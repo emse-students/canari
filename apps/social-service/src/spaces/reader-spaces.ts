@@ -1,3 +1,4 @@
+import { ruleReachesSpaceSql } from './rule-sql';
 import { ruleReachesSpace, type AudienceRule } from './spaces.service';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
 
@@ -80,12 +81,6 @@ export function rulesOutsideCeiling(
  */
 export function isReaderSpaceSql(space: string, user: string): string {
   return `(${space}.campus = ${user}.campus AND ${user}.cursus @> jsonb_build_array(jsonb_build_object('formation', ${space}.formation)))`;
-}
-
-/** Rule row `rule` (formation/campus, NULL = any) reaches space row `space`: `ruleReachesSpace`. */
-function ruleReachesSpaceSql(rule: string, space: string): string {
-  return `((${rule}.formation IS NULL OR ${rule}.formation = ${space}.formation)
-    AND (${rule}.campus IS NULL OR ${rule}.campus = ${space}.campus))`;
 }
 
 /** Rule row `rule` reaches at least one space of user row `user`. */

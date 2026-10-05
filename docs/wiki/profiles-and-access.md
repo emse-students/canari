@@ -578,9 +578,23 @@ is a read-only `VirtualColumn` derived from it, so every API and the frontend ke
 field; the toggle on `/admin/associations` is now a read-only badge. Migration `072_drop_is_bde.sql`
 drops the column and REFUSES while a flagged association governs no space (071 seeds a BDE only when
 exactly one was flagged), so no one silently loses VALIDATE_EVENTS / MANAGE_ASSO / MODERATE. Tried on a
-throwaway Postgres: drop, replay, refusal; the virtual column read against real rows. **STEP 2, NOT
-BUILT: scope validation and MANAGE_ASSO to the BDE of the event association's space** (today any BDE
-validates any event); MODERATE stays global (D23).
+throwaway Postgres: drop, replay, refusal; the virtual column read against real rows.
+
+**WP6c, step 2 (2026-10-04, branch `feat/spaces-6c-scope`, stacked on step 1): A BDE GOVERNS THE
+ASSOCIATIONS ITS SPACES REACH.** One predicate, `spaces/bde.ts` `holdsBdeFlagOverSql(user,
+association, flag)`: the user holds `flag` in the BDE of a space one of the association's rules
+reaches. "The event association's space(s)" are therefore the spaces its rules reach - several:
+the BDE of ANY of them; none: a global admin only. VALIDATE_EVENTS (validate, reject, edit, delete,
+deposit, `break`, and who is TOLD of a proposal) and MANAGE_ASSO (the super-admin tier, `DELETE
+:id`) read it; MODERATE stays global (D23). An event is judged on its OWN association, read from the
+row, never the URL's. The client draws per-association controls from `GET
+/api/associations/me/bde-reach` and the pending queue's per-row `canValidate`. **Left unscoped on
+purpose** (no association to scope to): creating an association, categories, carte, document
+reviewers - WP7's question. Table, routes and proof:
+[association-permissions](association-permissions.md#wp6c-step-2-a-bde-governs-the-associations-its-spaces-reach-2026-10-04).
+**Production consequence**: while every association still carries 071's single (ICM,
+saint-etienne) rule, the one BDE governs all of them and nothing changes; the scoping bites the day
+the grid gives an association a reach outside its BDE's spaces.
 
 **WP6b as built (2026-10-04)**, branch `feat/spaces-6b-readers`, stacked on 6a/6d. Every server
 read that serves a post, an event or an announcement asks ONE module,

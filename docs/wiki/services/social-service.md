@@ -836,7 +836,7 @@ offers the buttons:
 | Caller | Scope |
 |---|---|
 | Global admin (`x-global-admin: true`) | any association's event |
-| BDE admin (`isUserBdeAdmin`: `VALIDATE_EVENTS` in an association flagged `isBDE`) | any association's event |
+| BDE validator (`mayValidateEvent`: `VALIDATE_EVENTS` in the BDE of a space the event's association reaches - WP6c step 2, [association-permissions](../association-permissions.md#wp6c-step-2-a-bde-governs-the-associations-its-spaces-reach-2026-10-04)) | the events of the associations its spaces reach |
 | Anyone else | needs `PROPOSE_EVENT` in the association that owns the event |
 
 `:id` is always the **owning** association - an event never changes owner, so there is no
@@ -845,7 +845,8 @@ offers the buttons:
 Two surfaces offer these actions and they gate differently on purpose. An association's own page
 (`AssociationCalendarSection`) gates on `PROPOSE_EVENT` *there*, so a BDE validator holding no
 membership in that club sees nothing. The global agenda (`/calendar`) gates per event on the full
-server rule, which is the only place that validator can act - deriving its gate from the other
+server rule (`GET /api/associations/me/bde-reach` names the associations it governs), which is the
+only place that validator can act - deriving its gate from the other
 surface instead of from the server would have kept the right unusable.
 
 ### Nothing is validated by the act of creating it
