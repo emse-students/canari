@@ -2550,6 +2550,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val why = when (outcome) {
                 is PushDecrypt.NothingToRender -> "nothing to render in it"
                 is PushDecrypt.Yielded -> "the foreground holds it"
+                is PushDecrypt.RefusedForGood -> "MLS refused it at an epoch this device holds"
                 else -> "it could not be decrypted"
             }
             Log.d(TAG, "Silent push group=${groupId.take(8)} shows nothing - $why")
@@ -3142,6 +3143,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * and the only one that owes the worker a retry.
          */
         object Refused : PushDecrypt
+
+        /**
+         * MLS refused the frame at an epoch this device already holds - a spent generation, a
+         * same-epoch refusal, a past epoch, our own frame, an eviction (`background.rs`
+         * `refused_by_mls`, reason `mls-refused-for-good`).
+         *
+         * **NOT [Refused], BECAUSE NOTHING THE LADDER DOES CAN READ IT.** A catch-up applies
+         * commits, which build the NEXT epoch and leave this one's secrets as they were, and the
+         * worker loads the same `mls.bin`. Both used to run on it anyway - `catchup: no commit to
+         * catch up -> fallback`, then an enqueue that did nothing - once per such message. A
+         * visible push still owes the generic banner: there IS a message, only not for this state.
+         */
+        object RefusedForGood : PushDecrypt
     }
 
     private fun tryDecrypt(
@@ -3454,6 +3468,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // it saw and stops, rather than retrying a frame no ladder can help.
                     Log.d(TAG, "$where: a peer asks for a seed - the foreground answers those")
                     PushDecrypt.NothingToRender
+                }
+                "mls-refused-for-good" -> {
+                    // Told by the layer that KNOWS (`DecryptErrorKind`), never re-derived from the
+                    // error text here: no catch-up, no worker - see `PushDecrypt.RefusedForGood`.
+                    Log.w(TAG, "$where: MLS refused it at an epoch this device holds kind=${json.optString("kind")} - no catch-up or retry can read it")
+                    PushDecrypt.RefusedForGood
                 }
                 else -> {
                     Log.w(TAG, "$where: no message to show, reason=$reason")

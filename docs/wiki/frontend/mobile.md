@@ -1490,7 +1490,7 @@ recipient is its author and already holds it.
 
 Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:
 
-1. Try a direct decrypt (`tryDecrypt` / `decryptProto`).
+1. Try a direct decrypt (`tryDecrypt` / `decryptProto`). **A refusal at an epoch this device already holds stops here** (reason `mls-refused-for-good`, Kotlin `PushDecrypt.RefusedForGood`, since 2026-10-04): `background.rs` `refused_by_mls` splits MLS refusals by `DecryptErrorKind`, and a spent generation, a same-epoch refusal, a past epoch, our own frame or an eviction cannot be read by any later epoch. So no catch-up and no worker - each used to cost `fetchCommitsFromBackend` and an enqueue per message to learn `no commit to catch up`. A visible push still gets the generic banner. (The in-app iOS path, `canari_push.mm`, does not read the reason yet.)
 2. If that fails, ask where the group stands: `groupLocality` / `GroupLocality` returns `LOCAL`, `ABSENT` or `UNKNOWN`.
 3. `UNKNOWN` — the state could not be reached at all (lock not acquired, `mls.bin` unreadable, device key missing, JNI absent). **Neither recovery runs**, because neither is an answer to it. The push falls through to the fallback below.
 4. `LOCAL` (epoch ≥ 0) — run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately.
