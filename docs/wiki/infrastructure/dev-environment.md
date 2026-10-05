@@ -660,3 +660,45 @@ mechanism is `Network.setExtraHTTPHeaders` carrying the `CF-Access-Client-Id` /
 NOT built yet: an arming path nobody can exercise is an untested code path in the one instrument the
 campaign depends on, and the crossing can only be proved once the Access application and its service
 token exist.
+
+## 9. A pre-release cannot measure production state - the second package id (decided 2026-09-15)
+
+An APK embeds its frontend and its backend URL, so `-alpha.N` means two things at once: the Play
+`internal` track AND `dev.canari-emse.fr`. On 2026-09-15 this cost a measurement. `v0.18.3-alpha.1`
+was installed over the production app on the Pixel 6a to measure a cold-start fix, and
+`coldstart.mjs` read `START=true PROMPT=false`: the biometric prompt it brackets exists only for an
+established session, and on dev that account has none. The coupling has three costs:
+
+- a pre-release cannot be measured against production data;
+- installing an alpha replaces the tester's production app, because both use one package id;
+- the stable is rebuilt with another backend URL frozen in, so gate 4 ("dev has served it")
+  vouches for the same COMMIT, never the same BINARY.
+
+**Decided by the user, 2026-09-15: a second package id**, `fr.emse.canari.dev`, installable beside
+`fr.emse.canari`. A runtime switch was rejected: in a production build it is a foot-gun unless gated
+to a debug artefact, which brings back the two artefacts it was meant to avoid.
+
+**The package id is also the custom URL scheme** (`<id>://callback` for OIDC, `<id>://chat/<id>` for
+deep links). Since 2026-10-04 the frontend spells it once, as `MOBILE_APP_PACKAGE` in
+`$lib/mobile/appSiteAssociation.ts`. `MOBILE_APP_PROTOCOL`, `appDeepLink()` and
+`OIDC_MOBILE_REDIRECT_URI` derive from it, and `oidcRedirectScheme.test.ts` fails on any other module
+writing it as a literal. What the rest takes, in order:
+
+1. **The OIDC client accepts `fr.emse.canari.dev://callback`** on Authentik. Do this first, or the dev
+   build cannot log in at all.
+2. **A second FCM app entry** for the dev package in
+   `frontend/src-tauri/gen/android/app/google-services.json` (a Firebase console action). Without it
+   the dev build gets no push.
+3. **A second Play listing** for `fr.emse.canari.dev`. The keystore can be reused.
+4. **A Tauri config overlay** for the dev artefact (`identifier`, `productName`, and the deep-link
+   scheme), with `MOBILE_APP_PACKAGE` fed from the same source. `android.yml` then picks the artefact
+   with `release_kind()` instead of only picking the track.
+5. **`assetlinks.json` on the dev host**, only if https App Links are wanted there.
+
+iOS takes the same shape (bundle identifier, second App Store record), and the Android measurement
+that motivated this does not need it.
+
+**Until then**: anything measured against PRODUCTION state can only be measured on a STABLE. The
+versionCode band brings a tester back: rank 99 for a stable, so `0.18.3` = 1800399 outranks
+`0.18.3-alpha.1` = 1800301, and Play restores it as an ordinary update with the data intact.
+Leaving the tester programme instead forces an uninstall, which wipes the state being measured.
