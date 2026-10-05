@@ -9,6 +9,7 @@
 
 import { version } from '$app/environment';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
+import { appRouteForDeepLink } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { createStaleBuildRecovery } from '$lib/utils/staleBuild';
@@ -202,29 +203,21 @@ if (isTauriRuntime()) {
               continue;
             }
 
-            // Post deep link: fr.emse.canari://post/{postId}
-            if (u.protocol === 'fr.emse.canari:' && u.host === 'post') {
-              const postId = u.pathname.replace(/^\//, '');
-              if (postId) {
-                import('$app/navigation')
-                  .then(({ goto }) => goto(`/posts/${postId}`))
-                  .catch(() => {
-                    window.location.href = `/posts/${postId}`;
-                  });
-              }
-              continue;
-            }
-
-            // Form deep link: fr.emse.canari://form/{formId}
-            if (u.protocol === 'fr.emse.canari:' && u.host === 'form') {
-              const formId = u.pathname.replace(/^\//, '');
-              if (formId) {
-                import('$app/navigation')
-                  .then(({ goto }) => goto(`/forms/${formId}`))
-                  .catch(() => {
-                    window.location.href = `/forms/${formId}`;
-                  });
-              }
+            // Page deep links a notification tap lands on: post/{id}, form/{id}, posts, calendar,
+            // admin-agenda. The table is `appRouteForDeepLink`; a host it does not own falls through
+            // to the handlers below.
+            const pageRoute = appRouteForDeepLink(u);
+            if (pageRoute) {
+              Promise.all([
+                import('$app/navigation'),
+                import('$lib/stores/globalChatSingleton.svelte'),
+              ])
+                .then(([{ goto }, { appendLog }]) => {
+                  // The same line the chat branch prints: the first absent one names the broken hop.
+                  appendLog(`[notifNav] deep link received: ${url} -> ${pageRoute}`);
+                  return goto(pageRoute);
+                })
+                .catch((err) => console.error('[hooks] Navigation to', pageRoute, 'failed', err));
               continue;
             }
 
