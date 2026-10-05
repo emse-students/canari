@@ -498,6 +498,15 @@ route table, compared against `notificationHref`).
 
 **Not measured on the iPhone yet** - see the verification note appended below when it is.
 
+**What was observed on the iPhone (2026-10-05, build 1.0.3 against the local stack).** A real push could
+not be sent: Firebase refuses the bench build's sandbox token (`Invalid APNs credential`, the APNs key
+owed in Firebase's development slot, see [cross-client-ios](../cross-client-ios.md)). The links were
+therefore opened with the same URL a tap hands to `openURL`, from a killed app and a backgrounded one:
+`post/<id>` opens the post (after the PIN on a cold start), `form/<id>` opens the form, and `calendar`
+and `posts` were IGNORED on 1.0.3 - the hosts the event pushes land on, which the route table of this
+change adds. Routing below the tap is proven; that the server now writes the link is proven by tests, and
+a real push, tapped killed and backgrounded, is still owed until the APNs key is in.
+
 #### A backgrounded tap reached BOTH paths, and the live one now writes the claim (2026-10-01)
 
 **Measured on a Mi 9T:** each tap on a backgrounded app logged `[hooks] Processing URL` and
