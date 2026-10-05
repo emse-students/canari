@@ -894,24 +894,6 @@ keeps the session alive across navigation, and it buys nothing on the route the 
 on.
 
 ---
-### P3 - the WASM stub is an iOS-only opt-in, so an Android build carries a WASM module it cannot use (found 2026-09-16)
-
-`mlsWasmStub()` in `vite.config.js` fires on `TAURI_TARGET`, and the ONLY thing that sets it is
-`.github/workflows/ios.yml`. Android reaches Vite through `bun tauri android build`, whose
-`beforeBuildCommand` gets `TAURI_ENV_PLATFORM` instead - so the stub does not fire, and the
-Android bundle carries the MLS WASM module and its workers while every MLS call goes to Rust
-through `invoke()`. Both builds were made on 2026-09-16 and `[bundle-check]` reports `1 wasm` for
-each.
-
-**It is not a one-word predicate change, which is why it is written down rather than done.** The
-virtual module the stub installs exports `loadAndInitWasm` and nothing else, while
-`$lib/mls-client/index.ts` re-exports `migrateLegacyMlsStateBlob` from the same file and three
-workers import from it. Widening the predicate therefore changes what compiles on iOS as well -
-where the current shape has shipped - so it owes a build of BOTH natives and a reading of what the
-native path actually calls, not a guess. The prize is the whole WASM payload on Android, which is
-the largest single asset either native build carries.
-
----
 ### P3 - THE PRE-RELEASE CHANNEL IS THE ENVIRONMENT SELECTOR, SO THE BUILD CARRYING A FIX CANNOT MEASURE IT (found 2026-09-15)
 
 An APK embeds its frontend and its backend URL, so freezing the environment into the artifact is

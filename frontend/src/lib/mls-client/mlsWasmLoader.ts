@@ -1,11 +1,10 @@
 /**
  * WASM loader for WebMlsService.
  *
- * This module is the ONLY place in the codebase that contains static-string
- * dynamic imports of the compiled WASM assets. By isolating them here, the
- * `mls-wasm-stub` Vite plugin can replace this entire module with a no-op
- * stub when TAURI_TARGET is set - so Vite never resolves or bundles the WASM
- * files in Tauri (AppImage / Android) builds.
+ * A native build ships it but never calls it: TauriMlsService runs MLS in Rust, and the one
+ * importer left in a native graph is `wasmPrefetch.ts`, which `hooks.client.ts` skips under Tauri.
+ * The `.wasm` binary reaches those builds anyway, because `backup.ts` imports the bindings for the
+ * backup envelope on every platform ([mobile](docs/wiki/frontend/mobile.md)).
  *
  * WASM assets live under `$lib/wasm/` (built output).
  */
@@ -170,8 +169,8 @@ export async function migrateLegacyMlsStateBlob(
  *    further is a measurement `mls-core` owes, not one this file can take. Reporting three spans
  *    from here would be inventing a boundary that does not exist.
  *
- * Both are WEB-ONLY. The `mls-wasm-stub` plugin replaces this module on Tauri, where the state load
- * crosses the IPC bridge instead, so a native report carries `mls-load-state` and neither of these.
+ * Both are WEB-ONLY. A Tauri build never calls this module (`platformMlsService()` in
+ * `vite.config.js` ships TauriMlsService there), and its state load crosses the IPC bridge instead, so a native report carries `mls-load-state` and neither of these.
  * An absent span is not a zero one, and the report says `null` rather than 0 for exactly that reason.
  */
 export async function loadAndInitWasm(

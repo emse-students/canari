@@ -145,8 +145,8 @@ type WasmClient = import('$lib/wasm/mls_wasm.js').WasmMlsClient;
 export type KeyPackageMinter = Pick<WasmClient, 'generate_key_packages' | ...>;
 ```
 
-The inline `import(...)` is a type position, erased before Vite resolves anything, so the
-`mls-wasm-stub` plugin that replaces `mlsWasmLoader` on Tauri builds never sees it. And the mock in
+The inline `import(...)` is a type position, erased before Vite resolves anything, so it pulls
+nothing into a bundle. And the mock in
 the helper's unit test carries the same parameter types for the same reason: the previous one
 accepted a Number and its assertion (`Number.isInteger` on the clock) demanded exactly the type the
 binding refuses.

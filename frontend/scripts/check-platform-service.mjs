@@ -3,7 +3,7 @@
  * Asserts that a build ships ONE MLS implementation - the one it can run.
  *
  * `TauriMlsService` calls into the Rust side of the app and cannot execute in a browser;
- * `WebMlsService` needs the WASM loader that a Tauri build stubs out. Until 2026-09-16 a runtime
+ * `WebMlsService` drives the WASM engine, which a Tauri build never uses for MLS. Until 2026-09-16 a runtime
  * ternary picked between two statically imported implementations, so every bundle carried both: the
  * reading of `/login`'s module graph on 2026-09-16 found `TauriMlsService` (48 312 B of source) in
  * the web build and `WebMlsService` (60 538 B) in the Tauri one, compiled and evaluated on every

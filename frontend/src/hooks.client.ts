@@ -59,8 +59,8 @@ export function init(): void {}
 // start-up. Nothing about the binary depends on the PIN. `wasmPrefetch` carries the measurement,
 // the four-step chain it shortens, and why it is guarded rather than unconditional.
 //
-// Tauri is excluded because there is no download there: `frontendDist` embeds the bundle, and the
-// `mls-wasm-stub` plugin replaces the loader outright in those builds, so calling it would throw.
+// Tauri is excluded because there is no download there: `frontendDist` embeds the bundle, and MLS
+// runs in Rust, so nothing would ever await the module this warms.
 if (!isTauriRuntime()) {
   prefetchMlsWasmAtBoot();
 }

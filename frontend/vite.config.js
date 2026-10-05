@@ -39,8 +39,8 @@ function isNativeBuild() {
 /**
  * Resolves `$lib/mlsServicePlatform` to the implementation this build can actually run.
  *
- * `TauriMlsService` cannot execute in a browser and `WebMlsService` cannot execute in a Tauri build
- * (its WASM loader is stubbed above). Both were nevertheless statically imported behind a runtime
+ * `TauriMlsService` cannot execute in a browser and `WebMlsService` has no business in a Tauri build,
+ * where MLS runs in Rust. Both were nevertheless statically imported behind a runtime
  * ternary until 2026-09-16, so each bundle shipped, parsed and evaluated the one it could never
  * call. The choice is known when the bundle is built, so it is made here.
  *
@@ -60,45 +60,6 @@ function platformMlsService() {
       if (!/(^|\/)mlsServicePlatform$/.test(source)) return null;
       const resolved = await this.resolve(nativeFile, importer, { ...options, skipSelf: true });
       return resolved?.id ?? nativeFile;
-    },
-  };
-}
-
-/**
- * Stubs out the WASM loader for Tauri builds (AppImage, Android, etc.).
- *
- * When the TAURI_TARGET env var is set, any import of `mlsWasmLoader` is
- * redirected to a virtual module that throws if ever called. This prevents
- * Vite from resolving or bundling the .wasm assets in native Tauri builds,
- * where TauriMlsService is used instead.
- *
- * @returns {import('vite').Plugin}
- */
-function mlsWasmStub() {
-  // TAURI_TARGET alone, deliberately, and NOT `isNativeBuild()`: the virtual module this installs
-  // exports `loadAndInitWasm` and nothing else, while `$lib/mls-client` re-exports more names from
-  // the real loader. Widening the predicate to Android is a change to what an Android build
-  // compiles, and it is written down as a measurement to make rather than made blind here
-  // (docs/wiki/backlog.md).
-  // eslint-disable-next-line no-undef
-  const isTauri = !!process.env.TAURI_TARGET;
-  const VIRTUAL_ID = '\0mls-wasm-stub';
-  return {
-    name: 'mls-wasm-stub',
-    resolveId(id) {
-      if (isTauri && id.includes('mlsWasmLoader')) {
-        return VIRTUAL_ID;
-      }
-    },
-    load(id) {
-      if (id === VIRTUAL_ID) {
-        return `export async function loadAndInitWasm() {
-  throw new Error('[mls-wasm-stub] WASM is not available in Tauri builds - TauriMlsService should be used instead.');
-}
-export function wasmGraineSignatureEngine() {
-  throw new Error('[mls-wasm-stub] WASM is not available in Tauri builds - TauriMlsService answers graineSignatureEngine.');
-}`;
-      }
     },
   };
 }
@@ -178,7 +139,6 @@ export default defineConfig(async () => ({
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion),
   },
   plugins: [
-    mlsWasmStub(),
     platformMlsService(),
     tailwindcss(),
     // Paraglide must compile before SvelteKit so the generated runtime in
