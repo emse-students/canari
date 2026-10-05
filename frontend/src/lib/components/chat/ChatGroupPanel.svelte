@@ -26,7 +26,7 @@
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
-  import { membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
+  import { joiningRows, membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
 
   /**
    * Props for the ChatGroupPanel component.
@@ -99,9 +99,8 @@
   const memberOrder = membersByFamilyName(() => groupMembers);
   const orderedMembers = $derived(memberOrder.current);
 
-  const pendingDisplay = $derived(
-    pendingInvites.filter((id) => !groupMembers.some((mem) => mem.toLowerCase() === id))
-  );
+  // Decided by what the list RENDERS, never by what the roster holds: see `joiningRows`.
+  const pendingDisplay = $derived(joiningRows(pendingInvites, groupMembers, orderedMembers));
 
   // ── Group avatar upload ─────────────────────────────────────────────────────
   let imageUploading = $state(false);

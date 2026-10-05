@@ -92,3 +92,36 @@ export function membersByFamilyName(userIds: () => string[]) {
     },
   };
 }
+
+/**
+ * The ids a member panel must still show as a "joining" row: nobody may be absent between being
+ * invited and being listed.
+ *
+ * A member is on screen in exactly ONE of two places - the ordered list, or a joining row - and
+ * the hand-over is decided by what the list RENDERS ({@link membersByFamilyName}'s `current`), not
+ * by what the roster HOLDS. The two differ for as long as the newcomer's profile lookup is in
+ * flight: the roster already carries the id, the list does not list it yet. Hiding the joining row
+ * on roster membership therefore made the newcomer appear (invited), disappear (in the roster,
+ * not yet listed) and appear again (listed) - 2026-10-05, the day the ordering shipped.
+ *
+ * - every invited id not yet listed is a joining row;
+ * - once the list has rows at all, so is every roster id not yet listed (a member who joined
+ *   through another device, or whose invitation ended before the lookup did). With NO row listed
+ *   the panel shows its loading line instead, and a joining row per id would duplicate it.
+ *
+ * @param invited ids with an invitation in flight, lower-cased
+ * @param roster the ids the roster holds
+ * @param listed the ids the ordered list renders
+ */
+export function joiningRows(invited: string[], roster: string[], listed: string[]): string[] {
+  const shown = listed.map((id) => id.toLowerCase());
+  const out: string[] = [];
+  const add = (id: string) => {
+    const key = id.toLowerCase();
+    if (shown.includes(key) || out.includes(key)) return;
+    out.push(key);
+  };
+  invited.forEach(add);
+  if (listed.length > 0) roster.forEach(add);
+  return out;
+}
