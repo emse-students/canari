@@ -2802,8 +2802,6 @@ channel id everywhere (routes, `channel_<id>` conversations); the one place that
 an identity, the invitation's target salon in `Sidebar.svelte`, now picks the first public salon
 the viewer may open. The unique index `(workspaceId, name)` stays and is case-sensitive.
 
-**Default salon:** `DEFAULT_CHANNEL_NAME` is the accented 'general' (e-acute twice). Existing
-communities: migration 076 renames, per community, the public salon still named exactly `general`
-that was created within a minute of its community, unless the accented name is taken. A salon renamed
-away and back is indistinguishable from the default (accepted). **Owed to the user's go before the
-release that carries it** (it rewrites a name members see; clients pick it up on their next load).
+**Default salon:** `DEFAULT_CHANNEL_NAME` is the accented 'general' (e-acute twice). NEW
+communities only: existing default salons keep the name `general` (user decision, 2026-10-05 - no
+rename migration; a member with the right may rename one by hand).
