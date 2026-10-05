@@ -7,6 +7,7 @@
  */
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
+import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage } from '$lib/db';
 import { computePinVerifier } from '$lib/utils/chat/auth';
@@ -1615,8 +1616,10 @@ export async function loginImpl(
     } else if (cb.onLoginFailed) {
       cb.onLoginFailed(shown, code);
     } else {
-      const cur = window.location.pathname + window.location.search + window.location.hash;
-      void goto(resolve(`/login?returnTo=${encodeURIComponent(cur)}`), { replaceState: true });
+      const loc = window.location;
+      void goto(resolve(internalPath(loginReturningTo(loc.pathname, loc.search, loc.hash))), {
+        replaceState: true,
+      });
     }
   } finally {
     ctx.setIsLoginInProgress(false);

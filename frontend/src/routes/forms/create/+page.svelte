@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { internalPath } from '$lib/utils/internalPath';
+  import { internalPath, safeInternalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -66,7 +66,7 @@
   /** Who may answer at all; null means anybody. */
   let submitCondition = $state<AudienceCondition | null>(null);
 
-  const returnTo = $derived(page.url.searchParams.get('returnTo') || '/forms');
+  const returnTo = $derived(safeInternalPath(page.url.searchParams.get('returnTo'), '/forms'));
   const fromPostComposer = $derived(
     returnTo === '/posts' && page.url.searchParams.get('attach') === 'form'
   );
