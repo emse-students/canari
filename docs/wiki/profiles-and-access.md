@@ -189,7 +189,8 @@ built.
 - **D30 - The agenda stays PUBLIC, per space**: each open space has its own anonymous feed and
   `.ics`, as today's single feed.
 - **D31 - A personal post inherits its AUTHOR's spaces**; someone with no space (a staff post only)
-  cannot publish one, and publishes through an institution instead.
+  cannot publish one, and publishes through an institution instead. **Closed as MEMBERSHIP ONLY
+  (user, 2026-10-05)**: through institutions they are a member of, nothing more.
 - **D32 - Two cursus pay the MOST FAVOURABLE price**: the matrix is evaluated for each cursus and the
   cheapest cell wins. A question shown to, or a submission allowed for, any of their cursus is shown
   or allowed.
@@ -706,7 +707,7 @@ State: **built** = in a draft PR, **next** = decided, not built, **open** = to s
 | Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post | next |
 
 Order: WP6c (BDE per space, `isBDE` deleted) comes first (D35). A new association reaches its creator's
-spaces by default (D36, built - see below). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
+spaces by default (D36, built - see below; NOT an institution, which starts with no rule, WP6e). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
 and a personnel: the spaces add up. Being personnel gives NO right to publish as the School: that takes
 membership of the institution's own instance, exactly as for an association. Everyone ticks `EMSE`, so that
 box no longer defines anything.
@@ -753,7 +754,8 @@ box no longer defines anything.
 
 ### D36 and D37 as built (2026-10-04)
 
-**D36 - a new association reaches its creator's spaces.** `AssociationsService.create` (the one path
+**D36 - a new association reaches its creator's spaces** (a list too; **an institution does NOT**, user
+2026-10-05 - it starts with no rule, see WP6e below). `AssociationsService.create` (the one path
 for an association AND a list, `POST /api/associations`) writes, in the SAME transaction as the row,
 the creator's spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`) as the smallest equivalent
 rule set (`smallestRules` in `spaces/spaces.service.ts`, the server twin of the grid's `toRules`: a
@@ -993,12 +995,17 @@ An institution is an `associations` row of that type, so it reuses every mechani
   `PROPOSE_EVENT` the same way; the post composer and the event picker are type-agnostic.
 - **Republishing**: `REPUBLISHING_ASSOCIATION_TYPES` is now `association, institution` (a list still does not); the
   dialogs offer institutions. Co-organisation takes any association row, so institutions co-organise too.
-- **Listings**: `?type=institution` is accepted by the directory and the public listing; `/associations` shows
-  institutions with associations. An institution can never be a BDE (the `/admin/spaces` button is for `association` only).
+- **Listings**: `?type=institution` is accepted by the directory and the public listing. **`/institutions` is its own page**
+  (user, 2026-10-05): the same directory API and `AssociationTile` as `/associations` and `/lists`, narrowed by type, so the
+  same visibility (rules reaching the reader's spaces, plus memberships, D37). `/associations` no longer lists institutions in
+  its catalogue (the cleaner reading of the choice; its "mine" shelf still shows the ones the reader belongs to) and carries an
+  "Institutions" button, as it does for lists. The page is `noindex` like `/lists` and has its title in `resolve.ts`. An
+  institution can never be a BDE (the `/admin/spaces` button is for `association` only).
 - **Reach**: its audience rules (its ceiling, D33) are the same `association_audiences` rows, edited on the grid.
-
-**Questions left to the user, not guessed**: (1) D36's default reach (creator's spaces) applies to an institution too,
-since D33 wants one mechanism - but a global admin's spaces are rarely the School's; should an institution be created
-with NO rule until set on the grid? (2) Does an institution get its own page/list (`/institutions`) or stay among
-associations? (3) D31 (a person with no space publishes through an institution) needs a way to choose an institution
-they are not a member of - undecided, not built.
+  **A new institution has NO rule** (user, 2026-10-05): `AssociationsService.create` skips D36's default for
+  `type: 'institution'`, so it is visible to its members only until an admin ticks the `/admin/spaces` grid (a global
+  admin's own spaces are rarely the School's). D33's one mechanism is kept: the type decides the default, nothing else
+  differs. `associations.service.create-default-audience.spec.ts` carries the control (an institution created by someone
+  with spaces writes no rule).
+- **D31 closes as "membership only"** (user, 2026-10-05): a person with no space publishes through the institutions they
+  are a MEMBER of, with `POST_AS_ASSO`. Nothing to build; no way to pick an institution one does not belong to.
