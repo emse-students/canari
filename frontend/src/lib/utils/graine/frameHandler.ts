@@ -41,9 +41,7 @@ export async function storeIncomingSeed(
   seed: IncomingSeed,
   keyGroupId: string
 ): Promise<boolean> {
-  const { storage, deviceKeyB64, mlsService } = requireGraineRuntime(
-    'cannot store an incoming seed'
-  );
+  const { storage, deviceKey, mlsService } = requireGraineRuntime('cannot store an incoming seed');
   if (!seed.sessionId || seed.seed.length === 0 || !seed.channelId) {
     console.warn(
       `[GRAINE] ignoring a malformed seed frame from ${senderId} in community ${workspaceId.slice(0, 8)}`
@@ -51,7 +49,7 @@ export async function storeIncomingSeed(
     return false;
   }
 
-  const existing = await storage.getGraineSession(seed.sessionId, deviceKeyB64);
+  const existing = await storage.getGraineSession(seed.sessionId, deviceKey());
   if (existing) {
     // A SESSION ID NAMES ONE SEED, IN ONE SALON, FOR EVER. A frame naming a held session with other
     // bytes, or another salon, is not a repair - a repair re-sends the SAME seed at a lower floor.
@@ -119,7 +117,7 @@ export async function storeIncomingSeed(
         // and `distributionEpoch` is the roster it was minted under - a judgement only its sender
         // may make.
       };
-  await storage.saveGraineSession(session, deviceKeyB64);
+  await storage.saveGraineSession(session, deviceKey());
   cacheGraineSession(session);
   // Mirrored so a push arriving with the app killed can still be opened. Not awaited for
   // correctness - the seed is already durable - but awaited for ORDER: a notification racing the
@@ -233,7 +231,7 @@ async function answerSeedRequest(
   frame: DistributionFrame,
   request: canari.GraineRequestMsg.$Properties
 ): Promise<void> {
-  const { storage, deviceKeyB64, userId, mlsService } = requireGraineRuntime(
+  const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     'cannot answer a seed request'
   );
   if (String(request.answererUserId ?? '').toLowerCase() !== userId) return;
@@ -253,8 +251,8 @@ async function answerSeedRequest(
 
   const gathered =
     request.kind === kinds.GRAINE_REQUEST_KIND_HISTORY
-      ? await gatherCommunityHistory(frame, storage, deviceKeyB64)
-      : await gatherNamedSessions(frame, request, storage, deviceKeyB64);
+      ? await gatherCommunityHistory(frame, storage, deviceKey())
+      : await gatherNamedSessions(frame, request, storage, deviceKey());
   // A refusal (`null`, the past withheld) is the only case answered by silence, and it is the one
   // the requester can already derive: the visibility rule is broadcast by the server, so both sides
   // know it. Everything else answers, INCLUDING an empty hand - "I hold none of these" is the fact

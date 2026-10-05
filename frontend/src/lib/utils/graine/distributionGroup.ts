@@ -599,8 +599,8 @@ async function persistDistributionTreeChange(
     );
     return;
   }
-  const { userId, deviceKeyB64 } = requireGraineRuntime('checkpoint a distribution group change');
-  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
+  const { userId, deviceKey } = requireGraineRuntime('checkpoint a distribution group change');
+  await persistMlsStateAfterMutation(mlsService, userId, deviceKey(), log);
 }
 
 /**

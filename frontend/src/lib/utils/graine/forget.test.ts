@@ -83,7 +83,7 @@ beforeEach(() => {
         return gone;
       },
     } as never,
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     userId: 'alice',
     mlsService: {
       sendMessage,
@@ -159,7 +159,7 @@ describe('forgetCommunityGraine', () => {
           return 4;
         },
       } as never,
-      deviceKeyB64: 'device-key',
+      deviceKey: () => 'device-key',
       userId: 'alice',
       mlsService: {
         sendMessage,
