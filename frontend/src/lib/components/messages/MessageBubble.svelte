@@ -41,10 +41,12 @@
     isGifUrl,
   } from '$lib/utils/chat/messageDisplay';
   import { isEmojiOnlyText } from '$lib/utils/emoji';
+  import { Log } from '$lib/utils/Log';
   import {
     canStartReplySwipe,
     createReplySwipeGesture,
     replySwipeDragOffset,
+    replySwipeArmed,
     replySwipeProgress,
     shouldTriggerReplySwipe,
     updateReplySwipeGesture,
@@ -532,6 +534,16 @@
   });
 
   let replyHintOpacity = $derived(replySwipeProgress(replyDragPx, isOwn));
+  let replyArmed = $derived(replySwipeArmed(replyDragPx));
+
+  // One tick the moment the drag crosses the threshold - releasing now sends the reply.
+  $effect(() => {
+    if (!replyArmed) return;
+    Log.d('MESSAGE', `reply swipe armed for ${messageId}`);
+    if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      navigator.vibrate(8);
+    }
+  });
 
   function cancelLongPress() {
     if (longPressTimer) {
@@ -683,9 +695,11 @@
         mirrored to point the way the bubble travels.
       -->
         <div
-          class="text-cn-ink pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-amber-400/90 shadow-md transition-opacity
+          class="text-cn-ink pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 items-center justify-center rounded-full shadow-md transition-[background-color,box-shadow] duration-100
+ {replyArmed ? 'bg-amber-400 ring-2 ring-amber-200' : 'bg-amber-400/70'}
  {isOwn ? 'left-full ml-1.5' : 'right-full mr-1.5'}"
-          style:opacity={replyHintOpacity}
+          style:opacity={0.35 + 0.65 * replyHintOpacity}
+          style:transform={`translateY(-50%) scale(${replyArmed ? 1.15 : 0.6 + 0.4 * replyHintOpacity})`}
           aria-hidden="true"
         >
           <CornerDownRight size={18} class={isOwn ? '' : 'rotate-180'} />
@@ -705,10 +719,9 @@
         The bubble keeps `transition-shadow`, which was never transitioning the transform anyway.
       -->
       <div
-        class="flex w-fit max-w-full flex-col {isOwn ? 'items-end' : 'items-start'} {replyDragPx !==
-        0
-          ? 'message-swipe-reply-active'
-          : ''}"
+        class="flex w-fit max-w-full flex-col transition-transform duration-200 ease-out {isOwn
+          ? 'items-end'
+          : 'items-start'} {replyDragPx !== 0 ? 'message-swipe-reply-active' : ''}"
         style:transform={replyDragPx !== 0 ? `translate3d(${replyDragPx}px, 0, 0)` : undefined}
       >
         {#if effectiveReplyTo}

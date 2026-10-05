@@ -1,5 +1,7 @@
 import {
   canStartReplySwipe,
+  REPLY_SWIPE_TRIGGER_PX,
+  replySwipeArmed,
   replySwipeDragOffset,
   shouldTriggerReplySwipe,
   updateReplySwipeGesture,
@@ -24,6 +26,15 @@ describe('messageSwipeReply', () => {
   it('ignores wrong-direction swipes', () => {
     expect(replySwipeDragOffset(40, true)).toBeNull();
     expect(shouldTriggerReplySwipe(60, 4, true, 'horizontal')).toBe(false);
+  });
+});
+
+describe('replySwipeArmed', () => {
+  it('arms exactly where releasing would send the reply, on either side', () => {
+    expect(replySwipeArmed(REPLY_SWIPE_TRIGGER_PX - 1)).toBe(false);
+    expect(replySwipeArmed(REPLY_SWIPE_TRIGGER_PX)).toBe(true);
+    expect(replySwipeArmed(-REPLY_SWIPE_TRIGGER_PX)).toBe(true);
+    expect(replySwipeArmed(0)).toBe(false);
   });
 });
 
