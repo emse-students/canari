@@ -277,10 +277,10 @@ describe('MessageBubble - the reply hint is revealed, never driven over', () => 
   // The hint is absolutely positioned and does NOT move; the bubble does. Put it on the side the
   // bubble travels TOWARD and the message slides underneath it, which is what the user reported:
   // *"une bulle avec le logo repondre, mais a l'interieur et qui ne bouge pas ... le message passe
-  // dessous"*. `right-full` on a received bubble anchors it past the LEFT edge - the side the drag
-  // comes from, and the space the bubble vacates. Asserting the class is what pins the SIDE; no
+  // dessous"*. `left-1` on a received bubble anchors it inside the footprint on the LEFT edge - the side the
+  // bubble leaves, and the space it vacates. Asserting the class is what pins the SIDE; no
   // jsdom layout is involved, so this is the only honest way to state it.
-  it('anchors past the LEFT edge of a received bubble, which is where the drag came from', () => {
+  it('anchors on the LEFT edge of a received bubble, uncovered as the bubble slides right', () => {
     mountBubble();
     const el = bubble();
     el.dispatchEvent(pointer('pointerdown', 100, 200));
@@ -289,11 +289,12 @@ describe('MessageBubble - the reply hint is revealed, never driven over', () => 
     flushSync();
 
     const hint = document.querySelector('[aria-hidden="true"].rounded-full');
-    expect(hint?.className).toContain('right-full');
-    expect(hint?.className).not.toContain('left-full');
+    expect(hint?.className).toContain('left-1');
+    expect(hint?.className).not.toContain('right-1');
+    expect(hint?.className).toContain('z-0');
   });
 
-  it('anchors past the RIGHT edge of an own bubble, mirrored for the same reason', () => {
+  it('anchors on the RIGHT edge of an own bubble, where it can never leave the screen', () => {
     mountBubble({ isOwn: true, senderId: 'u-me' });
     const el = bubble();
     el.dispatchEvent(pointer('pointerdown', 300, 200));
@@ -302,8 +303,9 @@ describe('MessageBubble - the reply hint is revealed, never driven over', () => 
     flushSync();
 
     const hint = document.querySelector('[aria-hidden="true"].rounded-full');
-    expect(hint?.className).toContain('left-full');
-    expect(hint?.className).not.toContain('right-full');
+    expect(hint?.className).toContain('right-1');
+    expect(hint?.className).not.toContain('left-1');
+    expect(hint?.className).not.toContain('left-full');
   });
 });
 

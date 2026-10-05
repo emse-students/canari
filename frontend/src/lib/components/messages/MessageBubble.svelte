@@ -700,14 +700,18 @@
         (user). Measured on Messenger 579.0.0.61.91: the row translates toward the centre and the
         reply icon is REVEALED in the space it vacates, on the outer edge, never covered.
 
-        `right-full` on a received bubble puts the icon past its LEFT edge, `left-full` on an own
-        bubble past its RIGHT edge - in both cases the direction the drag comes FROM. The arrow is
-        mirrored to point the way the bubble travels.
+        THE ICON LIVES INSIDE THE BUBBLE'S OWN FOOTPRINT, BEHIND IT (`z-0`, the sliding stack is above),
+        on the edge the bubble is leaving: `left-1` for a received message, `right-1` for an own one.
+        The bubble slides away and UNCOVERS it, which is the Messenger behaviour measured above, and
+        it can never leave the screen. It used to sit OUTSIDE the footprint (`left-full` on an own
+        bubble), and an own message already hugs the right edge: on the Mi 9T only a 20 px sliver of
+        the icon was visible at any distance (hardware read, 2026-10-05). The arrow is mirrored to
+        point the way the bubble travels.
       -->
         <div
-          class="text-cn-ink pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 items-center justify-center rounded-full shadow-md transition-[background-color,box-shadow] duration-100
+          class="text-cn-ink pointer-events-none absolute top-1/2 z-0 flex h-9 w-9 items-center justify-center rounded-full shadow-md transition-[background-color,box-shadow] duration-100
  {replyArmed ? 'bg-amber-400 ring-2 ring-amber-200' : 'bg-amber-400/70'}
- {isOwn ? 'left-full ml-1.5' : 'right-full mr-1.5'}"
+ {isOwn ? 'right-1' : 'left-1'}"
           style:opacity={0.35 + 0.65 * replyHintOpacity}
           style:transform={`translateY(-50%) scale(${replyArmed ? 1.15 : 0.6 + 0.4 * replyHintOpacity})`}
           aria-hidden="true"
