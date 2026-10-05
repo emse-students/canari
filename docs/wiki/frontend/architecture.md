@@ -192,6 +192,19 @@ the resource is then held by NOBODY - never freed, and in the avatar case still 
 later mount of the same face. The `cancelled` flag guards the STATE ASSIGNMENT, not the resource.
 Release inside the pending promise's `finally`, never beside it.
 
+### A timer a component starts dies with the component, not only with its "closed" state
+
+`MediaLightbox` cleared its tap and zoom timers when `open` went false, and nowhere else. Unmounted
+while open - a parent removing it, or a test's `unmount` - inside the 250 ms double-tap window, the
+tap timer fired on a component that no longer existed and logged `mediaLightbox.chrome`. In CI that
+line landed after `MediaLightbox.videoTap.svelte.test.ts` had ended and its worker was closing,
+which vitest reports as `EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`
+and counts as a run failure with every test green (2026-10-05, `main` and PR #1392). Whether it shows
+depends on how soon that worker closes, so it appeared only once new test files moved the schedule.
+The run's only console line attributed to no test (`stdout | Object.d (...Log.ts)`) named the
+culprit; grep a failing log for one before suspecting anything else. **Every `setTimeout` a component
+holds is cleared in an `$effect` teardown**, and `vi.getTimerCount()` after `unmount` is the test.
+
 ### A synchronous "unknown" placeholder is indistinguishable from an answer
 
 Once a placeholder label is stored, anything that later resolves the real value LOSES to it - and a
