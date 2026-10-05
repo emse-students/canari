@@ -1211,14 +1211,21 @@ export class AssociationsController {
     @Param('id') id: string,
     @Param('productId') productId: string,
     @Headers('x-user-id') userId: string,
-    @Body() body?: { customAmountCents?: number; successUrl?: string; cancelUrl?: string }
+    @Body()
+    body?: {
+      customAmountCents?: number;
+      successUrl?: string;
+      cancelUrl?: string;
+      payerEmail?: string;
+    }
   ) {
     return this.productsService.createCheckoutSession(
       id,
       productId,
       userId,
       body?.customAmountCents,
-      { successUrl: body?.successUrl, cancelUrl: body?.cancelUrl }
+      { successUrl: body?.successUrl, cancelUrl: body?.cancelUrl },
+      body?.payerEmail
     );
   }
 

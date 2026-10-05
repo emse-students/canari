@@ -273,6 +273,20 @@ dashboard or balance.
 - [../../cotisations.md](../../cotisations.md) - membership dues (also routed through Stripe Connect).
 - [admin.md](admin.md) - platform admin surfaces (Cercle top-ups).
 
+## The payer types an e-mail, and Lydia bounds the amount (2026-10-05)
+
+Lydia's `request/do` sends the payment request to a **recipient**, and Canari stores no e-mail
+address (the OIDC sign-in carries none). So the payer types one at payment: `PayerEmailPrompt` opens
+from the boutique button and the form page ONLY when `GET /api/payments/provider` says `lydia`, the
+address travels as `payerEmail` (social-service -> `POST /api/payments/create-checkout-session`),
+core-service turns it into the provider's `payerRecipient`, and nothing keeps it. A malformed one is
+refused before any provider call. The recipient is NOT an invoice address: Canari issues no invoices.
+
+Lydia confirmed on 2026-10-04 that a request must be between **0,50 EUR and 1000 EUR**;
+`LydiaPaymentProvider.createCheckoutSession` refuses anything outside it with a message instead of
+letting Lydia answer. In homologation the payer page offers a card form and, at its end, buttons to
+choose the final status - a real card is refused at the 3-D Secure step, so never type one there.
+
 ## Which onboarding flag a screen reads (2026-10-03)
 
 Stripe and Lydia keep independent account ids and `*OnboardingComplete` flags (migration 037), so
@@ -290,3 +304,19 @@ false (`POST /api/payments/complete-lydia-account/:associationId`, `NginxAuthGua
 `GlobalAdminGuard`, refused without a linked Lydia account). It calls social-service's existing
 `lydia-complete`, which also releases withheld products. Not open to the club's own managers: they
 would be declaring their own account ready. Removal of Lydia (`disconnect`) resets it.
+
+## The platform can declare payments DISABLED (2026-10-05)
+
+`platform_config.payment_provider` takes a third value, `disabled` (admin platform page, "Paiements
+desactives"; `VARCHAR(16)` holds it, no migration). Core-service answers it with
+`DisabledPaymentProvider`: `isConfigured()` is false, so every route gated on it gives its existing
+"not configured" answer, and anything that reaches the provider anyway fails with a 400,
+`Payments are disabled on this platform`. `GET /api/payments/provider` returns `{provider:'disabled'}`.
+
+It is NOT a kill switch for money already moving: the Stripe webhook and the Lydia request callback
+verify with their own secrets, independent of the active provider, so a payment in flight still
+completes. Social-service's `fetchActivePaymentProvider` returns the real value (it used to map
+anything but `lydia` to `stripe`), and `resolvePaymentTarget` resolves `disabled` to not ready with no
+account id - a ready Stripe or Lydia account, delegated or not, never routes. The client agrees:
+`isPaymentAccountReady` is false, the association payments card shows the existing "no provider
+configured" line instead of an onboarding flow, and `PayoutFeeHint` renders nothing.

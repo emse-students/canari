@@ -48,6 +48,7 @@ import {
 } from '../pricing/validate';
 import { normaliseCondition, visibleItemIds } from './visibility';
 import { coreUrl } from '../internal/service-urls';
+import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -966,6 +967,12 @@ export class FormsService {
         // order_ref for Lydia's request/do callback (see webhook.controller.ts) - never sent for
         // Stripe, which would otherwise read it as its own idempotency key.
         const activeProvider = await this.associationsService.getActivePaymentProvider();
+        if (activeProvider === 'disabled') {
+          this.logger.warn(
+            `[Forms] Paid submission ${savedSubmission.id} refused: payments are disabled`
+          );
+          throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
+        }
         const idempotencyKey =
           activeProvider === 'lydia' ? `form:${savedSubmission.id}` : undefined;
 
@@ -1000,6 +1007,7 @@ export class FormsService {
           metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
           stripeConnectAccountId,
           idempotencyKey,
+          payerEmail: input.payerEmail,
           // saveForFuture is incompatible with destination charges (Stripe Connect)
           ...(customerId ? { customerId, saveForFuture: !stripeConnectAccountId } : {}),
         });

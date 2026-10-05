@@ -59,6 +59,48 @@ describe('PaymentController.createCheckout', () => {
       expect.objectContaining({ idempotencyKey: undefined })
     );
   });
+
+  it('turns payerEmail into the payer recipient Lydia needs', async () => {
+    const createCheckoutSession = jest.fn().mockResolvedValue({ id: 's', url: 'https://x' });
+    const controller = makeController(createCheckoutSession);
+
+    await controller.createCheckout({
+      lineItems: [],
+      successUrl: 's',
+      cancelUrl: 'c',
+      payerEmail: '  payer@example.com ',
+    });
+
+    expect(createCheckoutSession).toHaveBeenCalledWith(
+      expect.objectContaining({ payerRecipient: { value: 'payer@example.com', type: 'email' } })
+    );
+  });
+
+  it('sends no recipient when no payerEmail is given', async () => {
+    const createCheckoutSession = jest.fn().mockResolvedValue({ id: 's', url: 'https://x' });
+    const controller = makeController(createCheckoutSession);
+
+    await controller.createCheckout({ lineItems: [], successUrl: 's', cancelUrl: 'c' });
+
+    expect(createCheckoutSession).toHaveBeenCalledWith(
+      expect.objectContaining({ payerRecipient: undefined })
+    );
+  });
+
+  it('refuses a malformed payerEmail before any provider call', async () => {
+    const createCheckoutSession = jest.fn();
+    const controller = makeController(createCheckoutSession);
+
+    await expect(
+      controller.createCheckout({
+        lineItems: [],
+        successUrl: 's',
+        cancelUrl: 'c',
+        payerEmail: 'not-an-email',
+      })
+    ).rejects.toThrow(/payerEmail/);
+    expect(createCheckoutSession).not.toHaveBeenCalled();
+  });
 });
 
 /**

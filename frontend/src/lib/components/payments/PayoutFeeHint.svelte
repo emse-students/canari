@@ -43,6 +43,7 @@
   const minCents = $derived(eurosInputToCents(props.minEuros));
   const maxCents = $derived(eurosInputToCents(props.maxEuros));
 
+  // `disabled` hides the hint entirely: there is no payout to estimate.
   // Server config, not per-association - fetched once and defaulted to `stripe` on failure, the
   // same posture the association edit page already takes for the same call.
   let provider = $state<PaymentProviderId>('stripe');
@@ -80,7 +81,7 @@
   }
 </script>
 
-{#if grossCents || memberCents || minCents || maxCents}
+{#if provider !== 'disabled' && (grossCents || memberCents || minCents || maxCents)}
   <div
     class="space-y-1 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-xs text-amber-950/90 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-100/90"
     role="note"

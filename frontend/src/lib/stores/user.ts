@@ -37,7 +37,8 @@ export interface UserProfile {
 }
 
 const USER_STORAGE_KEY = 'canari_saved_user';
-const USER_EMAIL_KEY = 'canari_user_email';
+/** No longer written (the OIDC sign-in carries no email); only purged, so old browsers shed it. */
+const LEGACY_USER_EMAIL_KEY = 'canari_user_email';
 const USER_DISPLAY_NAME_KEY = 'canari_user_display_name';
 const USER_GLOBAL_ADMIN_KEY = 'canari_global_admin';
 
@@ -53,24 +54,12 @@ export function getSavedDisplayName(): string | null {
   return localStorage.getItem(USER_DISPLAY_NAME_KEY);
 }
 
-/** Returns the persisted email address from localStorage, or `null` if not available. */
-export function getSavedEmail(): string | null {
-  if (typeof localStorage === 'undefined') return null;
-  return localStorage.getItem(USER_EMAIL_KEY);
-}
-
 /**
  * Persists the user's identity fields to localStorage and updates the reactive
  * Svelte 5 state so components that read `currentUserId()` or `globalAdminState()`
  * re-render immediately.
  */
-export function saveUserLocally(user: {
-  id: string;
-  email?: string;
-  displayName?: string;
-  admin?: boolean;
-}): void {
-  if (user.email) localStorage.setItem(USER_EMAIL_KEY, user.email);
+export function saveUserLocally(user: { id: string; displayName?: string; admin?: boolean }): void {
   if (user.displayName) localStorage.setItem(USER_DISPLAY_NAME_KEY, user.displayName);
   localStorage.setItem(USER_GLOBAL_ADMIN_KEY, user.admin ? 'true' : 'false');
   // A REMEMBERED VERDICT BELONGS TO ONE ACCOUNT. Anything derived from the previous session's
@@ -88,7 +77,7 @@ export function saveUserLocally(user: {
 /** Removes all persisted user data from localStorage and resets reactive state to logged-out. */
 export function clearUserLocally(): void {
   localStorage.removeItem(USER_STORAGE_KEY);
-  localStorage.removeItem(USER_EMAIL_KEY);
+  localStorage.removeItem(LEGACY_USER_EMAIL_KEY);
   localStorage.removeItem(USER_DISPLAY_NAME_KEY);
   localStorage.removeItem(USER_GLOBAL_ADMIN_KEY);
   setGlobalAdmin(false);

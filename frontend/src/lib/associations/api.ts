@@ -1866,7 +1866,8 @@ export async function createProductCheckout(
   associationId: string,
   productId: string,
   customAmountCents?: number,
-  callbacks?: { successUrl?: string; cancelUrl?: string }
+  callbacks?: { successUrl?: string; cancelUrl?: string },
+  payerEmail?: string
 ): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
   return request<{ checkoutUrl: string; amountCents: number; currency: string }>(
     `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/checkout`,
@@ -1876,6 +1877,7 @@ export async function createProductCheckout(
         ...(customAmountCents !== undefined ? { customAmountCents } : {}),
         ...(callbacks?.successUrl ? { successUrl: callbacks.successUrl } : {}),
         ...(callbacks?.cancelUrl ? { cancelUrl: callbacks.cancelUrl } : {}),
+        ...(payerEmail ? { payerEmail } : {}),
       }),
     }
   );
@@ -2011,7 +2013,8 @@ export function isConnectAccountReady(
  * True when the association's account at ONE provider is ready - the flag of that provider, since
  * Stripe and Lydia keep independent account ids and flags (migration 037). Reading the Stripe
  * flag while Lydia is active showed every Lydia association as incomplete for ever (2026-10-03).
- * `null` is a provider not yet known, which is never ready.
+ * `null` is a provider not yet known, and `disabled` is payments switched off platform-wide: neither
+ * is ever ready.
  */
 export function isPaymentAccountReady(
   asso: Pick<Association, 'stripeOnboardingComplete' | 'lydiaOnboardingComplete'>,
@@ -2149,7 +2152,8 @@ export async function startConnectAccountOnboarding(
 
 // ── Payment provider (WP-LYDIA-1) ───────────────────────────────────────────
 
-export type PaymentProviderId = 'stripe' | 'lydia';
+/** `disabled` is the platform declaring payments OFF: no provider, nothing is ever ready. */
+export type PaymentProviderId = 'stripe' | 'lydia' | 'disabled';
 
 /** Which payment provider core-service is currently configured to use. */
 export async function fetchActivePaymentProvider(): Promise<PaymentProviderId> {

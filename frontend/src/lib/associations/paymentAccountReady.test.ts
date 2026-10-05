@@ -26,6 +26,12 @@ describe('isPaymentAccountReady', () => {
     expect(isPaymentAccountReady(flags(true, true), null)).toBe(false);
   });
 
+  it('is never ready while the platform declares payments disabled, whatever the flags say', () => {
+    expect(isPaymentAccountReady(flags(true, true), 'disabled')).toBe(false);
+    expect(isPaymentAccountReady(flags(true, false), 'disabled')).toBe(false);
+    expect(isPaymentAccountReady(flags(false, true), 'disabled')).toBe(false);
+  });
+
   it('gates paid forms on the same answer', () => {
     const asso = flags(false, true) as Parameters<typeof canAssociationReceiveFormPayments>[0];
     expect(canAssociationReceiveFormPayments(asso, 'lydia')).toBe(true);

@@ -85,6 +85,41 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
     ).rejects.toThrow(/payerRecipient/);
   });
 
+  it.each([
+    ['below the 0.50 EUR minimum', 49],
+    ['above the 1000 EUR maximum', 100_001],
+  ])('refuses an amount %s before calling Lydia', async (_label, cents) => {
+    const provider = makeProvider();
+    await expect(
+      provider.createCheckoutSession({
+        lineItems: [{ productName: 'x', unitAmountCents: cents, quantity: 1, currency: 'eur' }],
+        successUrl: 's',
+        cancelUrl: 'c',
+        connectAccountId: 'vendor-token-abc',
+        payerRecipient: { value: 'user@example.com', type: 'email' },
+      })
+    ).rejects.toThrow(/0\.50 to 1000\.00 EUR/);
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+
+  it('accepts both bounds of the range', async () => {
+    mockedAxios.post.mockResolvedValue({
+      data: { error: '0', request_uuid: 'r', mobile_url: 'https://lydia-app.com/pay/r' },
+    });
+    const provider = makeProvider();
+    for (const cents of [50, 100_000]) {
+      await expect(
+        provider.createCheckoutSession({
+          lineItems: [{ productName: 'x', unitAmountCents: cents, quantity: 1, currency: 'eur' }],
+          successUrl: 's',
+          cancelUrl: 'c',
+          connectAccountId: 'vendor-token-abc',
+          payerRecipient: { value: 'user@example.com', type: 'email' },
+        })
+      ).resolves.toMatchObject({ id: 'r' });
+    }
+  });
+
   it('surfaces a Lydia error response as an exception', async () => {
     mockedAxios.post.mockResolvedValue({
       data: { error: '2', message: 'ERROR_INVALID_PHONE_FORMAT' },
