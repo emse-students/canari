@@ -90,8 +90,11 @@ criterion, hard-coded three times, and every admin flag is local:
   **Alumni association**.
 - **D3 - No graduated/current distinction.** A student and an alumnus are the same thing in the model:
   someone with a cursus. Any time filter goes through the promo.
-- **D4 - Formations: ICM, ISMIN, FSSS (formation sous statut salarie), Autre** - one bucket for
-  masters, doctorates and the rest, no sub-values.
+- **D4 - Formations: ICM, ISMIN, FSSS (formation sous statut salarie), PDIS, Autre** - one bucket for
+  masters, doctorates and the rest, no sub-values. **PDIS added 2026-10-04 (user), same shape as the
+  others and nobody in it yet**: the list lives in `SPACE_FORMATIONS` + migration 071 (social-service),
+  `FORMATIONS` (frontend) and the enrolment prompt of `20-enrollment.yaml` (authentik); core-service
+  stores a formation as free text and needs no change.
 - **D5 - Promo is the ENTRY year**, the School's and the alumni network's convention alike.
 - **D6 - ONE campus per person**, Gardanne or Saint-Etienne, staff included.
 - **D7 - The provider is only a way in.** CAS and Alumni SSO both give a name, a first name and an
@@ -136,6 +139,7 @@ application computed from the same profile, so no application keeps a hard-coded
   reader sees is the UNION of the spaces their affiliations open.
 - **D17 - A space exists only once an admin opens it**, and it is opened when a BDE is ready to
   govern it. Before that its members have the common modules and whatever targets them.
+  **RELAXED 2026-10-04 (user): every formation x campus pair exists from the start; nothing is opened.**
 - **D18 - Common to every valid profile, with no border between spaces: messaging, forms/ticketing,
   the directory.** The existing block is the only boundary.
 - **D19 - Feed, agenda and associations are per space, and an audience is FIXED BY THE AUTHOR, never
@@ -189,6 +193,12 @@ built.
 - **D32 - Two cursus pay the MOST FAVOURABLE price**: the matrix is evaluated for each cursus and the
   cheapest cell wins. A question shown to, or a submission allowed for, any of their cursus is shown
   or allowed.
+- **D33 - A post chooses its own visibility (user, 2026-10-04), amending D19's "fixed by the author".**
+  An entity's audience rules are its CEILING - what it may address: the School everything, each of
+  the two MEs its campus, an association its own. A post with no rule inherits them; an author may
+  give it rules of its own, and the server refuses any outside the ceiling. Going beyond is the
+  nominative grant of D24. One mechanism for associations, lists and institutions alike, so no
+  entity needs a special case.
 
 ## 3. Found on the way
 
@@ -497,15 +507,15 @@ migration), and its UI stops assuming them.
 **WP6 - Spaces in Canari (D16 to D22), five pull requests.**
 
 - **6a, data.** `spaces(id, formation, campus, opened_at, bde_association_id)`,
-  `association_spaces(association, space)`, `post_extra_spaces(post, space)`, and
+  `association_audiences(association, formation NULL, campus NULL)` (rules, see 6a as built), `post_audiences(post, formation NULL, campus NULL)`, and
   `associations.type` gains `institution`. Migration: open `ICM x saint-etienne`, attach every
   existing association and list to it, make today's `isBDE` association its BDE. The `isBDE` column
   is deleted at the end of 6c, never kept beside the new model.
 - **6b, readers.** ONE function, `readerSpaces(user)`: the open spaces matching (a cursus's
   formation, the person's campus), plus the content of the associations they belong to (D21). It
   replaces `feed-audience.ts`, its client twin `feedAudience.ts`, the announce scheduler's audience
-  and the agenda filter. A post is visible when its association's spaces, or its extra spaces, meet
-  the reader's.
+  and the agenda filter. A post is visible when its own rules (else its publisher's) reach an open space
+  the reader belongs to.
 - **6c, governance.** Validating an event is VALIDATE_EVENTS in the BDE of the event association's
   space, and only those people are notified; the BDE's MANAGE_ASSO powers are scoped the same way;
   MODERATE stays global (D23).
@@ -513,6 +523,58 @@ migration), and its UI stops assuming them.
   association's spaces are edited there.
 - **6e, institutions.** Created by a global admin, members added nominatively (D20); they publish and
   propose events like an association.
+
+**WP6a as built (2026-10-04), with one decision the user took that day.** *"La ME de Saint-Etienne ne va
+s'adresser qu'au Campus de Saint-Etienne, idem pour le pole Saint-Etienne de l'ecole"* - so who an
+association (or list, or institution) addresses is a RULE, not a list of spaces. Migration
+`apps/social-service/src/migrations/071_spaces.sql`: `spaces` (formation, campus, `openedAt`,
+`bdeAssociationId`; unique pair, CHECKs on the D4/D6 values, one BDE per space and one space per
+BDE), `association_audiences` (one row per rule, `formation`/`campus` where NULL means "any":
+(ICM, saint-etienne) one space, (NULL, saint-etienne) the whole campus - the ME and the School's
+pole there - and (NULL, NULL) everyone; an association has one or more rows, D19), `post_audiences` (the same rule shape, chosen by a post's author - see D33);
+entities in `social-service/src/spaces/`. The rules are resolved against the OPEN spaces at read
+time (6b), so a space opened later is reached with no edit to any association; a plan with explicit
+association-to-space links would have left it unreached until an admin added it to each. Seed: ICM x
+saint-etienne, every association and list addressing it, and the BDE set ONLY if exactly one
+association carries `isBDE` (production has one, user 2026-10-04; zero or several: left NULL with a
+notice - an admin designates it on the 6d page). Tried on a throwaway Postgres with one, zero and
+two `isBDE`, replayed, a duplicate rule refused, a bad value refused, cascade. **Deferred to 6e on
+purpose**: `associations.type` gaining `institution` (nothing could create one yet). **Settled the same day
+(D33)**: there is ONE School, which may share with one campus or the other, and TWO MEs (one per campus). Nothing reads these tables until 6b.
+
+**WP6d as built (2026-10-04, on the 6a branch).** API in `social-service/src/spaces/`, all global-admin
+only (`NginxAuthGuard` + `GlobalAdminGuard`), registered BEFORE `AssociationsController` so the literal
+`associations/spaces` wins over `associations/:id`: `GET /api/associations/spaces` (every pair with its
+BDE), `GET /api/associations/spaces/audiences` (the rules of EVERY association in one read, which is all
+the grid needs to draw itself), `PUT /api/associations/spaces/:id/bde` (designate or clear; only a
+regular association, never a list; **the same association may be the BDE of several spaces - user,
+2026-10-04, so the migration carries NO unique index on the BDE column**) and
+`GET/PUT /api/associations/:id/audiences` (replace the rules in one transaction, de-duplicated; **an
+empty set is allowed - the association then reaches nobody, user 2026-10-04**).
+
+**D17 RELAXED (user, 2026-10-04): NO ONE OPENS A SPACE.** All ten pairs (5 formations x 2 campuses)
+are seeded by migration 071, so there is no open/close route and no "open a space" form. D17's other
+half stands: a pair with no BDE has no governance yet.
+
+**The screen, `/admin/spaces` (nav entry "Espaces", global admins), is ONE GRID** (user: "une vue
+globale", then "quelque chose a la Discord"): associations in rows; columns are "everyone", then per
+campus a "whole campus" box and one box per formation. **Two levels, ticked like folders**: ticking a
+campus ticks its five formations, unticking one formation leaves the campus half-ticked. The pure logic
+is `lib/associations/audienceRules.ts`: the page reads the stored rules as a set of pairs and WRITES THE
+SMALLEST EQUIVALENT RULE SET (all pairs = one `(null,null)`, a whole campus = one `(null,campus)`, else
+pair rules), so a campus rule keeps covering a formation added later and the page always shows what is
+stored. A star in the corner of a pair box makes the association the BDE of that pair. **A BDE always
+reaches what it governs, and the SERVER holds that, not the page**: designating one adds the pair's
+rule in the same transaction when its rules do not cover it, and a rule set submitted without a
+governed pair gets it put back. The page shows that box ticked and locked until the star goes. A list
+has no star.
+
+**Post-level targeting (asked 2026-10-04, built with the 6b composer picker):** a post's "Audience" menu in the advanced settings starts from its association's reach and may narrow it; on top of REACH (where) sit FILTERS (who, among those reached): promo (from the profile's cursus) and contributor status of the PUBLISHING association. Filters only narrow, so they cannot step over the ceiling; the server evaluates them and the author sees a count, never a list.
+
+**The `isBDE` toggle on `/admin/associations` still exists and still drives every BDE check**: 6c moves
+those checks onto the space's BDE and deletes the column, so until then the two say the same thing only
+because the seed made them agree. Seen in a browser on a throwaway estate; the unit tests cover the
+service (9) and the pair logic (5), and CI boots the real module.
 
 **WP7 - Nominative grants (D24).** `grants(user, capability, space NULL, granted_by, at)`, add-only;
 `document_reviewer_grants` migrates into it and `/admin/document-reviewers` becomes the permissions

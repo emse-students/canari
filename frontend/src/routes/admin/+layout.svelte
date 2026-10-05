@@ -27,6 +27,7 @@
     HardDrive,
     History,
     Database,
+    Layers,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -106,6 +107,11 @@
         href: '/admin/associations',
         label: m.admin_associations_label(),
         icon: Building2,
+      });
+      communityItems.push({
+        href: '/admin/spaces',
+        label: m.admin_spaces_label(),
+        icon: Layers,
       });
     }
     // Document-reviewer grants + Carte de la Vie Asso: global admins and BDE super-admins.

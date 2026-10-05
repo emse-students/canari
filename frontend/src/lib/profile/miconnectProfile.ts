@@ -30,3 +30,12 @@ export function postLabel(post: Post): string {
       return m.profile_post_alumni();
   }
 }
+
+/** The formations MiConnect knows (D4). Mirrors `social-service` `SPACE_FORMATIONS`. */
+export const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const;
+export type Formation = (typeof FORMATIONS)[number];
+
+/** The localized name of a formation: the four acronyms stand for themselves, the rest is "Other". */
+export function formationLabel(formation: Formation): string {
+  return formation === 'Autre' ? m.profile_formation_other() : formation;
+}
