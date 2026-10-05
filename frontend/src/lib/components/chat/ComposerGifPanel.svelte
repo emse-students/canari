@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Keyboard } from '@lucide/svelte';
+  import { Keyboard, X } from '@lucide/svelte';
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { m } from '$lib/paraglide/messages';
   import GifGrid from './GifGrid.svelte';
   import type { GifResult } from '$lib/utils/chat/gifSearch';
@@ -25,9 +26,33 @@
     onSearchFocusChange: (focused: boolean) => void;
     /** Gives the room back to the keyboard: focuses the text field. */
     onKeyboard: () => void;
+    /**
+     * THE SEARCH IS OPEN (user, 2026-10-05): the picker is the whole screen above the keyboard - the
+     * search row and as many results as fit - and the conversation is not needed. The box in the
+     * footer stays as it is, so the conversation underneath lays out exactly as before and closing
+     * the picker puts it back where it was; only the content is lifted out, as a fixed layer
+     * sized like the other keyboard-aware overlays (`.composer-gif-fullscreen`).
+     */
+    fullscreen: boolean;
+    /** Closes the whole picker; the fullscreen layer has no composer under it to tap instead. */
+    onClose: () => void;
   }
 
-  let { active, spacerPx, contentPx, onPick, onSearchFocusChange, onKeyboard }: Props = $props();
+  let {
+    active,
+    spacerPx,
+    contentPx,
+    onPick,
+    onSearchFocusChange,
+    onKeyboard,
+    fullscreen,
+    onClose,
+  }: Props = $props();
+
+  /** A tap on the close button must not move focus: the search field would blur and the keyboard fall. */
+  function keepFocus(e: MouseEvent): void {
+    e.preventDefault();
+  }
 </script>
 
 <div
@@ -38,22 +63,38 @@
   aria-label={m.chat_gif_search_label()}
 >
   <div
-    class="flex flex-col"
-    style="height: {contentPx}px; padding-bottom: var(--safe-area-inset-bottom, 0px)"
+    class="flex flex-col {fullscreen ? 'composer-gif-fullscreen' : ''}"
+    style={fullscreen
+      ? undefined
+      : `height: ${contentPx}px; padding-bottom: var(--safe-area-inset-bottom, 0px)`}
     aria-hidden={!active}
     inert={!active}
+    use:coversScreen={fullscreen}
   >
     <GifGrid {active} {onPick} {onSearchFocusChange}>
       {#snippet trailing()}
-        <button
-          type="button"
-          onclick={onKeyboard}
-          aria-label={m.chat_gif_back_to_keyboard_label()}
-          title={m.chat_gif_back_to_keyboard_label()}
-          class="ui-icon-button text-text-muted rounded-xl hover:bg-black/5 dark:hover:bg-white/10"
-        >
-          <Keyboard size={20} />
-        </button>
+        {#if fullscreen}
+          <button
+            type="button"
+            onmousedown={keepFocus}
+            onclick={onClose}
+            aria-label={m.common_close_label()}
+            title={m.common_close_label()}
+            class="ui-icon-button text-text-muted rounded-xl hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            <X size={20} />
+          </button>
+        {:else}
+          <button
+            type="button"
+            onclick={onKeyboard}
+            aria-label={m.chat_gif_back_to_keyboard_label()}
+            title={m.chat_gif_back_to_keyboard_label()}
+            class="ui-icon-button text-text-muted rounded-xl hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            <Keyboard size={20} />
+          </button>
+        {/if}
       {/snippet}
     </GifGrid>
   </div>

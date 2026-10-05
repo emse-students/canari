@@ -50,8 +50,13 @@
    * affordance survives one hop away and the component no longer needs the author's id at all.
    */
   import { CornerUpLeft } from '@lucide/svelte';
-  import { shortenReplyPreview, getBubbleShapeClass } from '$lib/utils/chat/messageDisplay';
+  import {
+    shortenReplyPreview,
+    getBubbleShapeClass,
+    gifPreviewUrl,
+  } from '$lib/utils/chat/messageDisplay';
   import { m } from '$lib/paraglide/messages';
+  import ReplyGifThumb from './ReplyGifThumb.svelte';
 
   interface Props {
     /** ID of the quoted message, used for scroll-to navigation. */
@@ -69,6 +74,8 @@
   let { replyId, content, isOwn, replierDisplayName, onNavigateToMessage }: Props = $props();
 
   const previewText = $derived(shortenReplyPreview(content));
+  /** Set when the quoted message is a GIF: the quote then draws the picture, never its address. */
+  const gifUrl = $derived(gifPreviewUrl(content));
 
   /** Who answered, in one line: the reader is always "vous", anyone else by given name. */
   const caption = $derived(
@@ -112,6 +119,10 @@
     title={m.msg_go_to_quoted_message_label()}
     aria-label={m.msg_go_to_quoted_message_label()}
   >
-    <span class="block truncate"><EmojiText text={previewText} /></span>
+    {#if gifUrl}
+      <ReplyGifThumb url={gifUrl} />
+    {:else}
+      <span class="block truncate"><EmojiText text={previewText} /></span>
+    {/if}
   </button>
 </div>
