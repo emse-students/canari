@@ -225,6 +225,7 @@ if (isTauriRuntime()) {
             if (u.protocol === 'fr.emse.canari:' && u.host === 'stripe') {
               const path = u.pathname.replace(/\/$/, '') || '/';
               const sessionId = u.searchParams.get('session_id');
+              const submissionId = u.searchParams.get('submission_id');
               const registered = u.searchParams.get('registered');
               const postId = u.searchParams.get('post_id');
               const paymentSetup = u.searchParams.get('payment_setup');
@@ -245,6 +246,8 @@ if (isTauriRuntime()) {
                   navigate(
                     `/shop?purchase_success=${encodeURIComponent(purchaseSuccess)}&productId=${encodeURIComponent(productId)}`
                   );
+                } else if (submissionId) {
+                  navigate(`/forms/success?submission_id=${encodeURIComponent(submissionId)}`);
                 } else if (sessionId) {
                   navigate(`/forms/success?session_id=${encodeURIComponent(sessionId)}`);
                 } else if (paymentSetup) {
@@ -259,6 +262,8 @@ if (isTauriRuntime()) {
               } else if (path === '/cancel') {
                 if (u.searchParams.get('purchase_cancel')) {
                   navigate('/shop?purchase_cancel=1');
+                } else if (submissionId) {
+                  navigate(`/forms/cancel?submission_id=${encodeURIComponent(submissionId)}`);
                 } else if (sessionId) {
                   navigate(`/forms/cancel?session_id=${encodeURIComponent(sessionId)}`);
                 } else if (paymentSetup) {

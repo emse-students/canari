@@ -1935,6 +1935,8 @@
   "form_cancel_back_button": "Back to forms",
   "form_success_title": "Payment successful",
   "form_success_verifying": "Verifying payment…",
+  "form_success_pending_heading": "Payment awaiting confirmation",
+  "form_success_pending_desc": "Your payment is not confirmed yet. It can take a moment: come back to the form in a few minutes.",
   "form_success_confirmed_heading": "Payment confirmed!",
   "form_success_confirmed_desc": "Your registration has been saved. You will receive a confirmation by email.",
   "form_success_back_to_form": "Back to form",

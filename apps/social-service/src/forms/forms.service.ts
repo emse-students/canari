@@ -22,6 +22,7 @@ import type { ExportLabels } from './export-labels';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
+import { withSubmissionReturnKey } from './return-url-key';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
@@ -992,18 +993,26 @@ export class FormsService {
         }
 
         const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
+        const successUrl = resolveStripeCallbackUrl(
+          input.successUrl,
+          `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
+          frontendUrl
+        );
+        const cancelUrl = resolveStripeCallbackUrl(
+          input.cancelUrl,
+          `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
+          frontendUrl
+        );
         const res = await axios.post(checkoutUrl, {
           lineItems: singleLineItem,
-          successUrl: resolveStripeCallbackUrl(
-            input.successUrl,
-            `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
-            frontendUrl
-          ),
-          cancelUrl: resolveStripeCallbackUrl(
-            input.cancelUrl,
-            `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
-            frontendUrl
-          ),
+          successUrl:
+            activeProvider === 'lydia'
+              ? withSubmissionReturnKey(successUrl, savedSubmission.id)
+              : successUrl,
+          cancelUrl:
+            activeProvider === 'lydia'
+              ? withSubmissionReturnKey(cancelUrl, savedSubmission.id)
+              : cancelUrl,
           metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
           stripeConnectAccountId,
           idempotencyKey,

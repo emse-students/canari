@@ -303,6 +303,17 @@ export async function getSubmissions(formId: string): Promise<Submission[]> {
   return res.json();
 }
 
+/** The payment state of the caller's own submission, read by the return page after Lydia. */
+export async function getSubmissionPayment(
+  submissionId: string
+): Promise<{ id: string; formId: string; paymentStatus: string }> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}`
+  );
+  if (!res.ok) throw new Error('Failed to read the submission');
+  return res.json();
+}
+
 /** Deletes a submission. Requires form manager access. */
 export async function deleteSubmission(submissionId: string): Promise<void> {
   const res = await apiFetch(
