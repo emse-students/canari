@@ -3294,5 +3294,10 @@
   "asso_republications_withdraw": "Retirer",
   "asso_republications_view_post": "Voir la publication",
   "asso_republications_not_pending": "Cette proposition n'est plus en attente.",
-  "notif_open_error": "Impossible d'ouvrir cette notification."
+  "notif_open_error": "Impossible d'ouvrir cette notification.",
+  "calendar_selection_campus": "Campus",
+  "calendar_selection_formation": "Formation",
+  "calendar_selection_any_campus": "Tous les campus",
+  "calendar_selection_any_formation": "Toutes les formations",
+  "calendar_selection_required": "Choisissez un campus et/ou une formation pour continuer."
 }

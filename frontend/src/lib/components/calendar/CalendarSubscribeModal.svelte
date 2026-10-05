@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -27,6 +28,8 @@
    *   folded under it, the calendar-app link last - the order this modal always had there.
    */
   interface Props {
+    /** Drawn under the intro: the selector of a feed that needs one (D40). */
+    selector?: Snippet;
     open: boolean;
     onClose: () => void;
     /** https:// URL to the .ics feed; empty until computed (e.g. before the component mounts). */
@@ -35,7 +38,7 @@
     intro: string;
   }
 
-  let { open, onClose, icsUrl, intro }: Props = $props();
+  let { open, onClose, icsUrl, intro, selector }: Props = $props();
 
   const os = detectRuntimeDeviceOs('desktop');
   const isPhone = isPhoneOs(os);
@@ -177,6 +180,8 @@
     <p class="text-text-muted">
       {intro}
     </p>
+
+    {@render selector?.()}
 
     {#if isPhone}
       {@render appSection()}

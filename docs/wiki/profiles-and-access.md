@@ -721,7 +721,7 @@ box no longer defines anything.
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; never a personal post; card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
-| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | campus and formation built ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05)); "mine" and the UI await answers |
+| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | built, bare URL refused ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05)); "mine" is the signed-in agenda only |
 | Association directory (D37) | associations reaching one's spaces, or one belongs to | built |
 | Association page | NOT LISTED for a reader outside its audience, but reachable by a link (user, 2026-10-04); the member list does NOT follow the audience | existing |
 | Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
@@ -975,13 +975,22 @@ reader has no membership. Neither parameter is no selection and the feed stays w
 reader of `/feed` gets both filters. No migration. Proof: the integration spec's five selections
 against real PostgreSQL, plus the service and controller specs.
 
-**NOT BUILT, undecided - questions for the user:**
+**Decided by the user (2026-10-05):**
 
-1. **"mine"**: a calendar app sends no identity, so a personal feed needs a per-user secret URL (token,
-   rotation, revocation). Is that wanted, or is "mine" only the signed-in agenda?
-2. **The default**: with no selection, should the bare URL stay the whole agenda (kept), or be refused?
-3. **The selector UI**: where the subscribe modal and the PDF export pick campus/formation.
-4. **`GET /api/public/associations`** (sitemap): still lists every association; filter it too?
+- **"Mine" exists only in the signed-in agenda.** No per-user secret URL: a calendar app sends no
+  identity and none will be given one.
+- **The bare anonymous URL is REFUSED**: a 400 with code `AGENDA_SELECTION_REQUIRED`, for `feed.ics`
+  and the anonymous JSON feed. A `campus`/`formation`, an `associationId` (one association is its own
+  selection) or an `eventId` (the single-evening link) is enough; a signed-in JSON read is narrowed
+  to the reader's spaces and is not refused. The user took the cost knowing it: subscriptions saved
+  before this release stop working ([legacy-compatibility](legacy-compatibility.md#nothing-to-remove---a-calendar-subscription-saved-before-d40-now-gets-a-400-2026-10-05)).
+- **The selector** (`AgendaSelectionFields`, `lib/calendar/agendaSelection.ts`) sits in the subscribe
+  modal and on the PDF export page. It defaults to the reader's own campus and first cursus formation
+  (`defaultAgendaSelection`); a reader with no space gets nothing and must choose (no link, no month
+  until they do). One association's feed shows no selector. The SEO agenda page (`serverSeo`), which
+  reads anonymously, asks once per campus and merges - so an association with no rule, on no campus,
+  does not appear in that JSON-LD.
+- **`GET /api/public/associations`** (the sitemap) stays COMPLETE, unchanged.
 
 ### WP6e institutions as built (2026-10-05)
 

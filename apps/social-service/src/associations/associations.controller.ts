@@ -65,7 +65,7 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
-import { parseDirectoryQuery, parseSpaceSelection } from './directory-query';
+import { assertAgendaSelected, parseDirectoryQuery, parseSpaceSelection } from './directory-query';
 
 const LOGO_UPLOAD_MB = 2;
 
@@ -276,6 +276,11 @@ export class AssociationsController {
     @Query('formation') formation?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
+    assertAgendaSelected({
+      selection,
+      associationId,
+      signedIn: Boolean(userId?.trim()),
+    });
     // includePending is opt-in (the PDF export does not set it -> validated events only).
     // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
     let include = false;
@@ -302,7 +307,8 @@ export class AssociationsController {
    * `eventId` (optional) keeps only that event of the window - see the filter below.
    *
    * `campus` / `formation` (D40, optional): ONE FEED PER SELECTION - only the events a space of that
-   * campus / formation reaches. Neither is the whole agenda, as before; an unknown value is a 400.
+   * campus / formation reaches. An anonymous read with neither (and no `associationId` / `eventId`)
+   * is REFUSED with a 400 `AGENDA_SELECTION_REQUIRED`; an unknown value is a 400 too.
    *
    * **NO PROMO CUTOFF HERE, AND THAT IS NOT A HOLE.** A calendar app sends no identity and never
    * will, so there is no promo to cut at; and the cutoff is a relevance limit on a public agenda,
@@ -320,6 +326,8 @@ export class AssociationsController {
     @Query('formation') formation?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
+    // `.ics` is always anonymous: a calendar app sends no identity.
+    assertAgendaSelected({ selection, associationId, eventId, signedIn: false });
     const all = await this.service.listAggregatedCalendarFeed(from, to, associationId, {
       selection,
     });

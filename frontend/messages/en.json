@@ -3294,5 +3294,10 @@
   "asso_republications_withdraw": "Withdraw",
   "asso_republications_view_post": "View the post",
   "asso_republications_not_pending": "This proposal is no longer pending.",
-  "notif_open_error": "This notification could not be opened."
+  "notif_open_error": "This notification could not be opened.",
+  "calendar_selection_campus": "Campus",
+  "calendar_selection_formation": "Programme",
+  "calendar_selection_any_campus": "Any campus",
+  "calendar_selection_any_formation": "Any programme",
+  "calendar_selection_required": "Choose a campus and/or a programme to continue."
 }

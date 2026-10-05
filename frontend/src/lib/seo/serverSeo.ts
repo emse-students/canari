@@ -15,6 +15,7 @@ import {
   type JsonLdNode,
 } from '$lib/seo/jsonLd';
 import { m } from '$lib/paraglide/messages';
+import { CAMPUSES } from '$lib/profile/miconnectProfile';
 import { mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
 import { isStaticPageRoute, normalizePath } from '$lib/seo/staticRoutes';
 import { SITE, siteOrigin } from '$lib/seo/site';
@@ -382,10 +383,26 @@ const AGENDA_WINDOW_DAYS = 180;
 async function agendaJsonLd(): Promise<JsonLdNode[] | null> {
   const from = new Date();
   const to = new Date(from.getTime() + AGENDA_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const rows = await fetchJson<CalendarEventPayload[]>(
-    `${SOCIAL_URL()}/api/associations/calendar/feed?from=${from.toISOString()}&to=${to.toISOString()}`
+  // The public feed is one per selection and REFUSES a bare read (D40): the page describes the whole
+  // agenda, so it asks once per campus - every space is on one - and keeps each event once.
+  const perCampus = await Promise.all(
+    CAMPUSES.map((campus) =>
+      fetchJson<CalendarEventPayload[]>(
+        `${SOCIAL_URL()}/api/associations/calendar/feed?from=${from.toISOString()}&to=${to.toISOString()}&campus=${campus}`
+      )
+    )
   );
-  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const seen = new Set<string>();
+  const rows = perCampus
+    .flatMap((r) => (Array.isArray(r) ? r : []))
+    .filter((row) => {
+      if (!row.id) return true;
+      if (seen.has(row.id)) return false;
+      seen.add(row.id);
+      return true;
+    })
+    .sort((a, b) => new Date(a.startsAt ?? 0).getTime() - new Date(b.startsAt ?? 0).getTime());
+  if (rows.length === 0) return null;
 
   const events = rows
     .filter((row) => row.title?.trim() && row.startsAt)

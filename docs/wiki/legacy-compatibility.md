@@ -412,6 +412,25 @@ That is the same trade the NULL makes everywhere here, and it is why the count a
 
 ---
 
+## Nothing to remove - a calendar subscription saved before D40 now gets a 400 (2026-10-05)
+
+**This is a BREAK, not a shim, and there is no code to retire later.** `GET
+/api/associations/calendar/feed.ics` and the anonymous `calendar/feed` now REFUSE a read that names no
+campus, formation, `associationId` or `eventId`: a 400 with code `AGENDA_SELECTION_REQUIRED`
+(`assertAgendaSelected`, `associations/directory-query.ts`). The user chose this on 2026-10-05,
+knowing it (user decision, D40: no per-user URL, no fallback to "everything").
+
+- **Who is affected:** anyone who subscribed to the WHOLE agenda before this release - a calendar
+  app polling the bare `feed.ics?from=..&to=..` URL, or one pasted into Google Calendar. Their
+  calendar stops updating (the app shows an error or an empty calendar) until they subscribe again
+  from `/calendar`, whose modal now asks for a campus and/or formation. A subscription to ONE
+  association (`?associationId=`) and the one-event link (`?eventId=`) are NOT affected. Nothing is
+  lost server-side. An app installed before this release embeds the old frontend, so its subscribe
+  modal and PDF export keep building the bare URL until it updates (the signed-in JSON feed keeps
+  answering: it is narrowed to the reader's spaces).
+- **Why nothing is removed later:** the refusal IS the rule. The day nobody has a bare URL saved it
+  merely stops being hit; no branch waits to be deleted.
+
 ## No date - `GET /api/mls/history/:groupId` answering with a bare array
 
 **The gate does not reach this one, and the page used to claim it did.** Retiring it is not a matter

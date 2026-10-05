@@ -24,7 +24,14 @@
     getMyBdeReach,
     listEventCoOrganisers,
   } from '$lib/associations/api';
-  import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
+  import { isGlobalAdmin, isAssociationSuperAdmin, fetchMyProfile } from '$lib/stores/user';
+  import AgendaSelectionFields from '$lib/components/calendar/AgendaSelectionFields.svelte';
+  import {
+    defaultAgendaSelection,
+    EMPTY_AGENDA_SELECTION,
+    isAgendaSelected,
+    type AgendaSelection,
+  } from '$lib/calendar/agendaSelection';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
@@ -210,14 +217,33 @@
 
   let showSubscribeModal = $state(false);
 
+  /**
+   * THE PUBLIC FEED IS ONE PER SELECTION (D40) and the server refuses a bare one. It starts from the
+   * reader's own campus and formation; a reader with no space starts with nothing and must choose.
+   * One association's feed needs none: the association IS the selection.
+   */
+  let feedSelection = $state<AgendaSelection>(EMPTY_AGENDA_SELECTION);
+  onMount(() => {
+    fetchMyProfile()
+      .then((profile) => {
+        feedSelection = defaultAgendaSelection(profile);
+      })
+      .catch((err) =>
+        Log.d('calendar.feedSelection: profile unavailable, choice stays required', err)
+      );
+  });
+
   /** https:// URL to the aggregated .ics feed; `CalendarSubscribeModal` derives webcal/Google variants. */
   const calendarIcsUrl = $derived.by(() => {
     if (typeof window === 'undefined') return '';
+    if (!filterAssociationId && !isAgendaSelected(feedSelection)) return '';
     const { from, to } = icsSubscriptionRangeISO();
     return aggregatedCalendarFeedIcsAbsoluteUrl({
       from,
       to,
       associationId: filterAssociationId || undefined,
+      campus: filterAssociationId ? undefined : feedSelection.campus || undefined,
+      formation: filterAssociationId ? undefined : feedSelection.formation || undefined,
     });
   });
 
@@ -717,7 +743,16 @@
       onClose={() => (showSubscribeModal = false)}
       icsUrl={calendarIcsUrl}
       intro={m.calendar_subscribe_intro()}
-    />
+    >
+      {#snippet selector()}
+        {#if !filterAssociationId}
+          <AgendaSelectionFields
+            selection={feedSelection}
+            onChange={(next) => (feedSelection = next)}
+          />
+        {/if}
+      {/snippet}
+    </CalendarSubscribeModal>
   </div>
 </PageContainer>
 
