@@ -1152,6 +1152,10 @@
     if (globalSession.isTabLeader) return;
     const convo = globalConvs.conversations.get(event.conversationId);
     if (!convo) return;
+    // The leader counted this arrival against ITS selection. A follower tab that has the
+    // conversation open is reading it, so taking the leader's count verbatim put a badge on an open
+    // conversation that nothing cleared afterwards - the live path's `isConversationOpen` rule.
+    const isOpenHere = globalConvs.selectedContact === event.conversationId;
 
     if (event.type === 'message_added') {
       if (convo.messages.some((m) => m.id === event.message.id)) return;
@@ -1159,7 +1163,7 @@
         ...convo,
         messages: insertMessageOrdered(convo.messages, event.message),
         lastMessageAt: event.lastMessageAt,
-        unreadCount: event.unreadCount,
+        unreadCount: isOpenHere ? 0 : event.unreadCount,
       });
       return;
     }
@@ -1175,7 +1179,7 @@
       ...convo,
       messages: merged,
       lastMessageAt: event.lastMessageAt,
-      unreadCount: event.unreadCount,
+      unreadCount: isOpenHere ? 0 : event.unreadCount,
     });
   }
 

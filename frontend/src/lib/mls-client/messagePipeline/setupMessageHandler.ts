@@ -153,6 +153,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   mlsService.onChannelEvent = (event) => {
     void handleChannelEvent(event, {
       conversations: deps.conversations,
+      userId: deps.userId,
       addMessageToChat: deps.addMessageToChat,
       onChannelMemberJoined: deps.onChannelMemberJoined,
       onChannelMemberKicked: deps.onChannelMemberKicked,

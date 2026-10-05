@@ -2650,3 +2650,32 @@ There is **no per-conversation URL**. `/chat/[groupId]`, `/c/[groupId]` and `/g/
 documented for a while and never existed as routes; opening one renders an empty shell. A
 conversation is opened by publishing its id to `notifNav` (see the deep-link section above), which
 is why a notification tap works from any route while a hand-written URL does not.
+
+### The unread count follows my own read point (2026-10-05)
+
+**Reported with a screenshot:** the tab read `(2) Discussions - Canari` and the red dot stayed with
+nothing left to read. The title, the favicon dot and the nav badges all sum `unreadCount` over
+`globalConvs` (`utils/unreadTotal.ts`), and `unreadCount` is a counter kept BESIDE the read
+watermark, not derived from it. Single-tab DMs were fine (`selectConversation` zeroes it); the
+count stuck wherever the watermark moved without a caller remembering the counter:
+
+- **a salon read on another device** - `channel.read` carrying MY mark merged the watermark and
+  stopped, so tile, dot and title kept the count until the salon was opened here too (the DM twin
+  `read_watermark` did zero it, unconditionally);
+- **a conversation open in a FOLLOWER tab** - the follower took the leader's `unreadCount`
+  verbatim from `message_added`, and its own read (the debounced watermark effect in
+  `MainChatPage`) set the watermark only, never the count, and told no other tab (`conversation_read`
+  was published on selection alone). Leader and follower both kept `(N)` for good.
+
+**The fix is one function, `withOwnReadAdvanced` (`readState.ts`)**: the watermark rises and the
+count becomes `min(count, still-unread-at-the-new-watermark among held messages)`. It replaces the
+unconditional zero in the DM self-read (a message NEWER than the read stays counted), runs for the
+salon self-mark (`ChannelEventContext` now carries `userId`), runs in the optimistic mark of the
+open conversation, which now also publishes `conversation_read` to the other tabs, and a follower
+reading a leader's arrival for the conversation it has open counts it 0, the live path's
+`isConversationOpen` rule. Tests: `readState.test.ts`, `channelEventHandler.read.test.ts`,
+`systemMessageHandler.readState.test.ts` (two fail on the old code).
+
+**Not changed, owed a reading:** OS notification banners on the other devices are cleared by the
+push-side receipt (`markChannelRead` for salons, the native `read_watermark` for DMs); nothing here
+touches them. The stuck count was reproduced as failing tests, not on two live devices.
