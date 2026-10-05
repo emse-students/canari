@@ -206,7 +206,7 @@ Toasts sat under the full-screen viewer's layer, so "CanaReel enregistre" (and a
 
 `SEGMENTED_MEDIA_WRITER_ENABLED` moves to `mediaSegmentedWriterFlag.ts` (still `false`); an
 end-to-end test replaces that one module and runs upload, ranged streaming, seek and whole-blob read
-([media-service](docs/wiki/services/media-service.md#the-writer-flip---what-this-release-does-not-do)).
+([media-service](docs/wiki/services/media-service.md#the-writer-flip---on-since-2026-10-05)).
 
 ### Fixed - dragging a text selection no longer slides the page to the next tab
 
