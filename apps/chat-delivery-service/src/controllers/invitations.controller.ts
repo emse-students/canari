@@ -37,11 +37,14 @@ import { MessagingService } from '../services/messaging.service';
 import { groupInviteIsValid, resolveGroupInvitePreview } from '../utils/group-invite';
 import { activeRevocationWhere } from '../utils/revocation';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 
 /** Device-group membership management: pending invitations, status updates, kick-stale. */
 @Controller()
 export class InvitationsController {
   private readonly logger = new Logger(InvitationsController.name);
+  /** The last `[DEVICE_MEMBERSHIPS]` answer printed per device - see `getDeviceMemberships`. */
+  private readonly lastMembershipAnswer = new Map<string, string>();
 
   constructor(
     @InjectRepository(DeviceGroupMembership)
@@ -374,15 +377,29 @@ export class InvitationsController {
     const stranded = answer.filter(
       (m) => m.status === 'pending' && !m.welcomeQueued && !m.addInFlight
     ).length;
-    this.logger.log(
-      `[DEVICE_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} count=${memberships.length} ` +
-        `stranded=${stranded} statuses=${answer
-          .map(
-            (m) =>
-              `${m.groupId}:${m.status}${m.status === 'pending' ? `(welcome=${m.welcomeQueued},adding=${m.addInFlight})` : ''}`
-          )
-          .join(',')}`
-    );
+    const statuses = answer
+      .map(
+        (m) =>
+          `${m.groupId.slice(0, 8)}:${m.status}${m.status === 'pending' ? `(welcome=${m.welcomeQueued},adding=${m.addInFlight})` : ''}`
+      )
+      .join(',');
+    // SAID WHEN THE ANSWER CHANGES, not on every poll. A settling device polls several times a
+    // second and got the same twelve statuses back each time - the line was most of a window's
+    // noise and carried nothing new after the first. A changed answer (a stranded row appearing or
+    // clearing included) is printed every time, so the finding this line exists for is never lost.
+    const deviceKey = `${safeUserId}:${safeDeviceId}`;
+    const digest = `${stranded}|${statuses}`;
+    if (this.lastMembershipAnswer.get(deviceKey) !== digest) {
+      if (!this.lastMembershipAnswer.has(deviceKey) && this.lastMembershipAnswer.size >= 5000) {
+        const oldest = this.lastMembershipAnswer.keys().next().value;
+        if (oldest !== undefined) this.lastMembershipAnswer.delete(oldest);
+      }
+      this.lastMembershipAnswer.set(deviceKey, digest);
+      this.logger.log(
+        `[DEVICE_MEMBERSHIPS] user=${cutUserId(safeUserId)} device=${cutDeviceId(safeDeviceId)} count=${memberships.length} ` +
+          `stranded=${stranded} statuses=${statuses}`
+      );
+    }
     return answer;
   }
 

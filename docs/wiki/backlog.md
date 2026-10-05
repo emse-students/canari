@@ -3550,44 +3550,6 @@ That satisfies the file's own criterion better than any regex and closes the cla
 instance - the difference [testing-methodology](testing-methodology.md) rule 42 is about.
 
 
-### P3 - the server's log SHAPES that a reader has to carry an exception for (measured 2026-08-30, one added 2026-08-31)
-
-Read off HEAL-REVOKE-7's own run window (`srvlog.mjs --since 2026-08-30T02:31:06.469Z`, the pass that
-gave `PASS-DIRTY` on `edb8d7ab`). **52 unexplained lines across four services and not one of them is
-an error.** Recorded because the standing rule is that a line is either expected AND necessary or it
-is the visible end of something upstream, and these are neither - they are the reason the server half
-of this rung has never once been reported clean.
-
-**The two shapes that ARE the bucket**, both `chat-delivery-service`, both `LOG`:
-
-- `[InvitationsController] [DEVICE_MEMBERSHIPS] user=<64 hex> device=<full device id> count=12
-  statuses=<twelve UUIDs, each with :active or :pending>` - emitted on every membership poll, so
-  several per second while any device is settling. It alone is most of the 47.
-- `[MessagingService] [PUSH_SEND] No push token for user=<64 hex> device=<full device id>` - one per
-  addressee with no FCM token, on every send. In this fleet that is every desktop Tauri device, for
-  ever, and one line reads `user=unknown device=pending`.
-
-**They also put full identities in production logs.** Both print the 64-character user id and the
-whole device id rather than the 8-character prefix the client's own logs use, and `social-service`
-adds `[SubmitterFactsService] [FORMS] profile user=<8 hex> promo=<year> formation=<code>` at `DEBUG` -
-a named person's cohort and course, in a log. Nothing here needs the full-length ids to be actionable.
-
-**The other three are explained and must NOT be re-opened.** `[DevicesController] [DELETE_DEVICE] ...
-groupsCleaned=11 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=35 queuedMessagesDeleted=13
-signalled=true` is a genuine audit line and it is the SERVER-side proof that revocation drains the
-frame queue - corroborated on prod the same day: of 5 621 queued frames across 53 devices, **zero
-belong to any of the 223 revoked devices**. `[KICK] Reset device ... to pending` is the queued
-kick+re-add P3. `Refresh refused: no canari_refresh cookie` twice on `core-service` is the wiped
-victim asking with no cookie - the wipe working, which is this rung's subject.
-
-**One line is worth a look on its own**: `[DEL_MEMBERSHIP] ... group=8c0e53b9... affected=0` - a
-membership delete that matched no row. Harmless, but it means a caller believed in a row that was not
-there, and `affected=0` is the only place that shows.
-
-**NOT changed here, deliberately.** Lowering a level or trimming a field changes what `srvlog.mjs`
-classifies, and doing that between two passes of a running campaign would make the next window
-incomparable with every window already recorded. It is a one-commit job for after the ladder.
-
 ### P2 - a LIVE socket dies in the middle of GRP-3, and no navigation explains it (measured 2026-08-25)
 
 **Accepted as a `PASS-DIRTY` by the user's decision of 2026-08-25** - *"on peut se contenter des pass
