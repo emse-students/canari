@@ -23,10 +23,8 @@ import { logcatReport, logcatSince, watch } from '../watch.mjs';
 import { exitOnRecorded, finishObserved, mark, record } from '../results.mjs';
 import { requireFreshFcmLink } from '../fcmlink.mjs';
 import * as phone from '../phone.mjs';
-import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { ACCOUNT_OF, PEER_NAME, PORTS, peerNameFor } from '../names.mjs';
-import { requireScript } from '../scriptpath.mjs';
+import { PEER_NAME, PORTS, peerNameFor } from '../names.mjs';
 
 // THE PHONE THIS RUNNER DRIVES, DECLARED. Every row below is written for A1 - `PORTS.A1`,
 // `peerNameFor('A1')` - and with a second phone on the bench `serial()` refuses to choose rather
@@ -36,7 +34,6 @@ import { requireScript } from '../scriptpath.mjs';
 phone.useDevice('A1');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
 const mode = String(process.argv[2] || 'bg');
 if (!['bg', 'killed'].includes(mode)) throw new Error(`usage: bun notif7.mjs bg|killed`);
 
@@ -87,21 +84,8 @@ function tapNotification(needle) {
   return tap;
 }
 
-function unlock(port = PORTS.A1) {
-  try {
-    return execFileSync(
-      process.execPath,
-      [requireScript('pin.mjs'), '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
-      { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
-    )
-      .trim()
-      .split('\n')
-      .pop();
-  } catch (e) {
-    if (e.status === 2) return 'no modal';
-    return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
-  }
-}
+/** The rig's one PIN unlock for the phone (`phone.unlockPin` -> `pinspawn.mjs`), named for this runner. */
+const unlock = (port = PORTS.A1) => phone.unlockPin(port);
 
 // Match on `full`, never on the parsed title/body: those come out of a regex over a truncated dump,
 // and matching the truncated form is what made LIFE-2 report "no notification" for one that was

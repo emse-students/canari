@@ -13,7 +13,7 @@
  * that a session it cannot refresh is a session with nothing in it - a silent empty list, which
  * looks to a user exactly like every conversation having been deleted.
  */
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { APP_HOST, APP_TAB, awaitMessage, client, countMessage, ensureChat, evaluate, LOGIN_SHOWING, openConversation, send } from '../chat.mjs';
 import { listTargets, connect } from '../cdp.mjs';
 import { ignoringExpectedLog, ignoringExpectedRefusal, watch, report } from '../watch.mjs';
@@ -21,6 +21,7 @@ import { mark, recordObserved, exitOnRecorded } from '../results.mjs';
 import { killBrowser, startBrowser } from '../launch.mjs';
 import { ACCOUNT_OF, PORTS, SITE, peerNameFor } from '../names.mjs';
 import { requireScript } from '../scriptpath.mjs';
+import { spawnPin } from '../pinspawn.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const which = String(process.argv[2] || '2');
@@ -45,25 +46,8 @@ async function row(id, verdict, detail, observers) {
   rows.push(await recordObserved(id, verdict, detail, observers));
 }
 
-/** Enters the PIN through the CLI, which reads it from test-accounts.json - never from argv. */
-function unlock(port, account) {
-  try {
-    const out = execFileSync(
-      process.execPath,
-      [requireScript('pin.mjs'), '--port', String(port), '--account', account, '--match', APP_TAB],
-      { cwd: new URL('.', import.meta.url).pathname.replace(/^\//, ''), encoding: 'utf8' }
-    );
-    return out.trim().split('\n').pop();
-  } catch (e) {
-    // THE REASON, NOT THE TAIL OF STDOUT - the one stream that says nothing about why. This is the
-    // third copy of this wrapper in the rig and the second to be fixed today; see the P3 in
-    // `backlog.md` for the one implementation the three of them owe.
-    const why = String(e.stderr || e.message)
-      .trim()
-      .replace(/\s+/g, ' ');
-    return `pin.mjs failed (exit ${e.status ?? 'none'}): ${why.slice(0, 300)}`;
-  }
-}
+/** Enters the PIN through the rig's one implementation, which reads it from test-accounts.json - never from argv. */
+const unlock = (port, account) => spawnPin({ port, account, match: APP_TAB });
 
 // ── TAB-2: the tab is closed, a message arrives, the tab is reopened ──────────
 if (which === '2') {
