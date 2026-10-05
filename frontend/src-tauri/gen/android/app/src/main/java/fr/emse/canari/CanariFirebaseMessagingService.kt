@@ -19,6 +19,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import androidx.core.content.FileProvider
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -425,6 +427,42 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.e(TAG, "retrievePushSecret: no pending file and no Keystore entry - background send cannot authenticate")
             }
             return stored
+        }
+
+        /**
+         * Publishes the long-lived sharing shortcut that makes a message notification a
+         * CONVERSATION to the platform (API 30+): its icon becomes the header circle and the app's
+         * small icon the corner badge, so the notification shows ONE identity. Re-published on every
+         * post so a changed avatar replaces the old one; the shortcut id is stable per conversation.
+         *
+         * @param label the conversation's name: the group title, or the other person for a DM.
+         * @return the shortcut id to hand to `setShortcutId`, or null when the platform refused
+         *         (logged), in which case the caller keeps the plain large icon.
+         */
+        internal fun publishConversationShortcut(
+            context: Context,
+            groupId: String,
+            label: String,
+            icon: Bitmap,
+            person: Person,
+            tapIntent: Intent,
+        ): String? {
+            val id = "chat_$groupId"
+            return try {
+                val info = ShortcutInfoCompat.Builder(context, id)
+                    .setShortLabel(label.ifEmpty { context.getString(R.string.app_name) })
+                    .setLongLived(true)
+                    .setIcon(IconCompat.createWithBitmap(icon))
+                    .setIntent(tapIntent)
+                    .setPerson(person)
+                    .setCategories(setOf("androidx.core.content.pm.SHORTCUT_CATEGORY_CONVERSATION"))
+                    .build()
+                ShortcutManagerCompat.pushDynamicShortcut(context, info)
+                id
+            } catch (e: Exception) {
+                Log.e(TAG, "publishConversationShortcut: refused for group=${groupId.take(8)}: ${e.message}")
+                null
+            }
         }
 
         /**
@@ -1963,6 +2001,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             val isReactionNotif = channel == CHANNEL_REACTIONS
 
+            val conversationShortcutId = if (!isReactionNotif && (isGroup || namesEachSender)) {
+                publishConversationShortcut(
+                    this, groupId, if (isGroup) groupName else senderName, largeIcon, senderPerson, tapIntent
+                )
+            } else null
+
             val notifBuilder = NotificationCompat.Builder(this, channel)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setStyle(style)
@@ -1974,7 +2018,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     else NotificationCompat.PRIORITY_HIGH
                 )
                 .setContentIntent(pendingIntent)
-                .setLargeIcon(largeIcon)
+                // ONE IDENTITY, NOT TWO. A conversation-shaped post (group shape: a group, or a DM
+                // naming each author) is drawn by the platform from its SHORTCUT: the shortcut's icon
+                // is the header circle, with the app's small icon as the corner badge. Without one the
+                // header circle was the app's bird while the sender's face sat beside the line, two
+                // round pictures one above the other (user, 2026-10-05). The large icon is therefore
+                // set only where the old, shortcut-less shape is kept (reaction, salon).
+                .apply { if (conversationShortcutId != null) setShortcutId(conversationShortcutId) else setLargeIcon(largeIcon) }
                 // The second trigger for a message already in the shade re-posts the same content,
                 // so it must not sound or vibrate a second time - which is the whole of what the
                 // user saw as "the same notification twice".

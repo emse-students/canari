@@ -1536,6 +1536,22 @@ sentence about its actor, and a salon's "sender" IS its title, so naming either 
 title twice. Stacking, reply, "Marquer comme lu" and the supersede are untouched -
 `repostReplyPending` copies the title and the group flag from what is in the shade.
 
+**One identity, not a bird above a face (user, 2026-10-05).** The group shape above left the header
+circle as the app's bird and put the sender's face beside the line: two round pictures stacked. A
+group-shaped post (a group, or a DM naming each author; never a reaction or a salon) now publishes
+a long-lived conversation shortcut (`publishConversationShortcut`, id `chat_<groupId>`) and sets
+`setShortcutId`, so the platform draws the avatar as the conversation circle with the app's small icon
+as its corner badge; the plain `setLargeIcon` stays only for the shortcut-less shapes. **COMPILED
+NOTHING AND SEEN NOWHERE**: the Gradle project needs the Tauri-generated settings, and no Canari
+notification could be raised on the Mi 9T without a push - owed a look on that phone.
+
+**What the shade's two actions cover (audited 2026-10-05).** Reply and "Marquer comme lu" exist on
+Android and iOS for a one-to-one and a group (the MLS outbox and `read_watermark`, one function each,
+app killed included). **A community salon (`channel_<id>`) carries NEITHER action on either platform,
+by design** (server-authoritative send, not the MLS outbox) - acknowledging or answering a salon from
+the shade is a feature, not a repair ([backlog](../backlog.md)). The web has no service worker, so no
+web push actions exist.
+
 **Reaction notifications are at parity across the two platforms, and this is the list - do not
 re-derive it.** Both take the MESSAGE path rather than the social one, both use the stable
 per-conversation id and thread so a reaction replaces itself instead of stacking, both suppress

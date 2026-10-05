@@ -284,6 +284,8 @@ user the same day: WP0, then WPA (authentik as code), then WP1.** WP0 SHIPPED, W
 | **An unread dot on each community in the rail** | needs the per-community unread count; the conversation unread rule (own read point, #1436) already exists for discussions |
 | **A community member could pin a message** | a permission mismatch: a member rank must not pin. Read the server rule AND the client menu, they disagree somewhere ([backlog entry to be filled by the investigation]) |
 | **Several images in a post render ragged** | squares with a "+N" on the fourth; in progress as `feat/post-gallery-squares` |
+| **A notification showed the app's bird above the sender's face** | fixed with a conversation shortcut (`mobile.md`), NOT compiled and NOT seen: owed one look on the Mi 9T (a DM, a group) |
+| **Reply and mark-as-read from a salon notification** | absent on Android AND iOS by design; a salon send is server-authoritative, so it needs its own native send path. iOS actions never run in this repo's gates: owed a hand on an iPhone for a DM and a group |
 
 ## Open defects, in severity order
 
