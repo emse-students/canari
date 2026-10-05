@@ -141,10 +141,19 @@ describe('ReactionsDisplay - the "who reacted" panel', () => {
     expect(onReactionClick).toHaveBeenCalledWith('like');
   });
 
-  it('opens on nothing but a hold - a mouse resting on the badge opens no list', async () => {
+  it('a touch brushing the badge opens no list, a mouse RESTING on it does and leaving closes it', async () => {
     const { badge } = await render();
+    badge.dispatchEvent(pointer('pointerenter', 'touch'));
+    vi.advanceTimersByTime(2000);
+    flushSync();
+    expect(panel()).toBeNull();
+
     badge.dispatchEvent(pointer('pointerenter', 'mouse'));
     vi.advanceTimersByTime(2000);
+    flushSync();
+    expect(panel()).not.toBeNull();
+
+    badge.dispatchEvent(pointer('pointerleave', 'mouse'));
     flushSync();
     expect(panel()).toBeNull();
   });

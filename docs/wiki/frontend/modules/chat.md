@@ -257,7 +257,10 @@ the keyboard with the conversation around it; and a reply to a GIF quoted the GI
   `getGifEmbedUrl` that the bubble's `GifEmbed` uses. `ReplyGifThumb` draws it at most 5 rem tall,
   `opacity-60`, boxed from the `#cn-size` fragment, and becomes `[GIF]` if it cannot load. The quote
   text is the sender's stored `preview`, which was cut at 100 characters: a GIF's URL is now kept whole
-  (`messaging.ts`); a quote already stored cut short is not a GIF URL any more and stays text.
+  (`messaging.ts`); **every other cut goes through `cutReplyPreview` and ends with an ellipsis**
+  (2026-10-05: a raw `@[id]` mention weighs ~40 characters but draws short, so a bare cut at 100
+  fell under the display's 84 and ended mid-word with no mark; a cut inside a token is pulled back
+  before it. Quotes stored before that stay unmarked); a quote already stored cut short is not a GIF URL any more and stays text.
   **Not done: an image or video quote still reads `[Media]`** - drawing it needs a thumbnail the
   quote does not carry.
 
