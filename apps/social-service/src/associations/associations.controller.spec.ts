@@ -539,15 +539,33 @@ describe('AssociationsController feed.ics eventId', () => {
     ).rejects.toThrow('Unknown campus: paris');
   });
 
-  it('serves the whole window without an eventId', async () => {
+  it('serves the whole window of a selection without an eventId', async () => {
     const body = await makeController().aggregatedCalendarFeedIcs(
       undefined,
       undefined,
       undefined,
       undefined,
-      res
+      res,
+      'gardanne'
     );
     expect(body).toContain('UID:ev1@canari');
     expect(body).toContain('UID:ev2@canari');
+  });
+
+  it('REFUSES the bare public feed with a typed 400 (D40), but not one association or one event', async () => {
+    const controller = makeController();
+    await expect(
+      controller.aggregatedCalendarFeedIcs(undefined, undefined, undefined, undefined, res)
+    ).rejects.toMatchObject({ response: { code: 'AGENDA_SELECTION_REQUIRED' } });
+    await expect(controller.aggregatedCalendarFeed(undefined, undefined)).rejects.toMatchObject({
+      response: { code: 'AGENDA_SELECTION_REQUIRED' },
+    });
+    // A signed-in reader is narrowed to their own spaces, so the JSON feed answers them.
+    await expect(
+      controller.aggregatedCalendarFeed(undefined, undefined, undefined, undefined, 'u1')
+    ).resolves.toBeDefined();
+    await expect(
+      controller.aggregatedCalendarFeedIcs(undefined, undefined, 'asso1', undefined, res)
+    ).resolves.toContain('BEGIN:VCALENDAR');
   });
 });

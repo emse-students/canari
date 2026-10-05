@@ -68,3 +68,28 @@ export function parseSpaceSelection(raw: { campus?: string; formation?: string }
   }
   return { campus: campus as SpaceCampus | null, formation: formation as SpaceFormation | null };
 }
+
+/** The code of the 400 an anonymous agenda read gets when it names no selection (D40). */
+export const AGENDA_SELECTION_REQUIRED = 'AGENDA_SELECTION_REQUIRED';
+
+/**
+ * THE PUBLIC AGENDA IS ONE FEED PER SELECTION (D40, user 2026-10-05): an ANONYMOUS read must name a
+ * campus and/or a formation, or one association (`associationId`), or one event (`eventId`, the
+ * single-evening link). The bare URL is REFUSED on purpose - no fallback to "everything" - knowing
+ * it ends the subscriptions installed before D40 (docs/wiki/legacy-compatibility.md). A signed-in
+ * reader is already narrowed to their own spaces, so the rule does not apply to them.
+ */
+export function assertAgendaSelected(args: {
+  selection: SpaceSelection;
+  associationId?: string;
+  eventId?: string;
+  signedIn: boolean;
+}): void {
+  if (args.signedIn) return;
+  if (args.selection.campus !== null || args.selection.formation !== null) return;
+  if (args.associationId?.trim() || args.eventId?.trim()) return;
+  throw new BadRequestException({
+    code: AGENDA_SELECTION_REQUIRED,
+    message: 'The public agenda needs a selection: pass campus and/or formation (or associationId)',
+  });
+}

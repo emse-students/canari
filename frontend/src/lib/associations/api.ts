@@ -570,6 +570,9 @@ export async function listAggregatedCalendarFeed(opts: {
   from: string;
   to: string;
   associationId?: string;
+  /** D40: keep the events a space of this campus / formation reaches. */
+  campus?: Campus | null;
+  formation?: Formation | null;
   /** Opt-in: includes pending events (honoured only for proposers/BDE/admin). Never passed for the PDF export. */
   includePending?: boolean;
 }): Promise<AssociationCalendarFeedEvent[]> {
@@ -577,6 +580,8 @@ export async function listAggregatedCalendarFeed(opts: {
   q.set('from', opts.from);
   q.set('to', opts.to);
   if (opts.associationId?.trim()) q.set('associationId', opts.associationId.trim());
+  if (opts.campus) q.set('campus', opts.campus);
+  if (opts.formation) q.set('formation', opts.formation);
   if (opts.includePending) q.set('includePending', 'true');
   return request<AssociationCalendarFeedEvent[]>(`/api/associations/calendar/feed?${q.toString()}`);
 }
@@ -601,11 +606,16 @@ export function aggregatedCalendarFeedIcsPath(opts: {
   associationId?: string;
   /** Narrows the feed to this one event - the link that adds a single evening to a calendar. */
   eventId?: string;
+  /** D40: the public feed is one per selection; the server REFUSES a bare one. */
+  campus?: Campus | null;
+  formation?: Formation | null;
 }): string {
   const q = new URLSearchParams();
   q.set('from', opts.from);
   q.set('to', opts.to);
   if (opts.associationId?.trim()) q.set('associationId', opts.associationId.trim());
+  if (opts.campus) q.set('campus', opts.campus);
+  if (opts.formation) q.set('formation', opts.formation);
   if (opts.eventId?.trim()) q.set('eventId', opts.eventId.trim());
   return `/api/associations/calendar/feed.ics?${q.toString()}`;
 }
@@ -618,6 +628,8 @@ export function aggregatedCalendarFeedIcsAbsoluteUrl(opts: {
   to: string;
   associationId?: string;
   eventId?: string;
+  campus?: Campus | null;
+  formation?: Formation | null;
 }): string {
   const path = aggregatedCalendarFeedIcsPath(opts);
   const base = socialUrl();

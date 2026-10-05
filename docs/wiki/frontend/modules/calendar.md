@@ -711,4 +711,5 @@ cutoff of a current promo is one `GROUP BY` nobody has run.
 
 `calendar/feed` and `feed.ics` accept `?campus=` / `?formation=`; see
 [profiles-and-access](../../profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05).
-No frontend selector yet (undecided there).
+A bare anonymous feed is refused (400); the subscribe modal and the PDF export page therefore carry a
+campus/formation selector (`AgendaSelectionFields`), defaulted from the reader's own spaces.

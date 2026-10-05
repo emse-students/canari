@@ -4,7 +4,15 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
+  import { isGlobalAdmin, isAssociationSuperAdmin, fetchMyProfile } from '$lib/stores/user';
+  import AgendaSelectionFields from '$lib/components/calendar/AgendaSelectionFields.svelte';
+  import {
+    defaultAgendaSelection,
+    EMPTY_AGENDA_SELECTION,
+    isAgendaSelected,
+    type AgendaSelection,
+  } from '$lib/calendar/agendaSelection';
+  import { Log } from '$lib/utils/Log';
   import {
     listAggregatedCalendarFeed,
     ensureAssociationSuperAdmin,
@@ -46,7 +54,23 @@
   let events = $state<AssociationCalendarFeedEvent[]>([]);
   let loading = $state(false);
 
+  /**
+   * THE AGENDA IS ONE PER SELECTION (D40): the sheet is a campus's and/or a formation's, so the page
+   * ALWAYS sends one (the reader's own spaces by default, a required choice when they have none).
+   * One association's sheet needs none: the association IS the selection.
+   */
+  let selection = $state<AgendaSelection>(EMPTY_AGENDA_SELECTION);
+
+  function selectionChanged(next: AgendaSelection) {
+    selection = next;
+    void loadMonth();
+  }
+
   async function loadMonth() {
+    if (!filterAssociationId && !isAgendaSelected(selection)) {
+      events = [];
+      return;
+    }
     loading = true;
     try {
       const start = new Date(focusDate.getFullYear(), focusDate.getMonth(), 1, 0, 0, 0, 0);
@@ -55,6 +79,8 @@
         from: start.toISOString(),
         to: end.toISOString(),
         associationId: filterAssociationId || undefined,
+        campus: filterAssociationId ? undefined : selection.campus || undefined,
+        formation: filterAssociationId ? undefined : selection.formation || undefined,
       });
     } catch {
       events = [];
@@ -167,6 +193,11 @@
       const d = new Date(`${monthParam}-01`);
       if (!isNaN(d.getTime())) focusDate = d;
     }
+    try {
+      selection = defaultAgendaSelection(await fetchMyProfile());
+    } catch (err) {
+      Log.d('calendar.export: profile unavailable, the selection stays a required choice', err);
+    }
     void loadMonth();
   });
 
@@ -209,6 +240,11 @@
         <div
           class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-5 shadow-sm lg:sticky lg:top-4"
         >
+          {#if !filterAssociationId}
+            <AgendaSelectionFields {selection} onChange={selectionChanged} />
+            <hr class="border-cn-border/60" />
+          {/if}
+
           <!-- Month navigation -->
           <div>
             <p class="text-text-muted mb-2 text-xs font-bold tracking-wider uppercase">
