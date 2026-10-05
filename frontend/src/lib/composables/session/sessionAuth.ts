@@ -208,7 +208,7 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     mlsService: ctx.ensureMls(),
     storage: ctx.getStorage(),
     userId: ctx.getUserId(),
-    deviceKeyB64: ctx.getDeviceKey(),
+    deviceKey: () => ctx.getDeviceKey(),
     conversations: cb.conversations,
     log: cb.log,
     requestReAdd: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),

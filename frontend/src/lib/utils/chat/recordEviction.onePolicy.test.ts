@@ -254,7 +254,7 @@ async function runOutbox(opts: { active: boolean; send?: () => Promise<void> }):
     mlsService,
     storage: outboxStorage(),
     userId: 'me',
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     conversations,
     log: r.log,
     requestReAdd: vi.fn().mockResolvedValue(undefined),
