@@ -2668,6 +2668,16 @@ draws text over text while scrolling - the scroll-to-bottom button and the send-
 `bottom: 10rem`, the composer reserves its own height, reactions are in flow under their bubble, and
 there is no unread divider in the list to collide with.
 
+### A jump to a message scrolls the LIST, never the page (2026-10-05)
+
+Reported by the user (web desktop): opening the pinned-messages banner and clicking the pinned
+message made the salon header disappear. `navigateToMessage` called `scrollIntoView`, which scrolls
+EVERY scrollable ancestor, so the page wrapper moved too and the chat column slid up. All jumps -
+pinned banner, poll banner, reply quote, search result, notification deep link - end in that one
+function, which now calls `scrollMessageIntoList` (`utils/chat/scrollToMessage.ts`): the offset is
+computed against the list container and applied with `container.scrollTo`, so nothing else can move.
+Not driven in a browser by the agent that wrote it; owed a look at 390 and 1280 px.
+
 ## Routes
 
 | Route | Description |
