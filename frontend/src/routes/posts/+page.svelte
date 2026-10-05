@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Log } from '$lib/utils/Log';
+  import { feedToShowAfterPublish } from '$lib/posts/landingFeed';
   import { onMount, untrack } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import { page } from '$app/state';
@@ -298,6 +299,11 @@
    */
   function navigateFeed(feed: PostFeed) {
     settings.setPreferredPostFeed(feed);
+    showFeed(feed);
+  }
+
+  /** Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice. */
+  function showFeed(feed: PostFeed) {
     const u = new URL(page.url);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
@@ -340,8 +346,20 @@
     }
   }
 
-  function onPostCreated() {
+  /**
+   * A post must be visible where its author lands. `all` shows everything, so a reader on it stays;
+   * anyone else is taken to the feed that holds the post - Associations for an association's,
+   * All for a personal one - rather than back to a list that does not contain it.
+   */
+  function onPostCreated(landing: PostFeed | null) {
     showCreateModal = false;
+    const target = feedToShowAfterPublish(activeFeed, landing);
+    if (target) {
+      Log.d('POSTS', `published post lands in "${target}", leaving "${activeFeed}"`);
+      showFeed(target);
+      void loadScheduled();
+      return;
+    }
     void refreshPosts();
     void loadScheduled();
   }
