@@ -908,6 +908,17 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     let ctx = loadPushContext()
+    // COUNTED, NOT ONLY LOGGED - the Android twin is `reportBlindBanner`. Never `held` here: nothing
+    // redraws a banner once `finish()` runs, so a seed absent now is a blind banner for good.
+    if seedB64 == nil, let ctx = ctx {
+      let missing = [
+        "seed",
+        ciphertext.isEmpty ? "ciphertext" : nil,
+        nonce.isEmpty ? "nonce" : nil,
+        messageIndex == nil ? "messageIndex" : nil,
+      ].compactMap { $0 }
+      reportBlindBanner(ctx: ctx, channelId: channelId, missing: missing)
+    }
     // The default when the server could not name the salon is a WORD, so it belongs to the table
     // like every other sentence here - it used to be a French literal on both iOS paths.
     let channelName = sentChannelName ?? Self.localized("notif.channel.unnamed", locale: ctx?.locale)
@@ -1215,6 +1226,23 @@ class NotificationService: UNNotificationServiceExtension {
     let protos = commits.compactMap { ($0["proto"] as? String).flatMap { $0.isEmpty ? nil : $0 } }
     guard let out = try? JSONSerialization.data(withJSONObject: protos) else { return nil }
     return String(data: out, encoding: .utf8)
+  }
+
+  /// POST /api/mls/push/blind-banner: tells the server a salon banner went up without its plaintext,
+  /// and which term it lacked. Best-effort - the banner is up either way, and the count is a rate.
+  private func reportBlindBanner(ctx: PushContext, channelId: String, missing: [String]) {
+    guard let secret = loadPushSecret() else {
+      NSLog("[CanariNSE] reportBlindBanner: no push secret - the blind banner goes uncounted channel=\(channelId)")
+      return
+    }
+    let payload: [String: Any] = [
+      "userId": ctx.userId, "deviceId": ctx.deviceId, "channelId": channelId,
+      "platform": "ios", "missing": missing, "held": false,
+    ]
+    guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
+    let status = syncRequest(
+      method: "POST", urlStr: "\(ctx.baseUrl)/api/mls/push/blind-banner", secret: secret, body: body)?.1
+    NSLog("[CanariNSE] reportBlindBanner: HTTP \(status.map(String.init) ?? "none") channel=\(channelId) missing=\(missing.joined(separator: ","))")
   }
 
   /// Fetches the sender avatar, caching it in the container. Returns a local file URL.

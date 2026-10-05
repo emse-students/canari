@@ -61,6 +61,10 @@ const CASES = [
   [line('D', 'CanariFCM', 'markMembershipActive: HTTP 201 group=0adecec2-718a'), 'explained'],
   [line('D', 'CanariFCM', 'tryDecrypt refused group=0adecec2: its Welcome is queued behind this frame -> re-queued after it'), 'notable'],
   [line('D', 'CanariFCM', 'handleChannelMessage: the Welcome into key group 0adecec2 is queued behind this push -> re-queued after it channel=c0ffee00 index=0'), 'notable'],
+  // A blind salon banner, counted - and a refused count is a banner the fleet never saw.
+  [line('D', 'CanariFCM', 'reportBlindBanner: HTTP 201 channel=c0ffee00 missing=seed held=true'), 'explained'],
+  [line('D', 'CanariFCM', 'reportBlindBanner: HTTP 201 channel=c0ffee00 missing=seed,ciphertext held=false'), 'explained'],
+  [line('D', 'CanariFCM', 'reportBlindBanner: HTTP 403 channel=c0ffee00 missing=seed held=true'), 'unexplained'],
   // A seat the server refused to promote is not the join working.
   [line('D', 'CanariFCM', 'markMembershipActive: HTTP 403 group=0adecec2-718a'), 'unexplained'],
   [line('W', 'CanariFCM', 'openSeedFrame: seed frame refused group=2513c207 locality=LOCAL -> commit catch-up'), 'notable'], // explained, and reported: it carries `refused`

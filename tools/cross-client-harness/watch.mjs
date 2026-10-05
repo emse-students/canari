@@ -2346,6 +2346,9 @@ export function logcatReport(lines, label = 'A1') {
     // REQUIRED - the call site emits it unconditionally since 2026-09-24, and a rule that tolerated
     // its absence would go on matching a build that had quietly lost the discriminator.
     ['fcm-channel-generic', /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S* missing=\S+$/],
+    // The generic banner above, COUNTED: the phone tells `/api/mls/push/blind-banner` once the
+    // banner is up. Only a 2xx is explained - a refused report is a blind banner the fleet never saw.
+    ['fcm-channel-blind-reported', /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/],
     ['fcm-channel-redraw', /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/],
     ['fcm-channel-notify', /^handleChannelMessage: notification title=.*mentionsMe=(true|false)$/],
     // The seed arriving on its own push, and being stored. `decryptProto: graine key material` is a

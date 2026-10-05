@@ -4179,6 +4179,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         val stamp = postChannelNotification(data, seedB64)
+        // COUNTED, NOT ONLY LOGGED: a blind banner that reached the shade is reported once, after
+        // it is up, so the fleet has a rate rather than a line on one phone. A held frame may still
+        // be redrawn - `held` says so, and the reader of the count subtracts nothing by guessing.
+        if (stamp != 0L && seedB64 == null) {
+            reportBlindBanner(channelId, blindBannerMissing(data, seedB64), held = openable)
+        }
         if (!openable || seedB64 != null) return
 
         if (stamp == 0L) {
@@ -4336,12 +4342,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // The terms are APPENDED, never woven in: `watch.mjs`'s `fcm-channel-generic` rule is
             // anchored at both ends and `notif18.mjs` locates this frame by the same prefix, so a
             // suffix is the one shape that adds the discriminator without unclassifying the line.
-            val missing = listOfNotNull(
-                "seed".takeIf { seedB64 == null },
-                "ciphertext".takeIf { ciphertext == null },
-                "nonce".takeIf { nonce == null },
-                "messageIndex".takeIf { messageIndex == null },
-            ).joinToString(",")
+            val missing = blindBannerMissing(data, seedB64).joinToString(",")
             Log.d(TAG, "handleChannelMessage: no seed/ciphertext -> generic notification channel=$channelId session=$sessionId missing=$missing")
             buildChannelFallbackText(res, channelName)
         }
@@ -4363,6 +4364,58 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             sentAt     = createdAt,
             supersedes = supersedes,
         )
+    }
+
+    /**
+     * Which of the four things a salon banner needs to show its plaintext this push lacks - the
+     * terms of the generic-body log line and of the `[PUSH_BLIND]` report, from one place.
+     */
+    private fun blindBannerMissing(data: Map<String, String>, seedB64: String?): List<String> =
+        listOfNotNull(
+            "seed".takeIf { seedB64 == null },
+            "ciphertext".takeIf { data["ciphertext"].isNullOrEmpty() },
+            "nonce".takeIf { data["nonce"].isNullOrEmpty() },
+            "messageIndex".takeIf { data["messageIndex"]?.toIntOrNull() == null },
+        )
+
+    /**
+     * Tells the server a blind salon banner went up, and why (`POST /api/mls/push/blind-banner`,
+     * PushSecret - a shut app has no session). Best-effort: a failure is logged and nothing retries,
+     * because the banner is already up and the count is a rate, not a ledger.
+     */
+    private fun reportBlindBanner(channelId: String, missing: List<String>, held: Boolean) {
+        val ctx = MlsContextLoader.loadPushContext(this)
+        val secret = retrievePushSecret(this)
+        if (ctx == null || secret == null) {
+            Log.w(TAG, "reportBlindBanner: no push context or secret - the blind banner goes uncounted channel=$channelId")
+            return
+        }
+        try {
+            val body = JSONObject().apply {
+                put("userId", ctx.userId)
+                put("deviceId", ctx.deviceId)
+                put("channelId", channelId)
+                put("platform", "android")
+                put("missing", org.json.JSONArray(missing))
+                put("held", held)
+            }.toString()
+            val conn = (URL("${ctx.baseUrl}/api/mls/push/blind-banner").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "POST"
+                doOutput       = true
+                setRequestProperty("Authorization", "PushSecret $secret")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            try {
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                Log.d(TAG, "reportBlindBanner: HTTP ${conn.responseCode} channel=$channelId missing=${missing.joinToString(",")} held=$held")
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "reportBlindBanner: exception: ${e.message}")
+        }
     }
 
     /**
