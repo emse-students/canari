@@ -28,11 +28,12 @@
 
   onMount(async () => {
     try {
-      const [all, mine] = await Promise.all([
+      const [all, institutions, mine] = await Promise.all([
         listAssociationDirectory('association'),
+        listAssociationDirectory('institution'),
         isLoggedIn ? listMyAssociations() : Promise.resolve([]),
       ]);
-      associations = all;
+      associations = [...institutions, ...all];
       myAssociations = mine;
     } catch (err) {
       error = m.assoc_list_load_error_fallback();

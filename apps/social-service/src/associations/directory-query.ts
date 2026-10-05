@@ -14,7 +14,7 @@ export type DirectoryScope = 'directory' | 'all';
 
 /** The parsed query of the association listing. `null` on a filter side is "not filtered". */
 export interface DirectoryQuery {
-  type?: 'association' | 'list';
+  type?: 'association' | 'list' | 'institution';
   scope: DirectoryScope;
   campus: SpaceCampus | null;
   formation: SpaceFormation | null;
@@ -34,7 +34,10 @@ export interface RawDirectoryQuery {
  * silently widens or empties the answer.
  */
 export function parseDirectoryQuery(raw: RawDirectoryQuery): DirectoryQuery {
-  const type = raw.type === 'association' || raw.type === 'list' ? raw.type : undefined;
+  const type =
+    raw.type === 'association' || raw.type === 'list' || raw.type === 'institution'
+      ? raw.type
+      : undefined;
   const scope = raw.scope?.trim() || 'directory';
   if (scope !== 'directory' && scope !== 'all') {
     throw new BadRequestException(`Unknown scope: ${scope}`);

@@ -62,10 +62,13 @@ export class CreateAssociationDto {
   @MaxLength(255)
   contactEmail?: string;
 
-  /** 'association' (default) or 'list' (promo list). */
-  @IsIn(['association', 'list'])
+  /**
+   * 'association' (default), 'list' (promo list) or 'institution' (the School, a ME, the Alumni
+   * association: WP6e, D20). An institution is created by a global admin only.
+   */
+  @IsIn(['association', 'list', 'institution'])
   @IsOptional()
-  type?: 'association' | 'list';
+  type?: 'association' | 'list' | 'institution';
 
   /** Lists only: the promotion year the list belongs to (e.g. 2027). */
   @IsInt()

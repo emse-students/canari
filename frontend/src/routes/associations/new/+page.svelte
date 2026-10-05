@@ -7,11 +7,14 @@
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import { m } from '$lib/paraglide/messages';
   import { slugify } from '$lib/utils/textFold';
+  import { isGlobalAdmin } from '$lib/stores/user';
 
   let name = $state('');
   let slug = $state('');
   let description = $state('');
   let contactEmail = $state('');
+  /** WP6e: only a global admin may create an institution (D20, D24). */
+  let institution = $state(false);
   let submitting = $state(false);
   let error = $state('');
 
@@ -32,6 +35,7 @@
         slug: slug.trim(),
         description: description.trim() || undefined,
         contactEmail: contactEmail.trim() || undefined,
+        type: institution ? 'institution' : undefined,
       });
       await goto(`/associations/${asso.slug}`);
     } catch (err) {
@@ -82,6 +86,16 @@
       bind:value={contactEmail}
       placeholder="contact@asso.fr"
     />
+
+    {#if isGlobalAdmin()}
+      <label class="flex items-start gap-3 text-sm">
+        <input type="checkbox" bind:checked={institution} class="mt-1" />
+        <span>
+          <span class="font-semibold">{m.assoc_new_institution_label()}</span>
+          <span class="text-text-muted block text-xs">{m.assoc_new_institution_hint()}</span>
+        </span>
+      </label>
+    {/if}
 
     {#if error}
       <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">

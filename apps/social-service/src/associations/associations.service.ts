@@ -350,7 +350,7 @@ export class AssociationsService {
    * space matching them (the association map).
    */
   async list(
-    type?: 'association' | 'list',
+    type?: 'association' | 'list' | 'institution',
     opts: {
       viewerId?: string;
       campus?: SpaceCampus | null;

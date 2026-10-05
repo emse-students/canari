@@ -2593,6 +2593,8 @@
   "assoc_new_desc_label": "Description",
   "assoc_new_desc_placeholder": "Décrivez l'association en quelques mots…",
   "assoc_new_email_label": "E-mail de contact (optionnel)",
+  "assoc_new_institution_label": "C'est une institution (École, ME, association des anciens)",
+  "assoc_new_institution_hint": "Les membres sont ajoutés nominativement ensuite. Seul un membre d'une institution peut publier en son nom.",
   "assoc_new_create_btn": "Créer l'association",
   "dashboard_subtitle": "Accès rapide à toutes les sections",
   "dashboard_account_heading": "Compte",

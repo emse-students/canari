@@ -57,6 +57,18 @@ describe('republishCandidates', () => {
   });
 });
 
+describe('institutions republish like associations (WP6e)', () => {
+  it('offers an institution in both lists, an archived one in neither', () => {
+    const inst = asso('inst', {
+      type: 'institution',
+      permissions: AssociationPermissionFlag.POST_AS_ASSO,
+    });
+    const old = asso('old', { type: 'institution', archived: true });
+    expect(republishCandidates([inst, old], post, false).map((a) => a.id)).toEqual(['inst']);
+    expect(proposalCandidates([inst, old], post).map((a) => a.id)).toEqual(['inst']);
+  });
+});
+
 describe('proposalCandidates', () => {
   it('offers every association that does not carry the post yet', () => {
     const directory = [asso('own'), asso('done'), asso('x'), asso('l', { type: 'list' })];

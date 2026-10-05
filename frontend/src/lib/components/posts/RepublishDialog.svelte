@@ -59,10 +59,10 @@
     let cancelled = false;
     const load =
       opened === 'republish'
-        ? (isGlobalAdmin() ? listAssociations('association') : listMyAssociations()).then((mine) =>
+        ? (isGlobalAdmin() ? listAssociations() : listMyAssociations()).then((mine) =>
             republishCandidates(mine, post, isGlobalAdmin())
           )
-        : listAssociations('association').then((all) => proposalCandidates(all, post));
+        : listAssociations().then((all) => proposalCandidates(all, post));
     load
       .then((list) => {
         if (!cancelled) candidates = list;

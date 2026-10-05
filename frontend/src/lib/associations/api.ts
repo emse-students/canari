@@ -167,7 +167,7 @@ export interface Association {
   /** Primary thematic category (managed table). Null when uncategorized. Used by the "Carte de la Vie Asso" poster. */
   categoryId?: string | null;
   /** Discriminates a regular association from a promo list. */
-  type: 'association' | 'list';
+  type: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year the list belongs to. */
   promo?: number | null;
   /** Lists only: optional parent association (e.g. the owning BDE). */
@@ -199,8 +199,8 @@ export interface CreateAssociationPayload {
   bioMarkdown?: string;
   logoUrl?: string;
   contactEmail?: string;
-  /** 'association' (default) or 'list'. */
-  type?: 'association' | 'list';
+  /** 'association' (default), 'list' or 'institution' (global admins only, WP6e). */
+  type?: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year. */
   promo?: number;
   /** Lists only: optional parent association. */
@@ -480,13 +480,13 @@ export interface AssociationDirectoryFilter {
 
 const directoryKey = (
   scope: DirectoryScope,
-  type?: 'association' | 'list',
+  type?: 'association' | 'list' | 'institution',
   filter: AssociationDirectoryFilter = {}
 ) => `${scope}|${type ?? 'all'}|${filter.campus ?? '*'}|${filter.formation ?? '*'}`;
 
 function loadDirectory(
   scope: DirectoryScope,
-  type?: 'association' | 'list',
+  type?: 'association' | 'list' | 'institution',
   filter: AssociationDirectoryFilter = {}
 ): Promise<Association[]> {
   return associationDirectory.load(directoryKey(scope, type, filter), () => {
@@ -503,7 +503,9 @@ function loadDirectory(
  * co-organiser, a list's parent, a delegation, a past role, the shop's names, the admin pages. It
  * asks `scope=all` by name: the server's default is the reader's directory (D37).
  */
-export async function listAssociations(type?: 'association' | 'list'): Promise<Association[]> {
+export async function listAssociations(
+  type?: 'association' | 'list' | 'institution'
+): Promise<Association[]> {
   return loadDirectory('all', type);
 }
 
@@ -513,7 +515,7 @@ export async function listAssociations(type?: 'association' | 'list'): Promise<A
  * a hidden association is not listed there, and its page stays reachable by its link.
  */
 export async function listAssociationDirectory(
-  type?: 'association' | 'list',
+  type?: 'association' | 'list' | 'institution',
   filter: AssociationDirectoryFilter = {}
 ): Promise<Association[]> {
   return loadDirectory('directory', type, filter);
