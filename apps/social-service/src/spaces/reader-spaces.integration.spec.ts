@@ -26,6 +26,7 @@ import {
   announceRecipientsSql,
   associationRulesReachSpaceMatchingSql,
   associationVisibleToViewerSql,
+  eventVisibleToViewerSql,
   postVisibleToUserSql,
   postVisibleToViewerSql,
   readerSpaces,
@@ -44,6 +45,11 @@ const MIGRATION_072 = readFileSync(
 // Republication (D38): `post_republications`, `proposals`, and `post_audiences` dropped.
 const MIGRATION_073 = readFileSync(
   join(__dirname, '..', 'migrations', '073_republications.sql'),
+  'utf8'
+);
+// Co-organisation (D39): the `coorganise` kind, the co-owner unique key and the event trigger.
+const MIGRATION_074 = readFileSync(
+  join(__dirname, '..', 'migrations', '074_coorganise.sql'),
   'utf8'
 );
 
@@ -136,6 +142,22 @@ const POSTS: {
 
 const EVERYONE = Object.keys(USERS) as UserId[];
 
+/** Agenda events (D39): an event reaches its organiser's audience plus each ACCEPTED co-organiser's. */
+const EVENTS: {
+  id: string;
+  label: string;
+  organiser: string;
+  accepted?: string[];
+  pending?: string[];
+}[] = [
+  { id: '00000000-0000-4000-8000-0000000000e1', label: 'E1', organiser: A1 },
+  { id: '00000000-0000-4000-8000-0000000000e2', label: 'E2', organiser: A2 },
+  // Co-organised by A3, accepted: A3's member (notBackfilled) sees it too.
+  { id: '00000000-0000-4000-8000-0000000000e3', label: 'E3', organiser: A2, accepted: [A3] },
+  // A1 is only ASKED: nothing of A1's audience sees it yet.
+  { id: '00000000-0000-4000-8000-0000000000e4', label: 'E4', organiser: A2, pending: [A1] },
+];
+
 maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
   const schema = `spaces_it_${Math.random().toString(36).slice(2, 10)}`;
   let client: Client;
@@ -155,7 +177,10 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255));
-      CREATE TABLE association_calendar_events (id serial PRIMARY KEY, "associationId" uuid);
+      CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
+        "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
+      CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id uuid NOT NULL, association_id uuid NOT NULL);
     `);
     await client.query(`INSERT INTO associations (id, name) VALUES ($1, 'A1'), ($2, 'A2')`, [
       A1,
@@ -166,6 +191,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     // 071 reads `isBDE`, which 072 then drops: the shape production goes through (WP6c).
     await client.query(MIGRATION_072);
     await client.query(MIGRATION_073);
+    await client.query(MIGRATION_074);
     // A3 is created after 071, so it has no rule: it reaches its members and nobody else.
     await client.query(`INSERT INTO associations (id, name) VALUES ($1, 'A3')`, [A3]);
     // Then the grid: A2 addresses the whole Gardanne campus instead.
@@ -201,10 +227,26 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
         );
       }
     }
-    await client.query(
-      `INSERT INTO association_calendar_events ("associationId") VALUES ($1), ($2)`,
-      [A1, A2]
-    );
+    for (const ev of EVENTS) {
+      await client.query(
+        `INSERT INTO association_calendar_events (id, "associationId") VALUES ($1, $2)`,
+        [ev.id, ev.organiser]
+      );
+      for (const co of ev.accepted ?? []) {
+        await client.query(
+          `INSERT INTO association_calendar_event_co_owners (event_id, association_id) VALUES ($1, $2)`,
+          [ev.id, co]
+        );
+      }
+      // A PENDING co-organiser is a proposal and nothing else: no co-owner row.
+      for (const co of ev.pending ?? []) {
+        await client.query(
+          `INSERT INTO proposals (kind, "subjectId", "fromAssociationId", "toAssociationId", "proposedBy")
+             VALUES ('coorganise', $1, $2, $3, 'it')`,
+          [ev.id, ev.organiser, co]
+        );
+      }
+    }
   });
 
   afterAll(async () => {
@@ -367,25 +409,26 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     expect(rows.map((r) => r.id as string)).toEqual(['icmSe2']);
   });
 
-  it('filters the agenda by the event association: rules, membership, admin', async () => {
+  it('filters the agenda by organiser OR accepted co-organiser: rules, membership, admin', async () => {
     const seen: Record<string, string[]> = {};
     for (const id of EVERYONE) {
       const { rows } = await client.query(
-        `SELECT e."associationId" FROM association_calendar_events e
-          WHERE ${associationVisibleToViewerSql('e."associationId"', '$1')} ORDER BY e.id`,
+        `SELECT e.id FROM association_calendar_events e
+          WHERE ${eventVisibleToViewerSql('e', '$1')} ORDER BY e.id`,
         [id]
       );
-      seen[id] = rows.map((r) => (r.associationId === A1 ? 'A1' : 'A2'));
+      seen[id] = rows.map((r) => EVENTS.find((ev) => ev.id === r.id)?.label ?? '?');
     }
     expect(seen).toEqual({
-      icmSe: ['A1'],
-      icmSe2: ['A1'],
-      isminGa: ['A2'],
+      icmSe: ['E1'],
+      icmSe2: ['E1'],
+      isminGa: ['E2', 'E3', 'E4'],
       admin: [],
-      adminIcm: ['A1'],
-      staff: ['A1'],
+      adminIcm: ['E1'],
+      staff: ['E1'],
       outsider: [],
-      notBackfilled: [],
+      // A member of A3 and nothing else: the event A3 co-organises, never the one A3 was not asked to.
+      notBackfilled: ['E3'],
     });
   });
 

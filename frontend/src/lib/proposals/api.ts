@@ -3,14 +3,14 @@
  * management page.
  *
  * One association proposes something to another, whose holders of the kind's flag accept or refuse
- * it; the sender may withdraw it while it waits. `repost` (a post offered for republication) is the
- * first kind; co-organisation will be the next, on the same table, the same routes and this same
+ * it; the sender may withdraw it while it waits. `repost` (a post offered for republication, D38)
+ * and `coorganise` (an event offered for co-organisation, D39) share the table, the routes and this
  * file. The server owns every right: what this module offers is only what it answered.
  */
 import { socialRequest } from '$lib/posts/api';
 
 /** The kinds the server knows. A new kind is added here AND in the backend's `PROPOSAL_KINDS`. */
-export type ProposalKind = 'repost';
+export type ProposalKind = 'repost' | 'coorganise';
 
 export type ProposalStatus = 'pending' | 'accepted' | 'refused' | 'withdrawn';
 
@@ -30,18 +30,31 @@ export interface RepostSubject {
   associationName: string | null;
 }
 
-/** One proposal in a queue. `subject` is null when the subject is gone (a deleted post). */
-export interface Proposal {
+/** A `coorganise` proposal's subject: the event, and the association organising it. */
+export interface CoorganiseSubject {
+  title: string;
+  startsAt: string;
+  endsAt: string | null;
+  associationName: string | null;
+}
+
+interface ProposalBase {
   id: string;
-  kind: ProposalKind;
   status: ProposalStatus;
-  /** What is proposed - a post id for `repost`. */
+  /** What is proposed - a post id for `repost`, an event id for `coorganise`. */
   subjectId: string;
-  subject: RepostSubject | null;
   from: ProposalAssociation;
   to: ProposalAssociation;
   createdAt: string;
 }
+
+/**
+ * One proposal in a queue, its subject typed by its kind. `subject` is null when the subject is gone
+ * (a deleted post).
+ */
+export type Proposal =
+  | (ProposalBase & { kind: 'repost'; subject: RepostSubject | null })
+  | (ProposalBase & { kind: 'coorganise'; subject: CoorganiseSubject | null });
 
 /** An association's pending proposals: what it was sent, and what it sent and still waits on. */
 export interface ProposalQueue {

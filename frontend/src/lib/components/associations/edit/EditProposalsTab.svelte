@@ -1,15 +1,17 @@
 <script lang="ts">
   /**
-   * THE PROPOSAL QUEUE OF ONE ASSOCIATION (D38): what other associations sent it to republish, and
-   * what it sent and still waits on.
+   * THE PROPOSAL QUEUE OF ONE ASSOCIATION: what other associations sent it, and what it sent and
+   * still waits on - posts to republish (D38) and events to co-organise (D39), one queue.
    *
    * A pending proposal never expires (user, 2026-10-04): it waits here until this association
-   * accepts or refuses it, or its sender withdraws it. Accepting republishes the post at once, and
-   * its newly reached readers are notified by the server. A row this tab decides leaves the list on
-   * the server's answer; a 409 means someone else decided first, and the queue is re-read.
+   * accepts or refuses it, or its sender withdraws it. Accepting a post republishes it at once (its
+   * newly reached readers are notified by the server); accepting an event makes this association a
+   * co-organiser - its rights on the event, and its audience on the agenda. A row this tab decides
+   * leaves the list on the server's answer; a 409 means someone else decided first, and the queue
+   * is re-read. Which rows the caller sees is the server's (each kind has its own flags).
    */
   import { onMount } from 'svelte';
-  import { Repeat2 } from '@lucide/svelte';
+  import { Inbox } from '@lucide/svelte';
   import type { Association } from '$lib/associations/api';
   import {
     acceptProposal,
@@ -20,6 +22,7 @@
   } from '$lib/proposals/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
+  import { formatEventDateTimeRange } from '$lib/calendar/feedEvents';
   import { refusalStatus } from '$lib/utils/apiRefusal';
   import { formatRelative } from '$lib/utils/time';
   import { Log } from '$lib/utils/Log';
@@ -48,7 +51,7 @@
       incoming = queue.incoming;
       outgoing = queue.outgoing;
     } catch (e: unknown) {
-      Log.d('EditRepublicationsTab', `queue load failed: ${String(e)}`);
+      Log.d('EditProposalsTab', `queue load failed: ${String(e)}`);
       errorMessage = m.common_load_error();
     } finally {
       loading = false;
@@ -59,7 +62,7 @@
   async function decide(proposal: Proposal, action: 'accept' | 'refuse' | 'withdraw') {
     busy = proposal.id;
     errorMessage = '';
-    Log.d('EditRepublicationsTab', `${action} proposal=${proposal.id.slice(0, 8)}`);
+    Log.d('EditProposalsTab', `${action} ${proposal.kind} proposal=${proposal.id.slice(0, 8)}`);
     try {
       if (action === 'accept') await acceptProposal(proposal.id);
       else if (action === 'refuse') await refuseProposal(proposal.id);
@@ -68,7 +71,7 @@
       outgoing = outgoing.filter((p) => p.id !== proposal.id);
     } catch (e: unknown) {
       const status = refusalStatus(e);
-      Log.d('EditRepublicationsTab', `${action} refused: status=${status} ${String(e)}`);
+      Log.d('EditProposalsTab', `${action} refused: status=${status} ${String(e)}`);
       if (status === 409) {
         errorMessage = m.asso_republications_not_pending();
         await load();
@@ -79,10 +82,26 @@
       busy = null;
     }
   }
+
+  /** The accept button names what accepting DOES, per kind. */
+  function acceptLabel(proposal: Proposal): string {
+    return proposal.kind === 'coorganise'
+      ? m.asso_proposals_accept_coorganise()
+      : m.asso_republications_accept();
+  }
 </script>
 
 {#snippet subjectLine(proposal: Proposal)}
-  {#if proposal.subject}
+  {#if proposal.kind === 'coorganise'}
+    {#if proposal.subject}
+      <p class="text-text-main text-sm font-semibold">
+        {m.asso_proposals_coorganise_line({ title: proposal.subject.title })}
+      </p>
+      <p class="text-text-muted text-xs">{formatEventDateTimeRange(proposal.subject)}</p>
+    {:else}
+      <p class="text-text-muted text-sm italic">{m.asso_proposals_event_gone()}</p>
+    {/if}
+  {:else if proposal.subject}
     <p class="text-text-main line-clamp-3 text-sm italic">
       <EmojiText text={proposal.subject.preview} />
     </p>
@@ -100,10 +119,10 @@
 <div class="border-cn-border bg-cn-surface space-y-6 rounded-2xl border p-6 shadow-sm">
   <div>
     <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
-      <Repeat2 size={20} />
-      {m.asso_republications_title()}
+      <Inbox size={20} />
+      {m.asso_proposals_title()}
     </h2>
-    <p class="text-text-muted mt-1 text-sm">{m.asso_republications_subtitle()}</p>
+    <p class="text-text-muted mt-1 text-sm">{m.asso_proposals_subtitle()}</p>
   </div>
 
   {#if errorMessage}
@@ -157,7 +176,7 @@
                   disabled={busy !== null || !proposal.subject}
                   onclick={() => decide(proposal, 'accept')}
                 >
-                  {m.asso_republications_accept()}
+                  {acceptLabel(proposal)}
                 </button>
               </div>
             </li>

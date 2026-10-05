@@ -5,6 +5,8 @@ import {
   toCreatePayload,
   toUpdatePayload,
   validateEventForm,
+  withCoOrganiserStates,
+  loadCoOrganiserFields,
   type EventFormValues,
 } from './eventForm';
 import { toDatetimeLocalValue } from '$lib/utils/dates';
@@ -26,6 +28,8 @@ const BASE: EventFormValues = {
   kind: 'break',
   linkedFormId: 'form-1',
   coOwnerIds: ['asso-2'],
+  coOwnersLoad: 'ready',
+  coOwnerStates: [],
   targetAssociationId: 'asso-1',
 };
 
@@ -93,6 +97,48 @@ describe('toUpdatePayload', () => {
     expect('kind' in toUpdatePayload(BASE, {})).toBe(false);
     expect(toUpdatePayload(BASE, { canSetKind: true }).kind).toBe('break');
   });
+
+  // D39: the event's payload names only ACCEPTED co-organisers. Sending a list seeded from it
+  // before the states arrive would withdraw every pending proposal the form never knew about.
+  it('sends the co-organiser list only once its states were read', () => {
+    expect(toUpdatePayload(BASE, {}).coOwnerIds).toEqual(['asso-2']);
+    expect('coOwnerIds' in toUpdatePayload({ ...BASE, coOwnersLoad: 'loading' }, {})).toBe(false);
+    expect('coOwnerIds' in toUpdatePayload({ ...BASE, coOwnersLoad: 'failed' }, {})).toBe(false);
+  });
+});
+
+describe('withCoOrganiserStates', () => {
+  const state = (associationId: string, status: 'accepted' | 'pending' | 'refused') => ({
+    associationId,
+    name: associationId,
+    slug: associationId,
+    color: null,
+    logoUrl: null,
+    status,
+    proposalId: `p-${associationId}`,
+  });
+
+  it('names the accepted and pending ones, keeps the refused one shown but unsent, and unlocks', () => {
+    const seeded = withCoOrganiserStates({ ...BASE, coOwnerIds: ['a1'], coOwnersLoad: 'loading' }, [
+      state('a1', 'accepted'),
+      state('a2', 'pending'),
+      state('a3', 'refused'),
+    ]);
+
+    expect(seeded.coOwnerIds).toEqual(['a1', 'a2']);
+    expect(seeded.coOwnerStates.map((s) => s.status)).toEqual(['accepted', 'pending', 'refused']);
+    expect(seeded.coOwnersLoad).toBe('ready');
+    expect(toUpdatePayload(seeded, {}).coOwnerIds).toEqual(['a1', 'a2']);
+  });
+
+  it('a failed read leaves the list unsent rather than guessed', async () => {
+    const values = { ...BASE, coOwnersLoad: 'loading' as const };
+    const fields = await loadCoOrganiserFields(values, () => Promise.reject(new Error('503')));
+    expect(fields.coOwnersLoad).toBe('failed');
+    expect('coOwnerIds' in toUpdatePayload({ ...values, ...fields }, {})).toBe(false);
+    const ok = await loadCoOrganiserFields(values, () => Promise.resolve([state('a2', 'pending')]));
+    expect(ok).toMatchObject({ coOwnerIds: ['a2'], coOwnersLoad: 'ready' });
+  });
 });
 
 describe('toDatetimeLocalValue', () => {
@@ -149,6 +195,8 @@ describe('eventFormValuesFrom', () => {
       kind: 'break',
       linkedFormId: 'form-9',
       coOwnerIds: ['asso-2'],
+      // Not sendable until the states are read (D39).
+      coOwnersLoad: 'loading',
       targetAssociationId: 'asso-1',
     });
   });

@@ -11,6 +11,7 @@
     CalendarCog,
     Newspaper,
     Repeat2,
+    CalendarPlus,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -118,9 +119,15 @@
    */
   const REPOST_TYPES = ['association_repost', 'repost_proposed'] as const;
   const isRepostNotif = $derived((REPOST_TYPES as readonly string[]).includes(notif.type));
+  /**
+   * A CO-ORGANISATION PROPOSAL (D39), named for the same reason: the ORGANISING association asks,
+   * and the body is the event's title.
+   */
+  const isCoorganiseNotif = $derived(notif.type === 'coorganise_proposed');
   /** The actor is an association, whose logo stands in for a person's avatar. */
   const actorIsAssociation = $derived(
-    (notif.type === 'association_post' || isRepostNotif) && !!notif.associationId
+    (notif.type === 'association_post' || isRepostNotif || isCoorganiseNotif) &&
+      !!notif.associationId
   );
 
   /**
@@ -151,7 +158,7 @@
               ? 'bg-red-500 text-white'
               : notif.type === 'event_pending'
                 ? 'bg-amber-500 text-cn-ink'
-                : isEventNotif
+                : isEventNotif || isCoorganiseNotif
                   ? 'bg-sky-600 text-white'
                   : isPostNotif || isRepostNotif
                     ? 'bg-indigo-500 text-white'
@@ -210,6 +217,8 @@
         <Newspaper size={glyph} strokeWidth={2.75} />
       {:else if isRepostNotif}
         <Repeat2 size={glyph} strokeWidth={2.75} />
+      {:else if isCoorganiseNotif}
+        <CalendarPlus size={glyph} strokeWidth={2.75} />
       {:else}
         <MessageCircle size={glyph} strokeWidth={2.75} />
       {/if}
@@ -264,6 +273,9 @@
         {notif.type === 'repost_proposed'
           ? m.notif_repost_proposed_text()
           : m.notif_association_repost_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isCoorganiseNotif}
+        {m.notif_coorganise_proposed_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else}
         {m.notif_comment_text()}

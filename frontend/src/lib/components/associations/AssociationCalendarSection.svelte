@@ -12,6 +12,7 @@
     aggregatedCalendarFeedIcsAbsoluteUrl,
     icsSubscriptionRangeISO,
     getCalendarEventLinkedToPost,
+    listEventCoOrganisers,
     type AssociationCalendarEvent,
     type AssociationCalendarFeedEvent,
     type AssociationLinkCandidates,
@@ -40,6 +41,7 @@
   import {
     blankEventFormValues,
     eventFormValuesFrom,
+    loadCoOrganiserFields,
     toCreatePayload,
     toUpdatePayload,
     type EventFormValues,
@@ -255,6 +257,12 @@
     formValues = eventFormValuesFrom(ev);
     poster.set(ev.imageUrl ?? null);
     modalOpen = true;
+    // D39: the co-organisers' states (accepted / pending / refused) arrive after the form opens; the
+    // list stays unsent until they do. Through THIS association, the route the save will use.
+    const fields = await loadCoOrganiserFields(formValues, () =>
+      listEventCoOrganisers(associationId, ev.id)
+    );
+    if (editingId === ev.id) formValues = { ...formValues, ...fields };
     await ensureLinkCandidates();
   }
 

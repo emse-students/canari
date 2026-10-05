@@ -28,6 +28,7 @@ export type PushContentKey =
   | 'social_followed_post'
   | 'social_association_repost'
   | 'social_repost_proposed'
+  | 'social_coorganise_proposed'
   | 'form_opening_soon'
   | 'form_open'
   | 'event_proposed'
@@ -477,5 +478,24 @@ export function repostProposedContent(
     arg: preview,
     legacyTitle: `${associationName} propose de relayer une publication`,
     legacyBody: preview || 'Publication à relayer',
+  };
+}
+
+/**
+ * An association asks one the recipient may publish for to CO-ORGANISE an event (D39). `actorName`
+ * is the ORGANISING association; `arg` the event's title.
+ */
+export function coorganiseProposedContent(
+  associationName: string,
+  eventTitle: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_coorganise_proposed',
+    icon,
+    actorName: associationName,
+    arg: eventTitle,
+    legacyTitle: `${associationName} propose de co-organiser un événement`,
+    legacyBody: eventTitle || 'Événement à co-organiser',
   };
 }

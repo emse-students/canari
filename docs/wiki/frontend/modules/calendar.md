@@ -203,6 +203,12 @@ grid's bands, the day panel and the event dialog - and every list of them is key
 `associationId`. **A name is a label two associations may share and a slug is a URL; neither is an
 identity, and a key that can repeat is a crash rather than a cosmetic slip.**
 
+**Since D39 a co-owner row means ACCEPTED** (migration 074): naming a co-organiser in the event form
+asks it, and it reaches nothing - this list, its rights, its readers' agenda - until its publishers
+accept. The form reads the states from `GET .../events/:eventId/co-organisers` after it opens and
+sends `coOwnerIds` only once they arrived (`coOwnersLoad`), because the event's own `coOwners` names
+only the accepted ones ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
+
 The same fact decides what a row says: the day panel takes `ownAssociationId` (not a
 `hideAssociationName` boolean) and the dialog is told `showAssociation` per event, so a row the page
 merely co-owns still names, colours and badges its real owner.

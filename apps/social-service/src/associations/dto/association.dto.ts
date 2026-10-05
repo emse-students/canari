@@ -336,7 +336,10 @@ export class CreateAssociationCalendarEventDto {
   @IsUUID()
   targetAssocId?: string;
 
-  /** Additional associations co-managing this event (max 10). */
+  /**
+   * Associations ASKED to co-organise this event (D39, max 10): each gets a `coorganise` proposal
+   * and co-organises only once its publishers accept it.
+   */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)
@@ -377,7 +380,10 @@ export class UpdateAssociationCalendarEventDto {
   @IsUUID()
   linkedFormId?: string | null;
 
-  /** Replaces the full co-owner list for this event (max 10). */
+  /**
+   * The co-organisers the form now names (D39, max 10): a new one is proposed, a pending one left
+   * out is withdrawn, an accepted one left out is ended. Omit to leave them unchanged.
+   */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)

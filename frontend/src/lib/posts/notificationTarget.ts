@@ -40,10 +40,12 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
 /**
  * The notification types whose `postId` names an ASSOCIATION BY ID, and whose page is reached by
  * slug - so the destination needs one lookup `notificationHref` cannot make synchronously.
- * `repost_proposed` (D38) sends its acceptors to the queue where they accept or refuse it.
+ * `repost_proposed` (D38) and `coorganise_proposed` (D39) send their acceptors to the one proposal
+ * queue (section key `republications`, kept because older notifications already link there).
  */
 const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
   repost_proposed: 'republications',
+  coorganise_proposed: 'republications',
 };
 
 /**

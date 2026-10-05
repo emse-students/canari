@@ -723,29 +723,15 @@ export class AssociationsController {
    * `isBde` is scoped to THE EVENT (WP6c step 2): VALIDATE_EVENTS in the BDE of a space the event's
    * own association reaches, read from the row - never "a BDE somewhere".
    */
-  private async assertMayWriteEvent(
+  private assertMayWriteEvent(
     userId: string,
     ga: string | undefined,
     associationId: string,
     eventId: string
   ): Promise<{ isGlobalAdmin: boolean; isBde: boolean }> {
-    const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEvent(userId, eventId);
-    if (!isGlobalAdmin && !isBde) {
-      // Regular admin must be granted PROPOSE_EVENT on this association. Through `mayAct`, so a
-      // cross-association super-admin may act on an event in an association they administer - the
-      // guard on `POST :id/events` already lets them CREATE one there.
-      const hasPerm = await this.service.mayAct(
-        userId,
-        associationId,
-        AssociationPermissionFlag.PROPOSE_EVENT,
-        { isGlobalAdmin }
-      );
-      if (!hasPerm) {
-        throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
-      }
-    }
-    return { isGlobalAdmin, isBde };
+    // The rule itself is the service's, because the co-organiser route (`coorganisation/`) asks it
+    // too, and a rule written twice is the one the third route forgets.
+    return this.service.assertMayWriteEvent(userId, ga === 'true', associationId, eventId);
   }
 
   /**

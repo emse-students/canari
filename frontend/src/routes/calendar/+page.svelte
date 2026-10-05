@@ -22,6 +22,7 @@
     type Association,
     ensureAssociationSuperAdmin,
     getMyBdeReach,
+    listEventCoOrganisers,
   } from '$lib/associations/api';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -38,6 +39,7 @@
   import {
     blankEventFormValues,
     eventFormValuesFrom,
+    loadCoOrganiserFields,
     toCreatePayload,
     toUpdatePayload,
     type EventFormValues,
@@ -256,7 +258,7 @@
 
   function handleDetailEdit(ev: AssociationCalendarFeedEvent) {
     agenda.detailModalOpen = false;
-    openEditEvent(ev);
+    void openEditEvent(ev);
   }
 
   async function handleDetailDelete(id: string) {
@@ -412,12 +414,18 @@
     depositModalOpen = true;
   }
 
-  function openEditEvent(ev: AssociationCalendarFeedEvent) {
+  async function openEditEvent(ev: AssociationCalendarFeedEvent) {
     editingEventId = ev.id;
     editingOwnerName = ev.associationName;
     depositValues = eventFormValuesFrom(ev);
     poster.set(ev.imageUrl ?? null);
     depositModalOpen = true;
+    // D39: the co-organisers' states arrive after the form opens; the list stays unsent until they
+    // do. Through the owning association - the route `submitEvent` saves through.
+    const fields = await loadCoOrganiserFields(depositValues, () =>
+      listEventCoOrganisers(ev.associationId, ev.id)
+    );
+    if (editingEventId === ev.id) depositValues = { ...depositValues, ...fields };
   }
 
   /**

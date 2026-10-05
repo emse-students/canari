@@ -15,6 +15,7 @@ import { InternalModule } from './internal/internal.module';
 import { PublicModule } from './public/public.module';
 import { RedisModule } from './common/redis';
 import { MinesweeperModule } from './minesweeper/minesweeper.module';
+import { CoorganisationModule } from './coorganisation/coorganisation.module';
 import { HealthController } from './health.controller';
 
 /** Root NestJS module - wires up TypeORM, config, Redis, and all social feature modules. */
@@ -53,6 +54,8 @@ import { HealthController } from './health.controller';
     InternalModule,
     PublicModule,
     MinesweeperModule,
+    // Event co-organisation by proposal (D39): registers the `coorganise` kind and the event port.
+    CoorganisationModule,
   ],
   controllers: [HealthController],
 })
