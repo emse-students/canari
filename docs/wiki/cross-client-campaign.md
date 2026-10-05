@@ -1404,7 +1404,7 @@ its KeyPackage in **1.9 s**.
 
 **AND THE PREDICATE THAT NAMES THE RESPONDER IS SATISFIED BY THE DEBRIS, read 2026-08-29.** Rows 3
 and 15 assert `ourOwnDeviceWasInTheFleet` as `fleet.readable && fleet.extra.length > 0`
-(`healnew.mjs:600`) - a COUNT, over a presence read whose keys outlive their device by up to 20 s and
+(`healnew.mjs:600`) - a COUNT, over a presence read whose keys outlive their device by up to 90 s and
 which the abandoned mints of this very rung populate. HEAL-NEW-15's `FAIL` on `48b65d08` carried two
 abandoned mints in `fleet.extra`, so the expectation would have been met with W1 shut. It is the same
 fault as a `PASS` over an empty intersection: a predicate that cannot tell the responder the row NAMES
