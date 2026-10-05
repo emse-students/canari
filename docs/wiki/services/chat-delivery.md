@@ -21,7 +21,7 @@ The chat-delivery-service is the MLS API layer. It:
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, RevokedDevice |
+| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice |
 | Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `mls:addlock:{groupId}` and `mls:commitlock:{groupId}` locks, `pending_welcome:{groupId}` sets and their per-member `pending_welcome_notify:{userId}` fan-out (drained by the gateway) |
 | Firebase | Push notifications (FCM) |
 
@@ -1006,6 +1006,7 @@ those groups' first pages itself, which is the path every group took before the 
 |---|---|---|---|
 | POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ optional iOS `voipToken`) |
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
+| GET / PUT | `/api/mls/notification-preferences` | JWT | The account's switched-off notification categories (`{ disabled: string[] }`); PUT replaces the set and refuses an unknown id |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
 | GET | `/api/mls/push/avatar/:targetUserId` | PushSecret | Get avatar URL for notification display |
 | GET | `/api/mls/push/media/:mediaId` | PushSecret | Proxy encrypted media ciphertext (2 MB cap) for a notification thumbnail |
@@ -1854,6 +1855,49 @@ how to read it are on [`call-service`](call-service.md#the-call-record) - keep n
 | POST | `/api/internal/push/notify` | InternalSecret | Send push via internal secret |
 | DELETE | `/api/internal/users/:userId` | InternalSecret | Delete all user MLS/device data |
 | GET | `/api/health` | none | Liveness probe |
+
+## Notification categories - one switch per kind, decided before the send
+
+Settings holds one switch per category (default: all ON), **per account** so it follows the user
+across devices. The server decides: **a muted category is never sent**, and no client has to filter
+what was never delivered. Storage is `notification_preference` (migration 028, one row per account
+that ever changed it, holding the DISABLED set - so an account with no row and a category added later
+are both ON with no backfill). It lives in THIS service because every push is sent from here.
+
+| Category | Pushes filed under it | Decided in |
+|---|---|---|
+| `messages` | MLS 1-to-1 and group messages (`type: 'message'`) | `sendFcmForQueued`: delivered **silent**, not dropped |
+| `channels` | community salon messages (`type: 'channel'`) | `sendPushToUser`: not sent |
+| `posts` | `social_association_post`, `social_followed_post` | `sendPushToUser` |
+| `comments` | `social_comment`, `social_reply` | `sendPushToUser` |
+| `mentions` | `social_mention` (post or comment) | `sendPushToUser` |
+| `reactions` | `social_reaction`, and the DM reaction (`reaction: 'true'`) | `sendPushToUser` |
+| `events` | the six `event_*` keys | `sendPushToUser` |
+| `forms` | `form_opening_soon`, `form_open`, `type: 'form_reminder'` | `sendPushToUser` |
+
+The id list and the push-to-category map are ONE file, `services/push-category.ts`; the frontend
+mirrors the ids (`frontend/src/lib/notifications/categories.ts`) and `categories.contract.test.ts`
+reads the server file so the two cannot drift.
+
+- **A MESSAGE IS SILENCED, NEVER DROPPED.** An MLS ciphertext is state the account needs to stay
+  decryptable, so a muted `messages` category sends the same frame with `silent: 'true'` - the flag
+  own-device copies and receipts already use, honoured by Android and the iOS path - and the device
+  draws nothing. The recipient's own sends and already-silent frames never cost a read.
+- **Filed under no category, on purpose**: `channel_read`, `call_ring` / `call_ring_end` and every MLS
+  control frame (welcome, history, device revoked). Filtering one would break a conversation or a
+  ring rather than quiet it. Calls are held off anyway (`CALLS_ENABLED = false`).
+- **A read that fails delivers, and logs `[NOTIF_PREF]`** - dropping a push because a preference could
+  not be read loses a message the user wanted. The settings GET reads strictly and fails loudly.
+- **The per-salon level is a different question and is not replaced.** `channel_members.notifLevels`
+  (`all` / `mentions` / `none`, social-service) says how loud ONE salon is and is applied there
+  before a push is handed here; the category switch sits below it, at the single send.
+- **The client half.** A frame received over the WebSocket raises its notification on the device
+  with no push involved, so `useMessaging.notifyInbound` consults `notificationPreferences` (the
+  store mirroring the server set, loaded at sign-in and by the settings section) with the same
+  `channel_` split. The in-app notifications LIST (bell, `/notifications`) is an inbox, not an
+  alert, and is unchanged.
+- **Unverified on hardware**: native delivery with a category off is covered by unit tests on what
+  reaches FCM, not by a phone.
 
 ## Two lines that report a rate, not an event
 

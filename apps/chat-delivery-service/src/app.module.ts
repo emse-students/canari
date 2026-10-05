@@ -29,6 +29,8 @@ import { DeviceGroupMembership } from './entities/device-group-membership.entity
 import { GroupInvite } from './entities/group-invite.entity';
 import { DeviceSignatureKey } from './entities/device-signature-key.entity';
 import { PushToken } from './entities/push-token.entity';
+import { NotificationPreference } from './entities/notification-preference.entity';
+import { NotificationPreferencesController } from './controllers/notification-preferences.controller';
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
@@ -91,6 +93,7 @@ class RedisShutdown implements OnModuleDestroy {
         MlsCommitLog,
         MlsGroupInfo,
         DeviceSignatureKey,
+        NotificationPreference,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
     }),
@@ -109,6 +112,7 @@ class RedisShutdown implements OnModuleDestroy {
       MlsCommitLog,
       MlsGroupInfo,
       DeviceSignatureKey,
+      NotificationPreference,
     ]),
   ],
   controllers: [
@@ -122,6 +126,7 @@ class RedisShutdown implements OnModuleDestroy {
     LocksController,
     MessagingController,
     PushController,
+    NotificationPreferencesController,
     InternalController,
     AdminStorageController,
     CallsController,

@@ -45,6 +45,8 @@ describe('InternalController - POST internal/push/notify', () => {
   const pushTokenRepo = {
     find: jest.fn(),
     delete: jest.fn(),
+    /** The notification-preference read: no row, so every category is on. */
+    manager: { findOne: jest.fn().mockResolvedValue(null) },
   };
   /** Repositories this path never touches; present only to satisfy the constructors. */
   const unusedRepo = { find: jest.fn(), findOne: jest.fn(), delete: jest.fn(), save: jest.fn() };

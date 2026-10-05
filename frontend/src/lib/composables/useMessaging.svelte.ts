@@ -90,6 +90,8 @@ import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
+import { categoryOfConversation } from '$lib/notifications/categories';
+import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
 
 /** Runtime dependencies injected into all messaging operations. */
@@ -408,6 +410,17 @@ export function useMessaging() {
     ) {
       console.log(
         `[NOTIF] Inbound in ${conversationKey} at ${sentAt} is already read here - nothing raised.`
+      );
+      return;
+    }
+
+    // THE ACCOUNT'S OWN SWITCH for this kind of notification. The server already refuses to PUSH a muted
+    // category; this is the half it cannot reach - a frame received over the socket raises its
+    // notification here, with no push involved, and it must obey the same set.
+    const category = categoryOfConversation(conversationKey);
+    if (!notificationPreferences.isEnabled(category)) {
+      console.log(
+        `[NOTIF] Inbound in ${conversationKey} - category "${category}" is switched off for this account; nothing raised.`
       );
       return;
     }

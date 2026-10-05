@@ -26,6 +26,7 @@ import { MLS_LOCAL_STATE_UNDECRYPTABLE, isKeystoreKeyUnavailable } from '$lib/ml
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
 import {
   flushPendingGroupExits,
@@ -924,6 +925,9 @@ export async function loginImpl(
     // (written by store_push_secret during startPushService) before the health check runs.
     // Skipped offline - registering a push token requires the server, and the resulting failure
     // would raise a spurious "push degraded" fatal error. promoteOfflineSession re-runs it.
+    // The account's notification switches, which this client's own local notifications consult.
+    // Skipped offline for the same reason; promoteOfflineSession loads them once it is online.
+    if (!offlineSession) void notificationPreferences.load();
     if (offlineSession) {
       cb.log('[PUSH] Registration deferred - offline session.');
     } else {
@@ -2007,6 +2011,7 @@ export function tearDownLiveSession(
 export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
   tearDownLiveSession(ctx, cb, 'logout');
+  notificationPreferences.reset();
   ctx.setStorage(null);
   ctx.setAuthToken('');
   clearUserLocally();

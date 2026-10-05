@@ -6,6 +6,7 @@
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import { currentUserId } from '$lib/stores/user';
   import SettingsPreferencesSection from '$lib/components/settings/SettingsPreferencesSection.svelte';
+  import SettingsNotificationsSection from '$lib/components/settings/SettingsNotificationsSection.svelte';
   import SettingsSecuritySection from '$lib/components/settings/SettingsSecuritySection.svelte';
   import SettingsBackupSection from '$lib/components/settings/SettingsBackupSection.svelte';
   import SettingsPaymentsSection from '$lib/components/settings/SettingsPaymentsSection.svelte';
@@ -58,6 +59,7 @@
 
   <div class="space-y-6 md:space-y-8">
     <SettingsPreferencesSection />
+    <SettingsNotificationsSection />
     <SettingsSecuritySection />
     <SettingsBackupSection />
     <SettingsPaymentsSection />

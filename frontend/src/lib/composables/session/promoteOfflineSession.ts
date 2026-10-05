@@ -23,6 +23,7 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { runGroupDiscoveryImpl, startConnectionWatchdogImpl } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
+import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 
 /**
  * Builds the argument for `initializeConnection`. Injected rather than imported from
@@ -90,6 +91,9 @@ async function runPromotion(
   ctx.setAuthToken(token);
   ctx.setIsOfflineSession(false);
   cb.log('[PROMOTE] Access token acquired - session is online.');
+
+  // 1b. The notification switches, skipped at login for the same reason.
+  void notificationPreferences.load();
 
   // 2. Push registration, skipped at login. The FCM/APNs token may have rotated while the device
   //    was away, so this re-registers rather than merely retries.
