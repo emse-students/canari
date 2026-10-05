@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
 import { pushContentData, type PushContent } from './push-content';
+import { socialDeepLink } from './push-target';
 
 /**
  * Fire-and-forget FCM dispatcher.
@@ -35,6 +36,8 @@ export class PushService {
     data: Record<string, string> = {}
   ): Promise<void> {
     await this.notify(userId, content.legacyTitle, content.legacyBody, {
+      // The tap target, written once here: iOS opens only what the payload names (see push-target).
+      deepLink: socialDeepLink(data),
       ...data,
       ...pushContentData(content),
     });

@@ -466,6 +466,38 @@ dead would produce, and the third row proves the claim is the thing holding the 
 an all-zero UUID matching no post - `/posts/<unknown>` stays on its route and renders "Publication
 introuvable", so the assertion is about ROUTING and touches nobody's data.
 
+#### What each notification names as its tap target, and who routes it (2026-10-05)
+
+**Reported by the user: on an iPhone a tap on a push opens the app and nothing else.** The tap handler
+(`canari_push.mm`, `didReceiveNotificationResponse`) opens `userInfo["deepLink"]` and NOTHING ELSE - it
+derives no target from `postId`, `formId` or `groupId`. Android's `showSimpleNotification` is handed a
+link BUILT natively from `postId` / `formId`, so the two platforms agreed on chat and disagreed on every
+social push. Built from the code:
+
+| Push type | Payload names | Link on the wire | iOS tap | Android tap |
+|---|---|---|---|---|
+| MLS message (DM, group) | `groupId` | NSE writes `chat/<groupId>` | routes | routes |
+| `channel` (salon) | `channelId` | NSE writes `chat/channel_<id>` | routes | routes |
+| reaction (`social` + `reaction`) | `groupId` | server `chat/<groupId>` | routes | routes |
+| comment, reply, mention, reaction on a post | `postId` | **was none; now server `post/<id>`** | **was dead** | routes |
+| `association_post`, `followed_post` | `postId` | **now `post/<id>`** | **was dead** | routes |
+| `form_reminder` | `formId` | **now `form/<id>`** | **was dead** | routes |
+| `event_proposed` | `associationId`, `action` | **now `admin-agenda`** | **was dead** | landed on `posts`, ignored |
+| `event_validated/rejected/updated/deleted/pending` | `associationId`, `action` | **now `calendar`** | **was dead** | landed on `posts`, ignored |
+
+The NSE keeps the payload's own keys (it mutates a copy of `userInfo`), so a link the server writes
+reaches the tap unchanged. **One implementation now writes the social links:** `socialDeepLink`
+(`apps/social-service/src/push/push-target.ts`, applied in `PushService.notifyContent`), mirroring
+`notificationHref` of the in-app bell; both platforms already prefer an explicit `deepLink`. The
+frontend resolves the page hosts (`post`, `form`, `posts`, `calendar`, `admin-agenda`) in
+`$lib/mobile/deepLinkRoutes.ts` - before this, `hooks.client.ts` had no `posts`, `calendar` or
+`admin-agenda` host and logged "not our deep link, ignoring" for the event pushes on BOTH platforms.
+A tap now logs `[CanariPush] notification tap type=... deepLink=...` on iOS, and an absent link
+says `ABSENT`. Tests: `push-target.spec.ts` (the server contract), `deepLinkRoutes.test.ts` (the
+route table, compared against `notificationHref`).
+
+**Not measured on the iPhone yet** - see the verification note appended below when it is.
+
 #### A backgrounded tap reached BOTH paths, and the live one now writes the claim (2026-10-01)
 
 **Measured on a Mi 9T:** each tap on a backgrounded app logged `[hooks] Processing URL` and

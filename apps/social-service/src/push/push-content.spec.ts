@@ -224,6 +224,7 @@ describe('PushService.notifyContent', () => {
     expect(payload.data).toEqual({
       type: 'social',
       postId: 'p1',
+      deepLink: 'fr.emse.canari://post/p1',
       contentKey: 'social_comment',
       actorName: 'Claire',
       contentArg: 'nice post',

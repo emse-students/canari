@@ -3564,12 +3564,19 @@ static void CanariInstallApnsTokenHook(void) {
   if ([userInfo[@"deepLink"] isKindOfClass:[NSString class]]) {
     deepLink = userInfo[@"deepLink"];
   }
+  // THE TAP OPENS WHAT THE PAYLOAD NAMES AND NOTHING ELSE, so an absent link is a payload that lost
+  // its field and says so: a post, form or agenda push used to arrive with none (the server sent
+  // only postId / formId) and the tap launched the app and stayed put, with nothing in the log.
+  NSLog(@"[CanariPush] notification tap type=%@ deepLink=%@", userInfo[@"type"] ?: @"?",
+        deepLink.length > 0 ? deepLink : @"ABSENT - the payload names no target");
   if (deepLink.length > 0) {
     NSURL *url = [NSURL URLWithString:deepLink];
     if (url != nil) {
       dispatch_async(dispatch_get_main_queue(), ^{
         [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
       });
+    } else {
+      NSLog(@"[CanariPush] notification tap: deepLink is not a URL: %@", deepLink);
     }
   }
   completionHandler();
