@@ -645,9 +645,31 @@ describe('ChannelService security hardening', () => {
     expect(msg.pinned).toBe(true);
   });
 
-  it('setMessagePinned lets a plain member pin their OWN message', async () => {
-    const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+  // A pin shows on every member's screen, so the author is NOT exempt (user, 2026-10-05).
+  it.each([true, false])(
+    'setMessagePinned refuses a plain member pinned=%s on their OWN message',
+    async (pinned) => {
+      const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      const msg = { id: 'm1', channelId: 'ch1', authorId: 'u1', pinned: !pinned };
+      messageRepo.findOne.mockResolvedValue(msg);
+
+      const refusal = await service.setMessagePinned('ch1', 'm1', 'u1', pinned).catch((e) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: PIN_REQUIRES_MODERATION,
+      });
+      expect(msg.pinned).toBe(!pinned);
+      expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+    }
+  );
+
+  it('setMessagePinned lets a moderator pin their own message', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo, redis } = makeService();
     arrangePollAccess(channelRepo, memberRepo);
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ id: 'r1', permissions: DEFAULT_MODERATOR_PERMISSIONS }]);
     const msg = { id: 'm1', channelId: 'ch1', authorId: 'u1', pinned: false };
     messageRepo.findOne.mockResolvedValue(msg);
 

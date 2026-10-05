@@ -2948,7 +2948,7 @@
   "chat_permission_manage_channel_label": "Gérer le canal",
   "chat_permission_manage_channel_tooltip": "Permet de renommer, archiver ou modifier les paramètres de ce canal.",
   "chat_permission_moderate_label": "Modérer les messages",
-  "chat_permission_moderate_tooltip": "Permet d'épingler ou de supprimer les messages des autres membres.",
+  "chat_permission_moderate_tooltip": "Permet d'épingler ou désépingler n'importe quel message et de supprimer ceux des autres membres.",
   "chat_permission_invite_label": "Inviter des membres",
   "chat_permission_invite_tooltip": "Permet d'inviter de nouveaux membres dans la communauté.",
   "chat_permission_kick_label": "Expulser des membres",

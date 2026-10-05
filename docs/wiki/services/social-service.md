@@ -177,7 +177,7 @@ added later without the pipe fails there.
 | GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
 | GET \| PATCH \| PUT | `/api/channels/roles/:roleId/permissions` | Read a role's base permissions; **PATCH** grants/revokes ONE key (`{key, granted}`) and is what every client sends; **PUT** replaces the whole list and is kept only for clients built before 2026-08-20 ([legacy](../legacy-compatibility.md)). MANAGE_WORKSPACE / MANAGE_ROLES |
 | DELETE | `/api/channels/:channelId/messages/:messageId` | Delete a channel message: own always, someone else's with `channel.moderate` |
-| POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message (own always, someone else's with `channel.moderate`) |
+| POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin or unpin a message: `channel.moderate` for EVERY message, own included (2026-10-05) |
 | POST | `/api/channels/:channelId/messages/:messageId/poll/vote` | Vote on a poll (empty = retract) |
 | PATCH | `/api/channels/:channelId/messages/:messageId/poll/close` | Close a poll now (author or moderator); forces the deadline + unpins. Answers the poll with `closed: true` - see "Channel polls" |
 | GET | `/api/channels/:channelId/notification-level` | Caller's push level for the channel |
@@ -274,12 +274,13 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
 
 #### Message moderation (`channel.moderate`)
 
-The role matrix advertises this permission as "pin or delete other members' messages", and that
-is exactly what it does. `memberCanModerateMessages` is the single check, shared by every entry
-point (`deleteChannelMessage`, `setMessagePinned`, `closePoll`); MANAGE_CHANNEL and
-MANAGE_WORKSPACE subsume it via `roleGrantsModeration`. In each case the **author** is allowed
-unconditionally and the permission only widens the action to *someone else's* message. Editing is
-never moderation - only the author can edit, in channels as in DMs.
+The role matrix advertises this permission as "pin or unpin any message, delete other members'
+ones", and that is exactly what it does. `memberCanModerateMessages` is the single check, shared by
+every entry point (`deleteChannelMessage`, `setMessagePinned`, `closePoll`); MANAGE_CHANNEL and
+MANAGE_WORKSPACE subsume it via `roleGrantsModeration`. For delete and poll close the **author** is
+allowed unconditionally and the permission only widens the action to *someone else's* message;
+**a pin has no author exemption** (see below). Editing is never moderation - only the author can
+edit, in channels as in DMs.
 
 The workspace listing carries `viewerCanModerate` alongside `viewerCanManage` so the client can
 decide whether to render the delete affordance on another member's bubble without probing the
@@ -289,26 +290,32 @@ API for a 403. It is a UI hint: the server re-checks on every call. `roleGrantsM
 
 ##### Who may pin, and what the client offers (2026-10-05)
 
-Reported by the user on 2026-10-05: a plain member pinned a message. **The rule, unchanged:** in a
-salon, a member may pin or unpin their OWN message, and anybody else's only with
-`channel.moderate` (or `channel.manage` / `workspace.manage`). A refusal is a 403 carrying
-`code: PIN_REQUIRES_MODERATION`, logged `[PIN] refused`; an accepted pin is logged `[PIN] ... as=author|moderator`.
-Two more paths put a pin on a salon message WITHOUT any rank, both by design: a **poll** is pinned on
-creation by whoever creates it (`sendMessage`, `pinned: pollMeta !== null`), and a DM or group pin is
-an MLS frame between equals that no server sees.
+Reported by the user on 2026-10-05: a plain member pinned a message. **The rule, decided by the
+user the same day:** in a salon, pinning or unpinning ANY message - the author's own included -
+needs `channel.moderate` (or `channel.manage` / `workspace.manage`), because a pin shows on every
+member's screen and an open pin list can be abused. Until then the author was exempt. A refusal is a
+403 carrying `code: PIN_REQUIRES_MODERATION`, logged `[PIN] refused ... own=`; an accepted pin is
+logged `[PIN]`. DMs and groups are untouched: a pin there is an MLS frame between equals that no
+server sees, and anybody may.
 
-**What was wrong was the client.** Every menu gated delete on `isOwn || canModerate` and pin on
+**One path still pins with no rank, LEFT FOR THE USER TO DECIDE:** a **poll** is pinned on creation
+by whoever creates it (`sendMessage`, `pinned: pollMeta !== null`), so a plain member's poll lands in
+everyone's pin list; under the new rule that member can no longer unpin it themselves, though
+closing it early (`closePoll`, author allowed) still unpins it, as does its deadline passing.
+
+**What was wrong on the client.** Every menu gated delete on `isOwn || canModerate` and pin on
 nothing, so a member was offered "Pin" on every message, saw it pinned optimistically, and had it
 reverted silently after the 403 (and a refused UNPIN tying in the same millisecond was never
 reverted). `mayPinMessage` (`frontend/src/lib/utils/chat/pinPermission.ts`) is now the one client
-rule, read by the bubble menus (through `ChatMessageGroups`), the pinned banner's unpin and
+rule - in a salon, `viewerCanModerate` alone - read by the bubble menus (through `ChatMessageGroups`), the pinned banner's unpin and
 `handleTogglePinMessage`; the revert is strictly later than the optimistic apply and a toast names
 the refusal. `workspace.role.changed` also carries `canModerate`, so a demoted moderator stops being
 offered pin and delete without a reload - it carried only the two other flags.
 
-**Not settled without production:** which of these the report was. The decisive reading is the
-pinned row itself - its `authorId` against the member, `metadata ? 'poll'`, and the member's
-`roleIds` and those roles' `permissions` - and, from this version on, the `[PIN]` log line.
+**Not settled without production:** which path the report took (own message, poll, or a role that
+does grant moderation). The decisive reading is the pinned row - its `authorId` against the member,
+`metadata ? 'poll'`, and the member's `roleIds` and those roles' `permissions` - and, from this
+version on, the `[PIN]` log line.
 
 Deletion drops the row (the content is a ciphertext the server cannot read, so there is nothing
 worth tombstoning) and broadcasts `channel.message.deleted` (`{ channelId, messageId, deletedBy }`)
