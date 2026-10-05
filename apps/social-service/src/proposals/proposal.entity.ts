@@ -2,19 +2,19 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeor
 
 /**
  * What one association may ask of another, and nothing it can impose (migration 073). `repost` is
- * the first kind (D38: sending a post to another association); event co-organisation (D39) is
- * meant to be the next, which is why nothing here names a post.
+ * D38 (sending a post to another association), `coorganise` is D39 (asking an association to
+ * co-organise an event, migration 074) - which is why nothing here names a post.
  */
-export const PROPOSAL_KINDS = ['repost'] as const;
+export const PROPOSAL_KINDS = ['repost', 'coorganise'] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 
 /** A proposal is pending until the receiver accepts or refuses it, or the sender withdraws it. */
 export type ProposalStatus = 'pending' | 'accepted' | 'refused' | 'withdrawn';
 
 /**
- * One proposal. `subjectId` is the thing proposed (a post for `repost`) and carries no foreign key
- * because it names a different table per kind; the migration's trigger removes a `repost` row whose
- * post is deleted. The same (kind, subject, target) cannot be pending or decided twice - a
+ * One proposal. `subjectId` is the thing proposed (a post for `repost`, an event for
+ * `coorganise`) and carries no foreign key because it names a different table per kind; a trigger
+ * per kind (migrations 073 and 074) removes the rows whose subject is deleted. The same (kind, subject, target) cannot be pending or decided twice - a
  * withdrawn row makes room for a new one, a refused one does not.
  */
 @Entity('proposals')

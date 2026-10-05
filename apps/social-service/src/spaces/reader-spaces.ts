@@ -186,6 +186,31 @@ export function associationVisibleToViewerSql(association: string, viewer: strin
 }
 
 /**
+ * Calendar event row `event` (an `association_calendar_events` row) is visible to user row `user`
+ * (D39): its ORGANISER is visible to them, or an ACCEPTED co-organiser is - the same association
+ * predicate for each, membership (D21) included. An event has no space rules of its own, so its
+ * reach is the union of those audiences. A pending or refused co-organiser has no row in
+ * `association_calendar_event_co_owners` (it lives in `proposals`), so it adds nothing; one that
+ * leaves takes its row and its audience with it, and the next read is recomputed without it.
+ *
+ * Status and dates are NOT decided here: each caller keeps its own (validated only, a window).
+ */
+export function eventVisibleToUserSql(event: string, user: string): string {
+  return `(${associationVisibleToUserSql(`${event}."associationId"`, user)}
+    OR EXISTS (SELECT 1 FROM association_calendar_event_co_owners vis_coorg
+      WHERE vis_coorg.event_id = ${event}.id
+        AND ${associationVisibleToUserSql('vis_coorg.association_id', user)}))`;
+}
+
+/**
+ * Event row `event` is visible to the viewer whose id is the placeholder `viewer` - the signed-in
+ * agenda's filter (`AssociationsService.restrictToViewerSpaces`). An absent viewer sees nothing.
+ */
+export function eventVisibleToViewerSql(event: string, viewer: string): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${eventVisibleToUserSql(event, 'vis_viewer')})`;
+}
+
+/**
  * THE FEED GATE: may user `$1` use the feed at all - an admin, someone with at least one space, or
  * a member of at least one association (whose content D21 opens to them). Answers `inAudience`.
  */

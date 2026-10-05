@@ -81,6 +81,8 @@
     <string name="notif_social_association_repost_body">Nouvelle publication</string>
     <string name="notif_social_repost_proposed_title">%1$s propose de relayer une publication</string>
     <string name="notif_social_repost_proposed_body">Publication à relayer</string>
+    <string name="notif_social_coorganise_proposed_title">%1$s propose de co-organiser un événement</string>
+    <string name="notif_social_coorganise_proposed_body">Événement à co-organiser</string>
     <string name="notif_form_opening_soon_title">Formulaire bientôt ouvert</string>
     <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
     <string name="notif_form_open_title">Formulaire ouvert !</string>

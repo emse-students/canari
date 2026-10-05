@@ -1,7 +1,9 @@
 import { toDatetimeLocalValue } from '$lib/utils/dates';
 import { m } from '$lib/paraglide/messages';
+import { Log } from '$lib/utils/Log';
 import type {
   AssociationCalendarEventKind,
+  CalendarEventCoOrganiserState,
   CreateAssociationCalendarEventPayload,
   UpdateAssociationCalendarEventPayload,
 } from '$lib/associations/api';
@@ -25,9 +27,68 @@ export interface EventFormValues {
   kind: AssociationCalendarEventKind;
   /** `''` when no form is linked. */
   linkedFormId: string;
+  /** The co-organisers named: accepted, pending, and newly added ones (D39 - each is ASKED). */
   coOwnerIds: string[];
+  /**
+   * Whether the co-organiser list may be SENT (D39). A new event is `ready`; an existing one is
+   * `loading` until its states arrive (`withCoOrganiserStates`), and `failed` if they never do. Only
+   * `ready` sends `coOwnerIds`: the event's own payload knows only the ACCEPTED co-organisers, so
+   * sending a list seeded from it would withdraw every pending one.
+   */
+  coOwnersLoad: 'ready' | 'loading' | 'failed';
+  /** Each co-organiser's state, as the server answered it - empty for a new event. */
+  coOwnerStates: CalendarEventCoOrganiserState[];
   /** `''` on a surface that does not choose an association. */
   targetAssociationId: string;
+}
+
+/** The co-organiser half of the form, which arrives after the rest (D39). */
+export type CoOrganiserFields = Pick<
+  EventFormValues,
+  'coOwnerIds' | 'coOwnerStates' | 'coOwnersLoad'
+>;
+
+/**
+ * Reads an existing event's co-organiser states through `load` (`listEventCoOrganisers`, a
+ * parameter so this stays testable without a network) and returns the fields to merge into the
+ * form. A failure is `failed`, which keeps the list UNSENT - never a list guessed from the payload.
+ * Both event surfaces call this, so they cannot disagree on what a failure means.
+ */
+export async function loadCoOrganiserFields(
+  values: EventFormValues,
+  load: () => Promise<CalendarEventCoOrganiserState[]>
+): Promise<CoOrganiserFields> {
+  try {
+    const seeded = withCoOrganiserStates(values, await load());
+    return {
+      coOwnerIds: seeded.coOwnerIds,
+      coOwnerStates: seeded.coOwnerStates,
+      coOwnersLoad: seeded.coOwnersLoad,
+    };
+  } catch (e: unknown) {
+    Log.d('eventForm', `co-organiser states failed to load: ${String(e)}`);
+    return {
+      coOwnerIds: values.coOwnerIds,
+      coOwnerStates: values.coOwnerStates,
+      coOwnersLoad: 'failed',
+    };
+  }
+}
+
+/**
+ * Seeds an existing event's form with its co-organiser STATES (D39): the list becomes the accepted
+ * and pending ones (a refused one is shown, never re-sent), and the list becomes sendable.
+ */
+export function withCoOrganiserStates(
+  values: EventFormValues,
+  states: CalendarEventCoOrganiserState[]
+): EventFormValues {
+  return {
+    ...values,
+    coOwnerIds: states.filter((s) => s.status !== 'refused').map((s) => s.associationId),
+    coOwnerStates: states,
+    coOwnersLoad: 'ready',
+  };
 }
 
 /**
@@ -101,7 +162,8 @@ export function toUpdatePayload(
     description: values.description.trim() || undefined,
     startsAt: new Date(values.start).toISOString(),
     endsAt: instant(values.end),
-    coOwnerIds: values.coOwnerIds,
+    // Omitted unless the states were read: see `coOwnersLoad`.
+    ...(values.coOwnersLoad === 'ready' ? { coOwnerIds: values.coOwnerIds } : {}),
     ...(caps.canSetKind ? { kind: values.kind } : {}),
     ...(caps.canLinkForm ? { linkedFormId: values.linkedFormId.trim() || null } : {}),
   };
@@ -133,6 +195,8 @@ export function blankEventFormValues(onDay?: Date | null): EventFormValues {
     kind: 'event',
     linkedFormId: '',
     coOwnerIds: [],
+    coOwnersLoad: 'ready',
+    coOwnerStates: [],
     targetAssociationId: '',
   };
 }
@@ -151,7 +215,10 @@ export function eventFormValuesFrom(ev: SeedableEvent): EventFormValues {
     end: ev.endsAt ? toDatetimeLocalValue(ev.endsAt) : '',
     kind: ev.kind ?? 'event',
     linkedFormId: ev.linkedFormId ?? '',
+    // The ACCEPTED ones only, which is why the list is not sendable until the states arrive.
     coOwnerIds: (ev.coOwners ?? []).map((co) => co.associationId),
+    coOwnersLoad: 'loading',
+    coOwnerStates: [],
     targetAssociationId: ev.associationId,
   };
 }

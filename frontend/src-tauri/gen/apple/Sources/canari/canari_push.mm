@@ -478,6 +478,8 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // Republication (D38): the republishing, then the proposing, association names the title.
     @"social_association_repost" : @"association_repost",
     @"social_repost_proposed" : @"repost_proposed",
+    // Co-organisation (D39): the organising association names the title, the event is the body.
+    @"social_coorganise_proposed" : @"coorganise_proposed",
   };
   NSString *stem = actorTitled[key];
   if (stem) {

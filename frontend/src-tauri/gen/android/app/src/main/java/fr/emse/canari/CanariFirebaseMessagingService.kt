@@ -4114,6 +4114,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_repost_proposed_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_repost_proposed_body) }
             )
+            // Co-organisation (D39): the organising association, then the event title.
+            "social_coorganise_proposed" -> Pair(
+                res.getString(R.string.notif_social_coorganise_proposed_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_coorganise_proposed_body) }
+            )
             "form_opening_soon" -> Pair(
                 res.getString(R.string.notif_form_opening_soon_title),
                 res.getString(R.string.notif_form_opening_soon_body)

@@ -626,8 +626,9 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
 - **Announce**: the recipients of a post are everyone who can see THAT post, minus its author
   (`announceRecipientsSql`); a personal post's followers are told only if they can see it.
 - **Agenda**: a SIGNED-IN reader's aggregated feed and per-association `/events` keep an event
-  when its association reaches one of their spaces, or they are a member (an admin is an ordinary
-  reader here, see above). The
+  when its association - or, since D39, an ACCEPTED co-organiser (`eventVisibleToUserSql`) -
+  reaches one of their spaces, or they are a member (an admin is an ordinary reader here, see
+  above). The
   anonymous agenda and its `.ics` (D30) are unchanged: like the promo cutoff, this is relevance.
 - **Post-level rules - REMOVED by D38** (migration 073 drops `post_audiences`; the DTO `audiences`,
   `rulesOutsideCeiling` and the read-time ceiling are deleted). A post's audience widens only
@@ -717,8 +718,8 @@ box no longer defines anything.
 | Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built (filters not built) |
 | Personal post | author and people sharing a space; never an institution; an admin only by id | built |
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; never a personal post; card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04)) |
-| Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | next (today a co-organiser is added without consent) |
-| Agenda signed in | as events above | built (organiser only) |
+| Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
+| Agenda signed in | as events above | built |
 | Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | next (today: all, public) |
 | Association directory (D37) | associations reaching one's spaces, or one belongs to | built |
 | Association page | NOT LISTED for a reader outside its audience, but reachable by a link (user, 2026-10-04); the member list does NOT follow the audience | existing |
@@ -812,7 +813,7 @@ that.
 
 **`proposals(kind, subjectId, fromAssociationId, toAssociationId, status, ...)`** - GENERIC, so
 co-organisation (D39) is a second `kind` on the same table, routes and queue. `kind` is
-CHECK-listed (`'repost'` today). The status is `pending -> accepted | refused | withdrawn`, with a
+CHECK-listed (`'repost'`, and `'coorganise'` since migration 074). The status is `pending -> accepted | refused | withdrawn`, with a
 CHECK tying `decidedAt`/`decidedBy` to it. A unique partial index on `(kind, subjectId,
 toAssociationId) WHERE status <> 'withdrawn'` makes a proposal idempotent: a second one is a 409,
 and a REFUSAL IS RECORDED (it keeps its place, so the same post cannot be proposed there again).
@@ -857,8 +858,8 @@ foreign key, since what it names depends on the kind.
     the menu entries;
   - `RepublishDialog` offers the reader's `POST_AS_ASSO` associations (republish), or the
     directory (propose).
-- **The queue**: a "Republications" tab on `/associations/<slug>/edit`, for the association's
-  `POST_AS_ASSO` holders.
+- **The queue**: a "Propositions" tab on `/associations/<slug>/edit` (named "Republications"
+  until D39; its section key is still `republications`, which older notifications link to).
 - **The proposal notification**: its `postId` carries the RECEIVING association's id, and the
   notifications page resolves that id to a slug before it routes. Its push carries no `postId`, so
   a tap on the phone opens the feed, not the queue.
@@ -883,3 +884,82 @@ run against a real PostgreSQL with 073 applied:
 - hide and delete removing everything.
 
 A control that drops the `NOT visible-before` term from the newly-reached SQL fails 3 cases.
+
+### D39 co-organisation as built (2026-10-05)
+
+Branch `feat/spaces-coorganise`, stacked on `feat/spaces-repost`. Until then a co-organiser
+(`coOwnerIds`) was added without its consent, held every right on the event at once, and the agenda
+filter read the organiser only.
+
+**The model.** Naming a co-organiser is a `coorganise` proposal (subject = the event) on the generic
+`proposals` table. `association_calendar_event_co_owners` now means **accepted**: its row is written
+only by the acceptance (`apply`). Both readers of that table therefore read consent:
+
+- the rights - `findCalendarEventForAssociation`: edit, poster, delete, as before, but only once
+  accepted;
+- the reach - `eventVisibleToUserSql` in `spaces/reader-spaces.ts`.
+
+A pending or refused co-organiser lives only in `proposals`, so it has no right and no appearance.
+
+- **Flags**: the sender is the organiser (`PROPOSE_EVENT`, the right that writes its events); the
+  acceptors are the receiver's `POST_AS_ASSO` holders - the repost rule, no new grant. They are
+  notified (`coorganise_proposed`, push key `social_coorganise_proposed` in the Android, iOS and NSE
+  tables; `postId` carries the receiving association, like `repost_proposed`).
+- **Reach**: an event is visible to a signed-in reader when its organiser OR an accepted
+  co-organiser is visible to them (D21 membership included) - the union, since an event has no
+  rules of its own. ONE predicate, used by `restrictToViewerSpaces` for the aggregated feed and the
+  per-association `/events`. Those are the only two server reads that filter events per reader:
+  - event announcements to readers do not exist (the `event_*` notifications go to the
+    association's proposers and the BDE validators);
+  - the post-linked event routes are gated by the post's own visibility;
+  - the anonymous feed and `.ics` are untouched (D40 is a separate package).
+- **Through the event form** (`coOwnerIds` on create and update, `CoorganisationService.sync`,
+  against the current state):
+  - a new name is proposed;
+  - a pending one left out is withdrawn;
+  - an accepted one left out is ENDED: its row goes, and its proposal moves `accepted -> withdrawn`
+    so the pair may be asked again;
+  - a refused one is NOT asked again (the refusal stands; logged);
+  - a caller writing through a co-organiser's own route may only remove that association (leave);
+    anything else is a 403 before any write.
+  - Because `AssociationsModule` cannot import the proposals, the co-organisation module registers
+    a port (`co-organisers.port.ts`) at boot, the way a kind registers with `ProposalsService`.
+- **A co-organiser that refuses or leaves**: the event stays with its organiser, and its audience
+  is recomputed on the next read (the row is gone). No expiry; no clock decides a proposal.
+- **Reading the states**: `GET /api/associations/:id/events/:eventId/co-organisers` (accepted,
+  pending, refused), for whoever may write the event through `:id` - the write rule, now
+  `AssociationsService.assertMayWriteEvent`, shared with the controller.
+- **Frontend**:
+  - the picker shows each co-organiser's state and lists the refused ones apart;
+  - the form sends `coOwnerIds` only once the states have loaded, since the event's own `coOwners`
+    names only the accepted ones and a list seeded from it would withdraw every pending proposal;
+  - the receiving side decides in the proposal queue, renamed "Propositions" for both kinds.
+
+**Migration 074 (`074_coorganise.sql`), replay-safe** (every statement guarded; the spec runs it twice):
+
+1. `coorganise` is added to the kind CHECK.
+2. Duplicate co-owner pairs and orphans are removed. The table was built by `synchronize` with no
+   unique key, so either may exist; then a unique index on `(event_id, association_id)` is created.
+3. **EXISTING CO-OWNERS ARE BACKFILLED AS ACCEPTED** - one `accepted` proposal each, decided by
+   `migration-074`. They keep their rights and their reach: a backfill dropping them would have taken
+   both away silently.
+4. An `AFTER DELETE` trigger on `association_calendar_events` removes an event's co-owner rows and
+   its `coorganise` proposals.
+
+**Proof.** `coorganisation/coorganisation.integration.spec.ts` runs the real `AssociationsService`,
+`ProposalsService` and `CoorganisationService` against PostgreSQL, over tables built by
+`synchronize` and migrations 071-074. It covers:
+
+- the backfill and its replay;
+- propose, accept, refuse and withdraw, by the form and by the queue;
+- no right and no agenda entry before acceptance, both after;
+- the union reach;
+- leave and removal recomputing the reach;
+- the permission refusals;
+- the delete trigger.
+
+`reader-spaces.integration.spec.ts` adds the event predicate to the reader matrix. A control that
+removes the co-organiser branch of `eventVisibleToUserSql` fails 2 cases.
+
+**Not verified**: no browser pass (the picker states, the queue rows and the notification were
+checked by `svelte-check` and the component tests only), and no device push.

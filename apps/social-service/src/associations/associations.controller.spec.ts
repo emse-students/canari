@@ -298,14 +298,18 @@ describe('AssociationsController delete tier', () => {
  */
 describe('AssociationsController calendar event writes', () => {
   function makeController(mayAct: boolean, isBde = false) {
-    const service = {
+    // On the service's own prototype, so `assertMayWriteEvent` is the REAL rule (it moved into the
+    // service so the co-organiser route shares it), run over the two answers mocked below - these
+    // cases still pin the rule, not a stub of it.
+    const service = Object.assign(Object.create(AssociationsService.prototype) as object, {
       mayAct: jest.fn(() => Promise.resolve(mayAct)),
       mayValidateEvent: jest.fn(() => Promise.resolve(isBde)),
       updateCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev1' })),
       deleteCalendarEvent: jest.fn(() => Promise.resolve({ ok: true })),
       setEventImageFromUpload: jest.fn(() => Promise.resolve({ id: 'ev1' })),
       clearEventImage: jest.fn(() => Promise.resolve({ id: 'ev1' })),
-    };
+      logger: { debug: jest.fn() },
+    });
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
       {} as ProductsService,

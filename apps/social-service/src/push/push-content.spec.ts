@@ -15,6 +15,7 @@ import {
   followedPostContent,
   associationRepostContent,
   repostProposedContent,
+  coorganiseProposedContent,
   previewOf,
   markdownToPreviewText,
   publicMediaIconId,
@@ -51,6 +52,7 @@ describe('push content', () => {
     ['followedPost', followedPostContent('Claire', 'hello')],
     ['associationRepost', associationRepostContent('BDE', 'hello')],
     ['repostProposed', repostProposedContent('BDE', 'hello')],
+    ['coorganiseProposed', coorganiseProposedContent('BDE', 'Gala')],
   ];
 
   it.each(ALL)('%s carries a key, not only a sentence', (_name, content) => {
@@ -318,6 +320,7 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_followed_post', followedPostContent(ACTOR, '')],
     ['social_association_repost', associationRepostContent(ACTOR, '')],
     ['social_repost_proposed', repostProposedContent(ACTOR, '')],
+    ['social_coorganise_proposed', coorganiseProposedContent(ACTOR, '')],
   ];
 
   /**

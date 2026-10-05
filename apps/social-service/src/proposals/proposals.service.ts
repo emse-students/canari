@@ -13,6 +13,12 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import { isUniqueViolation } from '../common/pg-errors';
 import { Proposal, type ProposalKind, type ProposalStatus } from './proposal.entity';
 
+/** The first row of an `UPDATE ... RETURNING`, which node-postgres answers as [rows, count] via TypeORM. */
+function firstReturned(result: unknown): Proposal | null {
+  const rows = Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result;
+  return Array.isArray(rows) ? ((rows[0] as Proposal | undefined) ?? null) : null;
+}
+
 /** Work owed once the decision has COMMITTED - a notification, a cache sweep. Never inside it. */
 export type AfterCommit = () => Promise<void>;
 
@@ -43,8 +49,7 @@ export interface ProposalView {
  * what is proposed, who may send and decide it, and what accepting it DOES.
  *
  * A handler registers itself (`ProposalsService.register`) from its own module, so this module
- * imports none of them: `repost` lives with the posts, and co-organisation (D39) will live with the
- * events.
+ * imports none of them: `repost` lives with the posts, `coorganise` (D39) in `coorganisation/`.
  */
 export interface ProposalKindHandler {
   readonly kind: ProposalKind;
@@ -102,19 +107,30 @@ export class ProposalsService {
    * `actorId` asks `toAssociationId` to accept `subjectId`, in the name of the association the
    * handler resolves as the sender. 403 without the sender flag there; 409 when the same proposal
    * already stands (pending, accepted or refused). The acceptors are told after the row is stored.
+   *
+   * `senderVouched`: the caller has ALREADY established that the actor speaks for the sending
+   * association by a rule of the subject itself - the event write check, for `coorganise`, which
+   * also admits the BDE validator governing the organiser. The sender flag is then not asked again;
+   * the decision stays the receiver's, and that check is never skipped.
    */
   async propose(
     kind: ProposalKind,
     subjectId: string,
     toAssociationId: string,
     actorId: string,
-    isGlobalAdmin: boolean
+    isGlobalAdmin: boolean,
+    opts: { senderVouched?: boolean } = {}
   ): Promise<Proposal> {
     const handler = this.handler(kind);
     const fromAssociationId = await handler.resolveSender(subjectId, toAssociationId);
-    const maySend = await this.associations.mayAct(actorId, fromAssociationId, handler.senderFlag, {
-      isGlobalAdmin,
-    });
+    if (opts.senderVouched === true) {
+      this.logger.debug(`[PROPOSAL] ${kind} by ${actorId.slice(0, 8)}: sender right vouched`);
+    }
+    const maySend =
+      opts.senderVouched === true ||
+      (await this.associations.mayAct(actorId, fromAssociationId, handler.senderFlag, {
+        isGlobalAdmin,
+      }));
     if (!maySend) {
       this.logger.debug(
         `[PROPOSAL] ${actorId.slice(0, 8)} refused: no sender flag in ${fromAssociationId.slice(0, 8)}`
@@ -265,6 +281,35 @@ export class ProposalsService {
     return { incoming, outgoing };
   }
 
+  /**
+   * Moves the `kind` proposal of (`subjectId`, `toAssociationId`) from `from` to `withdrawn` inside
+   * `manager`'s transaction, and returns it - or null when none is in that state. For a kind whose
+   * handler ENDS what was accepted (a co-organiser leaving, D39) as well as a pending one being
+   * withdrawn: the row frees its place in the unique index, so the pair may be proposed again. The
+   * CALLER owns the rights; this owns only the conditional write, so two racing enders get one row
+   * and one null.
+   */
+  async withdrawBySubject(
+    manager: EntityManager,
+    kind: ProposalKind,
+    subjectId: string,
+    toAssociationId: string,
+    from: 'pending' | 'accepted',
+    actorId: string
+  ): Promise<Proposal | null> {
+    const result: unknown = await manager.query(
+      `UPDATE proposals SET status = 'withdrawn', "decidedBy" = $5, "decidedAt" = now()
+        WHERE kind = $1 AND "subjectId" = $2 AND "toAssociationId" = $3 AND status = $4
+        RETURNING *`,
+      [kind, subjectId, toAssociationId, from, actorId]
+    );
+    const row = firstReturned(result);
+    this.logger.log(
+      `[PROPOSAL] ${kind} ${subjectId.slice(0, 8)} -> ${toAssociationId.slice(0, 8)}: ${from} -> withdrawn by ${actorId.slice(0, 8)} (${row ? 'done' : 'none'})`
+    );
+    return row;
+  }
+
   private async load(proposalId: string): Promise<Proposal> {
     const proposal = await this.repo.findOne({ where: { id: proposalId } });
     if (!proposal) throw new NotFoundException('Proposal not found');
@@ -299,9 +344,7 @@ export class ProposalsService {
         WHERE id = $1 AND status = 'pending' RETURNING *`,
       [proposalId, status, actorId]
     );
-    // node-postgres answers an UPDATE ... RETURNING as [rows, count] through TypeORM.
-    const rows = Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result;
-    const row = Array.isArray(rows) ? (rows[0] as Proposal | undefined) : undefined;
+    const row = firstReturned(result);
     if (!row) {
       this.logger.debug(`[PROPOSAL] ${proposalId.slice(0, 8)} is no longer pending`);
       throw new ConflictException('This proposal has already been decided');

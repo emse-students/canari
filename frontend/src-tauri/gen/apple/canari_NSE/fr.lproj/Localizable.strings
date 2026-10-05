@@ -36,6 +36,8 @@
 "notif.social.association_repost.body" = "Nouvelle publication";
 "notif.social.repost_proposed.title" = "%@ propose de relayer une publication";
 "notif.social.repost_proposed.body" = "Publication à relayer";
+"notif.social.coorganise_proposed.title" = "%@ propose de co-organiser un événement";
+"notif.social.coorganise_proposed.body" = "Événement à co-organiser";
 "notif.form.opening_soon.title" = "Formulaire bientôt ouvert";
 "notif.form.opening_soon.body" = "Un formulaire que vous suivez ouvre dans 5 minutes !";
 "notif.form.open.title" = "Formulaire ouvert !";

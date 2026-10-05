@@ -68,12 +68,14 @@ import {
 import {
   associationRulesReachSpaceMatchingSql,
   associationVisibleToViewerSql,
+  eventVisibleToViewerSql,
   READER_SPACES_SQL,
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { smallestRules } from '../spaces/spaces.service';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
+import type { CoOrganiserPort } from './co-organisers.port';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 
@@ -246,6 +248,25 @@ export class AssociationsService {
     private readonly notifications: PostNotificationsService,
     private readonly userTagService: UserTagService
   ) {}
+
+  /** Co-organisation (D39), registered at boot by `CoorganisationModule` - see `co-organisers.port`. */
+  private coOrganisers: CoOrganiserPort | null = null;
+
+  /** Called once, by the co-organisation service. A second registration is a wiring defect. */
+  registerCoOrganisers(port: CoOrganiserPort): void {
+    if (this.coOrganisers) throw new Error('co-organisers registered twice');
+    this.coOrganisers = port;
+    this.logger.log('[COORG] co-organisation registered');
+  }
+
+  private coOrganiserPort(): CoOrganiserPort {
+    if (!this.coOrganisers) {
+      // Not a user error: the module that implements it was not loaded, and every event write
+      // naming a co-organiser would silently drop it.
+      throw new Error('co-organisation is not registered (CoorganisationModule missing)');
+    }
+    return this.coOrganisers;
+  }
 
   /**
    * Drops every cached feed page so the next request rebuilds it with this association's new name,
@@ -981,10 +1002,11 @@ export class AssociationsService {
   }
 
   /**
-   * Returns the event if the caller's association is the primary owner OR a co-owner.
-   * Pass `canCrossAsso = true` for BDE / global-admin callers (no ownership check).
+   * Returns the event if the caller's association is the primary owner OR an ACCEPTED co-organiser
+   * (D39: a co-owner row exists only once its `coorganise` proposal was accepted, so a pending one
+   * reaches nothing here). Pass `canCrossAsso = true` for BDE / global-admin callers.
    */
-  private async findCalendarEventForAssociation(
+  async findCalendarEventForAssociation(
     eventId: string,
     associationId: string,
     canCrossAsso: boolean
@@ -1005,20 +1027,7 @@ export class AssociationsService {
       .getOne();
   }
 
-  /** Replaces the full co-owner list for an event atomically. */
-  private async syncCoOwners(
-    eventId: string,
-    primaryAssociationId: string,
-    coOwnerIds: string[]
-  ): Promise<AssociationCalendarEventCoOwner[]> {
-    await this.coOwnerRepo.delete({ eventId });
-    const validIds = [...new Set(coOwnerIds)].filter((id) => id !== primaryAssociationId);
-    if (validIds.length === 0) return [];
-    const rows = validIds.map((id) => this.coOwnerRepo.create({ eventId, associationId: id }));
-    return this.coOwnerRepo.save(rows);
-  }
-
-  /** Batch-loads co-owners for a list of event IDs (2 queries total). */
+  /** Batch-loads the ACCEPTED co-organisers for a list of event IDs (2 queries total). */
   private async batchLoadCoOwners(
     eventIds: string[]
   ): Promise<Map<string, AssociationCalendarEventCoOwner[]>> {
@@ -1286,12 +1295,12 @@ export class AssociationsService {
   }
 
   /**
-   * A SIGNED-IN READER'S AGENDA IS THEIR SPACES' (WP6b): an event is kept when the rules of its
-   * association reach one of the reader's spaces, when the reader is a member of that association
-   * (D21), or when the reader is a global admin - `associationVisibleToViewerSql`, the predicate the
-   * feed uses for an association post. An anonymous read (the public agenda and its `.ics`, D30)
-   * passes no viewer and is left whole, exactly as the promo cutoff leaves it: like that cutoff,
-   * this is relevance and not confidentiality.
+   * A SIGNED-IN READER'S AGENDA IS THEIR SPACES' (WP6b, D39): an event is kept when its ORGANISER
+   * or one of its ACCEPTED co-organisers is visible to the reader - its rules reach one of their
+   * spaces, or the reader is a member (D21) - `eventVisibleToViewerSql`, the one predicate for an
+   * event. An anonymous read (the public agenda and its `.ics`, D30) passes no viewer and is left
+   * whole, exactly as the promo cutoff leaves it: like that cutoff, this is relevance and not
+   * confidentiality.
    */
   private restrictToViewerSpaces(
     qb: SelectQueryBuilder<AssociationCalendarEvent>,
@@ -1300,7 +1309,7 @@ export class AssociationsService {
     const viewerId = viewer?.userId?.trim();
     if (!viewerId) return;
     this.logger.debug(`[AGENDA] restricted to the spaces of ${viewerId.slice(0, 8)}`);
-    qb.andWhere(associationVisibleToViewerSql('e."associationId"', ':agendaViewerId'), {
+    qb.andWhere(eventVisibleToViewerSql('e', ':agendaViewerId'), {
       agendaViewerId: viewerId,
     });
   }
@@ -1443,6 +1452,39 @@ export class AssociationsService {
       return false;
     }
     return this.mayValidateEventsOf(userId, ev.associationId);
+  }
+
+  /**
+   * THE ONE RULE FOR EVERY WRITE ON AN EXISTING EVENT, routed through association `associationId`:
+   * a global admin, VALIDATE_EVENTS in the BDE governing the EVENT's association (read from the row),
+   * or PROPOSE_EVENT in `associationId` through `mayAct`. Which events that last tier reaches is
+   * `findCalendarEventForAssociation`'s: the organiser's, or an ACCEPTED co-organiser's (D39).
+   * Returns the tier, which the cross-association paths need.
+   */
+  async assertMayWriteEvent(
+    userId: string,
+    isGlobalAdmin: boolean,
+    associationId: string,
+    eventId: string
+  ): Promise<{ isGlobalAdmin: boolean; isBde: boolean }> {
+    const isBde = isGlobalAdmin ? false : await this.mayValidateEvent(userId, eventId);
+    if (!isGlobalAdmin && !isBde) {
+      // Through `mayAct`, so a cross-association super-admin may act on an event in an association
+      // they administer - the guard on `POST :id/events` already lets them CREATE one there.
+      const hasPerm = await this.mayAct(
+        userId,
+        associationId,
+        AssociationPermissionFlag.PROPOSE_EVENT,
+        { isGlobalAdmin }
+      );
+      if (!hasPerm) {
+        this.logger.debug(
+          `[PERM] event write refused: ${sanitizeLog(userId.slice(0, 8))} via ${sanitizeLog(associationId.slice(0, 8))}`
+        );
+        throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
+      }
+    }
+    return { isGlobalAdmin, isBde };
   }
 
   /**
@@ -2014,9 +2056,24 @@ ${rejectionReason}`
       validatedBy: null,
     });
     const saved = await this.calendarRepo.save(row);
-    const coOwners = await this.syncCoOwners(saved.id, targetId, dto.coOwnerIds ?? []);
+    // D39: every co-organiser named here is ASKED, so a new event has no co-owner row yet - its
+    // reach and its rights stay the organiser's until one accepts. The creator writes as the
+    // organiser (the guard, or the BDE / global admin tier for a deposit).
+    const askedCount = new Set((dto.coOwnerIds ?? []).filter((id) => id !== targetId)).size;
+    if (askedCount > 0) {
+      await this.coOrganiserPort().sync({
+        eventId: saved.id,
+        organiserId: targetId,
+        desiredIds: dto.coOwnerIds ?? [],
+        actorId: userId,
+        isGlobalAdmin: callerOpts?.isGlobalAdmin === true,
+        organiserSide: true,
+        viaAssociationId: associationId,
+      });
+    }
+    const coOwners: AssociationCalendarEventCoOwner[] = [];
     this.logger.debug(
-      `Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, coOwners=${coOwners.length})`
+      `Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, co-organisers asked=${askedCount})`
     );
     // EVERY creation is a proposal, so the calendar managers are told about every one - there is
     // no longer a branch here, because there is no longer a creation that skips the queue.
@@ -2133,11 +2190,24 @@ ${rejectionReason}`
       }
     }
 
+    // D39: the list is turned into proposals BEFORE the event is saved, so a refusal (a co-organiser
+    // trying to change anything but its own presence, 403) leaves the event as it was found.
+    if (dto.coOwnerIds !== undefined) {
+      if (!callerOpts?.callerUserId) {
+        throw new ForbiddenException('A co-organiser change needs a caller');
+      }
+      await this.coOrganiserPort().sync({
+        eventId: ev.id,
+        organiserId: ev.associationId,
+        desiredIds: dto.coOwnerIds,
+        actorId: callerOpts.callerUserId,
+        isGlobalAdmin: callerOpts.isGlobalAdmin === true,
+        organiserSide: canCrossAsso === true || ev.associationId === associationId,
+        viaAssociationId: associationId,
+      });
+    }
     const saved = await this.calendarRepo.save(ev);
-    const coOwners =
-      dto.coOwnerIds !== undefined
-        ? await this.syncCoOwners(saved.id, saved.associationId, dto.coOwnerIds)
-        : await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
+    const coOwners = await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
     this.logger.debug(
       `Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
     );

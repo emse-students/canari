@@ -41,7 +41,7 @@
     HandCoins,
     Share2,
     Handshake,
-    Repeat2,
+    Inbox,
   } from '@lucide/svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
@@ -53,7 +53,7 @@
   import EditCotisationsTab from '$lib/components/associations/edit/EditCotisationsTab.svelte';
   import EditDelegationTab from '$lib/components/associations/edit/EditDelegationTab.svelte';
   import EditPartnershipsTab from '$lib/components/associations/edit/EditPartnershipsTab.svelte';
-  import EditRepublicationsTab from '$lib/components/associations/edit/EditRepublicationsTab.svelte';
+  import EditProposalsTab from '$lib/components/associations/edit/EditProposalsTab.svelte';
   import LydiaBusinessOnboardingForm from '$lib/components/associations/edit/LydiaBusinessOnboardingForm.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -151,12 +151,15 @@
     mayActOnAssociation(AssociationPermissionFlag.MANAGE_PARTNERSHIPS, permissionContext)
   );
   /**
-   * The republication queue (D38): its acceptors and senders are this association's `POST_AS_ASSO`
-   * holders, the flag the server checks. Only an association republishes, never a promo list.
+   * The proposal queue: republications (D38) and co-organisations (D39). `POST_AS_ASSO` accepts
+   * both (and sends republications - only an association does, the server refuses the rest);
+   * `PROPOSE_EVENT` sends and withdraws co-organisations. The server filters the rows per kind, so
+   * holding either is what makes the tab worth drawing. The section key stays `republications`:
+   * notifications already in people's lists deep-link to it.
    */
-  let canHandleRepublications = $derived(
-    asso?.type === 'association' &&
-      mayActOnAssociation(AssociationPermissionFlag.POST_AS_ASSO, permissionContext)
+  let canHandleProposals = $derived(
+    mayActOnAssociation(AssociationPermissionFlag.POST_AS_ASSO, permissionContext) ||
+      mayActOnAssociation(AssociationPermissionFlag.PROPOSE_EVENT, permissionContext)
   );
   /**
    * The super-admin tier drops out on its own: `MANAGE_STRIPE_CONNECT` is in
@@ -546,7 +549,7 @@
               {m.asso_edit_tab_partenariats()}
             </button>
           {/if}
-          {#if canHandleRepublications}
+          {#if canHandleProposals}
             <button
               type="button"
               onclick={() => (editSection = 'republications')}
@@ -555,8 +558,8 @@
                 ? 'bg-cn-yellow text-cn-ink shadow-sm'
                 : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
             >
-              <Repeat2 size={17} />
-              {m.asso_edit_tab_republications()}
+              <Inbox size={17} />
+              {m.asso_edit_tab_proposals()}
             </button>
           {/if}
           {#if canArchiveAssociation}
@@ -825,8 +828,8 @@
         <EditPartnershipsTab {asso} />
       {/if}
 
-      {#if editSection === 'republications' && canHandleRepublications && asso}
-        <EditRepublicationsTab {asso} />
+      {#if editSection === 'republications' && canHandleProposals && asso}
+        <EditProposalsTab {asso} />
       {/if}
 
       {#if editSection === 'danger' && canArchiveAssociation}

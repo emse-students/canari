@@ -152,6 +152,8 @@ class NotificationService: UNNotificationServiceExtension {
     // Republication (D38): the republishing, then the proposing, association names the title.
     case "social_association_repost": composed = actorTitled("association_repost")
     case "social_repost_proposed": composed = actorTitled("repost_proposed")
+    // Co-organisation (D39): the organising association names the title, the event is the body.
+    case "social_coorganise_proposed": composed = actorTitled("coorganise_proposed")
     case "social_reaction":
       composed = (
         Self.localized("notif.social.reaction.title", locale: locale),

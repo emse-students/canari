@@ -262,6 +262,16 @@ export interface CalendarEventCoOwner {
   logoUrl: string | null;
 }
 
+/** Where a co-organiser stands (D39). Only `accepted` ones are on `coOwners` and on the agenda. */
+export type CoOrganiserStatus = 'accepted' | 'pending' | 'refused';
+
+/** One co-organiser of an event with its state, from `GET .../events/:eventId/co-organisers`. */
+export interface CalendarEventCoOrganiserState extends CalendarEventCoOwner {
+  status: CoOrganiserStatus;
+  /** The proposal behind the state (null only for a row with none). */
+  proposalId: string | null;
+}
+
 export interface AssociationCalendarEvent {
   id: string;
   associationId: string;
@@ -284,7 +294,7 @@ export interface AssociationCalendarEvent {
   linkedFormId: string | null;
   /** Poster/banner image URL (public, served via media-service). */
   imageUrl: string | null;
-  /** Other associations co-managing this event. */
+  /** The ACCEPTED co-organisers (D39); one asked and not yet answering is not here. */
   coOwners: CalendarEventCoOwner[];
 }
 
@@ -312,7 +322,7 @@ export interface CreateAssociationCalendarEventPayload {
   linkedFormId?: string;
   /** BDE / global admin only: create on behalf of another association. */
   targetAssocId?: string;
-  /** IDs of associations co-managing this event (max 10). */
+  /** Associations ASKED to co-organise this event (D39, max 10): each decides. */
   coOwnerIds?: string[];
 }
 
@@ -324,7 +334,12 @@ export interface UpdateAssociationCalendarEventPayload {
   /** `event` or `break` (a full-day background band). */
   kind?: AssociationCalendarEventKind;
   linkedFormId?: string | null;
-  /** Replaces the full co-owner list. Omit to leave unchanged. */
+  /**
+   * The co-organisers the form now names, accepted and pending included (D39): a new one is asked,
+   * a pending one left out is withdrawn, an accepted one left out is ended. Omit to leave unchanged
+   * - and omitted it MUST be when the current states could not be read, or a pending one the form
+   * never knew about would be withdrawn.
+   */
   coOwnerIds?: string[];
 }
 
@@ -629,6 +644,20 @@ export async function updateAssociationCalendarEvent(
   return request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}`,
     { method: 'PATCH', body: JSON.stringify(payload) }
+  );
+}
+
+/**
+ * Every co-organiser of an event with its state (D39): `accepted` co-organises (rights and reach),
+ * `pending` was asked and has not answered, `refused` said no and is not asked again. For the
+ * event's editors only (the same right as editing it through `associationId`).
+ */
+export async function listEventCoOrganisers(
+  associationId: string,
+  eventId: string
+): Promise<CalendarEventCoOrganiserState[]> {
+  return request<CalendarEventCoOrganiserState[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/co-organisers`
   );
 }
 

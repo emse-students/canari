@@ -166,4 +166,12 @@ describe('NotificationRow sentence', () => {
     expect(proposed.textContent).toContain('propose de relayer');
     expect(proposed.textContent).not.toContain('a commenté');
   });
+
+  // D39: the organising association asks to co-organise an event, with its logo.
+  it('says an association PROPOSES to co-organise, with its logo', () => {
+    const row = renderRow({ ...postRow('coorganise_proposed'), associationId: 'asso-1' });
+    expect(row.textContent).toContain('propose de co-organiser');
+    expect(row.textContent).not.toContain('a commenté');
+    expect(row.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+  });
 });
