@@ -243,6 +243,24 @@ production. Authorization is not always a decorator, though - several routes cal
 `assertInternalSecret()`, `assertCanManageAssociation()` or `verifyPushSecretAuth()` as their first
 statement, and **counting decorators counts decorators.**
 
+#### Code scanning `js/user-controlled-bypass` on `HeaderAuthGuard` is a false positive (audited 2026-10-05)
+
+CodeQL alert #2547 flags `if (loggedIn !== 'true')` in `apps/chat-delivery-service/src/guards/header-auth.guard.ts`
+because the value is a request header. Written justification, for the USER to dismiss it ("false positive"):
+
+- **Who sets the header.** nginx, from the `/internal/auth/verify` sub-request (`auth_request_set`), in every
+  guarded location of `infrastructure/local/Dockerfile.frontend` (`proxy_set_header X-User-Logged-In $user_logged_in;`,
+  e.g. lines 345, 369, 427, 470). The unguarded and server-level blocks overwrite it with `"false"` / `""` (lines 101-103, 165-167, 500-502).
+- **A client cannot forge it alone.** Even if a header reached the service, in production the guard also requires
+  the per-minute HMAC `x-internal-token` for the same `x-user-id` (`internal-token.ts`), minted by nginx under
+  `INTERNAL_SHARED_SECRET`, and it FAILS CLOSED when that secret is unset and `NODE_ENV=production`.
+- **The service is not reachable except through nginx.** `infrastructure/docker-compose.prod.yml` declares it with
+  `expose: "3010"` (no `ports:`). Only `infrastructure/local/docker-compose.yml` publishes 3010, a developer stack
+  with no secret and `NODE_ENV=development`, which is the one place the bare header is trusted.
+- **Tests** (`header-auth.guard.spec.ts`): missing, empty, `false` and `True` headers are refused; a forged
+  `x-user-logged-in: true` + `x-user-id` without a valid token is refused when the secret is set; production with
+  no secret refuses even the `true` header.
+
 **On the two Axum crates there is no guard layer at all**, so the handler's own body is the whole of
 the enforcement: `get_presence` and `get_admin_presence` read the headers nginx set
 (`is_authenticated`, `x-global-admin`), and both WebSocket upgrades decode the `canari_ws_token` JWT,
