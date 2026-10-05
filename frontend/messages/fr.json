@@ -1960,6 +1960,8 @@
   "form_cancel_back_button": "Retour aux formulaires",
   "form_success_title": "Paiement réussi",
   "form_success_verifying": "Vérification du paiement…",
+  "form_success_pending_heading": "Paiement en cours de confirmation",
+  "form_success_pending_desc": "Votre paiement n'est pas encore confirmé. Cela peut prendre un moment : revenez sur le formulaire dans quelques minutes.",
   "form_success_confirmed_heading": "Paiement confirmé !",
   "form_success_confirmed_desc": "Votre inscription a bien été enregistrée. Vous recevrez une confirmation par email.",
   "form_success_back_to_form": "Retour au formulaire",

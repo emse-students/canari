@@ -287,6 +287,24 @@ Lydia confirmed on 2026-10-04 that a request must be between **0,50 EUR and 1000
 letting Lydia answer. In homologation the payer page offers a card form and, at its end, buttons to
 choose the final status - a real card is refused at the 3-D Secure step, so never type one there.
 
+## Where Lydia sends the payer back (2026-10-05)
+
+Stripe replaces `{CHECKOUT_SESSION_ID}` in a return URL when it redirects; **Lydia does not**, so a
+paid form's page received the literal braces, `verify-session` refused it and the screen said
+"payment not found" while the signed callback had in fact marked the submission paid. For Lydia,
+`forms.service.ts` now swaps that placeholder for `submission_id=<id>` (the id exists before the
+request does), the success page reads the submission and keeps asking while it is `pending` (the
+callback may land after the redirect; `paymentReturnVerdict` is the one rule, at most 10 reads 3 s
+apart, then an honest "awaiting confirmation" instead of an error), and the cancel page cancels that
+pending submission. The boutique needs none of this: its return URLs carry no session id and its
+fulfilment is the callback.
+
+**Not verified, and owed to Lydia or a phone**: whether Lydia appends parameters to
+`browser_success_url`, whether it accepts the `fr.emse.canari://` deep link the phone app sends,
+and the mobile deep-link branch itself (`hooks.client.ts` reads `submission_id` now). A return URL
+you see in a test is the one the request was created with: a link made by hand with `/ok` and
+`/ko` returns there, which is how a test once ended on `/ko`.
+
 ## Which onboarding flag a screen reads (2026-10-03)
 
 Stripe and Lydia keep independent account ids and `*OnboardingComplete` flags (migration 037), so
