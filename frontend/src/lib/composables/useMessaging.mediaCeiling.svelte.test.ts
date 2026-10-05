@@ -20,6 +20,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
+import { segmentedCiphertextLength } from '$lib/mediaSegmented';
 
 // Same import-cycle break as the other useMessaging tests: useMessaging -> chat/outbox ->
 // chat/outboxMirror -> globalChatSingleton, which calls useMessaging() at module scope.
@@ -44,8 +45,12 @@ import type { Conversation } from '$lib/types';
 const CONVO = 'conversation-key';
 /** What every server in this estate is configured with, and what the fixture server answers. */
 const SERVER_MAX_BYTES = 50 * 1024 * 1024;
-/** The AES-GCM tag, the whole of the difference between the file and what the server measures. */
-const TAG = 16;
+/**
+ * What encryption adds to a file at the ceiling, the whole of the difference between the file and
+ * what the server measures. The segmented writer is ON, so it is the WORST format's overhead (the
+ * header and one tag per megabyte) and not the single GCM tag of 16 bytes.
+ */
+const OVERHEAD = segmentedCiphertextLength(SERVER_MAX_BYTES) - SERVER_MAX_BYTES;
 
 /**
  * A file this test never allocates. `prepareMediaFiles` reads `size`, `type` and `name` and nothing
@@ -131,13 +136,13 @@ describe('the upload ceiling comes from the server, not from the build', () => {
     const messaging = await freshMessaging();
     const ctx = makeContext();
 
-    // Exactly the server's ceiling as PLAINTEXT is 16 bytes too big once encrypted.
+    // Exactly the server's ceiling as PLAINTEXT is too big once encrypted.
     await messaging.handleFilesSelected([fileOf(SERVER_MAX_BYTES)], ctx);
     expect(ctx.setSendError).toHaveBeenCalledTimes(1);
 
     // One byte under that is the largest file that fits, and it must not be refused.
     const ctx2 = makeContext();
-    await messaging.handleFilesSelected([fileOf(SERVER_MAX_BYTES - TAG)], ctx2);
+    await messaging.handleFilesSelected([fileOf(SERVER_MAX_BYTES - OVERHEAD)], ctx2);
     expect(ctx2.setSendError).not.toHaveBeenCalled();
   });
 
