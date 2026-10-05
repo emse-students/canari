@@ -117,7 +117,7 @@ export async function saveProfile(
   input: ProfileEditInput,
   requestId?: string
 ): Promise<{ changed: boolean }> {
-  Log.d('profile.save', userId.slice(0, 8), requestId ? 'for a request' : 'direct');
+  Log.d('profile.save', { user: userId.slice(0, 8), forRequest: !!requestId });
   const res = await apiFetch(`${coreUrl()}/api/users/${encodeURIComponent(userId)}/profile`, {
     method: 'PUT',
     body: JSON.stringify(requestId ? { ...input, requestId } : input),

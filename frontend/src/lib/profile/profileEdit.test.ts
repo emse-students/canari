@@ -31,7 +31,7 @@ describe('profile calls', () => {
   beforeEach(() => apiFetch.mockReset());
 
   it('PUTs the whole profile to the person, and names the request when it answers one', async () => {
-    apiFetch.mockResolvedValue(reply(200, { changed: true }));
+    apiFetch.mockImplementation(async () => reply(200, { changed: true }));
     await saveProfile('u 1', input);
     await saveProfile('u 1', input, 'req-1');
     const [direct, answering] = apiFetch.mock.calls;

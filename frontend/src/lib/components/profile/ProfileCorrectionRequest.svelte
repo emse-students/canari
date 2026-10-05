@@ -93,8 +93,7 @@
         bind:value={message}
         maxlength={CORRECTION_MESSAGE_MAX}
         placeholder={m.profile_correction_placeholder()}
-        required
-      ></textarea>
+        required></textarea>
       {#if error}
         <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-sm">
           {error}

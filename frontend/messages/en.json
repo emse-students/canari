@@ -182,13 +182,8 @@
   "chat_community_members_description": "Manage club members and their global roles.",
   "chat_community_member_count_label": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} member",
         "countPlural=other": "{count} members"
@@ -225,13 +220,8 @@
   "chat_search_limited_loaded_warning": "Search limited to loaded messages. Scroll up to load more.",
   "chat_active_polls_count": [
     {
-      "declarations": [
-        "input activePolls",
-        "local activePollsPlural = activePolls: plural"
-      ],
-      "selectors": [
-        "activePollsPlural"
-      ],
+      "declarations": ["input activePolls", "local activePollsPlural = activePolls: plural"],
+      "selectors": ["activePollsPlural"],
       "match": {
         "activePollsPlural=one": "{activePolls} active poll",
         "activePollsPlural=other": "{activePolls} active polls"
@@ -240,13 +230,8 @@
   ],
   "chat_pinned_messages_count": [
     {
-      "declarations": [
-        "input pinnedIds",
-        "local pinnedIdsPlural = pinnedIds: plural"
-      ],
-      "selectors": [
-        "pinnedIdsPlural"
-      ],
+      "declarations": ["input pinnedIds", "local pinnedIdsPlural = pinnedIds: plural"],
+      "selectors": ["pinnedIdsPlural"],
       "match": {
         "pinnedIdsPlural=one": "{pinnedIds} pinned message",
         "pinnedIdsPlural=other": "{pinnedIds} pinned messages"
@@ -268,13 +253,8 @@
   "chat_back_label": "Back to menu",
   "chat_pending_files_count": [
     {
-      "declarations": [
-        "input pendingFiles",
-        "local countPlural = pendingFiles: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input pendingFiles", "local countPlural = pendingFiles: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{pendingFiles} file pending",
         "countPlural=other": "{pendingFiles} files pending"
@@ -350,13 +330,8 @@
   "chat_device_last_one_error": "The last device cannot be deleted: you would lose access to your encrypted conversations, and this device could no longer re-register.",
   "chat_devices_count_label": [
     {
-      "declarations": [
-        "input devices",
-        "local devicesPlural = devices: plural"
-      ],
-      "selectors": [
-        "devicesPlural"
-      ],
+      "declarations": ["input devices", "local devicesPlural = devices: plural"],
+      "selectors": ["devicesPlural"],
       "match": {
         "devicesPlural=one": "{devices} device registered",
         "devicesPlural=other": "{devices} devices registered"
@@ -726,13 +701,8 @@
   "post_poll_multiple_choice_label": "Multiple choices allowed",
   "post_poll_days_remaining": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} day left",
         "countPlural=other": "{count} days left"
@@ -741,13 +711,8 @@
   ],
   "post_poll_hours_remaining": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} hour left",
         "countPlural=other": "{count} hours left"
@@ -756,13 +721,8 @@
   ],
   "post_poll_minutes_remaining": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} minute left",
         "countPlural=other": "{count} minutes left"
@@ -773,13 +733,8 @@
   "post_poll_you_voted_label": "You voted",
   "post_poll_vote_count_label": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} vote",
         "countPlural=other": "{count} votes"
@@ -788,13 +743,8 @@
   ],
   "post_poll_total_votes_label": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} vote total",
         "countPlural=other": "{count} votes total"
@@ -1047,13 +997,8 @@
   "moderation_association_post_label": "Club post",
   "moderation_pending_reports_count_label": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} report pending",
         "countPlural=other": "{count} reports pending"
@@ -1209,14 +1154,8 @@
   "admin_status_title": "Live connections",
   "admin_status_subtitle": [
     {
-      "declarations": [
-        "input count",
-        "input sec",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "input sec", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} device - refreshing every {sec}s",
         "countPlural=other": "{count} devices - refreshing every {sec}s"
@@ -1237,13 +1176,8 @@
   "admin_status_no_devices": "No devices.",
   "admin_status_anomalies_heading": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} anomaly - WS and Redis out of sync",
         "countPlural=other": "{count} anomalies - WS and Redis out of sync"
@@ -1270,13 +1204,8 @@
   "chat_e2e_established_preview": "E2E channel established.",
   "chat_unread_messages_label": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} unread message",
         "countPlural=other": "{count} unread messages"
@@ -1359,13 +1288,8 @@
   "asso_sections_nav_label": "Sections",
   "asso_member_count_association": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} member in this club.",
         "countPlural=other": "{count} members in this club."
@@ -1374,13 +1298,8 @@
   ],
   "asso_member_count_list": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} member in this list.",
         "countPlural=other": "{count} members in this list."
@@ -1535,13 +1454,8 @@
   "reviewer_docs_count_label": "{assos} associations · {docs} documents",
   "reviewer_docs_group_count": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} document",
         "countPlural=other": "{count} documents"
@@ -1602,13 +1516,8 @@
   "carte_publish_update_hint": "The live map no longer matches what is saved: replace it with the current version.",
   "carte_overlaps_title": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} overlap",
         "countPlural=other": "{count} overlaps"
@@ -1622,13 +1531,8 @@
   "carte_export_foreground_hint": "Keep this tab in the foreground: in the background the browser throttles rendering and the export can take minutes.",
   "carte_no_members_title": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} association with no members at all",
         "countPlural=other": "{count} associations with no members at all"
@@ -1722,13 +1626,8 @@
   "asso_forms_view_link": "View form ↗",
   "asso_forms_pending_cash_label": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} payment pending validation",
         "countPlural=other": "{count} payments pending validation"
@@ -1767,13 +1666,8 @@
   "asso_achats_payment_online": "Online",
   "asso_achats_count_label": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} purchase",
         "countPlural=other": "{count} purchases"
@@ -1847,13 +1741,8 @@
   "asso_cotisations_load_error": "Failed to load cotisants.",
   "asso_cotisations_total_label": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} cotisant",
         "countPlural=other": "{count} cotisants"
@@ -2402,10 +2291,7 @@
         "local conversationsPlural = conversations: plural",
         "local messagesPlural = messages: plural"
       ],
-      "selectors": [
-        "conversationsPlural",
-        "messagesPlural"
-      ],
+      "selectors": ["conversationsPlural", "messagesPlural"],
       "match": {
         "conversationsPlural=one,messagesPlural=one": "Backup restored: {conversations} conversation, {messages} message.",
         "conversationsPlural=one,messagesPlural=other": "Backup restored: {conversations} conversation, {messages} messages.",
@@ -2422,10 +2308,7 @@
         "local conversationsPlural = conversations: plural",
         "local messagesPlural = messages: plural"
       ],
-      "selectors": [
-        "conversationsPlural",
-        "messagesPlural"
-      ],
+      "selectors": ["conversationsPlural", "messagesPlural"],
       "match": {
         "conversationsPlural=one,messagesPlural=one": "Backup restored on a different device: {conversations} conversation, {messages} message. The conversations stay read-only until the original device invites you back into them.",
         "conversationsPlural=one,messagesPlural=other": "Backup restored on a different device: {conversations} conversation, {messages} messages. The conversations stay read-only until the original device invites you back into them.",
@@ -2650,13 +2533,8 @@
   "calendar_export_back": "Back to calendar",
   "calendar_export_more_events": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "+{count} more",
         "countPlural=other": "+{count} more"
@@ -2881,13 +2759,8 @@
   "calendar_day_no_events": "No events on this day.",
   "calendar_day_event_count": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{count} event",
         "countPlural=other": "{count} events"
@@ -3222,13 +3095,8 @@
   "admin_announcement_active_label": "Live announcement",
   "admin_announcement_seen_count": [
     {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Seen by {count} account",
         "countPlural=other": "Seen by {count} accounts"

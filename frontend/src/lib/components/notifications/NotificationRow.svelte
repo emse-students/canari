@@ -131,6 +131,7 @@
     (notif.type === 'association_post' || isRepostNotif || isCoorganiseNotif) &&
       !!notif.associationId
   );
+  /**
    * THE TWO ANSWERS TO A PROFILE CORRECTION REQUEST (WP4b), listed for the same reason as the agenda's
    * five: a type this chain does not name would inherit the COMMENT sentence, glyph and colour. The
    * actor is the platform; `text` holds the admin's note on a refusal, shown after the sentence.
