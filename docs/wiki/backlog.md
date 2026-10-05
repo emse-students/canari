@@ -185,6 +185,11 @@ The composer comparison R1 was built from is on
    The "deleted in N days" chip is REMOVED (user, 2026-10-02): a reel shows its age. **OWED:** one
    real-content take on each phone, the iOS frame timing of the viewer swipe (the Mi 9T measured 11.5 %
    janky frames), and the user's ruling on the publish note.
+   **THE EDITOR WAS CALLED "CATASTROPHIC" ON THE PHONE (user, 2026-10-05)**: the design, the first
+   slice built (text and emoji overlays with one gesture helper, "Next" no longer over the player,
+   the sound removed FROM THE FILE) and the work packages E2-E7 are on
+   [reel-editor](frontend/modules/reel-editor.md). **Owed: a reading of all of it on both phones,
+   then the user's Instagram screenshots for E3/E5.**
 4. **R4 - live** (C9), behind the calls revival.
 
 ### The tab swipe C5 rides on - satisfied by #1237, read clean on the user's phone 2026-10-01

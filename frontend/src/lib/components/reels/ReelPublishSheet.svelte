@@ -213,6 +213,12 @@
       </label>
     </div>
 
+    {#if clip.soundRemoved}
+      <p class="text-text-muted text-2xs mt-4" data-reel-publish-silent>
+        {m.reels_review_sound_removed()}
+      </p>
+    {/if}
+
     <p class="text-text-muted text-2xs mt-4">
       {m.reels_publish_expiry_note({ days: limits.retentionDays })}
     </p>

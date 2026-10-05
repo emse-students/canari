@@ -91,6 +91,12 @@ export interface PrepareVideoOptions {
    * remains the refusal, as for every other upload.
    */
   maxBytes?: number;
+  /**
+   * Leaves the audio track OUT of the output (the member removed the sound, CanaReels editor). It is
+   * the conversion that drops it, so the published file has no audio track at all - a muted player
+   * would still ship the sound. The size budget is planned without the audio's share.
+   */
+  removeAudio?: boolean;
   /** Called with the share done, from 0 to 1, as frames are encoded. */
   onProgress?: (fraction: number) => void;
   /** Aborting it stops the encoder and rejects with the `aborted` fault. */
@@ -133,9 +139,10 @@ export async function prepareVideoForUpload(
   source: Blob,
   options: PrepareVideoOptions = {}
 ): Promise<PreparedVideo> {
-  const { maxSeconds, maxBytes, onProgress, signal } = options;
+  const { maxSeconds, maxBytes, onProgress, signal, removeAudio = false } = options;
   console.debug(
     `[video-prep] start: ${source.type || 'unknown'}, ${source.size} bytes` +
+      (removeAudio ? ', audio removed' : '') +
       (maxSeconds !== undefined ? `, max ${maxSeconds} s` : '') +
       (maxBytes !== undefined ? `, max ${maxBytes} bytes` : '')
   );
@@ -187,7 +194,7 @@ export async function prepareVideoForUpload(
         displayHeight: await videoTrack.getDisplayHeight(),
         durationSeconds,
         frameRate: stats.averagePacketRate,
-        hasAudio: audioTrack !== null,
+        hasAudio: audioTrack !== null && !removeAudio,
       },
       maxBytes
     );
@@ -228,16 +235,16 @@ export async function prepareVideoForUpload(
         allowTransformationMetadata: false,
         forceTranscode: true,
       },
-      audio: {
-        codec: 'aac',
-        quality: new mb.Quality({ bitrate: AUDIO_BITRATE }),
-        forceTranscode: true,
-      },
+      audio: audioConversionOptions(mb, removeAudio),
     });
     // A dropped track is a refusal, never a quieter video: an engine that cannot decode the source
-    // or encode the target says so here, as a FACT read before a frame is touched.
-    if (!conversion.isValid || conversion.discardedTracks.length > 0) {
-      const why = describeDiscarded(conversion.discardedTracks);
+    // or encode the target says so here, as a FACT read before a frame is touched. The ONE track
+    // allowed to be missing is the audio the member asked to remove, which is not a refusal.
+    const refused = conversion.discardedTracks.filter(
+      (d) => !(removeAudio && d.track.type === 'audio' && d.reason === 'discarded_by_user')
+    );
+    if (!conversion.isValid || refused.length > 0) {
+      const why = describeDiscarded(refused);
       console.warn(`[video-prep] refused: this engine cannot convert it - ${why}`);
       throw new VideoPrepareError('unsupported', `video: cannot convert on this engine - ${why}`);
     }
@@ -291,6 +298,20 @@ export async function prepareVideoForUpload(
     signal?.removeEventListener('abort', onAbort);
     input.dispose();
   }
+}
+
+/**
+ * What the conversion does with the audio track: AAC at the plan's bitrate, or - when the member
+ * removed the sound - nothing at all (`discard`), so the output carries no audio track.
+ */
+export function audioConversionOptions(mb: typeof import('mediabunny'), removeAudio: boolean) {
+  return removeAudio
+    ? { discard: true as const }
+    : {
+        codec: 'aac' as const,
+        quality: new mb.Quality({ bitrate: AUDIO_BITRATE }),
+        forceTranscode: true,
+      };
 }
 
 /** The plan, as the log line prints it. */
