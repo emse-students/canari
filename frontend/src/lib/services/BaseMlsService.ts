@@ -2790,24 +2790,32 @@ export abstract class BaseMlsService implements IMlsService {
   // class of "sender fork" desyncs disappears. The platform primitives below (stage / merge / clear
   // / export tree / fresh epoch) are the only pieces that differ between WASM and native.
 
-  /** Stages an Add commit WITHOUT merging. Returns the commit, shared Welcome, and the input
-   *  positions actually added / dropped-as-invalid (already-member dedup is silent). */
+  /** Stages an Add commit WITHOUT merging. Returns the commit, shared Welcome, the input
+   *  positions actually added / dropped-as-invalid (already-member dedup is silent), and
+   *  `groupInfo`: the external-join base for the epoch the commit CREATES (see
+   *  {@link runCommitTransaction}). */
   protected abstract stageAddMembers(
     groupId: string,
     keyPackages: Uint8Array[]
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
+    groupInfo: Uint8Array;
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }>;
-  /** Stages a Remove commit (all devices of the given users) WITHOUT merging. Returns the commit. */
-  protected abstract stageRemoveMembers(groupId: string, userIds: string[]): Promise<Uint8Array>;
-  /** Stages a Remove commit for specific devices ("userId:deviceId") WITHOUT merging. */
+  /** Stages a Remove commit (all devices of the given users) WITHOUT merging. Returns the commit
+   *  and the external-join base for the epoch it creates. */
+  protected abstract stageRemoveMembers(
+    groupId: string,
+    userIds: string[]
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>;
+  /** Stages a Remove commit for specific devices ("userId:deviceId") WITHOUT merging. Returns the
+   *  commit and the external-join base for the epoch it creates. */
   protected abstract stageRemoveMembersByDevice(
     groupId: string,
     deviceIdentities: string[]
-  ): Promise<Uint8Array>;
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>;
   /** Merges the pending staged commit (server accepted): advances the local epoch. */
   protected abstract mergePendingCommit(groupId: string): Promise<void>;
   /** Clears the pending staged commit (server rejected): local epoch unchanged, no fork. */
@@ -2830,12 +2838,20 @@ export abstract class BaseMlsService implements IMlsService {
    * (skipping `excludeDeviceIds`) and, when `exportTree` is set, exports the post-merge ratchet
    * tree for the caller to deliver in the Welcome. The network preamble that builds the stage
    * inputs stays OUTSIDE this method; only the stage->merge unit is locked.
+   *
+   * **THE BASE FOR THE EPOCH THIS COMMIT CREATES TRAVELS INSIDE THE SUBMISSION** (COMM-22), exactly
+   * as an external join's does: `stageFn` returns the GroupInfo OpenMLS built while building the
+   * commit, and the server stores it in the same transaction as the epoch advance. It describes
+   * epoch N+1 while this device is still at N, so it is never published on its own - only the gate
+   * accepting the commit makes it true. Nothing is left to mint after the merge, so there is no
+   * follow-up to lose and no window between "the epoch moved" and "its base exists".
    */
   protected async runCommitTransaction(
     groupId: string,
     stageFn: () => Promise<{
       commit: Uint8Array;
       welcome?: Uint8Array;
+      groupInfo: Uint8Array;
       addedDeviceIds?: string[];
       skipped?: SkippedDevice[];
     }>,
@@ -2876,7 +2892,7 @@ export abstract class BaseMlsService implements IMlsService {
           baseEpoch,
           toBase64(staged.commit),
           opts.excludeDeviceIds,
-          undefined,
+          toBase64(staged.groupInfo),
           admits
         );
         if (!validation.accepted) {
@@ -2902,19 +2918,12 @@ export abstract class BaseMlsService implements IMlsService {
         };
       })
     );
-    // The commit advanced the epoch: refresh the external-join base so a member lacking state can
-    // self-join at the new epoch. Skipped on reject (the closure above throws before we get here, so
-    // the epoch never moved). [[Phase 4]]
-    //
-    // FIRE-AND-FORGET, AND WHAT IT COSTS IS NOT NOTHING. For a STAGED commit this is the only thing
-    // that mints the successor base - a carried external commit publishes its own inside the
-    // submission (see {@link externalJoin}), which is the difference this comment used to flatten -
-    // so losing it strands the group's published base one epoch behind, permanently, and every
-    // stateless joiner is refused for as long as it lasts. It stays off the critical path (a commit
-    // that succeeded must not be reported as failed because a follow-up did not land) and the repair
-    // lives where a device that CAN mint a base already reads the group: `republishStaleBase` in
-    // [distributionGroup](../utils/graine/distributionGroup.ts).
-    void this.refreshGroupInfo(groupId);
+    // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX (COMM-22). It used to be a
+    // fire-and-forget `refreshGroupInfo` that was the only thing minting the successor base for a
+    // staged commit, and losing it stranded the published base one epoch behind. The base now
+    // travelled inside the accepted submission. `republishStaleBase` / `republishBaseIfStale` stay
+    // as the holder repair for the OTHER causes of a stale base (a legacy client's commit, a
+    // server-side write that failed), which is a different question from this commit's own base.
     return out;
   }
 
@@ -3737,14 +3746,13 @@ export abstract class BaseMlsService implements IMlsService {
    * Exports the current GroupInfo and pushes it to the delivery service (external-join base, Phase 4)
    * so an authorized member lacking MLS state can self-join at the current epoch.
    *
-   * NEVER THROWS, AND THE LOSS IS NOT MOMENTARY - which is what the doc that used to sit here
-   * claimed ("a joiner may momentarily get a one-epoch-stale base and retry"). After a STAGED commit
-   * nothing else publishes a base, so a refresh lost here leaves the published one behind the
-   * group's epoch until some unrelated member happens to commit; the strict gate refuses every
-   * external commit built on it in the meantime, and a distribution group has no peer-Welcome
-   * fallback to take instead. On
-   * production 2026-08-25 that locked a member out of a private salon for the rest of the session.
-   * The repair is `republishStaleBase` in
+   * NO LONGER CALLED AFTER A COMMIT: every commit this device makes - staged or external - carries
+   * the base for the epoch it creates inside its own submission (COMM-22). What remains is the
+   * HOLDER REPAIR (`republishBaseIfStale`, `base_refresh_request`), for a base behind for any other
+   * cause. NEVER THROWS, and a loss here is not momentary: nothing else publishes a base, so a
+   * refresh lost leaves the published one behind until some holder repairs it; the strict gate
+   * refuses every external commit built on it meanwhile, and a distribution group has no
+   * peer-Welcome fallback. The repair is `republishStaleBase` in
    * [distributionGroup](../utils/graine/distributionGroup.ts), driven by any HOLDER's ordinary read.
    */
   async refreshGroupInfo(groupId: string): Promise<{ stored: boolean; baseEpoch: number } | null> {
@@ -4065,7 +4073,11 @@ export abstract class BaseMlsService implements IMlsService {
       groupId,
       async () => {
         const staged = await this.stageAddMembers(groupId, [keyPackageBytes]);
-        return { commit: staged.commit, welcome: staged.welcome };
+        return {
+          commit: staged.commit,
+          welcome: staged.welcome,
+          groupInfo: staged.groupInfo,
+        };
       },
       { excludeDeviceIds, exportTree: true }
     );
@@ -4092,6 +4104,7 @@ export abstract class BaseMlsService implements IMlsService {
         return {
           commit: staged.commit,
           welcome: staged.welcome,
+          groupInfo: staged.groupInfo,
           addedDeviceIds: staged.addedIndices.map((i) => devices[i].deviceId),
           skipped: staged.skipped.map((s) => ({
             deviceId: devices[s.index].deviceId,
@@ -4104,15 +4117,13 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   async removeMember(groupId: string, userIds: string[]): Promise<void> {
-    await this.runCommitTransaction(groupId, async () => ({
-      commit: await this.stageRemoveMembers(groupId, userIds),
-    }));
+    await this.runCommitTransaction(groupId, () => this.stageRemoveMembers(groupId, userIds));
   }
 
   async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
-    await this.runCommitTransaction(groupId, async () => ({
-      commit: await this.stageRemoveMembersByDevice(groupId, deviceIdentities),
-    }));
+    await this.runCommitTransaction(groupId, () =>
+      this.stageRemoveMembersByDevice(groupId, deviceIdentities)
+    );
   }
 
   abstract processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;

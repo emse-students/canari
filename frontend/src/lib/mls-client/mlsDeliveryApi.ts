@@ -702,11 +702,10 @@ export class MlsDeliveryApi {
    * failure (not on a business reject). [[C7]]
    *
    * `groupInfoBase64` carries the external-join base for the epoch this commit CREATES
-   * (`baseEpoch + 1`), and the server stores it in the same transaction as the epoch advance. Only
-   * a caller that already holds the resulting epoch's tree can supply it - which the external-join
-   * path does, and a staged add/remove does not (its commit is unapplied at this point). Where it
-   * is absent the base is still minted by the follow-up `refreshGroupInfo`, whose loss is what
-   * COMM-22 measured; see `docs/wiki/backlog.md`.
+   * (`baseEpoch + 1`), and the server stores it in the same transaction as the epoch advance. Every
+   * caller supplies it: the external join exports it from its applied instance, a staged add/remove
+   * takes the GroupInfo OpenMLS built with the commit (COMM-22,
+   * `docs/wiki/protocols/mls-protocol.md`). Only a legacy client omits it.
    *
    * `admits` names the devices this commit ADDS to the tree. The server records each `pending` at
    * the epoch the commit creates, in the same transaction as the advance, which makes it a recipient

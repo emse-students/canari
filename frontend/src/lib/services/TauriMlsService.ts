@@ -973,7 +973,8 @@ export class TauriMlsService extends BaseMlsService {
   /**
    * Tauri-native `invoke` wrapper - stages an Add commit WITHOUT merging via `ajouter_membres_bulk`
    * (all key packages in one OpenMLS commit, one shared Welcome). Returns
-   * (commit, welcome?, addedIndices, skipped). `addedIndices` are positions in `keyPackages`
+   * (commit, welcome?, addedIndices, skipped, groupInfo) - the last being the base for the epoch
+   * the commit creates. `addedIndices` are positions in `keyPackages`
    * actually included - entries skipped (invalid, or already a member) are omitted rather than
    * collapsing to a bare count. `skipped` is `{ index, reason }` per INVALID/undeserializable
    * KeyPackage, the reason typed in Rust (not the already-member dedup), surfaced so the loss is not silent. [[C5]]
@@ -984,38 +985,45 @@ export class TauriMlsService extends BaseMlsService {
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
+    groupInfo: Uint8Array;
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }> {
     const keyPackagesBytes = keyPackages.map((kp) => Array.from(kp));
-    const result = await invoke<[number[], number[] | null, number[], SkippedKeyPackage[]]>(
-      'ajouter_membres_bulk',
-      { groupId, keyPackagesBytes }
-    );
+    const result = await invoke<
+      [number[], number[] | null, number[], SkippedKeyPackage[], number[]]
+    >('ajouter_membres_bulk', { groupId, keyPackagesBytes });
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
       addedIndices: result[2],
       skipped: result[3] ?? [],
+      groupInfo: Uint8Array.from(result[4]),
     };
   }
 
   /** Tauri-native `invoke` wrapper - stages a Remove commit for all devices of the given users (no merge). */
-  protected async stageRemoveMembers(groupId: string, userIds: string[]): Promise<Uint8Array> {
-    const commitBytes = await invoke<number[]>('retirer_membres', { groupId, userIds });
-    return new Uint8Array(commitBytes);
+  protected async stageRemoveMembers(
+    groupId: string,
+    userIds: string[]
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
+    const [commit, groupInfo] = await invoke<[number[], number[]]>('retirer_membres', {
+      groupId,
+      userIds,
+    });
+    return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
   }
 
   /** Tauri-native `invoke` wrapper - stages a Remove commit for specific device identities (no merge). */
   protected async stageRemoveMembersByDevice(
     groupId: string,
     deviceIdentities: string[]
-  ): Promise<Uint8Array> {
-    const commitBytes = await invoke<number[]>('retirer_membres_par_appareil', {
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
+    const [commit, groupInfo] = await invoke<[number[], number[]]>('retirer_membres_par_appareil', {
       groupId,
       deviceIdentities,
     });
-    return new Uint8Array(commitBytes);
+    return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
   }
 
   /** Tauri-native `invoke` wrapper - merges the pending staged commit (server accepted) and refreshes the epoch cache. */

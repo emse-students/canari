@@ -308,8 +308,10 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     // asks somebody. Here: this device HOLDS the tree, which makes it the only kind of thing that
     // can mint an external-join base - so it is the one that repairs a base that has fallen behind.
     //
-    // A base is minted only as a follow-up to a commit (`void refreshGroupInfo`), so losing that
-    // call strands the published base one epoch behind for ever: the epoch gate accepts
+    // A base used to be minted only as a follow-up to a commit (`void refreshGroupInfo`); every
+    // commit now carries its own (COMM-22), and this repair covers the OTHER causes of a base left
+    // behind - a legacy client's commit, a failed server write. Losing the base strands it one
+    // epoch behind for ever: the epoch gate accepts
     // `baseEpoch == activeEpoch` and nothing else, so every stateless device is refused from that
     // moment on. Measured on production 2026-09-04 - four groups stale, all by exactly one epoch,
     // two of them for five days with three devices waiting on them. The repair existed for

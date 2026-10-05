@@ -352,6 +352,21 @@ pub struct SkippedKeyPackage {
 /// Result of `add_member`: `(commit, welcome)`. Staged like [`AddMembersBulkResult`].
 pub type AddMemberResult = (Vec<u8>, Option<Vec<u8>>);
 
+/// Result of `add_members_bulk_with_base`: the [`AddMembersBulkResult`] and the external-join base
+/// (a GroupInfo in `MlsMessageOut` wire form, ratchet tree included) for the epoch the staged commit
+/// CREATES.
+///
+/// The base is what the caller submits WITH the commit, so the server stores it in the same
+/// transaction as the epoch advance (COMM-22, `docs/wiki/protocols/mls-protocol.md`). It describes
+/// epoch N+1 while this device is still at N, so it must never be published on its own: only the
+/// commit gate accepting the commit makes it true.
+pub type AddMembersWithBaseResult = (AddMembersBulkResult, Vec<u8>);
+
+/// Result of `remove_members_for_users` / `remove_members_for_devices`: `(commit, group_info)` -
+/// the staged commit and the external-join base for the epoch it creates, under the same rule as
+/// [`AddMembersWithBaseResult`].
+pub type StagedRemovalResult = (Vec<u8>, Vec<u8>);
+
 #[cfg(test)]
 mod skipped_key_package_tests {
     use super::*;

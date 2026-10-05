@@ -525,7 +525,16 @@ pub(crate) fn ajouter_membres_bulk(
     group_id: String,
     key_packages_bytes: Vec<Vec<u8>>,
     state: tauri::State<AppState>,
-) -> Result<mls_core::AddMembersBulkResult, String> {
+) -> Result<
+    (
+        Vec<u8>,
+        Option<Vec<u8>>,
+        Vec<u32>,
+        Vec<mls_core::SkippedKeyPackage>,
+        Vec<u8>,
+    ),
+    String,
+> {
     let mut lock = state
         .mls_manager
         .lock()
@@ -536,9 +545,12 @@ pub(crate) fn ajouter_membres_bulk(
     // calls confirmer_commit (accepted) / annuler_commit (rejected), and reads the post-merge
     // ratchet tree via exporter_ratchet_tree.
     let refs: Vec<&[u8]> = key_packages_bytes.iter().map(|v| v.as_slice()).collect();
-    manager
-        .add_members_bulk(&group_id, &refs)
-        .map_err(|e| e.to_string())
+    // The fifth element is the external-join base for the epoch the commit creates: submitted WITH
+    // the commit by the caller, never published on its own (COMM-22).
+    let ((commit, welcome, added, skipped), group_info) = manager
+        .add_members_bulk_with_base(&group_id, &refs)
+        .map_err(|e| e.to_string())?;
+    Ok((commit, welcome, added, skipped, group_info))
 }
 
 #[tauri::command]
@@ -650,7 +662,7 @@ pub(crate) fn retirer_membres(
     group_id: String,
     user_ids: Vec<String>,
     state: tauri::State<AppState>,
-) -> Result<Vec<u8>, String> {
+) -> Result<mls_core::StagedRemovalResult, String> {
     let mut lock = state
         .mls_manager
         .lock()
@@ -668,7 +680,7 @@ pub(crate) fn retirer_membres_par_appareil(
     group_id: String,
     device_identities: Vec<String>,
     state: tauri::State<AppState>,
-) -> Result<Vec<u8>, String> {
+) -> Result<mls_core::StagedRemovalResult, String> {
     let mut lock = state
         .mls_manager
         .lock()
