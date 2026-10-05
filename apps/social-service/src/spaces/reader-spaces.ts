@@ -116,6 +116,23 @@ export function associationRulesReachSpaceMatchingSql(
 }
 
 /**
+ * The anonymous agenda's selection (D40): calendar event row `event` is reached by a space matching
+ * `filter` (sides as in `associationRulesReachSpaceMatchingSql`) through its ORGANISER's rules or an
+ * ACCEPTED co-organiser's (D39), the union an event's audience is. Rules only, like the map filter:
+ * an anonymous reader has no membership, so D21 has nothing to add. Both sides `null` is not a
+ * selection and the caller must not splice it.
+ */
+export function eventReachesSpaceMatchingSql(
+  event: string,
+  filter: { formation: string | null; campus: string | null }
+): string {
+  return `(${associationRulesReachSpaceMatchingSql(`${event}."associationId"`, filter)}
+    OR EXISTS (SELECT 1 FROM association_calendar_event_co_owners sel_coorg
+      WHERE sel_coorg.event_id = ${event}.id
+        AND ${associationRulesReachSpaceMatchingSql('sel_coorg.association_id', filter)}))`;
+}
+
+/**
  * An association that REPUBLISHED post row `post` (D38, `post_republications`) is visible to user
  * row `user` - the same predicate as the original's association, applied to the republisher: a
  * member of it (D21) or a reader its rules reach.

@@ -28,6 +28,8 @@
 
   onMount(async () => {
     try {
+      // Institutions have their own page (/institutions, user 2026-10-05); "mine" still lists the
+      // ones the reader belongs to.
       const [all, mine] = await Promise.all([
         listAssociationDirectory('association'),
         isLoggedIn ? listMyAssociations() : Promise.resolve([]),
@@ -62,6 +64,12 @@
       >
         <ListChecks size={16} />
         {m.assoc_list_lists_btn()}
+      </a>
+      <a
+        href="/institutions"
+        class="border-cn-border text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition-colors hover:bg-(--cn-surface)"
+      >
+        {m.assoc_list_institutions_btn()}
       </a>
       <a
         href="/calendar"

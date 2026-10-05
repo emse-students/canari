@@ -15,6 +15,7 @@
  * NO SECOND PATH. A refused camera is a state the screen explains (`CameraScreen`), never a hand-off
  * to the system camera app - the capture screen is the app's own (R3).
  */
+import { cameraVideoConstraints } from './framedCapture';
 
 /** Why the camera could not be opened. One code per cause the screen draws differently. */
 export type CameraFault =
@@ -39,13 +40,6 @@ export class CameraAccessError extends Error {
 
 /** Which lens: the member's face, or the world. */
 export type CameraFacing = 'user' | 'environment';
-
-/**
- * The frame asked for. 1280x720 `ideal`, which both phones answer as a 720x1280 PORTRAIT track
- * (measured): 720p is what the upload is prepared to anyway (C3), so asking for more would only cost
- * the recorder memory and the encoder time.
- */
-export const REEL_CAPTURE_IDEAL = { width: 1280, height: 720 } as const;
 
 /**
  * Turns a `getUserMedia` rejection into a {@link CameraFault}.
@@ -94,11 +88,19 @@ export async function openReelCamera(facing: CameraFacing): Promise<MediaStream>
     throw new CameraAccessError('unavailable', 'camera: getUserMedia is not available');
   }
   try {
+    // THE FRAME ASKED FOR IS THE SCREEN'S, capped (framedCapture.ts): nothing larger than the phone
+    // can show is worth the encoder's time. Both phones answer a landscape request as a portrait
+    // track (measured 2026-10-01).
+    const wanted = cameraVideoConstraints(
+      { width: window.screen.width, height: window.screen.height },
+      window.devicePixelRatio || 1
+    );
     const stream = await devices.getUserMedia({
       video: {
         facingMode: facing,
-        width: { ideal: REEL_CAPTURE_IDEAL.width },
-        height: { ideal: REEL_CAPTURE_IDEAL.height },
+        width: { ideal: wanted.width },
+        height: { ideal: wanted.height },
+        frameRate: { ideal: wanted.frameRate },
       },
       audio: true,
     });

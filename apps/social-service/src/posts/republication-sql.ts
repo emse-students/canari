@@ -1,9 +1,9 @@
 /**
  * THE KINDS OF ASSOCIATION THAT REPUBLISH, and the allowlist is the point: "only associations and
- * institutions republish" (user, 2026-10-04). A promo LIST does not; an institution is added here
- * the day `associations.type` gains it (WP6e) - a type nobody listed stays refused.
+ * institutions republish" (user, 2026-10-04). A promo LIST does not; an institution joined with WP6e
+ * (migration 075) - a type nobody listed stays refused.
  */
-export const REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = ['association'];
+export const REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = ['association', 'institution'];
 
 /** How a card names an association that republished its post. */
 export interface Republisher {

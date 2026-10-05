@@ -43,6 +43,7 @@ function makeService(creatorSpaces: { formation: string; campus: string }[]) {
 }
 
 const dto = { name: 'Club', slug: 'club' } as never;
+const institutionDto = { name: 'Ecole', slug: 'ecole', type: 'institution' } as never;
 
 describe('AssociationsService.create - the default reach (D36)', () => {
   it("writes the creator's spaces as the smallest rule set, inside the transaction", async () => {
@@ -83,6 +84,16 @@ describe('AssociationsService.create - the default reach (D36)', () => {
     const saved = await service.create(dto, 'admin-no-space');
 
     expect(saved).toMatchObject({ id: 'new-asso' });
+    expect(manager.insert).not.toHaveBeenCalled();
+  });
+
+  it('writes NO rule for an institution, even for a creator who has spaces (user, 2026-10-05)', async () => {
+    const { service, manager } = makeService([{ formation: 'ICM', campus: 'saint-etienne' }]);
+
+    const saved = await service.create(institutionDto, 'admin-with-spaces');
+
+    expect(saved).toMatchObject({ id: 'new-asso' });
+    expect(manager.query).not.toHaveBeenCalled();
     expect(manager.insert).not.toHaveBeenCalled();
   });
 });

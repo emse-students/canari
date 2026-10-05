@@ -65,7 +65,7 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
-import { parseDirectoryQuery } from './directory-query';
+import { parseDirectoryQuery, parseSpaceSelection } from './directory-query';
 
 const LOGO_UPLOAD_MB = 2;
 
@@ -271,8 +271,11 @@ export class AssociationsController {
     @Query('associationId') associationId?: string,
     @Query('includePending') includePending?: string,
     @Headers('x-user-id') userId?: string,
-    @Headers('x-global-admin') ga?: string
+    @Headers('x-global-admin') ga?: string,
+    @Query('campus') campus?: string,
+    @Query('formation') formation?: string
   ) {
+    const selection = parseSpaceSelection({ campus, formation });
     // includePending is opt-in (the PDF export does not set it -> validated events only).
     // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
     let include = false;
@@ -285,6 +288,7 @@ export class AssociationsController {
     return this.service.listAggregatedCalendarFeed(from, to, associationId, {
       includePending: include,
       viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
+      selection,
     });
   }
 
@@ -297,6 +301,9 @@ export class AssociationsController {
    *
    * `eventId` (optional) keeps only that event of the window - see the filter below.
    *
+   * `campus` / `formation` (D40, optional): ONE FEED PER SELECTION - only the events a space of that
+   * campus / formation reaches. Neither is the whole agenda, as before; an unknown value is a 400.
+   *
    * **NO PROMO CUTOFF HERE, AND THAT IS NOT A HOLE.** A calendar app sends no identity and never
    * will, so there is no promo to cut at; and the cutoff is a relevance limit on a public agenda,
    * not a confidentiality boundary - see `promo-visibility.ts`. Anything that must be SECRET is
@@ -308,9 +315,14 @@ export class AssociationsController {
     @Query('to') to: string | undefined,
     @Query('associationId') associationId: string | undefined,
     @Query('eventId') eventId: string | undefined,
-    @Res({ passthrough: true }) res: Response
+    @Res({ passthrough: true }) res: Response,
+    @Query('campus') campus?: string,
+    @Query('formation') formation?: string
   ) {
-    const all = await this.service.listAggregatedCalendarFeed(from, to, associationId);
+    const selection = parseSpaceSelection({ campus, formation });
+    const all = await this.service.listAggregatedCalendarFeed(from, to, associationId, {
+      selection,
+    });
     const wanted = eventId?.trim();
     // `eventId` narrows the feed to ONE event: the link a phone's browser opens to hand a single
     // evening to the calendar app (iOS Safari shows its "Add to Calendar" sheet for a text/calendar
@@ -489,6 +501,10 @@ export class AssociationsController {
     @Body() dto: CreateAssociationDto
   ) {
     const isGlobalAdmin = ga === 'true';
+    if (dto.type === 'institution' && !isGlobalAdmin) {
+      // D20/D24: a BDE's MANAGE_ASSO scopes to its own space; institutions are cross-space.
+      throw new ForbiddenException('Only a global admin creates an institution');
+    }
     if (!isGlobalAdmin) {
       // isUserBdeAdmin checks VALIDATE_EVENTS; MANAGE_ASSO is a separate flag
       const canCreateAsso = await this.service.callerHasAnyBdeFlag(

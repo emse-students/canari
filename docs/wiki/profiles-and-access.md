@@ -189,7 +189,8 @@ built.
 - **D30 - The agenda stays PUBLIC, per space**: each open space has its own anonymous feed and
   `.ics`, as today's single feed.
 - **D31 - A personal post inherits its AUTHOR's spaces**; someone with no space (a staff post only)
-  cannot publish one, and publishes through an institution instead.
+  cannot publish one, and publishes through an institution instead. **Closed as MEMBERSHIP ONLY
+  (user, 2026-10-05)**: through institutions they are a member of, nothing more.
 - **D32 - Two cursus pay the MOST FAVOURABLE price**: the matrix is evaluated for each cursus and the
   cheapest cell wins. A question shown to, or a submission allowed for, any of their cursus is shown
   or allowed.
@@ -706,7 +707,7 @@ State: **built** = in a draft PR, **next** = decided, not built, **open** = to s
 | Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post | next |
 
 Order: WP6c (BDE per space, `isBDE` deleted) comes first (D35). A new association reaches its creator's
-spaces by default (D36, built - see below). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
+spaces by default (D36, built - see below; NOT an institution, which starts with no rule, WP6e). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
 and a personnel: the spaces add up. Being personnel gives NO right to publish as the School: that takes
 membership of the institution's own instance, exactly as for an association. Everyone ticks `EMSE`, so that
 box no longer defines anything.
@@ -720,7 +721,7 @@ box no longer defines anything.
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; never a personal post; card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
-| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | next (today: all, public) |
+| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | campus and formation built ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05)); "mine" and the UI await answers |
 | Association directory (D37) | associations reaching one's spaces, or one belongs to | built |
 | Association page | NOT LISTED for a reader outside its audience, but reachable by a link (user, 2026-10-04); the member list does NOT follow the audience | existing |
 | Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
@@ -753,7 +754,8 @@ box no longer defines anything.
 
 ### D36 and D37 as built (2026-10-04)
 
-**D36 - a new association reaches its creator's spaces.** `AssociationsService.create` (the one path
+**D36 - a new association reaches its creator's spaces** (a list too; **an institution does NOT**, user
+2026-10-05 - it starts with no rule, see WP6e below). `AssociationsService.create` (the one path
 for an association AND a list, `POST /api/associations`) writes, in the SAME transaction as the row,
 the creator's spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`) as the smallest equivalent
 rule set (`smallestRules` in `spaces/spaces.service.ts`, the server twin of the grid's `toRules`: a
@@ -867,8 +869,7 @@ foreign key, since what it names depends on the kind.
 **Not built:**
 
 - The promo and contributor FILTERS of D38. Nothing narrows a republication branch.
-- Institutions as republishers, which arrive with 6e (the allowlist is
-  `REPUBLISHING_ASSOCIATION_TYPES`).
+- ~~Institutions as republishers~~ - built with 6e (below).
 
 A local `synchronize` database lacks 073's trigger and partial index, so its duplicate-proposal
 check and delete cleanup differ from production's. The integration specs apply 073 itself.
@@ -963,3 +964,48 @@ removes the co-organiser branch of `eventVisibleToUserSql` fails 2 cases.
 
 **Not verified**: no browser pass (the picker states, the queue rows and the notification were
 checked by `svelte-check` and the component tests only), and no device push.
+
+### D40 - the anonymous agenda per selection, as built (2026-10-05)
+
+`GET /api/associations/calendar/feed` and `feed.ics` (public) take `?campus=` and `?formation=`
+(D4/D6 values; an unknown one is a 400, because a saved subscription URL must fail where it is typed).
+`eventReachesSpaceMatchingSql` (`spaces/reader-spaces.ts`) keeps an event when its ORGANISER's rules
+or an ACCEPTED co-organiser's (D39) reach a space matching the selection: rules only, an anonymous
+reader has no membership. Neither parameter is no selection and the feed stays whole. A signed-in
+reader of `/feed` gets both filters. No migration. Proof: the integration spec's five selections
+against real PostgreSQL, plus the service and controller specs.
+
+**NOT BUILT, undecided - questions for the user:**
+
+1. **"mine"**: a calendar app sends no identity, so a personal feed needs a per-user secret URL (token,
+   rotation, revocation). Is that wanted, or is "mine" only the signed-in agenda?
+2. **The default**: with no selection, should the bare URL stay the whole agenda (kept), or be refused?
+3. **The selector UI**: where the subscribe modal and the PDF export pick campus/formation.
+4. **`GET /api/public/associations`** (sitemap): still lists every association; filter it too?
+
+### WP6e institutions as built (2026-10-05)
+
+Migration `075_institution_type.sql` (replay-safe) adds `CHK_associations_type` over `association | list | institution`.
+An institution is an `associations` row of that type, so it reuses every mechanism rather than adding a second one:
+
+- **Created by a global admin only** (D20, D24): `POST /api/associations` with `type: 'institution'` is a 403 for a BDE
+  member holding MANAGE_ASSO, before any write. The form `/associations/new` shows the checkbox to global admins only.
+- **Members are added nominatively** by the existing member admin; **publishing in its name needs membership of it**
+  with `POST_AS_ASSO`, exactly as for an association (being personnel gives no right, D34-D36). Events are proposed with
+  `PROPOSE_EVENT` the same way; the post composer and the event picker are type-agnostic.
+- **Republishing**: `REPUBLISHING_ASSOCIATION_TYPES` is now `association, institution` (a list still does not); the
+  dialogs offer institutions. Co-organisation takes any association row, so institutions co-organise too.
+- **Listings**: `?type=institution` is accepted by the directory and the public listing. **`/institutions` is its own page**
+  (user, 2026-10-05): the same directory API and `AssociationTile` as `/associations` and `/lists`, narrowed by type, so the
+  same visibility (rules reaching the reader's spaces, plus memberships, D37). `/associations` no longer lists institutions in
+  its catalogue (the cleaner reading of the choice; its "mine" shelf still shows the ones the reader belongs to) and carries an
+  "Institutions" button, as it does for lists. The page is `noindex` like `/lists` and has its title in `resolve.ts`. An
+  institution can never be a BDE (the `/admin/spaces` button is for `association` only).
+- **Reach**: its audience rules (its ceiling, D33) are the same `association_audiences` rows, edited on the grid.
+  **A new institution has NO rule** (user, 2026-10-05): `AssociationsService.create` skips D36's default for
+  `type: 'institution'`, so it is visible to its members only until an admin ticks the `/admin/spaces` grid (a global
+  admin's own spaces are rarely the School's). D33's one mechanism is kept: the type decides the default, nothing else
+  differs. `associations.service.create-default-audience.spec.ts` carries the control (an institution created by someone
+  with spaces writes no rule).
+- **D31 closes as "membership only"** (user, 2026-10-05): a person with no space publishes through the institutions they
+  are a MEMBER of, with `POST_AS_ASSO`. Nothing to build; no way to pick an institution one does not belong to.

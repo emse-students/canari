@@ -125,7 +125,7 @@ export class Association {
    * associations (members, events) minus the banking/shop/vault features.
    */
   @Column({ type: 'varchar', length: 20, default: 'association' })
-  type: 'association' | 'list';
+  type: 'association' | 'list' | 'institution';
 
   /** Lists only: the promotion year the list belongs to (e.g. 2027). Null for associations. */
   @Column({ type: 'int', nullable: true })

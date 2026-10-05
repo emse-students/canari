@@ -36,7 +36,7 @@ export interface PublicAssociation {
   logoUrl: string | null;
   logoMediaId: string | null;
   color: string | null;
-  type: 'association' | 'list';
+  type: 'association' | 'list' | 'institution';
   promo: number | null;
   parentAssociationId: string | null;
   /** Lists only: display name of the parent association, when resolved. */
@@ -121,7 +121,8 @@ export class PublicController {
   /** Lists associations and/or lists. `?type=association|list` restricts; omit for both. */
   @Get('associations')
   async listAssociations(@Query('type') type?: string): Promise<PublicAssociation[]> {
-    const filter = type === 'association' || type === 'list' ? type : undefined;
+    const filter =
+      type === 'association' || type === 'list' || type === 'institution' ? type : undefined;
     this.logger.debug(`public listAssociations type=${filter ?? 'all'}`);
     const rows = await this.associations.list(filter);
     return rows.map(toPublic);

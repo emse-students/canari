@@ -1,13 +1,12 @@
 /**
- * The capture's rules (CanaReels R3, C4): a press held past the threshold records until it lifts, a
- * tap toggles, the cap ends a take whatever the gesture, and the container is the platform's.
+ * The capture's rules (CanaReels R3, C4): ONE shutter - a tap is a photo, a press that stays down
+ * past the threshold is a video that its release ends - and the cap ends a take whatever the gesture.
  */
 import { describe, expect, it } from 'vitest';
 import {
   SHUTTER_HOLD_THRESHOLD_MS,
   captureReducer,
   classifyLimitsFault,
-  classifyShutterPress,
   formatTakeTime,
   pickReelRecorderMime,
   ringFraction,
@@ -17,35 +16,47 @@ import {
 
 const clip: ReelClip = { blob: new Blob(['x'], { type: 'video/webm' }), source: 'camera' };
 const ready: CaptureState = { kind: 'ready' };
+const pressing: CaptureState = { kind: 'pressing', pressedAt: 1000 };
+const recording: CaptureState = { kind: 'recording', pressedAt: 1000 };
 
-describe('classifyShutterPress', () => {
-  it('reads a short press as a tap and a long one as a hold', () => {
-    expect(classifyShutterPress(0)).toBe('tap');
-    expect(classifyShutterPress(SHUTTER_HOLD_THRESHOLD_MS - 1)).toBe('tap');
-    expect(classifyShutterPress(SHUTTER_HOLD_THRESHOLD_MS)).toBe('hold');
+describe('the hold threshold', () => {
+  it('is in the 300-400 ms band phone cameras use', () => {
+    expect(SHUTTER_HOLD_THRESHOLD_MS).toBeGreaterThanOrEqual(300);
+    expect(SHUTTER_HOLD_THRESHOLD_MS).toBeLessThanOrEqual(400);
   });
 });
 
 describe('captureReducer', () => {
-  it('a HOLD records from the press and ends at the release', () => {
-    const recording = captureReducer(ready, { type: 'press', at: 1000 });
-    expect(recording).toEqual({ kind: 'recording', pressedAt: 1000, mode: 'pending' });
-    expect(captureReducer(recording, { type: 'release', at: 3000 })).toEqual({ kind: 'finishing' });
+  it('a press waits to learn what it is', () => {
+    expect(captureReducer(ready, { type: 'press', at: 1000 })).toEqual(pressing);
   });
 
-  it('a TAP starts a take that the release does not end, and the next press does', () => {
-    const recording = captureReducer(ready, { type: 'press', at: 1000 });
-    const toggled = captureReducer(recording, { type: 'release', at: 1100 });
-    expect(toggled).toEqual({ kind: 'recording', pressedAt: 1000, mode: 'toggle' });
-    expect(captureReducer(toggled, { type: 'release', at: 5000 })).toBe(toggled);
-    expect(captureReducer(toggled, { type: 'press', at: 9000 })).toEqual({ kind: 'finishing' });
+  it('a TAP (released before the threshold fired) takes a photo, which is then reviewed', () => {
+    const photo = captureReducer(pressing, { type: 'release', at: 1100 });
+    expect(photo).toEqual({ kind: 'photo' });
+    expect(captureReducer(photo, { type: 'picked', clip })).toEqual({ kind: 'review', clip });
   });
 
-  it('the cap ends a take whether held or toggled', () => {
-    const held: CaptureState = { kind: 'recording', pressedAt: 0, mode: 'pending' };
-    const toggled: CaptureState = { kind: 'recording', pressedAt: 0, mode: 'toggle' };
-    expect(captureReducer(held, { type: 'limit' })).toEqual({ kind: 'finishing' });
-    expect(captureReducer(toggled, { type: 'limit' })).toEqual({ kind: 'finishing' });
+  it('a HOLD starts recording under the finger, and its release ends the take', () => {
+    const filming = captureReducer(pressing, { type: 'hold' });
+    expect(filming).toEqual(recording);
+    expect(captureReducer(filming, { type: 'release', at: 5000 })).toEqual({ kind: 'finishing' });
+  });
+
+  it('a cancelled touch before the threshold decides nothing: no photo, no take', () => {
+    expect(captureReducer(pressing, { type: 'cancel' })).toEqual(ready);
+  });
+
+  it('a cancelled touch during a take ENDS it and keeps it', () => {
+    expect(captureReducer(recording, { type: 'cancel' })).toEqual({ kind: 'finishing' });
+  });
+
+  it('a second press cannot end or restart a take - only the release, the cap or a cancel do', () => {
+    expect(captureReducer(recording, { type: 'press', at: 9000 })).toBe(recording);
+  });
+
+  it('the cap ends a take', () => {
+    expect(captureReducer(recording, { type: 'limit' })).toEqual({ kind: 'finishing' });
   });
 
   it('a finished take is reviewed, and a discard returns to the preview', () => {
@@ -56,19 +67,20 @@ describe('captureReducer', () => {
 
   it('a gallery pick goes straight to review, and only from the preview', () => {
     expect(captureReducer(ready, { type: 'picked', clip })).toEqual({ kind: 'review', clip });
-    const recording: CaptureState = { kind: 'recording', pressedAt: 0, mode: 'toggle' };
     expect(captureReducer(recording, { type: 'picked', clip })).toBe(recording);
+    expect(captureReducer(pressing, { type: 'picked', clip })).toBe(pressing);
   });
 
-  it('a failed recorder returns to the preview from recording or finishing', () => {
-    expect(
-      captureReducer({ kind: 'recording', pressedAt: 0, mode: 'pending' }, { type: 'failed' })
-    ).toEqual(ready);
+  it('a failed photo, take or press returns to the preview', () => {
+    expect(captureReducer({ kind: 'photo' }, { type: 'failed' })).toEqual(ready);
+    expect(captureReducer(recording, { type: 'failed' })).toEqual(ready);
     expect(captureReducer({ kind: 'finishing' }, { type: 'failed' })).toEqual(ready);
+    expect(captureReducer(pressing, { type: 'failed' })).toEqual(ready);
   });
 
   it('touches that decide nothing leave the state alone', () => {
     expect(captureReducer(ready, { type: 'release', at: 1 })).toBe(ready);
+    expect(captureReducer(ready, { type: 'hold' })).toBe(ready);
     const finishing: CaptureState = { kind: 'finishing' };
     expect(captureReducer(finishing, { type: 'press', at: 1 })).toBe(finishing);
     const review: CaptureState = { kind: 'review', clip };

@@ -106,13 +106,16 @@ The app's own, never the system camera (`components/reels/ReelCapture.svelte` ov
 a full-screen preview, the close and lens controls at the top (switch, and the torch where the lens
 has one), the gallery bottom-left, and the shutter in the middle.
 
-**The shutter is HOLD-to-record AND TAP-to-toggle** (`reels/reelCapture.ts`). Holding is the gesture
-the user named and Instagram's, and suits a few seconds. A reel runs to 90 s, and holding a button
-that long on glass shakes the frame, tires the thumb and puts the lens switch out of reach - so a
-press shorter than `SHUTTER_HOLD_THRESHOLD_MS` (300 ms) is a TAP that starts a take the release does
-not end, and the next press ends it. The threshold classifies a gesture; it never decides whether a
-recording exists. The shutter opts out of the tab swipe and captures its pointer, so a held take
-whose finger drifts neither turns the page nor loses its release.
+**ONE shutter: a TAP is a photo, a LONG PRESS is a video** (`reels/reelCapture.ts`, user, 2026-10-05;
+it replaced the tap-to-toggle take and the separate Photo button). A press arms a timer of
+`SHUTTER_HOLD_THRESHOLD_MS` (350 ms); if the finger is still down when it fires the press is a video
+and recording starts UNDER the finger, and its release ends the take. A release before it is a photo.
+A cancelled touch (`pointercancel`) before the threshold takes nothing; during a take it ends the take
+and keeps it. The timer only reports that a press stayed down - the recording's end is the release,
+the 90 s cap or a cancel. The shutter opts out of the tab swipe and captures its pointer, so a held
+take whose finger drifts neither turns the page nor loses its release; the context menu, text
+selection and iOS callout are switched off on it. It buzzes (`settings.vibrationsEnabled`) on a photo
+and on the start of a take.
 
 **The ring fills to the server's cap and the take ends there.** `GET /api/posts/reel-limits` is the
 one copy of the 90 s, so the shutter (and the gallery) stay disabled until it has answered. The
@@ -134,8 +137,9 @@ bench log shows a `500` (Postgres refusing "reel-limits" as a UUID), and a serve
 The deadline that ends a full take IS the product rule (C4), not a timer standing in for a fact.
 
 **The take is the platform's container** (`reels/reelRecorder.ts`): MP4 on iOS, VP9 WebM elsewhere,
-at 4 Mb/s - above the 2.5 Mb/s target on purpose, since the preparation re-encodes once and
-recording at the target would compress twice. Its bytes are handed over at the recorder's `stop`
+at up to 4 Mb/s (`REEL_RECORD_BITRATE_MAX`, scaled DOWN with the pixels of a smaller screen) - above
+the 2.5 Mb/s target on purpose, since the preparation re-encodes once and recording at the target
+would compress twice. Its bytes are handed over at the recorder's `stop`
 event, after the last chunk. Every failure is a typed `ReelRecorderError` (`unsupported`, `start`,
 `record`, `empty`) and a toast.
 
@@ -153,6 +157,31 @@ whose core purpose is a gallery, and a full photo-library grant on iOS - a priva
 only to draw a picture. The tile opens the system picker instead, which needs neither; a video over
 the cap is refused the moment it is picked (`reels/videoDuration.ts`), and one whose header has no
 duration is left to the preparation's own `too-long`.
+
+### One shutter, and a capture that IS the preview (2026-10-05)
+
+`reels/framedCapture.ts`. User report from the Mi 9T and the iPhone: the saved image did not match
+what the preview showed, and the camera lagged. Causes read in the code (hardware measurement is
+OWED, see below):
+
+- **A different frame.** The photo and the take were the SENSOR's whole frame; the preview is that
+  frame under `object-fit: cover` in a box with the phone's aspect. Both are now the preview's crop
+  (`coverCropRect`) drawn through a canvas, so the file has the preview's aspect exactly. A take is
+  recorded from `canvas.captureStream` plus the camera's audio tracks (`FramedStream`): a
+  `MediaRecorder` has no crop of its own.
+- **More pixels than the screen.** The request was 1280x720 whatever the phone, and the recorder
+  encoded the sensor's frame. `cameraVideoConstraints` now asks for the screen (`screen x dpr`) in its
+  aspect, capped at `REEL_CAPTURE_MAX_LONG_SIDE` (1280, what the upload is prepared to), plus 30 fps;
+  the saved size never exceeds the screen, the cap or the crop (`framedOutputSize`), and the bitrate
+  follows the pixels (`videoBitrateFor`).
+- **Mirroring.** The front preview is mirrored by a CSS transform; a canvas read of the decoded
+  frame ignores it, so the saved photo and take are NOT mirrored - Instagram's convention, so text in
+  frame reads right. The rear lens is never mirrored. The code never flipped a saved frame; if a
+  device still shows a flip, it is the review comparing an un-mirrored take with a mirrored preview,
+  or a platform fact to read on that device - not a transform to find here.
+- **Not changed, and a lead if the lag remains:** Android still prefers VP9 WebM in
+  `reelRecorderMimeCandidates`, a SOFTWARE encoder on the Mi 9T; H.264 MP4 (hardware) first is the
+  next candidate, to be measured, not guessed.
 
 **The camera also takes still photos.** A photo is captured from the live frame, reviewed, and can
 be edited before publishing. The editor draws freehand strokes and app-font text, then bakes those

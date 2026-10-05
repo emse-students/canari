@@ -14,7 +14,7 @@ export type DirectoryScope = 'directory' | 'all';
 
 /** The parsed query of the association listing. `null` on a filter side is "not filtered". */
 export interface DirectoryQuery {
-  type?: 'association' | 'list';
+  type?: 'association' | 'list' | 'institution';
   scope: DirectoryScope;
   campus: SpaceCampus | null;
   formation: SpaceFormation | null;
@@ -34,11 +34,30 @@ export interface RawDirectoryQuery {
  * silently widens or empties the answer.
  */
 export function parseDirectoryQuery(raw: RawDirectoryQuery): DirectoryQuery {
-  const type = raw.type === 'association' || raw.type === 'list' ? raw.type : undefined;
+  const type =
+    raw.type === 'association' || raw.type === 'list' || raw.type === 'institution'
+      ? raw.type
+      : undefined;
   const scope = raw.scope?.trim() || 'directory';
   if (scope !== 'directory' && scope !== 'all') {
     throw new BadRequestException(`Unknown scope: ${scope}`);
   }
+  const { campus, formation } = parseSpaceSelection(raw);
+  return { type, scope, campus, formation };
+}
+
+/** A selection of spaces: one campus, one formation, or the pair. `null` is "any". */
+export interface SpaceSelection {
+  campus: SpaceCampus | null;
+  formation: SpaceFormation | null;
+}
+
+/**
+ * Parses `?campus=` / `?formation=` (D4/D6 values), shared by the directory's map filter and the
+ * anonymous agenda's selection (D40). An unknown value is a 400: a feed URL is saved once by a
+ * calendar app, so a typo must fail where it is typed and never silently widen or empty it.
+ */
+export function parseSpaceSelection(raw: { campus?: string; formation?: string }): SpaceSelection {
   const campus = raw.campus?.trim() || null;
   if (campus !== null && !(SPACE_CAMPUSES as readonly string[]).includes(campus)) {
     throw new BadRequestException(`Unknown campus: ${campus}`);
@@ -47,10 +66,5 @@ export function parseDirectoryQuery(raw: RawDirectoryQuery): DirectoryQuery {
   if (formation !== null && !(SPACE_FORMATIONS as readonly string[]).includes(formation)) {
     throw new BadRequestException(`Unknown formation: ${formation}`);
   }
-  return {
-    type,
-    scope,
-    campus: campus as SpaceCampus | null,
-    formation: formation as SpaceFormation | null,
-  };
+  return { campus: campus as SpaceCampus | null, formation: formation as SpaceFormation | null };
 }
