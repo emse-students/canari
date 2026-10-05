@@ -258,6 +258,15 @@ describe('where a group-info base is read and written', () => {
     // send the next reader to entirely the wrong place. A wiring bug must look like one.
     expect(() => proto.groupInfoChannel.call(ctx, 'g-1')).toThrow(/transport/i);
   });
+
+  it('throws for a key group only NOTED, rather than asking chat-delivery for a base it has not', () => {
+    const ctx = makeCtx();
+    proto.noteDistributionGroup.call(ctx, 'g-1');
+
+    // chat-delivery would answer 403 - "not a member", the one refusal read as final.
+    expect(() => proto.groupInfoChannel.call(ctx, 'g-1')).toThrow(/no scope yet/);
+    expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
+  });
 });
 
 describe('joining on first use', () => {

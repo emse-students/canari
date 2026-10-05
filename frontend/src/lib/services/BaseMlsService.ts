@@ -3649,6 +3649,17 @@ export abstract class BaseMlsService implements IMlsService {
   } {
     const scope = this.distributionScopeByGroup.get(groupId);
     if (scope === undefined) {
+      // A KEY GROUP THE SERVER NAMED BUT NO SCOPE YET ADDRESSES (`noteDistributionGroup`: a salon
+      // whose community this session has not loaded) has no base anywhere this device can reach.
+      // chat-delivery would answer 403, which reads as "not a member" - the one refusal a caller
+      // treats as final. So it is refused HERE, as what it is; the community load registers the
+      // scope, and every caller retries through it. No caller is known to reach this (every gap,
+      // join and publish on a key group starts from a scope), and that is why it throws.
+      if (this.knownDistributionGroups.has(groupId)) {
+        throw new Error(
+          `[MLS] key group ${groupId.slice(0, 8)}... has no scope yet - its base is not addressable until its community loads`
+        );
+      }
       return {
         fetch: () => this.delivery.fetchGroupInfo(groupId),
         publish: (gi, epoch) => this.delivery.storeGroupInfo(groupId, gi, epoch),

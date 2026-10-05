@@ -44,6 +44,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       }
     ).groupInfoChannel,
     distributionScopeByGroup: new Map<string, string>(),
+    knownDistributionGroups: new Set<string>(),
     distributionGroupInfo: null,
     joinByExternalCommit: vi.fn().mockResolvedValue({ groupId: 'g', commit: new Uint8Array([9]) }),
     // The epoch the fake instance reaches once the external commit is applied to it. `externalJoin`
