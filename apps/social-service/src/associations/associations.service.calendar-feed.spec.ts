@@ -136,6 +136,31 @@ describe('AssociationsService.listAggregatedCalendarFeed', () => {
     expect(clause).toBeUndefined();
   });
 
+  it('narrows the anonymous agenda to a selection (D40), binding only the sides given', async () => {
+    const { service, qb } = makeService();
+    await service.listAggregatedCalendarFeed(undefined, undefined, undefined, {
+      selection: { campus: 'gardanne', formation: null },
+    });
+    const clause = qb.andWhere.mock.calls.find(
+      ([, params]: [string, Record<string, unknown>?]) => params && 'agendaCampus' in params
+    ) as [string, Record<string, unknown>] | undefined;
+    expect(clause).toBeDefined();
+    expect(clause?.[1]).toEqual({ agendaCampus: 'gardanne', agendaFormation: null });
+    expect(clause?.[0]).toContain(':agendaCampus');
+    expect(clause?.[0]).not.toContain(':agendaFormation');
+  });
+
+  it('leaves the agenda whole without a selection', async () => {
+    const { service, qb } = makeService();
+    await service.listAggregatedCalendarFeed(undefined, undefined, undefined, {
+      selection: { campus: null, formation: null },
+    });
+    const clause = qb.andWhere.mock.calls.find(
+      ([sql]: [string]) => typeof sql === 'string' && sql.includes('agendaCampus')
+    );
+    expect(clause).toBeUndefined();
+  });
+
   it('reports a malformed associationId as not-found instead of a raw database error', async () => {
     const { service } = makeService();
     // Not a UUID - previously reached `assoRepo.findOne` and surfaced Postgres's

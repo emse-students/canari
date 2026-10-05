@@ -720,7 +720,7 @@ box no longer defines anything.
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; never a personal post; card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
-| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | next (today: all, public) |
+| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | campus and formation built ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05)); "mine" and the UI await answers |
 | Association directory (D37) | associations reaching one's spaces, or one belongs to | built |
 | Association page | NOT LISTED for a reader outside its audience, but reachable by a link (user, 2026-10-04); the member list does NOT follow the audience | existing |
 | Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
@@ -963,3 +963,21 @@ removes the co-organiser branch of `eventVisibleToUserSql` fails 2 cases.
 
 **Not verified**: no browser pass (the picker states, the queue rows and the notification were
 checked by `svelte-check` and the component tests only), and no device push.
+
+### D40 - the anonymous agenda per selection, as built (2026-10-05)
+
+`GET /api/associations/calendar/feed` and `feed.ics` (public) take `?campus=` and `?formation=`
+(D4/D6 values; an unknown one is a 400, because a saved subscription URL must fail where it is typed).
+`eventReachesSpaceMatchingSql` (`spaces/reader-spaces.ts`) keeps an event when its ORGANISER's rules
+or an ACCEPTED co-organiser's (D39) reach a space matching the selection: rules only, an anonymous
+reader has no membership. Neither parameter is no selection and the feed stays whole. A signed-in
+reader of `/feed` gets both filters. No migration. Proof: the integration spec's five selections
+against real PostgreSQL, plus the service and controller specs.
+
+**NOT BUILT, undecided - questions for the user:**
+
+1. **"mine"**: a calendar app sends no identity, so a personal feed needs a per-user secret URL (token,
+   rotation, revocation). Is that wanted, or is "mine" only the signed-in agenda?
+2. **The default**: with no selection, should the bare URL stay the whole agenda (kept), or be refused?
+3. **The selector UI**: where the subscribe modal and the PDF export pick campus/formation.
+4. **`GET /api/public/associations`** (sitemap): still lists every association; filter it too?

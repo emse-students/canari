@@ -512,6 +512,33 @@ describe('AssociationsController feed.ics eventId', () => {
     expect(body).not.toContain('UID:ev1@canari');
   });
 
+  it('hands the selection to the feed, and refuses an unknown campus with a 400 (D40)', async () => {
+    const controller = makeController();
+    await controller.aggregatedCalendarFeedIcs(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      res,
+      'gardanne',
+      'ICM'
+    );
+    const service = (
+      controller as unknown as { service: { listAggregatedCalendarFeed: jest.Mock } }
+    ).service;
+    expect(service.listAggregatedCalendarFeed).toHaveBeenCalledWith(
+      undefined,
+      undefined,
+      undefined,
+      {
+        selection: { campus: 'gardanne', formation: 'ICM' },
+      }
+    );
+    await expect(
+      controller.aggregatedCalendarFeedIcs(undefined, undefined, undefined, undefined, res, 'paris')
+    ).rejects.toThrow('Unknown campus: paris');
+  });
+
   it('serves the whole window without an eventId', async () => {
     const body = await makeController().aggregatedCalendarFeedIcs(
       undefined,
