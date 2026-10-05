@@ -43,6 +43,7 @@ describe('every static route resolves a title of its own', () => {
     expect(routes).toContain('/admin/storage');
     expect(routes).toContain('/settings');
     expect(routes).toContain('/directory');
+    expect(routes).toContain('/institutions');
   });
 
   it.each(routes.filter((r) => !TITLED_BY_THE_SITE.has(r)))('%s', (route) => {

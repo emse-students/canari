@@ -317,6 +317,14 @@ export class AssociationsService {
     });
     return this.assoRepo.manager.transaction(async (manager) => {
       const saved = await manager.save(asso);
+      if (dto.type === 'institution') {
+        // The type decides the default (D33's one mechanism): an institution addresses nobody until
+        // an admin ticks the /admin/spaces grid - a global admin's own spaces are rarely the School's.
+        this.logger.log(
+          `[spaces] ${saved.id} is an institution: no default rule, visible to its members only`
+        );
+        return saved;
+      }
       const creatorSpaces = (await manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
       const rules = smallestRules(creatorSpaces);
       if (rules.length === 0) {
