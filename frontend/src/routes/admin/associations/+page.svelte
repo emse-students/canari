@@ -3,17 +3,14 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin } from '$lib/stores/user';
-  import { listAssociations, updateAssociation, type Association } from '$lib/associations/api';
-  import { Building2, Search, ShieldCheck, LoaderCircle } from '@lucide/svelte';
-  import { SvelteSet } from 'svelte/reactivity';
+  import { listAssociations, type Association } from '$lib/associations/api';
+  import { Building2, Search, ShieldCheck } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   let loading = $state(true);
   let error = $state<string | null>(null);
   let associations = $state<Association[]>([]);
   let query = $state('');
-  /** IDs whose BDE flag is currently being persisted (per-row spinner + disabled). */
-  const savingIds = new SvelteSet<string>();
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -36,24 +33,6 @@
       error = m.admin_assoc_load_error();
     } finally {
       loading = false;
-    }
-  }
-
-  /** Optimistically toggles the BDE flag and persists it, reverting on failure. */
-  async function toggleBde(assoc: Association, next: boolean) {
-    const previous = assoc.isBDE;
-    associations = associations.map((a) => (a.id === assoc.id ? { ...a, isBDE: next } : a));
-    savingIds.add(assoc.id);
-    error = null;
-    try {
-      await updateAssociation(assoc.id, { isBDE: next });
-    } catch (e) {
-      Log.d('admin.associations.toggleBde failed', e);
-      // Revert on failure so the UI never lies about the persisted state.
-      associations = associations.map((a) => (a.id === assoc.id ? { ...a, isBDE: previous } : a));
-      error = m.admin_assoc_update_error({ name: assoc.name });
-    } finally {
-      savingIds.delete(assoc.id);
     }
   }
 
@@ -121,22 +100,9 @@
               <span class="text-text-main block truncate text-sm font-semibold">{assoc.name}</span>
               <span class="text-text-muted block truncate text-xs">/{assoc.slug}</span>
             </div>
-            <label class="flex shrink-0 cursor-pointer items-center gap-2">
-              {#if savingIds.has(assoc.id)}
-                <LoaderCircle size={14} class="text-cn-yellow animate-spin" />
-              {/if}
-              <span class="text-xs font-bold {assoc.isBDE ? 'text-green-ok' : 'text-text-muted'}">
-                BDE
-              </span>
-              <input
-                type="checkbox"
-                checked={assoc.isBDE}
-                disabled={savingIds.has(assoc.id)}
-                onchange={(e) => toggleBde(assoc, (e.currentTarget as HTMLInputElement).checked)}
-                class="border-cn-border text-cn-yellow focus:ring-cn-yellow h-4 w-4 rounded disabled:opacity-50"
-                aria-label={m.admin_assoc_mark_bde_aria_label({ name: assoc.name })}
-              />
-            </label>
+            {#if assoc.isBDE}
+              <span class="text-green-ok shrink-0 text-xs font-bold">BDE</span>
+            {/if}
           </div>
         {/each}
       {/if}

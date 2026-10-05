@@ -133,8 +133,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     await client.query(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, formation varchar);
-      CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        "isBDE" boolean NOT NULL DEFAULT false);
+      CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,

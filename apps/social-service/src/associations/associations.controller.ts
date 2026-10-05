@@ -481,7 +481,7 @@ export class AssociationsController {
 
   /**
    * Updates association details.
-   * `isBDE` and `documentQuotaBytes` are silently ignored unless the caller is a global admin.
+   * `documentQuotaBytes` is silently ignored unless the caller is a global admin.
    * Cotisation config fields (`cotisationEnabled`/`cotisationMode`/`cotisationExpiresAt`) require
    * MANAGE_PRODUCTS (D5), stricter than this endpoint's baseline MANAGE_MEMBERS. When enabling,
    * the canonical cotisation product is provisioned/synced (see `provisionCotisationProduct`).
@@ -498,8 +498,7 @@ export class AssociationsController {
     const patch = { ...dto };
     const isGlobalAdmin = ga === 'true';
     if (!isGlobalAdmin) {
-      // Only global admins may toggle BDE status or adjust document quota
-      delete patch.isBDE;
+      // Only global admins may adjust document quota
       delete patch.documentQuotaBytes;
     }
 
