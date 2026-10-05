@@ -1013,7 +1013,7 @@ That collapses the seven stages to two without any client instrumentation at all
 | --- | --- |
 | `moderation` | `200` and **51 bytes**, which is exactly `{"isMuted":false,"mutedReason":null,"mutedAt":null}` - the muted shape carries a date and is longer |
 | `content` | unreachable: the Publier button is disabled on the identical predicate |
-| `mediaToken` | `authToken` is taken at mount, so the branch is skipped |
+| `mediaToken` | `getToken()` is read per upload (it was a mount-time copy until 2026-10-05, which expired after 15 min and showed as a session error), so the branch is skipped |
 | `mediaUpload` | no `/api/media` write from that device, and `compressImage` cannot throw - every failure it has is a typed passthrough, so an upload would have been attempted and logged |
 | `createPost` | never sent |
 
