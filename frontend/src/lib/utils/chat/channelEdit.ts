@@ -19,7 +19,11 @@ export interface DecodedChannelEdit {
  *
  * AUTHORSHIP IS DECIDED HERE, BY EVERY READER, AND NOT BY THE SERVER. A salon row is an opaque blob
  * to the server (Graine), so it cannot know that a frame is an edit, let alone whose message it
- * edits. What it does know, and what Graine v2 makes unforgeable, is who SEALED the row. So an edit
+ * edits. What it does know, and what Graine v2 makes unforgeable, is who SEALED the row. **That
+ * holds for v2 sessions ONLY**: a row opened under a v1 session has a server-supplied, unsigned
+ * `senderId`, so a malicious server or a pre-G2-5 row could forge an edit from the author - the
+ * same trust as a delete today, deliberately not restricted here, and gone with the v1 reader
+ * (channel-encryption 21.5b). So an edit
  * is honoured only when its sender is the target's author - the rule `mutationIsAuthorised` applies
  * to a group's `edit_message` - and a moderator's `channel.moderate` widens deletion only, never
  * this: a moderator may remove someone's words but not put others in their mouth.
