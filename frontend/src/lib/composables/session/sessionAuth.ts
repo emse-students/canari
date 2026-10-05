@@ -6,6 +6,7 @@
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
 import { goto } from '$app/navigation';
+import { resolve } from '$app/paths';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage } from '$lib/db';
 import { computePinVerifier } from '$lib/utils/chat/auth';
@@ -549,7 +550,7 @@ export async function loginImpl(
       if (err instanceof SessionExpiredError) {
         ctx.setIsLoginInProgress(false);
         if (cb.onSessionExpired) cb.onSessionExpired();
-        else void goto('/login', { replaceState: true });
+        else void goto(resolve('/login'), { replaceState: true });
         return;
       }
       // Anything else is a transport failure (no network, backend restarting): the server was
@@ -1609,12 +1610,12 @@ export async function loginImpl(
     if (_e instanceof SessionExpiredError) {
       clearUserLocally();
       if (cb.onSessionExpired) cb.onSessionExpired();
-      else void goto('/login', { replaceState: true });
+      else void goto(resolve('/login'), { replaceState: true });
     } else if (cb.onLoginFailed) {
       cb.onLoginFailed(shown, code);
     } else {
       const cur = window.location.pathname + window.location.search + window.location.hash;
-      void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+      void goto(resolve(`/login?returnTo=${encodeURIComponent(cur)}`), { replaceState: true });
     }
   } finally {
     ctx.setIsLoginInProgress(false);
@@ -2018,5 +2019,5 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   clearDeviceKeyAndWrapKey();
   clearAuth();
   cb.log('[LOGOUT] Local state cleared - redirecting to /login.');
-  void goto('/login', { replaceState: true });
+  void goto(resolve('/login'), { replaceState: true });
 }

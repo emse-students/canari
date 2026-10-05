@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { goto } from '$app/navigation';
   import { Trash2, LoaderCircle, CircleAlert } from '@lucide/svelte';
@@ -23,7 +24,7 @@
     try {
       await deleteMyAccount();
       await clearAuth();
-      await goto('/login', { replaceState: true });
+      await goto(resolve('/login'), { replaceState: true });
     } catch (err) {
       Log.d('handleDeleteAccount failed', err);
       deletionError = m.profile_delete_error_fallback();

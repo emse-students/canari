@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   /**
    * The CanaReels camera tab (C5): a full-screen preview, the app's own - never the system camera.
    *
@@ -132,7 +133,7 @@
     console.debug(`[camera] close (from app: ${cameFromApp})`);
     session.stop();
     if (cameFromApp) history.back();
-    else void goto('/posts', { replaceState: true });
+    else void goto(resolve('/posts'), { replaceState: true });
   }
 
   // The element follows the session's stream; `srcObject` is a property, not an attribute.

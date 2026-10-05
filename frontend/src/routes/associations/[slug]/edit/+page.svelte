@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -247,7 +248,7 @@
       superAdminOf = (await getMyBdeReach()).manageAsso;
       const canEdit = isGlobalAdmin() || isSuperAdminUser || (!!mine && mine.isAdmin);
       if (!canEdit) {
-        await goto(`/associations/${encodeURIComponent(slug)}`);
+        await goto(resolve(`/associations/${encodeURIComponent(slug)}`));
         return;
       }
     } catch (err) {

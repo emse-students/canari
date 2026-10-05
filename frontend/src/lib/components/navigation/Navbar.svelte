@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import StatusPill from '../shared/StatusPill.svelte';
   import CanariBrand from './CanariBrand.svelte';
   import EcosystemLauncher from './EcosystemLauncher.svelte';
@@ -11,7 +12,7 @@
 
   async function handleLogout() {
     await clearAuth();
-    void goto('/login', { replaceState: true });
+    void goto(resolve('/login'), { replaceState: true });
   }
 </script>
 

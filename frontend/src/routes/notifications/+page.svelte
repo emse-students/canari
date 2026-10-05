@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { BellOff } from '@lucide/svelte';
@@ -82,7 +84,7 @@
         notif,
         async (id) => (await getAssociation(id)).slug
       );
-      await goto(url);
+      await goto(resolve(internalPath(url)));
     } catch (e: unknown) {
       Log.d('notifications', `open ${notif.type} failed: ${String(e)}`);
       showToast(m.notif_open_error());

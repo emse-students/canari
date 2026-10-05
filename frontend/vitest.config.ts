@@ -36,6 +36,7 @@ export default defineConfig({
     conditions: ['browser'],
     alias: {
       '$app/navigation': resolve(import.meta.dirname, './src/test/mocks/app-navigation.ts'),
+      '$app/paths': resolve(import.meta.dirname, './src/test/mocks/app-paths.ts'),
       $lib: resolve(import.meta.dirname, './src/lib'),
       $app: resolve(import.meta.dirname, './node_modules/@sveltejs/kit/src/runtime/app'),
     },

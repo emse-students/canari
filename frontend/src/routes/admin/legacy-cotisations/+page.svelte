@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -70,7 +71,7 @@
   onMount(() => {
     if (!isGlobalAdmin()) {
       console.error('[ADMIN][LEGACY] non-global-admin blocked client-side, redirecting');
-      void goto('/admin', { replaceState: true });
+      void goto(resolve('/admin'), { replaceState: true });
       return;
     }
     ready = true;

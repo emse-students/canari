@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import {
@@ -132,7 +134,7 @@
           // Only redirect when not already on the target page, and never twice in a row to a
           // target that just bounced back here.
           if (target !== current && shouldAutoRedirectTo(target)) {
-            await goto(target, { replaceState: true });
+            await goto(resolve(internalPath(target)), { replaceState: true });
           }
         } catch {
           // Token expired or invalid: stay on login so the user can re-authenticate.

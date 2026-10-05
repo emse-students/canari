@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -98,15 +100,17 @@
   }
 
   function applyFilterToUrl() {
-    const path = page.url.pathname;
     if (filterAssociationId.trim()) {
-      void goto(`${path}?association=${encodeURIComponent(filterAssociationId.trim())}`, {
-        replaceState: true,
-        keepFocus: true,
-        noScroll: true,
-      });
+      void goto(
+        resolve(`/calendar?association=${encodeURIComponent(filterAssociationId.trim())}`),
+        {
+          replaceState: true,
+          keepFocus: true,
+          noScroll: true,
+        }
+      );
     } else {
-      void goto(path, { replaceState: true, keepFocus: true, noScroll: true });
+      void goto(resolve('/calendar'), { replaceState: true, keepFocus: true, noScroll: true });
     }
   }
 
@@ -528,7 +532,7 @@
   <div class="space-y-6">
     {#if canModerateAgenda}
       <a
-        href="/admin/agenda"
+        href={resolve('/admin/agenda')}
         class="border-amber-warn/30 bg-amber-warn/10 hover:border-amber-warn/40 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-colors"
       >
         <span
@@ -596,7 +600,7 @@
     {#snippet exportActions()}
       {#if canExportPdf}
         <a
-          href={exportHref}
+          href={resolve(internalPath(exportHref))}
           class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-sm font-bold transition-colors"
         >
           <FileDown size={18} />

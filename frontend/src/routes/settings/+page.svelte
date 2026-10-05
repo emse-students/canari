@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -33,7 +34,7 @@
   // themselves.
   onMount(() => {
     if (!currentUserId()) {
-      void goto('/login?returnTo=/settings', { replaceState: true });
+      void goto(resolve('/login?returnTo=/settings'), { replaceState: true });
     }
   });
 
