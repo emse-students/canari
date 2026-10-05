@@ -18,10 +18,11 @@
   import { sendReadWatermark } from '$lib/utils/chat/messaging';
   import { isAppInForeground } from '$lib/utils/appForeground';
   import {
-    mergeReadWatermark,
     watermarkAfterReading,
     watermarkFor,
+    withOwnReadAdvanced,
   } from '$lib/utils/chat/readState';
+  import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import {
     isChannelConversationId,
@@ -560,9 +561,13 @@
       setTimeout(() => {
         const fresh = convs.conversations.get(currentContact);
         if (!fresh) return;
-        const merged = mergeReadWatermark(fresh.readWatermarks, meNorm, target);
-        if (!merged) return;
-        convs.conversations.set(currentContact, { ...fresh, readWatermarks: merged });
+        // The count moves with the watermark (the open conversation is read, so it falls to 0),
+        // and the OTHER TABS of this account are told: a leader tab that counted the arrival while
+        // this tab had the conversation open would otherwise keep its `(N)` for good.
+        const next = withOwnReadAdvanced(fresh, meNorm, target);
+        if (next === fresh) return;
+        convs.conversations.set(currentContact, next);
+        publishConversationRead(currentContact, next.lastMessageAt ?? 0);
         void convs.saveConversation(currentContact, convCtx());
       }, 0);
     });

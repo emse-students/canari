@@ -8,7 +8,7 @@ import { setTyping } from '$lib/stores/typingStore.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
-import { mergeReadWatermark } from '$lib/utils/chat/readState';
+import { mergeReadWatermark, withOwnReadAdvanced } from '$lib/utils/chat/readState';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 
@@ -19,6 +19,7 @@ import type { MessageHandlerDeps } from './deps';
 export interface ChannelEventContext extends Pick<
   MessageHandlerDeps,
   | 'conversations'
+  | 'userId'
   | 'addMessageToChat'
   | 'onChannelMemberJoined'
   | 'onChannelMemberKicked'
@@ -283,8 +284,17 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const convo = conversations.get(key);
     // Not held here: nothing draws it, and its next load reads every mark from the server.
     if (!convo) return;
-    const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
-    if (merged) conversations.set(key, { ...convo, readWatermarks: merged });
+    // MY OWN MARK FROM ANOTHER DEVICE ALSO CLEARS THE COUNT THIS DEVICE DRAWS. It used to merge the
+    // watermark and stop, so a salon read on the phone stayed unread here - tile, nav dot and tab
+    // title `(N)` - until it was opened on this device too.
+    const next =
+      userId.toLowerCase() === ctx.userId.toLowerCase()
+        ? withOwnReadAdvanced(convo, userId, Number(data.at))
+        : (() => {
+            const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
+            return merged ? { ...convo, readWatermarks: merged } : convo;
+          })();
+    if (next !== convo) conversations.set(key, next);
     return;
   }
 

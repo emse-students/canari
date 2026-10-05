@@ -29,6 +29,7 @@ const { handleChannelEvent } = await import('./channelEventHandler');
 function ctx(conversations: Map<string, unknown>, log = vi.fn()) {
   return {
     conversations,
+    userId: 'me',
     addMessageToChat: vi.fn(),
     log,
     onOutOfSync: vi.fn(),
@@ -57,6 +58,37 @@ describe('channelEventHandler - channel.read', () => {
     );
   });
 
+  it('my own mark from another device clears the unread count this device draws', async () => {
+    const msg = (id: string, at: number) => ({
+      id,
+      senderId: 'bob',
+      isOwn: false,
+      isSystem: false,
+      timestamp: new Date(at),
+    });
+    const conversations = new Map<string, unknown>([
+      [
+        'channel_c1',
+        { id: 'channel_c1', unreadCount: 2, messages: [msg('a', 100), msg('b', 200)] },
+      ],
+    ]);
+
+    await handleChannelEvent(read('Me', 200), ctx(conversations));
+
+    const c = conversations.get('channel_c1') as { unreadCount: number; readWatermarks: unknown };
+    expect(c.unreadCount).toBe(0);
+    expect(c.readWatermarks).toEqual({ me: 200 });
+  });
+
+  it("someone else's mark never touches my count", async () => {
+    const conversations = new Map<string, unknown>([
+      ['channel_c1', { id: 'channel_c1', unreadCount: 2, messages: [] }],
+    ]);
+
+    await handleChannelEvent(read('bob', 200), ctx(conversations));
+
+    expect((conversations.get('channel_c1') as { unreadCount: number }).unreadCount).toBe(2);
+  });
   it('touches nothing for a salon this device does not hold', async () => {
     const conversations = new Map<string, unknown>();
     const log = vi.fn();

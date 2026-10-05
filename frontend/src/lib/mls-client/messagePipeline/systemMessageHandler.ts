@@ -36,6 +36,7 @@ import {
   parseReadWatermarks,
   watermarkAfterReading,
   watermarkFor,
+  withOwnReadAdvanced,
 } from '$lib/utils/chat/readState';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -706,14 +707,16 @@ export async function handleSystemEvent(
             );
       const merged = mergeReadWatermark(c.readWatermarks, senderNorm, at);
       // Read by OURSELVES on another device: clear the badge here too, which is the whole point of
-      // the watermark travelling between our own devices.
+      // the watermark travelling between our own devices. The count follows the watermark rather
+      // than being zeroed, so a message newer than what was read there stays counted.
       const selfRead = senderNorm === userId;
-      if (merged || selfRead) {
-        conversations.set(convoKey, {
-          ...c,
-          ...(merged ? { readWatermarks: merged } : {}),
-          ...(selfRead ? { unreadCount: 0 } : {}),
-        });
+      const next = selfRead
+        ? withOwnReadAdvanced(c, senderNorm, at)
+        : merged
+          ? { ...c, readWatermarks: merged }
+          : c;
+      if (next !== c) {
+        conversations.set(convoKey, next);
         // The read state lives on the conversation row, so this save is what persists it - for a
         // peer's watermark as much as for our own.
         await saveConversation?.(convoKey).catch(() => {});

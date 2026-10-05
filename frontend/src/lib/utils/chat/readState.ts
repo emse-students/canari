@@ -209,6 +209,41 @@ export function isUnreadForUser(
   return readOrderKey(msg) > watermark;
 }
 
+/**
+ * THE ONE WAY THIS USER'S OWN READ POINT MOVES: the watermark rises AND the unread counter follows.
+ *
+ * `unreadCount` is what the sidebar tile, the nav dot, the tab title `(N)` and the favicon dot all
+ * read, and it is a counter maintained beside the watermark rather than derived from it. Every place
+ * that advanced the watermark had to remember to zero the counter too, and the ones that did not
+ * (a salon read on another device, the optimistic mark of an open conversation, a follower tab) left
+ * a count nothing would ever clear - the title kept `(2)` after everything had been read.
+ *
+ * The count only ever FALLS here: it becomes the smaller of what it was and what is still unread at
+ * the new watermark among the messages held. A message this device has not loaded cannot raise it,
+ * and one it holds past the watermark keeps it - which is what an unconditional zero got wrong.
+ *
+ * @returns `convo` itself when neither the watermark nor the count changes, so a repeat costs no
+ *          re-render.
+ */
+export function withOwnReadAdvanced<
+  C extends {
+    messages: Array<Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp'>>;
+    readWatermarks?: ReadWatermarks;
+    unreadCount?: number;
+  },
+>(convo: C, userId: string, at: number): C {
+  const merged = mergeReadWatermark(convo.readWatermarks, userId, at);
+  const watermark = watermarkFor(merged ?? convo.readWatermarks, userId);
+  const held = convo.unreadCount ?? 0;
+  const next = Math.min(held, countUnreadForUser(convo.messages, watermark));
+  if (!merged && next === held) return convo;
+  return {
+    ...convo,
+    ...(merged ? { readWatermarks: merged } : {}),
+    unreadCount: next,
+  };
+}
+
 /** Counts the messages of `msgs` that still read as unread at `watermark`. */
 export function countUnreadForUser(
   msgs: Array<Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp'>>,
