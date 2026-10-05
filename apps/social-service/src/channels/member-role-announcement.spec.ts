@@ -113,6 +113,7 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
       permissions: ADMIN_ROLE.permissions,
       canManage: true,
       canManageChannels: true,
+      canModerate: true,
       changedBy: ACTOR,
     });
   });
@@ -130,6 +131,8 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
       roleName: 'Membre',
       canManage: false,
       canManageChannels: false,
+      // The flag the message menu's pin and delete follow - a demoted moderator must lose them live.
+      canModerate: false,
       permissions: [],
     });
   });

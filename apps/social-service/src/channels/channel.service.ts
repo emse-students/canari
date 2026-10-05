@@ -38,8 +38,10 @@ import {
   DEFAULT_ADMIN_PERMISSIONS,
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
+  PIN_REQUIRES_MODERATION,
   RETIRED_PERMISSIONS,
   roleGrantsChannelManagement,
+  roleGrantsModeration,
   writePolicyAllows,
 } from './permissions';
 
@@ -248,7 +250,7 @@ export class ChannelService {
     // moderator everywhere except here.
     return writePolicyAllows(policy, {
       canManage: roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)),
-      canModerate: roles.some((r) => this.roleGrantsModeration(r.permissions)),
+      canModerate: roles.some((r) => roleGrantsModeration(r.permissions)),
     });
   }
 
@@ -282,7 +284,7 @@ export class ChannelService {
         .map((r) => r.id)
     );
     const moderateRoleIds = new Set(
-      roles.filter((r) => this.roleGrantsModeration(r.permissions)).map((r) => r.id)
+      roles.filter((r) => roleGrantsModeration(r.permissions)).map((r) => r.id)
     );
     const byUser = new Map(members.map((m) => [m.userId.trim().toLowerCase(), m]));
 
@@ -310,16 +312,7 @@ export class ChannelService {
   private async memberCanModerateMessages(member: ChannelMember): Promise<boolean> {
     if (!member.roleIds?.length) return false;
     const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
-    return roles.some((r) => this.roleGrantsModeration(r.permissions));
-  }
-
-  /** The permission set that grants message moderation. Single source for enforcement and for the `viewerCanModerate` flag the client gates its UI on. */
-  private roleGrantsModeration(permissions: string[]): boolean {
-    return (
-      permissions.includes(CHANNEL_PERMISSIONS.MANAGE_MESSAGES) ||
-      permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-      permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
-    );
+    return roles.some((r) => roleGrantsModeration(r.permissions));
   }
 
   // ================= THE GOVERNANCE POSTCONDITION =================
@@ -1496,7 +1489,7 @@ export class ChannelService {
           .map((r) => r.id)
       );
       const moderateRoleIds = new Set(
-        roles.filter((r) => this.roleGrantsModeration(r.permissions)).map((r) => r.id)
+        roles.filter((r) => roleGrantsModeration(r.permissions)).map((r) => r.id)
       );
       viewerCanManage = viewerMember.roleIds.some((id) => manageRoleIds.has(id));
       viewerCanModerate = viewerMember.roleIds.some((id) => moderateRoleIds.has(id));
@@ -1580,7 +1573,7 @@ export class ChannelService {
     // Moderation is a separate, weaker grant: it lets the client offer "delete this message"
     // on someone else's message without having to probe the API for a 403.
     const moderateRoleIds = new Set(
-      roles.filter((r) => this.roleGrantsModeration(r.permissions)).map((r) => r.id)
+      roles.filter((r) => roleGrantsModeration(r.permissions)).map((r) => r.id)
     );
     const manageChannelsRoleIds = new Set(
       roles.filter((r) => roleGrantsChannelManagement(r.permissions)).map((r) => r.id)
@@ -2656,8 +2649,10 @@ export class ChannelService {
     // stayed open. Nothing was breakable, because the server re-checks each of those actions; what
     // the person got was a screen full of buttons that now fail with no explanation.
     //
-    // THE PERMISSIONS TRAVEL WITH THE EVENT rather than being fetched back. The client caches two
-    // permission-derived flags (`viewerCanManage`, `viewerCanManageChannels`), each DERIVED FROM THIS
+    // THE PERMISSIONS TRAVEL WITH THE EVENT rather than being fetched back. The client caches three
+    // permission-derived flags (`viewerCanManage`, `viewerCanManageChannels`, `viewerCanModerate` -
+    // the third was missing until 2026-10-05, so a demoted moderator kept being offered pin and
+    // delete on other members' messages), each DERIVED FROM THIS
     // ROLE, which is known here - so handing it over is the discriminator carried to where the
     // decision is made, instead of a round trip that can fail, race a load already in flight, or
     // arrive after the user has clicked. The whole permission list is sent, not just the one flag,
@@ -2676,6 +2671,7 @@ export class ChannelService {
           permissions: role.permissions,
           canManage: role.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
           canManageChannels: roleGrantsChannelManagement(role.permissions),
+          canModerate: roleGrantsModeration(role.permissions),
           changedBy: actorUserId,
         },
         [targetUserId]
@@ -3564,10 +3560,20 @@ export class ChannelService {
     if (!msg) throw new NotFoundException('Message not found');
 
     // Pinning someone else's message is a moderation act, exactly as the role matrix
-    // advertises it. Own messages stay free to pin.
-    if (msg.authorId !== userId && !(await this.memberCanModerateMessages(member))) {
-      throw new ForbiddenException('Missing channel.moderate permission to pin this message');
+    // advertises it. Own messages stay free to pin. Unpinning is the same act and the same rule.
+    const own = msg.authorId === userId;
+    if (!own && !(await this.memberCanModerateMessages(member))) {
+      this.logger.warn(
+        `[PIN] refused channel=${channelId} message=${messageId} user=${userId.slice(0, 8)} pinned=${pinned}: not the author and no moderation grant`
+      );
+      throw new ForbiddenException({
+        code: PIN_REQUIRES_MODERATION,
+        message: "Missing channel.moderate permission to pin someone else's message",
+      });
     }
+    this.logger.log(
+      `[PIN] channel=${channelId} message=${messageId} user=${userId.slice(0, 8)} pinned=${pinned} as=${own ? 'author' : 'moderator'}`
+    );
 
     if (msg.pinned !== pinned) {
       msg.pinned = pinned;
@@ -3964,11 +3970,12 @@ export class ChannelService {
    * an assignment sends, because from where they stand it is the same event.
    *
    * `workspace.role.permissions` redraws the grid and nothing else: the client caches its OWN
-   * standing as decisions (`viewerCanManage`, `viewerCanManageChannels`), never re-derived from the
-   * grid. So granting `channel.manage` to Moderateur left every moderator without the salon controls,
-   * and revoking it left them offered controls that now fail, until their next full load.
+   * standing as decisions (`viewerCanManage`, `viewerCanManageChannels`, `viewerCanModerate`), never
+   * re-derived from the grid. So granting `channel.manage` to Moderateur left every moderator without
+   * the salon controls, and revoking it left them offered controls that now fail, until their next
+   * full load.
    *
-   * The audience is SPLIT BY THE ANSWER, one publish per distinct verdict (four at most), because one
+   * The audience is SPLIT BY THE ANSWER, one publish per distinct verdict (eight at most), because one
    * payload cannot carry a per-viewer answer and a publish per holder would be one per member for
    * Membre. A holder's other roles count, so the verdict is over everything they hold. Best-effort
    * and logged, like the assignment's: the permissions are already written.
@@ -3985,18 +3992,19 @@ export class ChannelService {
       byId.set(role.id, role);
       const byVerdict = new Map<
         string,
-        { canManage: boolean; canManageChannels: boolean; to: string[] }
+        { canManage: boolean; canManageChannels: boolean; canModerate: boolean; to: string[] }
       >();
       for (const holder of holders) {
         const held = (holder.roleIds ?? []).flatMap((id) => byId.get(id)?.permissions ?? []);
         const canManage = held.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE);
         const canManageChannels = roleGrantsChannelManagement(held);
-        const key = `${canManage}:${canManageChannels}`;
-        const group = byVerdict.get(key) ?? { canManage, canManageChannels, to: [] };
+        const canModerate = roleGrantsModeration(held);
+        const key = `${canManage}:${canManageChannels}:${canModerate}`;
+        const group = byVerdict.get(key) ?? { canManage, canManageChannels, canModerate, to: [] };
         group.to.push(holder.userId);
         byVerdict.set(key, group);
       }
-      for (const { canManage, canManageChannels, to } of byVerdict.values()) {
+      for (const { canManage, canManageChannels, canModerate, to } of byVerdict.values()) {
         await this.redis.publishChannelEvent(
           'workspace.role.changed',
           {
@@ -4005,6 +4013,7 @@ export class ChannelService {
             permissions: role.permissions,
             canManage,
             canManageChannels,
+            canModerate,
           },
           to
         );

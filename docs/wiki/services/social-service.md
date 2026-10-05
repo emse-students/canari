@@ -247,15 +247,16 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   be declined while a load is already in flight, and would return exactly what the event already
   carries. Best-effort and logged - the role is written before the announcement is attempted, so a
   failed publish leaves the member where they were. **The invariant this rests on, written down because
-  nothing enforces it:** the client caches exactly two permission-derived values, `viewerCanManage` and
-  `viewerCanManageChannels`, and the event carries both as DECISIONS (`canManage`, `canManageChannels`;
-  an absent one means unchanged) - a third cached flag owes a third field here, never a derivation from
-  `permissions` on the client.
+  nothing enforces it:** the client caches exactly three permission-derived values, `viewerCanManage`,
+  `viewerCanManageChannels` and `viewerCanModerate`, and the event carries all three as DECISIONS
+  (`canManage`, `canManageChannels`, `canModerate`; an absent one means unchanged) - a fourth cached
+  flag owes a fourth field here, never a derivation from `permissions` on the client. The invariant
+  was already broken once: `viewerCanModerate` was cached and never announced until 2026-10-05.
 - **Editing what a role grants re-announces its HOLDERS' standing** (2026-09-29). `workspace.role.permissions`
   only redraws the grid, so granting `channel.manage` to Moderateur left every moderator without the
   salon controls until a full load, and revoking it left them offered controls that fail.
   `announceStandingToHolders` sends the same `workspace.role.changed` to the role's holders, split by
-  verdict (four publishes at most, never one per member).
+  verdict (eight publishes at most - three flags - never one per member).
 - **The salon settings panel offers only what the server would accept** (reported by the user
   2026-09-29): a plain member was shown visibility, write policy, allowlist, rename and delete, each
   refused with a 403 behind a confirmation. `ChannelSettingsPanel` reads `viewerCanManageChannels`;
@@ -282,7 +283,32 @@ never moderation - only the author can edit, in channels as in DMs.
 
 The workspace listing carries `viewerCanModerate` alongside `viewerCanManage` so the client can
 decide whether to render the delete affordance on another member's bubble without probing the
-API for a 403. It is a UI hint: the server re-checks on every call.
+API for a 403. It is a UI hint: the server re-checks on every call. `roleGrantsModeration`
+(`permissions.ts`) is the one definition behind the check, the listing flag and the
+`canModerate` field of `workspace.role.changed`.
+
+##### Who may pin, and what the client offers (2026-10-05)
+
+Reported by the user on 2026-10-05: a plain member pinned a message. **The rule, unchanged:** in a
+salon, a member may pin or unpin their OWN message, and anybody else's only with
+`channel.moderate` (or `channel.manage` / `workspace.manage`). A refusal is a 403 carrying
+`code: PIN_REQUIRES_MODERATION`, logged `[PIN] refused`; an accepted pin is logged `[PIN] ... as=author|moderator`.
+Two more paths put a pin on a salon message WITHOUT any rank, both by design: a **poll** is pinned on
+creation by whoever creates it (`sendMessage`, `pinned: pollMeta !== null`), and a DM or group pin is
+an MLS frame between equals that no server sees.
+
+**What was wrong was the client.** Every menu gated delete on `isOwn || canModerate` and pin on
+nothing, so a member was offered "Pin" on every message, saw it pinned optimistically, and had it
+reverted silently after the 403 (and a refused UNPIN tying in the same millisecond was never
+reverted). `mayPinMessage` (`frontend/src/lib/utils/chat/pinPermission.ts`) is now the one client
+rule, read by the bubble menus (through `ChatMessageGroups`), the pinned banner's unpin and
+`handleTogglePinMessage`; the revert is strictly later than the optimistic apply and a toast names
+the refusal. `workspace.role.changed` also carries `canModerate`, so a demoted moderator stops being
+offered pin and delete without a reload - it carried only the two other flags.
+
+**Not settled without production:** which of these the report was. The decisive reading is the
+pinned row itself - its `authorId` against the member, `metadata ? 'poll'`, and the member's
+`roleIds` and those roles' `permissions` - and, from this version on, the `[PIN]` log line.
 
 Deletion drops the row (the content is a ciphertext the server cannot read, so there is nothing
 worth tombstoning) and broadcasts `channel.message.deleted` (`{ channelId, messageId, deletedBy }`)

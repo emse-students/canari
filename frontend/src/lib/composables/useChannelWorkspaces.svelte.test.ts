@@ -483,6 +483,39 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
     expect(store.channelWorkspaces[0].viewerCanManageChannels).toBe(false);
   });
 
+  // The pin and delete affordances on OTHER members' messages follow this flag. A moderator demoted
+  // to Membre kept them until a reload when the event did not carry it (2026-10-05).
+  it('applies canModerate from the event, and leaves it alone when the event omits it', async () => {
+    listUserWorkspaces.mockResolvedValue([
+      { ...makeWorkspaceDto('ws1', 'One', 'one'), viewerCanModerate: true },
+    ]);
+    listChannels.mockResolvedValue([]);
+
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+    expect(store.channelWorkspaces[0].viewerCanModerate).toBe(true);
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Modérateur',
+      canManage: false,
+      permissions: ['channel.moderate'],
+    });
+    expect(store.channelWorkspaces[0].viewerCanModerate).toBe(true);
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Membre',
+      canManage: false,
+      canManageChannels: false,
+      canModerate: false,
+      permissions: [],
+    });
+    expect(store.channelWorkspaces[0].viewerCanModerate).toBe(false);
+  });
+
   // An event for a community this device does not hold must change nothing at all - not throw, and
   // not create a phantom entry in the sidebar.
   it('ignores a role change for a community it does not have', async () => {

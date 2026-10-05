@@ -18,6 +18,7 @@
   } from '$lib/utils/users/displayName';
   import { LoaderCircle } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
 
   interface Props {
     /** Slice of message groups currently rendered in the DOM. */
@@ -48,6 +49,11 @@
     onBeginEdit?: (messageId: string, text: string) => void;
     /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
     onTogglePin?: (messageId: string) => void;
+    /**
+     * Where the viewer stands for pinning (`mayPinMessage`): the action is handed to a bubble only
+     * when the rule lets the viewer pin THAT message. Absent = no ranks (DM, group).
+     */
+    pinStanding?: PinStanding;
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
     onJoinChannel?: (channelId: string) => void;
     /** IDs of pinned messages in this conversation. */
@@ -90,6 +96,7 @@
     canModerate = false,
     onBeginEdit,
     onTogglePin,
+    pinStanding = { inChannel: false, canModerate: false },
     onJoinChannel,
     pinnedIds = [],
     switchTime,
@@ -314,7 +321,7 @@
               {onDelete}
               {canModerate}
               {onBeginEdit}
-              {onTogglePin}
+              onTogglePin={mayPinMessage(pinStanding, msg) ? onTogglePin : undefined}
               pinned={pinnedSet.has(msg.id)}
               {currentUserId}
               shouldAnimate={msg.timestamp.getTime() > switchTime}

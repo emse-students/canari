@@ -251,6 +251,7 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
       workspaceId: WORKSPACE,
       canManage: false,
       canManageChannels: true,
+      canModerate: true,
     });
     expect(standing[0][2]).toEqual([MODERATOR]);
 

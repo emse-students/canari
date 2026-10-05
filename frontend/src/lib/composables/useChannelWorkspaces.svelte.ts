@@ -1447,8 +1447,9 @@ export function useChannelWorkspaces() {
   /**
    * Applies this device's own new role in a community, pushed by the server.
    *
-   * TWO FLAGS ARE CACHED, and each is stated rather than re-derived: `viewerCanManage` (the
-   * community) and `viewerCanManageChannels` (its salons) come from `listWorkspacesForUser`, which
+   * THREE FLAGS ARE CACHED, and each is stated rather than re-derived: `viewerCanManage` (the
+   * community), `viewerCanManageChannels` (its salons) and `viewerCanModerate` (other members'
+   * messages - the pin and delete affordances) come from `listWorkspacesForUser`, which
    * reads the permission set of the roles a member holds. The event carries the same answers
    * computed by the same service, so applying them here cannot disagree with what the next load
    * will say.
@@ -1466,6 +1467,7 @@ export function useChannelWorkspaces() {
     roleName: string;
     canManage: boolean;
     canManageChannels?: boolean;
+    canModerate?: boolean;
     permissions: string[];
   }) {
     channelWorkspaces = channelWorkspaces.map((ws) =>
@@ -1476,6 +1478,7 @@ export function useChannelWorkspaces() {
             ...(event.canManageChannels === undefined
               ? {}
               : { viewerCanManageChannels: event.canManageChannels }),
+            ...(event.canModerate === undefined ? {} : { viewerCanModerate: event.canModerate }),
           }
         : ws
     );

@@ -2917,6 +2917,8 @@
   "channel_action_message_send": "Sending the message",
   "channel_action_poll_vote": "Voting in the poll",
   "channel_action_poll_close": "Closing the poll",
+  "channel_action_pin": "Pinning the message",
+  "channel_pin_error": "Could not change the pin",
   "channel_action_community_image": "Community image updated",
   "channel_action_role_update": "Role updated",
   "channel_action_error_permission": "{action}: insufficient permissions ({detail}).",
