@@ -926,7 +926,7 @@
           appendLog(`[CHANNEL_ORDER] community ${event.workspaceId.slice(0, 8)} rearranged`);
           globalChannels.refreshChannelOrder(event.workspaceId).catch((error: unknown) => {
             appendLog(
-              `[CHANNEL_ORDER] re-read of ${event.workspaceId.slice(0, 8)} failed: ${error instanceof Error ? error.message : String(error)}`
+              `[CHANNEL_ORDER] re-read of ${event.workspaceId.slice(0, 8)} failed: ${String(error)}`
             );
           });
         }
