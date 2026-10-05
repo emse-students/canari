@@ -77,6 +77,15 @@ export function replySwipeProgress(dragPx: number, _isOwn: boolean): number {
 }
 
 /**
+ * True once the drag has travelled far enough that letting go sends the reply. The bubble shows it
+ * (a solid, larger icon and one haptic tick) so the reader knows BEFORE releasing, instead of
+ * guessing where the threshold is (Mi 9T, 2026-10-05: the hint stayed a dull half-opaque disc).
+ */
+export function replySwipeArmed(dragPx: number): boolean {
+  return Math.abs(dragPx) >= REPLY_SWIPE_TRIGGER_PX;
+}
+
+/**
  * THERE WAS A REACTION SWIPE HERE, AND IT IS GONE ON PURPOSE (user, 2026-09-22).
  *
  * Dragging a bubble AWAY from the centre opened the reaction tray. *"swiper pour reagir n'est pas
