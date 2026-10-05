@@ -397,7 +397,7 @@
   }
 </script>
 
-<PageContainer>
+<PageContainer width="tool">
   <PageHeader
     title={m.asso_edit_page_title()}
     subtitle={asso ? `@${asso.slug}` : undefined}
