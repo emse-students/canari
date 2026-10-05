@@ -1218,12 +1218,46 @@ export class MlsDeliveryApi {
    * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
    * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
    */
-  async getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
-    const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
-      headers: await this.auth(),
+  getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
+    // Simultaneous askers share ONE request (membership guards, stray sweeps and peer resolution all
+    // ask per conversation). Never held past the answer: callers decide security and repairs on it.
+    return this.joinInFlight(`user-members:${groupId}`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
+        headers: await this.auth(),
+      });
+      if (!res.ok) throw new Error(`getGroupUserMembers failed: ${res.status}`);
+      return await res.json();
     });
-    if (!res.ok) throw new Error(`getGroupUserMembers failed: ${res.status}`);
-    return await res.json();
+  }
+
+  /** Requests currently on the wire, by key: a second identical ask joins instead of repeating. */
+  private readonly inFlightReads = new Map<string, Promise<unknown>>();
+
+  /**
+   * Joins an identical read already in flight. THE ENTRY LIVES EXACTLY AS LONG AS THE REQUEST - no
+   * clock, no staleness: a caller arriving after the answer asks again, so nothing here can serve a
+   * roster or a group row older than the request it joined.
+   */
+  private joinInFlight<T>(key: string, run: () => Promise<T>): Promise<T> {
+    const pending = this.inFlightReads.get(key) as Promise<T> | undefined;
+    if (pending) return pending;
+    const p = run().finally(() => this.inFlightReads.delete(key));
+    this.inFlightReads.set(key, p);
+    return p;
+  }
+
+  /**
+   * `GET /api/mls/groups/:id` as status + body text, shared by every simultaneous reader. The two
+   * public readers ({@link getGroupMeta}, {@link getGroupServerStatus}) parse it differently but ask
+   * the same question, and each used to send its own request (14 calls for 7 groups, HAR 2026-10-05).
+   */
+  private readGroupRow(groupId: string): Promise<{ ok: boolean; status: number; text: string }> {
+    return this.joinInFlight(`group:${groupId}`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
+        headers: await this.auth(),
+      });
+      return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '' };
+    });
   }
 
   /** Returns all groups `userId` belongs to, including soft-deleted tombstones (`deletedAt`). */
@@ -1249,11 +1283,9 @@ export class MlsDeliveryApi {
    *    conversation locally (banner + manual deletion).
    */
   async getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta> {
-    let res: Response;
+    let res: { ok: boolean; status: number; text: string };
     try {
-      res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
-        headers: await this.auth(),
-      });
+      res = await this.readGroupRow(groupId);
     } catch {
       return 'error';
     }
@@ -1266,9 +1298,7 @@ export class MlsDeliveryApi {
     // or "null" 2xx body from THIS endpoint therefore unambiguously means "group absent" (not a
     // network error). This distinction lets discovery purge a deleted group instead of keeping
     // it indefinitely as "uncertain status". [[lifecycle]]
-    const text = await res.text().catch(() => null);
-    if (text === null) return 'error';
-    const trimmed = text.trim();
+    const trimmed = res.text.trim();
     if (trimmed === '' || trimmed === 'null') return 'absent';
     let g: unknown;
     try {
@@ -1370,11 +1400,9 @@ export class MlsDeliveryApi {
    */
   async getGroupMeta(groupId: string): Promise<GroupMeta | null> {
     try {
-      const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
-        headers: await this.auth(),
-      });
+      const res = await this.readGroupRow(groupId);
       if (!res.ok) return null;
-      const g = await res.json();
+      const g = JSON.parse(res.text);
       if (!g || typeof g !== 'object') return null;
       const id = (g as { id?: string; groupId?: string }).groupId ?? (g as { id?: string }).id;
       if (typeof id !== 'string' || !id) return null;

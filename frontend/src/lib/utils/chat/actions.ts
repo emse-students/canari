@@ -648,6 +648,12 @@ export async function discoverMissingGroups(params: {
     const nextImage = g.imageMediaId ?? null;
     if ((convo.imageMediaId ?? null) !== nextImage) {
       conversations.set(g.groupId, { ...convo, imageMediaId: nextImage });
+      // Persisted, so the next start draws it from the local row rather than waiting for this list.
+      if (saveConversation) {
+        await saveConversation(g.groupId).catch((e) =>
+          log(`[WARN] Group photo persistence failed for ${g.groupId}: ${String(e)}`)
+        );
+      }
     }
   }
 }

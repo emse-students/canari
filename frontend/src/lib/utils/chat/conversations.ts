@@ -96,6 +96,7 @@ export function toConversationMeta(
     readWatermarks: convo.readWatermarks,
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
+    imageMediaId: convo.imageMediaId ?? null,
   };
 }
 
@@ -860,7 +861,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           displayName: resolvedName,
           directPeerId: prev?.directPeerId ?? identity.directPeerId,
         },
-        imageMediaId: prev?.imageMediaId ?? null,
+        imageMediaId: prev?.imageMediaId ?? meta.imageMediaId ?? null,
         // Seed from DB so the sidebar can sort before messages are loaded.
         lastMessageAt: meta.updatedAt,
         // The conversation-level state, restored from the row it was written to. This seed is the
