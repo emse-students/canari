@@ -160,7 +160,7 @@ The composer comparison R1 was built from is on
    **The writer's whole path runs with the flag ON in `media.segmentedWriter.e2e.test.ts`; the flip
    itself is one constant (`mediaSegmentedWriterFlag.ts`) and waits on the USER raising
    `minClientVersion` to `1.0.0` once both stores serve it**
-   ([media-service](services/media-service.md#the-writer-flip---what-this-release-does-not-do)).
+   ([media-service](services/media-service.md#the-writer-flip---on-since-2026-10-05)).
 3. **R3 - CanaReels.** The camera tab (C5), 90 s capture (C4), publish in the same flow, the
    full-screen viewer (C7), a `reel` retention class of 30 days that takes the post with it (C6),
    save-to-gallery. **The capture screen is the app's own, not the phone's camera app** (the

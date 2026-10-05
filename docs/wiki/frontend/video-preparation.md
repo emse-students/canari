@@ -147,4 +147,4 @@ The composer wiring on an APK and an iOS build carrying `SEGMENTED_MEDIA_WRITER_
 
 The output plays on every client that exists, segmented or not: it is an ordinary MP4 to a reader
 that reads it whole. Whether it is WRITTEN segmented is a separate switch,
-`SEGMENTED_MEDIA_WRITER_ENABLED` ([media-service](../services/media-service.md#the-writer-flip---what-this-release-does-not-do)).
+`SEGMENTED_MEDIA_WRITER_ENABLED` ([media-service](../services/media-service.md#the-writer-flip---on-since-2026-10-05)).

@@ -330,10 +330,10 @@ not one metadata write per megabyte. The streaming client REFUSES a `200` to a r
 nginx `location /api/media` passes `Range` and a `206` through untouched. Parser: `byte-range.ts`;
 tests: `byte-range.spec.ts`, `media.service.range.spec.ts`.
 
-### The writer flip - what this release does NOT do
+### The writer flip - ON since 2026-10-05
 
-`SEGMENTED_MEDIA_WRITER_ENABLED` is `false`: nothing writes the format yet, so this release changes
-no blob anyone uploads. A client older than the reader, handed a segmented blob, would feed the
+`SEGMENTED_MEDIA_WRITER_ENABLED` is `true` (user's go, 2026-10-05: `minClientVersion` `1.0.0`, both
+stores on 1.0.x). The paragraph below is the gate it passed, kept as the reason the flip is one line. A client older than the reader, handed a segmented blob, would feed the
 header and every tag to ONE GCM decrypt and show a broken video. The flip is ONE line - the
 constant in `frontend/src/lib/mediaSegmentedWriterFlag.ts`, a module of its own so nothing else
 moves - video only (`writesSegmented`), and may land only when ALL of these hold - the order

@@ -53,10 +53,10 @@ async function faultOf(promise: Promise<unknown>): Promise<string> {
   throw new Error('expected a refusal');
 }
 
-describe('the reader release writes nothing segmented', () => {
-  it('keeps the writer off, for video and everything else', () => {
-    expect(SEGMENTED_MEDIA_WRITER_ENABLED).toBe(false);
-    expect(writesSegmented('video/mp4')).toBe(false);
+describe('the writer release segments video and nothing else', () => {
+  it('writes the format for video only', () => {
+    expect(SEGMENTED_MEDIA_WRITER_ENABLED).toBe(true);
+    expect(writesSegmented('video/mp4')).toBe(true);
     expect(writesSegmented('image/webp')).toBe(false);
   });
 });
