@@ -274,7 +274,7 @@
                       >
                         <Check size={14} />
                       </button>
-                      {#if association.type !== 'list' && space}
+                      {#if association.type === 'association' && space}
                         <button
                           type="button"
                           disabled={busy === cellKey}

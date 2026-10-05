@@ -867,8 +867,7 @@ foreign key, since what it names depends on the kind.
 **Not built:**
 
 - The promo and contributor FILTERS of D38. Nothing narrows a republication branch.
-- Institutions as republishers, which arrive with 6e (the allowlist is
-  `REPUBLISHING_ASSOCIATION_TYPES`).
+- ~~Institutions as republishers~~ - built with 6e (below).
 
 A local `synchronize` database lacks 073's trigger and partial index, so its duplicate-proposal
 check and delete cleanup differ from production's. The integration specs apply 073 itself.
@@ -981,3 +980,25 @@ against real PostgreSQL, plus the service and controller specs.
 2. **The default**: with no selection, should the bare URL stay the whole agenda (kept), or be refused?
 3. **The selector UI**: where the subscribe modal and the PDF export pick campus/formation.
 4. **`GET /api/public/associations`** (sitemap): still lists every association; filter it too?
+
+### WP6e institutions as built (2026-10-05)
+
+Migration `075_institution_type.sql` (replay-safe) adds `CHK_associations_type` over `association | list | institution`.
+An institution is an `associations` row of that type, so it reuses every mechanism rather than adding a second one:
+
+- **Created by a global admin only** (D20, D24): `POST /api/associations` with `type: 'institution'` is a 403 for a BDE
+  member holding MANAGE_ASSO, before any write. The form `/associations/new` shows the checkbox to global admins only.
+- **Members are added nominatively** by the existing member admin; **publishing in its name needs membership of it**
+  with `POST_AS_ASSO`, exactly as for an association (being personnel gives no right, D34-D36). Events are proposed with
+  `PROPOSE_EVENT` the same way; the post composer and the event picker are type-agnostic.
+- **Republishing**: `REPUBLISHING_ASSOCIATION_TYPES` is now `association, institution` (a list still does not); the
+  dialogs offer institutions. Co-organisation takes any association row, so institutions co-organise too.
+- **Listings**: `?type=institution` is accepted by the directory and the public listing; `/associations` shows
+  institutions with associations. An institution can never be a BDE (the `/admin/spaces` button is for `association` only).
+- **Reach**: its audience rules (its ceiling, D33) are the same `association_audiences` rows, edited on the grid.
+
+**Questions left to the user, not guessed**: (1) D36's default reach (creator's spaces) applies to an institution too,
+since D33 wants one mechanism - but a global admin's spaces are rarely the School's; should an institution be created
+with NO rule until set on the grid? (2) Does an institution get its own page/list (`/institutions`) or stay among
+associations? (3) D31 (a person with no space publishes through an institution) needs a way to choose an institution
+they are not a member of - undecided, not built.

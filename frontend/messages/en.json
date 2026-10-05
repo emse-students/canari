@@ -2566,6 +2566,8 @@
   "assoc_new_desc_label": "Description",
   "assoc_new_desc_placeholder": "Describe the association in a few words…",
   "assoc_new_email_label": "Contact email (optional)",
+  "assoc_new_institution_label": "This is an institution (School, student office, alumni association)",
+  "assoc_new_institution_hint": "Members are added by name afterwards. Only a member of an institution can publish in its name.",
   "assoc_new_create_btn": "Create association",
   "dashboard_subtitle": "Quick access to all sections",
   "dashboard_account_heading": "Account",

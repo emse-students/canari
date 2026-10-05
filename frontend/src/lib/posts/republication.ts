@@ -24,11 +24,11 @@ export function republishedByLine(
 }
 
 /**
- * Only associations republish - never a promo list (the server's `REPUBLISHING_ASSOCIATION_TYPES`).
+ * Only associations and institutions republish - never a promo list (the server's `REPUBLISHING_ASSOCIATION_TYPES`).
  * Archived ones are left out: they no longer speak.
  */
 function mayRepublishAtAll(a: Association): boolean {
-  return a.type === 'association' && !a.archived;
+  return (a.type === 'association' || a.type === 'institution') && !a.archived;
 }
 
 /** Neither the post's own association nor one that already republished it. */

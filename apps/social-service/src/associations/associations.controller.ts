@@ -501,6 +501,10 @@ export class AssociationsController {
     @Body() dto: CreateAssociationDto
   ) {
     const isGlobalAdmin = ga === 'true';
+    if (dto.type === 'institution' && !isGlobalAdmin) {
+      // D20/D24: a BDE's MANAGE_ASSO scopes to its own space; institutions are cross-space.
+      throw new ForbiddenException('Only a global admin creates an institution');
+    }
     if (!isGlobalAdmin) {
       // isUserBdeAdmin checks VALIDATE_EVENTS; MANAGE_ASSO is a separate flag
       const canCreateAsso = await this.service.callerHasAnyBdeFlag(
