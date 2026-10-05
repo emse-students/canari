@@ -1,6 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import ProfileChips from '$lib/components/profile/ProfileChips.svelte';
+  import ProfileCorrectionRequest from '$lib/components/profile/ProfileCorrectionRequest.svelte';
   import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { onMount } from 'svelte';
@@ -236,6 +237,7 @@
           </h1>
           <ProfileMinesweeperBadge userId={profile.id} />
           <ProfileChips {profile} />
+          <ProfileCorrectionRequest />
         </div>
         <a
           href={resolve('/settings')}

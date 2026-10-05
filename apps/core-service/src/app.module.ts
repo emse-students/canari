@@ -9,6 +9,7 @@ import { HealthController } from './health.controller';
 import { User } from './users/entities/user.entity';
 import { UserBlock } from './users/entities/user-block.entity';
 import { ProfileChange } from './users/entities/profile-change.entity';
+import { ProfileCorrectionRequest } from './users/entities/profile-correction-request.entity';
 import { AuthSession } from './auth/entities/auth-session.entity';
 import { PlatformConfig } from './platform/entities/platform-config.entity';
 import { PlatformAnnouncement } from './platform/entities/platform-announcement.entity';
@@ -42,6 +43,7 @@ import { SkyModule } from './sky/sky.module';
           User,
           UserBlock,
           ProfileChange,
+          ProfileCorrectionRequest,
           AuthSession,
           PlatformConfig,
           PlatformAnnouncement,

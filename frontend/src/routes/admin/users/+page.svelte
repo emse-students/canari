@@ -2,8 +2,9 @@
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { onMount } from 'svelte';
-  import { Shield, RefreshCw, Copy } from '@lucide/svelte';
+  import { onMount, type ComponentProps } from 'svelte';
+  import { Shield, RefreshCw, Copy, UserPen } from '@lucide/svelte';
+  import ProfileEditForm from '$lib/components/profile/ProfileEditForm.svelte';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -50,6 +51,21 @@
       error = m.admin_users_load_error();
     } finally {
       loading = false;
+    }
+  }
+
+  let editing = $state<ComponentProps<typeof ProfileEditForm>['person'] | null>(null);
+
+  /** Opens the profile form on the person's current profile, read from the public endpoint. */
+  async function startEdit(user: AdminUser) {
+    feedback = { ...feedback, [user.id]: '' };
+    try {
+      const res = await apiFetch(`${coreUrl()}/api/users/${encodeURIComponent(user.id)}`);
+      if (!res.ok) throw new Error(m.admin_users_http_error_label({ status: res.status }));
+      editing = await res.json();
+    } catch (e) {
+      Log.d('admin.users.startEdit failed', e);
+      feedback = { ...feedback, [user.id]: m.common_generic_error_label() };
     }
   }
 
@@ -164,6 +180,14 @@
             {/if}
             <button
               type="button"
+              onclick={() => void startEdit(user)}
+              class="ui-icon-button text-text-muted rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+              title={m.profile_edit_action()}
+            >
+              <UserPen size={16} />
+            </button>
+            <button
+              type="button"
               onclick={() => toggleAdmin(user)}
               disabled={saving[user.id]}
               class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 {user.admin
@@ -192,3 +216,14 @@
     </ul>
   {/if}
 </div>
+
+{#if editing}
+  <ProfileEditForm
+    person={editing}
+    onClose={() => (editing = null)}
+    onSaved={() => {
+      editing = null;
+      void load();
+    }}
+  />
+{/if}

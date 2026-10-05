@@ -5,6 +5,8 @@ import { InternalFormsController } from './internal-forms.controller';
 import { InternalProductsController } from './internal-products.controller';
 import { InternalInvitesController } from './internal-invites.controller';
 import { InternalLegacyCotisationsController } from './internal-legacy-cotisations.controller';
+import { InternalProfileNotificationsController } from './internal-profile-notifications.controller';
+import { PostsModule } from '../posts/posts.module';
 import { FormsModule } from '../forms/forms.module';
 import { AssociationsModule } from '../associations/associations.module';
 import { ChannelsModule } from '../channels/channels.module';
@@ -29,6 +31,7 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
     AssociationsModule,
     ChannelsModule,
     UserTagModule,
+    PostsModule,
     TypeOrmModule.forFeature([
       Post,
       ChannelMember,
@@ -50,6 +53,7 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
     InternalProductsController,
     InternalInvitesController,
     InternalLegacyCotisationsController,
+    InternalProfileNotificationsController,
   ],
 })
 export class InternalModule {}

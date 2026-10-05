@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { ProfileChange } from './entities/profile-change.entity';
+import { ProfileCorrectionRequest } from './entities/profile-correction-request.entity';
+import { ProfileCorrectionNotPendingError } from './profile-correction.errors';
 import { MiconnectEditorClient } from './miconnect-editor.client';
 import { legacyColumns, validateProfileEdit, type ProfileSnapshot } from './miconnect-profile';
 import { ProfileEditInvalidError, ProfileEditNotLinkedError } from './profile-edit.errors';
@@ -40,8 +42,18 @@ export class ProfileEditService {
    *
    * Throws a typed error from `profile-edit.errors.ts` for every refusal; the estate and token are
    * checked BEFORE the database is touched, so the dev refusal costs nothing and reveals nothing.
+   *
+   * With `requestId`, the edit answers that correction request (WP4b): the audit row names it, and
+   * the request is marked applied in the SAME transaction, so a request is answered exactly when
+   * both sources hold the edit. The caller has checked the request is pending; the guarded update
+   * here is what makes that true under a race.
    */
-  async applyEdit(targetId: string, actorId: string, input: unknown): Promise<ProfileEditResult> {
+  async applyEdit(
+    targetId: string,
+    actorId: string,
+    input: unknown,
+    opts: { requestId?: string } = {}
+  ): Promise<ProfileEditResult> {
     this.logger.log(`[PROFILE_EDIT] actor=${actorId.slice(0, 8)} target=${targetId.slice(0, 8)}`);
     // The estate first: on dev nothing else is worth reading, and nothing about the request leaks.
     this.editor.assertAvailable();
@@ -95,12 +107,29 @@ export class ProfileEditService {
           ...legacyColumns(after.cursus),
         });
         await manager.save(User, user);
-        if (unchanged) return { user, changed: false, changeId: null };
-        const change = await manager.save(
-          ProfileChange,
-          manager.create(ProfileChange, { userId: targetId, actorId, before, after })
-        );
-        return { user, changed: true, changeId: change.id };
+        let changeId: string | null = null;
+        if (!unchanged) {
+          const change = await manager.save(
+            ProfileChange,
+            manager.create(ProfileChange, {
+              userId: targetId,
+              actorId,
+              before,
+              after,
+              requestId: opts.requestId ?? null,
+            })
+          );
+          changeId = change.id;
+        }
+        if (opts.requestId) {
+          const answered = await manager.update(
+            ProfileCorrectionRequest,
+            { id: opts.requestId, status: 'pending' },
+            { status: 'applied', resolvedAt: new Date(), resolvedBy: actorId }
+          );
+          if (answered.affected !== 1) throw new ProfileCorrectionNotPendingError();
+        }
+        return { user, changed: !unchanged, changeId };
       });
     } catch (err) {
       this.logger.error(

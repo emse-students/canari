@@ -21,6 +21,7 @@
     ChevronRight,
     ShieldAlert,
     UserCog,
+    UserPen,
     Wrench,
     FileCheckCorner,
     BookUser,
@@ -74,6 +75,7 @@
     | 'platform'
     | 'status'
     | 'users'
+    | 'profile-corrections'
     | 'associations'
     | 'create-association'
     | 'calendar'
@@ -141,6 +143,12 @@
           kind: 'users',
           label: m.admin_card_manage_admins_label(),
           description: m.admin_card_users_desc(),
+        },
+        {
+          href: '/admin/profile-corrections',
+          kind: 'profile-corrections',
+          label: m.profile_corrections_nav_label(),
+          description: m.profile_corrections_card_desc(),
         },
         {
           href: '/associations',
@@ -222,6 +230,8 @@
               <Wrench size={20} />
             {:else if card.kind === 'users'}
               <UserCog size={20} />
+            {:else if card.kind === 'profile-corrections'}
+              <UserPen size={20} />
             {:else if card.kind === 'associations'}
               <Users size={20} />
             {:else if card.kind === 'create-association'}
