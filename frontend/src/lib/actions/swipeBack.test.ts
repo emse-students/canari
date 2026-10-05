@@ -7,7 +7,7 @@ import { swipeBack } from './swipeBack';
  */
 function touch(
   target: HTMLElement,
-  type: 'touchstart' | 'touchmove' | 'touchend',
+  type: 'touchstart' | 'touchmove' | 'touchend' | 'touchcancel',
   clientX: number,
   clientY = 0
 ) {
@@ -107,5 +107,40 @@ describe('swipeBack', () => {
     expect(node.style.transform).toBe('');
     expect(onBack).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+
+  it('forgets an edge touch the system cancelled, so the next scroll is not read as a swipe back', () => {
+    const node = document.createElement('section');
+    document.body.appendChild(node);
+    const onBack = vi.fn();
+    swipeBack(node, { onBack, enabled: true });
+
+    // The Android system back gesture takes the edge touch: touchcancel, never touchend.
+    touch(node, 'touchstart', 2, 1200);
+    touch(node, 'touchmove', 40, 1200);
+    touch(node, 'touchcancel', 40, 1200);
+
+    // A vertical scroll at mid-screen, as the next stroke of the same finger session.
+    touch(node, 'touchstart', 540, 700);
+    touch(node, 'touchmove', 540, 1200);
+    touch(node, 'touchend', 540, 1700);
+
+    expect(onBack).not.toHaveBeenCalled();
+    expect(node.style.transform).toBe('');
+  });
+
+  it('forgets an unfinished edge touch when a new touch starts away from the edge', () => {
+    const node = document.createElement('section');
+    document.body.appendChild(node);
+    const onBack = vi.fn();
+    swipeBack(node, { onBack, enabled: true });
+
+    touch(node, 'touchstart', 2, 1200);
+    // No touchend and no touchcancel at all: the next touch must still start clean.
+    touch(node, 'touchstart', 540, 700);
+    touch(node, 'touchmove', 700, 700);
+    touch(node, 'touchend', 700, 700);
+
+    expect(onBack).not.toHaveBeenCalled();
   });
 });

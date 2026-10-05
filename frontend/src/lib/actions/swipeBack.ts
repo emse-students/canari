@@ -55,7 +55,23 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
   let tracking = false;
   let committed = false;
 
+  /**
+   * ONE TOUCH AT A TIME, AND A CANCELLED ONE IS OVER. On Android the SYSTEM back gesture owns the
+   * left edge: it takes the touch from the WebView, which then gets a `touchcancel` and never a
+   * `touchend`. Tracking stayed armed with `startX` at the edge, so the NEXT stroke - a vertical
+   * scroll at mid-screen - read as a 540px rightward drag from that edge and ended in `onBack`:
+   * open the keyboard, back-swipe it closed, scroll, and the conversation closed underneath you
+   * (user, 2026-10-05, read through the page's `history.back()` stack on the Mi 9T).
+   */
+  function reset() {
+    tracking = false;
+    committed = false;
+    node.style.removeProperty('transform');
+  }
+
   function onTouchStart(e: TouchEvent) {
+    // A new touch supersedes any unfinished one, whatever the guards below decide about it.
+    tracking = false;
     if (!opts.enabled) return;
     // The back button lives INSIDE the edge zone by construction (leftmost element in the
     // header), so a bare clientX check armed the gesture on it too - and this fires before the
@@ -146,6 +162,7 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
   node.addEventListener('touchstart', onTouchStart, { passive: true });
   node.addEventListener('touchmove', onTouchMove, { passive: true });
   node.addEventListener('touchend', onTouchEnd);
+  node.addEventListener('touchcancel', reset, { passive: true });
 
   return {
     update(newOptions: SwipeBackOptions) {
@@ -155,6 +172,7 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
       node.removeEventListener('touchstart', onTouchStart);
       node.removeEventListener('touchmove', onTouchMove);
       node.removeEventListener('touchend', onTouchEnd);
+      node.removeEventListener('touchcancel', reset);
     },
   };
 }
