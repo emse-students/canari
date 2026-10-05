@@ -2004,27 +2004,51 @@ skipped whatever path welcomed the device - the overlap no longer exists - and a
 says how long ago this tab's Welcome left. In memory on purpose, and reset at logout: a Welcome
 sent before a reload is one the requester has had time to lose.
 
-### A DM has two keys, depending on which side created it
+### One key per conversation - the "a DM has two keys" premise, audited and refuted (2026-10-04)
 
-`conversations` is keyed by `groupId` for a DM created on this device, and by the PEER'S USER ID for
-one learnt from a Welcome - `deriveConversationIdentity` returns the other participant out of an
-`"a::b"` group name, and that becomes `contactName`, which is the key. Both are opaque strings, both
-are stable, and the store works fine; what does not work is any reader that spells
-`for (const [id] of conversations)` and hands `id` to something expecting a group id.
+**THE MAP KEY IS THE ROW'S `id`, FOR EVERY ROW.** The section that stood here (2026-09-01) said a DM
+learnt from a Welcome is keyed by the PEER'S USER ID, and wrote the rule *treat any `[key]` lookup
+over this heterogeneously-keyed map as a defect on sight* - without enumerating the consumers. The
+enumeration, done 2026-10-04 against `main`, refutes the premise instead: **no writer of
+`conversations` keys a row by anything but its `id`** (the MLS group id, or `channel_<id>`), and none
+did on 2026-09-01 either (`git grep` at `a939b6f97^`). The single-key store dates from `a6d5fb203`
+(2026-04-07, *"only one id will be used now"*). What misled the reading is a name: the key parameter
+is still spelled `contactName` / `selectedContact` in `useConversations` and `history.ts`, and
+`deriveConversationIdentity` DOES return the peer as `contactName` - as a FIELD of the row, never as
+its key.
 
-Two did. The sync watchdog asked the server to recover a group id no `dm_groups` row can carry, for
-every DM this device had RECEIVED - so the answer was a confirmed absent, which returns before the
-throttle is armed, so nothing paced it: two HTTP round trips every five seconds, per received DM, for
-the whole session, driving a recovery that could never fire for any of them. And `stopRecovering`
-looked the conversation up by key, so on that same population it could not find the row it existed to
-retire, and `requestReAdd`'s idempotence check never matched - a recovery holding its own terminating
-answer went on asking.
+The writers, which are the mechanism that holds the invariant:
 
-The readers are fixed, not the store: the watchdog takes the id from `convo.id`, and `recovery.ts`
-resolves a group id through one exported `findByGroupId` helper. Re-keying a persisted store is a
-data migration and would have to carry every device's existing rows; correcting three lookups is a
-repair. **Treat `[key]` destructuring over this map as a defect on sight** - the key names the
-conversation, `id` names the group, and only one of them is on the wire.
+| Writer | Key it writes |
+| --- | --- |
+| boot restore (`conversations.ts`) | `meta.id`; `saveConversation` persists `toConversationMeta(key, ...)` with `id = key`, so the loop is closed |
+| `createNewGroup`, `startNewConversation`, the existing-server-DM path (`groupCreation.ts`) | the group id |
+| the Welcome's early placeholder and `upsertConversation` (`setupMessageHandler.ts`) | `joinedGroupId`; a DM matched by PEER under another group is deleted and **re-keyed onto `joinedGroupId`** - the one writer whose key is computed, pinned by `setupMessageHandler.test.ts` (*"a Welcome into a DM keys the row by the joined group id"*) |
+| `onWelcomeProcessed` (`sessionAuth.ts`), the FCM merge, channel builders, tab sync | the group / conversation id they were handed |
+| every other `set` (retire, unread, watermarks, rename, avatar, messages) | read-modify-write of a key already in the map |
+
+The consumers that look a conversation up by a group id, and the verdict on each:
+
+| Consumer | Lookup | Verdict |
+| --- | --- | --- |
+| `processPendingInvitations` (`actions.ts`) | `get(groupId)` / `has(groupId)` | correct - the key is the id |
+| `handleWelcomeRequest`, *"No ready conversation - deferring"* (`actions.ts`) | `get(groupId)` | correct |
+| `handleHistoryRequest`, the history-serving gate (`actions.ts`) | `get(groupId)` | correct |
+| the promotion after a successful external join (`recovery.ts`) | `findByGroupId` (by `id`), saved by the found key | correct |
+| `requestReAdd` idempotence, `stopRecovering`, `purgePhantomConversation` (`recovery.ts`) | `findByGroupId` | correct |
+| the redelivered-Welcome branch (`setupMessageHandler.ts`) | `get(terminalId)` | correct |
+| `upsertConversation`'s migrated-peer read (`setupMessageHandler.ts`) | `get(joinedGroupId)` | correct |
+| SYNC_WATCHDOG candidates (`sessionWatchdogs.ts`) | `convo.id`, channels skipped on the key | correct |
+| `onWelcomeProcessed` (`sessionAuth.ts`) | `has(groupId)` | correct |
+| group avatar refresh (`actions.ts`), call notices (`callSystemMessages.ts`) | `get(groupId)` | correct |
+
+**No defect, so nothing was re-routed.** `findByGroupId` stays private to `recovery.ts`: it reads by
+`id` and is right whatever the key, and replacing the `get`s above with an O(n) scan would buy
+nothing while the writers hold. The `recovery.test.ts` cases with a key different from the id stay as
+a pin on that helper - they describe a state no writer produces. **The rule that survives is the
+writer table**: a new writer that keys a row by anything but its `id` breaks every `get(groupId)`
+above at once, so it goes in the table and in the `setupMessageHandler.test.ts` pin, rather than
+teaching the readers to scan.
 
 ### An exit is owed to the SERVER, and the local purge is not what pays it (DEL-10)
 
