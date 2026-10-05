@@ -144,7 +144,6 @@
   let errorMessage = $state('');
   /** A picked video being re-encoded on the device during publish (decision C3). */
   const videoPreparation = new VideoPreparationState();
-  let authToken = $state('');
   // --- Draft auto-save (full composer state; images are not persisted) ---
   let draftRestored = $state(false);
   let draftSaved = $state(false);
@@ -260,11 +259,6 @@
     }
 
     try {
-      authToken = await getToken();
-    } catch {
-      /* retried on upload */
-    }
-    try {
       availableForms = await getForms();
     } catch (e) {
       console.error('Failed to load forms', e);
@@ -372,15 +366,6 @@
 
       stage = 'moderation';
       await assertNotMuted();
-      stage = 'mediaToken';
-      if (selectedFiles.length > 0 && !authToken) {
-        try {
-          authToken = await getToken();
-        } catch {
-          throw new LocalizedError(m.post_create_image_token_error());
-        }
-      }
-
       // Compress images, re-encode videos on the device, upload the rest as-is; collect the refs.
       const media = [];
       const limits = selectedFiles.length > 0 ? await mediaService.uploadLimits() : null;
@@ -391,8 +376,16 @@
           videoPreparation.optionsFor(limits?.maxPlaintextBytes)
         );
         videoPreparation.finish();
+        stage = 'mediaToken';
+        // Read at upload time: a copy taken earlier is past its 15 min life by now.
+        let uploadToken: string;
+        try {
+          uploadToken = await getToken();
+        } catch {
+          throw new LocalizedError(m.post_create_image_token_error());
+        }
         stage = 'mediaUpload';
-        const ref = await mediaService.encryptAndUpload(file, authToken, dims, 'archive');
+        const ref = await mediaService.encryptAndUpload(file, uploadToken, dims, 'archive');
         const caption = mediaCaptions[i]?.trim();
         media.push({ ...ref, ...(caption ? { caption } : {}) });
       }
