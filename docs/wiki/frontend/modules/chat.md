@@ -2367,7 +2367,12 @@ can attribute.
   draws no head on its owner's message. Who can appear is what `readWatermarks` holds - for a salon
   the server's `read-marks`, restricted to who may read it now
   ([social-service](../../services/social-service.md#read-receipts-in-a-salon)). One drawing,
-  `SeenByHeads.svelte`, serves both: three heads, then `+N`.
+  `SeenByHeads.svelte`, serves both: three heads, then `+N`. Each head's tooltip is its owner's
+  name (`Avatar`); the `+N` counter's tooltip names the readers it folds, and the screen-reader
+  text names every reader (`msg_statut_lu_par_noms`), resolved live by `userDisplayNames`. There is
+  no per-member "hide my read state" setting: what `readWatermarks` holds IS the predicate, so the
+  placement never filters a second time. A reader whose watermark is older than the loaded page
+  gets no head (every loaded row is one they have not read); one past the newest row sits on it.
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.
