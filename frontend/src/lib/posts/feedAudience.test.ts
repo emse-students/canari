@@ -1,10 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { verdictFromFailure, verdictFromProfile } from './feedAudience';
-import { UserProfileFetchError } from '$lib/stores/user';
+import { verdictFromAnswer } from './feedAudience';
 
 /**
- * THE FEED AUDIENCE RULE IS STATED ONCE PER SIDE, AND THIS IS THE CLIENT'S HALF.
+ * THE FEED AUDIENCE RULE IS STATED ONCE, ON THE SERVER, AND THE CLIENT ONLY ASKS IT (WP6b).
  *
  * "ICM students, plus global admins" was written out twice in the routes - the same eleven lines,
  * the same two `catch` branches, the same redirect - and announcing posts made the server need the
@@ -43,34 +42,36 @@ describe('the feed audience gate', () => {
     });
     expect(offenders).toEqual([]);
   });
+
+  it('names no formation at all: the rule is the server one, asked through the audience endpoint', () => {
+    // WP6b: the client used to decide from `profile.formation === 'ICM'`. The rule is now spaces
+    // and memberships, which the client cannot see, so any formation literal back in the helper is
+    // a second copy of the rule coming back.
+    const helper = readFileSync(join(process.cwd(), 'src/lib/posts/feedAudience.ts'), 'utf8');
+    expect(helper).not.toMatch(/'ICM'|formation\s*===/);
+    expect(helper).toContain('fetchFeedAudience');
+  });
 });
 
 /**
- * THE MAPPING IS A BEHAVIOUR TEST, BECAUSE IT IS NOW A JUDGEMENT AND NOT A LINE.
+ * THE ANSWER IS A BEHAVIOUR TEST, BECAUSE A WRONG READING EJECTS A READER.
  *
- * The guard above is still a source guard for the reason its docblock gives. What it cannot see is
- * the 2026-09-23 change: the helper stopped redirecting on every `catch` and started asking
- * whether the refusal was an ANSWER. That distinction has exactly two outcomes and they are worth
- * pinning, because getting the transport case wrong ejects a reader on a train out of the feed.
+ * Only a boolean `inAudience` is a statement about the reader. Anything else - a body of another
+ * shape, a proxy's HTML page parsed into nothing - must leave the remembered verdict alone, or a
+ * reader on a captive portal is sent out of the feed.
  */
-describe('what a profile answer, or a refusal, says about the reader', () => {
-  it('reads the formation the feed is addressed to', () => {
-    expect(verdictFromProfile({ formation: 'ICM' })).toBe(true);
-  });
-
-  it.each([['ISMIN'], ['CMP'], [null]])('keeps %s out of the feed', (formation) => {
-    expect(verdictFromProfile({ formation })).toBe(false);
-  });
-
-  it('treats a 404 as the answer it is: there is no such account', () => {
-    expect(verdictFromFailure(new UserProfileFetchError(404))).toBe(false);
-  });
-
+describe('what the server answer says about the reader', () => {
   it.each([
-    [new UserProfileFetchError(500)],
-    [new UserProfileFetchError(401)],
-    [new TypeError('Failed to fetch')],
-  ])('says nothing about the reader when it could not ask (%s)', (error) => {
-    expect(verdictFromFailure(error)).toBeNull();
+    [{ inAudience: true }, true],
+    [{ inAudience: false }, false],
+  ])('reads %j as %s', (body, verdict) => {
+    expect(verdictFromAnswer(body)).toBe(verdict);
   });
+
+  it.each([[null], [undefined], ['true'], [{}], [{ inAudience: 'true' }], [{ inAudience: 1 }]])(
+    'says nothing about the reader for %j',
+    (body) => {
+      expect(verdictFromAnswer(body)).toBeNull();
+    }
+  );
 });

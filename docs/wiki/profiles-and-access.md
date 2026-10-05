@@ -515,7 +515,7 @@ migration), and its UI stops assuming them.
   formation, the person's campus), plus the content of the associations they belong to (D21). It
   replaces `feed-audience.ts`, its client twin `feedAudience.ts`, the announce scheduler's audience
   and the agenda filter. A post is visible when its own rules (else its publisher's) reach an open space
-  the reader belongs to.
+  the reader belongs to. **BUILT 2026-10-04 - see WP6b as built, below.**
 - **6c, governance.** Validating an event is VALIDATE_EVENTS in the BDE of the event association's
   space, and only those people are notified; the BDE's MANAGE_ASSO powers are scoped the same way;
   MODERATE stays global (D23).
@@ -540,7 +540,7 @@ association carries `isBDE` (production has one, user 2026-10-04; zero or severa
 notice - an admin designates it on the 6d page). Tried on a throwaway Postgres with one, zero and
 two `isBDE`, replayed, a duplicate rule refused, a bad value refused, cascade. **Deferred to 6e on
 purpose**: `associations.type` gaining `institution` (nothing could create one yet). **Settled the same day
-(D33)**: there is ONE School, which may share with one campus or the other, and TWO MEs (one per campus). Nothing reads these tables until 6b.
+(D33)**: there is ONE School, which may share with one campus or the other, and TWO MEs (one per campus). 6b reads them (below).
 
 **WP6d as built (2026-10-04, on the 6a branch).** API in `social-service/src/spaces/`, all global-admin
 only (`NginxAuthGuard` + `GlobalAdminGuard`), registered BEFORE `AssociationsController` so the literal
@@ -569,12 +569,97 @@ rule in the same transaction when its rules do not cover it, and a rule set subm
 governed pair gets it put back. The page shows that box ticked and locked until the star goes. A list
 has no star.
 
-**Post-level targeting (asked 2026-10-04, built with the 6b composer picker):** a post's "Audience" menu in the advanced settings starts from its association's reach and may narrow it; on top of REACH (where) sit FILTERS (who, among those reached): promo (from the profile's cursus) and contributor status of the PUBLISHING association. Filters only narrow, so they cannot step over the ceiling; the server evaluates them and the author sees a count, never a list.
+**Post-level targeting (asked 2026-10-04; its SERVER half - rules on a post, held to the ceiling - shipped with 6b, the composer menu and the filters are a later PR):** a post's "Audience" menu in the advanced settings starts from its association's reach and may narrow it; on top of REACH (where) sit FILTERS (who, among those reached): promo (from the profile's cursus) and contributor status of the PUBLISHING association. Filters only narrow, so they cannot step over the ceiling; the server evaluates them and the author sees a count, never a list.
 
 **The `isBDE` toggle on `/admin/associations` still exists and still drives every BDE check**: 6c moves
 those checks onto the space's BDE and deletes the column, so until then the two say the same thing only
 because the seed made them agree. Seen in a browser on a throwaway estate; the unit tests cover the
 service (9) and the pair logic (5), and CI boots the real module.
+
+**WP6b as built (2026-10-04)**, branch `feat/spaces-6b-readers`, stacked on 6a/6d. Every server
+read that serves a post, an event or an announcement asks ONE module,
+`social-service/src/spaces/reader-spaces.ts`; `posts/feed-audience.ts` ("ICM plus global admins")
+is deleted, and the client no longer decides from `formation === 'ICM'`.
+
+- **A reader's spaces** (`readerSpaces`, and its SQL twin `isReaderSpaceSql`): the pairs whose
+  formation is one of their `cursus` formations AND whose campus is their `campus`. No campus or
+  no cursus is no space. The SQL uses jsonb containment, so a malformed `cursus` matches nothing
+  rather than failing every reader's query.
+- **AN ADMIN BROWSES AS AN ORDINARY READER (user, 2026-10-04: "ce serait un peu le bordel sinon").**
+  The feed, the search, the announcements and the agenda give a global admin exactly what their own
+  spaces and memberships give: an admin who is an ICM Saint-Etienne student sees what an ICM
+  Saint-Etienne student sees, and an admin with no space sees only what they wrote. What an admin
+  keeps is OPENING one post BY ITS ID (a report or moderation link: `assertVisible`, option
+  `adminSeesAll`) and the gate (they can reach the feed to moderate). Nobody else gets that.
+- **A post is visible** (`postVisibleToUserSql`) to its author, to a member of its association (D21: any
+  `association_members` row - there is no pending state), and otherwise when its own
+  `post_audiences` rules if it has any, else its association's rules, reach one of the reader's
+  spaces. A PERSONAL post (anonymous included) is visible to readers sharing at least one space
+  with its author. Reels are posts here. Scheduled, hidden and expired-reel rules are unchanged.
+- **The gate** (`FeedAudienceGuard`, `IN_FEED_AUDIENCE_SQL`): an admin, a reader with at least
+  one space, or a member of at least one association. **Readers**: `GET /api/posts` (all four
+  feeds), `/search`, `/:postId`, `/:postId/calendar-link` and `/calendar-link/:eventId` apply
+  the per-post predicate; a post the reader may not see is a **404** (before the moderation 403,
+  which would confirm the id). Voting, reacting, commenting and liking a comment are refused the
+  same way.
+- **Announce**: the recipients of a post are everyone who can see THAT post, minus its author
+  (`announceRecipientsSql`); a personal post's followers are told only if they can see it.
+- **Agenda**: a SIGNED-IN reader's aggregated feed and per-association `/events` keep an event
+  when its association reaches one of their spaces, or they are a member (an admin is an ordinary
+  reader here, see above). The
+  anonymous agenda and its `.ics` (D30) are unchanged: like the promo cutoff, this is relevance.
+- **Post-level rules, server only**: `CreatePostDto` and `UpdatePostDto` accept
+  `audiences: [{formation?, campus?}]`. Each rule must be INSIDE the association's ceiling (every
+  pair it covers is covered by one of the association's rules - `rulesOutsideCeiling`), else 400;
+  a personal post cannot carry any; an empty list on an edit drops them (the post inherits again);
+  absent leaves them alone. Written in the same transaction as the post, so the announce sweeper
+  never sees a post without its rules.
+- **Cache**: `SpacesService.setAudiences`/`setBde` and `addMember`/`removeMember` drop the
+  feed cache (keyed per reader; no TTL was added). A change to a user's campus or cursus is
+  served stale for at most the existing 30 s TTL.
+- **Client**: `GET /api/posts/audience` -> `{ inAudience }`, the guard's own SQL. The verdict stays
+  remembered per account for first paint and is revalidated behind it; only a boolean answer
+  changes it.
+
+**Proof.** `reader-spaces.integration.spec.ts` runs every fragment against a real PostgreSQL with
+migration 071 (an ICM Saint-Etienne student and a second one, an ISMIN Gardanne student, an admin,
+a staff member with no cursus who is a member, a reader with a campus and nothing else, a profile
+not yet backfilled; an association on (ICM, saint-etienne), one on the whole Gardanne campus,
+personal and anonymous posts, a post narrowed by its own rule) and asserts exactly who sees what,
+the gate, the announce recipients and the agenda; it also proves `READER_SPACES_SQL` and
+`readerSpaces` agree. A control (the read-time ceiling removed) made 4 of its 15 cases fail. The
+service was then booted on a throwaway database with the same cast and every endpoint read per
+reader: list (all, associations), search, one post, calendar link, the aggregated agenda (signed in
+and anonymous, `.ics` included), a create refused outside the ceiling and on a personal post, and
+the announce sweep's recipient counts.
+
+**Judgement calls (the most conservative where it changed who sees what):**
+
+- **A post's own rules are held to the ceiling at READ time too**: a space reached by a post rule
+  counts only if one of the association's rules reaches it as well, so narrowing an association in
+  the grid also narrows posts written under the old ceiling. A global admin is held to the ceiling
+  when writing rules (going beyond is WP7's nominative grant).
+- **A personal post by someone with no space** (staff, D31 not yet enforced at publish) is seen
+  only by its author, admins - and nobody else.
+- **The public share preview and the sitemap skip a post with rules of its own**: an author who
+  chose who sees a post did not choose "anyone holding the link". Association posts without own
+  rules keep their preview, as before.
+- **An association created after migration 071 has NO rule**, so it reaches only its members until
+  an admin gives it one in the grid. Nothing adds a default rule.
+- The `custom` feed's promo/formation filters still read the legacy `users.promo`/`formation`
+  columns; they only narrow, after visibility.
+
+**PRODUCTION CONSEQUENCES - THE RELEASE ORDER IS FORCED.** The migration gave every existing
+association the single rule (ICM, saint-etienne), so the moment this ships **only ICM x
+Saint-Etienne readers see existing association posts**, until an admin edits the grid at
+`/admin/spaces`. And a reader whose `campus`/`cursus` columns are still EMPTY - the WP3 backfill
+(`infrastructure/authentik/backfill-canari-profiles.sh`) not yet applied, and they have not signed
+in since - has no space: **they LOSE the feed** (unless a member of an association), where today
+`formation = 'ICM'` lets them in. So, in this order: (1) the 6a/6d release (migration 071) and the
+WP3 backfill applied on production with the user's go; (2) the grid set at `/admin/spaces` (every
+association's real reach, the BDEs); (3) only then the release carrying 6b. A local preview running
+an older social-service answers `/api/posts/audience` with a 400 (the `:postId` route): the client
+keeps its remembered verdict, and the server must be restarted to show 6b.
 
 **WP7 - Nominative grants (D24).** `grants(user, capability, space NULL, granted_by, at)`, add-only;
 `document_reviewer_grants` migrates into it and `/admin/document-reviewers` becomes the permissions

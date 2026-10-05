@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { Association } from '../associations/entities/association.entity';
+import { RedisService } from '../common/redis/redis.service';
+import { invalidatePostListCache } from '../posts/post-list-cache';
 import { AssociationAudience } from './association-audience.entity';
 import type { AudienceRuleDto } from './dto/space.dto';
 import { Space } from './space.entity';
@@ -65,8 +67,22 @@ export class SpacesService {
     @InjectRepository(Association) private readonly associations: Repository<Association>,
     @InjectRepository(AssociationAudience)
     private readonly audiences: Repository<AssociationAudience>,
-    private readonly dataSource: DataSource
+    private readonly dataSource: DataSource,
+    private readonly redis: RedisService
   ) {}
+
+  /**
+   * Drops every cached feed page: who an association reaches decides which posts each reader gets
+   * (WP6b), and the list cache is keyed per reader, so a rule change is a change to every page.
+   */
+  private async invalidateFeedCache(): Promise<void> {
+    try {
+      const dropped = await invalidatePostListCache(this.redis);
+      this.logger.debug(`[spaces] feed cache dropped: ${dropped} key(s)`);
+    } catch (e: unknown) {
+      this.logger.warn('[spaces] feed cache sweep failed - pages stay stale until their TTL', e);
+    }
+  }
 
   /** Lists every space with its BDE. */
   async list(): Promise<SpaceView[]> {
@@ -134,6 +150,7 @@ export class SpacesService {
         });
       }
     });
+    await this.invalidateFeedCache();
   }
 
   /** The audience rules of an association. */
@@ -152,7 +169,7 @@ export class SpacesService {
     await this.requireAssociation(associationId);
     const rules = normaliseRules(submitted);
     this.logger.log(`[spaces] audiences of ${associationId}: ${rules.length} rule(s)`);
-    return this.dataSource.transaction(async (manager) => {
+    const stored = await this.dataSource.transaction(async (manager) => {
       const governed = await manager.find(Space, { where: { bdeAssociationId: associationId } });
       for (const space of governed) {
         if (!rules.some((r) => ruleReachesSpace(r, space))) {
@@ -168,6 +185,8 @@ export class SpacesService {
       }
       return rules;
     });
+    await this.invalidateFeedCache();
+    return stored;
   }
 
   private async requireAssociation(id: string): Promise<void> {

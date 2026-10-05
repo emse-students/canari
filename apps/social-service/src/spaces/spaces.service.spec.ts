@@ -70,10 +70,12 @@ describe('SpacesService', () => {
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: (m: unknown) => unknown) => cb(manager)),
     } as unknown as DataSource;
+    const redis = { deleteByPattern: jest.fn().mockResolvedValue(3) };
     return {
-      service: new SpacesService(spaces, associations, audiences, dataSource),
+      service: new SpacesService(spaces, associations, audiences, dataSource, redis as never),
       save,
       manager,
+      redis,
     };
   }
 
@@ -184,5 +186,26 @@ describe('SpacesService', () => {
       { formation: 'ICM', campus: 'gardanne' },
     ]);
     expect(manager.insert).toHaveBeenCalled();
+  });
+
+  it('drops every cached feed page when who an association reaches changes (WP6b)', async () => {
+    // The list cache is keyed per reader and the rules decide which posts each reader gets, so a
+    // rule change - by the grid or by designating a BDE - is a change to every reader's pages.
+    const rules = make({ association: { id: 'a' } });
+    await rules.service.setAudiences('a', [{ campus: 'gardanne' }]);
+    expect(rules.redis.deleteByPattern).toHaveBeenCalledWith('posts:list:v2:*');
+
+    const bde = make({
+      space: { id: 's', formation: 'ICM', campus: 'gardanne' },
+      association: { id: 'a', type: 'association' },
+    });
+    await bde.service.setBde('s', 'a');
+    expect(bde.redis.deleteByPattern).toHaveBeenCalledWith('posts:list:v2:*');
+  });
+
+  it('does not drop the cache for a write it refused', async () => {
+    const refused = make({});
+    await expect(refused.service.setAudiences('a', [])).rejects.toBeInstanceOf(NotFoundException);
+    expect(refused.redis.deleteByPattern).not.toHaveBeenCalled();
   });
 });

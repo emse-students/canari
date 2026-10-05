@@ -746,26 +746,33 @@ permission granted. Measured that day: an anonymous `GET /api/posts?limit=1` ret
 bodies. **A gate is only a gate if it can say no.**
 
 The guard asks the database and ignores `x-global-admin`, though that header is trustworthy.
-Admins are already inside the audience predicate, so reading the header would state half the rule a
-second time in a second place - the exact shape of the original defect - and `formation` is not in
-the JWT, so the query is needed regardless.
+Admins are already inside the audience predicate, so reading the header would state part of the rule
+a second time in a second place - the exact shape of the original defect - and campus and cursus are
+not in the JWT, so the query is needed regardless.
 
-| Caller | Answer |
-| --- | --- |
-| no identity | **401**, from `NginxAuthGuard`, before this guard runs |
-| `formation = 'ICM'` | 200 |
-| `admin = true` | 200 |
-| neither | **403** |
+**Since WP6b the gate and every read rest on spaces** ([profiles-and-access](../profiles-and-access.md), "WP6b as built"):
+the gate is `IN_FEED_AUDIENCE_SQL` and which posts each read returns is `postVisibleToViewerSql`,
+both in `spaces/reader-spaces.ts`, the only copy. `feed-audience.ts` ("ICM plus global admins") is
+deleted.
 
-403 rather than 404: the client already redirects a non-ICM user away from `/posts`, so a
-distinguishable refusal is what lets the two agree.
+| Caller | Gate | Posts returned |
+| --- | --- | --- |
+| no identity | **401**, from `NginxAuthGuard`, before this guard runs | - |
+| `admin = true` | 200 | every post |
+| at least one space (a cursus formation on their campus) | 200 | the posts whose rules reach one of their spaces, plus D21 below |
+| a member of at least one association, no space | 200 | that association's posts (D21), and their own |
+| none of these | **403** | - |
 
-**The predicate lives in `feed-audience.ts` and the parentheses in `IS_FEED_AUDIENCE_SQL` are
-load-bearing.** `AND` binds tighter than `OR`, so `WHERE id = $1 AND formation = 'ICM' OR admin =
-true` parses as `(id = $1 AND formation = 'ICM') OR (admin = true)` - true for every admin row
-whoever asked. Measured against the local copy of production with an id belonging to nobody: **4
-rows without the brackets, 0 with them**, the four being the school's four administrators. A
-fragment meant to be combined has to say so, which is why the combining lives beside it.
+403 rather than 404 for the GATE: the client asks `GET /api/posts/audience` (the same SQL) and
+redirects a reader outside it away from `/posts`, so a distinguishable refusal is what lets the two
+agree. ONE POST the reader may not see is a **404**, before the moderation check whose 403 would
+confirm the id.
+
+**Every fragment is parenthesised, and that is load-bearing.** `AND` binds tighter than `OR`; the
+old `WHERE id = $1 AND formation = 'ICM' OR admin = true` would have parsed as
+`(id = $1 AND formation = 'ICM') OR (admin = true)` - true for every admin row whoever asked
+(measured on the local copy of production: 4 rows without the brackets, 0 with them). Who each
+fragment admits is proven against PostgreSQL by `reader-spaces.integration.spec.ts`.
 
 **This closes the feed and not the class.** FIFTEEN edge locations carry the same `auth_request`
 (re-derived 2026-09-15; this line said sixteen), and `/api/presence` was the second confirmed hole
@@ -782,7 +789,7 @@ and reach whoever happened to open the feed. `PostAnnounceScheduler` closes that
 
 | | Association post | Personal post |
 | --- | --- | --- |
-| Recipients | everyone who can see the feed (`feed-audience.ts`) | rows in `user_follows` for the author |
+| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's followers (`user_follows`) who can see it |
 | Notification `type` | `association_post` | `followed_post` |
 | Push `actorName` | the ASSOCIATION's name | the author's display name |
 | Measured rate (17 weeks to 2026-09-10) | 0.53/week to 356 people | ~6.5/week to 2.84 people each |
@@ -804,18 +811,13 @@ means "not yet announced", so shipping the column empty makes the first tick rea
 archive as new. It stamped 120 rows on the local copy of production. A partial index on the null
 rows keeps the once-a-minute query off a growing table.
 
-**The audience query is not an access gate, and it stopped having to be on 2026-09-10.**
-`feed-audience.ts` states "ICM plus global admin" so the sweeper knows who to TELL; the same
-`FEED_AUDIENCE_WHERE` is what `FeedAudienceGuard` refuses a reader with, one section above. The
-rule is stated once per side rather than once per endpoint, which is why narrowing it is a single
-edit.
+**Who is told is who can see, since WP6b.** The recipients are `postVisibleToUserSql` - the
+predicate every read applies - asked of every user for THAT post, so a notification never points at
+a post its recipient would get a 404 for. A post's own rules (D33) narrow its announcement exactly
+as they narrow its readers.
 
-**`association_follows` IS DELIBERATELY NOT CONSULTED, and that is a consequence of the first rule
-rather than an oversight.** If every association post reaches the whole feed audience, following an
-association adds nothing to what you are told - the first recipient derivation already subsumes the
-half of the second that would have used it. That table becomes the opt-in the day the association
-rule is narrowed, which is the one change that would give this sweeper a THIRD derivation rather
-than a different one.
+**`association_follows` IS DELIBERATELY NOT CONSULTED.** Everyone an association reaches is told
+already, so following it adds nothing to what you are told.
 
 **No digest and no per-association mute, decided on the measured rate rather than on taste.** At
 0.53 association announcements a week, either control would be a setting nobody would ever find.

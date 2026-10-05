@@ -22,6 +22,9 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
     const postRepo = {
       manager: {
         query: jest.fn((sql: string, params?: unknown[]) => {
+          // The block lookup a named viewer triggers answers "nobody blocked"; only the post read
+          // is recorded, which is what these assertions are about.
+          if (sql.includes('user_blocks')) return Promise.resolve([]);
           calls.push({ sql, params });
           return Promise.resolve(rows);
         }),
@@ -87,6 +90,13 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
     expect(calls[0].sql).toMatch(/NOT COALESCE\(posts\."hiddenByModeration", false\)/);
     expect(calls[0].sql).toMatch(/ORDER BY posts\."createdAt" DESC/);
     expect(calls[0].sql).toMatch(/LIMIT 1/);
-    expect(calls[0].params).toEqual(['event-1']);
+    expect(calls[0].params).toEqual(['event-1', null]);
+  });
+
+  it('returns only a post the viewer may see (WP6b), the viewer being the last parameter', async () => {
+    const { service, calls } = makeService([ROW]);
+    await service.findPostLinkedToCalendarEvent('event-1', 'reader-1', false);
+    expect(calls[0].sql).toContain('vis_viewer.id = $2');
+    expect(calls[0].params).toEqual(['event-1', 'reader-1']);
   });
 });
