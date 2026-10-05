@@ -6,6 +6,7 @@
    */
   import { onMount, type ComponentProps } from 'svelte';
   import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import { RefreshCw, UserPen, Ban } from '@lucide/svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import ProfileEditForm from '$lib/components/profile/ProfileEditForm.svelte';
@@ -77,7 +78,7 @@
 
   onMount(async () => {
     if (!isGlobalAdmin()) {
-      goto('/');
+      void goto(resolve('/dashboard'), { replaceState: true });
       return;
     }
     await load();

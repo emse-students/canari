@@ -501,10 +501,10 @@ filters.
 
 - **Request**: a person with no open one asks from their profile (`ProfileCorrectionRequest.svelte`,
   `POST /users/me/profile-correction`, message required). ONE OPEN REQUEST PER PERSON is a partial
-  unique index (migration core `010`, table `profile_correction_requests`), so two clicks cannot queue
+  unique index over `pending`/`applying` (migration core `010`, table `profile_correction_requests`), so two clicks cannot queue
   twice; `GET /users/me/profile-correction` returns the open or latest answered one.
 - **Queue**: `/admin/profile-corrections` (global admin), oldest first. **Apply** is the WP4a edit with
-  the request id in the body (`PUT /users/:id/profile`, `ProfileCorrectionService.apply`): the edit,
+  the request id in the body (`PUT /users/:id/profile`, `ProfileCorrectionService.apply`). The request is CLAIMED (`pending` -> `applying`) BEFORE authentik is written, released if the edit fails, so two admins never both write; a crash mid-edit leaves `applying`. Ids are uuid-validated (typed NOT_FOUND), and the requester reads a projection without `resolvedBy`. The edit,
   the request's closing and `profile_changes.requestId` agree, so the audit reads "asked for, then
   done". **Refuse** is `POST /users/admin/profile-corrections/:id/refuse` with an optional note.
 - **Notification**: core-service calls social's internal `POST /internal/notifications/profile-correction`
