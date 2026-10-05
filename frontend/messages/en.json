@@ -103,6 +103,7 @@
   "user_selector_remove_label": "Remove this user",
   "nav_main_landmark": "Main navigation",
   "nav_conversations_landmark": "Conversation list",
+  "sidebar_community_unread_label": "has unread messages",
   "nav_communities_landmark": "Communities and channels",
   "nav_my_profile_title": "My profile",
   "nav_my_profile_label": "Go to profile",

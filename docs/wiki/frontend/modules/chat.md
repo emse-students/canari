@@ -91,6 +91,21 @@ apps themselves (no WebView here), a real account, and the keyboard on a phone.
 | `ComposerEmojiPicker.svelte` | Emoji picker for the text input itself, desktop only |
 | `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
 
+### A community in the rail carries a dot when any of its salons has unread messages (2026-10-05)
+
+`Sidebar.svelte` draws a red dot on the rail's community button, a SIBLING of the button because the
+button clips its avatar. It is DERIVED, never stored: `communityHasUnread` (`utils/unreadTotal.ts`)
+asks `channelUnreadCount` of every salon - the same function the salon row's badge calls, over the
+live `conversations` map that `useMessaging` bumps on an incoming message and zeroes on read - so the
+dot lights live and clears with the last read, with no second ledger. The state is spoken by the
+button's label (`sidebar_community_unread_label`), the dot is `aria-hidden`.
+
+**There is no mute filter, on purpose:** a salon's notification level (`all`/`mentions`/`none`) is a
+server-held PUSH preference read one channel at a time by the settings panel; the salon rows' badges
+ignore it too, so the dot agrees with what it summarises. Filtering it would need a new bulk read of
+a preference, decided with the user, not guessed. Read-receipt settings do not enter: the count is
+local and receipts are only what OTHERS see. `Sidebar.communityUnreadDot.svelte.test.ts`.
+
 ### Every member list reads by family name, and a row never moves because its name arrived (2026-10-05)
 
 Asked by the user: the community admin panel listed its members by user id, the group panel and a
