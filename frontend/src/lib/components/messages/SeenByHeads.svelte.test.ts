@@ -51,10 +51,17 @@ describe('SeenByHeads', () => {
     expect(heads?.lastElementChild?.textContent).toBe('+2');
   });
 
-  it('announces how many read it, since the heads are hidden from assistive technology', () => {
-    const el = render(['a', 'b']);
+  it('names every reader to assistive technology, since the heads are hidden from it', () => {
+    const el = render(['a', 'b', 'c', 'd']);
 
     expect(el.querySelector('[role="status"]')).not.toBeNull();
-    expect(el.querySelector('.sr-only')?.textContent).toMatch(/2/);
+    expect(el.querySelector('.sr-only')?.textContent).toMatch(/a, b, c, d/);
+  });
+
+  it('names the readers folded into "+N" on the counter itself', () => {
+    const el = render(['a', 'b', 'c', 'd', 'e']);
+    const counter = el.querySelector('[aria-hidden="true"]')?.lastElementChild;
+
+    expect(counter?.getAttribute('title')).toBe('d, e');
   });
 });

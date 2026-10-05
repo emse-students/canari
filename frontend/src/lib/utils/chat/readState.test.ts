@@ -256,6 +256,40 @@ describe('where each head sits in a group (seen by)', () => {
     expect(anchors.get('a')).toEqual([ALICE]);
   });
 
+  it('anchors a reader whose last read message is NEWER than the list on its newest row', () => {
+    // Bob's watermark is past everything loaded: he has read every row this device holds.
+    const messages = [msg('a', 1000, PEER), msg('b', 2000, ALICE)];
+    const anchors = seenByAnchors(messages, { [BOB]: 9000 }, ME);
+
+    expect(anchors.get('b')).toEqual([BOB]);
+  });
+
+  it('draws no head for a reader whose last read message is OLDER than the loaded page', () => {
+    // History paged in from 5000: Bob stopped at a message this device has not loaded, and every
+    // loaded row is one he has NOT read - a head anywhere would claim otherwise.
+    const messages = [msg('a', 5000, PEER), msg('b', 6000, ALICE)];
+    const anchors = seenByAnchors(messages, { [BOB]: 3000 }, ME);
+
+    expect(anchors.size).toBe(0);
+  });
+
+  it('draws only who the watermarks hold - a member absent from them never appears', () => {
+    // The map IS the visibility predicate (a salon's read-marks are restricted server-side to who
+    // may read it now); a member who wrote a message but holds no mark gets no head anywhere.
+    const messages = [msg('a', 1000, BOB), msg('b', 2000, PEER)];
+    const anchors = seenByAnchors(messages, { [ALICE]: 2000 }, ME);
+
+    expect([...anchors.values()].flat()).toEqual([ALICE]);
+  });
+
+  it('never puts a head under a message its owner has not reached', () => {
+    const messages = [msg('a', 1000), msg('b', 2000), msg('c', 3000)];
+    const anchors = seenByAnchors(messages, { [ALICE]: 2999 }, ME);
+
+    expect(anchors.get('b')).toEqual([ALICE]);
+    expect(anchors.has('c')).toBe(false);
+  });
+
   it('draws nobody who has read nothing on the list', () => {
     expect(seenByAnchors([msg('a', 5000, PEER)], { [ALICE]: 1000 }, ME).size).toBe(0);
     expect(seenByAnchors([msg('a', 5000, PEER)], undefined, ME).size).toBe(0);

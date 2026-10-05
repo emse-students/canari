@@ -2,6 +2,7 @@
   import { CheckCheck } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
 
   /**
    * The heads of who has read a message: three avatars at most, then `+N`. ONE drawing for both
@@ -18,6 +19,16 @@
   let { readers, withCheck = false }: Props = $props();
 
   const MAX_HEADS = 3;
+
+  /**
+   * Every reader's name, kept live. Each head already carries its own name as a tooltip (`Avatar`);
+   * these serve who the heads cannot: the readers folded into `+N`, and assistive technology, from
+   * which the heads are hidden.
+   */
+  const names = userDisplayNames(() => readers);
+  const nameOf = (userId: string) => names.get(userId) ?? userId;
+  let foldedNames = $derived(readers.slice(MAX_HEADS).map(nameOf).join(', '));
+  let allNames = $derived(readers.map(nameOf).join(', '));
 </script>
 
 <span class="msg-status msg-status-read inline-flex items-center gap-0.5" role="status">
@@ -26,7 +37,9 @@
       <Avatar {userId} size="xs" shape="circle" />
     {/each}
     {#if readers.length > MAX_HEADS}
-      <span class="text-2xs font-bold opacity-70">+{readers.length - MAX_HEADS}</span>
+      <span class="text-2xs font-bold opacity-70" title={foldedNames}
+        >+{readers.length - MAX_HEADS}</span
+      >
     {/if}
     {#if withCheck}
       <CheckCheck
@@ -36,15 +49,5 @@
       />
     {/if}
   </span>
-  <!--
-    One key per arity, which is this codebase's convention for counted strings (see
-    `chat_typing_one_person` / `_two_people` / `_multiple_people`). The inlang project has no
-    ICU plural support, and a single `{count, plural, ...}` message compiles to an input the
-    generated type does not carry.
-  -->
-  <span class="sr-only">
-    {readers.length === 1
-      ? m.msg_statut_lu_une_personne()
-      : m.msg_statut_lu_plusieurs({ count: readers.length })}
-  </span>
+  <span class="sr-only">{m.msg_statut_lu_par_noms({ names: allNames })}</span>
 </span>
