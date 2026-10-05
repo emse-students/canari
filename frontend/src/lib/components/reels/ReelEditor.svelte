@@ -285,7 +285,7 @@
     >
       <ChevronLeft size={24} strokeWidth={2.5} />
     </button>
-    <h1 class="min-w-0 truncate text-base font-bold">{m.reels_editor_title()}</h1>
+    <h1 class="min-w-0 text-base font-bold">{m.reels_editor_title()}</h1>
     <button
       type="button"
       class="text-cn-ink inline-flex h-11 items-center gap-1.5 rounded-full bg-amber-500 px-4 text-sm font-bold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
