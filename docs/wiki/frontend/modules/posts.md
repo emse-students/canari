@@ -223,6 +223,17 @@ viewer (`GET /api/posts`, `/api/posts/search`, `/api/posts/:id` all do), or ever
 will be read-only. And a response that merges into a card - `onPostSaved` does exactly that - has to
 carry the three too, or saving an edit removes the control that started it.
 
+**What a "no bin on my own post" report has already been read against (user, 2026-09-17, a post
+published as an association, on prod).** `createPost` used to stamp its response with
+`isGlobalAdmin: false`, so a global admin posting as an association got its own post back
+`canManage: false` - fixed. But `CreatePostForm` discards that response and refetches the feed, so
+that defect was invisible to this client. Ruled out by reading: the feed passes the real admin flag
+and stamps every row through `shapeListRow`; `getById` passes its own; the feed cache is keyed per
+reader; `PostCard` reads `canManage` straight from the response; and `viewerIsPublisher` resolves an
+association post through `POST_AS_ASSO` for creation and management alike. What would settle the
+report is the post itself: whether its publisher held `POST_AS_ASSO` on that association, or reached
+the composer through the global-admin route alone.
+
 ## The search stops where the feed stops (2026-10-04)
 
 `/api/posts/search` is ONE server query - `ILIKE` over the body and the association name, pinned

@@ -824,6 +824,34 @@ importes pour les differencier des audios enregistres directement dans la conver
 note is a turn in the conversation, like the sentence it replaces; a file someone picked from disk
 is something they chose to send, and it stays under Fichiers where it was.
 
+**An import cannot say so on the wire, and the file-name rule is load-bearing.** `voiceNote` travels
+as `true | undefined` and never as `false` (`envelope.ts` emits the key only when true), so an import
+is always UNDECLARED, and `isVoiceNote` separates it from an undeclared OLD recording by the
+`vocal_<digits>` name. An audio file a person happened to name that way is hidden from the tab. The
+fix is sender-side - the import path declares `voiceNote: false`, or the flag becomes a
+`source: 'recorded' | 'imported'` the sender must set - and nobody has hit the collision, so it is
+not built. Do not delete the name rule as a heuristic: it is what keeps pre-2026-09-17 recordings
+out of the tab.
+
+**A push does not read the field.** A voice note on a locked phone is still announced as an audio
+file: the sentence is chosen in the Rust push scanner (`mobile/proto_fields.rs`,
+`extract_full_message_info`, from the `MediaKind` varint), not in Kotlin, and field 11 sits unread
+beside it. The same file writes SIXTEEN user-visible sentences as French literals, whatever the
+app's language:
+
+| builder | sentences |
+| --- | ---: |
+| `format_system_event_text` - renamed (2 forms), image changed, member added (2 forms), removed, left, deleted, invitation | **9** |
+| the reaction arm - `a réagi {emoji}` | **1** |
+| the media arm - `Photo`, `Vidéo`, `Audio`, `Pièce jointe` | **4** |
+| the call arm - `Appel vidéo entrant`, `Appel entrant` | **2** |
+
+Its fallback arm prints `événement de groupe ({event})`, a raw protocol name; the silence list beside
+it is what keeps that a trap rather than live noise. The text is what the FCM cache persists as a
+message body, so emitting a KIND for the native side to word (which `appLocaleContext` already
+localises on Android) changes what that cache stores - which is why it is a design, not a
+translation chore.
+
 ### A system event is executed, never displayed
 
 **`appMsgToEnvelope` returns `null` for a `system` AppMessage, and that null is load-bearing.** Every
