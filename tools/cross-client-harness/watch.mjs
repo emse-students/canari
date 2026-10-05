@@ -1299,6 +1299,8 @@ export async function report(w) {
   let untrackedFailures = 0;
   const console_ = [];
   const ws = [];
+  /** Socket handshakes that completed in the window - informational, never gating. */
+  const wsOpen = [];
   const exceptions = [];
   /** epoch_ms - monotonic_ms, read off the one event carrying both clocks. Null until one is seen. */
   let monoToWallOffset = null;
@@ -1354,6 +1356,15 @@ export async function report(w) {
       case 'Network.webSocketClosed':
         ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}` });
         break;
+      // A SOCKET THAT (RE)OPENED, recorded OUTSIDE the gate. A close with no open after it and a
+      // close followed by a reconnection are different findings, and before this the second half was
+      // invisible by construction (GRP-3's unexplained live close, backlog 2026-08-25). The handshake
+      // RESPONSE rather than `webSocketCreated`, because only the response carries a `timestamp` and
+      // an undated open cannot be placed against the close it answers. Never part of `clean`: a
+      // socket opening is the healthy half, and the gate already judges the close.
+      case 'Network.webSocketHandshakeResponseReceived':
+        wsOpen.push({ mono: p.timestamp, text: `${e.method} status=${p.response?.status ?? '?'} ${p.requestId}` });
+        break;
       case 'Runtime.exceptionThrown': {
         // WHERE IT WAS THROWN IS PART OF THE REPORT. `description` carries a stack only when the
         // thrown value is an Error with one; an exception raised from a script the native side
@@ -1407,6 +1418,7 @@ export async function report(w) {
   const monoRef = monoToWallOffset;
   const wall = (mono) => (monoRef === null || mono === undefined ? null : mono * 1000 + monoRef);
   for (const w of ws) w.at = wall(w.mono);
+  for (const w of wsOpen) w.at = wall(w.mono);
 
   // De-duplicate: Log.entryAdded and consoleAPICalled surface the same line twice.
   //
@@ -1601,6 +1613,7 @@ export async function report(w) {
     knownBadHttp: knownBadHttp.map((r) => `${r.method} ${r.url} -> ${r.status ?? r.failed}`),
     ...(untrackedFailures ? { untrackedFailures } : {}),
     wsEvents: ws.map((w) => `${hhmmss(w.at)} ${w.text}`),
+    ...(wsOpen.length ? { wsOpened: wsOpen.map((w) => `${hhmmss(w.at)} ${w.text}`) } : {}),
     documentsReplaced,
     warnings: warnings.map(renderLine),
     notable: notable.map(renderLine),
@@ -1619,7 +1632,7 @@ export async function report(w) {
     // offline` fired a second time ten seconds after the first, and the classifier had thrown the
     // second one away as a duplicate of the first. A repeat is not noise - it is often the entire
     // finding.
-    timeline: timelineOf(console_.map((l) => ({ ...l, text: renderLine(l) })), ws),
+    timeline: timelineOf(console_.map((l) => ({ ...l, text: renderLine(l) })), [...ws, ...wsOpen]),
   });
 }
 

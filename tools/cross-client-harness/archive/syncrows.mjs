@@ -495,10 +495,10 @@ export async function serverEpochs(cx, userId) {
 /**
  * The client's own `getEpoch(groupId)` per group, read through `window.__canariMlsEpochs()`.
  *
- * **THAT HOOK DOES NOT EXIST YET** - the application exposes no in-page way to read an MLS epoch (the
- * state is an encrypted IndexedDB blob), so until one is added this answers `epochs: null` with the
- * reason, and {@link readEpochForks} reports the window `unobservable` rather than clean. The reader
- * is written against the hook's contract so adding it is the only remaining step.
+ * The hook is installed by `createMlsService` (`frontend/src/lib/mls-client/epochDevTools.ts`) and
+ * answers `{ groupId: epoch }` for every group the device holds. A build older than it answers
+ * `epochs: null` with the reason, and {@link readEpochForks} reports the window `unobservable`
+ * rather than clean.
  */
 export async function clientEpochs(cx) {
   const raw = await evaluate(

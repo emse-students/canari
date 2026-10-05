@@ -198,7 +198,9 @@ export const STRANDED_ABSENT_MENTION_IDS = [];
  *   export const { OWNER_NAME, PEER_NAME, displayNameFor, peerNameFor } = makeNameHelpers(values);
  *   export const STATE_DIR = fileURLToPath(new URL('../../../../canari-harness/', import.meta.url));
  *
- * `STATE_DIR` has exactly three consumers - `launch.mjs` for the profiles, `accounts.mjs` for the
- * logins, `results.mjs` for the verdict record - and nothing else needs to know the split exists.
+ * `STATE_DIR` is read for the profiles (`launch.mjs`), the logins (`accounts.mjs`) and the verdict
+ * record (`results.mjs`), and `archive/run.mjs` PRINTS it on the preflight's first line: a second
+ * `canari-harness` directory (the one `tools/play-vitals` reads) holds a `names.mjs` of the same
+ * shape, and an edit landing there changes nothing - the printed path is what shows which one ran.
  * ---------------------------------------------------------------------------------------------
  */

@@ -1446,10 +1446,8 @@ estate up:
    Until it happens the rig can log the account in and cannot make anybody *find* it.
 2. **A device each**, which means a Chrome profile plus `PORTS`, `ORIGIN` and `ACCOUNT_OF` entries.
    A profile IS a device here, so this is not configuration, it is enrolment.
-3. **A name the rig can ask for.** `names.mjs` exposes exactly two identities - `OWNER_NAME` and
-   `PEER_NAME` - and `peerNameFor(device)` is `device === 'W2' ? OWNER_NAME : PEER_NAME`, which does
-   not return a wrong answer for a third identity so much as it cannot express the question - see
-   [the harness entry](#p2---the-rig-can-express-exactly-two-identities-and-the-third-and-fourth-accounts-now-exist-measured-2026-09-10).
+3. **A name the rig can ask for** - DONE (#1277): names are keyed (`DISPLAY_NAME_OF`), `displayNameFor(key)`
+   answers any account, and `peerNameFor` throws outside the owner/peer pair (`namesderive.mjs`).
 
 ### P3 - Android's two notification builders are ONE builder with two triggers since 2026-09-18, and three tap/reply rows still owe a run against it
 
@@ -3420,20 +3418,6 @@ instead take the first mentioned name from the server, bounded against the 4 KB 
 
 ## The harness itself
 
-### P3 - the iPhone rig has three gaps that cost a session an hour (found 2026-10-02)
-
-- **`attached()` read "pymobiledevice3 is not on PATH" as "no iPhone".** It swallowed the spawn failure and
-  answered `[]`, so `login.mjs --device I1` said the phone was not attached while `usbmux list` listed it. FIXED:
-  it throws, naming `PYMOBILEDEVICE3` (the executable's path) for a workstation whose Python `Scripts` directory is
-  off PATH (OXYGEN).
-- **`login.mjs` waits 60 s for a sign-in sheet that a system question is hiding.** After a REINSTALL iOS asks
-  "Canari souhaite utiliser auth.canari-emse.fr pour se connecter" (`Annuler` / `Continuer`) before
-  `ASWebAuthenticationSession` shows its page; `signInThroughSheet` does not know that screen and fails with "the
-  sheet never appeared". Tapping `Continuer` by hand (WDA, point 270,508) and re-running it signed in. OPEN: answer
-  that prompt in `signInThroughSheet`.
-- **A second `wda-daemon.py` cannot start while one holds port 8100**, and the first one gives no hint whose it is
-  (`OSError 10048` after the tunnel is up). Check `curl localhost:8100/status` before starting one.
-
 ### P3 - the phone's local debris cannot be swept, so every run ends on a line that says so (measured on A1 2026-09-08, still true 2026-09-21)
 
 `sweepDismissed` (`archive/dismiss.mjs`) clears the client-side half of a deleted throwaway group -
@@ -3465,40 +3449,6 @@ and W2 no longer do.
 **IT IS P3 BECAUSE NOTHING HAS COST A VERDICT SINCE THE WORDING CHANGED**, not because the debris is
 harmless: the 2026-09-08 incident is what it costs when it is not read.
 
-### P2 - the rig can express exactly TWO identities, and the third and fourth accounts now exist (measured 2026-09-10)
-
-`names.mjs` exports `OWNER_NAME` and `PEER_NAME`, and the counterpart helper is
-`peerNameFor = (device) => (device === 'W2' ? OWNER_NAME : PEER_NAME)`. Measured across the rig:
-**79 references to `OWNER_NAME`, 151 to `PEER_NAME`, 103 to `peerNameFor`, over roughly fifty
-files.** Two identities is not a limit somebody chose - it is what the campaign happened to need,
-frozen into a helper whose FALSE branch is "everything that is not W2".
-
-**A THIRD IDENTITY DOES NOT MAKE THAT HELPER WRONG, IT MAKES IT UNASKABLE**, and the failure mode is
-the dangerous one: `peerNameFor('W4')` for a device held by `third` returns `PEER_NAME` - a real
-name, of the wrong human, with no error. A check would click a conversation that exists and report
-about it confidently. This is the same class as the display-name-used-as-identity P1 of 2026-09-09.
-
-**WHAT THE SHAPE SHOULD BE.** `test-accounts.json` is already keyed by account (`owner`, `peer`,
-and now `third`, `fourth`) and `accounts.mjs` reads it generically - it has no notion of there being
-two. The names should be keyed the same way, `DISPLAY_NAME_OF[key]`, with `OWNER_NAME`/`PEER_NAME`
-derived from it so no call site moves; and `peerNameFor` should resolve the device through
-`ACCOUNT_OF`, return the counterpart for the two-party pair, and **THROW** for a device whose
-counterpart is not defined, naming `displayNameFor(key)` as the thing to call instead. A rig that
-refuses is a rig that can be extended; one that guesses cannot.
-
-**AND THERE IS A SECOND HALF, WHICH IS WHY THIS IS P2 RATHER THAN P3.** `peerNameFor` is LOGIC, and
-it lives in `names.mjs`, which is **gitignored** - so it is not reviewable, not testable, and not
-carried by the handoff bundle. The split the file's own docblock argues for is SECRETS out of tree;
-what is actually out of tree is secrets AND the derivations over them. Inverting it is cheap: a
-machine-local `values.mjs` holding only values, and a COMMITTED `names.mjs` that re-exports it and
-adds the derivations, so every call site keeps the same specifier and the helpers finally get a
-test. The cost is one renamed file on each machine that already has a rig, which is why it is
-recorded rather than done in passing.
-
-**WHAT IS OWED TO USE THE NEW ACCOUNTS AT ALL** is in the first-contact P1 above: a first sign-in to
-materialise each Canari user row and its display name, then a Chrome profile, `PORTS`, `ORIGIN` and
-`ACCOUNT_OF` entry per device.
-
 ### P2 - no row on the board can tell a healthy conversation from an epoch-forked one (measured 2026-08-29)
 
 Two production conversations sat forked one epoch behind for twenty-four hours, refusing 191 and 172
@@ -3508,47 +3458,12 @@ else. Reasoning in
 [testing-methodology](testing-methodology.md#a-green-sidebar-tile-does-not-prove-the-group-is-not-epoch-forked);
 this is the queue entry for the gap it leaves.
 
-**What is missing is a predicate, not a runner.** Readiness answers *the list has painted*, which is
-what it was written for. Nothing anywhere in the rig asks *is this device at the group's epoch*,
-though the answer is one field: the client already holds `getEpoch(groupId)`, and the server already
-answers `activeEpoch` on any refused commit and carries it in the commit-log endpoint. A `syncrows`
-reader that put the two side by side would turn a class of defect that is currently found by hand,
-a day late, into a per-row assertion.
-
-**The row it belongs to is not written either.** COMM and MULTI both send and observe arrival, so
-they would catch a fork that blocks traffic *in the window they watch*; neither asks the question of
-a conversation it is not itself using, which is the only place a quiet fork can live. Scope it with
-the four MULTI rows of queue item 3 - same shape, same devices, and the same reason none of ~200
-existing rows would have caught it.
-
-
-### P3 - an internet scanner can stop a `--repeat`, and separate invocations are the way round it (2026-08-26)
-
-`GRP --repeat 5` stopped at pass 1 with `frontend-ssr NOT CLEAN ... unexplained=3`, the three lines being
-`[404] HEAD /WP`, `[404] HEAD /old`, `[404] HEAD /Old` - a scanner sweeping a public host for WordPress
-and a leftover backup directory.
-
-**`srvlog.mjs` is not wrong to leave them there.** Its 404 rules are keyed on a stack prefix the
-application provably cannot own (`/wp-*`, `/administrator/`, `/_next/`), and its own comments state twice
-why a blanket `[404]` rule may never exist: it would forgive a route we DO own answering 404. `/WP` misses
-the existing rule on case and on the absent hyphen, and `/old` is a shape a SvelteKit app could own, so
-forgiving it would break the file's criterion rather than extend it.
-
-**So the finding is not the three lines - it is that campaign throughput depends on what the internet
-does to prod during a window.** Prod IS the test server, so this recurs with every new scanner spelling,
-each time costing the remaining passes of a `--repeat`.
-
-**The route round it, used the same day, needing no change to any gate:** the stop is BETWEEN passes, not
-inside one - all ten checks of pass 1 ran and recorded their verdicts. Five separate `run.mjs GRP`
-invocations therefore give five measured passes where `--repeat 5` gives one, with nothing disarmed. It
-costs one preflight per pass.
-
-**The real fix, when it is worth the time,** is to stop enumerating spellings and read the fact instead:
-the set of paths the application owns is knowable without a build, from `frontend/src/routes/**` and
-`frontend/static/**`. A 404 on a path IN that set is a defect; a 404 outside it provably cannot be ours.
-That satisfies the file's own criterion better than any regex and closes the class instead of the
-instance - the difference [testing-methodology](testing-methodology.md) rule 42 is about.
-
+**THE PREDICATE IS BUILT END TO END (2026-10-04)**: `epochfork.mjs` compares, `archive/syncrows.mjs`
+`readEpochForks` reads both halves, and the client half is `window.__canariMlsEpochs()`, installed by
+`createMlsService` (`frontend/src/lib/mls-client/epochDevTools.ts`). **What is owed is the ROW, and
+it needs the rig**: a MULTI-shaped row asking `readEpochForks` of a conversation it is NOT itself
+using - the only place a quiet fork can live - run once on a build carrying the hook (older builds
+answer `unobservable`, never clean).
 
 ### P3 - the server's log SHAPES that a reader has to carry an exception for (measured 2026-08-30, one added 2026-08-31)
 
@@ -3632,14 +3547,12 @@ window, dirty on the next. GRP-3's `PASS-DIRTY` of 2026-08-24 is a DIFFERENT cau
 counted here - it was an `[OUTBOX] ... evicted from ...` line from a browser left on a stale bundle,
 which is what `8c248131` closed.
 
-**How to settle it, in order, and none of it needs a new tool.** `ws1.mjs` already prints one
-interleaved timeline of every `Network.webSocket*` event and every console line on one clock, written
-for precisely this question on READ. Point it at GRP-3's sequence rather than READ-1's; add
-`Network.webSocketCreated` to the collector at `watch.mjs:1121` first, since the reconnection is half
-the answer and is currently invisible by construction. Then the discriminator is cheap: if the close
-sits at a fixed offset from `removeMember` it belongs to the Remove commit path, and if it sits at a
-fixed offset from the socket's own age it is a lifetime, which `wsidle.mjs` did not test because it
-watched a socket for eight minutes rather than an old one.
+**How to settle it - the instrument half is DONE (2026-10-04), the run is owed.** `report()` in
+`watch.mjs` now records every completed socket handshake as `wsOpened` (dated, outside `clean`) and
+puts it on the `timeline`, so a close followed by a reconnection is visible in any row. What is left
+needs the rig: run `ws1.mjs` over GRP-3's sequence. If the close sits at a fixed offset from
+`removeMember` it belongs to the Remove commit path; at a fixed offset from the socket's own age it is
+a lifetime, which `wsidle.mjs` did not test (it watched a fresh socket, not an old one).
 
 ### P2 - ONE NAMED STARTING POINT, reachable at every granularity (asked 2026-08-25)
 
@@ -3833,13 +3746,11 @@ does NOT read contains a `names.mjs` of its own: same filename, same shape, same
 during the venue rename on 2026-09-04 - the edit landed, `grep` confirmed it, and the run kept
 printing the old value.
 
-**Why this is not fixed here.** Moving either directory breaks the other reader, and both hold
-credentials and state (`play-console-sa.json`, the Chrome profiles) that a wrong move destroys - so
-this is a one-off gesture on the user's own machine rather than a code change, and
-[ONE-OFF ACTIONS GO TO THE USER](../../CLAUDE.md). The cheap half a session can do is make each
-reader PRINT the absolute path it resolved, so a wrong edit is visible in the first line of output
-rather than in a value that refuses to change. Note that `STATE_DIR` is already exported and has
-three consumers, so the resolved path is available and simply never shown.
+**The cheap half is DONE (2026-10-04)**: `archive/run.mjs` prints `rig state: <STATE_DIR>` as the
+preflight's first line, so an edit landing in the wrong directory shows on line one. **What is left is
+the user's one-off** - merging the two directories (or deleting the decoy `names.mjs`) on the
+workstation; both hold credentials and Chrome profiles a wrong move destroys, so it is not a code
+change ([ONE-OFF ACTIONS GO TO THE USER](../../CLAUDE.md)).
 
 ## The graphical pass - every page at 100 % (user, 2026-09-13)
 

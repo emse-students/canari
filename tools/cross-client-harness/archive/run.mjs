@@ -42,7 +42,7 @@ import { client } from '../chat.mjs';
 import * as phone from '../phone.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
 import { isPhoneName } from '../device.mjs';
-import { PORTS, VENUE } from '../names.mjs';
+import { PORTS, STATE_DIR, VENUE } from '../names.mjs';
 import { channelIdOf, communityMemberIds, workspaceIdOf } from '../grainedb.mjs';
 import { all, clientBuild } from '../results.mjs';
 import { deployedBundleId, isOnTheDeployment, reloadOntoBundle, sourceIsDeployed } from '../bundle.mjs';
@@ -308,6 +308,12 @@ function sharedVenue() {
 
 async function preflight(devices, { quiet = false } = {}) {
   const problems = [];
+
+  // WHICH OUT-OF-TREE DIRECTORY THIS RUN READS, printed first. Two directories on one workstation
+  // answer to `canari-harness` (the rig's, and the one `play-vitals` and the dump puller read), and
+  // the second holds a stale `names.mjs` of the same shape: editing it changes nothing and says
+  // nothing (venue rename, 2026-09-04). The resolved path on line one is what makes that visible.
+  console.log(`  ..   rig state: ${STATE_DIR}`);
 
   // PRODUCTION MUST BE STILL BEFORE A CHECK TOUCHES IT. Prod IS the test server, and a push to
   // `main` restarts every container under whatever is running: on 2026-08-21 a commit touching only
