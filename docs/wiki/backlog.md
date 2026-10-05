@@ -1855,24 +1855,6 @@ The reason it is not that way is visible in the code: only users whose Welcome w
 registered, so inverting the order also changes which users end up registered when a delivery fails.
 That is a real design decision and wants measuring, not guessing.
 
-### P3 - the PIN form may still want a hidden username field, and the observation is now too old to work from (seen 2026-08-28, autocomplete fixed since)
-
-The classifier half of this entry SHIPPED (2026-08-29 for HEAL-NEW, 2026-08-30 for HEAL-REVOKE) and
-its design - `withoutTheMintsOwnNoise`, the four per-OBSERVER lists, and why the wipe's own narration
-deliberately has no list - is in [the rig's README](../../tools/cross-client-harness/README.md), the
-only copy. Two lines it disposed of must NOT be re-opened: `History msg error: Group not found` is
-the amber probe clicking a SYNCING tile on purpose, and `[WS] Disconnected. Code: 1006` is a browser
-the row killed by construction.
-
-What survives is one accessibility hint Chrome printed beside them: a password form wants a username
-field. **Re-observe before working it.** The half that was clearly wrong is fixed - all four PIN
-inputs now carry the right `autocomplete` (`PinModal.svelte` switches `new-password` /
-`current-password` on `isFirstSetup`; `ChangePinModal.svelte` names all three) - so the line that
-remains, if any, is the password-manager association one, and nobody has seen it since. A hint
-quoted from a run three weeks old is not evidence that it still fires. **Not made moot by the lock
-screen (#1273)** - re-read 2026-10-01: `PinModal.svelte` and `ChangePinModal.svelte` are both still a
-`<form>` with `type="password"` inputs and no username field, so the premise stands.
-
 ### P2 - iOS carries none of the window-layout work Android already has (user, 2026-08-28)
 
 **Named by the user from real use on an iPhone**, and one of the three is already fixed. The Android
