@@ -20,6 +20,8 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
+import { categoryOfDataPush } from './push-category';
+import { readDisabledCategories } from './notification-preferences';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
@@ -545,6 +547,21 @@ export class MessagingService {
       return;
     }
 
+    // THE RECIPIENT'S "MESSAGES" SWITCH. The frame must still REACH the device - an MLS ciphertext is
+    // state the account needs to stay decryptable, so it cannot be dropped like a social push - but it
+    // may be told to draw nothing: the same `silent` the own-device copies and receipts already use,
+    // which both native clients honour. Decided here, once, so no client has to filter.
+    let drawNothing = silent || queued.recipientId === senderId;
+    if (!drawNothing) {
+      const disabled = await readDisabledCategories(this.groupRepo.manager, queued.recipientId);
+      if (disabled.has('messages')) {
+        drawNothing = true;
+        this.logger.log(
+          `[PUSH_SEND][${traceId}] category=messages disabled by user=${cutUserId(queued.recipientId)} - sent silent`
+        );
+      }
+    }
+
     // Resolve group name for a meaningful fallback when the Android service
     // cannot decrypt (app killed, JNI state unavailable).
     //
@@ -612,7 +629,7 @@ export class MessagingService {
       // Filled in below once the budget the other fields leave is known.
       proto: '',
       // Own-device copies, read receipts and welcome packets are not shown.
-      silent: silent || queued.recipientId === senderId,
+      silent: drawNothing,
       isWelcome: !!queued.isWelcome,
       createdAt: queued.createdAt.toISOString(),
     };
@@ -3476,6 +3493,21 @@ export class MessagingService {
     }
 
     const traceId = this.makeTraceId('social-push');
+
+    // THE ACCOUNT'S CATEGORY SWITCHES, decided before a single token is read: a muted category is
+    // not sent at all, on any platform, so no client has to filter and nothing reaches Google or
+    // Apple for it. Pushes belonging to no category (read frames, call rings) are never refused.
+    const category = categoryOfDataPush(data);
+    if (category) {
+      const disabled = await readDisabledCategories(this.pushTokenRepo.manager, userId);
+      if (disabled.has(category)) {
+        this.logger.log(
+          `[SOCIAL_PUSH][${traceId}] category=${category} disabled by user=${userId} - not sent`
+        );
+        return { sent: 0, failed: 0 };
+      }
+    }
+
     const pushTokens = await this.pushTokenRepo.find({ where: { userId } });
 
     if (pushTokens.length === 0) {
