@@ -276,7 +276,7 @@ migration of the 600 accounts. **Thirty-two decisions, all on
 were taken against. **The technical plan is its section 4, eleven work packages, VALIDATED by the
 user the same day: WP0, then WPA (authentik as code), then WP1.** WP0 SHIPPED, WPA and WP1 LIVE on production (2026-09-30); WP4 is its PR (4a the editor account, the endpoint and the audit; 4b the correction queue); WP5 is next. **WP6b (readers by space) is BUILT on its branch (2026-10-04) and its release order is forced** - see the owed-to-the-user table above.
 
-## Asked by the USER on 2026-10-05 - four requests, none built
+## Asked by the USER on 2026-10-05 - requests, readings and migrations owed
 
 | Request | What it needs |
 | --- | --- |
@@ -286,6 +286,29 @@ user the same day: WP0, then WPA (authentik as code), then WP1.** WP0 SHIPPED, W
 | **Several images in a post render ragged** | squares with a "+N" on the fourth; in progress as `feat/post-gallery-squares` |
 | **A notification showed the app's bird above the sender's face** | fixed with a conversation shortcut (`mobile.md`), NOT compiled and NOT seen: owed one look on the Mi 9T (a DM, a group) |
 | **Reply and mark-as-read from a salon notification** | absent on Android AND iOS by design; a salon send is server-authoritative, so it needs its own native send path. iOS actions never run in this repo's gates: owed a hand on an iPhone for a DM and a group |
+| **`@everyone` in COMMUNITIES** (user, 2026-10-05: *"a l'occasion"*, LOW priority) | Open design questions, none decided: who may use it (`channel.moderate` or a dedicated permission; it notifies everyone, so abuse and rate limit); whether it respects each member's per-salon level and the per-category preferences (#1453); how it is carried when salon messages are Graine ciphertext (a mention token in the plaintext with recipients computed client-side, or a server push fan-out that cannot read content); an `@here` variant; the composer autocomplete |
+| **Reel editor: NO video editing, OVERLAYS only** (user, 2026-10-05) | No trim, music or clips. Only overlays on the capture: text with a style row (font, colour, background pill, alignment, size), drawing (pens, colours, stroke width, eraser, undo), stickers and emoji; "Next" opens publish directly. The editor first slice is PR #1464 (not on `main` when this was written, and `reel-editor.md` with its E1-E7 packages does not exist on `main` either): cut E1-E7 down to this scope when it lands. **Owed: the Instagram walkthrough on the Mi 9T** covered photo (one shutter tap, long press = video), text (Modern/Classic/Signature, font/colour/animation/effect/alignment/background row, one finger moves, two rotate and resize), drawing (sharpie/arrow/marker/neon/eraser/special, vertical width slider, 9-colour palette with eyedropper, undo) and the exit dialog (Discard / Save draft / Keep editing); NOT yet surveyed: video capture, the trash zone while dragging, stickers. See [reels](frontend/modules/reels.md) |
+
+### Owed readings from the work merged on 2026-10-05 (one look each, none taken)
+
+| What | Look at |
+| --- | --- |
+| GIF picker full screen with the keyboard, and the GIF reply preview | #1454 |
+| Reel capture: single shutter, crop, latency, the front-camera mirror claim, the iPhone MP4 canvas path | #1463, [reels](frontend/modules/reels.md#one-shutter-and-a-capture-that-is-the-preview-2026-10-05) |
+| Editor "Suivant" layout and remove-sound | #1464 |
+| Notification header avatar overlap on the Mi 9T | #1448 |
+| Salon drag-and-drop reorder at 390 and 1280 | #1461 |
+| Community rail unread dot (muted salons are NOT handled: owed a bulk read of notification levels if wanted) | #1452 |
+| Group photo late first render after the SQLite v12 migration (untested on device) | #1455 |
+| Member-add flicker | #1462 |
+| Edit your own message in salons (protocol change, `EditMsg` field 13) | #1466 |
+| Quote ellipsis and reactor hover | #1467 |
+| Institutions page `/institutions` | #1465 |
+| Agenda feed selection, and the legacy subscription break | #1460 |
+
+### Migrations owed to the user's go before the next release
+
+`028` (chat-delivery `notification_preference`), `075` (institution type) and `076` (`channels.sortOrder`): apply on dev with the pre-release, on prod with the next stable (migrations run at deploy).
 
 ## Open defects, in severity order
 
