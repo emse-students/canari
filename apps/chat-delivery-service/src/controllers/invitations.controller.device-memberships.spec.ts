@@ -128,6 +128,33 @@ describe('InvitationsController - getDeviceMemberships', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('stranded=0'));
   });
 
+  it('says an unchanged answer once, and says it again the moment it changes', async () => {
+    // A settling device polls several times a second; the line used to repeat the same statuses
+    // on every poll. A changed answer - a row stranding or clearing - must always be printed.
+    deviceGroupRepo.find.mockResolvedValue([row('g1', 'pending')]);
+    queuedMessageRepo.find.mockResolvedValue([{ groupId: 'g1' }]);
+    await ask();
+    await ask();
+    const membershipLines = () =>
+      log.mock.calls.filter((c) => String(c[0]).includes('[DEVICE_MEMBERSHIPS]'));
+    expect(membershipLines()).toHaveLength(1);
+
+    queuedMessageRepo.find.mockResolvedValue([]);
+    await ask();
+    expect(membershipLines()).toHaveLength(2);
+    expect(String(membershipLines()[1][0])).toContain('stranded=1');
+  });
+
+  it('prints cut identifiers, never a full user or device id', async () => {
+    deviceGroupRepo.find.mockResolvedValue([row('g1', 'active')]);
+    await ask();
+    const line = String(
+      log.mock.calls.find((c) => String(c[0]).includes('[DEVICE_MEMBERSHIPS]'))?.[0]
+    );
+    expect(line).toContain(`device=${DEVICE.slice(0, 12)} `);
+    expect(line).not.toContain(DEVICE);
+  });
+
   it('answers per row rather than per device, so one queued Welcome does not cover the others', async () => {
     // The production shape: ELEVEN rows written in one batch, of which some may be served and some
     // not. A device-level answer would have hidden exactly the rows that were stranded.

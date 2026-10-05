@@ -1855,6 +1855,18 @@ how to read it are on [`call-service`](call-service.md#the-call-record) - keep n
 | DELETE | `/api/internal/users/:userId` | InternalSecret | Delete all user MLS/device data |
 | GET | `/api/health` | none | Liveness probe |
 
+## Two lines that report a rate, not an event
+
+`[DEVICE_MEMBERSHIPS]` used to print on every membership poll (several per second while a device
+settles) and `[PUSH_SEND] No push token` on every send to a device with no token (every web and
+desktop device, for ever): together they were most of a run window's unexplained lines, and both
+printed the full 64-character user id and the whole device id. Since 2026-10-05 the first prints
+when a device's answer CHANGES (a row stranding or clearing always does), the second once per device
+and then at its 10th, 100th... send (`utils/log-repeat.ts`), and both cut ids to 8 (user) and 12
+(device, so the `web-`/`ios-` prefix the rig's classifier keys on survives). How many devices cannot
+be pushed is a population question, answered by `tools/cross-client-harness/devices.mjs
+--unpushable`, never by counting this line.
+
 ## Environment variables
 
 | Variable | Required | Description |

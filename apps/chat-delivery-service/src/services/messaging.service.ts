@@ -26,6 +26,7 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { resolveUserDisplayName, resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
 import { mlsFrameEpoch } from '../utils/mls-frame-epoch';
+import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import {
   deleteGroupOwnedRows,
   deleteGroupRedisKeys,
@@ -334,6 +335,8 @@ export interface AckMessagesBody {
 @Injectable()
 export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
+  /** Per-device count of sends that found no push token - see `sendFcmForQueued`. */
+  private readonly noPushTokenRepeats = new RepeatCounter();
 
   constructor(
     @InjectRepository(QueuedMessage)
@@ -529,9 +532,16 @@ export class MessagingService {
     });
 
     if (pushTokens.length === 0) {
-      this.logger.log(
-        `[PUSH_SEND][${traceId}] No push token for user=${queued.recipientId} device=${queued.deviceId}`
-      );
+      // A RATE, NOT AN EVENT: every desktop and web device has no token for ever, so this fired
+      // once per addressee per send. Said once per device, then at its 10th, 100th... send; the
+      // population is `tools/cross-client-harness/devices.mjs --unpushable`, not this line.
+      const nth = this.noPushTokenRepeats.hit(`${queued.recipientId}:${queued.deviceId}`);
+      if (nth !== null) {
+        this.logger.log(
+          `[PUSH_SEND][${traceId}] No push token for user=${cutUserId(queued.recipientId)} device=${cutDeviceId(queued.deviceId)}` +
+            (nth === 1 ? ' (repeats are counted, printed at 10, 100...)' : ` - send #${nth} to it`)
+        );
+      }
       return;
     }
 
