@@ -1,5 +1,6 @@
 export type { IMlsService } from '$lib/mls-client';
 import type { IMlsService } from '$lib/mls-client';
+import { installMlsEpochDevTools } from '$lib/mls-client/epochDevTools';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { MLS_PLATFORM, MlsService } from './mlsServicePlatform';
 
@@ -44,5 +45,7 @@ export function assertPlatformMatchesRuntime(
  */
 export function createMlsService(): IMlsService {
   assertPlatformMatchesRuntime();
-  return new MlsService();
+  const svc = new MlsService();
+  installMlsEpochDevTools(svc);
+  return svc;
 }
