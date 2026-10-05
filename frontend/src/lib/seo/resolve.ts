@@ -110,6 +110,7 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/admin/legacy-cotisations': () => adminTitle(m.admin_legacy_title()),
   '/admin/moderation': () => adminTitle(m.moderation_title()),
   '/admin/platform': () => adminTitle(m.admin_platform_label()),
+  '/admin/spaces': () => adminTitle(m.admin_spaces_title()),
   '/admin/status': () => adminTitle(m.admin_status_title()),
   '/admin/storage': () => adminTitle(m.admin_storage_label()),
   '/admin/database': () => adminTitle(m.admin_database_label()),
