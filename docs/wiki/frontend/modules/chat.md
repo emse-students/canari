@@ -318,13 +318,24 @@ deleted); it now only ANNOUNCES the edit.
   paperclip, poll, GIF and microphone step aside (`actionsHidden`). `submit()` is the one send path
   for Enter and the button; **an edit does NOT clear the field**, because the parent hands the draft
   back and a clear would reach it after and wipe it.
-- **Channels cannot edit**, as before: `MainChatPage` passes no `onEdit` there, so no action shows.
+- **Salons CAN edit since 2026-10-05** (user: *why can I not edit my own message in a community?*). It was never refused on purpose: `MainChatPage` passed no `onEdit` for a channel because nothing had been built, so the bubble was never handed `onBeginEdit`. The mechanism is [below](#editing-your-own-message-in-a-salon-2026-10-05).
 
 Verified in Chromium on the composer in edit mode at 390 and 1000 px. Tests:
 `ChatComposer.edit.svelte.test.ts` (banner, Save rule, Enter and button, no clear, Escape and X, the
 "+" put away and present otherwise) and `editSession.svelte.test.ts` (draft kept and returned, first
 draft kept across two edits, unchanged and empty saved as nothing, reset). **Not exercised:** a real
 edit through `handleEditMessage` end to end on a phone.
+
+### Editing your own message in a salon (2026-10-05)
+
+**An edit is a SILENT ENCRYPTED CHANNEL ROW, exactly like a reaction** ([channel-encryption 4.7](../../protocols/channel-encryption.md)): a new `EditMsg` (`AppMessage.edit`, field 13: the target's SERVER row id, the replacement TEXT, `edited_at`), sealed under the author's Graine session by `sendChannelEdit` (`channelCrypto.ts`). The server stores an opaque row flagged `silent`, so **there is no new push and no server change, no endpoint, no migration** - and none COULD validate it: it cannot tell the row is an edit or whose message it names.
+
+- **Authorship is checked by every reader**, in ONE function, `applyChannelEdit` (`utils/chat/channelEdit.ts`), used by the live handler (`channelEventHandler`), a history page and the search sweep (`useConversations`) and the sender's own write (`editChannelMessage`). The edit's sender is the ROW's - what Graine v2 proves, unforgeable by the server and by other members - and it must equal the target's author. **A moderator may remove someone's message (`channel.moderate`), never rewrite it.** A refusal is logged (`REFUSED`), silent to the user.
+- It edits a plain TEXT message only: not a poll, a notice, a media message or a tombstone (a delete is final). Empty text is refused. Order is `editSupersedes` (later `editedAt` wins, tie on the text), so two devices converge in any arrival order; the author's own echo is a quiet no-op.
+- **The history load applies the edit rows after the page is built**, because a salon is not stored locally: the marker and the new text come back from the same silent rows. The page limit counts non-silent rows and brings every newer silent row, so an edit of a loaded message is always on the page.
+- UI: `MainChatPage` now passes `onEdit` for a channel (`channels.editChannelMessage`); the inline edit is the composer's, shared with DMs and groups, and the edited marker is the existing `isEdited`.
+- **Old clients** read `AppMessage` with an unknown oneof, which decodes to an empty frame: the row is not rendered and nothing breaks, they simply keep the original text. **Not exercised: two real devices round-trip, and the 365-day retention purge of an edit row whose (pinned) target outlives it** - the edit is then lost with its row, the original text stays.
+- Tests: `channelEdit.test.ts` (author, other member, moderator, empty, emoji and newline round trip through the proto, poll/notice/deleted/absent, reply kept, order independence, echo), `channelCrypto.test.ts` (`sendChannelEdit` silent, own row id), `MessageBubble.editAction.svelte.test.ts` (the menu entry only on an own, live, non-poll message with a handler).
 
 ### A message body and a media CAPTION are two render paths, and only one of them parsed mentions (2026-09-23)
 

@@ -85,6 +85,9 @@ message AppMessage {
     GraineMsg        graine         = 10;
     GraineRequestMsg graine_request = 11;
     GraineBundleMsg  graine_bundle  = 12;
+    // A salon message edited by its author, carried as an encrypted SILENT channel row. DMs and
+    // groups keep their `edit_message` system event.
+    EditMsg          edit           = 13;
   }
 }
 
@@ -138,6 +141,14 @@ message ReactionMsg {
   // True when the sender is TAKING THE REACTION BACK. Default false = placing it, so a frame from
   // before this field existed reads as a placement - which is exactly what it was.
   bool   removed    = 4;
+}
+
+// An author's replacement text for one of their own salon messages. The server cannot read it, so
+// authorship is checked by every reader against the sender the Graine session proves, never here.
+message EditMsg {
+  string message_id  = 1; // SERVER row id of the edited message (the key every salon operation uses)
+  string new_content = 2; // the replacement TEXT, not a body - the reader keeps the reply reference
+  int64  edited_at   = 3; // Unix ms, the author's clock; the larger one wins (editSupersedes)
 }
 
 // ── Poll (community channels) ─────────────────────────────────────────────
