@@ -1209,6 +1209,23 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   margin-top: 0.75rem;
 }
 
+/* THE GIF PICKER WHILE ITS SEARCH IS OPEN IS THE WHOLE SCREEN ABOVE THE KEYBOARD (user, 2026-10-05).
+   The same box as `[data-keyboard-aware-overlay]` - top at the visual viewport's offset, the visual
+   viewport's height - which is the space the keyboard leaves on every platform, so no number here is
+   a keyboard height. The safe areas are padded inside an opaque surface, so the home indicator stays
+   clear when the keyboard has been dismissed and the picker stays. */
+.composer-gif-fullscreen {
+  position: fixed;
+  top: var(--visual-viewport-offset-top, 0px);
+  right: 0;
+  left: 0;
+  z-index: var(--z-sheet);
+  height: var(--app-viewport-height, 100dvh);
+  padding-top: var(--safe-area-inset-top, 0px);
+  padding-bottom: var(--safe-area-inset-bottom, 0px);
+  background-color: var(--cn-surface);
+}
+
 /* LIQUID GLASS, AND ONLY FOR CHROME THAT STAYS PUT WHILE CONTENT MOVES UNDER IT (user, 2026-09-30:
    "only static ui element, that are apart from content, should be liquid glass"). The conversation's
    floating header pieces and the composer's "+" wear it; a bubble, a card or a panel of content never

@@ -174,6 +174,20 @@ export function getGifEmbedUrl(url: string): string {
   return url;
 }
 
+/**
+ * The GIF a message IS, when its whole body is one GIF link: the URL a reply preview draws, else
+ * `null`. The same test the list preview (`[GIF]`) and the bubble (`GifEmbed`) already make - a body
+ * that is exactly one URL and `isGifUrl` says so - so a quote, the composer's reply strip and the
+ * renderer cannot disagree about what counts as a GIF. The fragment (`#cn-size`) is kept: it is the
+ * size a reader's frame reserves.
+ */
+export function gifPreviewUrl(text: string): string | null {
+  const trimmed = text.trim();
+  const url = extractFirstUrl(trimmed);
+  if (!url || trimmed !== url || !isGifUrl(url)) return null;
+  return getGifEmbedUrl(url);
+}
+
 export type TextLinkSegment =
   | { type: 'text'; value: string }
   /** Clickable URL; may show inline GIF when not `noEmbed`. */

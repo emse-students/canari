@@ -1,5 +1,6 @@
 import {
   extractFirstUrl,
+  gifPreviewUrl,
   gifSizeFromUrl,
   isAngleBracketAutolink,
   isGifUrl,
@@ -7,6 +8,28 @@ import {
   splitWithHighlight,
   withGifSize,
 } from './messageDisplay';
+
+describe('gifPreviewUrl - what a reply preview draws for a GIF', () => {
+  const KLIPY = 'https://static.klipy.com/ii/abc/def.gif#cn-size=498x280';
+
+  it('returns the whole address, size fragment included, for a message that is one GIF link', () => {
+    expect(gifPreviewUrl(KLIPY)).toBe(KLIPY);
+    expect(gifPreviewUrl(`  ${KLIPY}\n`)).toBe(KLIPY);
+  });
+
+  it('turns a Giphy page into the direct picture, as the bubble does', () => {
+    expect(gifPreviewUrl('https://giphy.com/gifs/funny-abc123')).toBe(
+      'https://media.giphy.com/media/abc123/giphy.gif'
+    );
+  });
+
+  it('is null for text around the link, a plain link, plain text and nothing', () => {
+    expect(gifPreviewUrl(`regarde ${KLIPY}`)).toBeNull();
+    expect(gifPreviewUrl('https://example.com/page')).toBeNull();
+    expect(gifPreviewUrl('bonjour')).toBeNull();
+    expect(gifPreviewUrl('')).toBeNull();
+  });
+});
 
 describe('a GIF size in the URL fragment', () => {
   const GIF = 'https://static.klipy.com/ii/abc/def.gif';

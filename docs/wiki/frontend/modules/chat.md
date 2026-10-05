@@ -225,6 +225,34 @@ focus), the panel (`ChatComposer.gifPanel.svelte.test.ts`: last in the footer at
 height, tiles sized from declared dimensions, send closes it, Back closes it, the hand-off), the Rust
 allowlist (`picked_files.rs` tests) and a source pin that the command is registered.
 
+### The GIF search is the whole screen, and a quoted GIF is a picture (2026-10-05)
+
+**Two reports from the user.** Typing in the panel's search left the picker as a 200 px strip above
+the keyboard with the conversation around it; and a reply to a GIF quoted the GIF's raw URL as text
+(Messenger quotes the picture, small and dimmed).
+
+- **The search is the whole screen.** Once the panel's search takes focus, `ChatComposer` sets
+  `gifFullscreen` and `ComposerGifPanel` lifts its CONTENT out as a fixed layer
+  (`.composer-gif-fullscreen`, `app.css`): `top: --visual-viewport-offset-top`, `height:
+  --app-viewport-height` - the box `[data-keyboard-aware-overlay]` already uses, which is the space the
+  keyboard leaves on iOS (native resize), the Android app (padding) and a phone browser (visual
+  viewport) alike, so no keyboard height is computed here. The panel's own box in the footer is
+  untouched, so the conversation lays out exactly as before and its scroll position is never
+  disturbed; closing puts it back. The mode is STICKY until the surface ends (a tap on a result
+  blurs the search first and must not collapse the layer under the finger); the trailing control is
+  then Close (it keeps focus: `mousedown` cancelled), Back and a send close it as ever
+  (`DismissReason` `close`). The layer registers with `coversScreen`, so the iOS native tab bar
+  stays away. **Owed: one look on an iPhone and an Android keyboard** - happy-dom has no keyboard.
+- **A quoted GIF is a picture.** `gifPreviewUrl(text)` (`messageDisplay.ts`) is the ONE test of "this
+  message is a GIF and here is its picture" - the list preview (`[GIF]`), the thread quote
+  (`MessageReplyQuote`) and the composer's reply strip all use it, over `isGifUrl` and
+  `getGifEmbedUrl` that the bubble's `GifEmbed` uses. `ReplyGifThumb` draws it at most 5 rem tall,
+  `opacity-60`, boxed from the `#cn-size` fragment, and becomes `[GIF]` if it cannot load. The quote
+  text is the sender's stored `preview`, which was cut at 100 characters: a GIF's URL is now kept whole
+  (`messaging.ts`); a quote already stored cut short is not a GIF URL any more and stays text.
+  **Not done: an image or video quote still reads `[Media]`** - drawing it needs a thumbnail the
+  quote does not carry.
+
 ### A photo or video with text fills its bubble, and a video keeps its shape (2026-10-02)
 
 **Two reports from the user.** *"message avec texte + image -> l'image est au dessus de la bulle,

@@ -11,6 +11,7 @@ import {
 import { extractMentionUserIds } from '$lib/utils/mentions';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { m } from '$lib/paraglide/messages';
+import { gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 
 /**
@@ -77,11 +78,14 @@ export async function sendChatMessage(
   if (replyingTo) {
     const replyEnv = parseEnvelope(replyingTo.content);
     const replyPreview =
-      replyEnv.kind === 'text' || replyEnv.kind === 'system'
-        ? replyEnv.text.slice(0, 100)
-        : replyEnv.kind === 'media'
-          ? (replyEnv.caption?.slice(0, 100) ?? m.chat_preview_media())
-          : `${m.chat_preview_poll()} ${replyEnv.question}`.slice(0, 100);
+      replyEnv.kind === 'text' && gifPreviewUrl(replyEnv.text)
+        ? // A GIF quote keeps its WHOLE address: cut at 100 characters it is a broken picture.
+          replyEnv.text.trim()
+        : replyEnv.kind === 'text' || replyEnv.kind === 'system'
+          ? replyEnv.text.slice(0, 100)
+          : replyEnv.kind === 'media'
+            ? (replyEnv.caption?.slice(0, 100) ?? m.chat_preview_media())
+            : `${m.chat_preview_poll()} ${replyEnv.question}`.slice(0, 100);
     replyToData = { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };
   }
 

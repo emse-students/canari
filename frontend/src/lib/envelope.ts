@@ -12,7 +12,7 @@
 import type { MediaRef } from '$lib/media';
 import type { MessageReference } from '$lib/types';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
-import { extractFirstUrl, isGifUrl } from '$lib/utils/chat/messageDisplay';
+import { extractFirstUrl, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
 import { m } from '$lib/paraglide/messages';
 
 // ---------------------------------------------------------------------------
@@ -118,9 +118,9 @@ export function getPreviewText(env: MessageEnvelope): string {
  */
 function previewForTextMessage(text: string): string {
   const trimmed = text.trim();
+  if (gifPreviewUrl(trimmed)) return m.chat_preview_gif();
   const url = extractFirstUrl(trimmed);
   if (url && trimmed === url) {
-    if (isGifUrl(url)) return m.chat_preview_gif();
     try {
       return `${m.chat_preview_link()} ${new URL(url).hostname.replace(/^www\./, '')}`;
     } catch {
