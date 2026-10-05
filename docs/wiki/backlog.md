@@ -4266,24 +4266,6 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 ## Tooling
 
-### P3 - "unlock the PIN through the CLI" is written three times in the rig, and all three had to be fixed separately (measured 2026-09-05)
-
-`phone.mjs:unlockPin`, `archive/notif7.mjs:unlock` and `archive/tab236.mjs:unlock` are the same
-wrapper around `pin.mjs`, differing only in which device they name and which origin they match. They
-were written independently, and on 2026-09-05 all three carried the same two defects: the script was
-spawned by BARE NAME (so two of the three resolved it to `archive/`, where it does not live, and did
-nothing at all while reporting a string), and the failure was reported from STDOUT, the one stream
-that cannot say why. Both were repaired in each copy, one at a time - which is the shape the rule
-about re-implemented CLI predicates already names.
-
-`atoms.mjs` is the home that exists for this and says so in its own docstring: *"ONE SPELLING OF THE
-ARGUMENTS, IN ONE PLACE."* The three copies simply predate it. The change is `unlockPin({ port,
-account, match })` there, returning `{ ok, line, why }`, with the three sites delegating - and it is
-P3 rather than P2 because the defect is gone and only the duplication is left.
-
-**It is not free**: `atoms.mjs` and `phone.mjs` are in the instrument set of nearly every runner, so
-the change ages a large part of the ledger. It belongs between rungs, or after the campaign.
-
 ### P2 - a cargo bump in `mls-core` leaves two committed lockfiles Dependabot will never fix
 
 `frontend/mls-core` is a library: its `Cargo.lock` is gitignored. `frontend/mls-wasm` and
