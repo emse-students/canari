@@ -49,6 +49,21 @@ already-cached media while every newly received image 401'd - a bug that reads a
 appears after a reload", because a reload is what mints a fresh token. `authToken` still travels as
 a prop, but only as a signal that the session is authenticated.
 
+### A load on the wire stays joinable, and the pool's URL is the one handed out (2026-10-05)
+
+**The report.** On the web, a picture the member had just SENT drew as its blurred ThumbHash with
+`image.png` over it - the `<img>`'s alt text, so a `src` that failed - until a reload; the recipient
+saw it normally. **The mechanism, reproduced in `mediaBlobCache.shared.test.ts`:** the outbox swaps
+the real ref into the optimistic message and the bubble starts the download; a moment later
+`patchStatus('sent')` replaces the message object, which re-runs the bubble's media effect (measured:
+a status-only patch, same `content` string, re-runs it). The first holder leaves while its request
+is ALREADY RUNNING - the gate cancels only a queued request - yet the load left the in-flight map,
+so the re-run started a SECOND download. The first landed and was pooled; `BlobUrlPool.retain` then
+kept it and revoked the second one's URL, which the loader returned anyway. Two fixes at the source:
+`SharedLoad.started` is set when the request leaves the gate, and from then on the entry stays
+joinable (one download); `sharedPooledLoad` returns what `retain` returns, never the URL it revoked.
+The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is the RUNNING half.
+
 ## Routes
 
 | Method | Path                                   | Auth              | Description                                                                                                                                                                      |
@@ -64,8 +79,8 @@ a prop, but only as a signal that the session is authenticated.
 | DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion)                                                                                                                          |
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
-| POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md) |
-| POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`) |
+| POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
+| POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`)                                                        |
 
 (`retention-class` refuses `reel`: that class is only ever set through its owner.)
 
@@ -168,13 +183,13 @@ community image (`channel_workspaces`) was unclassified, uploaded before `upload
 
 **The design now**, `RetentionClass` in `media.service.ts`:
 
-| Class         | Who sets it                                                                        | Idle sweep   | Account deletion |
-| ------------- | ---------------------------------------------------------------------------------- | ------------ | ---------------- |
-| `ephemeral`   | the client, for chat and channel media; social-service on a post release           | **takes it** | takes it         |
-| `archive`     | the client, for feed media and avatars; social-service's boot backfill             | keeps        | takes it         |
-| `association` | the client, for a vault upload; social-service on `createDocument` and at boot     | keeps        | **keeps**        |
-| `reel`        | the client at upload; social-service's CLAIM, proven by `ownerId` ([reels](reels.md))  | keeps        | takes it         |
-| none          | an old client, anything before 2026-10-01, an entry re-created after an index loss | **keeps**    | takes it         |
+| Class         | Who sets it                                                                           | Idle sweep   | Account deletion |
+| ------------- | ------------------------------------------------------------------------------------- | ------------ | ---------------- |
+| `ephemeral`   | the client, for chat and channel media; social-service on a post release              | **takes it** | takes it         |
+| `archive`     | the client, for feed media and avatars; social-service's boot backfill                | keeps        | takes it         |
+| `association` | the client, for a vault upload; social-service on `createDocument` and at boot        | keeps        | **keeps**        |
+| `reel`        | the client at upload; social-service's CLAIM, proven by `ownerId` ([reels](reels.md)) | keeps        | takes it         |
+| none          | an old client, anything before 2026-10-01, an entry re-created after an index loss    | **keeps**    | takes it         |
 
 - **The client's `encryptAndUpload` takes the class as a REQUIRED argument**, so no new call site
   can forget it the way the vault did.
