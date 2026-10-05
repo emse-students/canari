@@ -2447,26 +2447,14 @@ rows with the invitation question, now carried by the
 notification that arrives undecryptable are different failures, and only the logcat separates them.
 
 
-### P1 - NOTHING COUNTS A BLIND SALON BANNER, AND iOS NEVER WAKES FOR THE SEED THAT WOULD FIX ONE
+### P1 (hardware-owed) - an iPhone's salon banner for a session started while it was shut
 
-Both halves of the defect, and the order-independent handler that closed the Android one, are
-[channel-encryption section 14](protocols/channel-encryption.md#14-the-seed-was-pushed-to-a-shut-phone-and-the-push-service-threw-it-away-unread---fixed-2026-09-21-android),
-the only copy; `NOTIF-18` on the [board](cross-client-testing.md) is the measurement. Two halves
-are left.
-
-**NOTHING COUNTS THE DEGRADATION, ON EITHER PLATFORM.** A blind banner is a log line and nothing
-else - `seed absent -> generic banner, frame HELD` when the seed is merely late, `no seed/ciphertext
--> generic notification` when it can never come. The two are now distinguishable in logcat, which
-is what a run needs, and neither is counted, which is what a FLEET needs: no report, no rate. That
-is why the user found this and no gate did. *A correct mechanism with no report is found by hand, a
-day late*, and *a fallback is a signal whose rate is measured against the population before its
-name is believed.*
-
-**iOS IS UNTOUCHED AND UNMEASURED.** The NSE runs on an alert push; a silent `keyMaterial` frame
-does not wake it at all, and iOS throttles silent pushes on its own terms - so neither the 2026-09-21
-absorption fix nor the redraw above reaches an iPhone. `isKeyDistribution` travels there already
-(`buildApnsRequest` spreads the same data map), so what is owed is the wake, not the discriminator.
-One iPhone row; the Android row it was waiting for is done.
+Owed: ONE iPhone row. A silent `keyMaterial` frame never wakes the NSE, so on iOS the seed of a new
+session can only come from the frame the salon push itself carries (channel-encryption §19, proved
+on Android by NOTIF-20 stage B through the same ladder) - never measured on an iPhone. The count is
+in place on both platforms since 2026-10-05: `[PUSH_BLIND] platform=ios` in the chat-delivery log
+([channel-encryption §14](protocols/channel-encryption.md#what-is-left)). If the row fails, the wake
+(an alert push for key material) is the decision it hands the user.
 
 ## MLS state, device healing and delivery - the defects the campaign measured
 

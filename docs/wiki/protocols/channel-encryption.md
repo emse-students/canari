@@ -2297,12 +2297,17 @@ waiting for one would never end. `PendingChannelFrameTest` holds the eight cases
 
 ### What is left
 
-iOS, and the degradation is still uncounted. The NSE runs on an alert push and a silent
-`keyMaterial` frame does not wake it at all, so nothing above reaches an iPhone;
-`isKeyDistribution` already travels there through `buildApnsRequest`, so what is owed is the wake,
-not the discriminator. On Android the blind banner is now distinguishable in logcat - `seed absent
--> generic banner, frame HELD` against `no seed/ciphertext`, the frame that can never be retried -
-but nothing counts either. See [backlog](../backlog.md).
+iOS. The NSE runs on an alert push and a silent `keyMaterial` frame does not wake it at all, so
+nothing above reaches an iPhone; `isKeyDistribution` already travels there through
+`buildApnsRequest`, so what is owed is the wake, not the discriminator. See [backlog](../backlog.md).
+
+**THE DEGRADATION IS COUNTED SINCE 2026-10-05, ON BOTH PLATFORMS.** A blind salon banner that
+reaches the shade is reported to `POST /api/mls/push/blind-banner` (PushSecret, nothing stored),
+which prints one WARN line per banner: `[PUSH_BLIND] user= device= platform= channel=
+missing=<terms> held=<bool>`. `held=true` is Android's frame waiting for a late seed (it may still be
+redrawn); `missing=ciphertext` is the FCM budget, generic for ever; an iPhone is never `held`, since
+nothing redraws its banner. So the rate per platform and per cause is one `GROUP BY` over the
+chat-delivery log. The terms are the same four, from one helper (`blindBannerMissing`) on Android.
 
 **AND THE SECOND OF THOSE NAMES ITS OWN CAUSE SINCE 2026-09-24.** `no seed/ciphertext` is one `if`
 with four terms - `seedB64`, `ciphertext`, `nonce`, `messageIndex` - and the line named none of

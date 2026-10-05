@@ -26,7 +26,12 @@ import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
-import { sanitizeEpoch, sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
+import {
+  sanitizeEpoch,
+  sanitizeIdentityValue,
+  sanitizeLogValue,
+  sanitizeQueryValue,
+} from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 import { MessagingService } from '../services/messaging.service';
 import { coreUrl, mediaUrl } from '../internal/service-urls';
@@ -37,6 +42,12 @@ import { coreUrl, mediaUrl } from '../internal/service-urls';
  * text-only notification rather than being downloaded in a background handler.
  */
 const PUSH_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * What a blind salon banner may say it lacked - the four terms of the phone's own test
+ * (`postChannelNotification` on Android, `handleChannelMessage` in the iOS extension).
+ */
+const BLIND_BANNER_TERMS = new Set(['seed', 'ciphertext', 'nonce', 'messageIndex']);
 
 /** Outcome vocabulary of the `[PUSH_AVATAR]` line. */
 type AvatarPushOutcome = 'served' | 'absent' | 'unavailable' | 'unreachable' | 'rejected';
@@ -166,6 +177,51 @@ export class PushController {
     this.logger.warn(
       `[PUSH_UNAVAILABLE] user=${userId} device=${deviceId} platform=${platform} ` +
         `reason=${reason || 'unstated'}`
+    );
+    return { recorded: true };
+  }
+
+  /**
+   * A shut phone stating that it put up a BLIND salon banner - the generic "new message in #salon"
+   * where the plaintext should be - and which of the four things it needed was missing.
+   *
+   * THE COUNT THE FLEET NEVER HAD. A blind banner was a log line on the phone and nothing else, so
+   * the user found the defect behind it (production, 2026-09-20) and no gate did. `missing=seed`
+   * with a ciphertext is a seed not mirrored YET (`held=true`: the frame waits for its key material
+   * and may be redrawn); `missing=ciphertext` is a frame the server declined to inline for the FCM
+   * budget, generic for ever. Opposite causes, opposite fixes - which is why the line names the
+   * terms rather than a verdict. It stores nothing, for the reason `mls/push/unavailable` gives.
+   *
+   * PushSecret, like every route a killed app calls: there is no session to send. `missing` is an
+   * ALLOWLIST - an unknown term prints as `invalid`, so a client cannot write the line it likes.
+   */
+  @UseGuards(ThrottlerGuard)
+  @Post('mls/push/blind-banner')
+  async reportBlindBanner(
+    @Headers('authorization') authHeader: string,
+    @Body()
+    body: {
+      userId?: string;
+      deviceId?: string;
+      channelId?: unknown;
+      platform?: unknown;
+      missing?: unknown;
+      held?: unknown;
+    }
+  ): Promise<{ recorded: true }> {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+    const terms = Array.isArray(body.missing) ? body.missing : [];
+    const missing = terms.length
+      ? terms
+          .map((t) => (BLIND_BANNER_TERMS.has(t as string) ? (t as string) : 'invalid'))
+          .join(',')
+      : 'unstated';
+    const platform = body.platform === 'ios' ? 'ios' : 'android';
+    this.logger.warn(
+      `[PUSH_BLIND] user=${userId} device=${deviceId} platform=${platform} ` +
+        `channel=${sanitizeLogValue(body.channelId)} missing=${missing} held=${body.held === true}`
     );
     return { recorded: true };
   }
