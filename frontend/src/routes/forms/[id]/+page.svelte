@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { internalPath } from '$lib/utils/internalPath';
+  import { internalPath, safeInternalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
@@ -71,7 +71,7 @@
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
 
   const formId = $derived(page.params.id);
-  const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
+  const redirectTo = $derived(safeInternalPath(page.url.searchParams.get('redirect'), '/posts'));
 
   let form = $state<Form | null>(null);
   const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);

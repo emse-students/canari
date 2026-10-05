@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { internalPath } from '$lib/utils/internalPath';
+  import { appPathFromPathname, internalPath, safeInternalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
@@ -43,7 +43,7 @@
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
   function getSafeReturnTarget(): string {
-    const target = requestedReturnTo?.startsWith('/') ? requestedReturnTo : '/posts';
+    const target = safeInternalPath(requestedReturnTo, '/posts');
     // Prevent redirect loops back to the login page.
     if (target === '/login' || target.startsWith('/login?')) return '/posts';
     return target;
@@ -129,7 +129,7 @@
         try {
           await getToken();
           const target = getSafeReturnTarget();
-          const current = window.location.pathname + window.location.search;
+          const current = appPathFromPathname(window.location.pathname) + window.location.search;
 
           // Only redirect when not already on the target page, and never twice in a row to a
           // target that just bounced back here.

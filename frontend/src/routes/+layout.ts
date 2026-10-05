@@ -7,6 +7,7 @@ import { currentUserId, fetchUserProfile, UserProfileFetchError } from '$lib/sto
 import { refresh } from '$lib/stores/auth';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
+import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
 import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 // See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 export const ssr = false;
@@ -48,7 +49,7 @@ export const load = async (event: LoadEvent) => {
       // regardless, since this whole branch is already behind the `typeof window` guard above.
       return goto(
         resolve(
-          `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + window.location.hash)}`
+          internalPath(loginReturningTo(event.url.pathname, event.url.search, window.location.hash))
         ),
         { replaceState: true }
       ).catch(() => {});
@@ -69,7 +70,7 @@ export const load = async (event: LoadEvent) => {
     if (error instanceof UserProfileFetchError && error.status === 404) {
       return goto(
         resolve(
-          `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + window.location.hash)}`
+          internalPath(loginReturningTo(event.url.pathname, event.url.search, window.location.hash))
         ),
         { replaceState: true }
       ).catch(() => {});
