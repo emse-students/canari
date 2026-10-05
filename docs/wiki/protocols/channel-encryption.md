@@ -1944,6 +1944,14 @@ Four tests hold it: two concurrent callers produce one read, one join and one re
 caller that waited SAYS it waited, so it is not indistinguishable from the one that worked; nothing
 survives the call; and a rejection is shared without poisoning the next attempt.
 
+**A new private salon, driven end to end (2026-10-05).** `useChannelWorkspaces.salonCreation.test.ts`
+overlaps the three moments that reach a fresh salon's group on the creating device - the creation,
+its own `channel.member.joined` (published before the POST answers) and a workspace load - and pins
+ONE read and ONE `ensureDistributionGroup`. So the "same salon read twice in one second for one user"
+seen on the COMM rung (2026-08-27) is the user's OTHER device answering the same
+`channel.member.joined`: a first-publish race between two devices, settled by `stored: false` by
+design, not a duplicate caller.
+
 #### The sequel: the call was already one, the PRECONDITION was three (G-D1, 2026-09-13)
 
 The audit row read *"`ensureDistributionGroupFor`, 5 call sites, deduplicated only by an in-flight

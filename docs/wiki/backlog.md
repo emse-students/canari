@@ -2776,27 +2776,6 @@ whose creator holds no state should still be offered; and whether an unservable 
 a tile at all. Nothing here should be settled by widening a sweep - the P1 above is precisely what
 happens when a destructive path decides a group is dead from an incomplete read.
 
-### P3 - one client reads a new salon's distribution group TWICE, concurrently (measured 2026-08-27)
-
-`srvlog.mjs` leaves `published=false base=none active=0 devices=0` unexplained on purpose - it is
-the shape that found the concurrent-join race - and on `cb967b6c` it earned that again. Every new
-salon in the COMM rung is served that read **exactly twice, in the same second, to the same user**:
-`93c80263`, `7e91ade3`, `5e09125d`, `d4b3152f`, `2de1a37c`, `ccc67640`, six for six.
-
-Two callers are invoking `ensureDistributionGroup` for one channel concurrently. Neither can be
-stopped by its `getLocalGroups()` guard, because at that instant neither has created anything - the
-guard answers a question that only becomes true after one of them wins.
-
-**It is currently harmless and that is the whole reason it is a P3, not a P2.** The first-publish
-race is handled: the loser's `publish` returns `stored:false`, it calls `forgetGroup` and external
--joins the winner's base instead. So the duplicate costs one wasted group creation per salon and
-nothing else that has been measured. It is filed because it is the SAME two-callers-one-read shape
-that has already shipped one defect, and because a mitigation is not an absence.
-
-**Do not fix it by widening the guard.** The question to answer first is who the second caller is -
-the roster sweep and the channel-open path are both candidates - because a lock around the read
-would hide the duplication rather than remove it.
-
 ### P2 - two COMM rows could not ARM, and the re-run has to say whether that was the debris (measured 2026-08-27)
 
 `f21502e1` left three `VACUOUS` cells. COMM-22 is closed (its story is in `changelog.d`, its mechanism in [mls-protocol](protocols/mls-protocol.md#the-base-travels-inside-every-commit-submission-comm-22)). **The runner half is FIXED for COMM-9/10**
