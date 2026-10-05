@@ -160,7 +160,7 @@ export interface SendChannelMessageDto {
   /** Graine v2 (channel-encryption section 21): the session key's signature. Absent from v1. */
   signature?: string;
   messageId?: string;
-  /** When set, the message is a poll: auto-pinned server-side and votable. */
+  /** When set, the message is a poll: auto-pinned server-side when its author may pin (moderation grant), and votable. */
   poll?: ChannelPollInput;
   /**
    * Cleartext list of mentioned user ids, attached so the server can route the `mentions`

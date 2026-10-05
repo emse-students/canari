@@ -298,10 +298,11 @@ member's screen and an open pin list can be abused. Until then the author was ex
 logged `[PIN]`. DMs and groups are untouched: a pin there is an MLS frame between equals that no
 server sees, and anybody may.
 
-**One path still pins with no rank, LEFT FOR THE USER TO DECIDE:** a **poll** is pinned on creation
-by whoever creates it (`sendMessage`, `pinned: pollMeta !== null`), so a plain member's poll lands in
-everyone's pin list; under the new rule that member can no longer unpin it themselves, though
-closing it early (`closePoll`, author allowed) still unpins it, as does its deadline passing.
+**A poll is auto-pinned only when its author may pin (user, 2026-10-05).** `sendMessage` sets
+`pinned` from the same `memberCanModerateMessages` grant `setMessagePinned` reads, decided on the
+server and never from the client: a moderator's poll is pinned on creation, a plain member's is not
+(logged `[POLL] not auto-pinned`). Closing a poll (`closePoll`, author allowed) and its deadline
+still unpin it. Groups and DMs do not go through this service and are unchanged.
 
 **What was wrong on the client.** Every menu gated delete on `isOwn || canModerate` and pin on
 nothing, so a member was offered "Pin" on every message, saw it pinned optimistically, and had it

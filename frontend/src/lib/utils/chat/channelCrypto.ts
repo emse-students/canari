@@ -342,7 +342,7 @@ export async function sendChannelReaction(
 /**
  * Encrypts a poll definition into a PollMsg and sends it to a channel, attaching
  * the label-free descriptor (option ids + deadline) the server needs to tally.
- * The server auto-pins poll messages so they stay reachable in the pin list.
+ * The server auto-pins a moderator's poll messages (not a plain member's) so they stay reachable in the pin list.
  */
 export async function sendChannelPoll(
   channelId: string,
