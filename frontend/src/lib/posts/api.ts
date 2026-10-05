@@ -129,6 +129,20 @@ export interface PostEntity {
   canReport?: boolean;
   /** Clears `anonymous`, revealing the author again: same tier as `canPin`. */
   canUnmaskAnonymous?: boolean;
+  /**
+   * "Republier" (D38): an association post, and the reader may publish as another association that
+   * has not republished it yet. Which one is chosen in `RepublishDialog`; the server checks it again.
+   */
+  canRepublish?: boolean;
+  /** "Proposer a une association": the reader publishes in this post's association's name. */
+  canProposeRepublication?: boolean;
+  /** The republishers (ids in `republishedBy`) whose republication this reader may withdraw. */
+  canUnrepublishAs?: string[];
+  /**
+   * The associations that republished this post, oldest first (D38) - the card's "Republie par"
+   * line. Present on association posts only; a personal post is never republished.
+   */
+  republishedBy?: PostAssociationAuthor[];
   authorDisplayName?: string | null;
   authorFirstName?: string | null;
   authorLastName?: string | null;
@@ -271,6 +285,11 @@ export interface UpdatePostPayload {
   scheduledAt?: string | null;
 }
 
+/**
+ * One call to social-service, refused as an `ApiRefusalError` carrying the status. Exported as
+ * `socialRequest` for the generic proposals (`$lib/proposals/api`), which live in the same service
+ * and need the same refusal type rather than a second copy of this function.
+ */
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await apiFetch(`${socialUrl()}${path}`, init as any);
 
@@ -285,6 +304,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   return (await res.json()) as T;
 }
+
+export { request as socialRequest };
 
 function buildListPostsSearchParams(options: ListPostsOptions): string {
   const p = new URLSearchParams();
@@ -449,6 +470,39 @@ export async function unpinPost(postId: string): Promise<{ ok: boolean; pinned: 
 /** Clears the anonymous flag on a post, revealing its author again. Content moderators. */
 export async function unmaskPost(postId: string): Promise<{ ok: boolean }> {
   return request(`/api/posts/${postId}/unmask`, { method: 'PATCH' });
+}
+
+/**
+ * Republishes the post AS `associationId`, at once (D38): the reader publishes in that
+ * association's name and already sees the post. 409 when that association already did.
+ */
+export async function republishPost(postId: string, associationId: string): Promise<unknown> {
+  return request(`/api/posts/${postId}/republications`, {
+    method: 'POST',
+    body: JSON.stringify({ associationId }),
+  });
+}
+
+/** Withdraws `associationId`'s own republication of the post. */
+export async function unrepublishPost(
+  postId: string,
+  associationId: string
+): Promise<{ ok: boolean }> {
+  return request(`/api/posts/${postId}/republications/${associationId}`, { method: 'DELETE' });
+}
+
+/**
+ * Sends the post to ANOTHER association, whose publishers accept or refuse it on its management
+ * page. 409 when that association already holds a proposal for it, or already republished it.
+ */
+export async function proposeRepublication(
+  postId: string,
+  associationId: string
+): Promise<unknown> {
+  return request(`/api/posts/${postId}/republication-proposals`, {
+    method: 'POST',
+    body: JSON.stringify({ associationId }),
+  });
 }
 
 /** A post hidden by moderation, with its pending report count. Admin only. */

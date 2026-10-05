@@ -13,6 +13,8 @@ import {
   eventPendingContent,
   associationPostContent,
   followedPostContent,
+  associationRepostContent,
+  repostProposedContent,
   previewOf,
   markdownToPreviewText,
   publicMediaIconId,
@@ -47,6 +49,8 @@ describe('push content', () => {
     ['eventDeleted', eventDeletedContent('Claire', 'Soiree BDE')],
     ['associationPost', associationPostContent('BDE', 'hello')],
     ['followedPost', followedPostContent('Claire', 'hello')],
+    ['associationRepost', associationRepostContent('BDE', 'hello')],
+    ['repostProposed', repostProposedContent('BDE', 'hello')],
   ];
 
   it.each(ALL)('%s carries a key, not only a sentence', (_name, content) => {
@@ -312,6 +316,8 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['event_pending', eventPendingContent(ACTOR, ARG)],
     ['social_association_post', associationPostContent(ACTOR, '')],
     ['social_followed_post', followedPostContent(ACTOR, '')],
+    ['social_association_repost', associationRepostContent(ACTOR, '')],
+    ['social_repost_proposed', repostProposedContent(ACTOR, '')],
   ];
 
   /**

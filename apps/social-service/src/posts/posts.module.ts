@@ -13,6 +13,10 @@ import { PostMediaRetentionService } from './post-media-retention.service';
 import { ReelRetentionScheduler } from './reel-retention.scheduler';
 import { Post } from './entities/post.entity';
 import { PostNotification } from './entities/post-notification.entity';
+import { PostRepublication } from './entities/post-republication.entity';
+import { RepublicationsService } from './republications.service';
+import { RepublicationsController } from './republications.controller';
+import { ProposalsModule } from '../proposals/proposals.module';
 import { AssociationsModule } from '../associations/associations.module';
 import { FollowsModule } from '../follows/follows.module';
 import { PushService } from '../push/push.service';
@@ -20,14 +24,16 @@ import { ModerationModule } from '../moderation/moderation.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Post, PostNotification]),
+    TypeOrmModule.forFeature([Post, PostNotification, PostRepublication]),
     ConfigModule,
     HttpModule.register({ timeout: 30_000, maxRedirects: 0 }),
     AssociationsModule,
     FollowsModule,
     ModerationModule,
+    // The generic proposals; this module registers their `repost` kind (`RepublicationsService`).
+    ProposalsModule,
   ],
-  controllers: [PostsController],
+  controllers: [PostsController, RepublicationsController],
   providers: [
     // A guard with an injected repository is resolved from this module's injector, so it belongs
     // here beside the services. `NginxAuthGuard` needs no entry because it injects nothing.
@@ -39,6 +45,7 @@ import { ModerationModule } from '../moderation/moderation.module';
     PostAnnounceScheduler,
     PostMediaRetentionService,
     ReelRetentionScheduler,
+    RepublicationsService,
     PushService,
   ],
   // `PostPreviewService` is exported for `PublicModule` alone: the unauthenticated link-preview

@@ -25,6 +25,8 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
           // The block lookup a named viewer triggers answers "nobody blocked"; only the post read
           // is recorded, which is what these assertions are about.
           if (sql.includes('user_blocks')) return Promise.resolve([]);
+          // Nobody republished it (D38): the "Republie par" read answers empty, unrecorded.
+          if (sql.includes('FROM post_republications pr')) return Promise.resolve([]);
           calls.push({ sql, params });
           return Promise.resolve(rows);
         }),

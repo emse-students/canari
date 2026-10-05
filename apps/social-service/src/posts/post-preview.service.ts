@@ -170,14 +170,6 @@ export class PostPreviewService {
     // A reel past its month is dead to everyone, an anonymous link preview included.
     if (isExpiredReel(post)) return null;
     if (post.scheduledAt && new Date(post.scheduledAt).getTime() > Date.now()) return null;
-    const narrowed: { n: number }[] = await this.postRepo.manager.query(
-      `SELECT count(*)::int AS n FROM post_audiences WHERE "postId" = $1`,
-      [post.id]
-    );
-    if ((narrowed[0]?.n ?? 0) > 0) {
-      this.logger.debug(`[PREVIEW] ${post.id} has its own audience - no public preview`);
-      return null;
-    }
 
     // `findById` throws NotFoundException on a miss; here an absent association is one more reason
     // to answer nothing, not an error to propagate to an anonymous caller.
@@ -291,7 +283,6 @@ export class PostPreviewService {
       .where('p.associationId IS NOT NULL')
       .andWhere('p.hiddenByModeration = false')
       .andWhere('(p.scheduledAt IS NULL OR p.scheduledAt <= NOW())')
-      .andWhere('NOT EXISTS (SELECT 1 FROM post_audiences pa WHERE pa."postId" = p.id)')
       .orderBy('p.createdAt', 'DESC')
       .limit(limit)
       .getMany();

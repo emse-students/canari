@@ -17,6 +17,8 @@ import {
   eventPendingContent,
   associationPostContent,
   followedPostContent,
+  associationRepostContent,
+  repostProposedContent,
   publicMediaIconId,
   MENTION_TOKEN_RE,
   type PushContent,
@@ -80,6 +82,11 @@ export class PostNotificationsService {
         return associationPostContent(actorName, text, icon);
       case 'followed_post':
         return followedPostContent(actorName, text, icon);
+      // Republication (D38). `actorName` is the republishing, then the proposing, ASSOCIATION.
+      case 'association_repost':
+        return associationRepostContent(actorName, text, icon);
+      case 'repost_proposed':
+        return repostProposedContent(actorName, text, icon);
       // The agenda's six. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':

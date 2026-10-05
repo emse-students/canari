@@ -475,6 +475,9 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // opening as the body. `actorName` is the ASSOCIATION for the first, the author for the second.
     @"social_association_post" : @"association_post",
     @"social_followed_post" : @"followed_post",
+    // Republication (D38): the republishing, then the proposing, association names the title.
+    @"social_association_repost" : @"association_repost",
+    @"social_repost_proposed" : @"repost_proposed",
   };
   NSString *stem = actorTitled[key];
   if (stem) {

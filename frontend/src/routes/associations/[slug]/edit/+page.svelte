@@ -41,6 +41,7 @@
     HandCoins,
     Share2,
     Handshake,
+    Repeat2,
   } from '@lucide/svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
@@ -52,6 +53,7 @@
   import EditCotisationsTab from '$lib/components/associations/edit/EditCotisationsTab.svelte';
   import EditDelegationTab from '$lib/components/associations/edit/EditDelegationTab.svelte';
   import EditPartnershipsTab from '$lib/components/associations/edit/EditPartnershipsTab.svelte';
+  import EditRepublicationsTab from '$lib/components/associations/edit/EditRepublicationsTab.svelte';
   import LydiaBusinessOnboardingForm from '$lib/components/associations/edit/LydiaBusinessOnboardingForm.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -94,6 +96,7 @@
     | 'delegation'
     | 'formulaires'
     | 'partnerships'
+    | 'republications'
     | 'danger';
 
   const EDIT_SECTIONS: EditSection[] = [
@@ -106,6 +109,7 @@
     'delegation',
     'formulaires',
     'partnerships',
+    'republications',
     'danger',
   ];
 
@@ -145,6 +149,14 @@
   );
   let canManagePartnerships = $derived(
     mayActOnAssociation(AssociationPermissionFlag.MANAGE_PARTNERSHIPS, permissionContext)
+  );
+  /**
+   * The republication queue (D38): its acceptors and senders are this association's `POST_AS_ASSO`
+   * holders, the flag the server checks. Only an association republishes, never a promo list.
+   */
+  let canHandleRepublications = $derived(
+    asso?.type === 'association' &&
+      mayActOnAssociation(AssociationPermissionFlag.POST_AS_ASSO, permissionContext)
   );
   /**
    * The super-admin tier drops out on its own: `MANAGE_STRIPE_CONNECT` is in
@@ -534,6 +546,19 @@
               {m.asso_edit_tab_partenariats()}
             </button>
           {/if}
+          {#if canHandleRepublications}
+            <button
+              type="button"
+              onclick={() => (editSection = 'republications')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'republications'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <Repeat2 size={17} />
+              {m.asso_edit_tab_republications()}
+            </button>
+          {/if}
           {#if canArchiveAssociation}
             <button
               type="button"
@@ -798,6 +823,10 @@
 
       {#if editSection === 'partnerships' && canManagePartnerships && asso}
         <EditPartnershipsTab {asso} />
+      {/if}
+
+      {#if editSection === 'republications' && canHandleRepublications && asso}
+        <EditRepublicationsTab {asso} />
       {/if}
 
       {#if editSection === 'danger' && canArchiveAssociation}

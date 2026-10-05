@@ -1,5 +1,4 @@
 import { ruleReachesSpaceSql } from './rule-sql';
-import { ruleReachesSpace, type AudienceRule } from './spaces.service';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
 
 /**
@@ -50,24 +49,6 @@ export function readerSpaces(user: ReaderProfile, spaces: readonly SpacePair[]):
       .filter((f): f is string => typeof f === 'string')
   );
   return spaces.filter((s) => s.campus === user.campus && formations.has(s.formation));
-}
-
-/**
- * The submitted post rules that step outside the publisher's CEILING (D33): a rule is inside when
- * every pair it covers is covered by one of the association's own rules. `spaces` is every pair.
- * Returns the offending rules; empty means the whole set is allowed.
- */
-export function rulesOutsideCeiling(
-  submitted: readonly AudienceRule[],
-  ceiling: readonly AudienceRule[],
-  spaces: readonly SpacePair[]
-): AudienceRule[] {
-  return submitted.filter((rule) =>
-    spaces.some(
-      (space) =>
-        ruleReachesSpace(rule, space) && !ceiling.some((own) => ruleReachesSpace(own, space))
-    )
-  );
 }
 
 // ── SQL ─────────────────────────────────────────────────────────────────────────────────────────
@@ -135,17 +116,30 @@ export function associationRulesReachSpaceMatchingSql(
 }
 
 /**
- * Post row `post` is visible to user row `user` (decision 3 of WP6b):
+ * An association that REPUBLISHED post row `post` (D38, `post_republications`) is visible to user
+ * row `user` - the same predicate as the original's association, applied to the republisher: a
+ * member of it (D21) or a reader its rules reach.
+ */
+function republicationReachesUserSql(post: string, user: string): string {
+  return `EXISTS (SELECT 1 FROM post_republications vis_rep WHERE vis_rep."postId" = ${post}.id
+      AND ${associationVisibleToUserSql('vis_rep."associationId"', user)})`;
+}
+
+/**
+ * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
  * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
  *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the
  *   announcements show an admin what they would show an ordinary reader (user, 2026-10-04: an admin
  *   reading everyone's personal posts would be a mess, and a wrong thing to be able to do);
- * - an association post: a member of that association, or the post's OWN rules if it has any,
- *   else the association's, reach one of the user's spaces. Own rules are held to the ceiling HERE
- *   too, not only when they are written: a space reached by a post rule is visible only if one of
- *   the association's rules reaches it as well, so an admin narrowing an association later also
- *   narrows its posts that were written inside the old ceiling;
+ * - an association post: the reader sees its association (a member, or its rules reach one of the
+ *   reader's spaces), OR sees an association that republished it. A post has no rules of its own
+ *   any more (D38, user 2026-10-04): what widens its audience is a republication, never the author.
+ *   The promo and contributor FILTERS of D38 are not built yet, so nothing narrows either branch;
  * - a personal post (anonymous included): the user shares at least one space with its AUTHOR.
+ *
+ * MONOTONE IN REPUBLICATIONS, and `NEWLY_REACHED_BY_REPUBLICATION_SQL` relies on it: adding one
+ * only ever adds a disjunct, so who sees a post after is who saw it before plus who the republisher
+ * reaches.
  */
 export function postVisibleToUserSql(
   post: string,
@@ -153,22 +147,26 @@ export function postVisibleToUserSql(
   opts: { adminSeesAll?: boolean } = {}
 ): string {
   const adminClause = opts.adminSeesAll ? `${isAdminSql(user)}\n    OR ` : '';
-  const ownRules = `SELECT 1 FROM post_audiences vis_prule WHERE vis_prule."postId" = ${post}.id`;
   return `(${adminClause}${post}."authorId" = ${user}.id
     OR (${post}."associationId" IS NULL AND EXISTS (
       SELECT 1 FROM users vis_author JOIN spaces vis_shared ON ${isReaderSpaceSql('vis_shared', 'vis_author')}
       WHERE vis_author.id = ${post}."authorId" AND ${isReaderSpaceSql('vis_shared', user)}))
     OR (${post}."associationId" IS NOT NULL AND (
-      ${isMemberSql(`${post}."associationId"`, user)}
-      OR CASE WHEN EXISTS (${ownRules})
-        THEN EXISTS (SELECT 1 FROM spaces vis_pspace WHERE ${isReaderSpaceSql('vis_pspace', user)}
-          AND EXISTS (${ownRules} AND ${ruleReachesSpaceSql('vis_prule', 'vis_pspace')})
-          AND EXISTS (SELECT 1 FROM association_audiences vis_pceil
-            WHERE vis_pceil."associationId" = ${post}."associationId"
-              AND ${ruleReachesSpaceSql('vis_pceil', 'vis_pspace')}))
-        ELSE ${associationRulesReachUserSql(`${post}."associationId"`, user)}
-      END)))`;
+      ${associationVisibleToUserSql(`${post}."associationId"`, user)}
+      OR ${republicationReachesUserSql(post, user)})))`;
 }
+
+/**
+ * Who would see post `$1` for the FIRST time if association `$2` republished it: the readers the
+ * association reaches who cannot see the post NOW, minus its author. Asked inside the transaction
+ * that writes the republication, BEFORE the row exists - with `postVisibleToUserSql` monotone, that
+ * is exactly "visible after and not before", computed on state and never on a clock.
+ */
+export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users nr_user
+  JOIN posts nr_post ON nr_post.id = $1
+  WHERE nr_user.id <> nr_post."authorId"
+    AND ${associationVisibleToUserSql('$2::uuid', 'nr_user')}
+    AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**
  * Post row `post` is visible to the viewer whose id is the placeholder `viewer` (`$5`, or a TypeORM

@@ -612,9 +612,10 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   keeps is OPENING one post BY ITS ID (a report or moderation link: `assertVisible`, option
   `adminSeesAll`) and the gate (they can reach the feed to moderate). Nobody else gets that.
 - **A post is visible** (`postVisibleToUserSql`) to its author, to a member of its association (D21: any
-  `association_members` row - there is no pending state), and otherwise when its own
-  `post_audiences` rules if it has any, else its association's rules, reach one of the reader's
-  spaces. A PERSONAL post (anonymous included) is visible to readers sharing at least one space
+  `association_members` row - there is no pending state), and otherwise when its association's
+  rules reach one of the reader's spaces - or, since D38, when a REPUBLISHING association is
+  visible to the reader the same way ([D38 as built](#d38-republication-as-built-2026-10-04)). The
+  per-post `post_audiences` rules 6b first built are gone. A PERSONAL post (anonymous included) is visible to readers sharing at least one space
   with its author. Reels are posts here. Scheduled, hidden and expired-reel rules are unchanged.
 - **The gate** (`FeedAudienceGuard`, `IN_FEED_AUDIENCE_SQL`): an admin, a reader with at least
   one space, or a member of at least one association. **Readers**: `GET /api/posts` (all four
@@ -628,12 +629,9 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   when its association reaches one of their spaces, or they are a member (an admin is an ordinary
   reader here, see above). The
   anonymous agenda and its `.ics` (D30) are unchanged: like the promo cutoff, this is relevance.
-- **Post-level rules, server only**: `CreatePostDto` and `UpdatePostDto` accept
-  `audiences: [{formation?, campus?}]`. Each rule must be INSIDE the association's ceiling (every
-  pair it covers is covered by one of the association's rules - `rulesOutsideCeiling`), else 400;
-  a personal post cannot carry any; an empty list on an edit drops them (the post inherits again);
-  absent leaves them alone. Written in the same transaction as the post, so the announce sweeper
-  never sees a post without its rules.
+- **Post-level rules - REMOVED by D38** (migration 073 drops `post_audiences`; the DTO `audiences`,
+  `rulesOutsideCeiling` and the read-time ceiling are deleted). A post's audience widens only
+  through a republication.
 - **Cache**: `SpacesService.setAudiences`/`setBde` and `addMember`/`removeMember` drop the
   feed cache (keyed per reader; no TTL was added). A change to a user's campus or cursus is
   served stale for at most the existing 30 s TTL.
@@ -655,15 +653,10 @@ the announce sweep's recipient counts.
 
 **Judgement calls (the most conservative where it changed who sees what):**
 
-- **A post's own rules are held to the ceiling at READ time too**: a space reached by a post rule
-  counts only if one of the association's rules reaches it as well, so narrowing an association in
-  the grid also narrows posts written under the old ceiling. A global admin is held to the ceiling
-  when writing rules (going beyond is WP7's nominative grant).
+- ~~A post's own rules are held to the ceiling at read time~~ and ~~the share preview skips a post
+  with rules of its own~~ - both went with the rules themselves (D38).
 - **A personal post by someone with no space** (staff, D31 not yet enforced at publish) is seen
   only by its author, admins - and nobody else.
-- **The public share preview and the sitemap skip a post with rules of its own**: an author who
-  chose who sees a post did not choose "anyone holding the link". Association posts without own
-  rules keep their preview, as before.
 - ~~An association created after migration 071 has NO rule.~~ Superseded by D36 (below): it
   reaches its creator's spaces by default.
 - The `custom` feed's promo/formation filters still read the legacy `users.promo`/`formation`
@@ -721,9 +714,9 @@ box no longer defines anything.
 
 | Surface | Who sees it | State |
 | --- | --- | --- |
-| Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built, republication next |
+| Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built (filters not built) |
 | Personal post | author and people sharing a space; never an institution; an admin only by id | built |
-| Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; never a personal post; card shows "republished by X, Y"; notifies only those who newly see it | next |
+| Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; never a personal post; card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | next (today a co-organiser is added without consent) |
 | Agenda signed in | as events above | built (organiser only) |
 | Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | next (today: all, public) |
@@ -738,8 +731,8 @@ box no longer defines anything.
 
 | Item | Rule |
 | --- | --- |
-| Filters (promo, contributor) | kept, per association, cumulated: original's OR a republication's that reaches the reader |
-| Per-post space rules (`post_audiences`, ceiling, DTO `audiences`) | removed (D38) |
+| Filters (promo, contributor) | kept, per association, cumulated: original's OR a republication's that reaches the reader - **NOT BUILT: no promo or contributor filter exists in code yet**, so nothing narrows either branch |
+| Per-post space rules (`post_audiences`, ceiling, DTO `audiences`) | removed (D38, migration 073) |
 | Join an association | its admins add the member; following opens nothing |
 | Moderation | global (D23) |
 
@@ -805,3 +798,88 @@ them. `associations.service.create-default-audience.spec.ts` holds the transacti
 frontend's two requests and their separate cache keys. `AssociationsService.list` and `create` were
 also run through TypeORM against a copy of a local estate (directory per reader, a membership
 adding one, the map filter, creation with and without a space).
+
+### D38 republication as built (2026-10-04)
+
+Branch `feat/spaces-repost`, stacked on `feat/spaces-6c-scope`. Migration `073_republications.sql`
+drops `post_audiences` and creates two tables.
+
+**`post_republications(postId, associationId, republishedBy, republishedAt)`**, primary key the
+pair, both foreign keys `ON DELETE CASCADE`. `postVisibleToUserSql` gains ONE disjunct: a
+republishing association visible to the reader by the association predicate itself (member, or
+its rules reach a space of theirs). Adding a disjunct is MONOTONE, and the notification relies on
+that.
+
+**`proposals(kind, subjectId, fromAssociationId, toAssociationId, status, ...)`** - GENERIC, so
+co-organisation (D39) is a second `kind` on the same table, routes and queue. `kind` is
+CHECK-listed (`'repost'` today). The status is `pending -> accepted | refused | withdrawn`, with a
+CHECK tying `decidedAt`/`decidedBy` to it. A unique partial index on `(kind, subjectId,
+toAssociationId) WHERE status <> 'withdrawn'` makes a proposal idempotent: a second one is a 409,
+and a REFUSAL IS RECORDED (it keeps its place, so the same post cannot be proposed there again).
+An `AFTER DELETE` trigger on `posts` removes its `repost` proposals; `subjectId` cannot carry a
+foreign key, since what it names depends on the kind.
+
+- **The mechanism** (`proposals/`): `ProposalsService` holds the state machine, the rights and the
+  queue. A kind registers a `ProposalKindHandler`, which declares the sender and acceptor flags,
+  resolves the sending association from the subject, and provides `apply` (run INSIDE the decision
+  transaction), `announce` and `describe`. A decision is a conditional `UPDATE ... WHERE
+  status = 'pending'`, so two deciders cannot both win: the loser gets a 409. Routes:
+  `GET /api/associations/:id/proposals` (`{incoming, outgoing}`, pending only, 403 without the
+  flag) and `POST /api/associations/proposals/:id/accept|refuse|withdraw`.
+- **Republishing** (`posts/republications.service.ts`, the `repost` handler; both flags are
+  `POST_AS_ASSO`):
+  - `POST /api/posts/:id/republications` republishes AT ONCE. It needs `POST_AS_ASSO` in the
+    republishing association, and the post must be visible to the actor (opened by id, so an admin
+    included - our reading of "already sees").
+  - `POST /api/posts/:id/republication-proposals` PROPOSES. It needs the post's own association's
+    `POST_AS_ASSO`; its acceptors are notified (`repost_proposed`).
+  - `DELETE /api/posts/:id/republications/:associationId` lets an association withdraw its own.
+  - Refusals: a personal post (400), the post's own association (400), a non-`association` type
+    (400; institutions join with 6e), a hidden, scheduled or expired post (404), and a muted
+    actor.
+- **Who is notified** (`association_repost`): only the readers who see the post FOR THE FIRST TIME,
+  minus its author. The republication transaction locks the post row (`FOR UPDATE`) and, BEFORE it
+  inserts the row, asks `NEWLY_REACHED_BY_REPUBLICATION_SQL` - the association's readers who cannot
+  see the post now. With visibility monotone, that is exactly "after minus before", read from state
+  and never from a clock. The announce sweeper stamps `feedNotifiedAt` and reads its recipients in
+  ONE transaction, under the same lock. So:
+  - a republication before the first announce adds nothing of its own, and the sweep tells
+    everyone;
+  - a republication after it tells only the new readers;
+  - nobody is told twice.
+- **Removal**: hiding a post (moderation, manual or automatic) deletes its republications and its
+  pending repost proposals in the same transaction. Deleting a post cascades through the foreign
+  key and the trigger.
+- **The card**:
+  - `republishedBy` (oldest first) draws "Republie par X, Y +N" under the header, one card per
+    post;
+  - `canRepublish`, `canProposeRepublication` and `canUnrepublishAs` are server answers that draw
+    the menu entries;
+  - `RepublishDialog` offers the reader's `POST_AS_ASSO` associations (republish), or the
+    directory (propose).
+- **The queue**: a "Republications" tab on `/associations/<slug>/edit`, for the association's
+  `POST_AS_ASSO` holders.
+- **The proposal notification**: its `postId` carries the RECEIVING association's id, and the
+  notifications page resolves that id to a slug before it routes. Its push carries no `postId`, so
+  a tap on the phone opens the feed, not the queue.
+
+**Not built:**
+
+- The promo and contributor FILTERS of D38. Nothing narrows a republication branch.
+- Institutions as republishers, which arrive with 6e (the allowlist is
+  `REPUBLISHING_ASSOCIATION_TYPES`).
+
+A local `synchronize` database lacks 073's trigger and partial index, so its duplicate-proposal
+check and delete cleanup differ from production's. The integration specs apply 073 itself.
+
+**Proof**: `posts/republications.integration.spec.ts` and `spaces/reader-spaces.integration.spec.ts`
+run against a real PostgreSQL with 073 applied:
+
+- republish at once;
+- propose, accept, refuse, withdraw and a duplicate proposal;
+- a personal post and the permissions refused;
+- visibility before and after;
+- the first-time notification set;
+- hide and delete removing everything.
+
+A control that drops the `NOT visible-before` term from the newly-reached SQL fails 3 cases.

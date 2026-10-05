@@ -26,6 +26,8 @@ export type PushContentKey =
   | 'social_reaction'
   | 'social_association_post'
   | 'social_followed_post'
+  | 'social_association_repost'
+  | 'social_repost_proposed'
   | 'form_opening_soon'
   | 'form_open'
   | 'event_proposed'
@@ -437,5 +439,43 @@ export function followedPostContent(
     arg: preview,
     legacyTitle: `${actorName} a publié`,
     legacyBody: preview || 'Nouvelle publication',
+  };
+}
+
+/**
+ * An association republished a post the recipient could not see until then (D38). `actorName` is
+ * the REPUBLISHING association; `arg` the post's opening.
+ */
+export function associationRepostContent(
+  associationName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_association_repost',
+    icon,
+    actorName: associationName,
+    arg: preview,
+    legacyTitle: `${associationName} a relayé une publication`,
+    legacyBody: preview || 'Nouvelle publication',
+  };
+}
+
+/**
+ * Another association proposes a post to one the recipient may publish for (D38). `actorName` is
+ * the PROPOSING association; `arg` the post's opening.
+ */
+export function repostProposedContent(
+  associationName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_repost_proposed',
+    icon,
+    actorName: associationName,
+    arg: preview,
+    legacyTitle: `${associationName} propose de relayer une publication`,
+    legacyBody: preview || 'Publication à relayer',
   };
 }
