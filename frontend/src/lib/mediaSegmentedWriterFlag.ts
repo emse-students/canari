@@ -1,5 +1,5 @@
 /**
- * THE WRITER FLIP - `false` UNTIL THE USER DECIDES OTHERWISE, AND THAT IS THE WHOLE OF ITS SAFETY.
+ * THE WRITER FLIP - `true` SINCE 2026-10-05 (user's go, `minClientVersion` 1.0.0, both stores on 1.0.x); `false` WAS THE WHOLE OF ITS SAFETY.
  *
  * A client older than the reader (`1.0.0`, #1295), handed a segmented blob, decrypts it as ONE GCM
  * block: the header and every tag are fed in as ciphertext, the final tag fails, and the member
@@ -23,4 +23,4 @@
  * the path has already been exercised. Only VIDEO is segmented even then (`writesSegmented`).
  * The gate is written down in docs/wiki/services/media-service.md ("The writer flip").
  */
-export const SEGMENTED_MEDIA_WRITER_ENABLED = false;
+export const SEGMENTED_MEDIA_WRITER_ENABLED = true;

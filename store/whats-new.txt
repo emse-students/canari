@@ -1,7 +1,7 @@
-version: 1.0.2
+version: 1.0.3
 
-Les reels arrivent : un onglet camera pour filmer 90 secondes et publier dans le fil. La camera s'ouvre sur l'objectif avant, en plein ecran.
+Les videos longues se lisent maintenant pendant leur envoi et leur telechargement, et l'on peut avancer dans la video sans attendre la fin.
 
-Les videos des conversations se lancent avec un bouton lecture, une seule joue a la fois, et reprennent ou elles en etaient en grand.
+L'editeur de photo arrive dans la camera. Sous le dernier message lu par chaque membre, de petits avatars montrent qui l'a vu.
 
-Le retour au fil et l'ouverture d'une conversation sont plus fluides. Le calendrier ajoute un evenement a votre agenda, et le theme Automatique suit l'appareil.
+Les notifications des communautes ne se melangent plus aux discussions, et celles des publications sont regroupees. Plusieurs corrections d'affichage et de stabilite.
