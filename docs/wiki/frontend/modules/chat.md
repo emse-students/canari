@@ -127,6 +127,14 @@ channel's member list in the server's order. All three now render through `membe
   community panel stays mounted while closed, so it empties its list on close and the next opening
   re-reads every name. Pinned by `memberOrder.svelte.test.ts`, `familyNameOrder.test.ts` and
   `ChannelMembersList.order.svelte.test.ts`.
+- **A newcomer is never absent (2026-10-05, user: they appeared, vanished, reappeared).** The
+  group roster is `dm_device_group_memberships` (active devices), refetched when the invite ends;
+  the newcomer's profile lookup is still in flight, so the roster HOLDS the id while the ordered
+  list does not LIST it. `ChatGroupPanel` hid its "Inviting..." row on roster membership: appeared
+  (pending), vanished (roster, not listed), reappeared (listed). `joiningRows` now decides by what
+  the list renders: a row stays until the member row replaces it, one hand-over, no timer. NOT an
+  MLS ordering problem - commit, welcome and roster were already in order. Pinned by
+  `memberOrder.svelte.test.ts` ("a member added while the panel is open").
 
 Association rosters (`EditMembersTab`, `AssociationDetailView`) are NOT sorted: their order is the
 one the bureau arranges by drag (`sortOrder`), and the president is its first row.
