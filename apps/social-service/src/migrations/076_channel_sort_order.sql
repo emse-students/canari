@@ -1,4 +1,4 @@
--- Migration 075: a community's salons have a position, shared by every member.
+-- Migration 076: a community's salons have a position, shared by every member.
 --
 -- Until now the sidebar listed a community's salons in whatever order the database returned them.
 -- `channels."sortOrder"` is that order, written by `PATCH workspaces/:id/channels/reorder` (drag and

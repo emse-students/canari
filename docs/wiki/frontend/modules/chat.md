@@ -2773,7 +2773,7 @@ touches them. The stuck count was reproduced as failing tests, not on two live d
 
 ## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
 
-**Order.** `channels."sortOrder"` (migration 075; the backfill numbers each never-arranged community
+**Order.** `channels."sortOrder"` (migration 076; the backfill numbers each never-arranged community
 by creation date, so nothing visibly moves) is written by `PATCH /channels/workspaces/:id/channels/reorder`
 (`ChannelService.reorderChannels`). Both listings sort through `sortChannels` (position, age, id - a
 total order). **Permission: `memberCanManageChannels`**, the grant that already gates creating, renaming
