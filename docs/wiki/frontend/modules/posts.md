@@ -1230,7 +1230,12 @@ ca cree des problemes"*.
 - **`actions/reactorsTrigger.ts` is the one gesture, for every pointer, a mouse included**: a tap
   toggles the reaction; a 450 ms hold (`LONG_PRESS_MS`, main button only for a mouse, cancelled past
   10 px of travel or when the pointer leaves) opens the list, and the click that ends the hold is
-  swallowed in capture, so a hold never reacts. Nothing opens on hover any more.
+  swallowed in capture, so a hold never reacts. **A mouse hovers again since 2026-10-05** (user, on
+  desktop): `HOVER_INTENT_MS` (400 ms) of resting opens the list, leaving or blurring closes it
+  (`close` in the action's params), keyboard `:focus-visible` rests the same way, and the badge
+  carries `aria-describedby` to the panel while it is open. What made the 2026-10-01 hover wrong - a
+  list opened on the way to every click - is what the delay and the press (which cancels the rest)
+  prevent; a touch never hovers and keeps the hold alone.
 - **`ReactorsPanel` lives until the reader's next action.** One effect listens, in capture, for
   `pointerdown`, `scroll`, `wheel`, `keydown` and `resize` on the window, and any of them closes it -
   a press anywhere, the badge and the list included. The press that opened it is already down when
