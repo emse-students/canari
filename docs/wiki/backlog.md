@@ -276,6 +276,15 @@ migration of the 600 accounts. **Thirty-two decisions, all on
 were taken against. **The technical plan is its section 4, eleven work packages, VALIDATED by the
 user the same day: WP0, then WPA (authentik as code), then WP1.** WP0 SHIPPED, WPA and WP1 LIVE on production (2026-09-30); WP4 is its PR (4a the editor account, the endpoint and the audit; 4b the correction queue); WP5 is next. **WP6b (readers by space) is BUILT on its branch (2026-10-04) and its release order is forced** - see the owed-to-the-user table above.
 
+## Asked by the USER on 2026-10-05 - four requests, none built
+
+| Request | What it needs |
+| --- | --- |
+| **Notification settings by category** - checkboxes to switch off posts, discussions, communities... separately | Android already has one channel per kind (the "six French channels and one called Default" entry below): settings must reach web and iOS too, and the SERVER must honour them, or a muted category still wakes the phone |
+| **An unread dot on each community in the rail** | needs the per-community unread count; the conversation unread rule (own read point, #1436) already exists for discussions |
+| **A community member could pin a message** | a permission mismatch: a member rank must not pin. Read the server rule AND the client menu, they disagree somewhere ([backlog entry to be filled by the investigation]) |
+| **Several images in a post render ragged** | squares with a "+N" on the fourth; in progress as `feat/post-gallery-squares` |
+
 ## Open defects, in severity order
 
 ### P2 - about one CAS return in six reaches MiConnect with no code and no state, and the sign-in fails (measured 2026-09-29)
@@ -339,37 +348,6 @@ holder to come online`, then the salon filling); the second community of 2026-09
 member; an end-to-end harness row. **Residue, not fixed:** a backgrounded Android can hold its
 socket and look online while unable to answer - the elected member is then silent and the next
 start re-asks.
-
-### P1 - the Cloudflare run token is readable by any local user on BOTH production boxes, and the fix that was believed to close it never touched the reader (measured 2026-09-24)
-
-`cloudflared` runs as `/usr/bin/cloudflared --no-autoupdate tunnel run --token <secret>`. In
-September 2026 that unit was found `644 root:root`, the token reached a terminal transcript, it was
-rotated, and the unit was set `600` on both hosts. **That closed `systemctl cat`, which reads the
-FILE.**
-
-**`systemctl show cloudflared -p ExecStart` reads systemd's in-memory state over D-Bus and answers
-any unprivileged user with the complete command line, token included.** Measured on `canari` and on
-`miconnect` the same minute, as the ordinary login account on each: the unit itself is unreadable
-(`systemctl cat` refused, mode `600 root:root` on both), and the token comes back anyway. So the
-token has now reached a transcript twice, for the same underlying reason.
-
-**No file mode fixes this** - D-Bus does not consult one. The token has to leave the command line:
-an `EnvironmentFile=/etc/cloudflared/token` (`600 root:root`) carrying `TUNNEL_TOKEN=`, with
-`ExecStart` reduced to `tunnel run`. `systemctl show` prints `EnvironmentFile=` as a path and never
-its contents, and the value lands in the process environment at exec time where `/proc/<pid>/environ`
-is root-only. **`Environment=` in the unit would NOT do** - `show` prints that one verbatim.
-
-**Both hosts owe the change, and a rotation after it.** The rotation procedure and its ordering trap
-are on [cloudflare-edge](infrastructure/cloudflare-edge.md#rotating-the-run-token-and-the-order-that-matters):
-step 1 invalidates the old token instantly, so the tunnel - the public path to production - is down
-between it and the restart. That minute is why this is done with the user present rather than alone,
-and it is the only reason it is not already done.
-
-**What this is really an instance of**: the `600` was verified against `systemctl cat`, the mechanism
-that caused the incident, instead of against the question the incident raised - *can a local user
-read this token*. The paragraph recording it has read as though the exposure were closed since
-2026-09-02.
-
 
 ### P3 - every keyboard rise moves the composer for a moment, on both phones, and the cause is a different stale number on each (measured 2026-10-02)
 

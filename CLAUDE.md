@@ -235,7 +235,6 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
    and the blob-header READER reached users in `v0.18.18`, NOT on the 2026-09-08 they MERGED; the
    WRITER cannot follow until that reader is the floor (`minClientVersion`: both stores serving it),
    so the two causes are still not separated in the field ([backlog](docs/wiki/backlog.md)).
-11. **P1 - THE TUNNEL RUN TOKEN WAS ROTATED (user, 2026-10-04) AND IS STILL READ BY ANY LOCAL USER ON BOTH PROD BOXES** - `systemctl show -p ExecStart` still carries `--token` (measured 2026-10-04). `EnvironmentFile` first, then rotate AGAIN, with the user present ([cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md)).
 12. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
    re-derived against `main` 2026-09-12, EIGHT larger than claimed, so **work to the swept numbers,
    never the audit's**; the table emptied 2026-09-14. D8/R-D8 REFUTED, not to be re-opened. **FIVE
