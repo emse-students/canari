@@ -14,7 +14,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 vi.mock('$lib/stores/auth', () => ({ getToken: async () => 'token' }));
 vi.mock('./mediaTouch', () => ({ noteMediaCacheHit: () => {} }));
 
-import { acquireDecryptedMediaBlobUrl } from './mediaBlobCache';
+import { acquireDecryptedMediaBlobUrl, releaseDecryptedMediaBlobUrl } from './mediaBlobCache';
 import { mediaRequestGate } from './requestGate';
 import { encryptMediaBuffer } from '$lib/mediaCrypto';
 import type { MediaRef } from '$lib/media';
@@ -121,6 +121,44 @@ describe('a download shared by several rows', () => {
 
     await expect(later).resolves.toBe('blob:again');
     await abandoned;
+  });
+
+  /**
+   * THE SENT PICTURE THAT STAYED BROKEN UNTIL A RELOAD (user, 2026-10-05, web, the SENDER only: its
+   * bubble drew the blurred placeholder and the file name - the `<img>`'s alt text). The outbox
+   * fills the ref, the download starts, and `patchStatus('sent')` replaces the message object a
+   * moment later, which re-runs the bubble's media effect. The gate is NOT saturated here - one
+   * picture, a free slot - so the first row's request is already ON THE WIRE when that row
+   * is re-rendered. Aborting it then changes nothing (the gate only cancels a queued request), yet the
+   * load used to leave the map, so the re-rendered row started a SECOND download of the same object.
+   * The first one landed and was pooled; the second one's blob URL was then revoked by the pool (the
+   * blob already displayed wins) and handed to the row anyway: an `<img>` on a dead URL for good.
+   */
+  it('keeps a load already on the wire joinable, and never hands out a URL it revoked', async () => {
+    const { ref, ciphertext } = await sealed();
+    const answers: ((r: Response) => void)[] = [];
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => answers.push(resolve)));
+    vi.stubGlobal('fetch', fetchMock);
+    let minted = 0;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:minted-${++minted}`);
+    const revoked = new Set<string>();
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation((url) => void revoked.add(url));
+
+    const first = new AbortController();
+    const started = acquireDecryptedMediaBlobUrl(ref, BASE, first.signal);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // The re-render: the first row is torn down while its request runs, the new one asks again.
+    first.abort();
+    const again = acquireDecryptedMediaBlobUrl(ref, BASE, new AbortController().signal);
+    answers[0](new Response(ciphertext.slice(0)));
+    // A torn-down row releases what it is handed, as `MessageBubble` and `PostMedia` both do.
+    await started.then(() => releaseDecryptedMediaBlobUrl(ref));
+    // A second request, if one was made, is answered too - the defect never needed it to fail.
+    for (const answer of answers) answer(new Response(ciphertext.slice(0)));
+
+    const url = await again;
+    expect(revoked.has(url), `the row was handed ${url}, a revoked URL`).toBe(false);
+    expect(fetchMock, 'one request served both renders').toHaveBeenCalledTimes(1);
   });
 
   it('serves a holder with no signal at all, and never abandons what it joined', async () => {
