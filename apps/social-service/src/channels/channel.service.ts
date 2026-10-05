@@ -303,8 +303,8 @@ export class ChannelService {
 
   /**
    * Whether `member` may act on OTHER members' messages in their workspace - the concrete
-   * meaning of the `channel.moderate` permission advertised in the role matrix ("pin or delete
-   * other members' messages"). MANAGE_CHANNEL and MANAGE_WORKSPACE subsume it.
+   * meaning of the `channel.moderate` permission advertised in the role matrix ("pin any message,
+   * delete other members' ones"). MANAGE_CHANNEL and MANAGE_WORKSPACE subsume it.
    *
    * Every moderation entry point (pin, delete, close poll) routes through here so the matrix
    * and the enforcement can never drift apart.
@@ -3559,20 +3559,20 @@ export class ChannelService {
     const msg = await this.messageRepo.findOne({ where: { id: messageId, channelId } });
     if (!msg) throw new NotFoundException('Message not found');
 
-    // Pinning someone else's message is a moderation act, exactly as the role matrix
-    // advertises it. Own messages stay free to pin. Unpinning is the same act and the same rule.
-    const own = msg.authorId === userId;
-    if (!own && !(await this.memberCanModerateMessages(member))) {
+    // A pin shows on every member's screen, so pinning is moderation for EVERY message, the
+    // author's own included (user, 2026-10-05) - otherwise any member could fill the salon's pin
+    // list. Unpinning is the same act and the same rule.
+    if (!(await this.memberCanModerateMessages(member))) {
       this.logger.warn(
-        `[PIN] refused channel=${channelId} message=${messageId} user=${userId.slice(0, 8)} pinned=${pinned}: not the author and no moderation grant`
+        `[PIN] refused channel=${channelId} message=${messageId} user=${userId.slice(0, 8)} pinned=${pinned} own=${msg.authorId === userId}: no moderation grant`
       );
       throw new ForbiddenException({
         code: PIN_REQUIRES_MODERATION,
-        message: "Missing channel.moderate permission to pin someone else's message",
+        message: 'Missing channel.moderate permission to pin a message',
       });
     }
     this.logger.log(
-      `[PIN] channel=${channelId} message=${messageId} user=${userId.slice(0, 8)} pinned=${pinned} as=${own ? 'author' : 'moderator'}`
+      `[PIN] channel=${channelId} message=${messageId} user=${userId.slice(0, 8)} pinned=${pinned}`
     );
 
     if (msg.pinned !== pinned) {

@@ -947,14 +947,8 @@
     const convo = convs.conversations.get(key);
     if (!convo) return;
     // THE SAME RULE THE MENUS WERE BUILT FROM, so a pin no menu offers is not sent from here either.
-    const isOwn = convo.messages.find((msg) => msg.id === messageId)?.isOwn === true;
-    if (
-      !mayPinMessage(
-        { inChannel: isSelectedChannel, canModerate: canModerateSelectedChannel },
-        { isOwn }
-      )
-    ) {
-      log(`[PIN] not sent: ${messageId.slice(0, 8)} is not the viewer's and they may not moderate`);
+    if (!mayPinMessage({ inChannel: isSelectedChannel, canModerate: canModerateSelectedChannel })) {
+      log(`[PIN] not sent: ${messageId.slice(0, 8)} - the viewer may not moderate this salon`);
       return;
     }
     if (isSelectedChannel) {

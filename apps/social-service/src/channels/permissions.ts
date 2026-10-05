@@ -103,7 +103,8 @@ export function roleGrantsChannelManagement(permissions: readonly string[]): boo
 }
 
 /**
- * Whether a role lets its holder act on OTHER members' messages - pin, unpin, delete, close a poll.
+ * Whether a role lets its holder moderate a salon's messages - pin or unpin ANY message (the
+ * author's own included: a pin shows on every screen), delete or close a poll on someone else's.
  * THE ONLY definition: every one of those endpoints refuses without it, the workspace listing hands
  * the same answer to the client as `viewerCanModerate`, and `workspace.role.changed` carries it as
  * `canModerate`, so the menu offering the action and the endpoint refusing it cannot disagree.
@@ -119,7 +120,7 @@ export function roleGrantsModeration(permissions: readonly string[]): boolean {
 }
 
 /**
- * The refusal code of a pin or unpin of someone else's message by a member who may not moderate.
+ * The refusal code of a pin or unpin by a member who may not moderate - whoever wrote the message.
  * A CODE, so a client maps the refusal from what the server typed rather than from its prose.
  */
 export const PIN_REQUIRES_MODERATION = 'PIN_REQUIRES_MODERATION';

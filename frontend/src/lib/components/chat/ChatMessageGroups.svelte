@@ -50,8 +50,8 @@
     /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
     onTogglePin?: (messageId: string) => void;
     /**
-     * Where the viewer stands for pinning (`mayPinMessage`): the action is handed to a bubble only
-     * when the rule lets the viewer pin THAT message. Absent = no ranks (DM, group).
+     * Where the viewer stands for pinning (`mayPinMessage`): the action is handed to the bubbles
+     * only when the rule lets the viewer pin here. Absent = no ranks (DM, group).
      */
     pinStanding?: PinStanding;
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
@@ -321,7 +321,7 @@
               {onDelete}
               {canModerate}
               {onBeginEdit}
-              onTogglePin={mayPinMessage(pinStanding, msg) ? onTogglePin : undefined}
+              onTogglePin={mayPinMessage(pinStanding) ? onTogglePin : undefined}
               pinned={pinnedSet.has(msg.id)}
               {currentUserId}
               shouldAnimate={msg.timestamp.getTime() > switchTime}

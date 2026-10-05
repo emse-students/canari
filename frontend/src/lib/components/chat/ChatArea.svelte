@@ -544,11 +544,6 @@
    */
   const pinStanding = $derived<PinStanding>({ inChannel: isChannel, canModerate });
 
-  /** Whether the viewer wrote a pinned message. One this device does not hold counts as not theirs. */
-  function pinnedIsOwn(messageId: string): boolean {
-    return chatView?.conversation.messages.find((x) => x.id === messageId)?.isOwn === true;
-  }
-
   function pinnedPreview(messageId: string): string | null {
     const msg = chatView?.conversation.messages.find((x) => x.id === messageId);
     if (!msg) return null;
@@ -1226,7 +1221,7 @@
                   >
                     <EmojiText text={pinnedPreview(pid) ?? m.chat_pinned_message_default_label()} />
                   </button>
-                  {#if onTogglePin && mayPinMessage(pinStanding, { isOwn: pinnedIsOwn(pid) })}
+                  {#if onTogglePin && mayPinMessage(pinStanding)}
                     <button
                       type="button"
                       onclick={() => onTogglePin?.(pid)}

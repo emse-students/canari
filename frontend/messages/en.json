@@ -2948,7 +2948,7 @@
   "chat_permission_manage_channel_label": "Manage channel",
   "chat_permission_manage_channel_tooltip": "Allows renaming, archiving or changing this channel's settings.",
   "chat_permission_moderate_label": "Moderate messages",
-  "chat_permission_moderate_tooltip": "Allows pinning or deleting other members' messages.",
+  "chat_permission_moderate_tooltip": "Allows pinning or unpinning any message, and deleting other members' messages.",
   "chat_permission_invite_label": "Invite members",
   "chat_permission_invite_tooltip": "Allows inviting new members to the community.",
   "chat_permission_kick_label": "Kick members",
