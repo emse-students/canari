@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -87,13 +89,13 @@
 
   async function handleLogout() {
     await clearAuth();
-    void goto('/login', { replaceState: true });
+    void goto(resolve('/login'), { replaceState: true });
   }
 </script>
 
 {#snippet card(s: Section)}
   <a
-    href={s.href}
+    href={resolve(internalPath(s.href))}
     class="group border-cn-border hover:border-cn-yellow flex items-start gap-4 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
   >
     <span
@@ -199,7 +201,7 @@
         {m.reviewer_docs_dashboard_heading()}
       </h2>
       <a
-        href="/documents"
+        href={resolve('/documents')}
         class="border-cn-border hover:border-cn-yellow flex items-start gap-4 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
         title={m.reviewer_docs_dashboard_label()}
       >
@@ -226,7 +228,7 @@
       </h2>
       <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <a
-          href="/admin"
+          href={resolve('/admin')}
           class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
           title={scope.title()}
         >

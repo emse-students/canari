@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -185,7 +186,7 @@
     } else {
       mayExport = await ensureAssociationSuperAdmin().catch(() => false);
       if (!mayExport) {
-        await goto('/calendar');
+        await goto(resolve('/calendar'));
         return;
       }
     }

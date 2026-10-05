@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { createAssociation } from '$lib/associations/api';
@@ -37,7 +38,7 @@
         contactEmail: contactEmail.trim() || undefined,
         type: institution ? 'institution' : undefined,
       });
-      await goto(`/associations/${asso.slug}`);
+      await goto(resolve(`/associations/${asso.slug}`));
     } catch (err) {
       error = m.assoc_new_error_fallback();
     } finally {

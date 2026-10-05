@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   /**
    * The CanaReels publish step (R3): a caption and the same "who is publishing" choice a post has
    * (`PostIdentityPicker`), over the take it publishes. "Publier" re-encodes the take on the device
@@ -124,7 +125,7 @@
         );
       }
       showToast(m.reels_publish_done(), 'info');
-      await goto('/posts', { replaceState: true });
+      await goto(resolve('/posts'), { replaceState: true });
     } catch (err) {
       const cause = err instanceof ReelPublishError ? err.cause : err;
       if (isVideoPrepareError(cause) && cause.fault === 'aborted') {

@@ -2,6 +2,7 @@
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import { isGlobalAdmin } from '$lib/stores/user';
   import {
     listAllAudiences,
@@ -131,7 +132,7 @@
 
   onMount(() => {
     if (!isGlobalAdmin()) {
-      void goto('/admin', { replaceState: true });
+      void goto(resolve('/admin'), { replaceState: true });
       return;
     }
     void load();

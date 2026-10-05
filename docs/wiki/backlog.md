@@ -3656,6 +3656,8 @@ which is why this is written down rather than done.
 
 ### P3 - 108 navigations bypass `resolve()` (92 here, 16 on MiGallery, counted 2026-08-27), and an inherited disable is the only reason nobody sees them
 
+**STATUS 2026-10-05: THE CANARI HALF IS DONE** - every call site goes through `resolve()` (a runtime-computed path through `internalPath()`, `src/lib/utils/internalPath.ts`), `$app/paths` is stubbed for vitest, and `oxvelte.config.json` no longer disables the rule, so the lint gate IS the test that the sweep stays complete. MiGallery's 16 remain.
+
 **FOUND 2026-08-27, while measuring whether `oxvelte.config.json` could be deleted.** It cannot, on
 this repository or on MiGallery, and the reason it cannot IS the finding.
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
@@ -28,7 +29,7 @@
   onMount(async () => {
     // Not authenticated yet: send to login, returning here afterwards (token is in the path).
     if (!currentUserId()) {
-      await goto(`/login?returnTo=${encodeURIComponent(`/c/join/${token}`)}`, {
+      await goto(resolve(`/login?returnTo=${encodeURIComponent(`/c/join/${token}`)}`), {
         replaceState: true,
       });
       return;
@@ -56,7 +57,7 @@
         await openInvitedChannel(firstChannelId);
         return;
       }
-      await goto('/communities', { replaceState: true });
+      await goto(resolve('/communities'), { replaceState: true });
     } catch (e) {
       // A link outliving its community is refused with a code rather than a sentence, so the
       // reason survives any rewording on the server side.
@@ -109,7 +110,10 @@
         <CircleAlert size={36} class="text-red-500" />
         <p class="text-text-main text-sm font-semibold">{m.invite_invalid_or_expired()}</p>
         {#if error}<p class="text-text-muted text-xs">{error}</p>{/if}
-        <a href="/communities" class="text-cn-dark text-sm font-semibold hover:underline">
+        <a
+          href={resolve('/communities')}
+          class="text-cn-dark text-sm font-semibold hover:underline"
+        >
           {m.community_join_back()}
         </a>
       </div>
@@ -139,7 +143,7 @@
       >
         {joining ? m.common_connecting_label() : m.community_join_btn()}
       </button>
-      <a href="/communities" class="text-text-muted hover:text-text-main block text-xs"
+      <a href={resolve('/communities')} class="text-text-muted hover:text-text-main block text-xs"
         >{m.common_cancel_button()}</a
       >
     {/if}

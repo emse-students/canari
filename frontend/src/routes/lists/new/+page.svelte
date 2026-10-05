@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -57,7 +58,7 @@
         promo: promo !== '' ? Number(promo) : undefined,
         parentAssociationId: parentAssociationId || undefined,
       });
-      await goto(`/lists/${list.slug}`);
+      await goto(resolve(`/lists/${list.slug}`));
     } catch (err) {
       Log.d('handleSubmit failed', err);
       error = m.list_new_error_fallback();

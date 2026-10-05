@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { Download, Wrench } from '@lucide/svelte';
   import {
@@ -54,7 +55,7 @@
     loggingOut = true;
     try {
       await clearAuth();
-      await goto('/login', { replaceState: true });
+      await goto(resolve('/login'), { replaceState: true });
     } finally {
       loggingOut = false;
     }

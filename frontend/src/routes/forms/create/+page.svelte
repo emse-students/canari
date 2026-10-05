@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -214,9 +216,9 @@
       const created = await createForm(payload);
       if (fromPostComposer) {
         sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
-        goto('/posts');
+        goto(resolve('/posts'));
       } else {
-        goto(returnTo);
+        goto(resolve(internalPath(returnTo)));
       }
     } catch (e: any) {
       error = e.message;

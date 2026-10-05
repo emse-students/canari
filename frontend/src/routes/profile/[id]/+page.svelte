@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import ProfileChips from '$lib/components/profile/ProfileChips.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { page } from '$app/state';
@@ -138,7 +139,7 @@
     // Redirect to own profile page if viewing self.
     const currentUserId = getSavedUserId();
     if (currentUserId && userId === currentUserId) {
-      goto('/profile', { replaceState: true });
+      goto(resolve('/profile'), { replaceState: true });
       return;
     }
 
@@ -159,7 +160,7 @@
   function handleSendMessage() {
     if (profile?.id) {
       sessionStorage.setItem('canari_pending_contact', profile.id);
-      goto('/chat');
+      goto(resolve('/chat'));
     }
   }
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -34,7 +35,7 @@
 
   onMount(() => {
     if (!isGlobalAdmin()) {
-      void goto('/admin', { replaceState: true });
+      void goto(resolve('/admin'), { replaceState: true });
       return;
     }
     void load();

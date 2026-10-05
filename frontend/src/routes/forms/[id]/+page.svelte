@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -492,7 +494,7 @@
       } else {
         submitted = true;
         successMessage = m.form_view_submission_success();
-        setTimeout(() => goto(redirectTo), 1500);
+        setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
       }
     } catch (e: any) {
       error = e.message || m.form_view_error_payment_failed();
@@ -507,7 +509,7 @@
       submitted = true;
       successMessage = m.form_view_payment_success();
       showPaymentModal = false;
-      setTimeout(() => goto(redirectTo), 1500);
+      setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
     }
     // If requiresAction, PaymentModal handles 3DS inline and calls onSuccess
     return result;
@@ -517,7 +519,7 @@
     submitted = true;
     successMessage = m.form_view_payment_success();
     showPaymentModal = false;
-    setTimeout(() => goto(redirectTo), 1500);
+    setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
   }
 
   async function handlePayWithNew() {
@@ -628,7 +630,7 @@
   <div class="mb-6 flex items-center justify-between">
     <button
       class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 text-sm font-semibold transition-colors"
-      onclick={() => goto(redirectTo)}
+      onclick={() => goto(resolve(internalPath(redirectTo)))}
     >
       <ArrowLeft size={15} />
       {m.common_back()}
@@ -668,8 +670,9 @@
   {:else if error && !form}
     <div class="border-cn-border space-y-3 rounded-3xl border bg-(--cn-surface) p-10 text-center">
       <p class="text-red-err font-semibold">{error}</p>
-      <button class="text-text-muted text-sm hover:underline" onclick={() => goto(redirectTo)}
-        >{m.common_back()}</button
+      <button
+        class="text-text-muted text-sm hover:underline"
+        onclick={() => goto(resolve(internalPath(redirectTo)))}>{m.common_back()}</button
       >
     </div>
   {:else if form}
@@ -701,9 +704,11 @@
     <!-- ── Linked agenda event ── -->
     {#if linkedAgendaEvent}
       <a
-        href={agendaAssociationSlug
-          ? `/associations/${encodeURIComponent(agendaAssociationSlug)}`
-          : '/associations'}
+        href={resolve(
+          agendaAssociationSlug
+            ? `/associations/${encodeURIComponent(agendaAssociationSlug)}`
+            : '/associations'
+        )}
         class="border-cn-yellow/35 bg-cn-yellow/10 hover:bg-cn-yellow/15 mb-4 flex items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
       >
         <div class="bg-cn-yellow/25 text-cn-dark shrink-0 rounded-xl p-2">
