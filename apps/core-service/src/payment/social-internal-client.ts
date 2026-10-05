@@ -46,6 +46,11 @@ export function internalUserAssociationsUrl(userId: string): string {
   return socialUrl(`internal/users/${encodeURIComponent(userId)}/associations`);
 }
 
+/** Internal route reading an association's payment-account fields (Stripe and Lydia ids and flags). */
+export function internalPaymentAccountUrl(associationId: string): string {
+  return socialUrl(`internal/associations/${encodeURIComponent(associationId)}/payment-account`);
+}
+
 /** Docker-network route to fulfill a boutique purchase after PaymentIntent success. */
 export function productPurchaseCompletedUrl(productId: string): string {
   return socialUrl(`associations/products/${encodeURIComponent(productId)}/purchase-completed`);

@@ -336,6 +336,13 @@ requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
 `lydiaOnboardingComplete` automatically) is deliberately unbuilt - no documented signature, and
 `vendor_token` is PUBLIC.
 
+**How core-service reads an association's payment account (2026-10-05).** `connect-status`, the
+dashboard link and the Lydia manual validation read social-service's INTERNAL route
+`GET /api/internal/associations/:id/payment-account` (X-Internal-Secret, the four Stripe/Lydia id and
+flag fields only). They used to call `GET /api/associations/:id`, which answers 401 without an
+`X-User-Id` since 2026-08-05, so each reported "Association not found" - invisible because
+`BadRequestException` is not logged and the client shows one generic message.
+
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/payments/provider` | none | Active provider (`stripe` or `lydia`), for the frontend to render the matching onboarding UI |
