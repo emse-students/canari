@@ -3353,31 +3353,6 @@ failure the campaign has already paid for repeatedly - a check measuring behind 
 route, or behind a PIN gate - each of which produced a refusal or a hang, never a false PASS. The rows
 stay; the flakiness they cost goes.
 
-### P3 - a build names itself by a clock, and the commit is inferred from it
-
-`/_app/version.json` carries `Date.now()` at build time and nothing else, so `resolveStamp` derives
-the commit by asking git for the newest one at or before that instant. Rule 35 fixed the half that
-was outright wrong - a locally built bundle was being dated against `origin/main`, a ref that does
-not contain it until somebody pushes - but the derivation itself remains an inference, and it moves
-if a commit ever lands carrying an earlier date than the build that preceded it (a pull of somebody
-else's work, a rebase).
-
-**The fix is the bundle carrying its own commit**: SvelteKit takes `kit.version.name` in
-`svelte.config.js` and writes it verbatim into `version.json`. Setting it to `<builtAtMs>-<sha>`
-keeps the timestamp the `updated` store needs to distinguish two builds of the SAME commit, and adds
-the identity the harness currently guesses. `resolveStamp` then parses instead of querying git, and
-the `ref` argument disappears with it.
-
-Two constraints, both established 2026-08-22 rather than assumed:
-
-- **The Docker image does not build the frontend.** `infrastructure/local/Dockerfile.frontend` copies
-  `frontend/build/client` from an artifact the CI `build-frontend` job produced, so git availability
-  is a question about the CI job and the local Tauri build, not about the image. Both have a
-  checkout.
-- **It changes the deployment's version identity**, which is why it was not done during the campaign:
-  prod IS the test server, and a `svelte.config.js` that throws when git is absent breaks every
-  build including CD. Verify the CI job's checkout depth before relying on `git rev-parse`.
-
 ### P3 - the bubble-action and observation helpers live in one runner, and every other runner re-invents them
 
 `mut.mjs` carries `clickBubbleIcon` / `deleteBubble`, which locate a message's controls by their

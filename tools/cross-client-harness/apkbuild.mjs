@@ -5,9 +5,8 @@
  *   bun apkbuild.mjs            # what is recorded for every APK this rig has built
  *
  * **THE HOLE THIS CLOSES, AND IT SILENTLY AFFECTED EVERY ROW MEASURED DURING A FIX.** A device
- * verdict is dated by `a1Build`, and that commit is DERIVED: `resolveStamp` takes the SvelteKit build
- * timestamp the packaged bundle carries and names the newest commit at or before it. That derivation
- * is exact for a build made from a clean tree and WRONG for every other kind, because `a1apk.mjs`
+ * verdict is dated by `a1Build`, and that commit is the one the bundle NAMES (`<builtAtMs>-<sha>`, the
+ * HEAD the build ran under). That is exact for a build made from a clean tree and WRONG for every other kind, because `a1apk.mjs`
  * builds from the WORKING TREE - which is the whole point of it, and the normal shape of a session:
  * write a fix, build, measure, commit.
  *
@@ -36,6 +35,7 @@ import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { STATE_DIR } from './names.mjs';
+import { parseBuildStamp } from './buildstamp.mjs';
 
 const HARNESS = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HARNESS, '..', '..');
@@ -60,9 +60,7 @@ function packagedStamp() {
     );
   }
   const parsed = JSON.parse(readFileSync(at, 'utf8'));
-  const stamp = Number(parsed.version);
-  if (!Number.isFinite(stamp)) throw new Error(`${at} carries no numeric version: ${parsed.version}`);
-  return new Date(stamp).toISOString();
+  return parseBuildStamp(parsed.version, at).builtAt;
 }
 
 /** `git` output as text, trimmed - a throw here is a repository that cannot be read. */

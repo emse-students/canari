@@ -697,8 +697,8 @@ if (serverDirty.length) {
 // A ROW WHOSE `a1Build` NAMES A COMMIT THAT DOES NOT CONTAIN THE CODE IT MEASURED.
 //
 // `a1apk.mjs` builds from the WORKING tree - that is the point of it, and the shape of every fix
-// loop: write a fix, build, measure, commit. `resolveStamp` then dates the APK to the newest commit
-// at or before its timestamp, which for a dirty build is the commit BEFORE the change. The verdict
+// loop: write a fix, build, measure, commit. The bundle's own stamp names the HEAD the APK was built under, which for a dirty build is
+// the commit BEFORE the change. The verdict
 // is sound and the attribution is false, and only the second half is detectable from the ledger -
 // so it is printed rather than left for a reader to disbelieve later. `apkbuild.mjs` records it.
 //
