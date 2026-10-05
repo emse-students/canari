@@ -41,6 +41,7 @@
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
+  import { scrollMessageIntoList } from '$lib/utils/chat/scrollToMessage';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
 
@@ -728,8 +729,8 @@
     }
 
     const targetElement = document.getElementById(`msg-${messageId}`);
-    if (targetElement) {
-      targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (targetElement && chatContainer) {
+      scrollMessageIntoList(chatContainer, targetElement);
       targetElement.classList.add('chat-message-jump-highlight');
       setTimeout(() => {
         targetElement.classList.remove('chat-message-jump-highlight');
