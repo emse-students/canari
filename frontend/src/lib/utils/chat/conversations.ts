@@ -994,7 +994,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           id: meta.id,
           contactName: meta.id,
           userId: ctx.userId,
-          deviceKeyB64: ctx.deviceKeyB64,
+          deviceKey: () => ctx.deviceKeyB64,
           storage: ctx.storage,
           getConversation: (name) => ctx.conversations.get(name),
           setConversation: (name, next) => ctx.conversations.set(name, next),

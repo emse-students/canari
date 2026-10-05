@@ -73,7 +73,7 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
     }),
     storage: null,
     userId: 'user-a',
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     historyBaseUrl: 'https://hist',
     conversations: createTestConversations([
       [groupId, emptyConversation(groupId, { lifecycle: 'active' })],

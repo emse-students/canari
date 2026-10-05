@@ -28,7 +28,7 @@ describe('memberLeft, live', () => {
       mlsService: {},
       storage: null,
       userId: 'alice',
-      deviceKeyB64: 'device-key',
+      deviceKey: () => 'device-key',
       conversations,
       messageReactions: new Map(),
       addMessageToChat: vi.fn().mockResolvedValue(undefined),

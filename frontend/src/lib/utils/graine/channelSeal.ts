@@ -171,7 +171,7 @@ export async function sealChannelMessage(
   payload: Uint8Array
 ): Promise<SealedChannelMessage> {
   const channel = rawChannelId(channelId);
-  const { storage, deviceKeyB64, userId, mlsService } = requireGraineRuntime(
+  const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     `cannot seal a message for channel ${channel.slice(0, 8)}`
   );
 
@@ -191,7 +191,7 @@ export async function sealChannelMessage(
   const slot = await reserveOutboundSlot(
     {
       storage,
-      deviceKeyB64,
+      deviceKeyB64: deviceKey(),
       distributionEpoch,
       distribute: (session) => distributeGraineSeed(mlsService, scope, session),
       endorse: (session) => endorseNewSession(mlsService, session),
@@ -262,12 +262,12 @@ export async function openChannelMessage(
     throw new GraineSessionUnavailableError(row.senderSessionId ?? '(none)', channel);
   }
 
-  const { storage, deviceKeyB64, mlsService } = requireGraineRuntime(
+  const { storage, deviceKey, mlsService } = requireGraineRuntime(
     `cannot open a message of channel ${channel.slice(0, 8)}`
   );
   let session = cachedGraineSession(row.senderSessionId);
   if (!session) {
-    session = await storage.getGraineSession(row.senderSessionId, deviceKeyB64);
+    session = await storage.getGraineSession(row.senderSessionId, deviceKey());
     if (session) cacheGraineSession(session);
   }
   if (!session) throw new GraineSessionUnavailableError(row.senderSessionId, channel);

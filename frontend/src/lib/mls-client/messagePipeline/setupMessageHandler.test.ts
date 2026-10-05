@@ -76,7 +76,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       mlsService: mls,
       storage: null,
       userId: 'user-a',
-      deviceKeyB64: 'device-key',
+      deviceKey: () => 'device-key',
       historyBaseUrl: 'https://hist',
       conversations,
       messageReactions: createTestMessageReactions(),
@@ -915,6 +915,73 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       groupId,
       expect.objectContaining({})
     );
+  });
+
+  /**
+   * A PIN CHANGE MOVES THE KEY UNDER A HANDLER THAT LIVES ON. The handler is set up once per login
+   * and nothing rebuilds it; `performPinChange` re-seals the store and calls `setDeviceKey`. It used
+   * to capture the key as a value, so every message written after the change was sealed under the
+   * key the store had just been migrated off - unreadable at the next launch. The deps carry a
+   * getter now, and these pin that every write reads it at the write.
+   */
+  describe('the device key is read at each write, never captured at setup', () => {
+    it('seals a reaction arriving after the key changed under the NEW key', async () => {
+      let currentKey = 'key-before-pin-change';
+      const updateMessage = vi.fn().mockResolvedValue(undefined);
+      const conversations = createTestConversations([
+        [
+          groupId,
+          emptyConversation(groupId, {
+            messages: [{ id: 'm-target', senderId: 'user-a', content: 'hi' } as any],
+          }),
+        ],
+      ]);
+      const deps = baseDeps({
+        conversations,
+        storage: { updateMessage },
+        deviceKey: () => currentKey,
+      });
+      const mls = deps.mlsService as any;
+      mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([7]));
+      mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0];
+
+      // The PIN change happens AFTER setup, exactly as it does in a session.
+      currentKey = 'key-after-pin-change';
+      vi.mocked(codec.decodeAppMessage).mockReturnValueOnce({
+        reaction: { messageId: 'm-target', emoji: '+1', at: 1, removed: false },
+        messageId: 'mid-r',
+      } as any);
+      const ok = await onMsg('peer', new Uint8Array([1]), groupId, false, undefined, false);
+
+      expect(ok).toBe(true);
+      expect(updateMessage).toHaveBeenCalledTimes(1);
+      expect(updateMessage.mock.calls[0][2]).toBe('key-after-pin-change');
+    });
+
+    it('republishes key material under the NEW key after a PIN change', async () => {
+      let currentKey = 'key-before-pin-change';
+      // Unique groupId: the NoMatchingKeyPackage failure counter is module-level.
+      const gid = 'a5555555-1111-4111-8111-111111111111';
+      const deps = baseDeps({
+        conversations: createTestConversations([
+          [gid, emptyConversation(gid, { lifecycle: 'pending' })],
+        ]),
+        deviceKey: () => currentKey,
+      });
+      const mls = deps.mlsService as any;
+      mls.processWelcome = vi.fn().mockRejectedValue(new Error('NoMatchingKeyPackage'));
+      mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0];
+
+      currentKey = 'key-after-pin-change';
+      await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
+
+      expect(mls.republishKeyMaterial).toHaveBeenCalledWith('key-after-pin-change');
+      expect(mls.republishKeyMaterial).not.toHaveBeenCalledWith('key-before-pin-change');
+    });
   });
 
   /**

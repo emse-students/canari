@@ -18,7 +18,7 @@ function makeCtx(senderNorm: string, held: Record<string, unknown>) {
     mlsService: { getDeviceId: () => 'device-me' },
     storage,
     userId: 'me',
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     conversations,
     messageReactions: new Map(),
     addMessageToChat: vi.fn(),

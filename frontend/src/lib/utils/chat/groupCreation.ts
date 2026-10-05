@@ -611,7 +611,7 @@ export async function startNewConversation(
           mlsService,
           storage: deps.storage,
           userId,
-          deviceKeyB64: deps.deviceKeyB64,
+          deviceKey: () => deps.deviceKeyB64,
           conversations,
           getSelectedContact: () => key,
           setSelectedContact: (id: string | null) => {

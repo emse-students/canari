@@ -20,7 +20,7 @@ function makeCtx(senderNorm: string, owner = 'peer') {
     mlsService: {},
     storage,
     userId: 'me',
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     conversations,
     messageReactions: new Map(),
     addMessageToChat: vi.fn(),

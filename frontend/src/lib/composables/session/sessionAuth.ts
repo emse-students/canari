@@ -154,7 +154,7 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
     mlsService: ctx.ensureMls(),
     storage: st,
     userId: ctx.getUserId(),
-    deviceKeyB64: ctx.getDeviceKey(),
+    deviceKey: () => ctx.getDeviceKey(),
     conversations: cb.conversations,
     getSelectedContact: cb.getSelectedContact,
     setSelectedContact: cb.setSelectedContact,
@@ -209,7 +209,7 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     mlsService: ctx.ensureMls(),
     storage: ctx.getStorage(),
     userId: ctx.getUserId(),
-    deviceKeyB64: ctx.getDeviceKey(),
+    deviceKey: () => ctx.getDeviceKey(),
     conversations: cb.conversations,
     log: cb.log,
     requestReAdd: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
@@ -1007,7 +1007,7 @@ export async function loginImpl(
     // and invalid after logout, so they are installed here and cleared in `logout`.
     setGraineRuntime({
       storage: ctx.getStorage()!,
-      deviceKeyB64: ctx.getDeviceKey(),
+      deviceKey: () => ctx.getDeviceKey(),
       userId: ctx.getUserId(),
       mlsService,
     });
@@ -1023,7 +1023,7 @@ export async function loginImpl(
 
     const callSystemCtx = {
       userId: ctx.getUserId(),
-      deviceKeyB64: ctx.getDeviceKey(),
+      deviceKey: () => ctx.getDeviceKey(),
       storage: ctx.getStorage(),
       conversations: cb.conversations,
       addMessageToChat: cb.addMessageToChat,
@@ -1040,7 +1040,8 @@ export async function loginImpl(
       mlsService,
       storage: ctx.getStorage(),
       userId: ctx.getUserId(),
-      deviceKeyB64: ctx.getDeviceKey(),
+      // Read at each write: a PIN change moves the session's key while this handler lives on.
+      deviceKey: () => ctx.getDeviceKey(),
       historyBaseUrl: ctx.getHistoryBaseUrl(),
       conversations: cb.conversations,
       messageReactions: cb.messageReactions,

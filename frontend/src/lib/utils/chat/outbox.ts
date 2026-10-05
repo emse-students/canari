@@ -91,7 +91,7 @@ export interface OutboxDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
-  deviceKeyB64: string;
+  deviceKey: () => string;
   conversations: SvelteMap<string, Conversation>;
   log: (msg: string) => void;
   /** Emit a non-destructive welcome_request for a group missing from the WASM. */
@@ -181,7 +181,7 @@ type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip';
  * {@link flushOutbox}.
  */
 export function createOutbox(deps: OutboxDeps): OutboxController {
-  const { conversations, storage, mlsService, deviceKeyB64, log, canFlush } = deps;
+  const { conversations, storage, mlsService, deviceKey, log, canFlush } = deps;
 
   let flushing = false;
   let rerun = false;
@@ -232,7 +232,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   async function readQueue(where: string): Promise<OutboxEntry[]> {
     if (!storage) return [];
-    return storage.getOutboxEntries(deviceKeyB64).catch((e) => {
+    return storage.getOutboxEntries(deviceKey()).catch((e) => {
       log(`[OUTBOX] ${where}: reading the queue failed, treating it as empty: ${String(e)}`);
       return [] as OutboxEntry[];
     });
@@ -347,7 +347,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           isEdited: m.isEdited,
           ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
         },
-        deviceKeyB64
+        deviceKey()
       )
       .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`));
   }
@@ -384,7 +384,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         ?.updateOutboxEntry(
           entry.id,
           { media: { ...media, uploadedRef: ref, fileBytes: undefined } },
-          deviceKeyB64
+          deviceKey()
         )
         // Losing this write means a crash before the send re-uploads the same file.
         .catch((e) =>
@@ -522,7 +522,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           lastAttemptAt: Date.now(),
           nextAttemptAt: Date.now() + backoffFor(attempts),
         },
-        deviceKeyB64
+        deviceKey()
       )
       // Losing this write loses the backoff with it, so the entry is retried at full speed.
       .catch((err) =>
@@ -866,7 +866,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // impossible to reach.
       if (!opts.alreadyDurable) {
         await storage
-          .saveOutboxEntry(entry, deviceKeyB64)
+          .saveOutboxEntry(entry, deviceKey())
           .catch((e) => log(`[OUTBOX] Enqueue failed: ${String(e)}`));
       }
       await refreshMirror();

@@ -433,7 +433,7 @@ export function useConversations() {
             id,
             contactName,
             userId: ctx.userId,
-            deviceKeyB64: ctx.deviceKeyB64,
+            deviceKey: () => ctx.deviceKeyB64,
             storage: ctx.storage,
             getConversation: (name) => conversations.get(name),
             setConversation: (name, next) => conversations.set(name, next),
@@ -1141,7 +1141,7 @@ export function useConversations() {
             mlsService,
             storage: ctx.storage,
             userId: ctx.userId,
-            deviceKeyB64: ctx.deviceKeyB64,
+            deviceKey: () => ctx.deviceKeyB64,
             conversations,
             getSelectedContact: () => selectedContact,
             setSelectedContact: (id: string | null) => {
