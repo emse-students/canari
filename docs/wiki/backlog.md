@@ -1010,10 +1010,6 @@ What is still open:
   wrong is what they SEE meanwhile**: a push for a salon whose key group the device does not hold can
   never be read, frame or no frame. Settled the day either of them opens Gala; until then the
   question is whether the phone should join from the push, as it does from a Welcome.
-- **P3, OPEN, UNSETTLED BY THE AUDIT - a key group the client has only NOTED.** `reconcileAbsentLocalGroup`
-  can mark a group as distribution with no scope, and `groupInfoChannel` then falls through to
-  chat-delivery, which answers 403. Whether an epoch gap can reach such a group is what decides it;
-  `routeDistributionFrame` returns early without a scope, so it looks unreachable.
 - **OPEN, ASKED FOR BY THE USER 2026-09-27 - ONE USER-LEVEL CONTRACT FOR A SALON AND A CONVERSATION.**
   *"Même si la machine est différente, on devrait avoir homogénéité en tant qu'utilisateur"*, then
   *"je veux que tout ce que tu as nommé soit réglé, testable et testé puis envoyé en prod"*. The two

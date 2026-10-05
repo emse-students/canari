@@ -529,6 +529,12 @@ once, from the registry, and both `refreshGroupInfo` and `externalJoin` go throu
 call site had to remember is the shape of rule the next call site does not. A group registered as a
 distribution group with no transport wired **throws**: sending it to chat-delivery instead would
 produce a 403 that reads like a permission problem and send the next reader to the wrong place.
+**So does a group only NOTED** (`noteDistributionGroup`: the server named it a key group before this
+session loaded its community, so no scope addresses it): it used to fall through to chat-delivery,
+whose 403 is the one refusal `externalJoin` reads as final. No caller was found to reach it - every
+gap, join and publish on a key group starts from a scope, and `routeDistributionFrame` returns before
+arming a gap for an unscoped one - so it throws rather than being trusted to stay unreachable
+(2026-10-04).
 
 **The transport is injected, not imported** (`setDistributionGroupInfoTransport`, wired in
 `sessionAuth` from `ChannelService`). The MLS layer never learns to speak to the communities API.

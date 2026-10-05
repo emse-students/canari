@@ -51,7 +51,10 @@ beforeEach(() => {
   });
 });
 
-describe('a device the OS never gives a push token', () => {
+// A LONGER TIMEOUT, AND IT IS NOT ABOUT THE CODE UNDER TEST: its cases re-import the module after
+// `vi.resetModules()`, which re-transforms its whole import graph - over 5 s when the suite runs in
+// parallel (measured 2026-10-04, one case failing at the default while green alone).
+describe('a device the OS never gives a push token', { timeout: 30_000 }, () => {
   it('reports it to the server, ONCE, and only after every retry is spent', async () => {
     // The "once, at the end" half matters as much as the reporting: an early attempt can fail for a
     // reason the next one fixes - that is what the retry loop is for on slow Android token
