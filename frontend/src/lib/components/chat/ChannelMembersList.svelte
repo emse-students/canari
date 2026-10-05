@@ -5,6 +5,7 @@
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
+  import { membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
 
   interface Props {
     /** ID of the channel whose members are displayed. */
@@ -39,12 +40,17 @@
     fetchedMembers.map((m) => ({ id: m.id, userId: m.userId, role: m.role }))
   );
 
-  const members = $derived(
-    channelMembers.map((m) => ({
-      ...m,
-      status: $presenceMap[m.userId] ? 'online' : 'offline',
-    }))
-  );
+  // Read by family name in each section (user, 2026-10-05). A member is listed once their profile
+  // has settled and never moves after that, so names landing late cannot reshuffle the list.
+  const memberOrder = membersByFamilyName(() => channelMembers.map((m) => m.userId));
+
+  const members = $derived.by(() => {
+    const byId = new Map(channelMembers.map((m) => [m.userId, m]));
+    return memberOrder.current.flatMap((id) => {
+      const mem = byId.get(id);
+      return mem ? [{ ...mem, status: $presenceMap[mem.userId] ? 'online' : 'offline' }] : [];
+    });
+  });
 
   $effect(() => {
     if (channelMembers.length > 0) {
