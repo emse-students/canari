@@ -5,12 +5,13 @@ import { PlatformConfig } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
+import type { PaymentProviderId } from '../payment/payment-provider.interface';
 
 export type PlatformConfigPublic = {
   maintenanceEnabled: boolean;
   maintenanceMessage: string | null;
   minClientVersion: string;
-  paymentProvider: 'stripe' | 'lydia';
+  paymentProvider: PaymentProviderId;
 };
 
 const DEFAULT_ROW: PlatformConfig = {

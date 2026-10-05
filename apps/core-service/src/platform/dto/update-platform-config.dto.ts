@@ -19,6 +19,6 @@ export class UpdatePlatformConfigDto {
   minClientVersion?: string;
 
   @IsOptional()
-  @IsIn(['stripe', 'lydia'])
-  paymentProvider?: 'stripe' | 'lydia';
+  @IsIn(['stripe', 'lydia', 'disabled'])
+  paymentProvider?: 'stripe' | 'lydia' | 'disabled';
 }

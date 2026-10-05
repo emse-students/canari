@@ -60,6 +60,11 @@
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import { m } from '$lib/paraglide/messages';
+  import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
+  import {
+    activePaymentProvider,
+    loadActivePaymentProvider,
+  } from '$lib/associations/activePaymentProvider.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
 
@@ -97,6 +102,7 @@
   // Payment
   let paymentMethods = $state<PaymentMethod[]>([]);
   let showPaymentModal = $state(false);
+  let askingPayerEmail = $state(false);
   let pendingCheckoutUrl = $state('');
   let pendingSubmissionId = $state('');
   let linkedAgendaEvent = $state<AssociationCalendarEvent | null>(null);
@@ -194,6 +200,7 @@
   }
 
   onMount(async () => {
+    void loadActivePaymentProvider();
     const savedUser = currentUserId();
     if (savedUser) {
       userId = savedUser;
@@ -436,7 +443,7 @@
     return Math.max(0, total);
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(payerEmail?: string) {
     if (!form || submitting) return;
     if (isNotOpenYet && form.opensAt) {
       error = m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) });
@@ -453,13 +460,21 @@
       return;
     }
 
+    // Lydia's request/do needs the payer's address and Canari stores none, so the payer types it.
+    const total = calculateTotal();
+    const paysOnline = total > 0 && !(form.allowCashPayment && paymentMethodChoice === 'cash');
+    if (paysOnline && !payerEmail && activePaymentProvider.current === 'lydia') {
+      askingPayerEmail = true;
+      return;
+    }
+
     error = '';
     submitting = true;
     try {
       const { formCheckoutCallbacks } = await import('$lib/utils/stripeCallbacks');
-      const total = calculateTotal();
       const res = await submitFormService(form.id, {
         email: '',
+        ...(payerEmail ? { payerEmail } : {}),
         answers: visibleAnswers(visibleItems, selections),
         ...formCheckoutCallbacks(),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
@@ -578,6 +593,16 @@
     }
   });
 </script>
+
+{#if askingPayerEmail}
+  <PayerEmailPrompt
+    onSubmit={(email) => {
+      askingPayerEmail = false;
+      void handleSubmit(email);
+    }}
+    onClose={() => (askingPayerEmail = false)}
+  />
+{/if}
 
 {#if showPaymentModal && pendingSubmissionId}
   <PaymentModal
@@ -900,7 +925,7 @@
           !maySubmit ||
           priceUnavailable}
         loading={submitting}
-        onclick={handleSubmit}
+        onclick={() => void handleSubmit()}
       >
         {#if paymentPending}
           <Check size={16} class="mr-1.5" />{m.form_view_pending()}

@@ -570,6 +570,16 @@
                   };
               }}
             />
+          {:else if canManageStripeConnect && activePaymentProvider === 'disabled'}
+            <!-- Payments declared OFF platform-wide: the existing "not configured" state, never a
+                 Stripe or Lydia onboarding flow. -->
+            <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
+              <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+                <CreditCard size={20} />
+                {m.asso_payments_section_title()}
+              </h2>
+              <p class="text-amber-warn text-sm">{m.asso_payments_unavailable()}</p>
+            </div>
           {:else if canManageStripeConnect}
             <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
               <div class="flex flex-wrap items-start justify-between gap-3">

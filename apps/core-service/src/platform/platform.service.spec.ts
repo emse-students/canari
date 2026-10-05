@@ -122,4 +122,22 @@ describe('PlatformService', () => {
     expect(result.paymentProvider).toBe('lydia');
     expect(result.minClientVersion).toBe('0.13.0');
   });
+
+  it('updateConfig stores the third value, disabled, without touching other fields', async () => {
+    const existing: PlatformConfig = {
+      id: 1,
+      maintenanceEnabled: false,
+      maintenanceMessage: null,
+      minClientVersion: '0.13.0',
+      paymentProvider: 'lydia',
+    };
+    repo.findOne.mockResolvedValue(existing);
+    repo.findOneOrFail.mockResolvedValue(existing);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    const result = await service.updateConfig({ paymentProvider: 'disabled' });
+
+    expect(result.paymentProvider).toBe('disabled');
+    expect(result.minClientVersion).toBe('0.13.0');
+  });
 });

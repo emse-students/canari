@@ -33,6 +33,8 @@ import {
 import { socialUrl } from '../internal/service-urls';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Deliberately loose: the provider is the authority on deliverability, this only refuses junk. */
+const PAYER_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** A Stripe Checkout session id (`cs_...`) or a Lydia `request_uuid` - retrieveSession() routes to whichever provider issued it. */
 export const SESSION_ID_RE =
   /^(cs_[a-zA-Z0-9_]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -478,6 +480,8 @@ export class PaymentController {
       saveForFuture?: boolean;
       /** order_ref for Lydia's request/do callback (webhook.controller.ts) - ignored by Stripe's provider unless set. */
       idempotencyKey?: string;
+      /** The payer's address, which Lydia's request/do needs as its recipient. Never stored. */
+      payerEmail?: string;
     }
   ) {
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
@@ -488,8 +492,14 @@ export class PaymentController {
       return { ok: false, message: 'Stripe not configured' };
     }
 
+    const payerEmail = body.payerEmail?.trim();
+    if (payerEmail && !PAYER_EMAIL_RE.test(payerEmail)) {
+      throw new BadRequestException('Invalid payerEmail');
+    }
+
     try {
       const session = await this.paymentService.createCheckoutSession({
+        payerRecipient: payerEmail ? { value: payerEmail, type: 'email' } : undefined,
         lineItems: body.lineItems,
         successUrl: body.successUrl,
         cancelUrl: body.cancelUrl,

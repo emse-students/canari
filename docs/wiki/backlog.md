@@ -3986,18 +3986,43 @@ registered per-request, and `POST /api/payments/lydia-request-callback`
 fulfillment Stripe's webhook already used, via a shared `order_ref` encoding
 (`form:<submissionId>` / `product:<productId>:<userId>`, parsed by `lydia-order-ref.ts`).
 
-**Two things still block actually flipping the switch, both found while wiring this:**
-1. **`payerRecipient` is never supplied.** `LydiaPaymentProvider.createCheckoutSession` throws
-   without it (`request/do` needs the payer's email/phone), and nothing in `products.service.ts`/
-   `forms.service.ts` resolves one - the interface field has existed since Phase 2 but no caller was
-   ever wired to it. Needs a design decision on where the payer's email comes from for a boutique
-   purchase (a logged-in user's account has no email stored in social-service today; only forms with
-   a guest `input.email` field have one at all).
+**One thing still blocks actually flipping the switch, and one was closed 2026-10-05:**
+1. **CLOSED 2026-10-05 - the payer's address.** `request/do` needs a recipient and Canari stores no
+   email (the OIDC sign-in carries none; `canari_user_email` was dead code and is gone), so the PAYER
+   TYPES IT at payment (`PayerEmailPrompt`, shown only when the active provider is Lydia), it travels
+   as `payerEmail` to core-service and is never stored ([payments](frontend/modules/payments.md#the-payer-types-an-e-mail-and-lydia-bounds-the-amount-2026-10-05)).
+   **NOT yet observed end to end**: it needs a dev pre-release and one homologation payment.
 2. **The `business/create` `BUSINESS_VALIDATED`/`BUSINESS_UNVALIDATED` webhook is deliberately not
    built.** It has no documented signature and `vendor_token` is PUBLIC - building it as-is would let
    anyone knowing another association's vendor_token forge or break its `lydiaOnboardingComplete`,
    with no resync since Lydia sends the event once. Add "does `business/create`'s `webhook` param
    have a signature scheme?" to Livrable A below before building this.
+
+---
+
+### Removing Stripe from Canari - decided by the user 2026-10-05, NOT started
+
+"In fine il va falloir tout enlever (a minima archiver) ce qui concerne Stripe" (user). 129 files
+mention Stripe (counted 2026-10-05 with `git grep -il stripe` over apps, frontend/src, infrastructure
+and .github; `bun.lock` and generated Paraglide output not excluded by the count, so treat it as an
+order of magnitude). **Nothing here is safe before Lydia has taken a real payment in production and
+every residual Stripe balance has been paid out** - the dependency order is the whole plan:
+
+1. Lydia live (production tokens, `LYDIA_ENV=production`, each club re-onboarded) and one payment
+   observed end to end, callback included.
+2. Residual Stripe Connect balances paid out (three prod associations are onboarded on Stripe today).
+3. Then, one pull request per layer, each green alone: the saved-card surface
+   (`setup-payment-method`, `payment-methods`, `charge-*-saved-method`, `PaymentModal`,
+   `SettingsPaymentsSection`, `SavedCardsList`, `AddCardForm`, already dropped BY DECISION for Lydia);
+   `StripePaymentProvider`, its webhook, `stripe-*.ts`, `stripeFees` and the SDK dependency; the
+   `stripe*` columns and `paymentProvider`'s `stripe` value (a migration, never a rename); the
+   `STRIPE_*` secrets in CI, compose files and `infrastructure/MIGRATION.md`; the CGU and privacy
+   text naming the processor.
+4. "Archive" = delete from `main` and keep the commit reachable under a tag (`archive/stripe`);
+   no dead code stays in the tree (CLAUDE.md: delete unused code immediately).
+
+Until then the platform switch `payment_provider = disabled` is the kill switch, and
+`stripeAccountId` columns must keep being written by nothing but the Stripe provider.
 
 ---
 
@@ -4448,15 +4473,10 @@ them measure.
 
 The environment is built (2026-09-01) and is the pre-release target. **Every decision about it -
 isolation, the unscrubbed prod copy, `DEV_<NAME>` secrets, Access, how a release picks the estate -
-is on [dev-environment](infrastructure/dev-environment.md), the only copy, and is TAKEN.** Two things
+is on [dev-environment](infrastructure/dev-environment.md), the only copy, and is TAKEN.** One thing
 outlived the chantier:
 
-1. **P3 - the platform cannot declare payments DISABLED.** `platform_config.payment_provider` is
-   typed `'stripe' | 'lydia'` with no third value, so the copy leaves it alone - writing anything
-   else would contradict what the code asserts about the column. Dev therefore presents Stripe as
-   the live provider and fails on use, with no keys behind it. A `'none'` value, refused by the
-   DTO's `@IsIn` today, would let an environment say the truth: one line of enum and one migration.
-2. **Phase 2, mobile, is OWED TO THE USER and nothing here can do it.** The dev Firebase project -
+1. **Phase 2, mobile, is OWED TO THE USER and nothing here can do it.** The dev Firebase project -
    the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it
    can neither create a project nor turn an API on - and the dev keystore, plus a decision on where
    that keystore is backed up. See the table at the top of this file.

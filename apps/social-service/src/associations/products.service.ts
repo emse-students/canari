@@ -904,7 +904,8 @@ export class ProductsService {
     productId: string,
     userId: string,
     customAmountCents?: number,
-    callbackUrls?: { successUrl?: string; cancelUrl?: string }
+    callbackUrls?: { successUrl?: string; cancelUrl?: string },
+    payerEmail?: string
   ): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
     const { product, amountCents, paymentTarget } = await this.resolvePurchase(
       associationId,
@@ -967,6 +968,7 @@ export class ProductsService {
           stripeConnectAccountId: paymentTarget.connectAccountId,
           customerId,
           idempotencyKey,
+          payerEmail,
         },
         { maxRedirects: 0 }
       )

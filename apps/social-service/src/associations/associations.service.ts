@@ -40,6 +40,7 @@ import {
   isDelegating,
   resolvePaymentTarget,
   fetchActivePaymentProvider,
+  PAYMENTS_DISABLED_MESSAGE,
   type PaymentTarget,
   type PaymentProviderId,
 } from './payment-delegation.util';
@@ -2530,6 +2531,9 @@ ${rejectionReason}`
     }
     const target = await this.resolvePaymentTarget(asso);
     if (target.ready) return;
+    if (target.provider === 'disabled') {
+      throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
+    }
     if (target.delegated) {
       throw new BadRequestException(
         'The parent association this club delegates payments to has not completed onboarding to receive payments.'

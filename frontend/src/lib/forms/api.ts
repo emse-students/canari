@@ -420,6 +420,8 @@ export async function submitForm(
   id: string,
   payload: {
     email?: string;
+    /** Where the payment request goes when Lydia is the provider. Never stored by Canari. */
+    payerEmail?: string;
     answers: any;
     successUrl?: string;
     cancelUrl?: string;

@@ -134,7 +134,7 @@ export interface ChargeWithSavedMethodParams {
  * charging. `StripePaymentProvider` is the current implementation; a `LydiaPaymentProvider` is
  * being added alongside it (see docs/wiki - WP-LYDIA-1). `PaymentService` is the only caller.
  */
-export type PaymentProviderId = 'stripe' | 'lydia';
+export type PaymentProviderId = 'stripe' | 'lydia' | 'disabled';
 
 export interface PaymentProvider {
   readonly id: PaymentProviderId;

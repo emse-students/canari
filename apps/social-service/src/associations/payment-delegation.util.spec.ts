@@ -1,4 +1,10 @@
-import { isDelegating, resolvePaymentTarget } from './payment-delegation.util';
+import { of } from 'rxjs';
+import type { HttpService } from '@nestjs/axios';
+import {
+  fetchActivePaymentProvider,
+  isDelegating,
+  resolvePaymentTarget,
+} from './payment-delegation.util';
 import type { Association } from './entities/association.entity';
 
 const asso = (o: Partial<Association> = {}): Association =>
@@ -161,6 +167,59 @@ describe('payment-delegation util', () => {
         ready: false,
         delegated: true,
       });
+    });
+
+    it('fails closed when payments are disabled, even for an association with a ready Stripe account', () => {
+      const t = resolvePaymentTarget(
+        asso({ stripeAccountId: 'acct_club', stripeOnboardingComplete: true }),
+        null,
+        'disabled'
+      );
+      expect(t).toEqual({
+        targetAssociationId: 'club',
+        provider: 'disabled',
+        connectAccountId: null,
+        ready: false,
+        delegated: false,
+      });
+    });
+
+    it('fails closed when payments are disabled, even for a delegation to a ready parent', () => {
+      const t = resolvePaymentTarget(
+        asso({ paymentParentAssociationId: 'parent', paymentDelegationStatus: 'approved' }),
+        asso({
+          id: 'parent',
+          lydiaAccountId: 'vendor_parent',
+          lydiaOnboardingComplete: true,
+          stripeAccountId: 'acct_parent',
+          stripeOnboardingComplete: true,
+        }),
+        'disabled'
+      );
+      expect(t).toEqual({
+        targetAssociationId: 'parent',
+        provider: 'disabled',
+        connectAccountId: null,
+        ready: false,
+        delegated: true,
+      });
+    });
+  });
+
+  describe('fetchActivePaymentProvider', () => {
+    const http = (provider: unknown) =>
+      ({ get: jest.fn(() => of({ data: { provider } })) }) as unknown as HttpService;
+
+    it('returns the real value for each known provider, disabled included', async () => {
+      for (const p of ['stripe', 'lydia', 'disabled'] as const) {
+        await expect(fetchActivePaymentProvider(http(p))).resolves.toBe(p);
+      }
+    });
+
+    it('throws on an unknown value instead of guessing Stripe', async () => {
+      await expect(fetchActivePaymentProvider(http('paypal'))).rejects.toThrow(
+        /unknown payment provider/
+      );
     });
   });
 });

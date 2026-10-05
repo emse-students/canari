@@ -2,6 +2,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsEmail,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -283,6 +284,11 @@ export class SubmitFormDto {
   @IsString()
   @IsOptional()
   email?: string;
+
+  /** Where Lydia sends the payment request. Forwarded to core-service, never persisted. */
+  @IsEmail()
+  @IsOptional()
+  payerEmail?: string;
 
   @IsValidAnswers()
   answers: Record<string, string | string[] | number>;
