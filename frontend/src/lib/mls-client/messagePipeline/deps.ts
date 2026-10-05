@@ -80,6 +80,11 @@ export interface MessageHandlerDeps {
     canManage: boolean;
     /** Whether the role lets this member govern salons. Absent (an older server) = unchanged. */
     canManageChannels?: boolean;
+    /**
+     * Whether the role lets this member pin or delete OTHER members' messages. Absent (an older
+     * server) = unchanged.
+     */
+    canModerate?: boolean;
     permissions: string[];
   }) => void;
   onWorkspaceDeleted?: (event: { workspaceId: string; deletedBy?: string }) => void;

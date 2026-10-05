@@ -178,6 +178,8 @@
   "channel_action_message_send": "Envoi du message",
   "channel_action_poll_vote": "Vote au sondage",
   "channel_action_poll_close": "Clôture du sondage",
+  "channel_action_pin": "Épinglage du message",
+  "channel_pin_error": "Impossible de modifier l'épingle",
   "channel_action_community_reorder": "Réorganisation des communautés",
   "channel_removed_from_community": "Vous avez été retiré de la communauté {community}.",
   "channel_removed_from_channel": "Vous avez été retiré du canal #{channel}.",

@@ -31,6 +31,7 @@
   } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+  import { mayPinMessage } from '$lib/utils/chat/pinPermission';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
   // whole service into this page's module graph for a `catch` - see `callFailure.ts`.
   import { describeCallFailure } from '$lib/utils/callFailure';
@@ -945,13 +946,32 @@
     if (!key) return;
     const convo = convs.conversations.get(key);
     if (!convo) return;
+    // THE SAME RULE THE MENUS WERE BUILT FROM, so a pin no menu offers is not sent from here either.
+    const isOwn = convo.messages.find((msg) => msg.id === messageId)?.isOwn === true;
+    if (
+      !mayPinMessage(
+        { inChannel: isSelectedChannel, canModerate: canModerateSelectedChannel },
+        { isOwn }
+      )
+    ) {
+      log(`[PIN] not sent: ${messageId.slice(0, 8)} is not the viewer's and they may not moderate`);
+      return;
+    }
     if (isSelectedChannel) {
       const next = !isMessagePinned(convo.id, messageId);
-      applyPin(convo.id, messageId, next, Date.now());
-      void channelService.setMessagePinned(convo.id, messageId, next).catch(() => {
-        // Revert if the server rejects. A LATER instant, or the revert would not supersede the
-        // optimistic apply it exists to undo.
-        applyPin(convo.id, messageId, !next, Date.now());
+      const at = Date.now();
+      applyPin(convo.id, messageId, next, at);
+      void channelService.setMessagePinned(convo.id, messageId, next).catch((e: unknown) => {
+        // Revert if the server rejects. STRICTLY LATER than the optimistic apply, or a refusal
+        // landing in the same millisecond would tie with it - and a tie keeps a pin, so a refused
+        // unpin would never come back.
+        applyPin(convo.id, messageId, !next, Math.max(Date.now(), at + 1));
+        const status = refusalStatus(e);
+        log(`[PIN] refused (status=${status ?? 'none'}) pinned=${next}: ${String(e)}`);
+        showToast(
+          describeApiRefusal(status, m.channel_action_pin()) ?? m.channel_pin_error(),
+          'warning'
+        );
       });
     } else {
       void messaging.handleTogglePin(messageId, msgCtx());

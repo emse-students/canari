@@ -14,6 +14,12 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
+import {
+  DEFAULT_ADMIN_PERMISSIONS,
+  DEFAULT_MEMBER_PERMISSIONS,
+  DEFAULT_MODERATOR_PERMISSIONS,
+  PIN_REQUIRES_MODERATION,
+} from './permissions';
 
 describe('ChannelService security hardening', () => {
   const previousSecret = process.env.INTERNAL_SECRET;
@@ -595,6 +601,75 @@ describe('ChannelService security hardening', () => {
     arrangePollAccess(channelRepo, memberRepo);
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
     roleRepo.find.mockResolvedValue([{ permissions: ['channel.moderate'] }]);
+    const msg = { id: 'm1', channelId: 'ch1', authorId: 'someone-else', pinned: false };
+    messageRepo.findOne.mockResolvedValue(msg);
+
+    await service.setMessagePinned('ch1', 'm1', 'u1', true);
+
+    expect(msg.pinned).toBe(true);
+  });
+
+  it('setMessagePinned types its refusal, and neither saves nor announces anything', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    // The seeded Membre role holds NOTHING - the rank a plain member actually has.
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['membre'] });
+    roleRepo.find.mockResolvedValue([{ id: 'membre', permissions: DEFAULT_MEMBER_PERMISSIONS }]);
+    messageRepo.findOne.mockResolvedValue({
+      id: 'm1',
+      channelId: 'ch1',
+      authorId: 'someone-else',
+      pinned: false,
+    });
+
+    const refusal = await service.setMessagePinned('ch1', 'm1', 'u1', true).catch((e) => e);
+
+    expect(refusal).toBeInstanceOf(ForbiddenException);
+    expect((refusal as ForbiddenException).getStatus()).toBe(403);
+    expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+      code: PIN_REQUIRES_MODERATION,
+    });
+    expect(messageRepo.save).not.toHaveBeenCalled();
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+  });
+
+  it("setMessagePinned refuses a plain member UNPINNING someone else's message too", async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const msg = { id: 'm1', channelId: 'ch1', authorId: 'someone-else', pinned: true };
+    messageRepo.findOne.mockResolvedValue(msg);
+
+    await expect(service.setMessagePinned('ch1', 'm1', 'u1', false)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(msg.pinned).toBe(true);
+  });
+
+  it('setMessagePinned lets a plain member pin their OWN message', async () => {
+    const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const msg = { id: 'm1', channelId: 'ch1', authorId: 'u1', pinned: false };
+    messageRepo.findOne.mockResolvedValue(msg);
+
+    await service.setMessagePinned('ch1', 'm1', 'u1', true);
+
+    expect(msg.pinned).toBe(true);
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.pin',
+      { channelId: 'ch1', messageId: 'm1', pinned: true },
+      expect.any(Array)
+    );
+  });
+
+  it.each([
+    ['the seeded Moderateur', DEFAULT_MODERATOR_PERMISSIONS],
+    ['the seeded Administrateur', DEFAULT_ADMIN_PERMISSIONS],
+    ['a role holding only channel.manage', ['channel.manage']],
+  ])("setMessagePinned lets %s pin someone else's message", async (_label, permissions) => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ id: 'r1', permissions }]);
     const msg = { id: 'm1', channelId: 'ch1', authorId: 'someone-else', pinned: false };
     messageRepo.findOne.mockResolvedValue(msg);
 

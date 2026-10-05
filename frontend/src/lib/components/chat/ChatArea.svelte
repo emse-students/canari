@@ -41,6 +41,7 @@
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
+  import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
 
   interface Props {
@@ -537,6 +538,17 @@
   });
 
   /** Resolves a short preview for a pinned message, or null when it isn't loaded in memory. */
+  /**
+   * Where the viewer stands for pinning here - the input of `mayPinMessage`, the one rule the bubble
+   * menus and the banner's unpin share with the handler that sends the request.
+   */
+  const pinStanding = $derived<PinStanding>({ inChannel: isChannel, canModerate });
+
+  /** Whether the viewer wrote a pinned message. One this device does not hold counts as not theirs. */
+  function pinnedIsOwn(messageId: string): boolean {
+    return chatView?.conversation.messages.find((x) => x.id === messageId)?.isOwn === true;
+  }
+
   function pinnedPreview(messageId: string): string | null {
     const msg = chatView?.conversation.messages.find((x) => x.id === messageId);
     if (!msg) return null;
@@ -1214,7 +1226,7 @@
                   >
                     <EmojiText text={pinnedPreview(pid) ?? m.chat_pinned_message_default_label()} />
                   </button>
-                  {#if onTogglePin}
+                  {#if onTogglePin && mayPinMessage(pinStanding, { isOwn: pinnedIsOwn(pid) })}
                     <button
                       type="button"
                       onclick={() => onTogglePin?.(pid)}
@@ -1350,6 +1362,7 @@
             {canModerate}
             onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}
+            {pinStanding}
             {pinnedIds}
             {switchTime}
             {authToken}

@@ -188,6 +188,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       // cached flag where the last listing put it, which is what "absent" means here.
       canManageChannels:
         typeof data.canManageChannels === 'boolean' ? data.canManageChannels : undefined,
+      // Same shape: absent leaves `viewerCanModerate` where the last listing put it.
+      canModerate: typeof data.canModerate === 'boolean' ? data.canModerate : undefined,
       permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
     });
     return;
