@@ -1,12 +1,13 @@
 import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 
-/** Where a correction request stands. `pending` is the only open state. */
-export type CorrectionStatus = 'pending' | 'applied' | 'refused';
+/** Where a correction request stands. `pending` is the open state; `applying` is an admin's claim held while authentik is written, so
+ * a second admin cannot answer the same request (it still occupies the person's one open slot). */
+export type CorrectionStatus = 'pending' | 'applying' | 'applied' | 'refused';
 
 /**
  * A person's request that an admin correct their MiConnect profile (D10).
  *
- * At most ONE is `pending` per person (a partial unique index, migration `010`); resolving it frees
+ * At most ONE is `pending` or `applying` per person (a partial unique index, migration `010`); resolving it frees
  * the slot. No foreign key: `users.id` is the OIDC subject and account deletion must not be blocked.
  */
 @Entity('profile_correction_requests')

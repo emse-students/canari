@@ -18,6 +18,19 @@ export const CORRECTION_MESSAGE_MAX = 1000;
 /** The longest note an admin may attach to a refusal. */
 export const CORRECTION_NOTE_MAX = 500;
 
+/** A request id is a uuid column: anything else is `not found`, never a Postgres 22P02 500. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** What the requester may read of their own request: never the answering admin's id. */
+export interface OwnCorrectionRequest {
+  id: string;
+  status: 'pending' | 'applied' | 'refused';
+  message: string;
+  createdAt: Date;
+  resolvedAt: Date | null;
+  resolutionNote: string | null;
+}
+
 /** A queue row with the name the admin needs to recognise the person. */
 export interface CorrectionQueueRow extends ProfileCorrectionRequest {
   displayName: string | null;
@@ -71,10 +84,25 @@ export class ProfileCorrectionService {
   }
 
   /** The caller's open request, or their latest answered one, or null: what the button shows. */
-  async latestFor(userId: string): Promise<ProfileCorrectionRequest | null> {
-    const open = await this.requests.findOne({ where: { userId, status: 'pending' } });
-    if (open) return open;
-    return this.requests.findOne({ where: { userId }, order: { createdAt: 'DESC' } });
+  async latestFor(userId: string): Promise<OwnCorrectionRequest | null> {
+    const open = await this.requests.findOne({
+      where: [
+        { userId, status: 'pending' },
+        { userId, status: 'applying' },
+      ],
+    });
+    const row =
+      open ?? (await this.requests.findOne({ where: { userId }, order: { createdAt: 'DESC' } }));
+    if (!row) return null;
+    return {
+      id: row.id,
+      // A claim in progress still reads as open to the person.
+      status: row.status === 'applying' ? 'pending' : row.status,
+      message: row.message,
+      createdAt: row.createdAt,
+      resolvedAt: row.resolvedAt,
+      resolutionNote: row.resolutionNote,
+    };
   }
 
   /** The admin queue: pending requests first-come-first-served, with each person's name. */
@@ -93,9 +121,10 @@ export class ProfileCorrectionService {
   }
 
   /**
-   * Applies `input` to the requester's profile as the answer to `requestId`. The request is checked
-   * pending BEFORE authentik is written; the guarded update inside the edit's transaction is what
-   * holds under a race. The person is told afterwards.
+   * Applies `input` to the requester's profile as the answer to `requestId`. The request is CLAIMED
+   * (`pending` -> `applying`, one guarded update) BEFORE authentik is written, so of two admins
+   * answering at once only one reaches authentik. A failed edit releases the claim; the person is
+   * told afterwards. A process dying mid-edit leaves `applying`, which the log below names.
    */
   async apply(
     requestId: string,
@@ -111,7 +140,21 @@ export class ProfileCorrectionService {
       );
       throw new ProfileCorrectionNotFoundError();
     }
-    const result = await this.profileEdit.applyEdit(request.userId, actorId, input, { requestId });
+    const claimed = await this.requests.update(
+      { id: requestId, status: 'pending' },
+      { status: 'applying' }
+    );
+    if (claimed.affected !== 1) throw new ProfileCorrectionNotPendingError();
+    let result: ProfileEditResult;
+    try {
+      result = await this.profileEdit.applyEdit(request.userId, actorId, input, { requestId });
+    } catch (err) {
+      this.logger.warn(
+        `[PROFILE_CORRECTION] ${requestId.slice(0, 8)} apply failed, releasing the claim`
+      );
+      await this.requests.update({ id: requestId, status: 'applying' }, { status: 'pending' });
+      throw err;
+    }
     await this.notify(request, 'applied');
     return result;
   }
@@ -143,6 +186,7 @@ export class ProfileCorrectionService {
   }
 
   private async pendingOrThrow(requestId: string): Promise<ProfileCorrectionRequest> {
+    if (!UUID_RE.test(requestId)) throw new ProfileCorrectionNotFoundError();
     const request = await this.requests.findOne({ where: { id: requestId } });
     if (!request) throw new ProfileCorrectionNotFoundError();
     if (request.status !== 'pending') throw new ProfileCorrectionNotPendingError();

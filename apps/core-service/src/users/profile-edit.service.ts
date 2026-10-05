@@ -45,8 +45,8 @@ export class ProfileEditService {
    *
    * With `requestId`, the edit answers that correction request (WP4b): the audit row names it, and
    * the request is marked applied in the SAME transaction, so a request is answered exactly when
-   * both sources hold the edit. The caller has checked the request is pending; the guarded update
-   * here is what makes that true under a race.
+   * both sources hold the edit. The caller has CLAIMED the request (`applying`) before this runs, so
+   * two admins cannot both write authentik; the guarded update here confirms the claim still holds.
    */
   async applyEdit(
     targetId: string,
@@ -124,7 +124,7 @@ export class ProfileEditService {
         if (opts.requestId) {
           const answered = await manager.update(
             ProfileCorrectionRequest,
-            { id: opts.requestId, status: 'pending' },
+            { id: opts.requestId, status: 'applying' },
             { status: 'applied', resolvedAt: new Date(), resolvedBy: actorId }
           );
           if (answered.affected !== 1) throw new ProfileCorrectionNotPendingError();

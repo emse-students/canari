@@ -5,7 +5,7 @@
 -- their own profile. The request lands here, an admin applies it (an edit, WP4a) or refuses it with a
 -- note, and the person is notified either way.
 --
--- ONE OPEN REQUEST PER PERSON, enforced by the partial unique index and not by a check in the code:
+-- ONE OPEN REQUEST PER PERSON ('pending', or 'applying' while an admin holds the claim), enforced by the partial unique index and not by a check in the code:
 -- two clicks, or two tabs, must not put the same person in the queue twice. A resolved request frees
 -- the slot, so asking again later is always possible.
 --
@@ -26,11 +26,11 @@ CREATE TABLE IF NOT EXISTS profile_correction_requests (
     "resolvedAt"     TIMESTAMPTZ,
     "resolvedBy"     VARCHAR(255),
     "resolutionNote" TEXT,
-    CONSTRAINT "CHK_profile_correction_status" CHECK (status IN ('pending', 'applied', 'refused'))
+    CONSTRAINT "CHK_profile_correction_status" CHECK (status IN ('pending', 'applying', 'applied', 'refused'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS "UQ_profile_correction_one_pending"
-    ON profile_correction_requests ("userId") WHERE status = 'pending';
+    ON profile_correction_requests ("userId") WHERE status IN ('pending', 'applying');
 CREATE INDEX IF NOT EXISTS "IDX_profile_correction_status_created"
     ON profile_correction_requests (status, "createdAt");
 
