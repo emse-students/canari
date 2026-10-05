@@ -302,22 +302,9 @@
     return isEmojiOnlyText(textContent, JUMBO_EMOJI_MAX_COUNT);
   });
 
-  let replySenderDisplayName = $state('');
-  $effect(() => {
-    const sid = effectiveReplyTo?.senderId;
-    if (!sid) {
-      replySenderDisplayName = '';
-      return;
-    }
-    replySenderDisplayName = getUserDisplayNameSync(sid, sid);
-    resolveUserDisplayName(sid).then((resolved) => {
-      if (resolved && effectiveReplyTo?.senderId === sid) replySenderDisplayName = resolved;
-    });
-  });
-
   /**
-   * The author of THIS message, resolved the same way - needed only by the reply caption, which
-   * says who answered whom and therefore names the replier whenever that is not the reader. It is
+   * The author of THIS message, needed only by the reply caption, which names the replier
+   * whenever that is not the reader. It is
    * resolved only while a quote is stacked, so an ordinary bubble asks the directory for nothing.
    */
   let senderDisplayName = $state('');
@@ -334,13 +321,7 @@
   });
 
   /** The caption names people already on the page, so it carries given names (the profile's `firstName`), not "Nils FERAL". */
-  const replySenderFirstName = $derived(
-    getUserFirstNameSync(effectiveReplyTo?.senderId ?? '', replySenderDisplayName)
-  );
   const senderFirstName = $derived(getUserFirstNameSync(senderId, senderDisplayName));
-
-  /** True when the quoted message is the reader's own - the caption says "vous" rather than a name. */
-  const quotedIsReader = $derived(!!currentUserId && effectiveReplyTo?.senderId === currentUserId);
 
   // A reaction the user took back is KEPT in the list, carrying the time it was taken back, so the
   // removal can reach devices that still hold the placement. Only what still stands is rendered.
@@ -741,11 +722,9 @@
         {#if effectiveReplyTo}
           <MessageReplyQuote
             replyId={effectiveReplyTo.id}
-            displayName={replySenderFirstName}
             content={effectiveReplyTo.content}
             {isOwn}
             replierDisplayName={senderFirstName}
-            {quotedIsReader}
             {onNavigateToMessage}
           />
         {/if}

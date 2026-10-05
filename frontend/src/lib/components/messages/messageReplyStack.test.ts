@@ -64,12 +64,12 @@ describe('the quoted message is a bubble, not a strip inside one', () => {
     expect(/class="flex w-full flex-col[^"]*\bgap-/.test(src)).toBe(false);
   });
 
-  it('names who answered whom through Paraglide, never as a literal', () => {
+  it('names only who answered, through Paraglide, never as a literal', () => {
     const src = read(QUOTE);
-    expect(src).toContain('m.msg_reply_caption_you_to_other');
-    expect(src).toContain('m.msg_reply_caption_you_to_self');
-    expect(src).toContain('m.msg_reply_caption_other_to_you');
-    expect(src).toContain('m.msg_reply_caption_other_to_other');
+    expect(src).toContain('m.msg_reply_caption_you');
+    expect(src).toContain('m.msg_reply_caption_other');
+    // The quoted bubble below already shows whose message is answered.
+    expect(src).not.toMatch(/caption_(you|other)_to/);
   });
 });
 

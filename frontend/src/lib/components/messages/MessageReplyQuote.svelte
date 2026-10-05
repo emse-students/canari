@@ -41,8 +41,8 @@
    * author inside the quote; it writes one small muted line above the pair saying who answered
    * whom - "Leon vous a repondu" - with a reply-arrow glyph, and that line is inset to the BUBBLE'S
    * TEXT left edge rather than to the bubble's own edge (measured: arrow at x=165, quote text at
-   * x=160, quote bubble at x=129). Four phrasings cover it, because the caption is the only place
-   * that says who is answering whom and it must not lie in the self-reply or third-party cases.
+   * x=160, quote bubble at x=129). Two phrasings cover it ("Nils a repondu" / "Vous avez repondu"): the quoted
+   * bubble right below already shows whose message is answered, so the caption names only the replier.
    *
    * THE QUOTED AUTHOR'S PROFILE LINK IS GONE, deliberately. It was an `<a>` nested inside the
    * quote's `<button>` - invalid markup, and the reference has no such link either: the whole quote
@@ -56,48 +56,23 @@
   interface Props {
     /** ID of the quoted message, used for scroll-to navigation. */
     replyId?: string;
-    /** Pre-resolved display name of the quoted message's author. */
-    displayName: string;
     /** Raw content of the quoted message (will be shortened automatically). */
     content: string;
     /** True when the REPLY (not the quote) is the reader's own message. Decides side and palette. */
     isOwn: boolean;
     /** Pre-resolved display name of the author of the reply, named only when it is not the reader. */
     replierDisplayName: string;
-    /** True when the quoted message is the reader's own. */
-    quotedIsReader: boolean;
     /** Called when the user clicks the quote to navigate to the original message. */
     onNavigateToMessage?: (id: string) => void;
   }
 
-  let {
-    replyId,
-    displayName,
-    content,
-    isOwn,
-    replierDisplayName,
-    quotedIsReader,
-    onNavigateToMessage,
-  }: Props = $props();
+  let { replyId, content, isOwn, replierDisplayName, onNavigateToMessage }: Props = $props();
 
   const previewText = $derived(shortenReplyPreview(content));
 
-  /**
-   * Who answered whom, in one line. The reader is always "vous", on whichever side they appear, so
-   * the four branches are the four ways the pair (author of the reply, author of the quote) can
-   * relate to them - and the third-party case is the only one that has to name two people.
-   */
+  /** Who answered, in one line: the reader is always "vous", anyone else by given name. */
   const caption = $derived(
-    isOwn
-      ? quotedIsReader
-        ? m.msg_reply_caption_you_to_self()
-        : m.msg_reply_caption_you_to_other({ name: displayName })
-      : quotedIsReader
-        ? m.msg_reply_caption_other_to_you({ name: replierDisplayName })
-        : m.msg_reply_caption_other_to_other({
-            replier: replierDisplayName,
-            name: displayName,
-          })
+    isOwn ? m.msg_reply_caption_you() : m.msg_reply_caption_other({ name: replierDisplayName })
   );
 </script>
 
