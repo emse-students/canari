@@ -11,7 +11,11 @@
     type MessageGroup,
     type MessageGroupMessageRow,
   } from '$lib/utils/messageGrouping';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import {
+    getUserDisplayNameSync,
+    getUserFirstNameSync,
+    resolveUserDisplayName,
+  } from '$lib/utils/users/displayName';
   import { LoaderCircle } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -128,16 +132,6 @@
               readersOfMessage(g.message).length > 0
           )?.message.id ?? null)
   );
-
-  function firstNameOnly(value: string): string {
-    const cleaned = value.trim();
-    if (!cleaned) return value;
-    if (cleaned.includes('@')) {
-      return cleaned.split('@')[0];
-    }
-    const parts = cleaned.split(/\s+/).filter(Boolean);
-    return parts[0] || cleaned;
-  }
 
   $effect(() => {
     const senderIds = new SvelteSet<string>();
@@ -284,7 +278,8 @@
                   onclick={(e) => e.stopPropagation()}
                 >
                   <EmojiText
-                    text={firstNameOnly(
+                    text={getUserFirstNameSync(
+                      msg.senderId,
                       resolvedSenderNames[msg.senderId] || m.user_unknown_label()
                     )}
                   />

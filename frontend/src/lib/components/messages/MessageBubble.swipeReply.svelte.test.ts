@@ -100,7 +100,8 @@ function bubble(): HTMLElement {
  * is still listened for on the bubble, which is why `bubble()` above is unchanged.
  */
 function dragged(): HTMLElement {
-  const el = bubble().parentElement;
+  // bubble -> toolbar anchor (`relative`) -> stack wrapper that carries the transform.
+  const el = bubble().parentElement?.parentElement;
   if (!el) throw new Error('stack wrapper not found');
   return el;
 }

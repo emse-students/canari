@@ -3,7 +3,11 @@
   import { fly } from 'svelte/transition';
   import { SvelteSet } from 'svelte/reactivity';
   import { Clock, Pencil, CheckCheck } from '@lucide/svelte';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import {
+    getUserDisplayNameSync,
+    getUserFirstNameSync,
+    resolveUserDisplayName,
+  } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -32,14 +36,6 @@
 
   let resolvedReadByNames = $state<Record<string, string>>({});
 
-  function firstNameOnly(value: string): string {
-    const cleaned = value.trim();
-    if (!cleaned) return value;
-    if (cleaned.includes('@')) return cleaned.split('@')[0];
-    const parts = cleaned.split(/\s+/).filter(Boolean);
-    return parts[0] || cleaned;
-  }
-
   $effect(() => {
     const ids = new SvelteSet<string>();
     for (const id of readBy) ids.add(id);
@@ -59,7 +55,9 @@
   });
 
   let readByLabels = $derived(
-    readBy.map((userId) => firstNameOnly(resolvedReadByNames[userId] || m.user_unknown_label()))
+    readBy.map((userId) =>
+      getUserFirstNameSync(userId, resolvedReadByNames[userId] || m.user_unknown_label())
+    )
   );
 </script>
 
