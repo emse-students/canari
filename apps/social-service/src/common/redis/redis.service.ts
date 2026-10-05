@@ -137,7 +137,7 @@ export class RedisService implements OnModuleDestroy {
   /**
    * Of `userIds`, the ones with at least one device online right now, lower-cased.
    *
-   * The gateway writes `user:online:{userId}:{deviceId}` (TTL 20 s, refreshed on every pong) in
+   * The gateway writes `user:online:{userId}:{deviceId}` (TTL 90 s, refreshed on every pong) in
    * this same Redis, and it is the only liveness fact the estate has. It is keyed per DEVICE, so a
    * user is online when any key under their prefix exists - which no single `EXISTS` can ask
    * without knowing the device ids. ONE `SCAN` over the whole `user:online:` prefix answers the
