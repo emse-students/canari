@@ -25,6 +25,7 @@
   } from '$lib/utils/chat/conversations';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import type { Conversation } from '$lib/types';
+  import { channelUnreadCount, communityHasUnread } from '$lib/utils/unreadTotal';
   import { m } from '$lib/paraglide/messages';
 
   interface ChannelItem {
@@ -476,7 +477,8 @@
         onfinalize={handleCommunityDndFinalize}
       >
         {#each orderedWorkspaces as workspace (workspace.id)}
-          <div animate:flip={{ duration: 150 }}>
+          {@const hasUnread = communityHasUnread(workspace.channels, conversations)}
+          <div animate:flip={{ duration: 150 }} class="relative">
             <button
               class="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl transition-all duration-200 {selectedCommunityWorkspaceId ===
               workspace.id
@@ -490,7 +492,9 @@
                 onSelectCommunity?.(workspace.id);
               }}
               title={workspace.name}
-              aria-label={workspace.name}
+              aria-label={hasUnread
+                ? `${workspace.name}, ${m.sidebar_community_unread_label()}`
+                : workspace.name}
             >
               <GroupAvatar
                 imageMediaId={workspace.imageMediaId}
@@ -499,6 +503,15 @@
                 size="lg"
               />
             </button>
+            <!-- A SIBLING OF THE BUTTON, NOT A CHILD: the button clips its avatar (`overflow-hidden`)
+                 and would clip the dot with it. The state is spoken by the button's own label. -->
+            {#if hasUnread}
+              <span
+                data-community-unread-dot
+                aria-hidden="true"
+                class="ring-cn-bg pointer-events-none absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full bg-red-500 ring-2"
+              ></span>
+            {/if}
           </div>
         {/each}
       </div>
@@ -628,8 +641,7 @@
           <div class="px-2 py-2">
             {#each currentWorkspace.channels as channel (channel.id)}
               {@const unjoined = channel.hasAccess === false}
-              {@const unreadCount =
-                conversations.get(channel.id)?.unreadCount ?? channel.unreadCount ?? 0}
+              {@const unreadCount = channelUnreadCount(channel, conversations)}
               <!-- THE WHOLE ROW IN ONE NAME. Sighted users read three signals here - a lock, a
                    name, a badge - and only the middle one was ever exposed: the icon is decorative
                    markup and the badge announced a bare number, so "general 3" was all a screen
