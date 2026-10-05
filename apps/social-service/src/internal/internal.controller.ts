@@ -1,4 +1,13 @@
-import { Controller, Delete, Get, Param, Headers, Logger, Post as HttpPost } from '@nestjs/common';
+import {
+  Controller,
+  Delete,
+  Get,
+  NotFoundException,
+  Param,
+  Headers,
+  Logger,
+  Post as HttpPost,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
@@ -103,6 +112,43 @@ export class InternalController {
     const removed = (forward.affected ?? 0) + (backward.affected ?? 0);
     this.logger.log(`[INTERNAL_SEVER_FOLLOWS] a=${userA} b=${userB} removed=${removed}`);
     return { ok: true, removed };
+  }
+
+  /**
+   * The payment-account state of an association, for core-service.
+   *
+   * `GET /api/associations/:id` answers 401 to a caller with no `X-User-Id` since 2026-08-05 (it
+   * became "logged-in callers only"), and core-service's connect-status, dashboard-link and Lydia
+   * validation all read it server to server - so all three said "Association not found" for ever.
+   * Internal secret, never nginx identity, and ONLY the four payment fields: no other column of the
+   * association leaves through here.
+   */
+  @Get('associations/:associationId/payment-account')
+  async getPaymentAccount(
+    @Param('associationId') associationId: string,
+    @Headers('x-internal-secret') headerSecret: string
+  ) {
+    assertInternalSecret(headerSecret);
+    const asso = await this.assocRepo.findOne({
+      where: { id: associationId },
+      select: {
+        id: true,
+        stripeAccountId: true,
+        stripeOnboardingComplete: true,
+        lydiaAccountId: true,
+        lydiaOnboardingComplete: true,
+      },
+    });
+    if (!asso) {
+      this.logger.warn(`[INTERNAL_PAYMENT_ACCOUNT] unknown association ${associationId}`);
+      throw new NotFoundException('Association not found');
+    }
+    return {
+      stripeAccountId: asso.stripeAccountId,
+      stripeOnboardingComplete: asso.stripeOnboardingComplete,
+      lydiaAccountId: asso.lydiaAccountId,
+      lydiaOnboardingComplete: asso.lydiaOnboardingComplete,
+    };
   }
 
   /** Returns member user IDs for an association (core-service directory filter). */

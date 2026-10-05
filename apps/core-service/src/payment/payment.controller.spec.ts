@@ -1,8 +1,12 @@
+import axios from 'axios';
 import { PaymentController, SESSION_ID_RE } from './payment.controller';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import type { PaymentService } from './payment.service';
 import type { UsersService } from '../users/users.service';
+
+jest.mock('axios');
+const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 describe('SESSION_ID_RE', () => {
   it('accepts a Stripe checkout session id', () => {
@@ -163,5 +167,39 @@ describe('PaymentController.createOnboarding - the check is not conditional on t
     await expect(controller.createOnboarding({ associationId: 'not-a-uuid' }, req)).rejects.toThrow(
       /Invalid associationId/
     );
+  });
+});
+
+/**
+ * The three routes that read an association's payment account (connect-status, dashboard link,
+ * Lydia validation) called social-service's `GET /associations/:id`, which answers 401 to a caller
+ * with no X-User-Id, so each reported "Association not found" for ever. They read the INTERNAL route
+ * now, and this pins the URL and the secret header, which is the whole fix.
+ */
+describe('PaymentController.completeLydiaAccount - reads the internal payment-account route', () => {
+  const id = 'd1f769ce-6cb6-47b8-b20b-7636f59548da';
+
+  afterEach(() => jest.clearAllMocks());
+
+  it('reads internal/associations/:id/payment-account with the internal secret, then completes', async () => {
+    process.env.INTERNAL_SECRET = 'internal-secret-for-test';
+    mockedAxios.get.mockResolvedValue({ status: 200, data: { lydiaAccountId: 'vendor-1' } });
+    mockedAxios.post.mockResolvedValue({ status: 201, data: {} });
+    const controller = new PaymentController({} as PaymentService, {} as UsersService);
+
+    await expect(controller.completeLydiaAccount(id)).resolves.toEqual({ ok: true });
+
+    const [url, config] = mockedAxios.get.mock.calls[0];
+    expect(url).toMatch(new RegExp(`/internal/associations/${id}/payment-account$`));
+    expect(config?.headers).toMatchObject({ 'X-Internal-Secret': 'internal-secret-for-test' });
+    expect(mockedAxios.post.mock.calls[0][0]).toMatch(/lydia-complete$/);
+  });
+
+  it('refuses an association with no linked Lydia account without completing anything', async () => {
+    mockedAxios.get.mockResolvedValue({ status: 200, data: { lydiaAccountId: null } });
+    const controller = new PaymentController({} as PaymentService, {} as UsersService);
+
+    await expect(controller.completeLydiaAccount(id)).rejects.toThrow(/No Lydia account/);
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
   });
 });

@@ -26,6 +26,7 @@ import axios from 'axios';
 import { resolveStripeCallbackUrl } from './stripe-callback-url';
 import {
   internalSocialRequestConfig,
+  internalPaymentAccountUrl,
   internalProductChargeContextUrl,
   internalSubmissionUrl,
   productPurchaseCompletedUrl,
@@ -251,7 +252,8 @@ export class PaymentController {
       const assoRes = await axios.get<{
         stripeAccountId?: string | null;
         stripeOnboardingComplete?: boolean;
-      }>(socialUrl(`associations/${encodeURIComponent(associationId)}`), {
+      }>(internalPaymentAccountUrl(associationId), {
+        ...internalSocialRequestConfig(),
         validateStatus: () => true,
       });
       if (assoRes.status >= 400) {
@@ -400,8 +402,8 @@ export class PaymentController {
     this.logger.log(`Lydia onboarding validated by hand for association ${associationId}`);
 
     const assoRes = await axios.get<{ lydiaAccountId?: string | null }>(
-      socialUrl(`associations/${encodeURIComponent(associationId)}`),
-      { validateStatus: () => true }
+      internalPaymentAccountUrl(associationId),
+      { ...internalSocialRequestConfig(), validateStatus: () => true }
     );
     if (assoRes.status >= 400) {
       throw new BadRequestException('Association not found');
@@ -448,8 +450,8 @@ export class PaymentController {
     }
 
     const assoRes = await axios.get<{ stripeAccountId?: string | null }>(
-      socialUrl(`associations/${encodeURIComponent(associationId)}`),
-      { validateStatus: () => true }
+      internalPaymentAccountUrl(associationId),
+      { ...internalSocialRequestConfig(), validateStatus: () => true }
     );
     if (assoRes.status >= 400) {
       throw new BadRequestException('Association not found');
