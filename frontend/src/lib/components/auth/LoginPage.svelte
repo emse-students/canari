@@ -11,6 +11,7 @@
   import LoginForm from './LoginForm.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { PHONE_VIEWPORT_QUERY, isPhoneViewport, onViewportChange } from '$lib/utils/viewport';
+  import { onAppForegroundChange } from '$lib/utils/appForeground';
   import {
     getAppVersionCheck,
     isBelowMinClientVersion,
@@ -91,6 +92,11 @@
     };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
+    // A phone's WebView stays `visible` in the background, so coming back from the identity
+    // provider's browser is seen only through the native foreground edge.
+    const unsubscribeForeground = onAppForegroundChange((foreground) => {
+      if (foreground) onVisible();
+    });
 
     // 1. Safely extract the return URL from query params.
     try {
@@ -140,6 +146,7 @@
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
+      unsubscribeForeground();
     };
   });
 

@@ -2527,33 +2527,28 @@ its own message, and that is the fact a user cares about - `A1 read it` appearin
 nobody looked at. That is one DOM read on W2 against a marker, and it is falsifiable in both
 directions without counting anything.
 
-### P2 - eleven more decisions read a visibility API that lies on every phone, and two of them look like they matter (measured 2026-09-05)
+### P2 - the Android background/resume sequence hangs on a visibility edge that never fires (owed ONE device run)
 
-`document.visibilityState` and `document.hasFocus()` are both permanently true in a backgrounded
-Android Tauri WebView - measured, see [durable-rules](durable-rules.md). Two consumers were fixed
-the day it was found, because each had a user-visible defect behind it: the inbound notification and
-the read watermark. **The rest were not touched, and they were not measured either.**
+A backgrounded Android WebView stays `visible` ([durable-rules](durable-rules.md)). The cheap sites
+now also take the native edge (`onAppForegroundChange`): the MLS persister flushes on backgrounding,
+the Tauri socket reconnects on return, the login page resets on return. **What is left must move
+TOGETHER and only after one run on a phone**, because the pieces depend on each other:
 
-| call site | what it decides | what a permanently-`visible` phone does instead |
-| --- | --- | --- |
-| `mlsStatePersisterLifecycle.ts:16` | persist the MLS state when the page goes hidden | **never persists on backgrounding** - the case the hook exists for is the one it cannot see |
-| `TauriMlsService.ts:173` | reconnect the socket when the page becomes visible | the edge never fires, so a socket dropped while away is not re-opened by this path |
-| `backgroundPausableInterval.ts:29,38` | pause timers while hidden | never pauses - battery, not correctness |
-| `ChatBackgroundService.svelte:881,953,1218,1237` | four guards around login and reconnection | unmeasured |
-| `MainChatPage.svelte:266` | a guard on a periodic refresh | unmeasured |
-| `LoginPage.svelte:85` | a retry on becoming visible | unmeasured |
+- `ChatBackgroundService.svelte` `handleVisibilityChange`: on hidden it pauses the socket, flushes
+  and releases the native foreground guard (`pause_mls_foreground`); on visible it reloads `mls.bin`
+  into the warm engine before anything processes. On Android neither half runs today.
+- `createPausableInterval` drives the `mls_foreground_heartbeat` that keeps that guard alive.
+  Pausing it on the native edge ALONE would let the guard expire while the resume reload above
+  still never runs - a warm engine overwriting a background engine's advance (`SecretReuseError`).
+  It also drives the presence poll, so that battery cost waits on the same change.
+- `ChatBackgroundService.svelte:951,1038` and `MainChatPage.svelte:357` guards, and
+  `routes/+layout.svelte:159` (version check on return).
 
-**The first two are the ones worth measuring first**, and the first is the one that could cost
-something durable: a state persister whose trigger never fires on the platform where the process is
-most likely to be killed without warning. That is a hypothesis from reading, not a measurement - the
-phone may well persist on another trigger, and **saying which needs one run, not an argument**.
-
-**The fix shape is settled and cheap**: `isAppInForeground()` already exists and is `true` on every
-runtime that has a working visibility API, so each site becomes one extra term and web and desktop
-keep their current behaviour exactly. What is NOT settled is which sites should change - a guard
-that is merely wasteful on mobile is not the same as one that loses state, and they want different
-urgency. (The batch-notify log line was an eleventh site; it only reports, so it was fixed without a
-run in `v0.18.23` - see `CHANGELOG.md`.)
+**The run that settles it**: on the Mi 9T, background the app with the WebSocket up, wait past the
+guard's 30 s, send it a message, bring it back - and read whether the background engine delivered,
+whether the warm engine reloaded, and whether the socket paused. Switching the sequence to the
+native edge also changes how a backgrounded phone is notified (socket paused -> FCM), which is the
+behaviour the 2026-09-05 notification fix rests on.
 
 ### P2 - a cold start re-accuses frames it already read, because the ratchet advance is durable and its mark is not (TAB-3b `PASS-DIRTY`, measured 2026-09-08)
 
