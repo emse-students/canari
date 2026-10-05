@@ -26,6 +26,7 @@ import { getLocale } from '$lib/i18n';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
+import { onAppForegroundChange } from '$lib/utils/appForeground';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -206,6 +207,15 @@ export class TauriMlsService extends BaseMlsService {
       };
       document.addEventListener('visibilitychange', this._visibilityHandler);
       window.addEventListener('online', this._onlineHandler);
+      // THE EDGE THE VISIBILITY API NEVER FIRES ON A PHONE. A backgrounded Android WebView stays
+      // `visible` (measured, see `appForeground.ts`), so the handler above cannot see the user
+      // coming back; the activity's own foreground event can. Same decision, honest trigger.
+      this._foregroundUnsubscribe = onAppForegroundChange((foreground) => {
+        if (foreground && !this.ws) {
+          console.log('[WS] app back in the foreground with no socket - reconnecting');
+          this.disconnectCallback?.();
+        }
+      });
     }
 
     // On Tauri mobile the cookie is not sent cross-origin, so we pass the

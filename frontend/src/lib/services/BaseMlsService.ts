@@ -390,6 +390,8 @@ export abstract class BaseMlsService implements IMlsService {
   protected heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   protected _visibilityHandler: (() => void) | null = null;
   protected _onlineHandler: (() => void) | null = null;
+  /** Unsubscribes the native foreground listener (`onAppForegroundChange`); null when none. */
+  protected _foregroundUnsubscribe: (() => void) | null = null;
 
   // ── Message queue ─────────────────────────────────────────────────────────
   /** Per-conversation queues with round-robin scheduling and a global MLS mutex. */
@@ -638,6 +640,8 @@ export abstract class BaseMlsService implements IMlsService {
       window.removeEventListener('online', this._onlineHandler);
       this._onlineHandler = null;
     }
+    this._foregroundUnsubscribe?.();
+    this._foregroundUnsubscribe = null;
     // A HELD FRAME BELONGS TO THE CLIENT THAT WAS GOING TO READ IT, and this destroy is that
     // client ending. Unlike the unacked work list above, nothing else can drain these: the gate
     // reopens on the next login against a different MLS state, and the server re-delivers any
