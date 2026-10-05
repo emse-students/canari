@@ -32,7 +32,11 @@
   import { clickOutside } from '$lib/actions/clickOutside';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { onDestroy } from 'svelte';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import {
+    getUserDisplayNameSync,
+    getUserFirstNameSync,
+    resolveUserDisplayName,
+  } from '$lib/utils/users/displayName';
   import {
     splitTextWithLinks,
     extractFirstUrl,
@@ -328,6 +332,12 @@
       if (resolved && senderId === sid) senderDisplayName = resolved;
     });
   });
+
+  /** The caption names people already on the page, so it carries given names (the profile's `firstName`), not "Nils FERAL". */
+  const replySenderFirstName = $derived(
+    getUserFirstNameSync(effectiveReplyTo?.senderId ?? '', replySenderDisplayName)
+  );
+  const senderFirstName = $derived(getUserFirstNameSync(senderId, senderDisplayName));
 
   /** True when the quoted message is the reader's own - the caption says "vous" rather than a name. */
   const quotedIsReader = $derived(!!currentUserId && effectiveReplyTo?.senderId === currentUserId);
@@ -727,137 +737,140 @@
         {#if effectiveReplyTo}
           <MessageReplyQuote
             replyId={effectiveReplyTo.id}
-            displayName={replySenderDisplayName}
+            displayName={replySenderFirstName}
             content={effectiveReplyTo.content}
             {isOwn}
-            replierDisplayName={senderDisplayName}
+            replierDisplayName={senderFirstName}
             {quotedIsReader}
             {onNavigateToMessage}
           />
         {/if}
 
-        <!-- Main message bubble. -->
-        <div
-          role="button"
-          tabindex="0"
-          data-swipe-reply
-          data-swipe-nav-ignore
-          use:replySwipeTouchMove
-          onclick={handleBubbleClick}
-          onpointerdown={beginLongPress}
-          onpointermove={handleSwipeReply}
-          onpointerup={endSwipeReply}
-          onpointerleave={endSwipeReply}
-          onpointercancel={endSwipeReply}
-          ontouchstart={beginLongPress}
-          ontouchend={endSwipeReply}
-          ontouchcancel={endSwipeReply}
-          oncontextmenu={(e) => {
-            e.preventDefault();
-            if (isDeleted) return; // see the long-press timer: the sheet has no items on a tombstone
-            showMobileActions = true;
-          }}
-          onkeydown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
+        <!-- The toolbar anchors to the bubble alone, so a quote above never shifts it upward. -->
+        <div class="relative w-fit max-w-full">
+          <!-- Main message bubble. -->
+          <div
+            role="button"
+            tabindex="0"
+            data-swipe-reply
+            data-swipe-nav-ignore
+            use:replySwipeTouchMove
+            onclick={handleBubbleClick}
+            onpointerdown={beginLongPress}
+            onpointermove={handleSwipeReply}
+            onpointerup={endSwipeReply}
+            onpointerleave={endSwipeReply}
+            onpointercancel={endSwipeReply}
+            ontouchstart={beginLongPress}
+            ontouchend={endSwipeReply}
+            ontouchcancel={endSwipeReply}
+            oncontextmenu={(e) => {
               e.preventDefault();
-              toggleInfo(e as unknown as MouseEvent);
-            }
-          }}
-          class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
-            ? 'p-0'
-            : 'px-3 py-2'} {bleedsMedia
-            ? 'overflow-hidden'
-            : ''} w-fit max-w-full cursor-pointer touch-pan-y transition-shadow duration-200 {isMobile
-            ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
-            : ''} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
-            ? ''
-            : getBubbleShapeClass(
-                effectiveReplyTo ? stackedQuotePosition(groupPosition) : groupPosition,
-                isOwn
-              )} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
-            ? ''
-            : isOwn
-              ? 'text-bubble-out-text bg-bubble-out'
-              : 'text-text-main bg-bubble-in'} {isHighlighted
-            ? 'animate-pulse ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent'
-            : ''} {shouldAnimate ? 'animate-rise-in' : ''}"
-        >
-          {#if pollEnvelope && pollSpec && pollMeta}
-            <ChannelPoll
-              spec={pollSpec}
-              meta={pollMeta}
-              {currentUserId}
-              onVote={(optionIds) => onVotePoll?.(messageId, optionIds)}
-              canClose={isOwn && !!onClosePoll}
-              onClose={() => onClosePoll?.(messageId)}
-            />
-          {:else}
-            <MessageMediaRenderer
-              {mediaRef}
-              {blobUrl}
-              failure={mediaFailure}
-              onRetry={() => (mediaAttempt += 1)}
-              {textContent}
-              {isOwn}
-              {textSegments}
-              bleed={bleedsMedia}
-              {senderId}
-              sentAt={timestamp}
-              onNear={() => (isNearViewport = true)}
-            />
-
-            {#if !mediaRef}
-              <MessageTextBody
-                {textSegments}
-                {searchTerm}
-                {isDeleted}
-                {firstLink}
-                jumbo={isEmojiOnly}
+              if (isDeleted) return; // see the long-press timer: the sheet has no items on a tombstone
+              showMobileActions = true;
+            }}
+            onkeydown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleInfo(e as unknown as MouseEvent);
+              }
+            }}
+            class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
+              ? 'p-0'
+              : 'px-3 py-2'} {bleedsMedia
+              ? 'overflow-hidden'
+              : ''} w-fit max-w-full cursor-pointer touch-pan-y transition-shadow duration-200 {isMobile
+              ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
+              : ''} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
+              ? ''
+              : getBubbleShapeClass(
+                  effectiveReplyTo ? stackedQuotePosition(groupPosition) : groupPosition,
+                  isOwn
+                )} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
+              ? ''
+              : isOwn
+                ? 'text-bubble-out-text bg-bubble-out'
+                : 'text-text-main bg-bubble-in'} {isHighlighted
+              ? 'animate-pulse ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent'
+              : ''} {shouldAnimate ? 'animate-rise-in' : ''}"
+          >
+            {#if pollEnvelope && pollSpec && pollMeta}
+              <ChannelPoll
+                spec={pollSpec}
+                meta={pollMeta}
+                {currentUserId}
+                onVote={(optionIds) => onVotePoll?.(messageId, optionIds)}
+                canClose={isOwn && !!onClosePoll}
+                onClose={() => onClosePoll?.(messageId)}
               />
+            {:else}
+              <MessageMediaRenderer
+                {mediaRef}
+                {blobUrl}
+                failure={mediaFailure}
+                onRetry={() => (mediaAttempt += 1)}
+                {textContent}
+                {isOwn}
+                {textSegments}
+                bleed={bleedsMedia}
+                {senderId}
+                sentAt={timestamp}
+                onNear={() => (isNearViewport = true)}
+              />
+
+              {#if !mediaRef}
+                <MessageTextBody
+                  {textSegments}
+                  {searchTerm}
+                  {isDeleted}
+                  {firstLink}
+                  jumbo={isEmojiOnly}
+                />
+              {/if}
             {/if}
-          {/if}
 
-          <MessageMetadata
-            {isEdited}
-            {isOwn}
-            {isLastOwn}
-            isReadReceiptAnchor={false}
-            {status}
-            {readBy}
-          />
-        </div>
-      </div>
+            <MessageMetadata
+              {isEdited}
+              {isOwn}
+              {isLastOwn}
+              isReadReceiptAnchor={false}
+              {status}
+              {readBy}
+            />
+          </div>
 
-      <!-- THE HOVER STRIP IS `hidden` BELOW `md`, so a phone never sees it - and it was mounted in
+          <!-- THE HOVER STRIP IS `hidden` BELOW `md`, so a phone never sees it - and it was mounted in
            every bubble anyway: five buttons, a menu and their icons per message, about a third of
            what opening a conversation cost on the Mi 9T (2026-10-02, profiled). A phone has the
            long-press sheet (`MessageMobileActions`) instead. -->
-      {#if !phoneViewport()}
-        <MessageBubbleToolbar
-          {isOwn}
-          {isDeleted}
-          hasMedia={!!mediaRef}
-          {showEmojiPicker}
-          onReply={onReply ? () => onReply!(messageId) : undefined}
-          onForward={onForward ? () => onForward!(messageId) : undefined}
-          onReact={onReact ? (emoji) => onReact!(messageId, emoji) : undefined}
-          userReactions={userOwnReactions}
-          onToggleEmojiPicker={!isDeleted && onReact
-            ? () => {
-                emojiPickerOrigin = emojiPickerOrigin ? null : 'toolbar';
-              }
-            : undefined}
-          {canModerate}
-          onEdit={canEdit ? startEdit : undefined}
-          onDelete={!isDeleted && (isOwn || canModerate) && onDelete
-            ? () => {
-                showDeleteModal = true;
-              }
-            : undefined}
-          {pinned}
-          onPin={!isDeleted && onTogglePin ? () => onTogglePin!(messageId) : undefined}
-        />
-      {/if}
+          {#if !phoneViewport()}
+            <MessageBubbleToolbar
+              {isOwn}
+              {isDeleted}
+              hasMedia={!!mediaRef}
+              {showEmojiPicker}
+              onReply={onReply ? () => onReply!(messageId) : undefined}
+              onForward={onForward ? () => onForward!(messageId) : undefined}
+              onReact={onReact ? (emoji) => onReact!(messageId, emoji) : undefined}
+              userReactions={userOwnReactions}
+              onToggleEmojiPicker={!isDeleted && onReact
+                ? () => {
+                    emojiPickerOrigin = emojiPickerOrigin ? null : 'toolbar';
+                  }
+                : undefined}
+              {canModerate}
+              onEdit={canEdit ? startEdit : undefined}
+              onDelete={!isDeleted && (isOwn || canModerate) && onDelete
+                ? () => {
+                    showDeleteModal = true;
+                  }
+                : undefined}
+              {pinned}
+              onPin={!isDeleted && onTogglePin ? () => onTogglePin!(messageId) : undefined}
+            />
+          {/if}
+        </div>
+      </div>
     </div>
 
     <MessageReactions
