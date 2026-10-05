@@ -2861,8 +2861,8 @@ client", never "clean on the server".
 
 ### P1 - a device asks for a Welcome for ever, and the member that answers RESETS the row that would have let it heal itself (measured on prod 2026-09-01)
 
-**THE LIVELOCK IS FIXED AND ITS STORY IS IN `CHANGELOG.md`; WHAT IS LEFT IS ONE PROD MEASUREMENT,
-ONE LOCAL SIGHTING AND ONE UNFINISHED AUDIT.** Reported 2026-09-01: a web device stuck on `SYNC` for
+**THE LIVELOCK IS FIXED AND ITS STORY IS IN `CHANGELOG.md`; WHAT IS LEFT IS ONE PROD MEASUREMENT
+AND ONE LOCAL SIGHTING.** Reported 2026-09-01: a web device stuck on `SYNC` for
 20 hours on three conversations, the responder's `[KICK]` resetting the very row that would have let
 it external-join itself. Six causes, all fixed: `pending` read as an in-flight Add (A, now
 `welcomeQueued` + `addInFlight`), the kick writing `pending` before the Add landed (B,
@@ -2883,14 +2883,6 @@ KeyPackage dying at its first Welcome (`last_resort`, 2026-09-06,
   measurement against. Its blast radius is measured on the HEAL-repair P1 above: a kicked leaf is
   elected as a history responder like any other member and is silently a dead end (the rotation fix
   was REFUTED 2026-09-08, not to be re-opened).
-- **The key-vs-id audit that `f46e7660` did not finish.** That commit wrote the rule *treat any
-  `[key]` destructuring over a heterogeneously-keyed map as a defect on sight* but never enumerated
-  the consumers. Read by groupId on 2026-09-01, in a store where a DM learnt from a Welcome is keyed
-  by the PEER'S USER ID: `processPendingInvitations`, `handleWelcomeRequest` (the *"No ready
-  conversation - deferring"* branch), the history-serving gate, the promotion in `recovery.ts` after a
-  successful external join, and `setupMessageHandler.ts` on the redelivery path. Unproven as the cause
-  of anything, a defect on sight by the repo's own rule. (verify: not re-audited against `main` since
-  2026-09-01)
 
 The cause of the skipped Add itself is the P2 immediately below.
 

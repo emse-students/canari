@@ -213,17 +213,14 @@ export interface RecoveryDeps {
 /**
  * The conversation carrying `groupId`, found BY ITS `id` rather than by its map key.
  *
- * THE KEY IS NOT THE GROUP ID, AND THIS MODULE IS ADDRESSED BY GROUP ID. A direct conversation
- * created on THIS device is keyed by its groupId (`startNewConversation`), while one learnt from a
- * Welcome is keyed by the PEER'S USER ID (`deriveConversationIdentity`) - two conventions in one
- * map, and every `conversations.get(groupId)` in here silently missed the second. The consequences
- * were not symmetric: the idempotence check in {@link requestReAdd} stopped short-circuiting on an
- * already-`removed` conversation, and {@link stopRecovering} could never retire one, so a recovery
- * that had its terminating ANSWER went on asking anyway.
- *
- * Re-keying the store is a data migration and is not this. Reading by `id` is correct under BOTH
- * conventions, which is why the lookup that was already written this way - the phantom purge below,
- * the one place that never had the bug - is now the only one.
+ * Written on 2026-09-01 on the premise that a DM learnt from a Welcome is keyed by the PEER'S USER
+ * ID. THE 2026-10-04 AUDIT REFUTED THAT PREMISE: every writer of the map keys a row by its own `id`
+ * (the group id, or `channel_<id>`) - boot restore, both creation paths and the Welcome's
+ * `upsertConversation`, which re-keys a peer-matched DM onto the joined group - so
+ * `conversations.get(groupId)` and this scan answer the same thing. It stays because reading by
+ * `id` is correct whatever the key is, and every lookup in this module goes through it; the writer
+ * enumeration and the consumer verdicts are in `docs/wiki/frontend/modules/chat.md`
+ * ("One key per conversation").
  */
 function findByGroupId(
   conversations: SvelteMap<string, Conversation>,
@@ -404,8 +401,7 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     // THE COOLDOWN IS ARMED THOUGH NO ATTEMPT WAS MADE, and that half is not optional. The
     // watchdog invokes this seam every FIVE seconds; the two probes above are what it costs to
     // reach this line, so returning without arming anything turns an unreachable server into two
-    // HTTP round trips every five seconds for as long as it stays unreachable - the exact shape
-    // {@link findByGroupId} records costing every received DM the same. `markGroupNotReady` is
+    // HTTP round trips every five seconds for as long as it stays unreachable. `markGroupNotReady` is
     // deliberately NOT set with it: that marker means "this device owes a recovery", and what this
     // branch knows is only that it could not ask.
     lastReAddAt.set(groupId, now);
@@ -452,8 +448,7 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
   // THE THROTTLE IS STILL ARMED, AND THAT HALF IS NOT OPTIONAL. The watchdog invokes this seam
   // every five seconds; `getGroupMeta` above is what it costs to reach this line, so returning
   // without arming anything would turn a locked-out group into one HTTP round trip every five
-  // seconds instead of one a minute - the exact shape the `findByGroupId` note records costing
-  // every received DM. `markGroupNotReady` is deliberately NOT set with it: the marker means "this
+  // seconds instead of one a minute. `markGroupNotReady` is deliberately NOT set with it: the marker means "this
   // device owes a recovery", and this device is not owing one, it is waiting for somebody to exist.
   const pair = epochPair(meta);
   const proven = noRepairerAt.get(groupId);
@@ -614,12 +609,9 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     // the group is now live in WASM, so mark it active here so the UI leaves the "syncing" state
     // without waiting for a page reload.
     //
-    // BY `id`, AND SAVED BY THE MAP KEY - the two are not the same string, and this call site was
-    // the last one in this module still reading the map by groupId. A direct conversation learnt
-    // from a Welcome is keyed by the PEER'S USER ID ({@link findByGroupId}), so for every received
-    // DM this lookup missed, the promotion never happened, and the badge stayed on a conversation
-    // that had just rejoined and worked - until the next login's reconciliation noticed. The write
-    // that follows takes the KEY: `saveConversation(groupId)` would have persisted nothing.
+    // BY `id`, AND SAVED BY THE MAP KEY, through the module's one lookup ({@link findByGroupId}).
+    // Every writer keys a row by its `id`, so the two are the same string today; the write takes the
+    // key it found so that it stays right if that invariant ever breaks.
     const entry = findByGroupId(deps.conversations, groupId);
     if (entry && entry[1].lifecycle !== 'active') {
       deps.conversations.set(entry[0], { ...entry[1], lifecycle: 'active' });

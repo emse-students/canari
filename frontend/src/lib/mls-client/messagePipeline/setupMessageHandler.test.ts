@@ -277,6 +277,74 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(deps.conversations.get(groupId)?.lifecycle).toBe('active');
   });
 
+  /**
+   * A RECEIVED DM IS KEYED BY ITS GROUP ID, LIKE EVERY OTHER ROW - the fact the 2026-10-04 key-vs-id
+   * audit rests on (`docs/wiki/frontend/modules/chat.md`, "One key per conversation").
+   *
+   * `upsertConversation` is the only writer of the conversation map whose key is not spelled `id`
+   * at the call: it matches an existing DM by PEER and keeps that row's key. If it ever kept a key
+   * that is not the joined group id, every `conversations.get(groupId)` consumer
+   * (`processPendingInvitations`, `handleWelcomeRequest`, `handleHistoryRequest`, the redelivery
+   * branch above) would miss the conversation silently. So both shapes are pinned here: a first DM
+   * with this peer, and a Welcome into a second group for a peer this device already has a DM with.
+   */
+  describe('a Welcome into a DM keys the row by the joined group id, never by the peer', () => {
+    const dmGroup = '22222222-2222-4222-8222-222222222222';
+    const olderDmGroup = '33333333-3333-4333-8333-333333333333';
+
+    async function deliverDmWelcome(
+      initial: Array<[string, ReturnType<typeof emptyConversation>]>
+    ) {
+      const deps = baseDeps({ conversations: createTestConversations(initial) });
+      const mls = deps.mlsService as any;
+      mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'user-a::peer-user', isGroup: false });
+      mls.processWelcome = vi.fn().mockResolvedValue(dmGroup);
+      mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (
+        a: string,
+        b: Uint8Array,
+        c?: string,
+        d?: boolean
+      ) => Promise<boolean>;
+      expect(await onMsg('peer-user', new Uint8Array([1]), dmGroup, true)).toBe(true);
+      return deps;
+    }
+
+    function expectEveryKeyIsItsRowId(conversations: Map<string, { id: string }>) {
+      for (const [key, convo] of conversations) expect(key).toBe(convo.id);
+    }
+
+    it('a first DM with this peer', async () => {
+      const deps = await deliverDmWelcome([]);
+
+      const row = deps.conversations.get(dmGroup);
+      expect(row?.conversationType).toBe('direct');
+      expect(row?.directPeerId).toBe('peer-user');
+      expect(deps.conversations.has('peer-user')).toBe(false);
+      expectEveryKeyIsItsRowId(deps.conversations);
+    });
+
+    it('a DM with a peer this device already holds under another group is RE-KEYED onto the new one', async () => {
+      const deps = await deliverDmWelcome([
+        [
+          olderDmGroup,
+          emptyConversation(olderDmGroup, {
+            lifecycle: 'active',
+            conversationType: 'direct',
+            directPeerId: 'peer-user',
+            contactName: 'peer-user',
+          }),
+        ],
+      ]);
+
+      expect(deps.conversations.get(dmGroup)?.directPeerId).toBe('peer-user');
+      expect(deps.conversations.has(olderDmGroup)).toBe(false);
+      expect(deps.conversations.has('peer-user')).toBe(false);
+      expectEveryKeyIsItsRowId(deps.conversations);
+    });
+  });
+
   it('routes plaintext channel.message.created to addMessageToChat', async () => {
     const channelKey = 'channel_chan-99';
     const conversations = createTestConversations([

@@ -384,15 +384,13 @@ describe('requestReAdd', () => {
   });
 
   /**
-   * THE MAP KEY IS NOT THE GROUP ID, and this module is addressed by group id.
+   * THIS MODULE IS ADDRESSED BY GROUP ID AND READS THE ROW'S `id`, NEVER THE MAP KEY.
    *
-   * A direct conversation created on this device is keyed by its groupId; one learnt from a Welcome
-   * is keyed by the PEER'S USER ID (`deriveConversationIdentity`). Every lookup in here used
-   * `conversations.get(groupId)`, which finds the first and misses the second - so on the receiving
-   * side of every DM the terminating answer was read, logged and then dropped on the floor: nothing
-   * was retired, and the idempotence check below could never fire either. The two cases are
-   * separated because they failed in opposite directions - one never terminating, one re-terminating
-   * for ever.
+   * No writer produces a row keyed by anything but its `id` (the "received DM keyed by the peer"
+   * premise these were written on was refuted 2026-10-04, `setupMessageHandler.test.ts` pins the
+   * Welcome writer). These keep a key that differs from the id on purpose: they pin that
+   * `findByGroupId` finds a conversation by `id` whatever its key, for both termination and
+   * idempotence.
    */
   it('retires a conversation keyed by the PEER, not by the group id', async () => {
     const deps = makeDeps({
@@ -871,17 +869,10 @@ describe('requestReAdd - a dead end the server already proved', () => {
 });
 
 /**
- * THE BADGE STAYED ON A CONVERSATION THAT HAD JUST REJOINED AND WORKED.
- *
- * Two key conventions live in one map: a DM created on this device is keyed by its groupId, one
- * learnt from a Welcome by the PEER'S USER ID (`deriveConversationIdentity`). The promotion after a
- * successful external join read the map by groupId, so for every RECEIVED DM it found nothing and
- * wrote nothing - and `saveConversation(groupId)` would have persisted nothing either. The
- * conversation was live in WASM, sendable and readable, wearing a badge that claimed otherwise until
- * the next login's reconciliation happened to notice.
- *
- * `findByGroupId` had already been written for exactly this, and the rule it carries is that any
- * `[key]` lookup over this heterogeneously-keyed map is a defect on sight.
+ * The promotion after a successful external join finds the row by `id` and saves it by the key it
+ * found. Every writer keys a row by its `id` (audited 2026-10-04, `docs/wiki/frontend/modules/chat.md`),
+ * so the first case below is a state no writer produces today; it pins that the lookup and the save
+ * stay right if one ever does.
  */
 describe('requestReAdd - the promotion after a successful external join', () => {
   const joined = () =>
