@@ -6,6 +6,7 @@ import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
+import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { mergeReadWatermark, withOwnReadAdvanced } from '$lib/utils/chat/readState';
@@ -340,6 +341,27 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
               Number(msg.reaction.at ?? 0),
               msg.reaction.removed === true
             );
+            return;
+          }
+          // An edit is a silent row as well, and changes a bubble instead of adding one. The
+          // sender is the row's - proven by Graine v2 - and `applyChannelEdit` compares it with
+          // the target's author. A bubble not loaded here is picked up by the next history load,
+          // which reads the same row.
+          if (msg?.edit) {
+            const current = conversations.get(channelId);
+            if (current) {
+              const { messages, applied } = applyChannelEdit(
+                current.messages,
+                {
+                  targetMessageId: String(msg.edit.messageId ?? ''),
+                  senderId: String(sender || '').toLowerCase(),
+                  newContent: String(msg.edit.newContent ?? ''),
+                  editedAt: Number(msg.edit.editedAt ?? 0),
+                },
+                log
+              );
+              if (applied) conversations.set(channelId, { ...current, messages });
+            }
             return;
           }
           if (msg) {

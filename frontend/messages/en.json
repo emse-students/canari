@@ -2956,6 +2956,7 @@
   "channel_action_community_leave": "Left community",
   "channel_action_community_delete": "Community deletion",
   "channel_action_message_delete": "Message deletion",
+  "channel_action_message_edit": "Message edit",
   "channel_action_message_react": "Message reaction",
   "channel_action_message_send": "Sending the message",
   "channel_action_poll_vote": "Voting in the poll",

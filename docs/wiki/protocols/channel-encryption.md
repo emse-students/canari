@@ -2909,6 +2909,17 @@ temporary mirror, with each refusal falsified. `background.rs` covers the sender
 three endorsement cases (endorsed, forged by another member, minted by a device the tree does not
 hold). `channelPushFields.test.ts` now expects `signature` in the inline group on all three readers.
 
+### 21.5b What a salon EDIT trusts (2026-10-05)
+
+A salon edit is a silent row whose authorship every reader checks against the row's sender
+(`applyChannelEdit`, [chat](../frontend/modules/chat.md#editing-your-own-message-in-a-salon-2026-10-05)).
+**That sender is PROVEN only for a row under a v2 session** (signature and minter checked by
+`openChannelMessage`). A row still opened under a v1 session carries a server-supplied, unsigned
+`senderId`, so a malicious server, or a v1 row from before G2-5, could forge an edit "from" the
+author. This is the same trust level as DELETE today (the server alone decides whose delete it
+honours), so it is not a regression, and edits are deliberately NOT restricted to v2. It closes when
+the last v1 session ages out with the v1 reader ([legacy-compatibility](../legacy-compatibility.md)).
+
 ### 21.6 The writer (WP-G2-5)
 
 Every send is v2 from this release on. It ships only once `minClientVersion` is R1 (the G2-4
