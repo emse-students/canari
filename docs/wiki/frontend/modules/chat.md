@@ -91,6 +91,31 @@ apps themselves (no WebView here), a real account, and the keyboard on a phone.
 | `ComposerEmojiPicker.svelte` | Emoji picker for the text input itself, desktop only |
 | `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
 
+### Every member list reads by family name, and a row never moves because its name arrived (2026-10-05)
+
+Asked by the user: the community admin panel listed its members by user id, the group panel and a
+channel's member list in the server's order. All three now render through `membersByFamilyName`
+(`utils/users/memberOrder.svelte.ts`) - `SidebarCommunityAdminPanel`, `ChatGroupPanel` and
+`ChannelMembersList` (inside each of its two sections).
+
+- **The order is ONE pure helper**, `sortByFamilyName` in `utils/users/familyNameOrder.ts`, shared
+  with the poster's directory ([carte-vie-asso](../../carte-vie-asso.md)): `lastName`, else the
+  printed name, then `firstName`, under `Intl.Collator('fr', { sensitivity: 'base' })` - accents
+  and case never reorder, hyphens and particles compare as written - and the id as the last,
+  locale-free tie-break. A member nothing names sorts LAST, in id order.
+- **The name columns come from the profile** (`fetchUserProfile`), never from splitting the
+  "Prenom NOM" string, which guesses wrong on a compound surname. The lookup is the same batched,
+  cached request the rows' `UserName` cells already make.
+- **No reshuffle.** An id is listed only once its lookup has SETTLED, and its key is then FROZEN:
+  until the first one settles the panel shows its loading line; a lookup that failed sorts last and
+  stays there when the name later repaints in place; a member who joins appears at their place. The
+  community panel stays mounted while closed, so it empties its list on close and the next opening
+  re-reads every name. Pinned by `memberOrder.svelte.test.ts`, `familyNameOrder.test.ts` and
+  `ChannelMembersList.order.svelte.test.ts`.
+
+Association rosters (`EditMembersTab`, `AssociationDetailView`) are NOT sorted: their order is the
+one the bureau arranges by drag (`sortOrder`), and the president is its first row.
+
 ### One attachment menu, and a GIF panel in the keyboard's place (2026-10-02)
 
 Two reports from the user on the iPhone 12, with a screen recording. *"Deux menus similaires, n'en

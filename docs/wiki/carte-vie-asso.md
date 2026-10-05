@@ -188,7 +188,10 @@ them.
 member the mirror has no family name for sorting under the name that is PRINTED for them - the only
 string a reader can look them up by. Both render paths call it (`PosterCanvas.svelte`'s directory
 footer and `publish.ts`'s `directoryLine`), which is what keeps the preview and the published
-document identical; they held a copy of the sort each before this.
+document identical; they held a copy of the sort each before this. Since 2026-10-05 its rule is
+`sortByFamilyName` (`utils/users/familyNameOrder.ts`), the one every on-screen member list uses
+too ([chat](frontend/modules/chat.md#every-member-list-reads-by-family-name-and-a-row-never-moves-because-its-name-arrived-2026-10-05)):
+French base collation, and the user id as the final tie-break.
 
 Roster order is untouched: `bubble.president` is still the first row and `bubble.bureau` still the
 admins after it, in the order an author arranged with `sortOrder`. Only the directory listing is

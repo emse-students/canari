@@ -36,6 +36,7 @@
   } from '$lib/crypto/graineConstants';
   import { m } from '$lib/paraglide/messages';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
   import { Log } from '$lib/utils/Log';
   import Picker from '../ui/Picker.svelte';
   import type { PickerOption } from '../ui/picker';
@@ -130,6 +131,13 @@
   let membersLoadToken = 0;
   let memberRoleSaving = $state<Record<string, boolean>>({});
   let memberRemoving = $state<Record<string, boolean>>({});
+  // The rows are READ by family name (user, 2026-10-05); the order is frozen per member once their
+  // profile settles, so a name landing late never moves a row (see `membersByFamilyName`).
+  const memberOrder = membersByFamilyName(() => communityMembers.map((mem) => mem.userId));
+  const orderedMembers = $derived.by(() => {
+    const byId = new Map(communityMembers.map((mem) => [mem.userId, mem]));
+    return memberOrder.current.flatMap((id) => byId.get(id) ?? []);
+  });
 
   // ── Roles & permissions state ───────────────────────────────────────────
   let rolesLoading = $state(false);
@@ -293,7 +301,8 @@
         const highest = memberRoles.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
         return { userId: mem.userId, role: normalizeRoleLabel(highest?.name ?? 'member') };
       });
-      communityMembers = members.sort((a, b) => a.userId.localeCompare(b.userId));
+      // Display order is `memberOrder`'s job (family name), not the load's.
+      communityMembers = members;
     } catch (e) {
       Log.d('communityAdmin.loadCommunityMembers failed', e);
       if (loadToken !== membersLoadToken) return;
@@ -622,6 +631,9 @@
     if (open && activeTab === 'members') void loadCommunityMembers();
     if (open && activeTab === 'roles') void loadRolesAndPermissions();
     if (!open) {
+      // Emptied so the next opening re-reads every member's name: `memberOrder` freezes a key for
+      // as long as its id stays listed, and this panel stays mounted while closed.
+      communityMembers = [];
       inviteStatus = '';
       inviteUserId = '';
       inviteRole = 'member';
@@ -886,7 +898,8 @@
                 {inviteStatus}
               </div>
             {/if}
-            {#if membersLoading}
+            {#if membersLoading || (communityMembers.length > 0 && orderedMembers.length === 0)}
+              <!-- Also while no member's name has settled: a list shown now would reorder itself. -->
               <div class="text-text-muted p-6 text-center">
                 {m.chat_community_loading_members()}
               </div>
@@ -896,7 +909,7 @@
               <div class="text-text-muted p-6 text-center">{m.chat_community_no_members()}</div>
             {:else}
               <div class="divide-cn-border/70 divide-y">
-                {#each communityMembers as member (member.userId)}
+                {#each orderedMembers as member (member.userId)}
                   <div class="flex items-center justify-between gap-3 px-4 py-3">
                     <div class="flex min-w-0 items-center gap-2.5">
                       <Avatar userId={member.userId} size="sm" />

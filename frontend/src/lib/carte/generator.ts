@@ -1,5 +1,6 @@
 import type { Association, AssociationCategory, AssociationMember } from '$lib/associations/api';
 import { associationAccent } from '$lib/associations/accent';
+import { sortByFamilyName } from '$lib/utils/users/familyNameOrder';
 
 /**
  * The persisted poster layout ("project.layout"). Stores the chrome (background) plus the
@@ -65,15 +66,13 @@ export interface PosterMemberRef {
  * @returns A new array, sorted by family name then given name.
  */
 export function orderByFamilyName(members: PosterMemberRef[]): PosterMemberRef[] {
-  const key = (mem: PosterMemberRef) => ({
-    family: mem.lastName?.trim() || mem.name,
-    given: mem.firstName?.trim() || '',
-  });
-  return [...members].sort((a, b) => {
-    const ka = key(a);
-    const kb = key(b);
-    return ka.family.localeCompare(kb.family) || ka.given.localeCompare(kb.given);
-  });
+  // The rule itself is shared with every on-screen member list (`utils/users/familyNameOrder`), so
+  // the poster and the panels can never disagree about who comes first.
+  return sortByFamilyName(
+    members,
+    (mem) => ({ firstName: mem.firstName, lastName: mem.lastName, displayName: mem.name }),
+    (mem) => mem.userId
+  );
 }
 
 /**
