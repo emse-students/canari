@@ -188,7 +188,9 @@ describe('AssociationsController directory scope (D37)', () => {
     ['formation', ['u1', undefined, undefined, undefined, 'MBA']],
   ] as const)('refuses an unknown %s', async (_name, args) => {
     const { controller, service } = makeController();
-    await expect(controller.list(...args)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      controller.list(...(args as unknown as Parameters<typeof controller.list>))
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(service.list).not.toHaveBeenCalled();
   });
 });
