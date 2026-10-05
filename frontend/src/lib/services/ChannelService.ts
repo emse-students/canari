@@ -496,6 +496,21 @@ export class ChannelService {
   }
 
   /**
+   * Persists the order of a community's salons for EVERY member (needs the channel-management
+   * permission). `orderedIds` is the caller's visible list in its new order.
+   */
+  async reorderChannels(workspaceId: string, orderedIds: string[]): Promise<void> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${workspaceId}/channels/reorder`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ orderedIds: orderedIds.map((id) => this.normalizeChannelId(id)) }),
+      }
+    );
+    await this.handleError(res);
+  }
+
+  /**
    * Returns the community's one live invite link, minting it if there is none.
    *
    * `rotate` is the only way to get a new token: it revokes the live one and mints its

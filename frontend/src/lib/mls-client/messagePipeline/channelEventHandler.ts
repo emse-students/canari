@@ -228,6 +228,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onWorkspaceUpdated?.({
       workspaceId: String(data.workspaceId || ''),
       imageMediaId: data.imageMediaId,
+      channelsReordered: data.channelsReordered === true,
     });
     return;
   }

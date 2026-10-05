@@ -66,6 +66,7 @@ describe('ChannelService - the community distribution group', () => {
       },
     };
     const channelRepo = {
+      maximum: jest.fn().mockResolvedValue(null),
       findOne: jest.fn(),
       find: jest.fn().mockResolvedValue([]),
       create: jest.fn((x: Record<string, unknown>) => x),

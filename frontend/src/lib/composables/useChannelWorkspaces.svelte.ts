@@ -40,6 +40,7 @@ import {
   ensureCommunityDistributionGroup,
   enterPrivateSalonGroup,
 } from '$lib/utils/graine/distributionGroup';
+import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
 
@@ -893,7 +894,9 @@ export function useChannelWorkspaces() {
       ctx.log('Cannot create channel: select a community first.');
       return;
     }
-    const normalizedChannelName = nameRaw.trim().toLowerCase();
+    // Stored as typed: a salon name is a display string, the id is its identity. The server is the
+    // authority on what is refused (empty, too long, control characters).
+    const normalizedChannelName = nameRaw.trim();
     if (!normalizedChannelName) return;
 
     try {
@@ -1357,7 +1360,7 @@ export function useChannelWorkspaces() {
     newName: string,
     ctx: ChannelWorkspaceContext
   ) {
-    const trimmed = newName.trim().toLowerCase();
+    const trimmed = newName.trim();
     if (!channelConversationId || !trimmed) return;
     try {
       await service.renameChannel(channelConversationId, trimmed);
@@ -1435,6 +1438,50 @@ export function useChannelWorkspaces() {
       channelWorkspaces = previous;
       ctx.log(toUiActionError(m.channel_action_community_reorder(), error));
     }
+  }
+
+  /**
+   * Applies a drag or keyboard reorder of one community's salons optimistically, then persists it
+   * for every member. Rolls back to the previous order if the request fails.
+   */
+  async function reorderChannels(
+    workspaceSlug: string,
+    newOrder: ChannelSidebarItem[],
+    ctx: ChannelWorkspaceContext
+  ) {
+    const workspace = channelWorkspaces.find((ws) => ws.id === workspaceSlug);
+    if (!workspace?.workspaceDbId) return;
+    const previous = channelWorkspaces;
+    channelWorkspaces = channelWorkspaces.map((ws) =>
+      ws.id === workspaceSlug ? { ...ws, channels: newOrder } : ws
+    );
+    try {
+      await service.reorderChannels(
+        workspace.workspaceDbId,
+        newOrder.map((channel) => channel.id)
+      );
+    } catch (error) {
+      channelWorkspaces = previous;
+      ctx.log(toUiActionError(m.channel_action_channels_reorder(), error));
+    }
+  }
+
+  /**
+   * Re-reads one community's salon order from the server, after another member rearranged it.
+   * The announcement carries no ids on purpose (a private salon must not leak to members who cannot
+   * see it), so each device asks for its own filtered list and only reorders what it already has.
+   */
+  async function refreshChannelOrder(workspaceDbId: string): Promise<void> {
+    const channels = (await service.listChannels(workspaceDbId)) as ChannelDto[];
+    const orderedIds = channels
+      .map((channel) => channel.id || channel._id)
+      .filter((id): id is string => Boolean(id))
+      .map((id) => `channel_${id}`);
+    channelWorkspaces = channelWorkspaces.map((ws) =>
+      ws.workspaceDbId === workspaceDbId
+        ? { ...ws, channels: orderByIds(ws.channels, orderedIds) }
+        : ws
+    );
   }
 
   /**
@@ -1591,6 +1638,10 @@ export function useChannelWorkspaces() {
     updateCurrentWorkspaceImage,
     /** Applies a drag-and-drop reorder of the sidebar communities and persists it server-side. */
     reorderWorkspaces,
+    /** Applies a reorder of one community's salons and persists it for every member. */
+    reorderChannels,
+    /** Re-reads a community's salon order after another member rearranged it. */
+    refreshChannelOrder,
     /** Applies an incoming real-time workspace-updated event (cover image change). */
     handleWorkspaceRoleChanged,
     /** What each workspace role grants right now, keyed by role id - see the state's own note. */

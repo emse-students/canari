@@ -17,6 +17,8 @@ vi.mock('$lib/stores/auth', async (importOriginal) => ({
 vi.mock('$lib/paraglide/messages', () => ({
   m: {
     channel_action_community_load: vi.fn(() => 'Loading communities'),
+    channel_action_channels_reorder: vi.fn(() => 'Reordering channels'),
+    channel_action_error_unknown: vi.fn(({ action }: { action: string }) => `${action}: unknown`),
     channel_action_error_session: vi.fn(
       ({ action }: { action: string }) => `${action}: session expired`
     ),
@@ -46,6 +48,9 @@ vi.mock('$lib/utils/chat/channelCrypto', () => ({
 const listUserWorkspaces = vi.fn();
 const listChannels = vi.fn();
 const createWorkspace = vi.fn();
+const createChannel = vi.fn();
+const renameChannel = vi.fn();
+const reorderChannels = vi.fn();
 
 // Same reason as the auth mock above: `ChannelApiError` must be the real class, because that is
 // what `ChannelService.handleError` throws and what the code under test tests for.
@@ -55,6 +60,9 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
     createWorkspace = createWorkspace;
+    createChannel = createChannel;
+    renameChannel = renameChannel;
+    reorderChannels = reorderChannels;
   },
 }));
 
@@ -750,5 +758,85 @@ describe('useChannelWorkspaces - a salon joined in-session enters the group its 
     ).rejects.toThrow('group-info refused');
 
     expect(workspaceForChannel('ch-public')).toBe('ws1');
+  });
+});
+
+describe('useChannelWorkspaces - salon names and order', () => {
+  const FREE_NAME = 'Général 🎉 Équipe';
+
+  async function loadedStore() {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'Promo', 'promo')]);
+    listChannels.mockResolvedValue([
+      makeChannelDto('c1', 'one'),
+      makeChannelDto('c2', 'two'),
+      makeChannelDto('c3', 'three'),
+    ]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    await api.loadChannelWorkspacesFromBackend(ctx);
+    return { api, ctx };
+  }
+
+  const names = (api: ReturnType<typeof useChannelWorkspaces>) =>
+    api.channelWorkspaces[0].channels.map((c) => c.name);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    reorderChannels.mockReset();
+  });
+
+  it('creates a salon with the name exactly as typed, case, accents and emoji included', async () => {
+    const { api, ctx } = await loadedStore();
+    createChannel.mockResolvedValue({ id: 'c4', name: FREE_NAME });
+
+    await api.createNewChannel('ws1', `  ${FREE_NAME}  `, ctx);
+
+    expect(createChannel).toHaveBeenCalledWith(expect.objectContaining({ name: FREE_NAME }));
+    expect(names(api)).toContain(FREE_NAME);
+  });
+
+  it('renames a salon with the name exactly as typed', async () => {
+    const { api, ctx } = await loadedStore();
+    renameChannel.mockResolvedValue({ success: true });
+
+    await api.renameCurrentChannel('channel_c1', FREE_NAME, ctx);
+
+    expect(renameChannel).toHaveBeenCalledWith('channel_c1', FREE_NAME);
+    expect(names(api)[0]).toBe(FREE_NAME);
+  });
+
+  it('applies a reorder at once and sends the new order to the server', async () => {
+    const { api, ctx } = await loadedStore();
+    reorderChannels.mockResolvedValue(undefined);
+    const channels = api.channelWorkspaces[0].channels;
+
+    await api.reorderChannels('promo', [channels[2], channels[0], channels[1]], ctx);
+
+    expect(names(api)).toEqual(['three', 'one', 'two']);
+    expect(reorderChannels).toHaveBeenCalledWith('ws1', ['channel_c3', 'channel_c1', 'channel_c2']);
+  });
+
+  it('rolls the order back, and says so, when the server refuses', async () => {
+    const { api, ctx } = await loadedStore();
+    reorderChannels.mockRejectedValue(new Error('nope'));
+    const channels = api.channelWorkspaces[0].channels;
+
+    await api.reorderChannels('promo', [channels[2], channels[1], channels[0]], ctx);
+
+    expect(names(api)).toEqual(['one', 'two', 'three']);
+    expect(ctx.log).toHaveBeenCalled();
+  });
+
+  it('follows another member rearranging, from its own filtered list', async () => {
+    const { api } = await loadedStore();
+    listChannels.mockResolvedValue([
+      makeChannelDto('c2', 'two'),
+      makeChannelDto('c3', 'three'),
+      makeChannelDto('c1', 'one'),
+    ]);
+
+    await api.refreshChannelOrder('ws1');
+
+    expect(names(api)).toEqual(['two', 'three', 'one']);
   });
 });

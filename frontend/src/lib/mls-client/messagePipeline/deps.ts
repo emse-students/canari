@@ -72,7 +72,12 @@ export interface MessageHandlerDeps {
     viewerCanWrite?: boolean;
   }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
-  onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
+  onWorkspaceUpdated?: (event: {
+    workspaceId: string;
+    imageMediaId?: string;
+    /** The community's salons were rearranged: re-read the order, the event names no salon. */
+    channelsReordered?: boolean;
+  }) => void;
   /** This device's own role in a community changed - see `sessionTypes.onWorkspaceRoleChanged`. */
   onWorkspaceRoleChanged?: (event: {
     workspaceId: string;

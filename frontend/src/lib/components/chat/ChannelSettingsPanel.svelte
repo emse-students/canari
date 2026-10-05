@@ -369,7 +369,7 @@
   }
 
   function handleRenameChannel() {
-    const trimmed = channelNameInput.trim().toLowerCase();
+    const trimmed = channelNameInput.trim();
     if (trimmed && trimmed !== selectedChannel?.name) {
       onRenameChannel?.(selectedChannelId, trimmed);
     }
