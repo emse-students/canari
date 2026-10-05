@@ -558,6 +558,8 @@ the shadow offset follows the font size. `weekdayFullNames` is gone the same way
 (*"supprime ce parametre [...] les conventions du Canva sont generalement les bonnes"*). `pageBg` is
 derived: it only shows through where no image is set, so it is the cell colour lightened.
 
+**THE PHOTOGRAPH'S CONTROLS EXIST ONLY WITH A PHOTOGRAPH (2026-10-05).** Image strength, scrim, vignette (radial gradient to the scrim colour, 0-100 %) and blur (0-40 px) are all hidden until an image is loaded. Blur is a CSS `filter` on the image layer alone, grown `2 x radius` past the sheet so the faded edge is clipped; vignette is a gradient, not a filter. Both default to 0, so an existing sheet is unchanged. The options are page state (not stored), so `resetOptions` restores them with the rest. Helpers: `vignetteLayerHtml`, `blurLayerCss` in `calendarExport.ts`.
+
 ### THE PALETTE IS READ OFF THE PHOTOGRAPH
 
 `$lib/calendar/sheetPalette.ts`, on the user's ask: *"tu pourrais faire aussi en sorte que les

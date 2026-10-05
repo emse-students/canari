@@ -14,6 +14,8 @@
     buildPreviewInnerHtml,
     exportCalendarMonth,
     DEFAULT_EXPORT_OPTIONS,
+    VIGNETTE_MAX,
+    BLUR_MAX_PX,
     CALENDAR_CONTAINER_HEIGHT,
     CALENDAR_CONTAINER_WIDTH,
     fileToDataUrl,
@@ -265,20 +267,20 @@
                 <input type="file" accept="image/*" class="sr-only" onchange={handleBgChange} />
               </label>
             {/if}
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs"
-                >{m.calendar_export_image_intensity({ value: opts.bgOpacity })}</span
-              >
-              <input
-                type="range"
-                min="0"
-                max="100"
-                bind:value={opts.bgOpacity}
-                class="accent-cn-dark w-28"
-              />
-            </div>
-            <!-- A scrim only darkens the photograph, so it has nothing to do without one. -->
+            <!-- Every control below acts on the photograph, so none has anything to do without one. -->
             {#if opts.bgDataUrl}
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs"
+                  >{m.calendar_export_image_intensity({ value: opts.bgOpacity })}</span
+                >
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  bind:value={opts.bgOpacity}
+                  class="accent-cn-dark w-28"
+                />
+              </div>
               <div class="flex items-center justify-between gap-2">
                 <span class="text-text-muted text-xs"
                   >{m.calendar_export_scrim({ value: opts.scrimOpacity })}</span
@@ -288,6 +290,30 @@
                   min="0"
                   max="80"
                   bind:value={opts.scrimOpacity}
+                  class="accent-cn-dark w-28"
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs"
+                  >{m.calendar_export_vignette({ value: opts.vignetteOpacity })}</span
+                >
+                <input
+                  type="range"
+                  min="0"
+                  max={VIGNETTE_MAX}
+                  bind:value={opts.vignetteOpacity}
+                  class="accent-cn-dark w-28"
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs"
+                  >{m.calendar_export_blur({ value: opts.bgBlur })}</span
+                >
+                <input
+                  type="range"
+                  min="0"
+                  max={BLUR_MAX_PX}
+                  bind:value={opts.bgBlur}
                   class="accent-cn-dark w-28"
                 />
               </div>

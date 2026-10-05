@@ -11,6 +11,9 @@ vi.mock('$lib/associations/api', () => ({
 
 import {
   buildPreviewInnerHtml,
+  blurLayerCss,
+  BLUR_MAX_PX,
+  vignetteLayerHtml,
   DAY_NUM_H,
   DEFAULT_EXPORT_OPTIONS,
   EVENT_TITLE_LINE_HEIGHT,
@@ -324,5 +327,47 @@ describe('buildPreviewInnerHtml - what the on-screen sheet points its logos at',
 
     expect(html).toContain('src="https://media.test/api/media/public/m-1"');
     expect(html).not.toContain('src="/api/media/public/m-1"');
+  });
+});
+
+describe('background vignette and blur', () => {
+  const withBg = (extra: object) =>
+    buildPreviewInnerHtml([], 2026, 4, {
+      ...DEFAULT_EXPORT_OPTIONS,
+      bgDataUrl: 'data:image/png;base64,AAAA',
+      ...extra,
+    });
+
+  it('defaults leave the sheet unchanged', () => {
+    expect(DEFAULT_EXPORT_OPTIONS.vignetteOpacity).toBe(0);
+    expect(DEFAULT_EXPORT_OPTIONS.bgBlur).toBe(0);
+    const html = withBg({});
+    expect(html).not.toContain('radial-gradient');
+    expect(html).not.toContain('filter:blur');
+  });
+
+  it('draws a vignette layer and a blurred, oversized image layer when asked', () => {
+    const html = withBg({ vignetteOpacity: 60, bgBlur: 10 });
+    expect(html).toContain('radial-gradient(ellipse at center');
+    expect(html).toContain('rgba(11,18,32,0.60)');
+    expect(html).toContain('inset:-20px;filter:blur(10px);will-change:filter;');
+  });
+
+  it('draws neither without an image', () => {
+    const html = buildPreviewInnerHtml([], 2026, 4, {
+      ...DEFAULT_EXPORT_OPTIONS,
+      bgDataUrl: null,
+      vignetteOpacity: 60,
+      bgBlur: 10,
+    });
+    expect(html).not.toContain('data-full-bg');
+    expect(html).not.toContain('radial-gradient');
+  });
+
+  it('clamps the blur radius and the vignette strength', () => {
+    expect(blurLayerCss(9999)).toContain(`blur(${BLUR_MAX_PX}px)`);
+    expect(blurLayerCss(-5)).toBe('inset:0;');
+    expect(vignetteLayerHtml(500)).toContain('rgba(11,18,32,1.00)');
+    expect(vignetteLayerHtml(0)).toBe('');
   });
 });

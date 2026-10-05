@@ -2570,6 +2570,8 @@
   ],
   "calendar_month_grid_label": "Calendrier du mois",
   "calendar_export_month_label": "Mois",
+  "calendar_export_vignette": "Vignette ({value}%)",
+  "calendar_export_blur": "Flou ({value} px)",
   "calendar_export_scrim": "Voile ({value}%)",
   "calendar_export_bg_label": "Image de fond",
   "calendar_export_bg_loaded": "Image chargée",
