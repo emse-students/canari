@@ -2895,26 +2895,6 @@ The report for the stranded state this entry also asked for EXISTS: `reportStran
 names every `pending` seat past its window hourly, partitioned into *awaiting a queued Welcome*,
 *never added* and *kicked with no re-add* ([chat-delivery](services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart)).
 
-### P3 - openmls 0.8.1 PANICS on a corrupted PrivateMessage body instead of returning an error (found 2026-08-27)
-
-Found while writing a producer for the same-epoch refusal test: tampering with the AEAD-protected
-body of a `PrivateMessage` does not yield an `Err`. It aborts inside the library -
-`panicked at openmls-0.8.1/src/framing/private_message_in.rs:136: Ciphertext decryption failed`.
-
-**Why it is more than a test inconvenience.** In WASM a panic surfaces as `unreachable`, which
-`mlsDecryptError.ts` classifies as `'oom'`, which routes to `onMlsFatalError`. So **a byte string the
-server hands us can kill the MLS client**, and the server is not trusted with plaintext but IS the
-thing that stores and returns these bytes. Nothing on the ladder produces one today - the campaign
-never corrupts a frame - which is precisely why CORRUPT (rung 18) should, and it is the natural
-place to settle it.
-
-**What is NOT known:** whether the panic is reachable from a frame the server could actually return
-(a truncated or bit-flipped ciphertext row) or only from a hand-built one. Answer that before
-deciding between catching it at the WASM boundary and carrying it upstream to openmls.
-
-The workaround the tests use is to avoid the shape entirely: the producer is two members committing
-at the same epoch, which is the production shape anyway and returns cleanly.
-
 ### P2 - a group that never leaves its creation epoch keeps collecting device invitations nobody can honour (measured on prod 2026-08-30)
 
 Found by HEAL-REVOKE-7 `--order last` on `edb8d7ab` - the run that was supposed to confirm the P1
@@ -3220,10 +3200,6 @@ Closing it needs a choice between two bad options - asking the revocation route 
 answering `/api/mls/devices/:userId/:deviceId/revoked` to an unauthenticated caller, a device-enumeration
 oracle; the alternative is a local expiry, the exact clock this project refuses to make load-bearing.
 **That question is the whole of what stays open here.**
-
-### A deleted group leaves every OTHER member a dead row - DECIDED 2026-10-04: NOTHING IS BUILT
-
-The retention is deliberate (a banner instead of a silent removal) and the user chose to keep the per-row exit only. No bulk action and no age-out; the rig's `dismiss.mjs` stays the way to sweep its own debris.
 
 ### P1 - a REVOKED device kept its local store, restored only SOME conversations, and a locally-pending deletion blocked the new conversation with that peer
 
