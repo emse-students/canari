@@ -706,3 +706,9 @@ right column and the right date, and that it is absent for an admin and for an a
 **Nothing has run this against a database**, so the `::timestamptz` cast is asserted as text and not
 as a plan. The population it will meet is also unmeasured - how many events on prod start before the
 cutoff of a current promo is one `GROUP BY` nobody has run.
+
+## THE PUBLIC FEED PER SELECTION (D40, 2026-10-05)
+
+`calendar/feed` and `feed.ics` accept `?campus=` / `?formation=`; see
+[profiles-and-access](../../profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05).
+No frontend selector yet (undecided there).

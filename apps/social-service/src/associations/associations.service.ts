@@ -17,6 +17,7 @@ import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { mediaUrl } from '../internal/service-urls';
 import { applyMediaRetentionClass } from '../internal/media-retention-class';
+import type { SpaceSelection } from './directory-query';
 import { Association } from './entities/association.entity';
 import {
   AssociationMember,
@@ -67,6 +68,7 @@ import {
 } from '../spaces/bde';
 import {
   associationRulesReachSpaceMatchingSql,
+  eventReachesSpaceMatchingSql,
   associationVisibleToViewerSql,
   eventVisibleToViewerSql,
   READER_SPACES_SQL,
@@ -1314,6 +1316,28 @@ export class AssociationsService {
     });
   }
 
+  /**
+   * THE ANONYMOUS AGENDA PER SELECTION (D40): keeps the events reached by a space matching the
+   * selected campus and/or formation (`eventReachesSpaceMatchingSql`, organiser or accepted
+   * co-organiser). No selection leaves the feed whole, as before. Relevance, not confidentiality.
+   */
+  private restrictToSelection(
+    qb: SelectQueryBuilder<AssociationCalendarEvent>,
+    selection: SpaceSelection | undefined
+  ): void {
+    const campus = selection?.campus ?? null;
+    const formation = selection?.formation ?? null;
+    if (campus === null && formation === null) return;
+    this.logger.debug(`[AGENDA] narrowed to spaces ${formation ?? '*'} x ${campus ?? '*'}`);
+    qb.andWhere(
+      eventReachesSpaceMatchingSql('e', {
+        campus: campus === null ? null : ':agendaCampus',
+        formation: formation === null ? null : ':agendaFormation',
+      }),
+      { agendaCampus: campus, agendaFormation: formation }
+    );
+  }
+
   /** Max span for aggregated calendar queries (abuse guard). */
   private static readonly CALENDAR_FEED_MAX_MS = 550 * 24 * 60 * 60 * 1000;
 
@@ -1785,7 +1809,7 @@ export class AssociationsService {
     fromIso?: string,
     toIso?: string,
     associationId?: string,
-    opts?: { includePending?: boolean; viewer?: CalendarViewer }
+    opts?: { includePending?: boolean; viewer?: CalendarViewer; selection?: SpaceSelection }
   ) {
     const defaultRange = AssociationsService.defaultCalendarFeedRange();
     const from = fromIso?.trim() ? new Date(fromIso.trim()) : defaultRange.from;
@@ -1821,6 +1845,7 @@ export class AssociationsService {
       qb.andWhere('e.startsAt >= :promoCutoff::timestamptz', { promoCutoff });
     }
     this.restrictToViewerSpaces(qb, opts?.viewer);
+    this.restrictToSelection(qb, opts?.selection);
     // Default: validated events only. Members allowed to propose can also see pending
     // events (greyed in UI); rejected events are never shown here.
     if (opts?.includePending) {

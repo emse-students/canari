@@ -26,6 +26,7 @@ import {
   announceRecipientsSql,
   associationRulesReachSpaceMatchingSql,
   associationVisibleToViewerSql,
+  eventReachesSpaceMatchingSql,
   eventVisibleToViewerSql,
   postVisibleToUserSql,
   postVisibleToViewerSql,
@@ -432,6 +433,26 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     });
   });
 
+  it.each([
+    [{ campus: 'gardanne', formation: null }, ['E2', 'E3', 'E4']],
+    [{ campus: 'saint-etienne', formation: null }, ['E1']],
+    [{ campus: null, formation: 'ICM' }, ['E1', 'E2', 'E3', 'E4']],
+    [{ campus: null, formation: 'ISMIN' }, ['E2', 'E3', 'E4']],
+    [{ campus: 'saint-etienne', formation: 'ISMIN' }, []],
+  ] as const)('the anonymous agenda selection %j keeps %j (D40)', async (filter, expected) => {
+    const params: string[] = [];
+    const slot = (v: string | null) => (v === null ? null : `$${params.push(v)}`);
+    const sql = eventReachesSpaceMatchingSql('e', {
+      campus: slot(filter.campus),
+      formation: slot(filter.formation),
+    });
+    const { rows } = await client.query(
+      `SELECT e.id FROM association_calendar_events e WHERE ${sql} ORDER BY e.id`,
+      params
+    );
+    expect(rows.map((r) => EVENTS.find((ev) => ev.id === r.id)?.label)).toEqual(expected);
+  });
+
   it('lists each reader their directory (D37): rules or membership, an admin as anyone', async () => {
     const seen: Record<string, string[]> = {};
     for (const id of EVERYONE) {
@@ -450,7 +471,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       adminIcm: ['A1'],
       staff: ['A1'],
       outsider: [],
-      notBackfilled: [],
+      // A member of A3 sees it in the directory: D37 lists what one belongs to, rules or not.
+      notBackfilled: ['A3'],
     });
   });
 
