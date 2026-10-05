@@ -2961,3 +2961,21 @@ Before / after (frames at 15 fps, the same swipe from the feed, Mi 9T):
 | --- | --- | --- |
 | Feed -> camera, the frames between the slide and the first preview frame | black "Ouverture de la camera" for 600 ms, then ONE frame of the grey glyph | Canari's navy stand-in throughout, cross-faded to the preview |
 | Camera -> feed, the bar | absent on the 4 frames of the slide, present at +270 ms | present on the first frame of the slide |
+
+## 41. The system back gesture takes the edge touch, and the swipe back stayed armed (Mi 9T, 2026-10-05)
+
+**Reported by the user as a P1: open the keyboard in a conversation, close it with the Android back
+swipe from the left edge, scroll up - and the conversation closes.** Reproduced on the Mi 9T, and the
+cause read from the page's own history rather than guessed: a `history.back()` hook showed
+`goBackToMenu` called from `swipeBack`'s `onBack` at the moment of the scroll.
+
+`swipeBack` arms on any touch within 28px of the left edge. On Android the SYSTEM back gesture owns
+that strip: it takes the touch, so the WebView gets `touchcancel` and never `touchend`. Nothing
+listened to `touchcancel`, so `tracking` stayed true with `startX` at the edge, and the next stroke -
+a vertical scroll at mid-screen - read as a 540px rightward drag from there and committed.
+
+The rule: **a gesture that arms on `touchstart` must disarm on `touchcancel`, and a new `touchstart`
+supersedes any unfinished touch.** `swipeBack` and `pullToRefresh` (same shape: a stale `active`
+could fire a refresh at the end of an unrelated stroke) now do both; the other touch handlers
+(`MessageBubble`, `ReelViewer`, `MediaLightbox`, `PdfViewerModal`) already handle `touchcancel`.
+Tests: `swipeBack.test.ts` (a cancelled edge touch, then a mid-screen scroll).
