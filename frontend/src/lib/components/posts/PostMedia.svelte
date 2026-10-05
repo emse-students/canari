@@ -60,7 +60,9 @@
      * TRUE wherever the box's width is imposed by something other than the picture - a single
      * attachment stacked under the post text, where the card sets the width and the ceiling sets
      * the height, so the two rarely agree with the picture's own shape. FALSE for the multi-image
-     * grid, whose square cells are square ON PURPOSE and where filling the cell is the point.
+     * grid, whose square cells are square ON PURPOSE and where filling the cell is the point - except
+     * for a VIDEO cell, which sets it: for a clip it means "fill the caller's box, cropped", where
+     * without it the clip draws its own 16:9 card inside the square.
      *
      * The fill is the same already-decrypted blob drawn again as a blurred `cover` layer, under a
      * veil of `--cn-surface`. That is deliberately not a dominant-colour extraction: no canvas, no

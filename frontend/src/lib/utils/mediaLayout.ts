@@ -3,9 +3,6 @@ import type { MediaType } from '$lib/media';
 /** Default aspect ratio when width/height are unknown (legacy messages). */
 export const DEFAULT_MEDIA_ASPECT = 4 / 3;
 
-/** Square grid cells for multi-image posts. */
-export const GALLERY_MEDIA_ASPECT = 1;
-
 const MIN_ASPECT = 0.25;
 const MAX_ASPECT = 4;
 

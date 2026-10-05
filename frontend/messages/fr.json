@@ -677,6 +677,17 @@
   "post_image_enlarged_alt": "Média agrandi",
   "post_image_label": "Image",
   "post_gallery_label": "Galerie de médias",
+  "post_gallery_more_count": "+{count}",
+  "post_gallery_more_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Voir {count} autre média",
+        "countPlural=other": "Voir {count} autres médias"
+      }
+    }
+  ],
   "post_media_file_label": "Fichier",
   "post_media_video_label": "Vidéo",
   "post_fullscreen_label": "Plein écran",
