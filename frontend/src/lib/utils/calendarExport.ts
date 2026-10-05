@@ -130,6 +130,16 @@ export interface CalendarExportOptions {
    * Only has an effect when `bgDataUrl` is set.
    */
   scrimOpacity?: number;
+  /**
+   * Vignette strength in percent (0-{@link VIGNETTE_MAX}): the edges of the background IMAGE darken
+   * toward the scrim colour. Default: 0 (off). Only has an effect when `bgDataUrl` is set.
+   */
+  vignetteOpacity?: number;
+  /**
+   * Gaussian blur radius, in sheet pixels (0-{@link BLUR_MAX_PX}), applied to the background IMAGE
+   * only. Default: 0 (off). Only has an effect when `bgDataUrl` is set.
+   */
+  bgBlur?: number;
   /** Month title + weekday name colour (hex). Default: '#ffffff'. */
   textColor?: string;
   /**
@@ -155,6 +165,8 @@ export interface CalendarExportOptions {
 export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDataUrl'>> = {
   bgOpacity: 100,
   scrimOpacity: 0,
+  vignetteOpacity: 0,
+  bgBlur: 0,
   textColor: '#ffffff',
   accentColor: '#a01f2d',
   cellBg: '#8b939c',
@@ -164,6 +176,35 @@ export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDat
 
 /** Colour of the scrim - a legibility device over a photograph, never a design choice. */
 const SCRIM_COLOR = '#0b1220';
+/** Same colour as {@link SCRIM_COLOR}, as the channels a gradient stop with an alpha needs. */
+const SCRIM_RGB = '11,18,32';
+
+/** Upper bound of the vignette slider, in percent. */
+export const VIGNETTE_MAX = 100;
+/** Upper bound of the blur slider, in sheet pixels: past it a blur costs the GPU and shows nothing more. */
+export const BLUR_MAX_PX = 40;
+
+/**
+ * The vignette layer: a radial gradient from clear in the middle to the scrim colour at the corners.
+ * A plain gradient, never a filter, so it rasterises like the scrim does. Empty when off.
+ */
+export function vignetteLayerHtml(vignetteOpacity: number): string {
+  const pct = Math.min(VIGNETTE_MAX, Math.max(0, vignetteOpacity || 0));
+  if (pct <= 0) return '';
+  const alpha = (pct / 100).toFixed(2);
+  return `<div style="position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(${SCRIM_RGB},0) 45%,rgba(${SCRIM_RGB},${alpha}) 100%);"></div>`;
+}
+
+/**
+ * Position and filter CSS for the image layer. With a blur the layer is grown past the sheet by
+ * twice the radius so the blurred edge (which fades to transparent) falls outside the clipping box
+ * instead of showing as a pale frame; `will-change` keeps it on its own GPU layer.
+ */
+export function blurLayerCss(bgBlur: number): string {
+  const px = Math.min(BLUR_MAX_PX, Math.max(0, Math.round(bgBlur || 0)));
+  if (px <= 0) return 'inset:0;';
+  return `inset:-${px * 2}px;filter:blur(${px}px);will-change:filter;`;
+}
 
 type ResolvedOpts = Required<CalendarExportOptions>;
 
@@ -676,7 +717,7 @@ function buildCalendarHtml(
   // The image layer carries the opacity and the scrim is its SIBLING, not its child: the scrim is a
   // legibility device over the photo and must not be faded along with it.
   const fullBgHtml = opts.bgDataUrl
-    ? `<div data-full-bg style="position:absolute;inset:0;overflow:hidden;pointer-events:none;"><div style="position:absolute;inset:0;background-image:url('${opts.bgDataUrl}');background-size:cover;background-position:center;background-repeat:no-repeat;opacity:${(opts.bgOpacity / 100).toFixed(2)};"></div>${scrimLayer}</div>`
+    ? `<div data-full-bg style="position:absolute;inset:0;overflow:hidden;pointer-events:none;"><div style="position:absolute;${blurLayerCss(opts.bgBlur)}background-image:url('${opts.bgDataUrl}');background-size:cover;background-position:center;background-repeat:no-repeat;opacity:${(opts.bgOpacity / 100).toFixed(2)};"></div>${vignetteLayerHtml(opts.vignetteOpacity)}${scrimLayer}</div>`
     : '';
 
   return `

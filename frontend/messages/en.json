@@ -2543,6 +2543,8 @@
   ],
   "calendar_month_grid_label": "Month calendar",
   "calendar_export_month_label": "Month",
+  "calendar_export_vignette": "Vignette ({value}%)",
+  "calendar_export_blur": "Blur ({value} px)",
   "calendar_export_scrim": "Scrim ({value}%)",
   "calendar_export_bg_label": "Background image",
   "calendar_export_bg_loaded": "Image loaded",
