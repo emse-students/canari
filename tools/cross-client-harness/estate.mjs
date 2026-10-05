@@ -23,7 +23,7 @@
  * and an ESTATE is not**, so they are different modules - the same split `native-residue.mjs`,
  * `servable.mjs`, `usability.mjs` and `marker.mjs` each exist for.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { SITE } from './names.mjs';
 import { ssh } from './ssh.mjs';
 
@@ -82,6 +82,22 @@ export const psql = (sql, opts) =>
 const ANSI = /\u001b\[[0-9;]*m/g;
 
 /**
+ * A container's whole log, STDOUT AND STDERR. `docker logs` replays each stream on the stream it was
+ * written to, and Nest writes its ERROR lines to stderr - so `execFileSync` (stdout only) was blind
+ * to every ERROR a local service logged, while the production branch's `2>&1` saw them. Measured
+ * 2026-10-05: GRAINE-AUTH-3 failed on a `[CHANNEL_KEY_REUSED]` line that was in the container log.
+ */
+function dockerLogsBothStreams(service, since) {
+  const r = spawnSync('docker', ['logs', '--since', since, `canari-local-${service}-1`], {
+    encoding: 'utf8',
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  if (r.error || r.status !== 0) throw new Error(`docker logs canari-local-${service}-1 failed: ${r.error ?? r.stderr}`);
+  return `${r.stdout}
+${r.stderr}`;
+}
+
+/**
  * One service's log lines in the window, from WHICHEVER ESTATE `SITE` NAMES - ANSI stripped, blanks
  * dropped.
  *
@@ -108,11 +124,7 @@ const ANSI = /\u001b\[[0-9;]*m/g;
  */
 export function srvLines(service, since) {
   const out = LOCAL
-    ? execFileSync(
-        'docker',
-        ['logs', '--since', since, `canari-local-${service}-1`],
-        { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }
-      )
+    ? dockerLogsBothStreams(service, since)
     : ssh('canari', `docker logs --since ${since} infrastructure-${service}-1 2>&1 || true`, {
         timeoutMs: 90_000,
       });

@@ -42,7 +42,15 @@ import { channelIdOf, userIdOf, workspaceIdOf } from '../grainedb.mjs';
 import { psql, srvLines } from '../estate.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from '../names.mjs';
 import { exitOnRecorded, mark, record } from '../results.mjs';
-import { awaitLine, gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
+import {
+  awaitLine,
+  gate,
+  ignoringExpectedLog,
+  ignoringExpectedRefusal,
+  PAGE_BOOT_NARRATION,
+  report,
+  watch,
+} from '../watch.mjs';
 
 const argv = process.argv.slice(2);
 const only = argv.includes('--only') ? Number(argv[argv.indexOf('--only') + 1]) : null;
@@ -99,7 +107,7 @@ async function reopenOnW2(label) {
 }
 
 /** One tampering arm: edit, reload, look for the line and for the marker's absence, restore. */
-async function tamperArm(n, { edit, undo, needle }) {
+async function tamperArm(n, { edit, undo, needle, companions = [] }) {
   const id = `GRAINE-AUTH-${n}`;
   const since = new Date().toISOString();
   const { marker, row } = await sendAndAwait(`${n}`);
@@ -123,7 +131,7 @@ async function tamperArm(n, { edit, undo, needle }) {
     if (!line) unmet.push(`theReaderNeverSaid(${needle})`);
     if (shown > 0) unmet.push('theTamperedRowWasRENDERED');
     const gated = gate(unmet.length ? 'FAIL' : 'PASS', {
-      W2: ignoringExpectedLog(await report(obs), [needle, 'is REFUSED and not rendered', 'REFUSED and not rendered']),
+      W2: ignoringExpectedLog(await report(obs), [needle, 'is REFUSED and not rendered', 'REFUSED and not rendered', ...companions, ...PAGE_BOOT_NARRATION]),
     });
     record(id, gated.verdict, {
       ...gated.detail,
@@ -158,6 +166,9 @@ async function replayArm() {
   const before = psql(
     `SELECT count(*) FROM channel_messages WHERE "channelId" = '${channelId}'`
   ).trim();
+  // W2 IS OBSERVED, because the replay is its request: the 409 it provokes is named below, and
+  // anything else it says is dirt.
+  const obs = await watch(w2, 'graineauth-3');
   const answer = await apiPost(w2, `/api/channels/${channelId}/messages`, {
     ciphertext,
     nonce,
@@ -173,7 +184,12 @@ async function replayArm() {
   }
   if (after !== before) unmet.push('aSecondRowWasSTORED');
   if (!log) unmet.push('noCHANNEL_KEY_REUSEDLineInSocialService');
-  record(id, unmet.length ? 'FAIL' : 'PASS', {
+  const replayPath = new RegExp(`^/api/channels/${channelId}/messages$`);
+  const gated = gate(unmet.length ? 'FAIL' : 'PASS', {
+    W2: ignoringExpectedRefusal(await report(obs), [{ path: replayPath, status: [409] }]),
+  });
+  record(id, gated.verdict, {
+    ...gated.detail,
     unmet,
     status: answer.status,
     body: String(answer.body).slice(0, 160),
@@ -196,6 +212,8 @@ try {
         edit: (r) => `UPDATE channel_messages SET "messageIndex" = ${r.index + 1} WHERE id = '${r.id}'`,
         undo: (r) => `UPDATE channel_messages SET "messageIndex" = ${r.index} WHERE id = '${r.id}'`,
         needle: 'bad signature',
+        // The WASM verifier's own WARN, emitted on the same refusal it provokes - the cause, not noise.
+        companions: ['[GRAINE_SIG] signature does not verify'],
       });
     } else if (n === 3) {
       await replayArm();
