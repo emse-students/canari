@@ -145,7 +145,8 @@ export class SqliteStorage implements IStorage {
                 lifecycle        TEXT    DEFAULT 'pending',
                 updated_at       INTEGER DEFAULT 0,
                 read_watermarks  TEXT,
-                history_floor    INTEGER
+                history_floor    INTEGER,
+                image_media_id   TEXT
             )
         `);
 
@@ -365,6 +366,18 @@ export class SqliteStorage implements IStorage {
       // Stamped at 11, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 11');
     }
+
+    if (currentVersion < 12) {
+      // v11->v12: the conversation carries its group photo id, so the sidebar draws it from the
+      // local row at first render instead of waiting for the server's group list. Additive and
+      // NULL on arrival, which reads as "no photo known yet" - the next discovery fills it.
+      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
+      if (!cols.some((c) => c.name === 'image_media_id')) {
+        await this.db.execute('ALTER TABLE conversations ADD COLUMN image_media_id TEXT');
+      }
+      // Stamped at 12, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 12');
+    }
   }
 
   // -- Conversations -------------------------------------------------------
@@ -372,7 +385,7 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor) VALUES ($1, $2, $3, $4, $5, $6)',
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
       [
         conv.id,
         conv.name,
@@ -380,6 +393,7 @@ export class SqliteStorage implements IStorage {
         conv.updatedAt,
         conv.readWatermarks ? JSON.stringify(conv.readWatermarks) : null,
         conv.historyFloor ?? null,
+        conv.imageMediaId ?? null,
       ]
     );
   }
@@ -397,6 +411,8 @@ export class SqliteStorage implements IStorage {
       updatedAt: r.updated_at,
       readWatermarks: parseReadWatermarks(r.read_watermarks),
       historyFloor: parseHistoryFloor(r.history_floor),
+      imageMediaId:
+        typeof r.image_media_id === 'string' && r.image_media_id ? r.image_media_id : null,
     };
   }
 
@@ -629,7 +645,7 @@ export class SqliteStorage implements IStorage {
   async mergeConversation(conv: ConversationMeta): Promise<void> {
     // INSERT OR IGNORE: only insert if no row with this id already exists.
     await this.db.execute(
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor) VALUES ($1, $2, $3, $4, $5, $6)',
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
       [
         conv.id,
         conv.name,
@@ -637,6 +653,7 @@ export class SqliteStorage implements IStorage {
         conv.updatedAt,
         conv.readWatermarks ? JSON.stringify(conv.readWatermarks) : null,
         conv.historyFloor ?? null,
+        conv.imageMediaId ?? null,
       ]
     );
   }

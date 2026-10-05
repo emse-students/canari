@@ -489,3 +489,28 @@ nulls the column. Only the client can encrypt, so the conversion cannot happen i
 | `STRIPE_SECRET_KEY` | no | Stripe secret key (payments) |
 | `STRIPE_WEBHOOK_SECRET` | no | Stripe webhook signing secret |
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
+
+##### An absence is remembered, and a group photo is stored (2026-10-05)
+
+A HAR of the web client (443 requests, 22 s) showed 110 `GET /api/users/:id/avatar` for 37 URLs: 80 were
+404s for 7 users, 11-12 times each. The server's `max-age=600` on an absence was not reused by the browser
+and `userAvatarCache.ts` forgot `none` with the mount.
+
+- **A has-avatar flag in `/api/users/batch` is REFUTED**: the photo lives in MiGallery, core holds no
+  column for it, so the flag would cost one upstream call per profile, which is the request it replaces.
+- **A 404 is kept per URL for 10 minutes** - the lifetime the server already states - and cleared when the
+  signed-in reader changes. **Only a 404**: a 502 `unavailable` is not an answer. **What would make it
+  wrong**: the user adds a photo, in MiGallery, which no Canari screen does and nothing here is told; so
+  the lifetime is the only bound. Guarded by `userAvatarCache.test.ts` ("a known absence").
+- **Group photos came late for another reason**: `ConversationMeta` did not hold `imageMediaId`, so a
+  restored sidebar row had no photo id until the server's group list arrived after the connection (the
+  per-group `GET /api/mls/groups/:id` is NOT what feeds it). The id is now persisted (IndexedDB row, SQLite
+  `image_media_id`, schema v12) and discovery saves it when it changes. People's avatars need no id.
+  Guarded by `db/conversationImage.test.ts`. Communities come from the workspace list DTO, a network
+  call with no local copy: unchanged, and not measured in a browser.
+- **`groups/:id` and `user-members`**: `MlsDeliveryApi` joins simultaneous identical reads (entry lives
+  only as long as the request, no clock). `getGroupMeta` and `getGroupServerStatus` share one request.
+  **A `user-members` batch endpoint was NOT built**: its callers are membership guards and the stray
+  sweep, which walk one group at a time and need a fresh read; batching means restructuring them, and
+  the measured gain was 36-90 ms calls after the list had rendered. Guarded by
+  `mlsDeliveryApi.inFlight.test.ts`.
