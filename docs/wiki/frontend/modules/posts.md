@@ -393,10 +393,39 @@ Four changes from one reading of the feed on the phone, each measured at 436 px 
 blur, which takes the hue of the frame under it. It is now an amber glyph on a near-opaque
 `--color-cn-scrim` while muted and a solid `--cn-yellow` disc once the sound is on.
 
-The gallery lightbox holds `lightboxMedia`, which is the attachment list **compacted** to
-image/video. A grid position is therefore not a lightbox index: each cell resolves its own index
-via `indexOf`, and `-1` doubles as "not lightboxable". Passing the grid index would let one
-document renumber every image after it.
+### Several media: square cells, and a "+N" past four (2026-10-05)
+
+Decided by the user with a screenshot: a post of several pictures was a two-column grid whose
+cells kept each picture's OWN shape (#1378 had dropped the square cells), so a landscape photo
+beside a portrait one left a blank area under the shorter one. The gallery is now the
+Facebook / Instagram / Messenger shape, decided by one pure helper,
+`postGalleryLayout(count)` in `utils/posts/postGalleryLayout.ts`:
+
+| Pictures and videos | Layout |
+| --- | --- |
+| 1 | drawn at its own shape, exactly as a single-attachment post (`singleMedia` snippet) |
+| 2 | two squares side by side |
+| 3 | `feature`: a 3x2 grid, the first cell spanning 2x2 - one large square, two stacked squares |
+| 4 | a 2x2 |
+| more | the first four in the 2x2, the fourth under a `cn-scrim` veil saying `+N` (N = total - 4) |
+
+- **Three is the large-plus-two shape, not three in a row**: a row of three gives each picture a
+  third of a 390 px card, about 120 px, too small to read.
+- **Every cell carries `aspect-square`, the spanning one included.** Its height then comes from
+  its width and never from the picture, which would otherwise stretch the rows it spans. A square
+  also has a height known before any download, so the gallery reserves its exact box and nothing
+  under it moves when the pictures land - `mediaAspectStyle` is no longer asked for a cell.
+- **The cells are drawn FROM `lightboxMedia`**, the list compacted to image/video, so a cell's
+  position IS its viewer index and a document cannot renumber the pictures after it. The `+N` cell
+  opens the viewer at index 3, and the viewer moves through all of them.
+- **Files and audio are never cells**: they are rows under the grid, each drawn by the same
+  snippet as a single attachment, caption included.
+- **A video cell passes `letterbox`**, which for a clip means "fill the caller's box, cropped";
+  without it `PostMedia` draws its own 16:9 card inside the square.
+- The per-cell caption overlay is kept, and hidden under the `+N` veil.
+
+The chat has no equivalent grid (one attachment per message), and the composer's previews are
+already fixed `aspect-square` thumbnails in a scrolling row.
 
 ## PDF previews, and the in-app reader
 

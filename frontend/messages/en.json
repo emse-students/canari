@@ -653,6 +653,17 @@
   "post_image_enlarged_alt": "Enlarged media",
   "post_image_label": "Image",
   "post_gallery_label": "Media gallery",
+  "post_gallery_more_count": "+{count}",
+  "post_gallery_more_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "See {count} more item",
+        "countPlural=other": "See {count} more items"
+      }
+    }
+  ],
   "post_media_file_label": "File",
   "post_media_video_label": "Video",
   "post_fullscreen_label": "Full screen",
