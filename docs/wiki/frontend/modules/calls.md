@@ -173,3 +173,38 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 - [`services/call-service.md`](../../services/call-service.md) — SFU WebRTC relay
 - [`services/chat-delivery.md#calls`](../../services/chat-delivery.md#calls) — Backend call endpoints
 - [`protocols/mls-protocol.md`](../../protocols/mls-protocol.md) — E2E encryption for call signaling
+
+## The webrtc 0.20 port, measured 2026-09-15
+
+Dependabot #431 offers `webrtc`
+0.17.2 -> 0.20.5 and has sat red since 2026-09-07. The ceiling refuses it for the relay-path call,
+which is correct, but that refusal said by omission that the bump would otherwise be mechanical, and
+it would not. Reproduced locally (`cargo check` with `webrtc = "0.20.5"`, manifest restored
+afterwards): **26 errors, with the imports not even resolving.** The crate's root went from about
+twenty public modules to FIVE - `data_channel`, `media_stream`, `peer_connection`, `rtp_transceiver`,
+`runtime`, plus `error` - so all nineteen of `main.rs`'s `use webrtc::...` lines break: `webrtc::api`,
+`webrtc::ice`, `webrtc::ice_transport`, `webrtc::interceptor`, `webrtc::rtcp` and `webrtc::track` no
+longer exist.
+
+**0.20 is webrtc-rs re-founded as a thin async layer over the Sans-I/O [`rtc`](https://docs.rs/rtc)
+crate**, and the shape of the port is visible from its own documentation:
+
+| 0.17, what this SFU uses | 0.20 |
+| --- | --- |
+| `APIBuilder` + `MediaEngine` + `SettingEngine` + interceptor `Registry` | one `PeerConnectionBuilder` |
+| `RTCPeerConnection`, a struct | `PeerConnection`, a TRAIT, driven by a background `PeerConnectionDriver` |
+| `pc.on_track(Box::new(...))` and the other `on_*` closures | a `PeerConnectionEventHandler` trait you implement, async methods |
+| `webrtc::track::track_local` / `track_remote` | `media_stream::track_local` / `track_remote` |
+| tokio assumed | a `Runtime` trait; `runtime-tokio` is a default cargo FEATURE |
+
+Three names have no same-named replacement at all: `RTCRtpSender` (now the `RtpSender` trait),
+`RTPCodecType`, and `TrackLocalWriter`. `RTCPeerConnection` loses `close()` and `add_ice_candidate()`
+from its inherent surface. The rest of the types survive by name but move, mostly re-exported from
+`peer_connection` out of `rtc`.
+
+**This changes the ORDER of what is owed, not the verdict.** The call is still the gate, because a
+ported SFU that compiles is exactly the same nothing the current one is - six majors unplaced becomes
+nine majors unplaced. But whoever writes rung 15 CALL to retire the refusal should know they are
+retiring it against a crate this service has to be rewritten onto first, and should consider whether
+the port and the call belong in the same piece of work. The refusal text in
+`.github/scripts/lib/ceiling.sh` now says both.

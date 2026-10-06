@@ -676,6 +676,8 @@ asserts the ordering directly (31 assertions).
 
 ### A stable ships the latest pre-release, and `main` may move on (2026-10-02)
 
+**A PRE-RELEASE tag is still refused when `main` moved past its sha between the head read and the tag, and a rerun re-reads the same tag and cannot rescue it; a stable is immune** (it ships the latest alpha, #1367).
+
 A stable used to be built on the commit its tag named and pushed to `main`, so it was REFUSED the
 moment anything merged after that commit - each merge during a release cost a new tag. Now (user:
 *"une release n'opere que sur le tag de la derniere pre-release"*):

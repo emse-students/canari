@@ -36,6 +36,8 @@ no iPad, and on 2026-08-30 that stopped being an academic gap**: App Review ran 
 defect it found had been in every build the store ever had - check T, and the paragraph there saying
 why an iPhone settles that particular check for both.
 
+**iPad: switching into Canari from another app does not rotate the window (reported 2026-08-28)** - needs an iPad. Android phone rotation is decided: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)). **iOS lifecycle classes (suspension and resume, the WebView evicted under memory pressure, a socket that does not come back; named by the user 2026-08-27) are closed by lettered checks here, one at a time, never by a fix written against a lifecycle bug nobody has seen** - three of three iOS defects so far were invisible to every gate.
+
 Two consequences to carry deliberately rather than rediscover:
 
 - **The iOS half of the app ships on compilation alone**, and compilation proves nothing about

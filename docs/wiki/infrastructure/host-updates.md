@@ -1,5 +1,7 @@
 # Host OS updates
 
+**Since the 2026-09-24 cutover production runs on the Portail-etu host, and the host table below predates it**: `canari`, `cercle` and `miconnect` are the old VMs. Which hosts the daily report covers is the first open item of the [backlog](../backlog.md).
+
 **The chain that keeps dependencies current used to stop at the repository.** Dependabot, the
 auto-merge and the ceiling all reason about `package.json` and `Cargo.toml`; nothing reasoned about
 the DEBIAN PACKAGES on the four boxes those services run on, and on 2026-09-02 the production origin

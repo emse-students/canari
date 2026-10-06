@@ -897,3 +897,99 @@ chain is walked only when the favicon is what the card would draw
 **The resource timeline holds 250 entries and a cold start fills it**, so anything after ~+4.5 s is
 dropped unless `setResourceTimingBufferSize` is raised the moment the debugger attaches - only a CDP
 `Network` capture armed at attach named the 415s.
+
+## The JavaScript is parsed before anything runs; the delivery is solved (measured on production 2026-09-16)
+
+Measured against the **under 1 s** target, after `0.18.7`, by counting the `Link: rel=modulepreload`
+entries the SSR sends and fetching every one of them over a single reused connection:
+
+| route | chunks | wire (zstd) | raw |
+| --- | --- | --- | --- |
+| `/login` | 100 | 338.1 KB | - |
+| `/chat` | 160 (156 JS + 4 CSS) | 490.1 KB | **1 703 232 B (1.62 MB)** |
+
+`/calendar` is 141 and `/` is 101. **`/social` reads 10 and is NOT a low outlier - it answers 404,
+so those ten are the error shell.** Checked before reporting, because the number invited exactly the
+wrong conclusion.
+
+**THE DELIVERY IS ALREADY AS GOOD AS IT GETS.** Mean TTFB across the 160 was **21 ms**, every one a
+Cloudflare `HIT`, all multiplexed on one connection. Compression is working - 1.62 MB becomes 490 KB.
+There is nothing left to win by moving these bytes around, and **a task proposing to is proposing to
+re-measure this table**.
+
+**RE-MEASURED 2026-09-18, FROM THE OTHER DIRECTION, BECAUSE THE BUILD'S SHAPE INVITES THE OPPOSITE
+CONCLUSION**: the document declares 161 `modulepreload`s, the MEDIAN module is 311 B and 143 of 169
+are under 2 KB, which reads as a chunking defect. It is not one - 104 of them fetched in parallel on
+a warm connection take **178 ms**, and the 126 KB chunk that takes 1925 ms inside a cold page load
+takes **27-35 ms** alone. Merging chunks would change the count and not the time.
+[cold-start](#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
+
+**WHAT IS LEFT IS THE JAVASCRIPT ITSELF.** 1.62 MB of it is parsed and compiled on the main thread
+before the app runs, on the same thread that then decrypts twenty-four avatars and initialises MLS.
+On a mid-range phone that is a substantial fraction of the whole budget, and unlike the network half
+it cannot be moved to an edge.
+
+**AND THE SPLIT IS ROUTE-AWARE, SO THIS IS NOT ONE MISSING `import()`.** 100 / 141 / 160 across three
+real routes is a graph that genuinely differs per page.
+
+**DO NOT TOUCH THE PRELOAD HEADER AS A REMEDY.** Removing entries does not remove the work - those
+modules are imported by the entry graph and would be discovered later instead of sooner, which is
+strictly worse for latency. The preload is what makes the 21 ms possible.
+
+### The reading this entry asked for, done 2026-09-16: the root layout puts the chat engine on the login page
+
+The entry above said the next step was a reading of the build's own module graph, not a guess from a
+count. It was done with a local `BUILD_WEB=1 vite build --sourcemap`, whose closure reproduces
+production's to the byte - **105 files, 1 248 197 B raw**, top chunk **404 879 B** against
+production's 404 643 B, and **75 of `/login`'s 100 chunk hashes are identical** (the other 25 are
+the ones #742/#743/#749 re-hashed). Attribution is each chunk's own source map, never a name and
+never a token histogram - a first pass WAS a token histogram, and it is not evidence.
+
+**Two chunks are 44% of everything `/login` loads, and neither is about logging in:**
+
+| chunk | bytes | share | what the source map says is in it |
+| --- | --- | --- | --- |
+| `CUdrkmCQ.js` | 404 879 | 32.4% | 201 modules: `BaseMlsService.ts` (177 KB of source), `WebMlsService.ts`, `TauriMlsService.ts`, `IMlsService.ts`, the message pipeline, `useMessaging`, `useConversations`, `useChannelWorkspaces`, chat `history` / `outbox` / `recovery` / `groupActions`, `CallService.ts` |
+| `C_IhFxpp.js` | 146 160 | 11.7% | the protobuf codec: `src/lib/proto/canari.js` (336 KB of source) + `protobufjs` + `long` |
+
+**THE EDGE IS ONE STATIC IMPORT IN THE ROOT LAYOUT, AND THE MANIFEST NAMES IT.** Node 0 - the root
+layout - statically imports that chunk, so every route in the application carries it, `/login`
+included. The import is `globalChatSingleton.svelte.ts`, and that module **constructs five chat
+composables at module-evaluation time** (`useChatSession()`, `useConversations()`, `useMessaging()`,
+`useChannelWorkspaces()`, `useNotifications()` all run on load). Its own docblock states the reason
+and the reason is real - the socket and the MLS state must outlive a route change - but it is a
+reason about an AUTHENTICATED session, and `/login` is the one route where there is none. The layout
+already computes `isLoginPage`; it branches on it for rendering and not for loading.
+
+**THE SAME MAP READ ON THE LAYOUT'S OWN CHUNK (124 358 B, 10% of the route) SAYS CALLING IS ON THE
+LOGIN PAGE TWICE.** Of its 191 modules, `ChatBackgroundService.svelte` is 16.9% of the source and
+`CallOverlay.svelte` 7.6% - and `CallOverlay` sits beside the `CallService.ts` already counted in the
+engine chunk. Calling has been held off since 2026-09-01 with `CALLS_ENABLED = false`, and it costs
+roughly **19 KB minified on every route** while it is off. Recorded as a measurement and nothing
+more: the five switches move in ONE commit at revival, so the feature is not to be picked apart for
+bytes.
+
+**THE 216 458 B OF CSS IS NOT A FINDING.** It is the single Tailwind sheet the whole application
+shares, and it is 17.3% of `/login` for the same reason it is a small share of every other route.
+Written down so the next reading of this table does not spend a day discovering that on its own.
+
+**THE PROTOBUF CHUNK IS NOT A SECOND, INDEPENDENT EDGE - AND NOT PROVABLY THE SAME ONE EITHER.** The
+manifest has node 0's chunk importing it DIRECTLY as well as through the engine chunk, so whether
+moving the engine off `/login` would take those 146 160 B with it is exactly the kind of thing this
+reading refuses to assume. It is re-read from the manifest after any such change, not predicted
+before one.
+
+**WHAT IS ACTUALLY PAID THERE IS PARSE AND EVALUATION, NOT AN MLS BOOT**, and the distinction has to
+survive into whatever is done about it: the composable bodies are inert, `new MlsService()` sits
+behind `ensureMls()`, so nothing here opens a socket or touches the keystore on the login page. The
+cost is 551 039 B of JavaScript compiled and its top level run, before a form with two fields.
+
+**IT IS NOT THE COLD START THE TARGET IS ABOUT.** That one is measured on `/chat` by a user who HAS
+a session, where this chunk is needed and correct - and it currently has NO number at all, the
+`v0.18.5` figure predating the Cache Rule and three boot fixes. This finding is about a different
+person, the first arrival with no session, and any claim that moving it helps the logged-in boot is
+a claim this reading does not support. Two separate things, and they must not be merged into one
+task.
+
+The second finding of the same map - one MLS implementation per build, resolved at BUILD time - is
+shipped ([mobile](mobile.md)), and saved 13 846 B: not to be quoted as the cold start.
