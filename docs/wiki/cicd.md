@@ -511,6 +511,17 @@ the primary path failed - so the fix belongs there. The emergency path is unchan
 software: a human with admin rights acting by other means, written into `CHANGELOG.md` when taken.
 Gate 4 costs one extra pre-release in a real emergency, which deploys dev in minutes.
 
+**THE ADMIN BYPASS SHORTENS NOTHING, AND THAT IS THE DOCUMENTED PRICE (decided 2026-10-06, the
+cheaper of the two options the 2026-09-06 outage left).** `gh pr merge --admin` skips the ruleset's
+`CI passed` on the PULL REQUEST; gate 3 then refuses the release until `CI passed` has run on the
+merged commit - main's own CI, ~8 minutes after the merge, the same suite the bypass avoided. So the
+sequence in an emergency is: admin-merge, `gh run list --branch main` until CI is green, publish the
+pre-release (or `gh run rerun` a refused one - it needs no new tag, and rescues only this gate), then
+the stable. Gate 3's refusal says so in its own words (`release-preflight.sh`, pinned by
+`release-preflight.test.sh`). A short path that is actually short would need a gate that trusts
+something other than a green suite on the commit, and the project's rule is that a refusal names the
+test that would lift it, not a switch.
+
 #### The bump job
 
 It stages `git add -u`, so whatever the bump script writes is what gets committed — see

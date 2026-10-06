@@ -3727,13 +3727,7 @@ smoke account on both estates, its credentials as GitHub secrets, and accepting 
 real login on production. **The alternative - that nobody signs in before users do - is what happened
 on 2026-09-06.**
 
-**4. THE EMERGENCY PATH SHORTENS NOTHING.** P2, measured under real urgency. `gh pr merge --admin`
-skips the ruleset's required check on the PULL REQUEST; `release-preflight.sh` gate 3 then refuses
-the release because `CI passed` never ran on the commit - and the wait is for the same CI, later,
-after a failed release run. The bypass bought zero minutes and cost one refused run. Either write
-that down where somebody reaching for it will read it, or build a short path that is actually short.
-
-(Item 5, the misleading run view, shipped in `v0.18.18` - the three-library split is on
+(Items 4 and 5 shipped - 4 as wording, see [cicd](cicd.md); 5, the misleading run view, shipped in `v0.18.18` - the three-library split is on
 [cicd](cicd.md). **Any proposal here must keep four visible workflows** - user, not to be relitigated.)
 
 **6. AUTO-MERGE STAYS ARMED DURING AN INCIDENT, AND IT NEARLY UNDID THE FIX.** P2, and it was luck

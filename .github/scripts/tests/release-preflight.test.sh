@@ -198,6 +198,21 @@ check_latest v1.0.1-alpha.2 1.0.1 v1.0.1-alpha.2 v1.0.2-alpha.7 v1.0.10-alpha.1 
 check_latest '' 1.0.1 v1.0.2-alpha.1 v1.0.1 v1.0.11-alpha.1
 check_latest '' 1.0.1
 
+# THE EMERGENCY PATH IS WORDED WHERE SOMEBODY REACHING FOR IT WILL READ IT. `gh pr merge --admin`
+# skips `CI passed` on the pull request, and gate 3 then refuses until main's own CI has run on the
+# commit - zero minutes bought, one refused run spent (measured 2026-09-06). The refusal says what to
+# wait for and that a rerun, not a new tag, is the way through.
+printf '\ngate 3 explains the admin-merge refusal\n'
+PREFLIGHT="$HERE/../release-preflight.sh"
+GATE3="$(sed -n "/never ran on/,/^    ;;/p" "$PREFLIGHT")"
+for needle in 'ADMIN-MERGED' 'own CI' 'gh run list --branch main' 'gh run rerun' 'no new tag'; do
+  if printf '%s' "$GATE3" | grep -qF "$needle"; then
+    pass "the 'never ran' refusal mentions: $needle"
+  else
+    fail "the 'never ran' refusal no longer mentions: $needle"
+  fi
+done
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

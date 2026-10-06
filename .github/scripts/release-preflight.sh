@@ -147,6 +147,9 @@ case "$CHECK_CONCLUSION" in
     refuse "$REQUIRED_CHECK never ran on ${TARGET_SHA:0:8}"
     hint 'An ABSENT result is not a passing one. A commit that reached main through a pull request'
     hint 'carries this check; one that arrived another way does not - which is the case to refuse.'
+    hint 'An ADMIN-MERGED commit (the emergency path) is this case too: the bypass skipped the check on'
+    hint 'the pull request, and main'"'"'s own CI (~8 min after the merge) is what supplies it. Wait for'
+    hint '`gh run list --branch main`, then `gh run rerun` this run - no new tag is needed.'
     ;;
   *)
     refuse "$REQUIRED_CHECK concluded $CHECK_CONCLUSION on ${TARGET_SHA:0:8}"
