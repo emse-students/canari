@@ -99,7 +99,7 @@
     </div>
     <div class="text-text-muted text-2xs mt-0.5 flex items-center gap-1.5 font-medium opacity-80">
       <Clock size={12} strokeWidth={2.5} />
-      <span title={exactDate(post.createdAt)}>{timeAgo(post.createdAt)}</span>
+      <span title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
       {#if anonymousBadge}
         <span class="inline-flex items-center gap-1" title={m.post_anonymous_badge_hint()}>
           <VenetianMask size={12} strokeWidth={2.5} />

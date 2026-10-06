@@ -22,6 +22,7 @@ function post(overrides: Partial<PostEntity>): PostEntity {
     media: [],
     polls: [],
     createdAt: '',
+    publishedAt: '',
     updatedAt: '',
     ...overrides,
   } as PostEntity;
@@ -73,6 +74,7 @@ describe('postPreviewTitle', () => {
       media: [],
       polls: [],
       createdAt: '',
+      publishedAt: '',
       updatedAt: '',
     } as PostEntity;
     expect(postPreviewTitle(post)).toBe('Hello world');
@@ -91,6 +93,7 @@ describe('postAuthorDisplayName', () => {
       media: [],
       polls: [],
       createdAt: '',
+      publishedAt: '',
       updatedAt: '',
     } as PostEntity;
     expect(postAuthorDisplayName(post)).toBe('BDE');

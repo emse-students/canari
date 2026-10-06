@@ -90,7 +90,7 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].sql).toMatch(/"linkedCalendarEventId"\s*=\s*\$1/);
     expect(calls[0].sql).toMatch(/NOT COALESCE\(posts\."hiddenByModeration", false\)/);
-    expect(calls[0].sql).toMatch(/ORDER BY posts\."createdAt" DESC/);
+    expect(calls[0].sql).toMatch(/ORDER BY posts\."publishedAt" DESC/);
     expect(calls[0].sql).toMatch(/LIMIT 1/);
     expect(calls[0].params).toEqual(['event-1', null]);
   });

@@ -205,7 +205,7 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
       createdAt: Date;
       associationName: string | null;
     }[] = await this.repo.manager.query(
-      `SELECT p.id, p.markdown, p."createdAt", a.name AS "associationName"
+      `SELECT p.id, p.markdown, p."publishedAt" AS "createdAt", a.name AS "associationName"
          FROM posts p LEFT JOIN associations a ON a.id = p."associationId"
         WHERE p.id = ANY($1::uuid[])`,
       [postIds]

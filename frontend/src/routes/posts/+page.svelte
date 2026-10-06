@@ -384,7 +384,7 @@
   }
 
   function postPublishedAt(post: PostEntity): number {
-    return new Date(post.scheduledAt ?? post.createdAt).getTime();
+    return new Date(post.publishedAt).getTime();
   }
 
   function isNew(post: PostEntity): boolean {

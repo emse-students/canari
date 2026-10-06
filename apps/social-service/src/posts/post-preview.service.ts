@@ -202,7 +202,7 @@ export class PostPreviewService {
     return {
       id: post.id,
       markdown: post.markdown ?? '',
-      createdAt: new Date(post.createdAt).toISOString(),
+      createdAt: new Date(post.publishedAt).toISOString(),
       updatedAt: new Date(post.updatedAt).toISOString(),
       association,
       image: media ? { width: media.width ?? null, height: media.height ?? null } : null,
@@ -283,7 +283,7 @@ export class PostPreviewService {
       .where('p.associationId IS NOT NULL')
       .andWhere('p.hiddenByModeration = false')
       .andWhere('(p.scheduledAt IS NULL OR p.scheduledAt <= NOW())')
-      .orderBy('p.createdAt', 'DESC')
+      .orderBy('p.publishedAt', 'DESC')
       .limit(limit)
       .getMany();
 

@@ -172,6 +172,8 @@ export interface PostEntity {
   pinned?: boolean;
   scheduledAt?: string | null;
   createdAt: string;
+  /** When the post became visible: `scheduledAt` for a scheduled post, `createdAt` otherwise. The ONE time the feed orders by and the card shows. */
+  publishedAt: string;
   updatedAt: string;
   /**
    * `'reel'` for a CanaReel - one vertical video that the server deletes, row and blob, at

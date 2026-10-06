@@ -56,6 +56,7 @@ function reel(id: string): PostEntity {
     authorFirstName: 'Ada',
     authorLastName: 'L',
     createdAt: '2026-10-01T00:00:00Z',
+    publishedAt: '2026-10-01T00:00:00Z',
     updatedAt: '2026-10-01T00:00:00Z',
   };
 }
