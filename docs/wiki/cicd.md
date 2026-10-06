@@ -522,6 +522,31 @@ the stable. Gate 3's refusal says so in its own words (`release-preflight.sh`, p
 something other than a green suite on the commit, and the project's rule is that a refusal names the
 test that would lift it, not a switch.
 
+#### Two incident-time items decided NOT to be built (2026-10-06)
+
+Both came out of the 2026-09-06 outage and both were re-read against `origin/main` before any code.
+
+**An auto-merge hold on files an in-flight fix touches.** The proposal keyed on an open `hotfix/*`
+pull request. No such population exists: the last 60 merged branches were `fix/` (25), `feat/`
+(16), `docs/` (9), `dependabot/` (8) and `test/` (2), so the hold would never fire; keying on `fix/`
+instead would make two overlapping fixes hold each other. And the harm it was written against - a
+green merge silently reverting a fix - needs the other pull request to have changed the SAME lines,
+which git refuses as a conflict (and a conflicting pull request does not merge); a change to other
+lines of that file keeps the fix. What is left is a SEMANTIC interaction between two correct changes,
+which is `CI passed`'s job. The real incident-class defect of that day - a session re-arming a
+deliberately disarmed merge - has its own rule in [durable-rules](durable-rules.md): a disarmed
+auto-merge is a decision until something proves it a fault.
+
+**Splitting `release.yml`'s `group: release` so the stores do not hold the lock.** The premise
+holds (an estate-only pre-release waited behind another's TestFlight upload) but the split cannot be
+made sound from here: job-level groups do not compose into a lock over a graph of jobs (a second run's
+`bump` would interleave with the first's `land` and `serve-*`), and a callee-level group on
+`android.yml` / `ios.yml` alone leaves the workflow-level lock in place. Nothing short of
+restructuring the whole run can be tested off GitHub, and the cost of getting it wrong is a refused
+or double-bumped release. **The supported gesture is the one the item itself named: `gh run cancel
+<run>` on the superseded pre-release once its estate jobs are green** - the estate work is already
+recorded (`dev-deployed`), only the store arms die, and the waiting run starts.
+
 #### The bump job
 
 It stages `git add -u`, so whatever the bump script writes is what gets committed — see
