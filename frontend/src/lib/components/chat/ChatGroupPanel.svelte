@@ -480,7 +480,8 @@
     <div
       class="keyboard-aware-panel-footer bg-cn-surface mt-auto flex flex-col gap-3 border-t border-black/5 px-(--side-panel-inset) py-5 @md:py-6 dark:border-white/10"
     >
-      {#if onGroupLeave && !confirmLeave && !confirmDelete}
+      <!-- A direct message has no group to leave: it is deleted, never left. -->
+      {#if isGroupConversation && onGroupLeave && !confirmLeave && !confirmDelete}
         <button
           onclick={() => {
             confirmLeave = true;
