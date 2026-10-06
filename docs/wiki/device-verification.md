@@ -20,6 +20,8 @@ here and nothing else.**
 
 ## Where the pass stands
 
+**2026-10-06, `v1.0.4-alpha.3` on the Mi 9T (a debug build of the same tree on the LOCAL estate - the harness accounts exist nowhere else; the release APK is signed with another key and cannot replace the debug app without an uninstall that costs the device).** Read and `PASS`: the tab swipe with no leftover shift (#1515), the profile header (#1513), conversation order across both accounts (#1510), the top-placed reaction-failure toast (#1509), the reel editor end to end (#1504-#1506), the own-message reply swipe icon, #1287, #1288, D1 and D4. **FAIL or owed, with the evidence on [backlog](backlog.md#after-the-102-release---what-the-user-asked-for-on-2026-10-02-and-what-is-owed-a-reading)**: no haptic on Android (the manifest lacks `VIBRATE`), NOTIF-10, GRP-3..10 ([cross-client-testing](cross-client-testing.md)), D2, D3 and #1520 (not reachable from the phone account).
+
 **Android is done except B-bis, H, K, L, M and R.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
 archived on the user's desktop) after partial runs on v0.11.5 and v0.11.6. Two defects came out of
 it, both tracked as WP-NOTIF-1 and both re-checked by **check K**. **Check H was recorded PASS and
