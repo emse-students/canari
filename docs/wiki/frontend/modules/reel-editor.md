@@ -114,6 +114,12 @@ choice below was the simplest one consistent with this page and is open to the l
   skin tone) on a surface of its own under the shelf. Picking records the emoji as recent. **No
   stickers with data (location, poll, mention, GIF)**: out of scope, no server support.
 
+- **Next -> publish (done)**: the editor's top-right button is "Next" (no "Use this capture"): it
+  exports the overlays and opens the publish step directly (`onnext(blob | null)`; null when
+  nothing was added, so an untouched take is never re-encoded). The publish sheet's back arrow
+  returns to the REVIEW, from where the pencil reopens the editor on the already-baked media
+  (edits stack; the originals are not kept). The "Use this capture" string is deleted.
+
 ## Work packages (estimates are focused engineering days, before device readings)
 
 | WP | What | Est. |

@@ -236,6 +236,23 @@ describe('ReelCapture', () => {
     expect(alert.querySelector('button')).not.toBeNull();
   });
 
+  it("the editor's Next goes straight to the publish step, with no stop at the review", async () => {
+    const { target, hold } = await render();
+    await hold();
+    target
+      .querySelector<HTMLButtonElement>(
+        `[data-reel-review] [aria-label="${m.reels_review_edit()}"]`
+      )!
+      .click();
+    await settle();
+    expect(target.querySelector('[data-reel-editor]')).not.toBeNull();
+    target.querySelector<HTMLButtonElement>('[data-reel-editor-next]')!.click();
+    await settle();
+    expect(target.querySelector('[data-reel-editor]')).toBeNull();
+    expect(target.querySelector('[data-reel-publish]')).not.toBeNull();
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+  });
+
   it('Suivant opens the publish step over the take, and its back arrow returns to the take', async () => {
     const { target, hold } = await render();
     await hold();

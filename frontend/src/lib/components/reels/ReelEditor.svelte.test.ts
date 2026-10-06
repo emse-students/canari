@@ -63,7 +63,7 @@ function mountEditor(props: Record<string, unknown> = {}) {
       props: {
         clip: { blob: new Blob(['x'], { type: 'image/webp' }), source: 'camera' },
         oncancel: () => {},
-        onapply: () => {},
+        onnext: () => {},
         ...props,
       },
     })
@@ -331,17 +331,19 @@ it('puts the emoji just used first on the shelf, and opens the full picker on de
   expect(target.querySelector('[data-reel-emoji-grid]')).not.toBeNull();
 });
 
-it('hands the overlays to the export, and does not export when nothing was added', async () => {
+it('Next hands on the edited media, or null (and no export) when nothing was added', async () => {
   const cancelled = vi.fn();
-  const applied = vi.fn();
-  const target = mountEditor({ oncancel: cancelled, onapply: applied });
-  target.querySelector<HTMLButtonElement>('[data-reel-editor-apply]')!.click();
-  await vi.waitFor(() => expect(cancelled).toHaveBeenCalled());
+  const next = vi.fn();
+  const target = mountEditor({ oncancel: cancelled, onnext: next });
+  target.querySelector<HTMLButtonElement>('[data-reel-editor-next]')!.click();
+  await vi.waitFor(() => expect(next).toHaveBeenCalledWith(null));
+  expect(cancelled).not.toHaveBeenCalled();
   expect(render).not.toHaveBeenCalled();
 
   addEmoji(target);
-  target.querySelector<HTMLButtonElement>('[data-reel-editor-apply]')!.click();
-  await vi.waitFor(() => expect(applied).toHaveBeenCalled());
+  target.querySelector<HTMLButtonElement>('[data-reel-editor-next]')!.click();
+  await vi.waitFor(() => expect(next).toHaveBeenCalledTimes(2));
+  expect(next.mock.calls[1][0]).toBeInstanceOf(Blob);
   const edits = render.mock.calls[0][1];
   expect(edits.overlays).toHaveLength(1);
   expect(edits.overlays[0]).toMatchObject({ kind: 'emoji', x: 0.5, y: 0.5, scale: 1, rotation: 0 });
