@@ -1127,11 +1127,12 @@ export function useMessaging() {
           if (isChannel && channelSvc) {
             // Channels are server-authoritative + always available: encrypt + upload + send inline.
             isUploadingMedia = true;
-            let { authToken } = ctx;
-            if (!authToken) {
-              authToken = await getToken();
-              ctx.setAuthToken(authToken);
-            }
+            // `ctx.authToken` is a COPY taken at sign-in: it is empty or EXPIRED far more often than it
+            // is live, and a 15-minute-old copy sent the upload out as `401 JWT expired` ("your session
+            // expired") on a tab that was perfectly signed in. `getToken` is the one place that knows
+            // the real expiry and renews it, exactly as the DM outbox path already does.
+            const authToken = await getToken();
+            ctx.setAuthToken(authToken);
             const mediaRef = await mediaService.encryptAndUpload(
               entry.file,
               authToken,
