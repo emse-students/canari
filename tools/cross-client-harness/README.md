@@ -809,6 +809,13 @@ is the part that needs no account and would have caught THIS one. `EXIT 2` means
 find the asset, which is **not** a pass - "I could not look" and "it is clean" are different answers
 and the script keeps them apart.
 
+**IT IS A GATE SINCE 2026-10-06.** `serve-dev.yml` runs it against the dev estate BEFORE it moves the
+`dev-deployed` marker, and the stable's fourth preflight gate reads that marker - so a refused wasm
+cannot reach production. With an explicit origin it needs no `names.mjs` (git-ignored, so absent in
+CI); the landing page is fetched under its own query so the edge's 60 s shell cache cannot answer for
+the previous build. `archive/deployed-wasm-selftest.mjs` drives the real script against a loopback
+estate for the three exit codes.
+
 **Its sibling guards the build**: `frontend/scripts/check-wasm-no-unsupported.mjs`, wired into
 `bun run wasm:build`. Both are needed - a build can be fixed while an estate still serves the old
 image, which is exactly the state production was in for the twenty minutes after the fix was merged.

@@ -432,6 +432,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/transport-selftest.mjs
 	@bun tools/cross-client-harness/archive/imports-selftest.mjs
 	@bun tools/cross-client-harness/archive/origin-selftest.mjs
+	@bun tools/cross-client-harness/archive/deployed-wasm-selftest.mjs
 	@bun tools/cross-client-harness/archive/ready-selftest.mjs
 	@bun tools/cross-client-harness/archive/servable-selftest.mjs
 	@bun tools/cross-client-harness/archive/residue-selftest.mjs
