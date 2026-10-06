@@ -105,6 +105,21 @@ describe('PaymentController.createCheckout', () => {
     ).rejects.toThrow(/payerEmail/);
     expect(createCheckoutSession).not.toHaveBeenCalled();
   });
+
+  it('refuses a pathological payerEmail of 100k characters quickly', async () => {
+    const controller = makeController(jest.fn());
+    const started = Date.now();
+
+    await expect(
+      controller.createCheckout({
+        lineItems: [],
+        successUrl: 's',
+        cancelUrl: 'c',
+        payerEmail: '!@' + '!.'.repeat(50_000),
+      })
+    ).rejects.toThrow(/payerEmail/);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });
 
 /**

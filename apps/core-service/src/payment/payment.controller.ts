@@ -35,7 +35,13 @@ import { socialUrl } from '../internal/service-urls';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Deliberately loose: the provider is the authority on deliverability, this only refuses junk. */
-const PAYER_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/**
+ * Shape of a payer e-mail. Domain labels exclude the dot so every dot has ONE reading (the old
+ * `[^\s@]+\.[^\s@]+` could split a run of dots many ways: polynomial backtracking, CodeQL
+ * js/polynomial-redos). Matched only after the `PAYER_EMAIL_MAX_LENGTH` cap, RFC 5321's limit.
+ */
+const PAYER_EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+const PAYER_EMAIL_MAX_LENGTH = 254;
 /** A Stripe Checkout session id (`cs_...`) or a Lydia `request_uuid` - retrieveSession() routes to whichever provider issued it. */
 export const SESSION_ID_RE =
   /^(cs_[a-zA-Z0-9_]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -495,7 +501,10 @@ export class PaymentController {
     }
 
     const payerEmail = body.payerEmail?.trim();
-    if (payerEmail && !PAYER_EMAIL_RE.test(payerEmail)) {
+    if (
+      payerEmail &&
+      (payerEmail.length > PAYER_EMAIL_MAX_LENGTH || !PAYER_EMAIL_RE.test(payerEmail))
+    ) {
       throw new BadRequestException('Invalid payerEmail');
     }
 

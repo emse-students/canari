@@ -79,7 +79,7 @@ describe('the desktop hands over no push token', () => {
   ])('%s answers None off a phone', (name, mobile) => {
     const fn = body(name);
     const offPhone = new RegExp(
-      `#\\[cfg\\(not\\(${mobile.replace(/[()]/g, '\\$&')}\\)\\)\\]\\s*\\{\\s*let _ = app;\\s*None\\s*\\}`
+      `#\\[cfg\\(not\\(${mobile.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}\\)\\)\\]\\s*\\{\\s*let _ = app;\\s*None\\s*\\}`
     );
 
     expect(fn).toContain(`#[cfg(${mobile})]`);
