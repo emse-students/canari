@@ -490,8 +490,19 @@ at `BREAK_LABEL_ANGLE` -20deg.
 | the Canva | this sheet | why |
 | --- | --- | --- |
 | the first row is filled with September's last evenings | those squares are NOT DRAWN - the background runs through them | the feed is one month wide; widening the fetch was refused (*"non, c'est bon"*), then the squares themselves were (*"on peut supprimer les cases qui ne contiennent pas de jour"*) |
-| the day number is large, bottom-right, UNDER the event cards | small, top-left, in a row nothing else may enter | *"tout doit etre lisible et rien ne doit se chevaucher"* |
+| the day number is large, bottom-right, UNDER the event cards | small, top-left, pinned over the tile (no longer a row of its own, 2026-10-06) | *"tout doit etre lisible et rien ne doit se chevaucher"*; the outline below keeps it readable if a long title reaches it |
 | no distinction for a weekend or a holiday | both recede, and a weekend IN a holiday recedes twice | *"on peut garder une distinction de fond quand meme, c'est plus lisible"*, then *"le WE et les jours de pause pourraient etre en un peu plus fonce"* |
+
+**EVERY EVENT TITLE IS WHITE WITH A DARK OUTLINE, CENTRED IN ITS OWN TILE (user, 2026-10-06, who works in Canva).**
+The old rule picked `contrastColor(tile colour)` - black above 55 % luminance, white below - so a
+yellow tile had a black title and a blue one a white title, with no logic a reader could see. Now
+`textOutlineCss()` gives white fill + `-webkit-text-stroke` with `paint-order:stroke fill` (only the
+outer half of the stroke shows, the glyph keeps its weight) on every title AND on the day number
+inside an event tile; a number on an empty day keeps `contrastColor(cellBg)`. The first title of a
+cell used to sit below the centre because the day number owned a row above it; the number is now
+absolutely pinned top-left and the title is centred both ways in the whole tile (each band of a
+stacked cell in its own). Long titles still shrink/clamp through `fitEventText(slotH)`.
+`DAY_NUM_H` remains the SCREEN grid's reserved row only.
 
 **A SQUARE OUTSIDE THE MONTH KEEPS ITS PLACE AND PAINTS NOTHING.** Dropping the element would slide
 the 1st onto the wrong weekday, so the cell is still emitted - with no background at all, which is

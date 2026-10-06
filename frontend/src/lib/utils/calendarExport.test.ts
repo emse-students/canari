@@ -15,6 +15,7 @@ import {
   BLUR_MAX_PX,
   vignetteLayerHtml,
   DAY_NUM_H,
+  textOutlineCss,
   DEFAULT_EXPORT_OPTIONS,
   EVENT_TITLE_LINE_HEIGHT,
   daySlotLayout,
@@ -369,5 +370,33 @@ describe('background vignette and blur', () => {
     expect(blurLayerCss(-5)).toBe('inset:0;');
     expect(vignetteLayerHtml(500)).toContain('rgba(11,18,32,1.00)');
     expect(vignetteLayerHtml(0)).toBe('');
+  });
+});
+
+describe('event titles - white with a dark outline, centred in the tile', () => {
+  it('outlines the glyph from underneath, at a width that follows the size', () => {
+    const css = textOutlineCss(13);
+    expect(css).toContain('color:#ffffff');
+    expect(css).toContain('paint-order:stroke fill');
+    expect(css).toContain('-webkit-text-stroke:2.6px');
+    expect(textOutlineCss(9)).toContain('-webkit-text-stroke:2px');
+  });
+
+  it('paints a pale and a dark tile the same white, and centres the first title of a cell', () => {
+    const html = buildPreviewInnerHtml(
+      [
+        makeEvent({ id: 'a', title: 'Pale', associationColor: '#ffee00' }),
+        makeEvent({ id: 'b', title: 'Dark', associationColor: '#001133' }),
+      ],
+      2026,
+      4,
+      { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null }
+    );
+    // No title or event day number is black any more (the luminance pick is gone).
+    expect(html.match(/paint-order:stroke fill/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(html).not.toContain('text-shadow:-1px 1px 0 rgba(0,0,0,0.55)');
+    // The day number is pinned over the tile, not given a row the title must dodge.
+    expect(html).toContain('position:absolute;top:6px;left:8px');
+    expect(html).not.toContain(`height:${DAY_NUM_H}px;flex-shrink:0`);
   });
 });
