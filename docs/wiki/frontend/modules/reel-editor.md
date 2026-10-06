@@ -148,3 +148,19 @@ choice below was the simplest one consistent with this page and is open to the l
 See the report that accompanied the PR. In short: which Instagram screens to copy for the
 text-style row, the sticker tray, the trim bar and the editor's top toolbar; whether music is wanted
 at all; whether "Next" after the editor should open the publish step directly.
+
+## The review controls over the letterbox, and leaving the camera (2026-10-06)
+
+Read on the Mi 9T (build `5b56dcb74`). **The pencil was not clipped**: the controls sit in the review's
+full-width box and overflow the letterboxed video, but their `bg-black/30` disc is INVISIBLE over the black
+bars beside a narrow clip, so the pencil seemed to lose its left third. `ReelReview` buttons now carry
+`ring-1 ring-white/30` and `bg-black/40`, readable on the bars and on a bright frame.
+
+**Leaving the camera** (`CameraScreen.close`) used `history.back()`, whose target is whatever entry sits
+below the camera; on the phone it landed on the Dashboard. It now goes to `cameraOriginFrom(from.url)`
+(`reels/cameraOrigin.ts`, recorded by `afterNavigate`; the feed for a cold link, never the camera) with
+`replaceState`, so Back from that tab does not reopen the camera. Trade-off: no history step, so the origin
+tab is re-rendered rather than restored. **NOT reproduced:** the discard itself (X or Back, confirmed) never
+navigates in code, and a jsdom replay of the overlay stack (sheet Back, Back, re-arm, X) stays on `/camera`;
+the Dashboard landing was reached through the camera's own close. Owed ONE re-read on the phone: discard
+stays on the camera, the camera's X returns to the tab it came from.
