@@ -19,7 +19,9 @@
   import type { ConversationOutcome } from '$lib/utils/chat/groupCreation';
   import { conversationRefusalMessage } from '$lib/utils/chat/conversationRefusalMessage';
   import {
+    compareConversationRecency,
     conversationMatchesQuery,
+    conversationRecency,
     recentDirectPeers,
     resolveConversationListPresentation,
   } from '$lib/utils/chat/conversations';
@@ -339,7 +341,7 @@
           searchQuery
         )
       )
-      .sort((a, b) => (b.convo.lastMessageAt ?? 0) - (a.convo.lastMessageAt ?? 0))
+      .sort((a, b) => compareConversationRecency(a.convo, b.convo))
   );
 
   /**
@@ -352,7 +354,7 @@
     recentDirectPeers(
       conversationRows.map(({ convo, resolved }) => ({
         resolved,
-        lastMessageAt: convo.lastMessageAt,
+        lastMessageAt: conversationRecency(convo),
       }))
     )
   );
