@@ -1,6 +1,6 @@
 {
   "name": "chat-delivery-service",
-  "version": "1.0.4-alpha.1",
+  "version": "1.0.4-alpha.2",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "nest build",
@@ -44,6 +44,7 @@
     "typescript": "^6.0.3"
   },
   "overrides": {
+    "proxy-addr": "^2.0.8",
     "@babel/core": "^7.29.6",
     "@grpc/grpc-js": "^1.14.5",
     "@protobufjs/utf8": "^1.1.1",

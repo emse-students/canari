@@ -266,7 +266,7 @@ jobs:
           # the assertions that void them, are below.
           - tree: apps/media-service
             install: --frozen-lockfile --ignore-scripts
-            audit: --audit-level=moderate --ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-528h-pc64-c93x
+            audit: --audit-level=moderate --ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-528h-pc64-c93x --ignore=GHSA-hqr4-qq8f-hg3x --ignore=GHSA-mjw6-4jj6-33hc
           - tree: apps/chat-delivery-service
             install: --frozen-lockfile --ignore-scripts
             audit: --audit-level=moderate
@@ -349,6 +349,17 @@ jobs:
       #      it. Its entire use of the client is `bucketExists`, `fPutObject`, `getObject`,
       #      `makeBucket`, `putObject`, `removeObject` - none of which reaches that module.
       #
+      # THE THIRD AND FOURTH ENTRIES, 2026-10-06. GHSA-hqr4-qq8f-hg3x (the JSONC parser and verifier
+      # re-scan the accumulated comment on every chunk, <= 3.5.0) and GHSA-mjw6-4jj6-33hc (the
+      # Assembler writes `this.current[this.key]` on plain objects, a prototype pollution, < 3.6.0)
+      # arrived on the same `minio > stream-json` edge and turned main red. Same chain, same
+      # absence of an in-range fix, and the override was REFUSED on the evidence: fixed stream-json
+      # is `type: module` (`src/` entry points) where minio's CJS build `require`s it, so it
+      # swaps a theoretical denial of service for an unproven module-system change at boot. LEG ONE
+      # became an allowlist of ONE module, `stream-json/jsonl/Parser.js`
+      # (`stream-json-premise.sh`, with its own self-test), instead of a denylist of four filters:
+      # advisories name different modules, and a denylist is the previous incident's predicate.
+      #
       # SO EVERY PREMISE IS ASSERTED, not just written down. The step below fails if minio ever
       # starts PARSING a query string, or if the `stringify` call site it was measured on
       # disappears, or if minio starts importing a stream-json FILTER, or if this service starts
@@ -360,7 +371,7 @@ jobs:
       # audit step above failed, which is what the sequential loop did by collecting failures instead
       # of aborting. A missing `node_modules` is itself one of the refusals below - an unmeasurable
       # premise does not grant the ignore.
-      - name: The premises behind media-service's two ignores
+      - name: The premises behind media-service's ignores
         if: ${{ !cancelled() && matrix.tree == 'apps/media-service' }}
         run: |
           set -uo pipefail
@@ -394,14 +405,11 @@ jobs:
             echo "::error::$mdist is not there, so the reachability of GHSA-528h-pc64-c93x cannot be checked. The ignore is not granted."
             failed="$failed media-service(premise2)"
           else
-            # LEG ONE: the vulnerability is in `stream-json/filters/*`. minio must import only the
-            # JSONL parser and none of the four filters.
-            filters=$(grep -rlE 'stream-json/(filters|pick|ignore|filter|replace)' "$mdist" 2>/dev/null | grep -v '[.]map$' || true)
-            if [ -n "$filters" ]; then
-              echo "::error::minio now imports a stream-json FILTER, which is exactly what GHSA-528h-pc64-c93x is about, so it is no longer unreachable: $filters"
+            # LEG ONE: minio may import ONLY `stream-json/jsonl/Parser.js`. An allowlist, so the
+            # filters (GHSA-528h), the JSONC parser/verifier (GHSA-hqr4) and the Assembler
+            # (GHSA-mjw6) are all covered, and so is whatever the next advisory names.
+            if ! bash .github/scripts/stream-json-premise.sh "$mdist"; then
               failed="$failed media-service(premise2)"
-            else
-              echo "    minio imports no stream-json filter, only jsonl/Parser.js; leg one holds."
             fi
             # LEG TWO: the only minio module touching stream-json at all is the bucket-notification
             # API. This service must not call it.

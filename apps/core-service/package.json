@@ -1,6 +1,6 @@
 {
   "name": "core-service",
-  "version": "1.0.4-alpha.1",
+  "version": "1.0.4-alpha.2",
   "description": "",
   "author": "",
   "private": true,
@@ -76,6 +76,7 @@
     "testEnvironment": "node"
   },
   "overrides": {
+    "proxy-addr": "^2.0.8",
     "path-to-regexp": "8.4.0",
     "picomatch": "4.0.4",
     "qs": "^6.16.0",
