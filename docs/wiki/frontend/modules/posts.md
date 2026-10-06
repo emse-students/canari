@@ -1055,6 +1055,8 @@ question or an option, a form with a choice - and `isPostComposerDraftWorthKeepi
 for the auto-save and the restore alike, so a draft that held only empty toggles is neither saved nor
 restored. Pinned by `postComposerDraft.test.ts`.
 
+**THE DRAFT IS OWNED BY THE ACCOUNT (2026-10-06, iPhone reading of `alpha.4`).** `canari_post_composer_draft` was ONE value per device and never cleared on sign-out, so account B opening "Nouvelle publication" landed on "Brouillon restaure" holding account A's text. It is now `canari_post_composer_draft:<userId>` (`postComposerDraftKey`): a switch hides the other account's draft rather than erasing it, and the author finds it again - no sign-out hook, no timer. The two old unkeyed keys (`canari_post_composer_draft`, `canari_post_draft`) have no provable author, so every draft access DROPS them and logs `[POST_COMPOSER] dropping unowned ...`; they are never adopted. With nobody signed in the draft is neither read nor written. Same class, enumerated and left alone on purpose: `canari_recent_emojis` and the skin tone (a device preference, no authored text), `canari.keyboardHeight.v1` (a measurement of the device), `canari_post_new_form_id` and `canari_pending_contact` (`sessionStorage`, one tab, consumed on the next page). Pinned by `postComposerDraft.test.ts`.
+
 ## The blocks preflight erases
 
 A reader reported on 0.18.17 that a post read nothing like what had been written: "the dashes do not

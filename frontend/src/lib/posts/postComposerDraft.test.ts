@@ -1,14 +1,25 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { newPollOption } from './pollDraft';
 import {
-  POST_COMPOSER_DRAFT_KEY,
+  clearPostComposerDraft,
+  postComposerDraftKey,
   emptyPostComposerDraft,
   isPostComposerDraftWorthKeeping,
   loadPostComposerDraft,
   savePostComposerDraft,
   withoutAbandonedAttachments,
 } from './postComposerDraft';
+
+/** Signs `id` in the way `getSavedUserId` reads it. */
+function signIn(id: string): void {
+  localStorage.setItem('canari_saved_user', id);
+}
+
+beforeEach(() => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  signIn('user-a');
+});
 
 afterEach(() => {
   localStorage.clear();
@@ -74,12 +85,50 @@ describe('loadPostComposerDraft', () => {
   it('restores nothing when the abandoned toggles were all the draft held', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     savePostComposerDraft({ ...emptyPostComposerDraft(), includeForm: true });
-    expect(localStorage.getItem(POST_COMPOSER_DRAFT_KEY)).not.toBeNull();
+    expect(localStorage.getItem(postComposerDraftKey('user-a'))).not.toBeNull();
     expect(loadPostComposerDraft()).toBeNull();
   });
 
   it('restores a poll the reader had started', () => {
     savePostComposerDraft({ ...emptyPostComposerDraft(), includePoll: true, pollQuestion: 'Où ?' });
     expect(loadPostComposerDraft()?.includePoll).toBe(true);
+  });
+});
+
+describe('a draft is owned by the account that wrote it', () => {
+  it('is invisible to another account on the same device, and survives for its author', () => {
+    savePostComposerDraft(emptyPostComposerDraft("le texte d'Alice"));
+    signIn('user-b');
+    expect(loadPostComposerDraft()).toBeNull();
+    signIn('user-a');
+    expect(loadPostComposerDraft()?.markdown).toBe("le texte d'Alice");
+  });
+
+  it('clears only the signed-in account draft', () => {
+    savePostComposerDraft(emptyPostComposerDraft('a'));
+    signIn('user-b');
+    savePostComposerDraft(emptyPostComposerDraft('b'));
+    clearPostComposerDraft();
+    expect(loadPostComposerDraft()).toBeNull();
+    signIn('user-a');
+    expect(loadPostComposerDraft()?.markdown).toBe('a');
+  });
+
+  it('drops the old device-global drafts instead of adopting them', () => {
+    localStorage.setItem(
+      'canari_post_composer_draft',
+      JSON.stringify(emptyPostComposerDraft('orphelin'))
+    );
+    localStorage.setItem('canari_post_draft', 'ancien');
+    expect(loadPostComposerDraft()).toBeNull();
+    expect(localStorage.getItem('canari_post_composer_draft')).toBeNull();
+    expect(localStorage.getItem('canari_post_draft')).toBeNull();
+  });
+
+  it('touches nothing while nobody is signed in', () => {
+    localStorage.removeItem('canari_saved_user');
+    savePostComposerDraft(emptyPostComposerDraft('x'));
+    expect(loadPostComposerDraft()).toBeNull();
+    expect(localStorage.length).toBe(0);
   });
 });
