@@ -736,3 +736,18 @@ arithmetic: it rasterises a symbol in pure JS through the SAME exported geometry
 real decoder that knows nothing about how the image was made - with no badge, with it, and on a link
 far longer than a form URL. happy-dom has no 2D context, which is why the canvas itself is not under
 test and the geometry is exported instead of inlined: a retuned radius moves the test with it.
+
+## The paid half: what it needs, scoped 2026-09-30
+
+Found while scoping it, so it is not re-derived (the paid half itself waits for WP-LYDIA-1, [backlog](../../backlog.md)):
+
+- **The payer's e-mail IS Lydia's `payerRecipient`** - the Lydia payer-address blocker resolves itself for a
+  guest form, since the guest types an e-mail. It does not for a logged-in boutique purchase.
+- **`social-service` calls `core-service`'s `create-checkout-session` with no credential** (a bare
+  `axios.post`), and that route sits behind `NginxAuthGuard`, which demands `X-User-Id`. Whether the
+  existing paid-form checkout works at all is NOT verified - read the two services' logs on dev
+  before building on it. A guest has no `X-User-Id` either, so it needs a dedicated internal route
+  guarded by the shared internal secret, as `internal/forms` is.
+- **Fulfilment must work without a `userId`**: `markPaid` and the cotisation grant both read it.
+- A fixed price only (no grid, no cotisation grant, no cash). The rate limit and the honeypot the
+  free half added (`PublicFormsController`) already cover the submission.

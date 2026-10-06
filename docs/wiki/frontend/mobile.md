@@ -1575,6 +1575,8 @@ as its corner badge; the plain `setLargeIcon` stays only for the shortcut-less s
 NOTHING AND SEEN NOWHERE**: the Gradle project needs the Tauri-generated settings, and no Canari
 notification could be raised on the Mi 9T without a push - owed a look on that phone.
 
+**The group key is still ONE constant**, `setGroup(GROUP_KEY_MESSAGES)` at three call sites of `CanariFirebaseMessagingService.kt` with one summary, where Messenger keys per THREAD (`GROUP:<threadId>`) - open, P3 ([backlog](../backlog.md)); measure on the Mi 9T after any change, since nothing in CI sees which section of the shade a notification lands in.
+
 **What the shade's two actions cover (audited 2026-10-05).** Reply and "Marquer comme lu" exist on
 Android and iOS for a one-to-one and a group (the MLS outbox and `read_watermark`, one function each,
 app killed included). **A community salon (`channel_<id>`) carries NEITHER action on either platform,

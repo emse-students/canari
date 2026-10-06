@@ -689,6 +689,12 @@ The largest area here, and the one that has cost the most. `chat` = [chat](front
 after its deploy - build the run that DISCRIMINATES, and assert the build id, never the deploy.
 [testing-methodology](testing-methodology.md)
 
+- **TWO PEERS AGREEING ON ONE HISTORY KEY IS NOT A TERMINATION WHILE THE ASKER HOLDS FRAMES IT CANNOT READ: ELECT ANOTHER MEMBER.** Two candidate causes of the HEAL-repair coin flip were refuted by A/B on 2026-09-08 and are not to be re-opened without new evidence: the checkpoint-bound history marks (disarming them reproduced the shipped distribution exactly) and the 30 s coalescing window (removing it changed every counter and healed nothing). The cause is arithmetic - the server elects a random online member and only one holds the frames. [history-reconciliation](protocols/history-reconciliation.md)
+- **A TRIGGER THAT NEVER FIRED AND A DRAIN THAT FOUND NOTHING MUST NOT RETURN THE SAME VALUE.** `drainPendingGroupExits` returned a bare `[]` for no-storage, re-entrancy and "nothing owed"; two of four ways to replay nothing were unnameable from outside (DEL-10, 2026-08-26, `PASS` clean on 0.16.3 once it accused). Accuse on the abnormal branches, stay silent on the routine `owed.length === 0` one - a line printed on every reconnect teaches a reader to skip `[EXIT]`. [chat](frontend/modules/chat.md)
+
+
+- **A TEST THAT DISPATCHES EVENTS IN THE CONVENIENT ORDER PROVES THE GUARD, NOT THE ORDERING.** #719 guarded the WebSocket close with `pagehide`, its test fired `pagehide` first, and Firefox closed the socket before it: the guard looked shipped and was not (fixed by listening to `beforeunload`, #754). Measure the real order once and make the test deliver the close BEFORE the event the guard relies on. [auth](frontend/modules/auth.md#and-what-is-not-a-reconnect-the-page-leaving)
+
 ## UI and i18n -> [frontend/architecture](frontend/architecture.md), [auth](frontend/modules/auth.md) (native prompts)
 
 `arch` = [frontend/architecture](frontend/architecture.md), `posts` = [posts](frontend/modules/posts.md),
@@ -1738,6 +1744,9 @@ Signing, the bump script, the secrets and every compile-check trick are on [cicd
 - **A NEW READ PATH REQUIRES THE REPAIR OF THE OLD DATA BEFORE THE RELEASE THAT SHIPS IT.** A reader that learns a new shape (a format, a header, a column, a stricter proof) meets every row written before it existed the moment it deploys, and rows nobody rewrote are refused, dropped or mis-read by the very code meant to be the improvement. The repair (a backfill, a re-seal, a migration, or a dual-read window with a measured drain) is part of the SAME change, written, run against the estate's real population and measured BEFORE the tag is cut - never "afterwards, if a report comes in". The Graine v2 order (reader release, `minClientVersion` raised once both stores serve it, then the writer) and the profile backfill that must precede the spaces release (WP6b) are the two instances here. [cicd](cicd.md)
 
 - **AN ARTIFACT THAT CANNOT BE INSTALLED IS NOT A DELIVERY PATH.** A build step producing a file nobody can run delivers nothing, and a green job hides it. The iOS bench build is the instance: an unsigned artifact refused installation until the workstation-signed `local_url` mode existed ([mobile](frontend/mobile.md#a-build-for-the-phone-on-the-bench)).\n- **A FLOOR (`minClientVersion`) IS RAISED AGAINST THE RECORDED POPULATION, NEVER AGAINST A COLUMN THAT MOST OF THE FLEET DID NOT WRITE.** Measure the NULL share per `deviceOs` first: on 2026-09-14, 168 of 226 iOS, 87 of 170 Android and every desktop row had a NULL `deviceAppVersion` before #613 started recording it, so a floor read from it would have described a third of the devices.\n
+
+- **A FLOOR (`minClientVersion`) IS RAISED AGAINST THE RECORDED POPULATION, NEVER AGAINST A COLUMN MOST OF THE FLEET DID NOT WRITE.** Measure the NULL share per `deviceOs` first: on 2026-09-14, before #613, 168 of 226 iOS devices, 87 of 170 Android and ALL desktop devices carried no `deviceAppVersion`, so a floor would have been decided about 630 devices against 141 of them (91 of 151 mobile devices that enrolled that week were below `0.17.3`). A browser always runs the build the estate serves, so the desktop rows are safe for a reason that is not the column. [mobile](frontend/mobile.md)
+
 
 ## Reporting and blocking -> [moderation-and-blocking](moderation-and-blocking.md)
 
