@@ -384,11 +384,15 @@ async function agendaJsonLd(): Promise<JsonLdNode[] | null> {
   const from = new Date();
   const to = new Date(from.getTime() + AGENDA_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   // The public feed is one per selection and REFUSES a bare read (D40): the page describes the whole
-  // agenda, so it asks once per campus - every space is on one - and keeps each event once.
+  // agenda, so it asks once per campus - every space is on one - and keeps each event once. A
+  // selection is SIGNED since 2026-10-06; this server-to-server read carries the internal secret
+  // instead, which the feed trusts without a signature (docs/wiki/profiles-and-access.md, D40 amended).
+  const headers = internalHeaders();
   const perCampus = await Promise.all(
     CAMPUSES.map((campus) =>
       fetchJson<CalendarEventPayload[]>(
-        `${SOCIAL_URL()}/api/associations/calendar/feed?from=${from.toISOString()}&to=${to.toISOString()}&campus=${campus}`
+        `${SOCIAL_URL()}/api/associations/calendar/feed?from=${from.toISOString()}&to=${to.toISOString()}&campus=${campus}`,
+        headers
       )
     )
   );

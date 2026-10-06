@@ -9,13 +9,16 @@ import * as crypto from 'crypto';
  * rejects, so a misconfigured deployment fails closed rather than open.
  */
 export function assertInternalSecret(headerSecret: string | undefined): void {
+  if (!isInternalSecret(headerSecret)) throw new ForbiddenException();
+}
+
+/** The same timing-safe check as a boolean, for a route that serves anyone and trusts one caller more. */
+export function isInternalSecret(headerSecret: string | undefined): boolean {
   const expected = Buffer.from(process.env.INTERNAL_SECRET ?? '');
   const received = Buffer.from(headerSecret ?? '');
-  if (
-    expected.length === 0 ||
-    received.length !== expected.length ||
-    !crypto.timingSafeEqual(expected, received)
-  ) {
-    throw new ForbiddenException();
-  }
+  return (
+    expected.length !== 0 &&
+    received.length === expected.length &&
+    crypto.timingSafeEqual(expected, received)
+  );
 }

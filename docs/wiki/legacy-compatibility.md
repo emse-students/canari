@@ -431,6 +431,23 @@ knowing it (user decision, D40: no per-user URL, no fallback to "everything").
 - **Why nothing is removed later:** the refusal IS the rule. The day nobody has a bare URL saved it
   merely stops being hit; no branch waits to be deleted.
 
+## Nothing to remove - an UNSIGNED calendar subscription now gets a 403 (2026-10-06)
+
+**A second BREAK in two days, and again no shim.** `feed.ics` and the anonymous `calendar/feed` now
+REFUSE a `campus` / `formation` / `associationId` selection that carries no valid `sig`: a 403 with code
+`AGENDA_SIGNATURE_REQUIRED` (absent) or `AGENDA_SIGNATURE_INVALID` (wrong), `associations/agenda-signature.ts`.
+The user decided it on 2026-10-06 ([D40 amended](profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)):
+a subscription is restricted to the reader's own spaces by a signed URL, and the old ones are NOT honoured.
+
+- **Who is affected:** every calendar subscription saved from `/calendar` between the D40 release
+  (selection URLs `?campus=..&formation=..`) and this one, and any association subscription saved
+  before (`?associationId=..`). The calendar app shows an error or an empty calendar until the reader
+  subscribes again from `/calendar` or the association's page; the modal says so (`calendar_subscribe_old_links_notice`).
+  The single-event link (`?eventId=`) is NOT affected. An installed app embeds the old frontend, so its
+  modal builds unsigned links until it updates: they are refused.
+- **Why nothing is removed later:** the signature IS the rule. Rotating `AGENDA_SIGNING_KEY` repeats this
+  break on purpose (it is the revocation) and needs no code.
+
 ## No date - `GET /api/mls/history/:groupId` answering with a bare array
 
 **The gate does not reach this one, and the page used to claim it did.** Retiring it is not a matter

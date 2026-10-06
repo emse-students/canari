@@ -26,10 +26,10 @@ import CalendarSubscribeModal from './CalendarSubscribeModal.svelte';
 const FEED = 'https://canari.emse.fr/api/associations/calendar/feed.ics';
 const mounted: ReturnType<typeof mount>[] = [];
 
-function render() {
+function render(extra: { signing?: 'idle' | 'signing' | 'ready' | 'error'; icsUrl?: string } = {}) {
   const component = mount(CalendarSubscribeModal, {
     target: document.body,
-    props: { open: true, onClose: () => {}, icsUrl: FEED, intro: 'intro' },
+    props: { open: true, onClose: () => {}, icsUrl: FEED, intro: 'intro', ...extra },
   });
   mounted.push(component);
   flushSync();
@@ -71,6 +71,28 @@ describe('CalendarSubscribeModal', () => {
     expect(sectionOrder()).toEqual(['app', 'copy', 'google']);
     const input = document.querySelector('[data-subscribe-section="copy"] input');
     expect((input as HTMLInputElement).value).toBe(FEED);
+  });
+
+  it('warns that links saved before the signature stopped working (2026-10-06)', () => {
+    runtimeOs.value = 'windows';
+    render();
+    expect(document.querySelector('[data-subscribe-old-links]')?.textContent?.trim()).toBe(
+      m.calendar_subscribe_old_links_notice()
+    );
+    expect(document.querySelector('[data-subscribe-sign-failed]')).toBeNull();
+  });
+
+  it('says it is preparing the link, then that the server refused to sign it', () => {
+    runtimeOs.value = 'windows';
+    render({ signing: 'signing', icsUrl: '' });
+    expect(document.querySelector('[data-subscribe-signing]')).not.toBeNull();
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    render({ signing: 'error', icsUrl: '' });
+    expect(document.querySelector('[data-subscribe-sign-failed]')?.textContent?.trim()).toBe(
+      m.calendar_subscribe_sign_failed()
+    );
+    expect(document.querySelector('[data-subscribe-signing]')).toBeNull();
   });
 
   it('keeps the desktop order: Google first, the calendar app last', () => {

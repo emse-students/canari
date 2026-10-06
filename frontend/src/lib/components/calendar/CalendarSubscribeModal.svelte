@@ -11,6 +11,7 @@
   import { navigateExternal } from '$lib/utils/openExternal';
   import { copyText } from '$lib/utils/clipboard';
   import { Log } from '$lib/utils/Log';
+  import type { FeedSigningStatus } from '$lib/calendar/signedFeedUrl.svelte';
 
   /**
    * Subscribe options for an `.ics` feed, ordered by what works on the platform reading them.
@@ -36,9 +37,14 @@
     icsUrl: string;
     /** Intro line shown above the options - context-specific per caller (one club vs. everyone). */
     intro: string;
+    /**
+     * Where the link's signature stands (2026-10-06): the URL is empty until the server has signed
+     * the selection, and an empty URL with `error` is a refusal the reader must be told about.
+     */
+    signing?: FeedSigningStatus;
   }
 
-  let { open, onClose, icsUrl, intro, selector }: Props = $props();
+  let { open, onClose, icsUrl, intro, selector, signing = 'ready' }: Props = $props();
 
   const os = detectRuntimeDeviceOs('desktop');
   const isPhone = isPhoneOs(os);
@@ -182,6 +188,19 @@
     </p>
 
     {@render selector?.()}
+
+    <p class="text-text-muted text-xs" data-subscribe-old-links>
+      {m.calendar_subscribe_old_links_notice()}
+    </p>
+    {#if signing === 'signing'}
+      <p class="text-text-muted text-xs" role="status" data-subscribe-signing>
+        {m.calendar_subscribe_signing()}
+      </p>
+    {:else if signing === 'error'}
+      <p class="text-red-err text-xs" role="alert" data-subscribe-sign-failed>
+        {m.calendar_subscribe_sign_failed()}
+      </p>
+    {/if}
 
     {#if isPhone}
       {@render appSection()}

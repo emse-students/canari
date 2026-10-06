@@ -636,6 +636,20 @@ fact. When omitted, `AssociationsService.defaultCalendarFeedRange()` supplies a 
 builds (`icsSubscriptionRangeISO()` in `frontend/src/lib/associations/api.ts`, shared by
 `AssociationCalendarSection.svelte` and `routes/calendar/+page.svelte`).
 
+## The subscription link is SIGNED, and the selector offers only the reader's own spaces (2026-10-06)
+
+`feed.ics` refuses a campus / formation / association selection without the `sig` the server made for
+it, and signs only the reader's own spaces (design and codes:
+[profiles-and-access, D40 amended](../../profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
+In the frontend: `signAgendaFeed` (`associations/api.ts`) calls `POST /api/associations/calendar/feed-signature`;
+`createFeedSigner` (`calendar/signedFeedUrl.svelte.ts`) asks while the subscribe modal is open and holds
+`sig` apart from the selection it was made for, so a URL is never built from the PREVIOUS choice;
+`/calendar` and the association's calendar section pass `sig` to `aggregatedCalendarFeedIcsAbsoluteUrl`.
+`CalendarSubscribeModal` takes `signing` and states that links saved before 2026-10-06 stopped working.
+`AgendaSelectionFields` takes the `reader` and offers `campusSelectOptions(reader)` /
+`formationSelectOptions(reader)` - "any" plus the reader's own values - on both the modal and the PDF export.
+The one-event link (`eventIcsAbsoluteUrl`) stays unsigned.
+
 ## A post links an event; the event does not link a post
 
 `Post.linkedCalendarEventId` is the only column - there is no `linkedPostId` on

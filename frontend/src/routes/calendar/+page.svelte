@@ -32,8 +32,10 @@
     defaultAgendaSelection,
     EMPTY_AGENDA_SELECTION,
     isAgendaSelected,
+    type AgendaReader,
     type AgendaSelection,
   } from '$lib/calendar/agendaSelection';
+  import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
@@ -227,9 +229,12 @@
    * One association's feed needs none: the association IS the selection.
    */
   let feedSelection = $state<AgendaSelection>(EMPTY_AGENDA_SELECTION);
+  /** Whose own campus and formations the selector offers (and nothing else, user 2026-10-06). */
+  let feedReader = $state<AgendaReader | null>(null);
   onMount(() => {
     fetchMyProfile()
       .then((profile) => {
+        feedReader = profile;
         feedSelection = defaultAgendaSelection(profile);
       })
       .catch((err) =>
@@ -237,10 +242,22 @@
       );
   });
 
+  /**
+   * The server signs the selection - only the reader's own spaces, or one association - and the link
+   * carries that signature (2026-10-06). Asked while the modal is open, for nothing else.
+   */
+  const feedSigner = createFeedSigner(() => {
+    if (!showSubscribeModal) return null;
+    if (filterAssociationId) return { associationId: filterAssociationId };
+    if (!isAgendaSelected(feedSelection)) return null;
+    return { campus: feedSelection.campus, formation: feedSelection.formation };
+  });
+
   /** https:// URL to the aggregated .ics feed; `CalendarSubscribeModal` derives webcal/Google variants. */
   const calendarIcsUrl = $derived.by(() => {
     if (typeof window === 'undefined') return '';
     if (!filterAssociationId && !isAgendaSelected(feedSelection)) return '';
+    if (!feedSigner.sig) return '';
     const { from, to } = icsSubscriptionRangeISO();
     return aggregatedCalendarFeedIcsAbsoluteUrl({
       from,
@@ -248,6 +265,7 @@
       associationId: filterAssociationId || undefined,
       campus: filterAssociationId ? undefined : feedSelection.campus || undefined,
       formation: filterAssociationId ? undefined : feedSelection.formation || undefined,
+      sig: feedSigner.sig,
     });
   });
 
@@ -746,12 +764,14 @@
       open={showSubscribeModal}
       onClose={() => (showSubscribeModal = false)}
       icsUrl={calendarIcsUrl}
+      signing={feedSigner.status}
       intro={m.calendar_subscribe_intro()}
     >
       {#snippet selector()}
         {#if !filterAssociationId}
           <AgendaSelectionFields
             selection={feedSelection}
+            reader={feedReader}
             onChange={(next) => (feedSelection = next)}
           />
         {/if}

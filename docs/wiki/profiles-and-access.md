@@ -187,7 +187,8 @@ built.
 - **D29 - WP0 builds a keyless avatar URL FIRST**, then switches MinoWiki and Archives to it, then
   revokes the key - no avatar is lost, and the key stays exposed until then.
 - **D30 - The agenda stays PUBLIC, per space**: each open space has its own anonymous feed and
-  `.ics`, as today's single feed.
+  `.ics`, as today's single feed. **Amended 2026-10-06 (D40): the feed of a selection needs a link the
+  server SIGNED for the reader's own spaces** ([D40 amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
 - **D31 - A personal post inherits its AUTHOR's spaces**; someone with no space (a staff post only)
   cannot publish one, and publishes through an institution instead. **Closed as MEMBERSHIP ONLY
   (user, 2026-10-05)**: through institutions they are a member of, nothing more.
@@ -738,7 +739,7 @@ box no longer defines anything.
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; never a personal post; card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
-| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | built, bare URL refused ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05)); "mine" is the signed-in agenda only |
+| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | built, bare URL refused, **selection SIGNED since 2026-10-06** ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05), [amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)); "mine" is the signed-in agenda only |
 | Association directory (D37) | associations reaching one's spaces, or one belongs to | built |
 | Association page | NOT LISTED for a reader outside its audience, but reachable by a link (user, 2026-10-04); the member list does NOT follow the audience | existing |
 | Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
@@ -1001,6 +1002,8 @@ against real PostgreSQL, plus the service and controller specs.
   selection) or an `eventId` (the single-evening link) is enough; a signed-in JSON read is narrowed
   to the reader's spaces and is not refused. The user took the cost knowing it: subscriptions saved
   before this release stop working ([legacy-compatibility](legacy-compatibility.md#nothing-to-remove---a-calendar-subscription-saved-before-d40-now-gets-a-400-2026-10-05)).
+- **AMENDED 2026-10-06 - read [D40 amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06): the selection is signed, and the selector below
+  now offers only the reader's own spaces.**
 - **The selector** (`AgendaSelectionFields`, `lib/calendar/agendaSelection.ts`) sits in the subscribe
   modal and on the PDF export page. It defaults to the reader's own campus and first cursus formation
   (`defaultAgendaSelection`); a reader with no space gets nothing and must choose (no link, no month
@@ -1008,6 +1011,55 @@ against real PostgreSQL, plus the service and controller specs.
   reads anonymously, asks once per campus and merges - so an association with no rule, on no campus,
   does not appear in that JSON-LD.
 - **`GET /api/public/associations`** (the sitemap) stays COMPLETE, unchanged.
+
+### D40 amended - the selection is SIGNED, and only the reader's own spaces are signed (2026-10-06)
+
+**Decided by the user (2026-10-06, four answers):** the subscription selector offers *the reader's OWN
+spaces only* (own campus, own formations; an association from its own page); the restriction is a
+**stateless signed URL that carries no identity**; an individual event link (`eventId`) stays open
+like an SEO page; and *"no need to be a member of an association to see/access an event; any
+constraint on that has no reason to exist"* - so membership gates nothing here, and an association
+with no audience rule is NOT "members only" for its feed. The anonymous `associationId` feed
+returning every event of such an association is therefore **intended**; the leak this closes is the
+one that remained: ANY campus or formation could be named in a URL by anyone.
+
+**As built:**
+
+- `POST /api/associations/calendar/feed-signature` (signed-in only; body `{campus?, formation?,
+  associationId?}`) answers `{ sig }`: base64url HMAC-SHA256 of the canonical selection
+  `v1|campus=..|formation=..|association=..` under **`AGENDA_SIGNING_KEY`** (`agenda-signature.ts`).
+  It signs a campus the reader's spaces contain, a formation their spaces contain, or a pair that is
+  one of their spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`); anything else is a 403
+  `AGENDA_SELECTION_FORBIDDEN`, an empty body a 400 `AGENDA_SELECTION_REQUIRED`. An association
+  needs only to exist. **A reader with a campus but no cursus has no space and is signed nothing.**
+- `feed.ics` and the ANONYMOUS JSON `feed` take `&sig=`. A `campus` / `formation` /
+  `associationId` selection without it is a **403 `AGENDA_SIGNATURE_REQUIRED`**; with a signature made
+  for another selection (another campus, a widened or narrowed one, an association) or a tampered one,
+  a **403 `AGENDA_SIGNATURE_INVALID`** (constant-time compare, logged `[AGENDA_SIG]`); no selection at
+  all stays the 400 `AGENDA_SELECTION_REQUIRED`. `from`/`to` are NOT signed, so the window stays free.
+  `assertAgendaAccess` (`directory-query.ts`) replaced `assertAgendaSelected`.
+- **Open on purpose:** `eventId` (the one-evening link, no signature), a **signed-in** JSON read (already
+  narrowed to the reader's spaces by `restrictToViewerSpaces`), and a **server-internal** read.
+- **The SEO agenda page** (`serverSeo`) keeps its per-campus reads unchanged and passes its existing
+  `X-Internal-Secret` (`internalHeaders()`): the JSON feed treats a valid internal secret as trusted
+  and skips the signature (`isInternalSecret`, timing-safe). No second secret, no public bypass; the
+  public JSON-LD is untouched.
+- **Fails closed:** with `AGENDA_SIGNING_KEY` unset or under 32 characters the signing route and every
+  signed selection answer **503**; nothing is ever served unchecked.
+- **Rotation is the revocation:** a new key invalidates every saved subscription URL at once. The
+  signature names no one, so no single URL can be revoked. Procedure: replace the GitHub secret
+  (`AGENDA_SIGNING_KEY`, dev `DEV_AGENDA_SIGNING_KEY`) and deploy; readers re-subscribe from
+  `/calendar` ([MIGRATION](../../infrastructure/MIGRATION.md)).
+- **Frontend:** `AgendaSelectionFields` offers "any" plus the reader's OWN campus and cursus formations
+  (`campusSelectOptions(reader)`, `formationSelectOptions(reader)`) in the subscribe modal and the PDF
+  export; `createFeedSigner` (`calendar/signedFeedUrl.svelte.ts`) asks for the signature while the
+  modal is open and the URL carries it; the modal states that links saved before 2026-10-06 stopped
+  working. A reader with no space is told to complete their profile.
+- **Known cost:** an anonymous visitor on an association's PUBLIC page cannot obtain a subscription
+  link - signing needs a session. A calendar subscription needs an account.
+- **Proof:** controller and signature specs (other campus, tampered, unsigned, `eventId` unsigned,
+  another selection's signature, rotated key, unset key, internal caller), and a run against the local
+  estate's real PostgreSQL.
 
 ### WP6e institutions as built (2026-10-05)
 
