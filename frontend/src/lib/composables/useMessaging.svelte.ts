@@ -151,7 +151,12 @@ function mediaKindFromEnvelope(type: string): number {
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
-  let replyingTo = $state<ChatMessage | null>(null);
+  /**
+   * The reply armed in each conversation, keyed by conversation id. A reply belongs to ONE
+   * conversation: the composer shows (and a send consumes) only the entry of the conversation
+   * that is open, so opening another one never carries the quote along.
+   */
+  const replyByConversation = new SvelteMap<string, ChatMessage>();
   let pendingMediaFiles = $state<import('$lib/media').PendingMediaFile[]>([]);
   /** A picked video being re-encoded on the device before it joins the queue (decision C3). */
   const videoPreparation = new VideoPreparationState();
@@ -1100,8 +1105,8 @@ export function useMessaging() {
       }
     }
 
-    const currentReplyingTo = replyingTo;
-    replyingTo = null;
+    const currentReplyingTo = replyByConversation.get(ctx.selectedContact) ?? null;
+    replyByConversation.delete(ctx.selectedContact);
     ctx.setSendError('');
     const channelSvc = isChannel ? new ChannelService() : null;
 
@@ -1645,13 +1650,25 @@ export function useMessaging() {
   // ── Reply ─────────────────────────────────────────────────────────────────
 
   /** Sets the message the user is replying to, which will be embedded as a quote preview in the next send. */
-  function handleReply(message: ChatMessage) {
-    replyingTo = message;
+  function handleReply(conversationKey: string, message: ChatMessage) {
+    if (!conversationKey) {
+      console.log('[REPLY] handleReply ignored: no conversation is open');
+      return;
+    }
+    console.log(`[REPLY] armed in "${conversationKey}" on message ${message.id}`);
+    replyByConversation.set(conversationKey, message);
   }
 
-  /** Clears the pending reply state (user dismissed the reply banner). */
-  function cancelReply() {
-    replyingTo = null;
+  /** The reply armed in `conversationKey`, or null: what that conversation's composer shows. */
+  function replyFor(conversationKey: string | null | undefined): ChatMessage | null {
+    return conversationKey ? (replyByConversation.get(conversationKey) ?? null) : null;
+  }
+
+  /** Clears the pending reply of ONE conversation (user dismissed its reply banner). */
+  function cancelReply(conversationKey: string) {
+    if (!conversationKey) return;
+    console.log(`[REPLY] cancelled in "${conversationKey}"`);
+    replyByConversation.delete(conversationKey);
   }
 
   /**
@@ -1780,10 +1797,8 @@ export function useMessaging() {
     /** Reactive map of emoji reactions keyed by message ID. */
     messageReactions,
 
-    /** Message the user is currently replying to (null when no reply is pending). */
-    get replyingTo() {
-      return replyingTo;
-    },
+    /** The message the user is replying to IN a given conversation (null when none is pending there). */
+    replyFor,
     /** Files staged for sending in the next handleSendChat call. */
     get pendingMediaFiles() {
       return pendingMediaFiles;
