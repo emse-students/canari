@@ -1051,6 +1051,8 @@ and the English error became `auth_biometric_no_user`.
 Still owed: a real finger (the proof written by a success), the Settings radio (step 4), and all of
 iOS.
 
+## iPad and rotation - owed on an iPad\n\nSwitching into Canari from another app does not rotate the window on an iPad (reported 2026-08-28); it needs an iPad. The Android phone rotation is decided and shipped: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)).\n
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.

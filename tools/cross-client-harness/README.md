@@ -863,6 +863,8 @@ Two environment traps worth repeating here, because they read as application bug
   `am kill` - and `am kill` will not reclaim a foreground process, so go HOME first and assert the
   death.
 
+The browser report attributes every console line to the ORIGIN that emitted it (`consoleorigin.mjs`: execution-context origin, then the top stack frame, then a non-network log entry's url; a network entry's url names the resource and is never an emitter). Lines from a foreign origin (the identity provider's console during `login.mjs`) are removed from `unexplained` and REPORTED as `foreignOrigins`, a count per origin, mirroring the phone report's `foreign` bucket; an unattributable line is never forgiven (#1277).\n
+
 ## Standing constraints
 
 - **Runs against the LOCAL estate since 2026-09-03** - `SITE` in `names.mjs`, one constant, and

@@ -2924,6 +2924,8 @@ cleared both. After the fix the removed-node release clears them.
 (`handleTouchStart`), so the end cannot be lost. No timer, no sweep. Not reproduced on the iPhone itself
 (no WebKit inspector tooling on the workstation); the mechanism is standard DOM and not engine-specific.
 
+**If a mounted pager is ever reopened, its price was audited 2026-09-29 and re-read 2026-10-01:** nothing knows which page is on screen. `MainChatPage` marks read and sends the read receipt on document focus alone (`isWindowFocused`/`isTabVisible`), handles every `canari-keyboard-media` GIF whatever is focused, consumes `canari_pending_contact` only at mount, and resets on a tab switch only through a remount (`lastActiveRouteMode`); `/chat` and `/communities` share one `globalConvs.selectedContact`, so two mounted instances draw one thread with duplicate `msg-<id>` ids (`ChatArea` jumps by `getElementById`) and one `--chat-composer-height`. The feed reads its `load` data (`data.feedParams`) and binds pull-to-refresh to the FIRST `.page-scroll-wrap` in the document, and `app.css` keys the chat layout on `.page-scroll-wrap:has(.app-layout)` - one wrapper for every page.\n
+
 ## 39. A community with many channels, and a channel with a long name - measured by injection (2026-09-14, 2026-09-22)
 
 The estate has one channel per workspace, so the graphical pass (user, 2026-09-13: every page at
