@@ -560,3 +560,16 @@ it records `SETUP-FAILED` naming `GET /api/posts/reel-limits`.
 | CORRUPT-8 | The store replaced by another device s - **a pass that "works" is a finding** | `+snapshot` | `pending` |
 | CORRUPT-9 | Fill the data dir until writes fail, then receive | `+A1` `+snapshot` | `pending` - no half-written save |
 | CORRUPT-10 | A write interrupted mid-flush - never a half-file read as valid | `+A1` `+snapshot` | `pending` |
+
+## 20 - GRAINE - an author that is proven
+
+Read [channel-encryption section 21](protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28) first. **One runner, `graineauth.mjs --only N`, on W1 and W2**: the owner writes through the product, a database edit alters the stored row, the peer is reloaded and must REFUSE it with its line. **The estate is whichever `SITE` names (the LOCAL docker estate since 2026-09-03), never production, and never the phones.** It requires the v2 writer on that estate (G2-5): a row W1 sends with no `signature` is `SETUP-FAILED`, not a pass. Every edit is undone in `finally`.
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| GRAINE-AUTH-1 | A row RELABELLED to another author (`authorId` = the peer): W2's history read refuses it with `author mismatch` at ERROR and renders nothing | `W1` `W2` | `PASS` 2026-10-05 on the local estate at `b52d540b3` (source `11aec14c1fd3ebee`, G2-5 writer: all 10 salon rows of the run signed), clean on W2 and in social-service; the `author mismatch` line at ERROR, marker not rendered |
+| GRAINE-AUTH-2 | A row MOVED to another index (`messageIndex` + 1): the signature no longer verifies, `bad signature` at ERROR, nothing rendered | `W1` `W2` | `PASS` 2026-10-05 on the local estate at `b52d540b3` (source `11aec14c1fd3ebee`, G2-5 writer: all 10 salon rows of the run signed), clean on W2 and in social-service; `bad signature` (with the WASM's own `[GRAINE_SIG]` WARN, named by the runner), marker not rendered |
+| GRAINE-AUTH-3 | A REPLAY, the same sealed fields POSTed again as the peer: `409 CHANNEL_MESSAGE_KEY_REUSED`, `[CHANNEL_KEY_REUSED]` in social-service, no second row. The reader's own replay refusal is unreachable here (the UNIQUE index) and stays a unit test | `W1` `W2` | `PASS` 2026-10-05 on the local estate at `b52d540b3` (source `11aec14c1fd3ebee`, G2-5 writer: all 10 salon rows of the run signed), clean on W2 and in social-service; 409 `CHANNEL_MESSAGE_KEY_REUSED`, `[CHANNEL_KEY_REUSED]` read from the container log, row count unchanged |
+| GRAINE-AUTH-4 | A SEED RELAYED from a member who has left the key group, carrying a forged key or endorsement: refused with `[GRAINE] REFUSED v2 seed`, nothing stored | `W1` `W2` `W3` | `pending` - no runner yet; needs a departed member and a forged relay |
+
+**NOTIF-19 and NOTIF-20 are owed again on a v2 session (G2-6).** Their `PASS` rows above were taken on v1, and the native reader now refuses on author and signature (channel-encryption section 21.5). Re-run `bun archive/notif19.mjs` and `bun archive/notif20.mjs` on the Mi 9T against a build carrying G2-5, and confirm the seed row of the salon has `signature IS NOT NULL` first. Nothing else changes in those rows: a plaintext banner with no hold is still the bar.

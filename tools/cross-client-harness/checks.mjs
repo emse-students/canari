@@ -382,6 +382,14 @@ export const PHASES = {
     scripts: only('reel.mjs', 1, 2),
     needs: ['A1'],
   },
+  // A SALON ROW THE SERVER ALTERS (Graine v2, channel-encryption section 21): W1 writes, a database
+  // edit relabels or moves the row, W2 re-reads history and must REFUSE it with its line. Edits are
+  // undone in `finally`. GRAINE-AUTH-4 (a seed relayed from a departed member) has no runner yet.
+  GRAINE: {
+    title: 'Graine v2 - an author that is proven',
+    scripts: only('graineauth.mjs', 1, 3),
+    needs: ['W1', 'W2'],
+  },
   CORRUPT: {
     title: 'deliberate store damage',
     scripts: ['corrupt.mjs', 'corrupt1.mjs', 'corrupt2.mjs', 'corrupt4.mjs', 'corrupt6.mjs'],

@@ -2024,6 +2024,24 @@ export const AUTH_TEARDOWN_NARRATION = [/^\[A\] clear$/, /^\[A\] ws-$/];
 export const BLOCK_LIST_READ_NARRATION = [/^\[blocks\.listBlockedUsers\]$/];
 
 /**
+ * WHAT ANY PAGE LOAD SAYS ABOUT ITSELF, so a row that RELOADS a client names it instead of widening
+ * the classifier. Four lines, each a function-entry or restore log the project's standard requires
+ * and each carrying no value that could be a finding: the brand's fit measurement, the text-zoom
+ * measurement, the notification-preference fetch, and the Graine key-group registry being restored
+ * before the drain (the boot step of the v2 reader - its COUNT is not asserted here).
+ *
+ * THEY ARE PINNED TO THEIR OWN SENTENCES and applied only by a row that provoked a reload
+ * (`graineauth.mjs` reloads W2 on purpose to re-read history). A client that did not reload and
+ * says one of these has booted without being asked, which is a finding.
+ */
+export const PAGE_BOOT_NARRATION = [
+  /^\[CanariBrand: name (?:fits|does not fit) in \d+px\]$/,
+  /^\[textZoom: font \d+px over a \d+px rem box -> --text-zoom [\d.]+\]$/,
+  /^\[notificationPreferences\.fetch\]$/,
+  /^\[GRAINE\] key-group registry restored before the drain - \d+ group\(s\)/,
+];
+
+/**
  * WHAT CREATING A GROUP SAYS ABOUT ITSELF, and both lines are load-bearing rather than chatter.
  *
  * `[blocks.isBlockedWith] <payload>` is the function-entry log this project's own standard requires
