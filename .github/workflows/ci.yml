@@ -802,6 +802,25 @@ jobs:
           name: frontend-coverage
           path: frontend/coverage/
 
+      # THE PRODUCTION FRONTEND IS BUILT ONCE ON `main`, NOT ON EVERY PULL REQUEST (#1476, #1498).
+      # Nothing above builds it, so a build-only defect - a bundle naming no commit, two build ids
+      # in one output - was invisible to every pull request and to main's CI and surfaced at the
+      # release tag. `bun run build` already chains the bundle-consistency, platform-service and
+      # emoji checks; the assertion script adds what only the artefact shows (the stamp names THIS
+      # commit, the wasm and protobuf module are in). Pull requests skip it to keep their cost.
+      # The release does NOT reuse this build: each estate bakes its own VITE_* origins in at build
+      # time (`build.yml`), which this one has none of.
+      - name: Build the production frontend (main only)
+        if: github.event_name == 'push'
+        working-directory: frontend
+        env:
+          BUILD_WEB: '1'
+        run: bun run build
+
+      - name: Assert what the build carries (main only)
+        if: github.event_name == 'push'
+        run: bun .github/scripts/assert-frontend-build.mjs frontend "${{ github.sha }}"
+
   # =================================================================================================
   # THE ANDROID UNIT TESTS, WHICH HAD NEVER RUN ON ANY MACHINE
   # =================================================================================================

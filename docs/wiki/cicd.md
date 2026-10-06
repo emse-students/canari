@@ -144,7 +144,14 @@ committed binary went a crypto fix stale precisely because only some pipelines r
 against its own head, so two pull requests that each pass can still break `main` between them; the
 push run is the one that says whether the merged result is green. It also covers what a required
 check cannot - an admin bypassing the ruleset for an emergency hotfix still gets told, on `main`,
-what the bypass skipped. **Nothing here deploys**, so a red run on `main` is a statement about the
+what the bypass skipped. **THE `push` RUN ALSO BUILDS THE PRODUCTION FRONTEND, ONCE (2026-10-06)**:
+the suite lints, type-checks and tests but built nothing, so the build-id defects of #1476 and #1498
+(a bundle naming no commit, two ids in one output) showed only at a release tag. The
+`test-frontend` job runs `BUILD_WEB=1 bun run build` on `push` only - pull requests skip it for cost -
+then `.github/scripts/assert-frontend-build.mjs` checks the stamp names THIS commit and that the wasm
+and protobuf module are in; `assert-frontend-build.test.mjs` pins each refusal and that `ci.yml`
+calls it. The release does not reuse the artefact: each estate bakes its own `VITE_*` origins in
+(`build.yml`), which `main`'s build has none of. **Nothing here deploys**, so a red run on `main` is a statement about the
 repository and never about production, which is still serving the last release.
 
 ### Build and deploy an estate (`build.yml`, `serve-dev.yml`, `serve-prod.yml`)

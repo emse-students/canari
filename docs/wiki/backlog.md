@@ -1028,8 +1028,6 @@ reachable**, and an auto-merge armed by a session that has since gone quiet merg
 the other end. Which is the argument for the design above: the window is not a coordination problem
 between sessions, it is a gate that reads a sha a human chose instead of the head the machine sees.
 
-### P2 - NO GATE BUILDS THE FRONTEND BEFORE A RELEASE, SO A BUILD-ONLY DEFECT SURFACES AT THE TAG (#1476, 2026-10-05)\n\nThe build-id defect fixed by #1476 and #1498 (the build named no commit; the stamp was computed per module, not once per process) was invisible to every pull request and to main's own CI, and surfaced only when a release built the frontend. **Work**: have `ci.yml` on `main` (not on every pull request, to keep its cost) run the production frontend build ONCE and assert on the artifact - the build id names the commit, one stamp per process, the generated `wasm`/`proto` are present. Files: `.github/workflows/ci.yml`, a script under `.github/scripts/` with its test, `frontend/vite.config.ts` only if the stamp has to be exposed. Must not add a fifth visible workflow ([cicd](cicd.md)); the build is then reusable by `release.yml` rather than repeated. Read [durable-rules](durable-rules.md#release-and-ci---cicd): a check no workflow calls does not exist.\n
-
 ### P3 - EVERY `.swift` IN THE iOS TREE IS UNGUARDED, AND NOTHING HAS MEASURED WHETHER A SUITE EVEN EXISTS
 
 **The Android half of this closed on 2026-09-22** and is on
