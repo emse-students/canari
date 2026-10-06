@@ -1,3 +1,0 @@
-### Changed - the public agenda is one feed per campus and/or formation (D40); a bare subscription URL is refused
-
-`feed` and `feed.ics` take `?campus=` and `?formation=`, and the subscribe modal and PDF export now ask for one (defaulting to the reader's own). **A bare anonymous feed URL is refused with a 400 `AGENDA_SELECTION_REQUIRED`: calendar subscriptions to the whole agenda saved before this release stop updating until re-subscribed** (user decision). See [profiles-and-access](docs/wiki/profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05) and [legacy-compatibility](docs/wiki/legacy-compatibility.md#nothing-to-remove---a-calendar-subscription-saved-before-d40-now-gets-a-400-2026-10-05).
