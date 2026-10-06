@@ -977,6 +977,32 @@ else
   fail 'serve-dev.yml does not pin bun from .bun-version - the check would run on whatever the runner has, or not at all'
 fi
 
+printf '\nproduction deploys its release by an immutable tag, so a rerun is a rollback\n'
+# On 2026-09-06 re-running v0.16.1's deploy passed twenty steps and redeployed v0.16.4, because the
+# estate was deployed by the moving `latest`. The pair that makes a rerun a rollback is the tag
+# `build.yml` pushes for EVERY service and the argument `serve-prod.yml` hands the deploy script.
+if grep -qE 'type=raw,value=v\$\{\{ inputs\.version \}\}' "$WF/build.yml"; then
+  pass 'build.yml pushes v<version> for every service it builds'
+else
+  fail 'build.yml no longer pushes the v<version> tag - production has nothing immutable to deploy'
+fi
+if grep -qE -- '--tag "v\$\{\{ inputs\.version \}\}"' "$WF/serve-prod.yml"; then
+  pass 'serve-prod.yml deploys --tag v<version>, the tag build.yml pushes'
+else
+  fail 'serve-prod.yml does not deploy v<version> - a rerun of an old release redeploys whatever latest points at'
+fi
+if grep -qE -- '--tag (latest|dev)\b' "$WF/serve-prod.yml"; then
+  fail 'serve-prod.yml names a moving tag - re-running an old release would redeploy the newest'
+else
+  pass 'serve-prod.yml names no moving tag'
+fi
+if grep -qE '^  enumerate-services:' "$WF/build.yml" && grep -q 'ALL_SERVICES=(' "$WF/build.yml" \
+  && grep -q 'for service in "${ALL_SERVICES\[@\]}"' "$WF/build.yml"; then
+  pass 'build.yml still builds every service every release, so the v<version> tag exists for all of them'
+else
+  fail 'build.yml selects services again - a service not rebuilt has no v<version> image and the prod deploy cannot resolve it'
+fi
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"
