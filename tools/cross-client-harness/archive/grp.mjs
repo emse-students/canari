@@ -315,7 +315,18 @@ async function withGroup(cx, n, fn) {
  */
 async function addPeer(cx) {
   const before = (await panelOf(cx)).count;
-  await addMember(cx, PEER_NAME, { openSettings: false });
+  // THE PICKER MUST HAVE RETURNED A CANDIDATE BEFORE THE ROSTER IS WAITED ON. A picker that offered
+  // nobody left "Ajouter des membres" open and the roster at `MEMBRES (1)`, and the wait below then
+  // read as a slow commit - while the overlay left behind failed every later `closeOverlays`
+  // (GRP-3..10, 2026-10-06). The refusal is raised HERE with its reason, and the modal is closed by
+  // its own control on the way out.
+  try {
+    await addMember(cx, PEER_NAME, { openSettings: false });
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    const left = await closeOverlays(cx).catch((c) => `could not close it either: ${c.message}`);
+    throw new Error(`addPeer: the member picker returned no candidate (${reason}); overlays: ${left}`);
+  }
   // `null` means the panel had no `MEMBRES (n)` to read at all, which is not a count this can wait
   // on - the caller's own assertion is what must speak to that.
   if (before === null) return;

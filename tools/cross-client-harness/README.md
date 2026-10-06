@@ -689,6 +689,21 @@ next one's symptom names the wrong cause.
   `--no-build` installs what is already on disk; `--reverse` alone is what a replug costs. It is a
   MODULE too (`armA1`), so a phase that arms the phone calls it instead of shelling out.
 
+  **`adb reverse --remove` DOES NOT CUT AN OPEN WEBSOCKET, so it cannot simulate a stream gap**
+  (LIFE-6 measured it on 2026-09-07, the Mi 9T pass's D5 met it again on 2026-10-06): it closes the
+  listener and the socket the app already holds keeps delivering. A gap is made by `restartGateway()`
+  in `estate.mjs` - `docker restart canari-local-chat-gateway-1`, which worked for D1 - and it throws
+  on any estate but the local one.
+
+- **Hand-made throwaway groups use `bun newgroup.mjs --sandbox <TAG>`**, which mints `SBX<TAG>-<mark>`,
+  a shape `debris.mjs` allowlists. A group made with `--name` (`ORD7496`, `ORE0185` on 2026-10-06) is a
+  person's name and is deliberately never swept: no runner mints it, and a three-letters-four-digits
+  pattern is one a person types. The allowlist was not widened; `debris-selftest.mjs` pins both names
+  as SPARED.
+- **`closeOverlays` closes the "Ajouter des membres" modal by its backdrop's own control**
+  (`MODAL_CLOSE` in `groupnav.mjs`), pinned against `Modal.svelte` by `selector-selftest.mjs`, and
+  `grp.mjs`'s `addPeer` throws, naming the reason, when the picker returns no candidate.
+
   **Two flags exist for check R and for nothing else.** `--release` builds the MINIFIED,
   resource-shrunk variant - the only one in which a stripped class or resource can surface - and
   installing it **costs the device**: it is signed with another key, so the tool uninstalls the

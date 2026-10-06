@@ -129,6 +129,12 @@ function authentikEnv() {
  *    cable, the app raised a notification 2.2s later, and the row reported FAIL about a phone that
  *    had never been offline. Cutting the radios is HALF of that state; cutting this is the other.
  *
+ * 3. **`--remove` DOES NOT CUT A SOCKET THAT IS ALREADY OPEN.** It closes the LISTENER; the
+ *    connection the app holds keeps carrying data. So it cannot simulate a stream gap - the Mi 9T
+ *    pass's D5 (2026-10-06) saw none, as LIFE-6 had on 2026-09-07. It stops NEW connections only.
+ *    A gap is made by `restartGateway()` in `estate.mjs` (`docker restart` of the chat gateway),
+ *    which is what worked for D1.
+ *
  * `--remove` on a forward that is already gone exits non-zero, so it is tolerated and the list is
  * what decides - the same rule as the raise, in the same place.
  */

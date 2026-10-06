@@ -14,13 +14,28 @@
  * surface here is therefore part of the job, not a debugging aid.
  *
  *   bun newgroup.mjs --port 9223 --name HEALW2-xxxx [--add "<the other party's display name>"]
+ *   bun newgroup.mjs --port 9223 --sandbox ORD     # a throwaway `SBXORD-<mark>` that cleanup.mjs may sweep
  */
 import { APP_TAB, client, evaluate } from './chat.mjs';
+import { mark } from './marker.mjs';
 
 const arg = (n, d) => (process.argv.includes(`--${n}`) ? process.argv[process.argv.indexOf(`--${n}`) + 1] : d);
 
 const cx = await client(Number(arg('port', 9223)), APP_TAB, { focus: false });
-const name = arg('name', `HEALW2-${Date.now().toString(36)}`);
+// `--sandbox <TAG>` MINTS A NAME THE SWEEPS KNOW (`SBX<TAG>-<mark tail>`, `debris.mjs`). A hand-made
+// `--name` is a person's name and is never swept, which is why a phone pass's `ORD7496` stayed on the
+// estate after `cleanup.mjs` ran. Giving both is ambiguous, so it is refused.
+const sandbox = arg('sandbox', null);
+if (sandbox !== null && process.argv.includes('--name')) {
+  throw new Error('newgroup: --sandbox mints the name, so --name cannot be given with it');
+}
+if (sandbox !== null && !/^[A-Z0-9]{1,8}$/.test(sandbox)) {
+  throw new Error(`newgroup: --sandbox ${JSON.stringify(sandbox)} must be 1-8 upper-case letters or digits`);
+}
+const name =
+  sandbox !== null
+    ? `SBX${sandbox}-${mark('G').split('-')[1]}`
+    : arg('name', `HEALW2-${Date.now().toString(36)}`);
 const addWho = arg('add', null);
 
 // THE GESTURE ITSELF NOW LIVES IN `groupnav.mjs`, and all three hard-won post-conditions written out

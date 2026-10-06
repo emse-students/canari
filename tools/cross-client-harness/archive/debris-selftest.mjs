@@ -58,6 +58,11 @@ for (const tail of ['i', 'ab', 'k7p', 'ktp5w', '0zzzz1'])
 // mark's. Built the same way here so a change to `mark` moves both together.
 swept(`N17B-${mark('G').split('-')[1]}`, 'notif17b.mjs:137');
 
+// newgroup.mjs `--sandbox <TAG>` -> `SBX${TAG}-${mark('G').split('-')[1]}`, the one shape a hand-made
+// throwaway has that a sweep may delete.
+swept(`SBXORD-${mark('G').split('-')[1]}`, 'newgroup.mjs --sandbox ORD');
+swept(`SBX7-${mark('G').split('-')[1]}`, 'newgroup.mjs --sandbox 7');
+
 // ------------------------------------------------- and the blind spot that let N17B in, closed
 //
 // THE HEADER ABOVE CALLED THIS THE RESIDUAL RISK AND IT CAME TRUE. The enumeration was "seven sites
@@ -136,6 +141,13 @@ spared(`${mark('GRP5')}-R-R`, 'nor a doubled rename');
 // `newgroup.mjs --name <anything>` lets an operator create a group by hand, deliberately outside
 // every pattern here. A name given on a command line is a person's name for it.
 spared('HEAL manual check', 'an operator-supplied --name');
+// THE TWO THE 2026-10-06 PHONE PASS LEFT: three letters and four digits, made by hand with --name. They
+// are NOT swept and must not become so - that shape is one a person types. `--sandbox` is the way out.
+spared('ORD7496', 'a hand-made --name; no runner mints it');
+spared('ORE0185', 'idem');
+spared('SBXORD', 'the sandbox prefix without a run mark names no run');
+spared('sbxord-k7p2a', 'lower case is not a stamp');
+spared(`SBXORD-${Date.now().toString(36)}-X`, 'no runner mints a trailing segment');
 
 if (problems.length) {
   for (const p of problems) console.error(`  FAIL ${p}`);
