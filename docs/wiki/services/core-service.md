@@ -165,7 +165,7 @@ of **three** outcomes. The distinction exists for one reason: **only an ANSWER m
 | outcome | when | response | cached |
 | --- | --- | --- | --- |
 | `image` | upstream 200 | the bytes, upstream `Content-Type` **and upstream `ETag`** | 1 h in process (then REVALIDATED, not re-fetched), 24 h in the browser |
-| `absent` | upstream **404** - this user has no photo | `404`, no body | 10 min in process, 10 min in the browser |
+| `absent` | upstream **404** - this user has no photo | `404`, no body | 10 min in process, 10 min in the browser (the web client itself remembers it for the session) |
 | `unavailable` | timeout, transport failure, upstream 5xx/429, our key refused, or no key configured | `502`, no body, `Cache-Control: no-store` | never, at any layer |
 
 - **The budget is 4 000 ms**, the number Le Cercle justified for the same endpoint. The four proxies
@@ -498,10 +498,12 @@ and `userAvatarCache.ts` forgot `none` with the mount.
 
 - **A has-avatar flag in `/api/users/batch` is REFUTED**: the photo lives in MiGallery, core holds no
   column for it, so the flag would cost one upstream call per profile, which is the request it replaces.
-- **A 404 is kept per URL for 10 minutes** - the lifetime the server already states - and cleared when the
-  signed-in reader changes. **Only a 404**: a 502 `unavailable` is not an answer. **What would make it
-  wrong**: the user adds a photo, in MiGallery, which no Canari screen does and nothing here is told; so
-  the lifetime is the only bound. Guarded by `userAvatarCache.test.ts` ("a known absence").
+- **A 404 is kept per URL for the rest of the session, with NO timer** (user, 2026-10-06; the 10-minute
+  lifetime of 2026-10-05 was a clock deciding traffic, and prod 1.0.3 - which predates it - logged 5121
+  404s in 6587 avatar requests over 30 h) - cleared only when the signed-in reader changes. **Only a
+  404**: a 502 `unavailable` is not an answer. **What would make it wrong**: the user adds a photo, in
+  MiGallery, which no Canari screen does and nothing here is told; initials stay until the app reloads,
+  the accepted cost. Guarded by `userAvatarCache.test.ts` ("a known absence").
 - **Group photos came late for another reason**: `ConversationMeta` did not hold `imageMediaId`, so a
   restored sidebar row had no photo id until the server's group list arrived after the connection (the
   per-group `GET /api/mls/groups/:id` is NOT what feeds it). The id is now persisted (IndexedDB row, SQLite
