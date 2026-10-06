@@ -379,6 +379,29 @@ Sweeps every `+push` row left behind above it.
 **NOTIF-12 records rather than asserts**: attribution of a stacked line inside a salon is an open
 product decision, in [backlog](backlog.md).
 
+### The phone pass of 2026-10-05 (Mi 9T, APK `7ab8f1780`, local estate, rig build `9a9003482`)
+
+Run on `feat/graine-v2-g2-6`'s estate with the writer (G2-5) active: the salon seed rows were read
+signed (`signature IS NOT NULL`, `idx 0` and `idx 1`) WHILE NOTIF-20 ran. Latest verdict per row, read
+from `results.ndjson`: `PASS` NOTIF-1b, 4b, 7 (bg, three runs), 9, 11, 14, 15, 16, 17b, 18, 19, 20,
+21; `PASS-DIRTY` NOTIF-2, 4, 7b (the standing same-epoch `SecretReuseError` P3, as 2026-09-23);
+`FAIL` NOTIF-10 (a `Nouveau message de ...` generic banner left in the shade by that same P3, 5 of 5
+markers delivered). **NOTIF-14 is `PASS`**: the title names its sender since #1434. **THREE TRAPS
+FOUND, ALL IN THE RIG OR THE BUILD, NONE IN THE PRODUCT**: (1) the estate's WASM was built BEFORE
+#1409, so `add_members_bulk` returned 4 elements and every admit died on `toBase64(undefined)`
+(`e is not iterable`) - GRP-1..9, NOTIF-17b and 21 recorded `FAIL` on it, and `bun run wasm:build`
+then `make local-frontend` cleared it (a `vite build` alone never rebuilds the WASM); (2) NOTIF-21 read
+"the handset" as the owner's FIRST `tauri-` device, which since the iPhone enrolled is a push-dead
+one - it reads the phone's own `mls_device_id_*` now; (3) `[coversScreen]`, `[PICKER]`, the boot and
+the `doFetchProto` lines were decision logs no rule named, so correct runs read `PASS-DIRTY`.
+**NOT SETTLED**: GRP-3..10 are `ERROR` after the rebuild with `could not close the overlay, still on
+group-panel` (`groupnav.mjs:222`), a rig-vs-UI drift not diagnosed here. The FEED is refused for
+every rig account (`[FEED_GATE] refused: no space, no association`), so `/posts` redirects the web
+client to `/chat` and shows "Impossible de charger les posts" on the iPhone: NOTIF-7 parks on
+`/calendar` instead. **The iPhone rows did not run**: the bench app was cold-started by the deep-link
+probe and sits behind the encryption PIN, which an agent does not type
+([cross-client-ios](cross-client-ios.md#the-notification-tap-deep-link-on-the-iphone-first-reading-2026-10-05)).
+
 ## 15 - CALL - audio and video
 
 The largest hole: four unit-test files, zero harness scripts. **A browser without the frame
