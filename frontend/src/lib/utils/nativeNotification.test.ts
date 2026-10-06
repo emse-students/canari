@@ -33,6 +33,7 @@ const NOTIF: NativeMessageNotification = {
   body: 'Hello',
   mentionsMe: false,
   sentAt: 1_700_000_000_000,
+  covers: 1,
 };
 
 describe('postNativeMessageNotification', () => {
@@ -65,6 +66,8 @@ describe('postNativeMessageNotification', () => {
       // THE SENDER'S OWN INSTANT, and it is load-bearing rather than cosmetic: it is the only
       // thing by which the builder recognises that the push and this frame are one message.
       sentAt: 1_700_000_000_000,
+      // One real banner answers up to this many refused pushes (the batched flush).
+      covers: 1,
     });
   });
 

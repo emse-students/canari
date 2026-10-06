@@ -1513,6 +1513,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *   the push payload uses, so both triggers render identically.
          * @param sentAt the sender's own instant in ms, 0 when unknown. See the de-duplication in
          *   [showMessageNotification]: without it the two triggers cannot recognise one message.
+         * @param covers how many inbound messages this ONE banner stands for (a catch-up flush
+         *   raises a single banner for N). [GenericBannerLedger] answers up to that many refused
+         *   pushes with it.
          */
         @JvmStatic
         fun notifyMessageFromWebSocket(
@@ -1523,21 +1526,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             body: String,
             mentionsMe: Boolean,
             sentAt: Long,
+            covers: Int,
         ): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
                 Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
                 return false
             }
-            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt")
+            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt covers=$covers")
             WS_NOTIF_LANE.execute {
                 try {
                     val avatar = if (senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
                     synchronized(GENERIC_BANNERS_LOCK) {
                         // THE REAL LINE REPLACES THE GENERIC ONE a refused push left for it.
-                        val generic = GENERIC_BANNERS.realPosted(groupId)
-                        if (generic != 0L) {
-                            Log.d(TAG, "notifyMessageFromWebSocket: replacing the generic banner a refused push posted (groupId=${groupId.take(8)})")
+                        val generics = GENERIC_BANNERS.realPosted(groupId, maxOf(covers, 1))
+                        if (generics.isNotEmpty()) {
+                            Log.d(TAG, "notifyMessageFromWebSocket: replacing ${generics.size} generic banner(s) a refused push posted (groupId=${groupId.take(8)} covers=$covers)")
                         }
                         context.showMessageNotification(
                             senderName = senderName,
@@ -1549,7 +1553,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             sentAt = sentAt,
                             // The WebView already decided this reader cannot see the message land.
                             suppressInForeground = false,
-                            supersedes = generic,
+                            supersedes = generics.firstOrNull() ?: 0L,
+                            alsoSupersedes = generics.drop(1).toSet(),
                             namesEachSender = true,
                         )
                     }
@@ -1865,6 +1870,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              */
             supersedes: Long = 0L,
             /**
+             * Further lines this post replaces: one batched real banner can answer several generic
+             * lines (see [GenericBannerLedger.realPosted]). Dropped like [supersedes].
+             */
+            alsoSupersedes: Set<Long> = emptySet(),
+            /**
              * Whether this notification is a conversation between PEOPLE, so every message carries
              * its author's name - the other person's above theirs, [R.string.notif_sender_self]
              * above ours - as a group already did.
@@ -1953,7 +1963,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             existingNotif
                 ?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
                 ?.messages
-                ?.filter { supersedes == 0L || it.timestamp != supersedes }
+                ?.filter { (supersedes == 0L || it.timestamp != supersedes) && it.timestamp !in alsoSupersedes }
                 ?.takeLast(MAX_NOTIF_MESSAGES - 1)
                 ?.forEach { style.addMessage(it) }
             // Rich media (WP-XP-3): attach the decrypted image inline via setData so it renders as a
