@@ -76,6 +76,7 @@
     "testEnvironment": "node"
   },
   "overrides": {
+    "proxy-addr": "^2.0.8",
     "path-to-regexp": "8.4.0",
     "picomatch": "4.0.4",
     "qs": "^6.16.0",
