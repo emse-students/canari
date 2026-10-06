@@ -1,7 +1,7 @@
 import { listPosts, DEFAULT_POST_FEED, parsePostFeed } from '$lib/posts/api';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import type { PageLoad } from './$types';
-import { redirectIfNotFeedAudience } from '$lib/posts/feedAudience';
+import { isOutsideFeedAudience, redirectIfNotFeedAudience } from '$lib/posts/feedAudience';
 
 export const load: PageLoad = async ({ url }) => {
   // THE URL WINS, THEN THE REMEMBERED TAB, THEN THE DEFAULT (user, 2026-09-10: *"L'onglet du fil
@@ -32,7 +32,7 @@ export const load: PageLoad = async ({ url }) => {
   const posts = listPosts({ limit: 20, feed, promo, formation });
   // Attach a handler so a refused fetch is not an unhandled rejection on the redirect path. The
   // promise itself is still handed over, so `{#await}` sees the same failure it always did.
-  posts.catch(() => {});
+  posts.catch((err) => void isOutsideFeedAudience(err));
 
   if (await redirectIfNotFeedAudience()) return;
 

@@ -4,6 +4,7 @@ import { feedAudienceState, setFeedAudience } from '$lib/stores/userState.svelte
 import { fetchFeedAudience } from '$lib/posts/api';
 import { goto } from '$app/navigation';
 import { Log } from '$lib/utils/Log';
+import { refusalStatus } from '$lib/utils/apiRefusal';
 
 /**
  * WHO MAY SEE THE SOCIAL FEED, ON THE CLIENT SIDE - ASKED, NOT RESTATED.
@@ -81,5 +82,27 @@ export async function redirectIfNotFeedAudience(): Promise<boolean> {
 
   if (verdict !== false) return false;
   await goto(resolve('/chat'), { replaceState: true }).catch(() => {});
+  return true;
+}
+
+/** The pure classification: a 403 from the feed read, by status. */
+export function isFeedAudienceRefusal(error: unknown): boolean {
+  return refusalStatus(error) === 403;
+}
+
+/**
+ * Whether a failed feed read is the server's "this reader is outside the audience" answer.
+ *
+ * `FeedAudienceGuard` refuses a signed-in reader with no space and no association with a 403, and
+ * a 403 is an ANSWER about the reader, not a failure of the feed. Classified by STATUS, never by
+ * the guard's sentence. When it is one, the refusal also corrects the remembered verdict: the page
+ * rendered from a stale `true` (or an unknown one), so the next visit must redirect.
+ *
+ * Any other failure (transport, 5xx, 401) is NOT a verdict and keeps the generic error.
+ */
+export function isOutsideFeedAudience(error: unknown): boolean {
+  if (!isFeedAudienceRefusal(error)) return false;
+  Log.d('FeedAudience: the feed answered 403 - reader is outside the audience, verdict corrected');
+  setFeedAudience(false);
   return true;
 }

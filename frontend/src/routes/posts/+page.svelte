@@ -16,6 +16,7 @@
     type PostFeed,
     type ScheduledPost,
   } from '$lib/posts/api';
+  import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
   import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
   import { progressiveCount } from '$lib/utils/progressiveMount.svelte';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
@@ -68,6 +69,8 @@
     batch: 2,
   });
   let errorMessage = $state('');
+  /** The server said this reader has no space and no association: an empty state, not an error. */
+  let noAudience = $state(false);
   let lastSeenTs = $state(0);
   const elementPostTs = new SvelteMap<Element, number>();
   let seenObserver: IntersectionObserver | null = null;
@@ -337,7 +340,8 @@
       writeFeedCache(feedCacheKey(data.feedParams), { posts, hasMore });
     } catch (err) {
       Log.d('refreshPosts failed', err);
-      errorMessage = m.posts_load_error_title();
+      if (isOutsideFeedAudience(err)) noAudience = true;
+      else errorMessage = m.posts_load_error_title();
     } finally {
       loading = false;
     }
@@ -599,9 +603,19 @@
             {@render skeletonCards()}
           {:then initialPosts}
             {@render feedList(initialPosts)}
-          {:catch _err}
+          {:catch err}
             {#if loading}
               {@render skeletonCards()}
+            {:else if noAudience || isFeedAudienceRefusal(err)}
+              <div
+                class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"
+              >
+                <Inbox size={48} class="text-text-muted mx-auto mb-3 opacity-40" />
+                <h3 class="text-text-main mb-1 text-lg font-bold">
+                  {m.posts_no_audience_title()}
+                </h3>
+                <p class="text-text-muted text-sm">{m.posts_no_audience_hint()}</p>
+              </div>
             {:else}
               <div
                 class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"

@@ -2940,6 +2940,8 @@
   "posts_badge_new": "Nouveau",
   "posts_all_loaded": "Vous avez tout vu !",
   "posts_load_error_title": "Impossible de charger les posts",
+  "posts_no_audience_title": "Pas encore de fil pour vous",
+  "posts_no_audience_hint": "Le fil des posts s'ouvre quand vous rejoignez un espace ou une association.",
   "post_edit_save_error": "Impossible de modifier le post",
   "post_edit_remove_image_aria": "Retirer cette image",
   "post_edit_schedule_title": "Programmer la publication",
