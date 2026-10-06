@@ -39,6 +39,7 @@
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import { closeHistoryOverlayFromUi, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import ReelEditor from './ReelEditor.svelte';
 
@@ -71,6 +72,8 @@
   let camera = $state<CameraCapture>();
   let picker = $state<HTMLInputElement | null>(null);
   let editorOpen = $state(false);
+  /** The open editor's handle: the system Back asks it to leave (it may have edits to protect). */
+  let editor = $state<ReelEditor>();
 
   const ios = isIosTauriRuntime();
 
@@ -126,14 +129,55 @@
   function holdTakeEntry() {
     if (takeEntry) return;
     takeEntry = () => {
-      // Back (or the X) while a take exists: a recording is thrown away, a review discarded.
+      // Back (or the X) while a take exists. The entry is spent by now, so what keeps the take
+      // asks for it again.
       takeEntry = null;
-      console.debug('[reel-capture] the take was dismissed');
-      abandonRecording();
-      publishOpen = false;
-      if (capture.kind !== 'ready') capture = { kind: 'ready' };
+      if (editorOpen) {
+        // Back leaves the EDITOR (asking when it holds edits), never the whole take.
+        console.debug('[reel-capture] Back with the editor open: the editor decides');
+        holdTakeEntry();
+        void editor?.requestLeave();
+        return;
+      }
+      if (capture.kind === 'review') {
+        void discardTakeAfterAsking();
+        return;
+      }
+      dismissTake();
     };
     pushHistoryOverlay(takeEntry);
+  }
+
+  /** A recording is thrown away, a review discarded: the take is over. */
+  function dismissTake() {
+    console.debug('[reel-capture] the take was dismissed');
+    abandonRecording();
+    publishOpen = false;
+    if (capture.kind !== 'ready') capture = { kind: 'ready' };
+  }
+
+  /**
+   * A finished take cannot be re-shot, so losing it is asked about (the X and Back share this).
+   * Keeping it re-arms the Back entry that asking spent.
+   */
+  async function discardTakeAfterAsking() {
+    if (await confirmDiscardTake()) dismissTake();
+    else if (capture.kind === 'review') holdTakeEntry();
+  }
+
+  async function confirmDiscardTake(): Promise<boolean> {
+    const discard = await showConfirm(m.reels_discard_take_confirm(), {
+      danger: true,
+      confirmLabel: m.reels_discard_take_button(),
+      cancelLabel: m.reels_discard_take_keep(),
+    });
+    console.debug(`[reel-capture] discarding the review: ${discard ? 'confirmed' : 'kept'}`);
+    return discard;
+  }
+
+  /** The review's X: the same question as Back, then the ordinary discard. */
+  async function discardFromReview() {
+    if (await confirmDiscardTake()) send({ type: 'discard' });
   }
 
   function releaseTakeEntry() {
@@ -347,7 +391,7 @@
     {:else}
       <ReelReview
         {clip}
-        ondiscard={() => send({ type: 'discard' })}
+        ondiscard={() => void discardFromReview()}
         onedit={() => (editorOpen = true)}
         onsoundchange={(soundRemoved) => {
           if (capture.kind === 'review') {
@@ -361,6 +405,7 @@
 
   {#if editorOpen && capture.kind === 'review'}
     <ReelEditor
+      bind:this={editor}
       clip={capture.clip}
       oncancel={() => (editorOpen = false)}
       onnext={(blob) => {

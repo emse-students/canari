@@ -11,12 +11,15 @@ import { SHUTTER_HOLD_THRESHOLD_MS } from '$lib/reels/reelCapture';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import { installFakeMediaRecorder } from '$lib/reels/fakeMediaRecorder.test-helper';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
+import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // The publish step fades in, and a test closes it mid-fade.
 afterAll(adoptTransitionAnimations());
 
+const showConfirm = vi.hoisted(() => vi.fn());
+vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm }));
 const getReelLimits = vi.fn();
 vi.mock('$lib/posts/api', () => ({ getReelLimits: () => getReelLimits() }));
 vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
@@ -67,6 +70,9 @@ beforeEach(() => {
     'URL',
     Object.assign(URL, { createObjectURL: () => 'blob:take', revokeObjectURL: () => {} })
   );
+  showConfirm.mockReset();
+  showConfirm.mockResolvedValue(true);
+  vi.mocked(pushHistoryOverlay).mockClear();
   getReelLimits.mockResolvedValue({
     maxDurationMs: 90_000,
     retentionDays: 30,
@@ -199,16 +205,66 @@ describe('ReelCapture', () => {
     expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
   });
 
-  it('a discarded take brings the live preview back', async () => {
-    const { target, hold } = await render();
-    await hold();
-    const discard = target.querySelector<HTMLButtonElement>(
+  const discardButton = (target: HTMLElement) =>
+    target.querySelector<HTMLButtonElement>(
       `[data-reel-review] button[aria-label="${m.reels_review_discard()}"]`
     )!;
-    discard.click();
+  /** The Back handler of the take's history entry: what Android's Back / the iOS swipe call. */
+  const backHandler = () => {
+    const calls = vi.mocked(pushHistoryOverlay).mock.calls;
+    return calls[calls.length - 1][0];
+  };
+
+  it('a discarded take brings the live preview back, once the member confirmed', async () => {
+    const { target, hold } = await render();
+    await hold();
+    discardButton(target).click();
+    await settle();
+    expect(showConfirm).toHaveBeenCalledOnce();
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+  });
+
+  it('keeps the take when the member does not confirm the discard', async () => {
+    showConfirm.mockResolvedValueOnce(false);
+    const { target, hold } = await render();
+    await hold();
+    discardButton(target).click();
+    await settle();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  });
+
+  it('Back on a review asks first, and keeping the take re-arms Back', async () => {
+    const { target, hold } = await render();
+    await hold();
+    const pushes = vi.mocked(pushHistoryOverlay).mock.calls.length;
+    showConfirm.mockResolvedValueOnce(false);
+    backHandler()();
+    await settle();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    expect(vi.mocked(pushHistoryOverlay).mock.calls.length).toBe(pushes + 1);
+
+    backHandler()();
     await settle();
     expect(target.querySelector('[data-reel-review]')).toBeNull();
     expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+  });
+
+  it('Back with the editor open leaves the editor, never the take', async () => {
+    const { target, hold } = await render();
+    await hold();
+    target
+      .querySelector<HTMLButtonElement>(
+        `[data-reel-review] [aria-label="${m.reels_review_edit()}"]`
+      )!
+      .click();
+    await settle();
+    backHandler()();
+    await settle();
+    // No edits: the editor closes without asking, and the review (not the camera) is back.
+    expect(showConfirm).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-reel-editor]')).toBeNull();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
   });
 
   it('says so, and offers a retry, when the cap cannot be read', async () => {

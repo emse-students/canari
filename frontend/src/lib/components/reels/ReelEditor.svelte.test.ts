@@ -21,6 +21,9 @@ vi.mock('$lib/utils/emojiCatalog', async (importOriginal) => ({
   loadEmojiCatalog: () => Promise.resolve([]),
 }));
 
+const showConfirm = vi.hoisted(() => vi.fn());
+vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm }));
+
 const mounted: Record<string, unknown>[] = [];
 
 const FRAME = { left: 0, top: 0, right: 200, bottom: 400, width: 200, height: 400 };
@@ -43,6 +46,7 @@ beforeEach(() => {
   });
   HTMLElement.prototype.setPointerCapture = vi.fn();
   localStorage.clear();
+  showConfirm.mockReset();
   render.mockReset();
   render.mockResolvedValue({ blob: new Blob(['edited']), width: 1, height: 1 });
 });
@@ -329,6 +333,27 @@ it('puts the emoji just used first on the shelf, and opens the full picker on de
   target.querySelector<HTMLButtonElement>('[data-reel-emoji-all]')!.click();
   flushSync();
   expect(target.querySelector('[data-reel-emoji-grid]')).not.toBeNull();
+});
+
+it('leaves at once when nothing was added, and asks first when there are edits', async () => {
+  const cancelled = vi.fn();
+  const target = mountEditor({ oncancel: cancelled });
+  const back = target.querySelector<HTMLButtonElement>('header button')!;
+  back.click();
+  await vi.waitFor(() => expect(cancelled).toHaveBeenCalledTimes(1));
+  expect(showConfirm).not.toHaveBeenCalled();
+
+  addEmoji(target);
+  showConfirm.mockResolvedValueOnce(false);
+  back.click();
+  await vi.waitFor(() => expect(showConfirm).toHaveBeenCalledTimes(1));
+  await Promise.resolve();
+  expect(cancelled).toHaveBeenCalledTimes(1);
+  expect(target.querySelectorAll('[data-overlay-id]')).toHaveLength(1);
+
+  showConfirm.mockResolvedValueOnce(true);
+  back.click();
+  await vi.waitFor(() => expect(cancelled).toHaveBeenCalledTimes(2));
 });
 
 it('Next hands on the edited media, or null (and no export) when nothing was added', async () => {

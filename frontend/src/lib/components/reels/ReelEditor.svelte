@@ -65,6 +65,7 @@
   import EmojiGrid from '$lib/components/messages/EmojiGrid.svelte';
   import { getRecentEmojis, persistRecentEmoji } from '$lib/components/messages/emojiPickerShared';
   import { emojiSvgSrc } from '$lib/utils/emojiSvg';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -371,6 +372,33 @@
     selectedId = null;
   }
 
+  /**
+   * Leaves the editor for the review. Edits are work: leaving with some asks first, and an export
+   * in progress is never interrupted. Also the target of the system Back (`ReelCapture` calls it
+   * through the component's handle), so the arrow and the gesture share ONE answer.
+   *
+   * @returns whether the editor was left.
+   */
+  export async function requestLeave(): Promise<boolean> {
+    if (busy) {
+      console.debug('[reel-editor] leaving ignored: the export is running');
+      return false;
+    }
+    if (overlays.length > 0) {
+      const discard = await showConfirm(m.reels_editor_discard_confirm(), {
+        danger: true,
+        confirmLabel: m.reels_editor_discard_button(),
+        cancelLabel: m.reels_editor_discard_keep(),
+      });
+      console.debug(
+        `[reel-editor] ${overlays.length} edit(s) pending: ${discard ? 'discarded' : 'kept'}`
+      );
+      if (!discard) return false;
+    }
+    oncancel();
+    return true;
+  }
+
   async function next() {
     if (overlays.length === 0) {
       console.debug('[reel-editor] nothing was added: on to publish with the take as it was');
@@ -404,7 +432,7 @@
       class="ui-icon-button"
       aria-label={m.reels_editor_back()}
       title={m.reels_editor_back()}
-      onclick={oncancel}
+      onclick={() => void requestLeave()}
     >
       <ChevronLeft size={24} strokeWidth={2.5} />
     </button>
