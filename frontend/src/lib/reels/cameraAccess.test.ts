@@ -55,13 +55,32 @@ describe('openReelCamera', () => {
     await expect(openReelCamera('environment')).resolves.toBe(stream);
     expect(getUserMedia).toHaveBeenCalledWith({
       video: {
-        facingMode: 'environment',
+        facingMode: { exact: 'environment' },
         width: { ideal: 1280 },
         height: { ideal: 590 },
         frameRate: { ideal: 30 },
       },
       audio: true,
     });
+  });
+
+  it('asks the FRONT lens exactly, so iOS cannot answer the back one', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi.fn().mockResolvedValue({ getVideoTracks: () => [{ label: 'front' }] });
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    await openReelCamera('user');
+    expect(getUserMedia.mock.calls[0][0].video.facingMode).toEqual({ exact: 'user' });
+  });
+
+  it('logs an error, and does not switch, when the track reports another lens', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const track = { label: 'x', getSettings: () => ({ facingMode: 'environment' }) };
+    const getUserMedia = vi.fn().mockResolvedValue({ getVideoTracks: () => [track] });
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    await openReelCamera('user');
+    expect(error).toHaveBeenCalled();
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
   });
 
   it('throws a typed refusal, never the engine error', async () => {
