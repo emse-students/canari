@@ -958,6 +958,25 @@ for f in serve-dev.yml serve-prod.yml; do
   fi
 done
 
+printf '\nthe dev estate is asked what it serves before it counts as dev-deployed\n'
+# `deployed-wasm-check.mjs` was written during the 2026-09-06 outage and called by nothing for a
+# month. The stable's fourth gate reads the `dev-deployed` marker, so the check only BLOCKS a stable
+# when it fails BEFORE the marker moves.
+CHECK_LINE="$(grep -n 'deployed-wasm-check.mjs "' "$WF/serve-dev.yml" | head -1 | cut -d: -f1)"
+MARK_LINE="$(grep -n 'tag -f dev-deployed' "$WF/serve-dev.yml" | head -1 | cut -d: -f1)"
+if [ -z "$CHECK_LINE" ]; then
+  fail 'serve-dev.yml never runs deployed-wasm-check.mjs - a wasm that panics reaches production through a green dev deploy'
+elif [ -z "$MARK_LINE" ] || [ "$CHECK_LINE" -gt "$MARK_LINE" ]; then
+  fail 'serve-dev.yml runs the wasm check AFTER moving dev-deployed - a refusal would not stop the stable'
+else
+  pass 'serve-dev.yml runs the wasm check, and before dev-deployed moves'
+fi
+if grep -qE 'bun-version: \$\{\{ steps\.bun\.outputs\.version \}\}' "$WF/serve-dev.yml"; then
+  pass 'it runs under the bun version .bun-version pins'
+else
+  fail 'serve-dev.yml does not pin bun from .bun-version - the check would run on whatever the runner has, or not at all'
+fi
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

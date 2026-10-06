@@ -207,7 +207,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-40 scripts.
+41 scripts.
 
 | script | what it is |
 |---|---|
@@ -216,6 +216,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/classify-selftest.mjs` | THE CLASSIFIER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
 | `archive/consoleorigin-selftest.mjs` | Pins `consoleorigin.mjs` and its use in `report()`: a console line another origin emitted (the |
 | `archive/debris-selftest.mjs` | Asserts that the allowlist deciding what may be DESTROYED matches every name a runner mints, and |
+| `archive/deployed-wasm-selftest.mjs` | THE POST-DEPLOY WASM CHECK MUST REFUSE WHAT IT IS MEANT TO REFUSE, AND ONLY THAT. |
 | `archive/devices-selftest.mjs` | SELFTEST FOR THE DEVICE CENSUS - pins the classification against rows measured on production. |
 | `archive/epochfork-selftest.mjs` | Pins `epochfork.mjs`: the comparison that tells a healthy conversation from an epoch-forked one, |
 | `archive/estate-selftest.mjs` | WHICH ESTATE A CLIENT IS ON IS A GATE, AND A GATE THAT ONLY EVER ACCEPTS IS NOT ONE. |
@@ -305,4 +306,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-244 scripts in total.
+245 scripts in total.

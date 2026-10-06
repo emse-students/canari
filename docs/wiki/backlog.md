@@ -3715,9 +3715,9 @@ every login was refused. `CLAUDE.md` already says a green deploy proves the cont
 never that the site answers; **answering does not prove it works either**.
 `tools/cross-client-harness/deployed-wasm-check.mjs` was written during the incident and refuses an
 estate serving a wasm that can panic - it named `mls_wasm_bg.YXThuGSF.wasm` on production, the exact
-file in the user's stack trace, with no credentials and in seconds. It belongs after the dev deploy,
-where it would have stopped this build before production - and as of 2026-10-01 no workflow calls it.
-It is NOT a login and must not be sold as one.
+file in the user's stack trace, with no credentials and in seconds. **SHIPPED 2026-10-06 as a gate**:
+`serve-dev.yml` runs it before `dev-deployed` moves, so a refused wasm cannot reach a stable
+([cicd](cicd.md)). It is NOT a login and must not be sold as one - the sign-in below is what stays open.
 
 **The honest check cannot be a campaign row**: the rig has targeted the LOCAL estate since
 2026-09-03, deliberately, and the next defect of this class may not be in the wasm at all. **The real

@@ -487,6 +487,14 @@ the dev deploy writes: `identical` or dev `ahead` both mean the code went throug
 pre-release at that commit first. A detector was written first and deleted unshipped - the same
 measurement, as a refusal instead of a report.
 
+**"Served dev" MEANS "the dev estate was asked what wasm it serves" (2026-10-06).** `serve-dev.yml`
+runs `tools/cross-client-harness/deployed-wasm-check.mjs https://dev.canari-emse.fr` BEFORE its
+`Record the deployed commit` step, so a dev estate serving a wasm that can panic (the 2026-09-06
+class: every login refused as a wrong PIN, every status code 200) never moves the marker, and gate 4
+refuses the stable. It is not a login; the sign-in smoke test stays a user decision
+([backlog](backlog.md#the-delivery-chain-review---opened-by-the-2026-09-06-outage-agreed-with-the-user-the-same-night)).
+`release-chain.test.sh` pins the order; `archive/deployed-wasm-selftest.mjs` pins the three exit codes.
+
 **A PULL REQUEST THAT MERGES BETWEEN THE PRE-RELEASE AND THE STABLE COSTS ONE MORE PRE-RELEASE, AND
 WHICH GATE REFUSES DEPENDS ON WHICH COMMIT YOU TAG.** Measured 2026-09-17 during `v0.18.10`: the
 pre-release was cut at `14d77ab3`, the bump pushed `2e42ddac`, the dev deploy marked `dev-deployed`
