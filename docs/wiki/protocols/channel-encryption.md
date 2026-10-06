@@ -2922,8 +2922,8 @@ the last v1 session ages out with the v1 reader ([legacy-compatibility](../legac
 
 ### 21.6 The writer (WP-G2-5)
 
-Every send is v2 from this release on. It ships only once `minClientVersion` is R1 (the G2-4
-reader) AND both stores serve R1: a v1 reader shown a v2 row fails to open it (production is at `1.0.0`, 2026-10-04). This is the
+Every send is v2 from this release on (#1221, first in the stable `v1.0.3`, 2026-10-05). It ships only once `minClientVersion` is R1 (the G2-4
+reader) AND both stores serve R1: a v1 reader shown a v2 row fails to open it (production is at `1.0.0`, 2026-10-04, and the floor is raised by the user only; refusing an ARRIVING v1 seed, G2-5b, waits for a floor >= `1.0.3`). This is the
 reader-then-writer order of CORRUPT ([durable-rules](../durable-rules.md)).
 
 **Minting endorses first** (`reserveOutboundSlot` in `utils/graine/sessionManager.ts`). A new
