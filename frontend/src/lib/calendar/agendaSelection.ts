@@ -47,18 +47,32 @@ export function isAgendaSelected(selection: AgendaSelection): boolean {
   return selection.campus !== '' || selection.formation !== '';
 }
 
-/** The campus choices, "any campus" first. */
-export function campusSelectOptions(): PickerOption[] {
+/**
+ * The campus choices - "any campus" first, then the reader's OWN campus and nothing else: the
+ * server signs only a selection inside the reader's own spaces (D40, user 2026-10-06), so offering
+ * another campus would offer a link it refuses.
+ */
+export function campusSelectOptions(reader: AgendaReader | null | undefined): PickerOption[] {
   return [
     { value: '', label: m.calendar_selection_any_campus() },
-    ...CAMPUSES.map((c) => ({ value: c, label: campusLabel(c) })),
+    ...CAMPUSES.filter((c) => c === reader?.campus).map((c) => ({
+      value: c,
+      label: campusLabel(c),
+    })),
   ];
 }
 
-/** The formation choices, "any formation" first. */
-export function formationSelectOptions(): PickerOption[] {
+/** The formation choices - "any formation" first, then the formations of the reader's cursus. */
+export function formationSelectOptions(reader: AgendaReader | null | undefined): PickerOption[] {
+  const own = new Set(reader?.cursus?.map((entry) => entry.formation));
   return [
     { value: '', label: m.calendar_selection_any_formation() },
-    ...FORMATIONS.map((f) => ({ value: f, label: formationLabel(f) })),
+    ...FORMATIONS.filter((f) => own.has(f)).map((f) => ({ value: f, label: formationLabel(f) })),
   ];
+}
+
+/** Whether the reader has an own space to choose from at all: no campus or no known formation is none. */
+export function hasAgendaSpace(reader: AgendaReader | null | undefined): boolean {
+  const own = defaultAgendaSelection(reader);
+  return own.campus !== '' && own.formation !== '';
 }

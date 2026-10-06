@@ -586,6 +586,30 @@ export async function listAggregatedCalendarFeed(opts: {
   return request<AssociationCalendarFeedEvent[]>(`/api/associations/calendar/feed?${q.toString()}`);
 }
 
+/** The selection a subscription URL is signed for: a side left empty is "any". */
+export interface AgendaFeedSelection {
+  campus?: Campus | '' | null;
+  formation?: Formation | '' | null;
+  associationId?: string;
+}
+
+/**
+ * Asks the server to SIGN a feed selection (D40 amended 2026-10-06): it answers only for the
+ * reader's OWN campus, formations and pairs of them (403 `AGENDA_SELECTION_FORBIDDEN` otherwise), or
+ * for an association, and the `sig` it returns goes into the `.ics` URL unchanged. Needs a session.
+ */
+export async function signAgendaFeed(selection: AgendaFeedSelection): Promise<string> {
+  const body: Record<string, string> = {};
+  if (selection.campus) body.campus = selection.campus;
+  if (selection.formation) body.formation = selection.formation;
+  if (selection.associationId?.trim()) body.associationId = selection.associationId.trim();
+  const res = await request<{ sig: string }>('/api/associations/calendar/feed-signature', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  return res.sig;
+}
+
 /**
  * Default window for an `.ics` subscription link: 3 months back to the end of the 12th month
  * ahead. The backend defaults to the same range when `from`/`to` are omitted, but a subscribe
@@ -609,6 +633,8 @@ export function aggregatedCalendarFeedIcsPath(opts: {
   /** D40: the public feed is one per selection; the server REFUSES a bare one. */
   campus?: Campus | null;
   formation?: Formation | null;
+  /** The server's signature of that selection (`signAgendaFeed`); a selection feed is refused without it. */
+  sig?: string;
 }): string {
   const q = new URLSearchParams();
   q.set('from', opts.from);
@@ -617,6 +643,7 @@ export function aggregatedCalendarFeedIcsPath(opts: {
   if (opts.campus) q.set('campus', opts.campus);
   if (opts.formation) q.set('formation', opts.formation);
   if (opts.eventId?.trim()) q.set('eventId', opts.eventId.trim());
+  if (opts.sig?.trim()) q.set('sig', opts.sig.trim());
   return `/api/associations/calendar/feed.ics?${q.toString()}`;
 }
 
@@ -630,6 +657,7 @@ export function aggregatedCalendarFeedIcsAbsoluteUrl(opts: {
   eventId?: string;
   campus?: Campus | null;
   formation?: Formation | null;
+  sig?: string;
 }): string {
   const path = aggregatedCalendarFeedIcsPath(opts);
   const base = socialUrl();

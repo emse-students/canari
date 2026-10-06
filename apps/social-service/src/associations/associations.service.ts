@@ -18,6 +18,11 @@ import { AxiosError } from 'axios';
 import { mediaUrl } from '../internal/service-urls';
 import { applyMediaRetentionClass } from '../internal/media-retention-class';
 import type { SpaceSelection } from './directory-query';
+import {
+  AGENDA_SELECTION_FORBIDDEN,
+  selectionWithinSpaces,
+  signAgendaSelection,
+} from './agenda-signature';
 import { Association } from './entities/association.entity';
 import {
   AssociationMember,
@@ -1806,6 +1811,31 @@ export class AssociationsService {
         canValidate: r.canValidate === true,
       };
     });
+  }
+
+  /**
+   * Signs the agenda selection a signed-in reader asks to subscribe to (D40 amended 2026-10-06).
+   * Only selections inside the reader's OWN spaces are signed - their campus, their formations, a
+   * pair of both (`READER_SPACES_SQL`, the twin of `readerSpaces`); an association needs no
+   * membership, only to exist. The returned `sig` goes into the feed URL unchanged.
+   */
+  async signAgendaFeedSelection(
+    userId: string,
+    selection: SpaceSelection,
+    associationId: string | null
+  ): Promise<{ sig: string }> {
+    if (associationId) await this.findById(associationId);
+    const spaces = (await this.assoRepo.manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
+    if (!selectionWithinSpaces(selection, spaces)) {
+      this.logger.warn(
+        `[AGENDA_SIG] refused to sign campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
+      );
+      throw new ForbiddenException({
+        code: AGENDA_SELECTION_FORBIDDEN,
+        message: 'You can only subscribe to the agenda of your own campus and formations',
+      });
+    }
+    return { sig: signAgendaSelection({ ...selection, associationId }) };
   }
 
   /**

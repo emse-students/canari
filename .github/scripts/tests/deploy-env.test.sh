@@ -62,7 +62,8 @@ dev_env() {
     DEV_GARAGE_SECRET_ACCESS_KEY=d4 \
     DEV_CHANNELS_ENCRYPTION_SECRET=d5 \
     DEV_INTERNAL_SHARED_SECRET=d6 \
-    DEV_CALL_ROOM_SECRET=d7
+    DEV_CALL_ROOM_SECRET=d7 \
+    DEV_AGENDA_SIGNING_KEY=d8
 }
 
 prod_env() {
@@ -80,7 +81,8 @@ prod_env() {
     GARAGE_SECRET_ACCESS_KEY=p4 \
     CHANNELS_ENCRYPTION_SECRET=p5 \
     INTERNAL_SHARED_SECRET=p6 \
-    CALL_ROOM_SECRET=p7
+    CALL_ROOM_SECRET=p7 \
+    AGENDA_SIGNING_KEY=p8
 }
 
 # Run the renderer with an explicit environment built from the lines on stdin.

@@ -65,7 +65,13 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
-import { assertAgendaSelected, parseDirectoryQuery, parseSpaceSelection } from './directory-query';
+import {
+  AGENDA_SELECTION_REQUIRED,
+  assertAgendaAccess,
+  parseDirectoryQuery,
+  parseSpaceSelection,
+} from './directory-query';
+import { isInternalSecret } from '../internal/is-internal-secret.util';
 
 const LOGO_UPLOAD_MB = 2;
 
@@ -273,13 +279,17 @@ export class AssociationsController {
     @Headers('x-user-id') userId?: string,
     @Headers('x-global-admin') ga?: string,
     @Query('campus') campus?: string,
-    @Query('formation') formation?: string
+    @Query('formation') formation?: string,
+    @Query('sig') sig?: string,
+    @Headers('x-internal-secret') internalSecret?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
-    assertAgendaSelected({
+    assertAgendaAccess({
       selection,
       associationId,
+      sig,
       signedIn: Boolean(userId?.trim()),
+      trusted: isInternalSecret(internalSecret),
     });
     // includePending is opt-in (the PDF export does not set it -> validated events only).
     // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
@@ -323,11 +333,12 @@ export class AssociationsController {
     @Query('eventId') eventId: string | undefined,
     @Res({ passthrough: true }) res: Response,
     @Query('campus') campus?: string,
-    @Query('formation') formation?: string
+    @Query('formation') formation?: string,
+    @Query('sig') sig?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
     // `.ics` is always anonymous: a calendar app sends no identity.
-    assertAgendaSelected({ selection, associationId, eventId, signedIn: false });
+    assertAgendaAccess({ selection, associationId, eventId, sig, signedIn: false });
     const all = await this.service.listAggregatedCalendarFeed(from, to, associationId, {
       selection,
     });
@@ -343,6 +354,28 @@ export class AssociationsController {
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=120');
     return body;
+  }
+
+  /**
+   * The signature a subscription URL needs (D40 amended 2026-10-06): signed-in readers only, and
+   * only for a selection inside their own spaces (403 `AGENDA_SELECTION_FORBIDDEN` otherwise; 400
+   * `AGENDA_SELECTION_REQUIRED` for an empty one). The result names no one, see `agenda-signature.ts`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('calendar/feed-signature')
+  async signCalendarFeedSelection(
+    @Headers('x-user-id') userId: string,
+    @Body() body: { campus?: string; formation?: string; associationId?: string }
+  ) {
+    const selection = parseSpaceSelection({ campus: body?.campus, formation: body?.formation });
+    const associationId = body?.associationId?.trim() || null;
+    if (selection.campus === null && selection.formation === null && !associationId) {
+      throw new BadRequestException({
+        code: AGENDA_SELECTION_REQUIRED,
+        message: 'Name a campus, a formation or an association to sign',
+      });
+    }
+    return this.service.signAgendaFeedSelection(userId, selection, associationId);
   }
 
   /**

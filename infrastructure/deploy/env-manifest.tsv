@@ -68,6 +68,7 @@ GARAGE_SECRET_ACCESS_KEY	required	required	secret:GARAGE_SECRET_ACCESS_KEY	media
 CHANNELS_ENCRYPTION_SECRET	required	required	secret:CHANNELS_ENCRYPTION_SECRET	channel encryption fails
 INTERNAL_SHARED_SECRET	required	required	secret:INTERNAL_SHARED_SECRET	inter-service HMAC auth is disabled, which is a security hole
 CALL_ROOM_SECRET	required	required	secret:CALL_ROOM_SECRET	WebRTC room access control is disabled, which is a security hole
+AGENDA_SIGNING_KEY	required	required	secret:AGENDA_SIGNING_KEY	calendar subscription links cannot be signed and every campus / formation feed is refused
 ALLOW_ORIGIN	computed	computed	computed	the chat-gateway refuses every client, or accepts every origin on earth
 CALL_E2E_ENCRYPTION	literal	literal	literal:false	nothing - it is off in both environments
 INTERNAL_SECRET	warn	warn	secret:INTERNAL_SECRET	social and form push notifications are disabled

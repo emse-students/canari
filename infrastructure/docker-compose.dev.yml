@@ -392,6 +392,7 @@ services:
       # THIS estate and not only the local one, which is why the 2026-09-09 comment could be true
       # and this defect still ship: the check existed and was pointed at the wrong file.
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
       # PRESENT ON PROD AND LOCAL AND MISSING HERE UNTIL 2026-09-09, which is the whole of the
       # defect: `RedisService` falls back to `redis://localhost:6379`, so this service dialled
       # itself, failed, and retried for ever - 3 657 error lines in one hour, and `POST /api/posts`

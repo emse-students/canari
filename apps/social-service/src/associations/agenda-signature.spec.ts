@@ -1,0 +1,124 @@
+import { ForbiddenException } from '@nestjs/common';
+import {
+  assertAgendaSignature,
+  canonicalAgendaSelection,
+  selectionWithinSpaces,
+  signAgendaSelection,
+} from './agenda-signature';
+import { AssociationsService } from './associations.service';
+
+const KEY = 'agenda-test-key-0123456789abcdef0123456789';
+
+describe('agenda signature', () => {
+  const previous = process.env.AGENDA_SIGNING_KEY;
+  beforeAll(() => {
+    process.env.AGENDA_SIGNING_KEY = KEY;
+  });
+  afterAll(() => {
+    if (previous === undefined) delete process.env.AGENDA_SIGNING_KEY;
+    else process.env.AGENDA_SIGNING_KEY = previous;
+  });
+
+  const sel = { campus: 'gardanne', formation: null, associationId: null } as const;
+
+  it('is deterministic, names no one, and verifies in constant time', () => {
+    const sig = signAgendaSelection(sel);
+    expect(signAgendaSelection({ ...sel })).toBe(sig);
+    expect(() => assertAgendaSignature(sel, sig)).not.toThrow();
+  });
+
+  it('keeps every field of the selection apart (no concatenation ambiguity)', () => {
+    const a = canonicalAgendaSelection({ campus: null, formation: 'ICM', associationId: null });
+    const b = canonicalAgendaSelection({ campus: null, formation: null, associationId: 'ICM' });
+    expect(a).not.toBe(b);
+  });
+
+  it('rejects a key shorter than 32 characters instead of signing with it', () => {
+    process.env.AGENDA_SIGNING_KEY = 'short';
+    try {
+      expect(() => signAgendaSelection(sel)).toThrow('not configured');
+    } finally {
+      process.env.AGENDA_SIGNING_KEY = KEY;
+    }
+  });
+
+  describe('selectionWithinSpaces', () => {
+    const spaces = [
+      { campus: 'gardanne', formation: 'ICM' },
+      { campus: 'gardanne', formation: 'ISMIN' },
+    ] as const;
+    it('allows the reader own campus, own formations and own pairs', () => {
+      expect(selectionWithinSpaces({ campus: 'gardanne', formation: null }, spaces)).toBe(true);
+      expect(selectionWithinSpaces({ campus: null, formation: 'ISMIN' }, spaces)).toBe(true);
+      expect(selectionWithinSpaces({ campus: 'gardanne', formation: 'ICM' }, spaces)).toBe(true);
+    });
+    it('refuses another campus, another formation, and a pair that is not one of their spaces', () => {
+      expect(selectionWithinSpaces({ campus: 'saint-etienne', formation: null }, spaces)).toBe(
+        false
+      );
+      expect(selectionWithinSpaces({ campus: null, formation: 'FSSS' }, spaces)).toBe(false);
+      expect(selectionWithinSpaces({ campus: 'saint-etienne', formation: 'ICM' }, spaces)).toBe(
+        false
+      );
+    });
+    it('refuses everything to a reader with no space, but not an association-only selection', () => {
+      expect(selectionWithinSpaces({ campus: 'gardanne', formation: null }, [])).toBe(false);
+      expect(selectionWithinSpaces({ campus: null, formation: null }, [])).toBe(true);
+    });
+  });
+});
+
+describe('AssociationsService.signAgendaFeedSelection', () => {
+  const previous = process.env.AGENDA_SIGNING_KEY;
+  beforeAll(() => {
+    process.env.AGENDA_SIGNING_KEY = KEY;
+  });
+  afterAll(() => {
+    if (previous === undefined) delete process.env.AGENDA_SIGNING_KEY;
+    else process.env.AGENDA_SIGNING_KEY = previous;
+  });
+
+  function makeService(spaces: Array<{ campus: string; formation: string }>) {
+    const svc = Object.create(AssociationsService.prototype) as AssociationsService;
+    Object.assign(svc, {
+      assoRepo: { manager: { query: jest.fn(() => Promise.resolve(spaces)) } },
+      logger: { warn: jest.fn(), log: jest.fn() },
+      findById: jest.fn(() => Promise.resolve({})),
+    });
+    return svc;
+  }
+
+  it('signs the reader own campus and refuses another with a typed 403', async () => {
+    const svc = makeService([{ campus: 'gardanne', formation: 'ICM' }]);
+    const ok = await svc.signAgendaFeedSelection(
+      'user-1',
+      { campus: 'gardanne', formation: null },
+      null
+    );
+    expect(() =>
+      assertAgendaSignature({ campus: 'gardanne', formation: null, associationId: null }, ok.sig)
+    ).not.toThrow();
+    const refused = svc.signAgendaFeedSelection(
+      'user-1',
+      { campus: 'saint-etienne', formation: null },
+      null
+    );
+    await expect(refused).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(refused).rejects.toMatchObject({
+      response: { code: 'AGENDA_SELECTION_FORBIDDEN' },
+    });
+  });
+
+  it('signs an association for a reader with no space and no membership (membership never matters)', async () => {
+    const svc = makeService([]);
+    const id = '00000000-0000-4000-8000-000000000001';
+    const { sig } = await svc.signAgendaFeedSelection(
+      'user-1',
+      { campus: null, formation: null },
+      id
+    );
+    expect(() =>
+      assertAgendaSignature({ campus: null, formation: null, associationId: id }, sig)
+    ).not.toThrow();
+  });
+});

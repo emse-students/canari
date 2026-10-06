@@ -52,6 +52,7 @@
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
+  import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
@@ -127,10 +128,11 @@
   let showSubscribeModal = $state(false);
 
   /** ~15 months window for feed subscription (server max ~18 months). */
+  const feedSigner = createFeedSigner(() => (showSubscribeModal ? { associationId } : null));
   const calendarIcsUrl = $derived.by(() => {
-    if (!browser) return '';
+    if (!browser || !feedSigner.sig) return '';
     const { from, to } = icsSubscriptionRangeISO();
-    return aggregatedCalendarFeedIcsAbsoluteUrl({ from, to, associationId });
+    return aggregatedCalendarFeedIcsAbsoluteUrl({ from, to, associationId, sig: feedSigner.sig });
   });
 
   function associationPageUrl(): string {
@@ -586,5 +588,6 @@
   open={showSubscribeModal}
   onClose={() => (showSubscribeModal = false)}
   icsUrl={calendarIcsUrl}
+  signing={feedSigner.status}
   intro={m.asso_calendar_subscribe_intro()}
 />
