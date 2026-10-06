@@ -108,6 +108,12 @@ choice below was the simplest one consistent with this page and is open to the l
   clear then undo, and the exported 720x1280 WebP having its white pixels where the preview drew
   them (to within the line width). NOT seen on a phone.
 
+- **Stickers = emoji (WP-E3, done)**: the tray shows a shelf of twelve (the member's recents first,
+  the SAME history the chat's pickers share via `emojiPickerShared`, completed by `QUICK_EMOJI`:
+  `emojiShelf`) and an "All emoji" button that opens the chat's own `EmojiGrid` (categories, search,
+  skin tone) on a surface of its own under the shelf. Picking records the emoji as recent. **No
+  stickers with data (location, poll, mention, GIF)**: out of scope, no server support.
+
 ## Work packages (estimates are focused engineering days, before device readings)
 
 | WP | What | Est. |
