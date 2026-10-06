@@ -3339,6 +3339,7 @@
   "calendar_subscribe_old_links_notice": "Subscription links saved before 6 October 2026 no longer work: subscribe again with the link below.",
   "calendar_subscribe_signing": "Preparing the link...",
   "calendar_subscribe_sign_failed": "The link could not be created: once signed in, you can only subscribe to the agenda of your own campus, your programmes or an association.",
+  "calendar_subscribe_sign_unavailable": "The link could not be created right now: the service is unavailable. Try again later.",
   "profile_edit_title": "Edit {name}'s profile",
   "profile_edit_first_name": "First name",
   "profile_edit_last_name": "Last name",

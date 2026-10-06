@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { flushSync } from 'svelte';
 
 const signAgendaFeed = vi.hoisted(() => vi.fn());
-vi.mock('$lib/associations/api', () => ({
+vi.mock('$lib/associations/api', async (importActual) => ({
+  ...(await importActual<typeof import('$lib/associations/api')>()),
   signAgendaFeed: (...args: unknown[]) => signAgendaFeed(...args),
 }));
 
+import { SocialApiError } from '$lib/associations/api';
 import { createFeedSigner } from './signedFeedUrl.svelte';
 import type { AgendaFeedSelection } from '$lib/associations/api';
 
@@ -66,11 +68,28 @@ describe('createFeedSigner', () => {
     stop();
   });
 
-  it('reports a refusal as an error with no signature', async () => {
-    signAgendaFeed.mockRejectedValue(new Error('403'));
+  it('reports a 403 refusal as an error with no signature', async () => {
+    signAgendaFeed.mockRejectedValue(
+      new SocialApiError('forbidden', 'AGENDA_SELECTION_FORBIDDEN', 403)
+    );
     const { value, stop } = inRoot(() => createFeedSigner(() => ({ campus: 'gardanne' })));
     await vi.waitFor(() => expect(value.status).toBe('error'));
     expect(value.sig).toBe('');
+    stop();
+  });
+
+  it('reports a 503 as unavailable, not as a refusal', async () => {
+    signAgendaFeed.mockRejectedValue(new SocialApiError('down', null, 503));
+    const { value, stop } = inRoot(() => createFeedSigner(() => ({ campus: 'gardanne' })));
+    await vi.waitFor(() => expect(value.status).toBe('unavailable'));
+    expect(value.sig).toBe('');
+    stop();
+  });
+
+  it('reports a transport failure as unavailable', async () => {
+    signAgendaFeed.mockRejectedValue(new TypeError('Failed to fetch'));
+    const { value, stop } = inRoot(() => createFeedSigner(() => ({ campus: 'gardanne' })));
+    await vi.waitFor(() => expect(value.status).toBe('unavailable'));
     stop();
   });
 });

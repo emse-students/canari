@@ -1048,6 +1048,12 @@ one that remained: ANY campus or formation could be named in a URL by anyone.
   public JSON-LD is untouched.
 - **Fails closed:** with `AGENDA_SIGNING_KEY` unset or under 32 characters the signing route and every
   signed selection answer **503**; nothing is ever served unchecked.
+  **Refused at deploy since 2026-10-06**: `render-env.sh` fails the deploy naming the secret when the
+  value is blank or under 32 characters (`min_length`, asserted in `deploy-env.test.sh`), because the
+  iPhone reading on dev found the runtime 503 was the first place a short key showed. **The modal tells
+  the two apart**: `createFeedSigner` reports `error` only for a 4xx refusal (campus text) and
+  `unavailable` for a 5xx or a transport failure (its own "try later" text), classified by
+  `SocialApiError` type and status, never by message.
 - **Rotation is the revocation:** a new key invalidates every saved subscription URL at once. The
   signature names no one, so no single URL can be revoked. Procedure: replace the GitHub secret
   (`AGENDA_SIGNING_KEY`, dev `DEV_AGENDA_SIGNING_KEY`) and deploy; readers re-subscribe from

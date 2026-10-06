@@ -3339,6 +3339,7 @@
   "calendar_subscribe_old_links_notice": "Les liens d'abonnement enregistrés avant le 6 octobre 2026 ne fonctionnent plus : abonnez-vous à nouveau avec le lien ci-dessous.",
   "calendar_subscribe_signing": "Préparation du lien...",
   "calendar_subscribe_sign_failed": "Impossible de créer le lien : vous ne pouvez vous abonner qu'à l'agenda de votre campus, de vos formations ou d'une association, une fois connecté.",
+  "calendar_subscribe_sign_unavailable": "Impossible de créer le lien pour le moment : le service est indisponible. Réessayez plus tard.",
   "profile_edit_title": "Modifier le profil de {name}",
   "profile_edit_first_name": "Prénom",
   "profile_edit_last_name": "Nom",

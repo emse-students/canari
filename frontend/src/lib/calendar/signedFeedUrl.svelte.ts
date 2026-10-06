@@ -1,8 +1,12 @@
-import { signAgendaFeed, type AgendaFeedSelection } from '$lib/associations/api';
+import { signAgendaFeed, SocialApiError, type AgendaFeedSelection } from '$lib/associations/api';
 import { Log } from '$lib/utils/Log';
 
-/** Where a signature stands: asked, answered, or refused. */
-export type FeedSigningStatus = 'idle' | 'signing' | 'ready' | 'error';
+/**
+ * Where a signature stands: asked, answered, REFUSED (`error`: the server answered 4xx, the campus
+ * text applies) or UNAVAILABLE (a 5xx or a transport failure: nothing was decided about the reader,
+ * so the campus text would lie).
+ */
+export type FeedSigningStatus = 'idle' | 'signing' | 'ready' | 'error' | 'unavailable';
 
 /**
  * THE SIGNATURE A SUBSCRIPTION URL CARRIES (D40 amended 2026-10-06): a selection feed is refused by
@@ -41,8 +45,15 @@ export function createFeedSigner(request: () => AgendaFeedSelection | null) {
       })
       .catch((err) => {
         if (stale) return;
-        Log.d('feedSigner', `the server refused to sign: ${String(err)}`);
-        status = 'error';
+        // CLASSIFIED BY TYPE AND STATUS, never by message: a status code is an answer, a 5xx or a
+        // transport failure is not one (503 = the server's signing key is unset or too short).
+        if (err instanceof SocialApiError && err.status < 500) {
+          Log.d('feedSigner', `the server refused to sign: ${err.status} ${err.code ?? '-'}`);
+          status = 'error';
+        } else {
+          Log.d('feedSigner', `signing is unavailable, no refusal was issued: ${String(err)}`);
+          status = 'unavailable';
+        }
       });
     return () => {
       stale = true;
