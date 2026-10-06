@@ -43,6 +43,7 @@ import {
   enterPrivateSalonGroup,
 } from '$lib/utils/graine/distributionGroup';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
+import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
 
@@ -457,6 +458,10 @@ export function useChannelWorkspaces() {
       message = m.channel_action_error_permission({ action, detail: detail ?? '' });
     } else if (status === 409) {
       message = m.channel_action_error_conflict({ action });
+    } else if (error instanceof GraineSealUnavailableError) {
+      // Nothing was sent: this device holds no key for the scope yet (join not landed, session not
+      // wired). Said as a TYPE at the throw, so it no longer lands in the nameless arm below.
+      message = m.channel_action_error_not_ready({ action });
     } else if (isRetryableLoadError(error)) {
       // ONE PREDICATE, NOT TWO. "Worth retrying" and "say it is the network" are the same
       // question - the server did not decide anything - and they were two hand-kept lists that
@@ -467,6 +472,9 @@ export function useChannelWorkspaces() {
       message = m.channel_action_error_generic({ action, detail });
     } else {
       // The server said nothing we can quote, so the sentence says only what was attempted.
+      // THE CAUSE IS LOGGED HERE, because the sentence cannot carry it: this arm is a non-API
+      // error, and without this line a failed send left nothing to read it from.
+      console.error(`[CHANNEL] ${action}: unclassified failure`, error);
       message = m.channel_action_error_unknown({ action });
     }
 

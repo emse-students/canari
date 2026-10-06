@@ -1,3 +1,4 @@
+import { GraineSealUnavailableError } from './sealUnavailable';
 import { openWithGraine } from '$lib/crypto/graine';
 import { GraineSignatureError, openWithGraineV2, sealWithGraineV2 } from '$lib/crypto/graineV2';
 import type { StoredGraineSession, StoredGraineV2 } from '$lib/db/types';
@@ -150,7 +151,7 @@ export class GraineReplayError extends Error {
 }
 
 /** Thrown when a channel's community is unknown to this session, so nothing can be sealed for it. */
-export class GraineUnknownChannelError extends Error {
+export class GraineUnknownChannelError extends GraineSealUnavailableError {
   constructor(readonly channelId: string) {
     super(
       `[GRAINE] channel ${channelId.slice(0, 8)} belongs to no community this session has loaded`

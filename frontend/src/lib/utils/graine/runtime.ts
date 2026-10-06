@@ -1,3 +1,4 @@
+import { GraineSealUnavailableError } from './sealUnavailable';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
@@ -21,7 +22,7 @@ import {
  */
 
 /** Thrown when something asks the Graine layer to work before a session has wired it. */
-export class GraineNotReadyError extends Error {
+export class GraineNotReadyError extends GraineSealUnavailableError {
   constructor(what: string) {
     super(`[GRAINE] ${what} - no session is wired`);
     this.name = 'GraineNotReadyError';
