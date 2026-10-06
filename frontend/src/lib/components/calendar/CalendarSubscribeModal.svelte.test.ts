@@ -26,7 +26,9 @@ import CalendarSubscribeModal from './CalendarSubscribeModal.svelte';
 const FEED = 'https://canari.emse.fr/api/associations/calendar/feed.ics';
 const mounted: ReturnType<typeof mount>[] = [];
 
-function render(extra: { signing?: 'idle' | 'signing' | 'ready' | 'error'; icsUrl?: string } = {}) {
+function render(
+  extra: { signing?: 'idle' | 'signing' | 'ready' | 'error' | 'unavailable'; icsUrl?: string } = {}
+) {
   const component = mount(CalendarSubscribeModal, {
     target: document.body,
     props: { open: true, onClose: () => {}, icsUrl: FEED, intro: 'intro', ...extra },
@@ -93,6 +95,13 @@ describe('CalendarSubscribeModal', () => {
       m.calendar_subscribe_sign_failed()
     );
     expect(document.querySelector('[data-subscribe-signing]')).toBeNull();
+    unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    render({ signing: 'unavailable', icsUrl: '' });
+    expect(document.querySelector('[data-subscribe-sign-unavailable]')?.textContent?.trim()).toBe(
+      m.calendar_subscribe_sign_unavailable()
+    );
+    expect(document.querySelector('[data-subscribe-sign-failed]')).toBeNull();
   });
 
   it('keeps the desktop order: Google first, the calendar app last', () => {

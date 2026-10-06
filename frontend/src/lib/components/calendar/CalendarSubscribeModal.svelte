@@ -200,6 +200,10 @@
       <p class="text-red-err text-xs" role="alert" data-subscribe-sign-failed>
         {m.calendar_subscribe_sign_failed()}
       </p>
+    {:else if signing === 'unavailable'}
+      <p class="text-red-err text-xs" role="alert" data-subscribe-sign-unavailable>
+        {m.calendar_subscribe_sign_unavailable()}
+      </p>
     {/if}
 
     {#if isPhone}
