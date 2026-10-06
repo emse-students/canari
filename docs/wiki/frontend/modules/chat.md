@@ -2874,6 +2874,22 @@ The toast container sat at `bottom: 5rem`, sized for the bottom nav. Inside a co
 that offset lands on the last bubbles and the composer, so on a phone toasts now sit at the TOP (below the safe
 area); desktop keeps its bottom-right corner (`ToastContainer.svelte`).
 
+**Follow-up, same day (build `5b56dcb74` on the Mi 9T): the top toast overlapped the header, and the cause was a
+transport failure.** Three fixes:
+
+- the toast's top is `--chat-chrome-bottom`, the viewport Y where the conversation chrome ends, published on the
+  ROOT by `ChatArea` (the toast layer is a sibling of the app and cannot inherit the panel's
+  `--chat-header-height`); with no conversation open it falls back to the safe area;
+- `MlsDeliveryApi.postApplicationMessage` classifies a `fetch` rejection at the throw as
+  `DeliveryUnreachableError` (Tauri's `plugin-http` rejects with the bare reqwest string `error sending request
+  for url .../api/mls/send`, which was "unclassified"); `isRetryableLoadError` reads it, so the toast is the
+  existing network sentence. A cancelled request (`AbortError`) is not it;
+- **the optimistic reaction is rolled back, but ONLY when nothing was sent** (`DeliveryUnreachableError` or
+  `GraineSealUnavailableError`): the inverse frame at a later `at`, applied locally, never sent. A 5xx may have
+  reached peers, so there the pill stays - the earlier "no rollback is possible" reasoning still holds for that
+  case. Other sends (`/api/mls/send` callers beyond reactions) now also see the typed error; the outbox treats any
+  throw as a failure, as before. Owed ONE on-device re-read: airplane mode, react, toast below the header, pill gone.
+
 ## The conversation list has one ordering key (2026-10-06)
 
 The sidebar sorts in a `$derived` (`Sidebar.svelte`, `filteredConversationEntries`), so it re-sorts on every `conversations.set`. What was wrong was the KEY. It was `Conversation.lastMessageAt`, a stored seed advanced by `addMessageToChat`, `batchAddMessages` and the FCM merge only - history replay, channel history, `renderStoredPage` and older pages replaced `messages` and left it behind - and written from `Date.now()` by `toConversationMeta` (empty conversation) and the DM name repair, which `Math.max` then made permanent. Two devices with the same messages ordered differently.

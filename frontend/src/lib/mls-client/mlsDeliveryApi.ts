@@ -89,6 +89,23 @@ export class NotAGroupMemberError extends Error {
 }
 
 /**
+ * The delivery service could not be ASKED: `fetch` itself rejected (no route, DNS, a reset
+ * connection - on Tauri `plugin-http` rejects with the reqwest sentence, `error sending request
+ * for url ...`, as a bare string). A status code is an answer; this is the absence of one, so
+ * nothing was decided and the frame most probably never arrived.
+ *
+ * CLASSIFIED AT THE THROW so a caller reads `instanceof` and never the sentence - the sentence is
+ * what reached the log as "unclassified" on the Mi 9T (2026-10-06). The raw rejection is kept in
+ * `cause` for the log. A cancelled request (`AbortError`) is NOT this: somebody chose it.
+ */
+export class DeliveryUnreachableError extends Error {
+  constructor(readonly cause: unknown) {
+    super(`[DELIVERY] the delivery service could not be reached: ${String(cause)}`);
+    this.name = 'DeliveryUnreachableError';
+  }
+}
+
+/**
  * The delivery service refused an application frame because THIS DEVICE holds no leaf in the group.
  *
  * A membership row that is not `active` means the device is not in the ratchet tree, so whatever it
@@ -998,18 +1015,26 @@ export class MlsDeliveryApi {
     protoBase64: string,
     delivery: FrameDelivery = DELIVERY.visible
   ): Promise<void> {
-    const res = await this.f(`${this.historyUrl}/api/mls/send`, {
-      method: 'POST',
-      headers: await this.auth({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        senderId: this.userId,
-        senderDeviceId: this.deviceId,
-        groupId,
-        proto: protoBase64,
-        silent: delivery.silent,
-        durable: delivery.durable,
-      }),
-    });
+    const headers = await this.auth({ 'Content-Type': 'application/json' });
+    let res: Response;
+    try {
+      res = await this.f(`${this.historyUrl}/api/mls/send`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          senderId: this.userId,
+          senderDeviceId: this.deviceId,
+          groupId,
+          proto: protoBase64,
+          silent: delivery.silent,
+          durable: delivery.durable,
+        }),
+      });
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') throw e;
+      console.warn(`[DELIVERY] send to ${groupId.slice(0, 8)} could not be reached:`, e);
+      throw new DeliveryUnreachableError(e);
+    }
     if (!res.ok) {
       // CLASSIFIED AT THE THROW, because exactly one thing can be said about a `sender_not_active`
       // that cannot be said about any other failure here: no retry lifts it. See
