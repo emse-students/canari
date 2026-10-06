@@ -14,11 +14,13 @@
     label?: string;
     /** Everyone who reacted with it. */
     userIds: string[];
+    /** DOM id, so the badge can name the panel in `aria-describedby` while it is open. */
+    id?: string;
     /** Called when the panel closes - on the reader's next action, whatever it is. */
     onClose: () => void;
   }
 
-  let { anchor, emoji, label, userIds, onClose }: Props = $props();
+  let { anchor, emoji, label, userIds, id, onClose }: Props = $props();
 
   let panelEl = $state<HTMLElement | null>(null);
 
@@ -75,6 +77,7 @@
     bind:this={panelEl}
     class="bg-cn-tooltip text-2xs fixed z-(--z-tooltip) max-w-56 min-w-40 rounded-xl px-3 py-2.5 font-medium text-white shadow-xl"
     role="tooltip"
+    {id}
   >
     <p class="text-2xs mb-1.5 font-bold tracking-wide text-white/60 uppercase">
       <EmojiText text={emoji} />{#if label}&nbsp;{label}{/if}

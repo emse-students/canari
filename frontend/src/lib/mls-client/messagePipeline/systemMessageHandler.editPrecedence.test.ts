@@ -43,7 +43,7 @@ function makeCtx(
     mlsService: {},
     storage: { updateMessage: vi.fn().mockResolvedValue(undefined) },
     userId: 'me',
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     conversations,
     messageReactions: new Map(),
     addMessageToChat: vi.fn(),

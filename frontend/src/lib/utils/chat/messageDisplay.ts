@@ -3,6 +3,26 @@ import { foldForSearch, foldWithIndex } from '$lib/utils/textFold';
 
 /** Pure display utilities for rendering message text, URLs, GIFs, and bubble shapes. */
 
+/** Longest raw reply preview a sender stores, before the ellipsis mark. */
+export const REPLY_PREVIEW_STORED_MAX = 100;
+
+/**
+ * Cuts the preview a reply STORES, and MARKS the cut with an ellipsis.
+ *
+ * It used to be a bare `slice(0, 100)` of the raw text, where an `@[uuid]` mention token weighs ~40
+ * characters but is drawn as a short name: the quote of a message with a mention was cut at 100 raw
+ * characters, rendered under the 84 that `shortenReplyPreview` allows, and so ended mid-word with
+ * NO ellipsis (user, 2026-10-05). A cut that lands inside a token is pulled back before it, or the
+ * token stops parsing and the quote shows the raw `@[3f9a` instead of a name.
+ */
+export function cutReplyPreview(text: string): string {
+  if (text.length <= REPLY_PREVIEW_STORED_MAX) return text;
+  let cut = text.slice(0, REPLY_PREVIEW_STORED_MAX);
+  const open = cut.lastIndexOf('@[');
+  if (open > cut.lastIndexOf(']')) cut = cut.slice(0, open);
+  return `${cut.trimEnd()}…`;
+}
+
 /** Shortens a reply preview to at most 84 characters. */
 export function shortenReplyPreview(text: string): string {
   if (!text) return '';

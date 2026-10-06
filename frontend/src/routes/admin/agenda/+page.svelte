@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import {
@@ -45,7 +46,7 @@
     try {
       const res = await listPendingCalendarEvents();
       if (!res.canValidate) {
-        void goto('/dashboard', { replaceState: true });
+        void goto(resolve('/dashboard'), { replaceState: true });
         return;
       }
       events = res.events;

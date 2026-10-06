@@ -1212,6 +1212,26 @@ that raises a banner (a service worker handling `push` would be a second builder
 `commands/push.rs` to assert that `get_fcm_token` and `get_voip_token` answer `None` off a phone (a
 desktop branch there would be a second trigger).
 
+**A salon's two triggers title it two ways, and whichever posts LAST wins (NOTIF-14, `0.18.20`,
+2026-09-23).** Since 2026-09-22 both carry the same stored `channel_messages.createdAt`, so the
+builder recognises one message and the doubled line is gone (`ChannelNotificationDedupTest`); a post
+that SUPERSEDES a line (the redraw a late seed triggers) is exempt from the already-announced set. But the PUSH models a salon as a 1:1 conversation authored by the
+PLACE (`<Communaute> - #<salon>` as sender, empty `groupName`, because its cleartext payload names no
+human), while the SOCKET models a group conversation authored by the human sender. Eleven sends: the
+push fired eleven times and the socket twice; when both fired, the push's re-post won with
+`group=false`, dropped the conversation title, and Android titled the shade from a message author -
+the human name the socket had written (one caught run also showed `messages=6` falling to `5`,
+unexplained). The socket's conversation title is the salon's name since `notificationGroupName`
+returns `name` before `contactName` for a channel - `contactName` is the conversation KEY
+(`channel_<hex>`, read by `conversations.get` and four identity matches), not a label.
+
+Agreement has two shapes and they cost different things: the socket titles a salon exactly as the
+push does (needs the community name plumbed from `useChannelWorkspaces` to `notifyInbound`, and drops
+the sender's name from the Android banner), or the push gains a sender name (cleartext to FCM, which
+today sees an id). The salon socket post may also be redundant - the "a backgrounded app ACKs the
+frame so no push is sent" reasoning is about DMs - but eleven samples on one device are not enough to
+delete a path on. Either way the fix is NOT to undo the dedup: the two triggers must agree, and a re-post must not drop a conversation title the notification already has.
+
 That needed a call in the direction this app had never made, **Rust into Kotlin**, and the obstacle
 is documented where it bites: a thread attached from native code has no Java frames on its stack, so
 `FindClass` falls back to the system class loader and finds only the boot classpath. The app's own

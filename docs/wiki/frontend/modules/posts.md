@@ -223,6 +223,17 @@ viewer (`GET /api/posts`, `/api/posts/search`, `/api/posts/:id` all do), or ever
 will be read-only. And a response that merges into a card - `onPostSaved` does exactly that - has to
 carry the three too, or saving an edit removes the control that started it.
 
+**What a "no bin on my own post" report has already been read against (user, 2026-09-17, a post
+published as an association, on prod).** `createPost` used to stamp its response with
+`isGlobalAdmin: false`, so a global admin posting as an association got its own post back
+`canManage: false` - fixed. But `CreatePostForm` discards that response and refetches the feed, so
+that defect was invisible to this client. Ruled out by reading: the feed passes the real admin flag
+and stamps every row through `shapeListRow`; `getById` passes its own; the feed cache is keyed per
+reader; `PostCard` reads `canManage` straight from the response; and `viewerIsPublisher` resolves an
+association post through `POST_AS_ASSO` for creation and management alike. What would settle the
+report is the post itself: whether its publisher held `POST_AS_ASSO` on that association, or reached
+the composer through the global-admin route alone.
+
 ## The search stops where the feed stops (2026-10-04)
 
 `/api/posts/search` is ONE server query - `ILIKE` over the body and the association name, pinned
@@ -1013,7 +1024,7 @@ That collapses the seven stages to two without any client instrumentation at all
 | --- | --- |
 | `moderation` | `200` and **51 bytes**, which is exactly `{"isMuted":false,"mutedReason":null,"mutedAt":null}` - the muted shape carries a date and is longer |
 | `content` | unreachable: the Publier button is disabled on the identical predicate |
-| `mediaToken` | `authToken` is taken at mount, so the branch is skipped |
+| `mediaToken` | `getToken()` is read per upload (it was a mount-time copy until 2026-10-05, which expired after 15 min and showed as a session error), so the branch is skipped |
 | `mediaUpload` | no `/api/media` write from that device, and `compressImage` cannot throw - every failure it has is a typed passthrough, so an upload would have been attempted and logged |
 | `createPost` | never sent |
 
@@ -1230,7 +1241,12 @@ ca cree des problemes"*.
 - **`actions/reactorsTrigger.ts` is the one gesture, for every pointer, a mouse included**: a tap
   toggles the reaction; a 450 ms hold (`LONG_PRESS_MS`, main button only for a mouse, cancelled past
   10 px of travel or when the pointer leaves) opens the list, and the click that ends the hold is
-  swallowed in capture, so a hold never reacts. Nothing opens on hover any more.
+  swallowed in capture, so a hold never reacts. **A mouse hovers again since 2026-10-05** (user, on
+  desktop): `HOVER_INTENT_MS` (400 ms) of resting opens the list, leaving or blurring closes it
+  (`close` in the action's params), keyboard `:focus-visible` rests the same way, and the badge
+  carries `aria-describedby` to the panel while it is open. What made the 2026-10-01 hover wrong - a
+  list opened on the way to every click - is what the delay and the press (which cancels the rest)
+  prevent; a touch never hovers and keeps the hold alone.
 - **`ReactorsPanel` lives until the reader's next action.** One effect listens, in capture, for
   `pointerdown`, `scroll`, `wheel`, `keydown` and `resize` on the window, and any of them closes it -
   a press anywhere, the badge and the list included. The press that opened it is already down when

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import '../app.css';
   import { DEFAULT_PUBLIC_APP_ORIGIN } from '$lib/utils/publicAppUrl';
   import {
@@ -417,7 +419,7 @@
     pageScrollWrap.style.transition = `transform ${swipeNavTransitionMs}ms ease-out`;
     pageScrollWrap.style.transform = `translate3d(${direction === 'next' ? -width : width}px, 0, 0)`;
     swipeNavSlide = { direction };
-    void goto(href).catch((err) => {
+    void goto(resolve(internalPath(href))).catch((err) => {
       console.error('[SwipeNav] navigation failed:', href, err);
       swipeNavSlide = null;
       snapSwipeBack();

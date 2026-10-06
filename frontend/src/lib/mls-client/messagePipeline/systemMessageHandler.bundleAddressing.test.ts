@@ -24,7 +24,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     mlsService: { getDeviceId: () => MY_DEVICE },
     storage: null,
     userId: ME,
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     conversations,
     messageReactions: new Map(),
     addMessageToChat: vi.fn(),

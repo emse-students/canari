@@ -739,6 +739,44 @@ describe('ChannelService security hardening', () => {
     notify.mockRestore();
   });
 
+  // A pin shows on every member's screen, so a poll is auto-pinned only for an author who may pin
+  // (user, 2026-10-05). Matrix: plain member -> not pinned; moderator -> pinned.
+  it.each([
+    ['a plain member', ['membre'], DEFAULT_MEMBER_PERMISSIONS, false],
+    ['a moderator', ['mod'], ['channel.moderate'], true],
+  ])('sendMessage with a poll by %s: pinned=%s', async (_who, roleIds, permissions, pinned) => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
+    channelRepo.findOne.mockResolvedValue({
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: false,
+      writePolicy: 'everyone',
+    });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds });
+    roleRepo.find.mockResolvedValue([{ id: roleIds[0], permissions }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }]);
+    messageRepo.create.mockImplementation((v: any) => v);
+    messageRepo.save.mockImplementation(async (v: any) => ({
+      ...v,
+      id: 'm-new',
+      createdAt: new Date(),
+    }));
+    jest.spyOn(service as any, 'notifyChannelRecipients').mockResolvedValue(undefined);
+
+    await service.sendMessage('ch1', {
+      senderId: 'u1',
+      ciphertext: 'c',
+      nonce: 'n',
+      senderSessionId: 's-1',
+      messageIndex: 0,
+      poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null },
+    } as any);
+
+    const created = messageRepo.create.mock.calls[0][0] as any;
+    expect(created.pinned).toBe(pinned);
+    expect(created.metadata.poll).toBeDefined();
+  });
+
   it('listMessages fills its page with bodies and adds the silent rows inside it', async () => {
     const { service, channelRepo, memberRepo, messageRepo } = makeService();
     arrangePollAccess(channelRepo, memberRepo);

@@ -201,7 +201,8 @@ export interface RecoveryDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
-  deviceKeyB64: string;
+  /** The session's CURRENT device key, read at use - see `MessageHandlerDeps.deviceKey`. */
+  deviceKey: () => string;
   conversations: SvelteMap<string, Conversation>;
   getSelectedContact: () => string | null;
   setSelectedContact: (id: string | null) => void;
@@ -385,7 +386,7 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
         await persistMlsStateAfterMutation(
           deps.mlsService,
           deps.userId,
-          deps.deviceKeyB64,
+          deps.deviceKey(),
           deps.log
         );
       return;

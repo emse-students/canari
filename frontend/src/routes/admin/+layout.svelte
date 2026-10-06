@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -74,7 +76,7 @@
     }
     ready = true;
     if (!mayOpen) {
-      void goto('/dashboard', { replaceState: true });
+      void goto(resolve('/dashboard'), { replaceState: true });
     }
   });
 
@@ -171,7 +173,7 @@
        column per page, and the layout owns it here because the header above is part of it. -->
   <PageContainer width="tool" class="space-y-6">
     <a
-      href="/dashboard"
+      href={resolve('/dashboard')}
       class="tap-target text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
     >
       <ArrowLeft size={14} />
@@ -192,7 +194,7 @@
 
     <nav class="flex gap-2 overflow-x-auto pb-1" aria-label={scope.title()} data-swipe-nav-ignore>
       <a
-        href="/admin"
+        href={resolve('/admin')}
         class="tap-target shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
  {path === '/admin'
           ? 'bg-cn-yellow text-cn-ink shadow-sm'
@@ -210,7 +212,7 @@
       {/each}
       {#each directLinks as item (item.href)}
         <a
-          href={item.href}
+          href={resolve(internalPath(item.href))}
           class="tap-target inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
  {path.startsWith(item.href)
             ? 'bg-cn-yellow text-cn-ink shadow-sm'

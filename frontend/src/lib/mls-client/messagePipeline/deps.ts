@@ -16,7 +16,16 @@ export interface MessageHandlerDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
-  deviceKeyB64: string;
+  /**
+   * The key the local store is sealed with NOW, read at every write.
+   *
+   * A function and never a value, because these deps live for the whole session while the key does
+   * not: an in-session PIN change re-seals the store and moves the session's key
+   * (`performPinChange` -> `SessionContext.setDeviceKey`), and a value captured at login kept sealing
+   * every later message under the key the store had just been migrated off. Call it at the write,
+   * never once up front - a copy is exactly what went stale.
+   */
+  deviceKey: () => string;
   historyBaseUrl: string;
   conversations: SvelteMap<string, Conversation>;
   messageReactions: SvelteMap<string, MessageReaction[]>;

@@ -33,7 +33,7 @@ export async function forgetCommunityGraine(workspaceId: string): Promise<number
     return 0;
   }
 
-  const { storage, deviceKeyB64, mlsService } = requireGraineRuntime('forgetCommunityGraine');
+  const { storage, deviceKey, mlsService } = requireGraineRuntime('forgetCommunityGraine');
 
   // THE MLS GROUP GOES FIRST, and it is the one thing this function used to leave behind. Seeds,
   // maps and the mirror are what this device HELD; the distribution group is what keeps FEEDING it
@@ -68,7 +68,7 @@ export async function forgetCommunityGraine(workspaceId: string): Promise<number
   let sessionIds: string[] = [];
   let channelIds: string[] = [];
   try {
-    const held = await storage.getGraineSessionsForWorkspace(workspaceId, deviceKeyB64);
+    const held = await storage.getGraineSessionsForWorkspace(workspaceId, deviceKey());
     sessionIds = held.map((session) => session.sessionId);
     channelIds = [...new Set(held.map((session) => session.channelId))];
   } catch (e) {

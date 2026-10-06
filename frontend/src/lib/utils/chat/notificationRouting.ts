@@ -1,4 +1,5 @@
 import { goto } from '$app/navigation';
+import { resolve } from '$app/paths';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { isChannelConversationId } from './channelCrypto';
 
@@ -118,5 +119,5 @@ export async function openInvitedChannel(channelId: string): Promise<void> {
   if (!channelId) return;
   const channelConversationId = `channel_${channelId}`;
   notifNav.navigate(channelConversationId);
-  await goto(chatDeepLinkRoute(channelConversationId));
+  await goto(resolve(chatDeepLinkRoute(channelConversationId)));
 }

@@ -351,7 +351,7 @@
   }
 
   /** Only the author's own text message can be edited, and only where the parent can take it. */
-  const canEdit = $derived(!isDeleted && isOwn && !mediaRef && !!onBeginEdit);
+  const canEdit = $derived(!isDeleted && isOwn && !mediaRef && !pollEnvelope && !!onBeginEdit);
 
   function handleBubbleClick(e: MouseEvent) {
     // Double-tap on mobile: react with ❤️ instead of toggling info

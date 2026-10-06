@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { Log } from '$lib/utils/Log';
@@ -164,11 +165,11 @@
       const loaded = await getAssociationBySlug(slug);
       // Enforce canonical URL: lists live under /lists, associations under /associations.
       if (loaded.type === 'list' && kind !== 'list') {
-        await goto(`/lists/${encodeURIComponent(slug)}`, { replaceState: true });
+        await goto(resolve(`/lists/${encodeURIComponent(slug)}`), { replaceState: true });
         return;
       }
       if (loaded.type !== 'list' && kind === 'list') {
-        await goto(`/associations/${encodeURIComponent(slug)}`, { replaceState: true });
+        await goto(resolve(`/associations/${encodeURIComponent(slug)}`), { replaceState: true });
         return;
       }
       asso = loaded;
@@ -253,7 +254,7 @@
 -->
 <PageContainer width={sectionWidth} class="space-y-8">
   <a
-    href={basePath}
+    href={resolve(basePath)}
     class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
   >
     <ArrowLeft size={16} />
@@ -527,7 +528,7 @@
             <ShoppingBag size={20} />
             {m.asso_tab_shop()}
           </h2>
-          <a href="/shop" class="text-cn-dark text-xs font-semibold hover:underline">
+          <a href={resolve('/shop')} class="text-cn-dark text-xs font-semibold hover:underline">
             {m.asso_view_all_shop()}
           </a>
         </div>

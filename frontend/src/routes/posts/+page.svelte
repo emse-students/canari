@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { feedToShowAfterPublish } from '$lib/posts/landingFeed';
   import { onMount, untrack } from 'svelte';
@@ -124,6 +126,15 @@
    * a share or a back gesture then lands on the feed rather than on a modal or a search box the
    * reader did not ask for twice.
    */
+  /**
+   * This route carrying `u`'s query and hash, for `resolve`. Built from the route rather than from
+   * `u.pathname`, which already carries any base path and would then get it twice.
+   */
+  function feedPath(u: URL): string {
+    const query = u.searchParams.toString();
+    return `/posts${query ? `?${query}` : ''}${u.hash}`;
+  }
+
   $effect(() => {
     const params = page.url.searchParams;
     const compose = params.get('compose') === '1';
@@ -140,7 +151,11 @@
     const u = new URL(page.url);
     u.searchParams.delete('compose');
     u.searchParams.delete('search');
-    void goto(u, { replaceState: true, noScroll: true, keepFocus: true });
+    void goto(resolve(internalPath(feedPath(u))), {
+      replaceState: true,
+      noScroll: true,
+      keepFocus: true,
+    });
   });
 
   /**
@@ -308,7 +323,7 @@
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
-    void goto(u, { invalidateAll: true, noScroll: true });
+    void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
   }
 
   async function refreshPosts() {

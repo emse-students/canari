@@ -30,6 +30,8 @@
   const allReactorIds = $derived(Object.keys(reactions));
   const reactorNames = userDisplayNames(() => allReactorIds);
 
+  const panelId = $props.id();
+
   function openPopup(reactionType: string, anchor: HTMLElement) {
     anchorEl = anchor;
     popupReactionType = reactionType;
@@ -67,7 +69,9 @@
         onclick={() => onReactionClick(reactionType)}
         use:reactorsTrigger={{
           open: (anchor) => openPopup(reactionType, anchor),
+          close: closePopup,
         }}
+        aria-describedby={popupReactionType === reactionType ? panelId : undefined}
         class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 transition-all {userReaction ===
         reactionType
           ? 'bg-cn-yellow/15'
@@ -83,6 +87,7 @@
 
 <ReactorsPanel
   anchor={anchorEl}
+  id={panelId}
   emoji={popupReactionType
     ? (reactionList.find((r) => r.type === popupReactionType)?.emoji ?? '😊')
     : null}

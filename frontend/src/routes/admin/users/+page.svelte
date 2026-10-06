@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -83,7 +84,7 @@
 
   onMount(async () => {
     if (!isGlobalAdmin()) {
-      goto('/');
+      goto(resolve('/'));
       return;
     }
     await load();

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount, onDestroy } from 'svelte';
@@ -67,7 +68,7 @@
 
   onMount(() => {
     if (!isGlobalAdmin()) {
-      void goto('/admin', { replaceState: true });
+      void goto(resolve('/admin'), { replaceState: true });
       return;
     }
     void fetchPresence();

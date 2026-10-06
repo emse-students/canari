@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount, tick, untrack } from 'svelte';
   import { goto } from '$app/navigation';
@@ -572,7 +573,7 @@
   onMount(async () => {
     await ensureAssociationSuperAdmin();
     if (!isGlobalAdmin() && !isAssociationSuperAdmin()) {
-      void goto('/admin', { replaceState: true });
+      void goto(resolve('/admin'), { replaceState: true });
       return;
     }
     ready = true;
@@ -583,7 +584,7 @@
 {#if ready}
   <div class="space-y-6">
     <a
-      href="/admin/carte"
+      href={resolve('/admin/carte')}
       class="text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
     >
       <ArrowLeft size={14} />

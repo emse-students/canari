@@ -641,7 +641,7 @@ export async function requestCommunityHistory(
 ): Promise<void> {
   if (evenIfSeedsHeld) historyAsked.delete(workspaceId);
   if (historyAsked.has(workspaceId)) return;
-  const { storage, deviceKeyB64, userId, mlsService } = requireGraineRuntime(
+  const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     'cannot ask for community history'
   );
 
@@ -652,7 +652,7 @@ export async function requestCommunityHistory(
   // it addressed offline members; it elects among the online ones now. Asking the whole bundle again
   // here at every start, of one member, for seeds this device mostly holds, would buy nothing that
   // path does not already deliver session by session.
-  const held = await storage.getGraineSessionsForWorkspace(workspaceId, deviceKeyB64);
+  const held = await storage.getGraineSessionsForWorkspace(workspaceId, deviceKey());
   if (held.length > 0 && !evenIfSeedsHeld) return;
 
   const scope = workspaceScope(workspaceId);

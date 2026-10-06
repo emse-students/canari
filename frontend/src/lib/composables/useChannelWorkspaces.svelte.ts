@@ -14,6 +14,7 @@ import {
 } from '$lib/envelope';
 import {
   isChannelConversationId,
+  sendChannelEdit,
   sendChannelReaction,
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
@@ -25,6 +26,7 @@ import {
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
 import { currentUserId } from '$lib/stores/userState.svelte';
+import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame, getChannelReactions } from '$lib/stores/reactionStore.svelte';
 import {
   activeReactions,
@@ -1255,6 +1257,54 @@ export function useChannelWorkspaces() {
   }
 
   /**
+   * Edits the caller's OWN text message in a salon: sealed as a silent encrypted row, then applied
+   * locally with the SAME instant.
+   *
+   * Nothing here asks the server anything, because it cannot answer: a salon row is an opaque blob
+   * (Graine), so the server does not know the frame is an edit or whose message it names. The
+   * ownership check is made here for the menu's sake and AGAIN by every reader on arrival
+   * (`applyChannelEdit`), the one that counts since this side can be bypassed. The local write
+   * waits for the send, unlike a reaction: a text the peers never received would otherwise stay on
+   * this screen as if shared.
+   */
+  async function editChannelMessage(
+    channelConversationId: string,
+    messageId: string,
+    text: string,
+    ctx: ChannelWorkspaceContext
+  ) {
+    const userId = currentUserId();
+    const convo = ctx.conversations.get(channelConversationId);
+    const target = convo?.messages.find((msg) => msg.id === messageId);
+    if (
+      !convo ||
+      !target ||
+      !userId ||
+      (target.senderId ?? '').toLowerCase() !== userId.toLowerCase()
+    ) {
+      ctx.log(`[CHANNEL] edit of ${messageId.slice(0, 8)} not sent - not the author's message`);
+      return;
+    }
+    const editedAt = Date.now();
+    try {
+      await sendChannelEdit(channelConversationId, messageId, text, editedAt);
+    } catch (error) {
+      ctx.log(toUiActionError(m.channel_action_message_edit(), error));
+      return;
+    }
+    // Re-read: the send awaited, and a live message may have changed the list meanwhile.
+    const latest = ctx.conversations.get(channelConversationId);
+    if (!latest) return;
+    const { messages, applied } = applyChannelEdit(
+      latest.messages,
+      { targetMessageId: messageId, senderId: userId, newContent: text, editedAt },
+      ctx.log
+    );
+    if (applied) ctx.conversations.set(channelConversationId, { ...latest, messages });
+    ctx.invalidateChannelHistoryCache?.(channelConversationId);
+  }
+
+  /**
    * Places or takes back the caller's emoji reaction on a channel message.
    *
    * **The reaction IS the message (WP-40).** It is sealed under this device's Graine session and
@@ -1659,6 +1709,8 @@ export function useChannelWorkspaces() {
     handleRemovedFromWorkspace,
     /** Deletes a channel message (own message, or anyone's with `channel.moderate`). */
     deleteChannelMessage,
+    /** Edits the caller's own text message (silent encrypted edit row, see `applyChannelEdit`). */
+    editChannelMessage,
     /** Toggles the caller's emoji reaction on a channel message. */
     toggleChannelReaction,
     /** Applies an incoming real-time channel-message-deleted event. */

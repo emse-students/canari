@@ -62,7 +62,7 @@ beforeEach(() => {
         return ids.length;
       },
     } as never,
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     userId: 'alice',
     mlsService: {} as never,
   });

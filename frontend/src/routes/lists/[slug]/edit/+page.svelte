@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -71,7 +72,9 @@
       const a = await getAssociationBySlug(slug);
       // A regular association is managed from the association edit page.
       if (a.type !== 'list') {
-        await goto(`/associations/${encodeURIComponent(slug)}/edit`, { replaceState: true });
+        await goto(resolve(`/associations/${encodeURIComponent(slug)}/edit`), {
+          replaceState: true,
+        });
         return;
       }
       list = a;
@@ -89,7 +92,7 @@
       const mine = members.find((m) => m.userId === currentUserId());
       const canEdit = isGlobalAdmin() || (!!mine && mine.isAdmin);
       if (!canEdit) {
-        await goto(`/lists/${encodeURIComponent(slug)}`);
+        await goto(resolve(`/lists/${encodeURIComponent(slug)}`));
         return;
       }
     } catch {

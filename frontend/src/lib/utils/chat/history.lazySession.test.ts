@@ -54,7 +54,7 @@ const replay = async (rows: ReturnType<typeof rowFrom>[]) => {
     id: GROUP,
     contactName: 'peer',
     userId: USER,
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     storage: null,
     getConversation: () => undefined,
     setConversation: () => undefined,

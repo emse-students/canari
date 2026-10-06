@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   /**
    * Always-on layout component for the MLS session lifecycle.
    *
@@ -227,7 +228,7 @@
     if (step !== 'await-arrival') lastNavigatedNotifTarget = id;
     if (step === 'route') {
       appendLog(`[notifNav] routing to ${targetRoute} for pending conversation ${id}`);
-      void goto(targetRoute);
+      void goto(resolve(targetRoute));
     }
     if (step !== 'select') return;
     // Already on screen: the landing is done and must stay idle until the target is lost. The
@@ -502,7 +503,7 @@
     _sessionExpiredHandled = true;
     appendLog('[AUTH] Session expired - logging out and redirecting to /login.');
     await clearAuth().catch(() => {});
-    void goto('/login', { replaceState: true });
+    void goto(resolve('/login'), { replaceState: true });
   }
 
   /**
@@ -531,7 +532,7 @@
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
     await clearAuth().catch((e) => appendLog(`[AUTH] Sign-out: clearAuth failed - ${e}`));
-    await goto('/login', { replaceState: true });
+    await goto(resolve('/login'), { replaceState: true });
     dismissAuthPrompts();
     pinError = '';
     _loginInProgress = false;

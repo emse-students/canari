@@ -3082,8 +3082,17 @@ export class ChannelService {
     // A poll is just an encrypted message carrying a label-free descriptor: we
     // store its option IDs/deadline server-side (for tallying + auto-pin) while
     // the question and labels stay in the ciphertext. Auto-pinned so it stays
-    // reachable via the channel's pin list instead of drowning in the feed.
+    // reachable via the channel's pin list instead of drowning in the feed - but ONLY when the
+    // author may pin: a pin shows on every member's screen, so it is moderation for every message
+    // and a member's poll must not reach the pin list by a side door (user, 2026-10-05). The
+    // client is never asked: the same grant `setMessagePinned` reads decides here.
     const pollMeta = input.poll ? this.buildPollMeta(input.poll) : null;
+    const autoPin = pollMeta !== null && (await this.memberCanModerateMessages(member));
+    if (pollMeta && !autoPin) {
+      this.logger.log(
+        `[POLL] not auto-pinned channel=${channelId} user=${input.senderId.slice(0, 8)}: no moderation grant`
+      );
+    }
 
     const msg = this.messageRepo.create({
       // Never use a client-supplied ID as the DB primary key - the server
@@ -3098,7 +3107,7 @@ export class ChannelService {
       signature: input.signature ?? null,
       silent: input.silent === true,
       metadata: pollMeta ? { poll: pollMeta } : {},
-      pinned: pollMeta !== null,
+      pinned: autoPin,
     });
 
     const savedMsg = await this.saveUnderUnusedKey(msg, input);

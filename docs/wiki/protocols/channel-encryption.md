@@ -1944,6 +1944,14 @@ Four tests hold it: two concurrent callers produce one read, one join and one re
 caller that waited SAYS it waited, so it is not indistinguishable from the one that worked; nothing
 survives the call; and a rejection is shared without poisoning the next attempt.
 
+**A new private salon, driven end to end (2026-10-05).** `useChannelWorkspaces.salonCreation.test.ts`
+overlaps the three moments that reach a fresh salon's group on the creating device - the creation,
+its own `channel.member.joined` (published before the POST answers) and a workspace load - and pins
+ONE read and ONE `ensureDistributionGroup`. So the "same salon read twice in one second for one user"
+seen on the COMM rung (2026-08-27) is the user's OTHER device answering the same
+`channel.member.joined`: a first-publish race between two devices, settled by `stored: false` by
+design, not a duplicate caller.
+
 #### The sequel: the call was already one, the PRECONDITION was three (G-D1, 2026-09-13)
 
 The audit row read *"`ensureDistributionGroupFor`, 5 call sites, deduplicated only by an in-flight
@@ -2900,6 +2908,17 @@ is kept as before.
 temporary mirror, with each refusal falsified. `background.rs` covers the sender refusal and the
 three endorsement cases (endorsed, forged by another member, minted by a device the tree does not
 hold). `channelPushFields.test.ts` now expects `signature` in the inline group on all three readers.
+
+### 21.5b What a salon EDIT trusts (2026-10-05)
+
+A salon edit is a silent row whose authorship every reader checks against the row's sender
+(`applyChannelEdit`, [chat](../frontend/modules/chat.md#editing-your-own-message-in-a-salon-2026-10-05)).
+**That sender is PROVEN only for a row under a v2 session** (signature and minter checked by
+`openChannelMessage`). A row still opened under a v1 session carries a server-supplied, unsigned
+`senderId`, so a malicious server, or a v1 row from before G2-5, could forge an edit "from" the
+author. This is the same trust level as DELETE today (the server alone decides whose delete it
+honours), so it is not a regression, and edits are deliberately NOT restricted to v2. It closes when
+the last v1 session ages out with the v1 reader ([legacy-compatibility](../legacy-compatibility.md)).
 
 ### 21.6 The writer (WP-G2-5)
 

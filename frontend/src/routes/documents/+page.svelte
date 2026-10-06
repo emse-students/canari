@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -132,7 +133,7 @@
       .catch(() => false)
       .then((allowed) => {
         if (allowed) ready = true;
-        else void goto('/dashboard', { replaceState: true });
+        else void goto(resolve('/dashboard'), { replaceState: true });
       });
     void load();
   });

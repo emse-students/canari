@@ -555,7 +555,7 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
   beforeEach(() => {
     setGraineRuntime({
       storage: {} as never,
-      deviceKeyB64: 'device-key',
+      deviceKey: () => 'device-key',
       userId: 'alice',
       mlsService: {} as never,
     });
@@ -921,7 +921,7 @@ describe('a seat for a device that holds nothing - the admitter Welcome may be t
   beforeEach(() => {
     setGraineRuntime({
       storage: {} as never,
-      deviceKeyB64: 'k',
+      deviceKey: () => 'k',
       userId: 'me',
       mlsService: {} as never,
     });
@@ -1077,7 +1077,7 @@ describe('a held key group whose own leaf is gone', () => {
   beforeEach(() => {
     setGraineRuntime({
       storage: {} as never,
-      deviceKeyB64: 'k',
+      deviceKey: () => 'k',
       userId: 'me',
       mlsService: {} as never,
     });

@@ -93,7 +93,7 @@ function fakeMls(epoch: number | null) {
 }
 
 function wire(storage: IStorage, mls: ReturnType<typeof fakeMls>['mls'], isPrivate = false): void {
-  setGraineRuntime({ storage, deviceKeyB64: 'device-key', userId: 'alice', mlsService: mls });
+  setGraineRuntime({ storage, deviceKey: () => 'device-key', userId: 'alice', mlsService: mls });
   registerChannelWorkspace(CHANNEL, WS, isPrivate);
 }
 
@@ -135,7 +135,7 @@ describe('sealing', () => {
   it('refuses a channel belonging to no community this session loaded', async () => {
     const { storage } = fakeStorage();
     const { mls } = fakeMls(4);
-    setGraineRuntime({ storage, deviceKeyB64: 'k', userId: 'alice', mlsService: mls });
+    setGraineRuntime({ storage, deviceKey: () => 'k', userId: 'alice', mlsService: mls });
 
     // Without the community there is no distribution group, so the seed would reach nobody.
     await expect(sealChannelMessage(CHANNEL, new Uint8Array([1]))).rejects.toBeInstanceOf(

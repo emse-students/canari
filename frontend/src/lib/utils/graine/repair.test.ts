@@ -115,7 +115,7 @@ beforeEach(() => {
     storage: {
       getGraineSessionsForWorkspace: async () => heldSessions,
     } as never,
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     userId: 'alice',
     mlsService: {
       sendMessage,

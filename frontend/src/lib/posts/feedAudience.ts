@@ -1,3 +1,4 @@
+import { resolve } from '$app/paths';
 import { isGlobalAdmin } from '$lib/stores/user';
 import { feedAudienceState, setFeedAudience } from '$lib/stores/userState.svelte';
 import { fetchFeedAudience } from '$lib/posts/api';
@@ -79,6 +80,6 @@ export async function redirectIfNotFeedAudience(): Promise<boolean> {
   else void revalidateFeedAudience();
 
   if (verdict !== false) return false;
-  await goto('/chat', { replaceState: true }).catch(() => {});
+  await goto(resolve('/chat'), { replaceState: true }).catch(() => {});
   return true;
 }
