@@ -1317,6 +1317,33 @@ survive it, and a forced re-login of every member has been accepted for exactly 
 Several issuers are accepted during the transition; the end state is one. The redirect URIs live in
 Authentik's database, not in this repository - see [authentik](authentik.md).
 
+#### THE OLD NAME OF MICONNECT REDIRECTS, AND THE DSI REPLACED THE CAS CALLBACK (2026-10-06)
+
+**The DSI swapped the CAS callback instead of adding to it.** Measured the same day, on the same
+`/source/oauth/login/cas-emse/`: `miconnect.emse.fr` reached the CAS login page, and
+`auth.canari-emse.fr` ended in **`401 Not Authorized to Use CAS`** - every sign-in through the
+School's account on the old name was cut at that moment, for every client still naming it. The
+requirement above ("a DSI request, and it must land BEFORE any client points at the new name") had a
+mirror image nobody wrote down: **the request must say KEEP the old callback.** The next DSI message
+owes that sentence.
+
+**The repair is the old name's vhost, not a client change** (`authentik.conf` on the host, pre-edit
+copy `/root/authentik.conf.bak-2026-10-06-before-redirect`): every PAGE - `/`, `/if/` (flow, user UI,
+admin), `/source/`, `/application/o/authorize/`, end-session - answers `301` + `no-store` to
+`https://miconnect.emse.fr$request_uri`; the MACHINE endpoints stay proxied
+(`/application/o/{token,userinfo,introspect,revoke,device}/`, each provider's `.well-known/` and
+`jwks/`, `/api/`, `/-/health/`). A client that still names the old name keeps exchanging its code
+and reading `userinfo` there - a `POST` that gets a `301` is replayed as a `GET`, and the `iss` it
+expects is built from the Host of ITS request - while its browser leg runs on the new name, where
+the CAS accepts it. Measured: the old name's CAS path now lands on the CAS login page, and the old
+`authorize` lands on the new name's flow with the same query. The native clients' navigation guard
+(`navigation.rs`) accepts any `https://`, so an installed app follows the hop.
+
+**Nothing has to flip at once, and nothing may be removed early.** Each client switches to
+`miconnect.emse.fr` on its own release (Cercle: issuer AND JWKS together, it validates `iss`; Canari
+validates nothing and only exchanges at `AUTHENTIK_BASE_URL`); the old name stays for as long as an
+installed build or a store binary names it, which is for ever on Android and iOS.
+
 #### What the rename touches, read from Authentik 2026-09-27 (`ak shell`, read-only)
 
 **Every provider is `issuer_mode=per_provider`, and Authentik builds the issuer from the REQUEST's

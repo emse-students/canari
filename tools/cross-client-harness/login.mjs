@@ -81,7 +81,9 @@ const TAB_PORT = opt('tabPort', null) ? Number(opt('tabPort', null)) : isPhone &
  * The forward is re-made on every call rather than once: the abstract socket carries the browser's
  * pid, and a Custom Tab that is dismissed and re-opened is a different process.
  */
-const IDP_HOSTS = ['auth.canari-emse.fr', 'cas.emse.fr'];
+// BOTH names of MiConnect: the old one 301s its pages to the new one since 2026-10-06, and a build still
+// carrying the old name signs in through that hop.
+const IDP_HOSTS = ['miconnect.emse.fr', 'auth.canari-emse.fr', 'cas.emse.fr'];
 const atAnIdP = (url) => IDP_HOSTS.some((h) => url.includes(h));
 
 /**
@@ -184,8 +186,7 @@ const APP_ORIGIN = new URL(SITE).origin;
 // The iPhone's shell serves it from `tauri://localhost` (`phone-ios.mjs`), not `tauri.localhost`.
 const onTheApp = (url) =>
   (url.startsWith(APP_ORIGIN) || url.includes('tauri.localhost') || url.startsWith(IOS_WEBVIEW)) &&
-  !url.includes('auth.canari-emse.fr') &&
-  !url.includes('cas.emse.fr');
+  !IDP_HOSTS.some((h) => url.includes(h));
 console.log(`[login:${account}] start ${await here()}`);
 
 /**

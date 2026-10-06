@@ -121,6 +121,7 @@ mod tests {
             "https://canari-emse.fr/posts/1",
             // The OIDC authorize URL, which the desktop WebView really does navigate to.
             "https://auth.canari-emse.fr/application/o/authorize/?client_id=x&state=y",
+            "https://miconnect.emse.fr/application/o/authorize/?client_id=x&state=y",
             // The deep link Authentik sends the mobile clients back through.
             "fr.emse.canari://callback?code=1&state=2",
             // wry's own initial `currentUrl`, before anything has been loaded at all.
