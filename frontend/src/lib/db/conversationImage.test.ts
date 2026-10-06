@@ -20,6 +20,7 @@ describe('group photo id in the local row', () => {
       conversationType: 'group',
       lifecycle: 'active',
       imageMediaId: 'media-42',
+      messages: [],
     } as unknown as Conversation;
 
     await storage.saveConversation(toConversationMeta('g1', convo, 'me'));
@@ -30,7 +31,12 @@ describe('group photo id in the local row', () => {
   });
 
   it('writes null for a group without a photo', () => {
-    const convo = { id: 'g2', name: 'x', lifecycle: 'active' } as unknown as Conversation;
+    const convo = {
+      id: 'g2',
+      name: 'x',
+      lifecycle: 'active',
+      messages: [],
+    } as unknown as Conversation;
     expect(toConversationMeta('g2', convo, 'me').imageMediaId).toBeNull();
   });
 });
