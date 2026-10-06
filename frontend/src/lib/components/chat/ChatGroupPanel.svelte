@@ -231,7 +231,7 @@
         disabled={imageUploading}
         aria-label={m.chat_group_change_photo_label()}
         title={m.chat_group_change_photo_label()}
-        class="group/avatar relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden rounded-2xl shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
+        class="group/avatar squircle relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
       >
         <GroupAvatar {imageMediaId} name={effectiveDisplayName} variant="group" fill />
         <span

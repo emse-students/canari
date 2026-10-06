@@ -195,6 +195,16 @@ Conversation-list avatars are **48x48 with `border-radius: 16px`** - squircles. 
 reference surfaces is `50%`, a circle, 80 times per page. Nothing in Canari's identity depends on the
 squircle.
 
+**Decision 2026-10-05 (user): every NON-round avatar is a true squircle, groups included; circles stay
+circles.** One utility, `squircle` in `src/app.css` (`border-radius: var(--radius-squircle)` = 32%, a
+ratio so one token fits 24px to 56px, plus `corner-shape: squircle`), used by `Avatar`,
+`AssociationAvatar`, `AnonymousAvatar`, `GroupAvatar` and the group-photo button of `ChatGroupPanel`.
+Where `corner-shape` is unsupported the declaration is ignored and the plain percentage radius stays:
+progressive enhancement of one property, not a second code path. The conversation header draws its
+avatar in ONE 40px box that the avatar fills (it used to draw a 48px avatar inside a 40px wrapper),
+and the phone apps' glass title pill, being a `rounded-full` surface, holds a CIRCLE avatar so the
+two corners are concentric - a squircle inscribed in a pill was the mismatch.
+
 ---
 
 ## 7. The target - what the redesign adopted (SHIPPED, see section 9)

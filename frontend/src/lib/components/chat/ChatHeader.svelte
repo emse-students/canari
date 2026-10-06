@@ -255,7 +255,13 @@
           </span>
         {:else if isGroupConversation}
           <span data-glass-avatar class="flex h-8 w-8 shrink-0 items-center justify-center">
-            <GroupAvatar {imageMediaId} name={displayName} variant="group" size="md" />
+            <GroupAvatar
+              {imageMediaId}
+              name={displayName}
+              variant="group"
+              size="md"
+              shape="circle"
+            />
           </span>
         {:else}
           <span
@@ -315,18 +321,18 @@
     {/if}
   </div>
 
-  <!-- Conversation icon (avatar for groups/DMs; channels show no avatar, only a type icon) -->
+  <!-- Conversation icon: ONE 40px box and the avatar fills it, so no avatar overflows a smaller wrapper. Groups draw the squircle, DMs the circle (design-reference 6.4). -->
   {#if isChannel}
     <div class="text-text-muted flex h-10 w-10 shrink-0 items-center justify-center">
       <Hash size={22} strokeWidth={2.5} />
     </div>
   {:else if isGroupConversation}
     <div class="flex h-10 w-10 shrink-0 items-center justify-center">
-      <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
+      <GroupAvatar {imageMediaId} name={displayName} variant="group" fill />
     </div>
   {:else}
     <div class="relative flex h-10 w-10 shrink-0 items-center justify-center">
-      <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
+      <Avatar userId={contactName} fill fallbackLabel={effectiveDisplayName} />
       {#if isOnline}
         <span
           class="absolute right-0 bottom-0 block h-3.5 w-3.5 rounded-full bg-green-500 shadow-sm ring-2 ring-white dark:ring-zinc-900"
