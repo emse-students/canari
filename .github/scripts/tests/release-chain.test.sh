@@ -996,8 +996,9 @@ if grep -qE -- '--tag (latest|dev)\b' "$WF/serve-prod.yml"; then
 else
   pass 'serve-prod.yml names no moving tag'
 fi
+# shellcheck disable=SC2016  # the literal text of a loop in build.yml is searched for; it must NOT expand here
 if grep -qE '^  enumerate-services:' "$WF/build.yml" && grep -q 'ALL_SERVICES=(' "$WF/build.yml" \
-  && grep -q 'for service in "${ALL_SERVICES\[@\]}"' "$WF/build.yml"; then
+  && grep -qF 'for service in "${ALL_SERVICES[@]}"' "$WF/build.yml"; then
   pass 'build.yml still builds every service every release, so the v<version> tag exists for all of them'
 else
   fail 'build.yml selects services again - a service not rebuilt has no v<version> image and the prod deploy cannot resolve it'
