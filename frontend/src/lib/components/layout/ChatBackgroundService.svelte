@@ -183,10 +183,12 @@
   });
 
   /**
-   * Notification target we have already routed to /chat for. Plain (non-reactive) so updating
-   * it never re-triggers the effect; it only dedupes the one-shot navigation per pending target.
+   * The LANDING (`notifNav.landing`, one per tap) we have already routed for. Plain (non-reactive)
+   * so updating it never re-triggers the effect; it only dedupes the one-shot navigation per
+   * landing. It is an identity, not the target id: a second tap on the SAME conversation, from
+   * another page, carries the same id and was answered `await-arrival` for ever.
    */
-  let lastNavigatedNotifTarget: string | null = null;
+  let lastRoutedLanding = -1;
 
   /**
    * Pending channel target we already refetched the sidebar for. A just-accepted invitation (card
@@ -210,6 +212,7 @@
    */
   $effect(() => {
     const id = notifNav.pending;
+    const landing = notifNav.landing;
     if (!id || !globalSession.isLoggedIn) return;
     // Route to the view that can show this target once per pending id. hooks.client.ts also routes,
     // but on a cold start that goto can fire before the SvelteKit router is ready and silently
@@ -223,9 +226,9 @@
     const targetRoute = chatDeepLinkRoute(id);
     const step = landingStep({
       arrived: $page.url.pathname === targetRoute,
-      routeAlreadyRequested: lastNavigatedNotifTarget === id,
+      routeAlreadyRequested: lastRoutedLanding === landing,
     });
-    if (step !== 'await-arrival') lastNavigatedNotifTarget = id;
+    if (step !== 'await-arrival') lastRoutedLanding = landing;
     if (step === 'route') {
       appendLog(`[notifNav] routing to ${targetRoute} for pending conversation ${id}`);
       void goto(resolve(targetRoute));

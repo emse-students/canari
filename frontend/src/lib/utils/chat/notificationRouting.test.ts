@@ -1,3 +1,4 @@
+import { notifNav } from '$lib/stores/notifNav.svelte';
 import {
   chatDeepLinkRoute,
   landingAfterRefresh,
@@ -174,5 +175,27 @@ describe('landingStep', () => {
     // Already on the right page when the target arrives - a tap while the chat list is open. There
     // is nothing to navigate to, so there is no navigation to race.
     expect(landingStep({ arrived: true, routeAlreadyRequested: false })).toBe('select');
+  });
+});
+
+describe('a repeat tap on the same conversation is a new landing', () => {
+  // Mirrors the landing effect in ChatBackgroundService: route-once is keyed on `notifNav.landing`.
+  const route = (state: { routed: number }, arrived: boolean) => {
+    const step = landingStep({
+      arrived,
+      routeAlreadyRequested: state.routed === notifNav.landing,
+    });
+    if (step !== 'await-arrival') state.routed = notifNav.landing;
+    return step;
+  };
+
+  it('tap A -> land -> navigate away -> tap A again ROUTES', () => {
+    const state = { routed: -1 };
+    notifNav.navigate('5f4d0010-1234-4000-8000-000000000000');
+    expect(route(state, false)).toBe('route');
+    expect(route(state, true)).toBe('select'); // landed on /chat
+    expect(route(state, false)).toBe('await-arrival'); // user walked to /posts: no pull back
+    notifNav.navigate('5f4d0010-1234-4000-8000-000000000000'); // same id, new tap
+    expect(route(state, false)).toBe('route');
   });
 });

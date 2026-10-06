@@ -2849,3 +2849,9 @@ the viewer may open. The unique index `(workspaceId, name)` stays and is case-se
 **Default salon:** `DEFAULT_CHANNEL_NAME` is the accented 'general' (e-acute twice). NEW
 communities only: existing default salons keep the name `general` (user decision, 2026-10-05 - no
 rename migration; a member with the right may rename one by hand).
+
+## A repeat tap on the same conversation is a new landing (2026-10-06)
+
+Found on the iPhone bench (phone campaign 2026-10-05, [cross-client-ios](../../cross-client-ios.md) H4), the same code runs on Android. `ChatBackgroundService` kept `lastNavigatedNotifTarget`, the conversation ID it had routed for, and never cleared it. The pending target also stays set while the user walks away from `/chat`, so a second tap on the same conversation published the same ID: `notifNav.pending` did not change, and the effect that did re-run on the route change answered `landingStep` -> `await-arrival` for ever. The log showed `[notifNav] deep link received` and no `routing to /chat`. A different ID routed at once.
+
+**The guard is an identity, not an ID.** `notifNav.navigate` bumps a counter (`notifNav.landing`, never reset); the effect reads it and the route-once guard is `lastRoutedLanding === notifNav.landing`. Every tap is a new landing and routes once; the same landing re-running because the user left the page still answers `await-arrival`, so nothing pulls them back. Clearing on "landed" or "left the route" was rejected: `pending` has to outlive the landing for the selection watchdog, so a second clearing rule would be a second owner of the same state. No timer is involved. Test: `notificationRouting.test.ts`, "a repeat tap on the same conversation is a new landing" (fails when the bump is removed).
