@@ -323,6 +323,15 @@ export function eventAccentColor(event: AssociationCalendarFeedEvent): string {
 }
 
 /**
+ * The dashed ring marking something NOT YET FINAL (a proposed event, a scheduled post), in the
+ * item's accent colour. The one spelling: the agenda lists and the scheduled-posts panel all call
+ * it, next to `opacity-50` on the row.
+ */
+export function pendingRingStyle(color: string): string {
+  return `border:1.5px dashed ${color};`;
+}
+
+/**
  * The locale every calendar surface formats in.
  *
  * `getLocale()` answers `'fr'`/`'en'`, which `Intl` accepts but resolves to `en-GB`-ish defaults for
