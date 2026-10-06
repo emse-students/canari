@@ -302,9 +302,8 @@ export async function armA1({
 
     // WHETHER THIS APK IS ANY COMMIT AT ALL, written down while the answer is still knowable.
     //
-    // A verdict's `a1Build` is DERIVED - `resolveStamp` names the newest commit at or before the
-    // bundle's timestamp - and that derivation is exact only for a clean tree. This gesture builds
-    // from the WORKING tree, which is the point of it and the normal shape of a session: write a
+    // A verdict's `a1Build` is the HEAD the bundle names, exact only for a clean
+    // tree. This gesture builds from the WORKING tree, which is the point of it and the normal shape of a session: write a
     // fix, build, measure, commit. On 2026-09-08 that put NOTIF-16's PASS against `1fd7cecd7`, the
     // commit BEFORE the fix that makes it pass. Recorded rather than refused: a gate against a
     // dirty build would make the fix-and-measure loop impossible. See `apkbuild.mjs`.
