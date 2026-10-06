@@ -162,6 +162,68 @@ for (const [s, why] of Object.entries(NOT_APP_UI)) {
   }
 }
 
+/**
+ * THE OVERLAY HOOKS, PINNED AGAINST THE COMPONENT THAT OWNS THEM - the half this gate used to miss.
+ *
+ * It reads STRINGS, and `closeOverlays` broke twice on something that is not one: the sentence
+ * #455 removed (caught after the fact), then the class `.conversation-side-panel` that the shared
+ * `SidePanel` shell replaced on 2026-09-17 - which no string check can see, and which was found on a
+ * phone ten days later as `could not close the overlay`. So the selector's CLASS and the close
+ * button's LABEL are read out of `SidePanel.svelte`, and the two stacked-overlay markers out of the
+ * components that draw them. `structuralClaims` takes the selector as an argument so the control
+ * case below can hand it the one that broke and require a failure.
+ */
+const SIDE_PANEL = join(HERE, '../../../frontend/src/lib/components/shared/SidePanel.svelte');
+const CHAT_GROUP_PANEL = join(HERE, '../../../frontend/src/lib/components/chat/ChatGroupPanel.svelte');
+const frMessages = JSON.parse(readFileSync(MESSAGES, 'utf8'));
+
+/** Why `selector` (`.class [aria-label="..."]`) cannot match the shell's markup, as a list. */
+function structuralClaims(selector, panelSource) {
+  const parts = /^\.([\w-]+) \[aria-label="([^"]+)"\]$/.exec(selector);
+  if (!parts) return [`${selector} is not the "<class> [aria-label]" shape this gate can read`];
+  const [, cls, label] = parts;
+  // Markup only: the script block and its prose name `.side-panel` a dozen times and prove nothing.
+  const markup = panelSource.slice(panelSource.indexOf('</script>'));
+  const aside = new RegExp(`<aside\\s+class="${cls}[\\s"]`).exec(markup);
+  if (!aside) return [`no <aside class="${cls} ..."> in SidePanel.svelte, so ${selector} matches nothing`];
+  const inside = markup.slice(aside.index);
+  const key = [...inside.matchAll(/aria-label=\{m\.(\w+)\(\)\}/g)]
+    .map((x) => x[1])
+    .find((k) => frMessages[k] === label);
+  return key ? [] : [`no button inside the <aside> is labelled ${JSON.stringify(label)} by a message`];
+}
+
+// READ AS TEXT, NOT IMPORTED: groupnav.mjs pulls in names.mjs, which is local to a rig machine and
+// absent from CI, and this gate must run there.
+const groupnavSource = readFileSync(join(HARNESS, 'groupnav.mjs'), 'utf8');
+const SIDE_PANEL_CLOSE = /export const SIDE_PANEL_CLOSE = '([^']+)';/.exec(groupnavSource)?.[1] ?? '';
+const markerBlock = /export const OVERLAY_MARKERS = \{([^}]*)\};/.exec(groupnavSource)?.[1] ?? '';
+const OVERLAY_MARKERS = Object.fromEntries(
+  [...markerBlock.matchAll(/(\w+): (?:"([^"]+)"|'([^']+)')/g)].map((x) => [x[1], x[2] ?? x[3]])
+);
+if (!SIDE_PANEL_CLOSE || Object.keys(OVERLAY_MARKERS).length !== 2) {
+  failures += 1;
+  console.log('FAIL groupnav.mjs no longer exports SIDE_PANEL_CLOSE / OVERLAY_MARKERS in the shape this gate reads');
+}
+const panelSource = readFileSync(SIDE_PANEL, 'utf8');
+for (const claim of structuralClaims(SIDE_PANEL_CLOSE, panelSource)) {
+  failures += 1;
+  console.log(`FAIL closeOverlays: ${claim}`);
+}
+// CONTROL: the selector that broke on 2026-09-17 must be refused, or this gate reads nothing.
+if (structuralClaims('.conversation-side-panel [aria-label="Fermer"]', panelSource).length === 0) {
+  failures += 1;
+  console.log('FAIL control: the retired .conversation-side-panel selector was accepted');
+}
+const groupPanelSource = readFileSync(CHAT_GROUP_PANEL, 'utf8');
+for (const [name, text] of Object.entries(OVERLAY_MARKERS)) {
+  const keys = Object.keys(frMessages).filter((k) => frMessages[k] === text);
+  const drawn = keys.some((k) => groupPanelSource.includes(`m.${k}()`));
+  if (!drawn) {
+    failures += 1;
+    console.log(`FAIL overlayOn ${name}: ${JSON.stringify(text)} is rendered by no message ChatGroupPanel.svelte uses`);
+  }
+}
 const checked = clicked.size - Object.keys(NOT_APP_UI).length;
 if (failures === 0) {
   console.log(

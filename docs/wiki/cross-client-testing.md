@@ -394,8 +394,18 @@ then `make local-frontend` cleared it (a `vite build` alone never rebuilds the W
 "the handset" as the owner's FIRST `tauri-` device, which since the iPhone enrolled is a push-dead
 one - it reads the phone's own `mls_device_id_*` now; (3) `[coversScreen]`, `[PICKER]`, the boot and
 the `doFetchProto` lines were decision logs no rule named, so correct runs read `PASS-DIRTY`.
-**NOT SETTLED**: GRP-3..10 are `ERROR` after the rebuild with `could not close the overlay, still on
-group-panel` (`groupnav.mjs:222`), a rig-vs-UI drift not diagnosed here. The FEED is refused for
+**NOT SETTLED, AND NOT SELECTOR DRIFT (re-read from code and `results.ndjson`, 2026-10-06)**: GRP-3..10
+are `ERROR` with `could not close the overlay, still on group-panel` (`groupnav.mjs`), but GRP-1 and
+GRP-2 PASSED on the same build 90 s earlier through the SAME `closeOverlays` and the SAME
+`.side-panel [aria-label="Fermer"]` (both still in `SidePanel.svelte`, now pinned by
+`archive/selector-selftest.mjs`). The FIRST failure is GRP-3's own `until() timed out:
+/MEMBRES\s*\(1\)/` (`addPeer` read `before = 0`, so it waited for a roster that never showed 1); every
+later row then died in its first `closeOverlays`, so the panel the failed run left open stayed
+unclosable across runs. WHAT left it unclosable is not knowable from code, and the click's failure was
+swallowed: `closeOverlays` now logs each failed click and puts the last one in the throw. **OWED ON
+THE Mi 9T (nobody drove it from here)**: `bun archive/grp.mjs --only 3` (then 4..10, or without `--only`), reading the new
+`[closeOverlays] ... click failed - <why>` line - `no stable element` names the layer covering the
+close button, and `0 -> 2` in GRP-3 is a separate roster-read race to fix in `addPeer`. The FEED is refused for
 every rig account (`[FEED_GATE] refused: no space, no association`), so `/posts` redirects the web
 client to `/chat` and shows "Impossible de charger les posts" on the iPhone: NOTIF-7 parks on
 `/calendar` instead. **The iPhone rows did not run**: the bench app was cold-started by the deep-link
