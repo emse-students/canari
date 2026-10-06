@@ -1,1 +1,3 @@
+### Changed - the store notes for 1.1.0 are written
+
 The store notes for 1.1.0 are written: campus and formation spaces, the signed agenda subscription, the CanaReels editor, scheduled posts, one conversation order. See [mobile](docs/wiki/frontend/mobile.md).
