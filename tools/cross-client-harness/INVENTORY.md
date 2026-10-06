@@ -118,7 +118,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-79 scripts.
+80 scripts.
 
 | script | what it is |
 |---|---|
@@ -155,6 +155,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/fwd.mjs` | FWD-1 / FWD-2 - the WP-FWD-1 reproduction attempt, channel -> DM. |
 | `archive/fwd345.mjs` | FWD-3, FWD-4, FWD-5 - the three forward shapes WP-FWD-1 has not been tried against. |
 | `archive/fwd5.mjs` | FWD-5, isolated and repeated - the shape that just lost a forward. |
+| `archive/graineauth.mjs` | GRAINE-AUTH-1..3 - a salon row the SERVER tampers with is REFUSED by the reader, with its line. |
 | `archive/grp.mjs` | GRP-1..10 - group membership: the roster, the TWO different departures, the invitation link, and |
 | `archive/heal-a1.mjs` | HEAL on the PHONE - the ANDROID half of WP-LOSS-1, which is what is still owed. |
 | `archive/heal-w2.mjs` | HEAL-W2 - the UNKNOWN-GROUP path on the browser. |
@@ -304,4 +305,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-243 scripts in total.
+244 scripts in total.
