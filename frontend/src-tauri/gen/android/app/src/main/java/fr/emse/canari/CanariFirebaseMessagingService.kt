@@ -2723,30 +2723,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
         val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
         Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
-        if (outcome is PushDecrypt.RefusedForGood) {
-            // NOTIF-10 (b). Another engine consumed this generation, so it holds the message and
-            // posts the real banner itself. The generic line stays as the floor (nobody else is
-            // proven to post), but it is REPLACED when the real one comes, or not added at all if
-            // that already came - see [GenericBannerLedger].
-            synchronized(GENERIC_BANNERS_LOCK) {
-                if (GENERIC_BANNERS.refusedCoveredByRealPost(groupId)) {
-                    Log.d(TAG, "refused for good, and the real banner is already up -> no generic banner (groupId=${groupId.take(8)})")
-                } else {
-                    val stamp = showMessageNotification(
-                        senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
-                        channel, sentAt = 0L, namesEachSender = true,
-                    )
-                    if (stamp != 0L) {
-                        GENERIC_BANNERS.genericPosted(groupId, stamp)
-                        Log.d(TAG, "refused for good -> generic banner kept until the real one replaces it (groupId=${groupId.take(8)} stamp=$stamp)")
-                    }
+        // NOTIF-10 (b). A push refused for good means another engine consumed this generation, so
+        // it holds the message and posts the real banner itself. The generic line stays as the
+        // floor (nobody else is proven to post), but it is REPLACED when the real one comes, or
+        // not added at all if that already came - see [GenericBannerLedger].
+        val refusedForGood = outcome is PushDecrypt.RefusedForGood
+        synchronized(GENERIC_BANNERS_LOCK) {
+            if (refusedForGood && GENERIC_BANNERS.refusedCoveredByRealPost(groupId)) {
+                Log.d(TAG, "refused for good, and the real banner is already up -> no generic banner (groupId=${groupId.take(8)})")
+            } else {
+                val stamp = showMessageNotification(
+                    senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
+                    channel, sentAt = decrypted?.sentAt ?: 0L, namesEachSender = true,
+                )
+                if (refusedForGood && stamp != 0L) {
+                    GENERIC_BANNERS.genericPosted(groupId, stamp)
+                    Log.d(TAG, "refused for good -> generic banner kept until the real one replaces it (groupId=${groupId.take(8)} stamp=$stamp)")
                 }
             }
-        } else {
-            showMessageNotification(
-                senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
-                channel, sentAt = decrypted?.sentAt ?: 0L, namesEachSender = true,
-            )
         }
 
         // Woken by this incoming message: try to send our own pending outgoing messages
