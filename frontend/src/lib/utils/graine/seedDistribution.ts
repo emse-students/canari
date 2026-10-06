@@ -1,3 +1,4 @@
+import { GraineSealUnavailableError } from './sealUnavailable';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import type { GraineDistributionFrame, StoredGraineSession } from '$lib/db/types';
@@ -18,7 +19,7 @@ import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
  */
 
 /** Thrown when a seed cannot be distributed because the scope's group is not in hand. */
-export class GraineDistributionUnavailableError extends Error {
+export class GraineDistributionUnavailableError extends GraineSealUnavailableError {
   constructor(readonly scope: DistributionScope) {
     super(
       `[GRAINE] ${scopeLabel(scope)} has no distribution group on this device - ` +

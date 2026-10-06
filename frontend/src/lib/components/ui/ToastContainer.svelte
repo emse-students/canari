@@ -9,15 +9,18 @@
 </script>
 
 {#if toasts.length > 0}
+  <!-- PHONE: AT THE TOP. The bottom edge is the composer and the last messages in a conversation
+       (the bottom nav is hidden there), so a toast above it covered the very bubble just acted
+       on. The top is a header, which a transient notice may cross. Desktop keeps its corner. -->
   <div
-    class="pointer-events-none fixed right-4 bottom-[calc(var(--safe-area-inset-bottom,0px)+5rem)] left-4 z-(--z-toast) flex flex-col gap-2 md:right-6 md:bottom-6 md:left-auto md:w-96"
+    class="pointer-events-none fixed top-[calc(var(--safe-area-inset-top,0px)+0.75rem)] right-4 left-4 z-(--z-toast) flex flex-col gap-2 md:top-auto md:right-6 md:bottom-6 md:left-auto md:w-96"
     aria-live="assertive"
     aria-atomic="false"
   >
     {#each toasts as toast (toast.id)}
       <div
         role="alert"
-        in:fly={{ y: 16, duration: 200 }}
+        in:fly={{ y: -16, duration: 200 }}
         out:fade={{ duration: 150 }}
         class="pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-lg {toast.type ===
         'error'

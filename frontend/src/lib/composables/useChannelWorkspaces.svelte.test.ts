@@ -3,6 +3,9 @@ import { SvelteMap } from 'svelte/reactivity';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
+import { GraineNotReadyError } from '$lib/utils/graine/runtime';
+import { GraineUnknownChannelError } from '$lib/utils/graine/channelSeal';
+import { showToast } from '$lib/stores/toast.svelte';
 
 // THE ERROR CLASSES COME FROM THE REAL MODULE, not from the mock. `isRetryableLoadError` decides
 // by `instanceof`, and a stand-in class would make every one of those tests pass against a type the
@@ -31,6 +34,9 @@ vi.mock('$lib/paraglide/messages', () => ({
     ),
     channel_action_error_generic: vi.fn(
       ({ action, detail }: { action: string; detail: string }) => `${action}: ${detail}`
+    ),
+    channel_action_error_not_ready: vi.fn(
+      ({ action }: { action: string }) => `${action}: not ready`
     ),
     channel_action_error_conflict: vi.fn(({ action }: { action: string }) => `${action}: conflict`),
   },
@@ -825,6 +831,32 @@ describe('useChannelWorkspaces - salon names and order', () => {
 
     expect(names(api)).toEqual(['one', 'two', 'three']);
     expect(ctx.log).toHaveBeenCalled();
+  });
+
+  it('names a seal that this device cannot make yet, by its TYPE, instead of the nameless arm', async () => {
+    const { api, ctx } = await loadedStore();
+    const channels = api.channelWorkspaces[0].channels;
+
+    for (const failure of [
+      new GraineNotReadyError('cannot seal'),
+      new GraineUnknownChannelError('c1c1c1c1c1'),
+    ]) {
+      vi.mocked(showToast).mockClear();
+      reorderChannels.mockRejectedValue(failure);
+      await api.reorderChannels('promo', [channels[2], channels[1], channels[0]], ctx);
+      expect(showToast).toHaveBeenCalledWith(expect.stringContaining('not ready'), 'error');
+    }
+  });
+
+  it('logs the cause of a failure it cannot name, which the sentence cannot carry', async () => {
+    const { api, ctx } = await loadedStore();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    reorderChannels.mockRejectedValue(new Error('nope'));
+
+    await api.reorderChannels('promo', [], ctx);
+
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('unclassified'), expect.any(Error));
+    spy.mockRestore();
   });
 
   it('follows another member rearranging, from its own filtered list', async () => {

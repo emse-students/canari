@@ -2855,3 +2855,21 @@ rename migration; a member with the right may rename one by hand).
 Found on the iPhone bench (phone campaign 2026-10-05, [cross-client-ios](../../cross-client-ios.md) H4), the same code runs on Android. `ChatBackgroundService` kept `lastNavigatedNotifTarget`, the conversation ID it had routed for, and never cleared it. The pending target also stays set while the user walks away from `/chat`, so a second tap on the same conversation published the same ID: `notifNav.pending` did not change, and the effect that did re-run on the route change answered `landingStep` -> `await-arrival` for ever. The log showed `[notifNav] deep link received` and no `routing to /chat`. A different ID routed at once.
 
 **The guard is an identity, not an ID.** `notifNav.navigate` bumps a counter (`notifNav.landing`, never reset); the effect reads it and the route-once guard is `lastRoutedLanding === notifNav.landing`. Every tap is a new landing and routes once; the same landing re-running because the user left the page still answers `await-arrival`, so nothing pulls them back. Clearing on "landed" or "left the route" was rejected: `pending` has to outlive the landing for the selection watchdog, so a second clearing rule would be a second owner of the same state. No timer is involved. Test: `notificationRouting.test.ts`, "a repeat tap on the same conversation is a new landing" (fails when the bump is removed).
+
+### A failed reaction said "cela n'a pas abouti" and named nothing, and its toast covered the bubble (2026-10-06)
+
+A Mi 9T screenshot of the salon `general` showed `Reaction au message : cela n'a pas abouti`. That sentence is
+the NAMELESS arm of `toUiActionError` (`useChannelWorkspaces`): it is reached only by an error that is not a
+`ChannelApiError` (those carry a status and an envelope) and is not a transport failure. A reaction is a sealed
+message, so the candidates are the seal's own refusals - `GraineNotReadyError`, `GraineUnknownChannelError`,
+`GraineDistributionUnavailableError` - all of which mean "nothing was sent, this device holds no key for the
+scope yet". **The exact cause on that phone is NOT established**: the failure was swallowed with no log, which
+is the defect. Now:
+
+- the three share one base, `GraineSealUnavailableError` (`utils/graine/sealUnavailable.ts`, import-free to avoid
+  a cycle), and `toUiActionError` answers it by TYPE with `channel_action_error_not_ready`;
+- the nameless arm logs the error object (`console.error`) so the next occurrence has a cause to read.
+
+The toast container sat at `bottom: 5rem`, sized for the bottom nav. Inside a conversation the nav is hidden and
+that offset lands on the last bubbles and the composer, so on a phone toasts now sit at the TOP (below the safe
+area); desktop keeps its bottom-right corner (`ToastContainer.svelte`).

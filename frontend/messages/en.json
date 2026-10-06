@@ -2973,6 +2973,7 @@
   "channel_action_error_network": "{action}: service unavailable, check your connection.",
   "channel_action_error_generic": "{action}: {detail}",
   "channel_action_error_unknown": "{action}: that did not go through.",
+  "channel_action_error_not_ready": "{action}: this device is not ready for this channel yet. Try again in a moment.",
   "channel_action_community_reorder": "Reordering communities",
   "channel_action_channels_reorder": "Reordering channels",
   "sidebar_channel_reorder_hint": "Alt plus up or down arrow moves this channel. On a touch screen, press and hold, then drag.",
