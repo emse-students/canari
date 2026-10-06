@@ -97,14 +97,16 @@
     roleHistoryLoading = true;
     try {
       memberships = await fetchUserMemberships(userId);
-    } catch {
+    } catch (err) {
+      Log.d('profile.memberships failed', err);
       memberships = [];
     } finally {
       membershipsLoading = false;
     }
     try {
       roleHistory = await fetchUserRoleHistory(userId);
-    } catch {
+    } catch (err) {
+      Log.d('profile.roleHistory failed', err);
       roleHistory = [];
     } finally {
       roleHistoryLoading = false;
@@ -112,7 +114,8 @@
     parrainageLoading = true;
     try {
       parrainage = await fetchUserParrainage(userId);
-    } catch {
+    } catch (err) {
+      Log.d('profile.parrainage failed', err);
       parrainage = null;
     } finally {
       parrainageLoading = false;

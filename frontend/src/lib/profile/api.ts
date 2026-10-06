@@ -84,13 +84,30 @@ export interface SkyEntourage {
 }
 
 /**
+ * Reads a Sky entourage answer into the shape the profile renders, or throws.
+ *
+ * The core-service proxy relays Sky's body UNTOUCHED, so its shape is Sky's to change. A body that
+ * is not an object is not an entourage and is REFUSED (and logged by the caller); a missing list is
+ * an empty one, which is what `{ found: false }` means. Without this the page template read
+ * `parrains.length` on `undefined` and the whole profile route crashed.
+ */
+export function parseSkyEntourage(body: unknown): SkyEntourage {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new Error('parrainage: the answer is not an entourage object');
+  }
+  const o = body as Partial<Record<keyof SkyEntourage, unknown>>;
+  const list = (v: unknown): SkyEntourageMember[] => (Array.isArray(v) ? v : []);
+  return { found: o.found === true, parrains: list(o.parrains), fillots: list(o.fillots) };
+}
+
+/**
  * Loads a user's parrainage entourage from the Sky app (via the core-service
  * proxy). Read-only; returns an empty tree if Sky is unreachable or unlinked.
  */
 export async function fetchUserParrainage(userId: string): Promise<SkyEntourage> {
   const res = await apiFetch(`${coreUrl()}/api/users/${encodeURIComponent(userId)}/parrainage`);
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-  return (await res.json()) as SkyEntourage;
+  return parseSkyEntourage(await res.json());
 }
 
 /** Adds a role history entry to the caller's profile. */
