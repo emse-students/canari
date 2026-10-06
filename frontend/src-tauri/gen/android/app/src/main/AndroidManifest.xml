@@ -9,6 +9,7 @@
     - <service .CanariFirebaseMessagingService> + MESSAGING_EVENT intent-filter
       (WITHOUT it, Firebase never calls onMessageReceived -> no notification at all
       once the app is killed)
+    - VIBRATE (without it no haptic fires)
     - push permissions: POST_NOTIFICATIONS, WAKE_LOCK, c2dm RECEIVE, RECEIVE_BOOT_COMPLETED
     - <receiver .CanariBootReceiver> (BOOT_COMPLETED/MY_PACKAGE_REPLACED, WP-XP-4)
     - <receiver .CanariNotificationActionReceiver> (quick actions, WP-XP-1)
@@ -39,6 +40,10 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- navigator.vibrate (MessageBubble, ReelCapture, useNotifications): Chromium's
+         VibrationManager refuses without it and logs "requires VIBRATE permission". Normal
+         protection level, granted at install, no runtime prompt. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Push notifications -->
     <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE" />

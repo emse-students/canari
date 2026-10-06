@@ -1148,6 +1148,16 @@ reloading MLS state and interrupting an in-flight send for a movement of the wri
 Negative control, run 2026-08-17: under a forced `user_rotation 1`, Settings reported `cur=2400x1080`
 while Canari stayed `cur=1080x2400`.
 
+#### VIBRATE is a manifest permission, and `navigator.vibrate` fails silently without it (2026-10-06)
+
+`navigator.vibrate` (MessageBubble, ReelCapture, `useNotifications`) goes through Chromium's
+VibrationManager, which needs `android.permission.VIBRATE`; without it the call returns normally and
+logcat holds the only trace, `cr_VibrationManager: Failed to use vibrate API, requires VIBRATE
+permission` (Mi 9T, build `5b56dcb74`). The permission is in the tracked `gen/android` manifest (the
+source of truth, since `gen/android` is committed) and `androidCaptureManifest.test.ts` pins it. It is
+a normal-level permission: no runtime prompt. **Play's Data safety / permissions declaration may
+deserve a look** at the next submission; owed ONE on-device re-read that a long-press now buzzes.
+
 #### Asking for the permission: the rationale is acknowledged, never timed
 
 **Android's own permission dialog takes every touch until it is answered**, which is correct for a
