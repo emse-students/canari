@@ -2909,6 +2909,8 @@
   "posts_badge_new": "New",
   "posts_all_loaded": "You are all caught up!",
   "posts_load_error_title": "Could not load posts",
+  "posts_no_audience_title": "No feed for you yet",
+  "posts_no_audience_hint": "The posts feed opens once you join a space or an association.",
   "post_edit_save_error": "Failed to update the post",
   "post_edit_remove_image_aria": "Remove this image",
   "post_edit_schedule_title": "Schedule post",
