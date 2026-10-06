@@ -4,9 +4,8 @@ import { Log } from '$lib/utils/Log';
 import { m } from '$lib/paraglide/messages';
 import type { Campus, CursusEntry, Post } from './miconnectProfile';
 
-/** The formations a cursus may name (D4). Mirrors `core-service` `FORMATIONS`. */
-export const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'Autre'] as const;
-export type Formation = (typeof FORMATIONS)[number];
+/** The formations a cursus may name (D4): ONE list, `miconnectProfile`'s, which mirrors `core-service` `FORMATIONS`. */
+export { FORMATIONS, type Formation } from './miconnectProfile';
 
 /** The longest message a person may write to the admins. Mirrors `CORRECTION_MESSAGE_MAX`. */
 export const CORRECTION_MESSAGE_MAX = 1000;

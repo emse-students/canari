@@ -93,8 +93,10 @@ criterion, hard-coded three times, and every admin flag is local:
 - **D4 - Formations: ICM, ISMIN, FSSS (formation sous statut salarie), PDIS, Autre** - one bucket for
   masters, doctorates and the rest, no sub-values. **PDIS added 2026-10-04 (user), same shape as the
   others and nobody in it yet**: the list lives in `SPACE_FORMATIONS` + migration 071 (social-service),
-  `FORMATIONS` (frontend) and the enrolment prompt of `20-enrollment.yaml` (authentik); core-service
-  stores a formation as free text and needs no change.
+  `FORMATIONS` (frontend, ONE list: `profileEdit.ts` re-exports it), `FORMATIONS` in core-service
+  `miconnect-profile.ts` (it VALIDATES a profile edit's cursus - a person in PDIS would be refused
+  without it) and the enrolment prompt of `20-enrollment.yaml` (authentik). The blueprint reaches
+  production by itself: every stable release runs `apply-blueprints.sh apply` (`serve-prod.yml`).
 - **D5 - Promo is the ENTRY year**, the School's and the alumni network's convention alike.
 - **D6 - ONE campus per person**, Gardanne or Saint-Etienne, staff included.
 - **D7 - The provider is only a way in.** CAS and Alumni SSO both give a name, a first name and an
