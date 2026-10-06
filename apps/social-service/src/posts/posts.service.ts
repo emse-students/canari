@@ -35,6 +35,7 @@ import {
   type PostKind,
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
+import { publicationTime } from './publication-time';
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
@@ -629,6 +630,7 @@ export class PostsService {
     }
 
     const post = this.postRepo.create(data) as unknown as Post;
+    post.publishedAt = publicationTime(post.scheduledAt, new Date());
     let entity: Post;
     try {
       entity = await this.postRepo.save(post);
@@ -724,7 +726,7 @@ export class PostsService {
     const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewer?.viewerUserId);
     const params: unknown[] = [limit, offset, `%${term}%`];
     const promoSql = promoCutoff
-      ? `AND COALESCE(posts."scheduledAt", posts."createdAt") >= $${params.push(promoCutoff)}::timestamptz`
+      ? `AND posts."publishedAt" >= $${params.push(promoCutoff)}::timestamptz`
       : '';
     const bp = blockedIds.length > 0 ? params.push(blockedIds) : null;
     const viewerParam = params.push(viewer?.viewerUserId ?? null);
@@ -741,7 +743,7 @@ export class PostsService {
          ${this.serviceAccountFilterSql(isAdmin, viewer?.viewerUserId)}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${viewerParam}`)}
-       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
        LIMIT $1 OFFSET $2`,
       params
     );
@@ -834,7 +836,7 @@ export class PostsService {
              FROM jsonb_array_elements(COALESCE(posts.comments, '[]'::jsonb)) AS elem
              ${visibleComment})`;
     return `posts.id,
-         posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."updatedAt",
+         posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."publishedAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts."linkedCalendarEventId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
@@ -957,9 +959,7 @@ export class PostsService {
     // SQL fragment added to every query when a promo cutoff applies.
     // The parameter index is computed per-query below.
     const promoSql = (idx: number) =>
-      promoCutoff
-        ? `AND COALESCE(posts."scheduledAt", posts."createdAt") >= $${idx}::timestamptz`
-        : '';
+      promoCutoff ? `AND posts."publishedAt" >= $${idx}::timestamptz` : '';
 
     let followedAssocIds: string[] | undefined;
     let followedUserIds: string[] | undefined;
@@ -1004,7 +1004,7 @@ export class PostsService {
          ${serviceAccountFilter}
          ${promoSql(3)}
          ${visibleAt(3 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1022,7 +1022,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
          ${visibleAt(3 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1049,7 +1049,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );
@@ -1072,7 +1072,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset, promoParam, formationParam, ...tail, viewerParam]
       );
@@ -1254,7 +1254,7 @@ export class PostsService {
          ${this.liveReelFilterSql()}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${blockedIds.length > 0 ? 3 : 2}`)}
-       ORDER BY posts."createdAt" DESC
+       ORDER BY posts."publishedAt" DESC
        LIMIT 1`,
       [eventId, ...(blockedIds.length > 0 ? [blockedIds] : []), viewerId ?? null]
     );
@@ -1401,8 +1401,15 @@ export class PostsService {
       }
     }
 
-    if ('scheduledAt' in data)
+    if ('scheduledAt' in data) {
+      // A post already visible and un-scheduled keeps the instant it appeared; every other change
+      // re-derives it, so the order key never disagrees with the visibility predicate.
+      const wasVisible = !post.scheduledAt || post.scheduledAt.getTime() <= Date.now();
       post.scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
+      if (post.scheduledAt || !wasVisible) {
+        post.publishedAt = publicationTime(post.scheduledAt, new Date());
+      }
+    }
 
     const mentionedIds = post.markdown
       ? this.notifications

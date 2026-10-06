@@ -67,7 +67,7 @@ export class PostAnnounceScheduler {
         { ...common, scheduledAt: IsNull() },
         { ...common, scheduledAt: LessThanOrEqual(now) },
       ],
-      order: { createdAt: 'ASC' },
+      order: { publishedAt: 'ASC' },
       take: ANNOUNCE_BATCH,
     });
     if (pending.length === 0) return;

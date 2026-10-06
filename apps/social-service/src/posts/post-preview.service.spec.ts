@@ -29,6 +29,7 @@ function post(overrides: Partial<Post> = {}): Post {
     anonymous: false,
     media: [],
     createdAt: new Date('2026-09-01T10:00:00.000Z'),
+    publishedAt: new Date('2026-09-01T10:00:00.000Z'),
     updatedAt: new Date('2026-09-02T10:00:00.000Z'),
     ...overrides,
   } as Post;

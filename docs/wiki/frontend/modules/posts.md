@@ -1276,3 +1276,21 @@ on <date>" line is the non-visual cue.
 The "link to an event" picker (`linkableEventPickerOptions`, `utils/time.ts`, used by the composer
 and the editor) lists the furthest future event first and the furthest past last; the server answers
 ascending, so the sort lives in that one function.
+
+## One notion of "when it became visible": `publishedAt` (2026-10-06)
+
+Cause of the report "scheduled at noon for 18:00, published at 18:00 but shown as 12:00, behind newer
+posts": nothing publishes a scheduled post (there is no flip job). Visibility is the predicate
+`scheduledAt IS NULL OR scheduledAt <= NOW()`, while every feed query ordered by, and every card
+displayed, `createdAt` - the moment the author pressed the button.
+
+`posts."publishedAt"` (migration 077, NOT NULL) is `scheduledAt` for a scheduled post and the
+creation time otherwise. `PostsService.createPost` and `updatePost` set it through
+`publicationTime()` (`posts/publication-time.ts`), the only writer: rescheduling moves it, publishing
+a pending post now sets it to now, un-scheduling an already-visible post keeps it. Feeds
+(offset pagination, so no cursor), search, the promo cutoff, the announce sweeper order, the share
+preview and republication cards read it; the client shows `post.publishedAt` (`PostHeader`,
+`PostContent`, the `isNew` badge). `createdAt` keeps its meaning. Backfill is
+`COALESCE(scheduledAt, createdAt)`, so an immediate post's order is unchanged. Reels cannot be
+scheduled and keep `createdAt`. Notifications carry their own `createdAt` (written at announce time,
+which is already publication time).

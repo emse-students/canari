@@ -84,7 +84,7 @@
   const gallery = $derived(postGalleryLayout(lightboxMedia.length));
 
   /** Who published the post and when: the media viewer's title and information panel. */
-  const postInfo = $derived({ senderName: postAuthorName(post), sentAt: post.createdAt });
+  const postInfo = $derived({ senderName: postAuthorName(post), sentAt: post.publishedAt });
   const lightboxItem = $derived(lightboxIndex === null ? null : lightboxMedia[lightboxIndex]);
 
   function openLightbox(i: number) {
