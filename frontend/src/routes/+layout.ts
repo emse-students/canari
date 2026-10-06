@@ -6,6 +6,8 @@ import type { LoadEvent } from '@sveltejs/kit';
 import { currentUserId, fetchUserProfile, UserProfileFetchError } from '$lib/stores/user';
 import { refresh } from '$lib/stores/auth';
 import { goto } from '$app/navigation';
+import { resolve } from '$app/paths';
+import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
 import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 // See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 export const ssr = false;
@@ -46,7 +48,9 @@ export const load = async (event: LoadEvent) => {
       // `goto()` is even called, well before the `.catch()` below could ever see it. Safe here
       // regardless, since this whole branch is already behind the `typeof window` guard above.
       return goto(
-        `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + window.location.hash)}`,
+        resolve(
+          internalPath(loginReturningTo(event.url.pathname, event.url.search, window.location.hash))
+        ),
         { replaceState: true }
       ).catch(() => {});
     }
@@ -65,7 +69,9 @@ export const load = async (event: LoadEvent) => {
     // typed error rather than parsed back out of its sentence.
     if (error instanceof UserProfileFetchError && error.status === 404) {
       return goto(
-        `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + window.location.hash)}`,
+        resolve(
+          internalPath(loginReturningTo(event.url.pathname, event.url.search, window.location.hash))
+        ),
         { replaceState: true }
       ).catch(() => {});
     }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -56,7 +57,7 @@
   onMount(async () => {
     if (currentUserId()) {
       Log.d('PublicForm', `member on a guest link, sent to the member page form=${formId}`);
-      await goto(`/forms/${formId}`, { replaceState: true });
+      await goto(resolve(`/forms/${formId}`), { replaceState: true });
       return;
     }
     try {

@@ -33,6 +33,7 @@
    */
   let openEmoji = $state<string | null>(null);
   let anchorEl = $state<HTMLElement | null>(null);
+  const panelId = $props.id();
 
   function openPanel(emoji: string, anchor: HTMLElement) {
     anchorEl = anchor;
@@ -107,8 +108,10 @@
         }}
         use:reactorsTrigger={{
           open: (anchor) => openPanel(emoji, anchor),
+          close: closePanel,
         }}
         aria-pressed={hasReacted}
+        aria-describedby={openEmoji === emoji ? panelId : undefined}
         aria-label={users.length === 1
           ? m.msg_reaction_aria_label_one({ emoji })
           : m.msg_reaction_aria_label({ emoji, count: users.length })}
@@ -137,6 +140,7 @@
 
 <ReactorsPanel
   anchor={anchorEl}
+  id={panelId}
   emoji={openEmoji}
   userIds={openEmoji ? (groupedReactions[openEmoji] ?? []) : []}
   onClose={closePanel}

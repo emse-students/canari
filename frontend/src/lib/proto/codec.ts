@@ -159,6 +159,18 @@ export function mkReaction(
   return { reaction: { messageId, emoji, at, removed } };
 }
 
+/**
+ * Builds a salon edit frame: the author's replacement text for one of their own messages.
+ * `messageId` is the SERVER row id, the key a salon message is addressed by everywhere else.
+ */
+export function mkEdit(
+  messageId: string,
+  newContent: string,
+  editedAt: number
+): canari.AppMessage.$Properties {
+  return { edit: { messageId, newContent, editedAt } };
+}
+
 export function mkMedia(media: canari.MediaMsg.$Properties): canari.AppMessage.$Properties {
   return { media };
 }

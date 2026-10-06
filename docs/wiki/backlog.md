@@ -234,9 +234,14 @@ wrapper for every page.
 
 ## After the 1.0.2 release - what the user asked for on 2026-10-02, and what is owed a reading
 
-- **The iPhone camera letterbox fix shipped UNVERIFIED (user, 2026-10-02, "pas le temps").** One `<video>` per stream (#1370): the agent measured 5 of 5 bad after a home-and-return and 0 of 40 without. Owed ONE loop of 20+ opens on both lenses on the iPhone, with a home-and-return in it.
-- **iPhone rig gaps.** `pin.mjs --device I1` and `login.mjs --device I1` could not see the phone (`attached()` read a missing `pymobiledevice3` as no phone; fixed to throw in #1370, set `PYMOBILEDEVICE3` to the executable). Starting WDA brings its runner to the foreground, so Canari goes to the background and relocks on the PIN screen - every WDA session ends on the PIN, and a tap on "Deverrouiller" can land on a logout control when the keyboard shifts the layout (screenshot before each tap).
-- **Android fluidity.** Feed progressive mount (#1361), no hover toolbar on phones (#1362) and a cancelable-only `touchmove` claim (#1363) shipped; owed a re-measure of `open_conversation` (first open 662 ms before) and a read on the Mi 9T. Lucide `Icon` is about 1 ms per icon on that phone: 100-150 ms per heavy screen is the hardware.
+- **The iPhone camera letterbox fix (#1370) shipped UNVERIFIED (user, 2026-10-02) - owed ONE loop** of 20+ camera opens on both lenses on the iPhone, with a home-and-return in it (5 of 5 bad before the fix after one).
+- **READ 2026-10-05 on the `v1.0.3` tag (Mi 9T, debug APK from `a1apk.mjs`, local stack; iPhone 12 on a bench build of `77f5e3cc4`, NOT 1.0.3).** PASS on the Mi 9T: reply swipe on a RECEIVED message (icon small and translucent at 60 px, full and yellow at 250 px, the bubble glides back and the reply bar opens); a personal post from the Associations tab (the feed switches to "Tout", the post on top); video thumbnails (play button centred and not cut, tap plays online in under a second with sound - "playable while downloading" is NOT proven, the local video was too small). PASS on the iPhone 12: the CanaReels camera opens full-bleed with no black band, front lens by default, still full-bleed after two lens flips (the rear view never settled: the phone lay flat; the 20-open loop above is NOT done). **TWO DEFECTS FOUND, NOT FIXED** (adb-simulated gestures, so confirm by hand first):
+  - **The reply swipe on your OWN message** (swipe left): the bubble stops at about -100 px and the reply icon stays almost entirely off the right edge, a ~20 px yellow sliver at every distance up to 450 px. Reply itself works. On a received message the icon is drawn over the avatar at the start of the gesture.
+  - **Edge back then scroll**: after a swipe from the left edge the conversation does not close (correct) but the scroll that follows is swallowed and the list does not move; the same scroll from mid-screen works. adb injects the gesture, so the system gesture navigation may not react as under a finger - owed ONE real-finger scroll on the Mi 9T.
+  - Observations: in the SWIPE-CHECK conversation both media show "Format non supporte / Telecharger" on the Mi 9T while the iPhone lists them as "[Media]"; the info sheet of a two-person conversation reads "Quitter le groupe".
+  - **Owed, nothing measured**: D1-D6, #1287/#1288, check K, C, NOTIF-6b, U, the cold-start timing, NOTIF-7/7b and "Nouvelle discussion" (no row of the table above was taken; the session was redirected twice). The iPhone was not read on 1.0.3: rerunning `ios.yml` in `local_url` mode on that tag needs the local OIDC client id (`VITE_AUTHENTIK_CLIENT_ID` in `frontend/.env`), which the agent was not allowed to read. The iOS push rows stay blocked on the APNs development-slot key.
+- **Android fluidity (#1361-#1363) - owed a re-measure on the Mi 9T** of `open_conversation` (662 ms on the first open before them); Lucide `Icon` costs about 1 ms per icon on that phone, so 100-150 ms per heavy screen is the hardware.
+- **"Seen by" heads in groups and salons (#1401) - owed one look** in a group and a salon with four or more readers: each head under the last message its owner read, `+N` past three.
 
 ## The Liquid Glass conversation chrome - decided 2026-09-30, WP-G1 then WP-G2
 
@@ -267,7 +272,7 @@ button that then grows (as intended by the liquid glass design) to show the othe
 [chat](frontend/modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)),
 and WP-G2, the iOS native glass drawn at the web pieces' rects (#1254,
 [mobile](frontend/mobile.md#the-conversations-native-glass-chrome)). **Owed on the iPhone 12**:
-the alignment, the keyboard, "+" > Photos opening the picker, VoiceOver's four names.
+the alignment, the keyboard, "+" > Photos opening the picker, VoiceOver's four names. **Read 2026-10-05 on the iPhone 12 (bench build of `77f5e3cc4`, local stack): the native glass tab bar refracts the content under it, and in a conversation back, title and the menu are native glass - PASS.** The keyboard, the picker and VoiceOver are still owed.
 
 ## The MiConnect profile reform - decided 2026-09-29, the technical plan is next
 
@@ -337,6 +342,7 @@ One pull request per package, in this order. R1 = G2-0 to G2-4, R2 = G2-5. **R1 
 | G2-3 | Data: `GraineMsg` gains `version`, minter user and device, `signing_public_key`, `endorsement`; the store, codec, backup and native mirror carry them (the mirror gains `firstIndex` too); social-service gains a `signature` column and a UNIQUE `(senderSessionId, messageIndex)` - count existing duplicates on production FIRST; chat-delivery keeps every signature key a device published and serves it ([§21.3](protocols/channel-encryption.md#213-the-data-model-carries-the-minter-and-its-key-wp-g2-3)); duplicates counted first (0 on both estates), and every stored KeyPackage read first (76 702, all naming their uploader) so a foreign identity is now REFUSED | shipped in `v0.18.31` (#1214) |
 | G2-4 | The READER, web and both natives: author and salon checked, AAD and signature verified, endorsements verified on arrival, a replay shown once; v1 stays readable ([legacy-compatibility](legacy-compatibility.md)). Split in two PRs, both in R1: **G2-4a the web** ([§21.4](protocols/channel-encryption.md#214-the-web-reader-wp-g2-4a)), **G2-4b the natives** (Kotlin, NSE, `canari_push.mm`, the attached frame's endorsement, and the signature joining the push) | G2-4a shipped in `v0.18.31` (#1217); G2-4b, the native readers and the native half of G2-1b, shipped in `v0.18.32` ([§21.5](protocols/channel-encryption.md#215-the-native-readers-wp-g2-4b)); owed: NOTIF-19/20 on the Mi 9T on a v2 session once G2-5 writes one |
 | G2-5 | The WRITER, once `minClientVersion` is the G2-4 release AND both stores serve it: every v1 session rotates, every send is v2. **Then v1 ends (user, 2026-09-28)**: once THIS release is the floor, a v1 seed that ARRIVES is refused - a modified client could otherwise keep minting v1 to forge an author - while v1 seeds already held stay readable until their rows age out (365 days), and the v1 reader is deleted | open |
+| G2-6b | **Salon edits (2026-10-05) are author-proven only under v2 sessions**: an edit row from a v1 session has an unsigned, server-supplied `senderId` (same trust as delete); closes with the v1 reader when the last v1 session ages out ([§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05)). **Also owed, only if a channel ever gets an older-page load:** `listMessages` with a `before` cursor omits edit (and reaction) rows made after the cursor; the fix would need the page's targets reachable, which the opaque rows forbid server-side | open |
 | G2-6 | Campaign row `GRAINE-AUTH` (a relabelled row on dev, a replay, a seed relayed from a departed member - each refused with its line); `NOTIF-19` and `NOTIF-20` on a v2 session; the durable rule | open |
 
 **What v2 does not close**: the server can still admit a device it controls or publish a false
@@ -950,512 +956,109 @@ out of the tester programme instead forces an uninstall, which wipes the very st
 
 ## Reported by the USER on 2026-09-27 - the community settings panels, and two community defects behind them
 
-*"Que ce soit sur mobile ou sur web, l'interface du panneau est vraiment nulle, plein d'éléments
-sont invisibles."* Then: *"pourquoi les membres que j'ajoute au canal ne survivent pas au
-rafraichissement de la page ?"*, and a notification reading *"Nouveau message dans #general"*.
-The user's words: *"Il va falloir rapidement régler tous les problèmes de communauté."*
+Shipped in `v0.18.28`; what is left is readings, one decision, three test rows and one native change.
 
-**SHIPPED in `v0.18.28`, and only readings are owed** (stories in `CHANGELOG.md`):
-- **the added member and the panels** - ONE look on web and the Mi 9T: an add survives a reload,
-  the roles tab is one card per role ([social-service](services/social-service.md#roles-membership-and-channel-access));
-- **the notification that stayed generic** (the catch-up answered 403 in a key group) - ONE
-  reading on the Pixel 6a: a salon message in Gala with the phone shut, `fetchCommitsFromBackend`
-  answering 200 before the banner ([channel-encryption §16](protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27));
-- **the seed travels with the message** (`NOTIF-20` `PASS`) - ONE iPhone reading, the NSE half
-  ([channel-encryption §19](protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)).
+- **Readings owed** - web and the Mi 9T: a salon add survives a reload, the roles tab is one card per
+  role ([social-service](services/social-service.md#roles-membership-and-channel-access)). The Pixel
+  6a: a salon message in Gala with the phone shut, `fetchCommitsFromBackend` answering 200 before the
+  banner ([channel-encryption §16](protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27)).
+  The iPhone: `NOTIF-20`'s NSE half ([channel-encryption §19](protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)).
+- **P1 - USER DECISION: should a phone join a salon's key group from the PUSH, as it joins a DM from
+  a Welcome?** Two Gala members (`76198d2d`, `7bc0efc7`) held no device in the key group: the seat is
+  committed by the member's own device when it LOADS the community, and theirs never had (read on
+  production 2026-09-27 21:00, `0.18.15` and `0.18.22`), so every salon push reached them unreadable.
+  Production check, read-only: whether either now holds a key-group row (`dm_group_members` for
+  `17d0281e`).
+- **Three DM/salon test pairs owed (user, 2026-09-27: one contract for a salon and a conversation)** -
+  the same row on a DM and on a salon, plaintext on both: right after a membership change, a sender's
+  first message, a new device. `NOTIF-2`/`NOTIF-19` is the pair that exists
+  ([board](cross-client-testing.md)).
+- **P2 - the Rust half of a push handled in a KILLED app logs nowhere**: `tauri_plugin_log` installs
+  the logger when Tauri starts; a push in a dead app calls Rust through JNI without it, so every
+  `[PushBG]` line is lost exactly where it is needed. A logger installed in `JNI_OnLoad` would take
+  the global slot from the plugin at a normal start, so the two must be reconciled, not stacked.
 
-What is still open:
+## Reported by the USER on 2026-09-18 and 2026-09-17 - what is still owed
 
-- **P1, OPEN - two Gala members hold NO device in the community's key group** (`76198d2d`,
-  `7bc0efc7`, members since 14:35, none six hours later). The joiner enters by its OWN external
-  commit, so their clients have not done it; the welcomes of 14:35 went to their DMs with the user,
-  not to `17d0281e`. They receive every salon push and never a seed. **READ 2026-09-27 21:00 on
-  production (now `canari-prod-postgres-1` on the Portail-etu host):** still no key-group row, on
-  current clients (`0.18.15` and `0.18.22` on their phones), and NOT ONE group-info fetch or external
-  commit from either since 14:35 - their phones took every salon push offline (`[SOCIAL_PUSH]`) and
-  no client of theirs has loaded the community. So nothing refused them: the join is owed by a load
-  that has not happened, which is the design (a member's own device commits its seat). **What is
-  wrong is what they SEE meanwhile**: a push for a salon whose key group the device does not hold can
-  never be read, frame or no frame. Settled the day either of them opens Gala; until then the
-  question is whether the phone should join from the push, as it does from a Welcome.
-- **OPEN, ASKED FOR BY THE USER 2026-09-27 - ONE USER-LEVEL CONTRACT FOR A SALON AND A CONVERSATION.**
-  *"Même si la machine est différente, on devrait avoir homogénéité en tant qu'utilisateur"*, then
-  *"je veux que tout ce que tu as nommé soit réglé, testable et testé puis envoyé en prod"*. The two
-  mechanisms differ (one push against two, Welcome against external commit, user rows against device
-  rows) and every defect of this section is code written for one kind receiving the other. So the
-  SAME rows run on a DM and on a salon, and both must show the plaintext: phone shut, right after a
-  membership change, a sender's first message, a new device. `NOTIF-19` (salon) and `NOTIF-2` (its
-  DM twin, on the [board](cross-client-testing.md)) are the second pair; the other three pairs are
-  owed.
-- **P2, OPEN - the Rust half of a push handled in a KILLED app logs nowhere.** `tauri_plugin_log`
-  installs the logger when Tauri starts; a push in a dead app calls Rust through JNI without it, so
-  every `[PushBG]` line is lost exactly where it is needed (§18 was diagnosed from Kotlin alone).
-  Installing one in `JNI_OnLoad` would take the global slot from the plugin when the app starts
-  normally, so the two must be reconciled, not stacked.
+The mechanisms are on [mobile](frontend/mobile.md#one-builder-two-triggers),
+[chat](frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell) and
+[posts](frontend/modules/posts.md#who-sees-which-control-three-served-booleans-never-authorid).
+**No identity from the users' captures enters this file.**
 
-## Reported by the USER on 2026-09-18 - eleven items, verbatim
+- **G1 - one look on the Mi 9T**: one salon message reaching the phone by push AND socket draws one
+  line.
+- **G1 - USER DECISION: how a salon notification is titled on Android.** The push titles it
+  `<Communaute> - #<salon>` with no sender (its cleartext names none), the socket by the human sender,
+  and whichever posts last wins (NOTIF-14 `FAIL`, a race). Either the socket titles it as the push
+  does (the sender's name leaves the banner), or the push gains a sender name (cleartext to FCM).
+- **G1 - one human reading of a DESKTOP banner**: what a salon and a DM notification say, and where a
+  tap lands.
+- **P3 - USER DECISION, then native work: the push scanner's sixteen sentences are French literals and
+  a voice note is announced as an audio file** (`mobile/proto_fields.rs`). Word them in Rust from the
+  mirrored locale, or hand the KIND to Kotlin and Swift - the second changes what the FCM cache stores
+  as a body. Either needs an Android and an iPhone reading to ship.
+- **P2 - one observation: the post its publisher could not delete (2026-09-17)** - the post's URL, or
+  whether its publisher held `POST_AS_ASSO` on that association.
+- **P2 - one observation: the member who could not publish (2026-09-21)** - once he is past `0.18.14`
+  (still there 2026-09-23), whether the composer, which now names its failing stage, refuses him
+  anything ([posts](frontend/modules/posts.md#one-catch-said-seven-things)).
 
-**WHAT IS WRITTEN UNDER EACH ITEM IS WHAT IS STILL OWED, AND NOTHING ELSE.** An item whose work
-has shipped is DELETED from here the day it merges - its story goes to `CHANGELOG.md` and its
-mechanism to the wiki page that entry points at. A hypothesis is marked as one, and nothing here is
-a diagnosis until it names the line it read.
-
-**NO IDENTITY FROM THE CAPTURES ENTERS THIS FILE.** The reports came with screenshots of real
-conversations between real students; the peers' names, their faces and their message text are
-evidence that stays in the chat. Counts, shapes and widget behaviour are all a defect needs.
-
-### G1 - ONE NOTIFICATION, TWO TRIGGERS, AND THE PUSH PAYLOAD IS THINNER THAN THE SOCKET FRAME
-
-Android posts ONE builder since 2026-09-18 and the WebSocket frame is a second TRIGGER for it rather
-than a second builder - see `CHANGELOG.md` and [mobile](frontend/mobile.md#one-builder-two-triggers).
-**THE DOUBLED LINE IS FIXED, 2026-09-22, AND THE FIX IS A FIELD.** The salon push now carries
-`channel_messages.createdAt` and the socket frame reads the SAME stored column off
-`channel.message.created`, so the two triggers hand the builder one number and it recognises one
-message. Not a clock and not a heuristic: nothing is re-derived at either end, which is why the
-comparison is exact. A post that SUPERSEDES a line is now exempt from the already-announced set,
-the half that had to move with it - the generic "nouveau message" banner announces the message, and
-the redraw a late seed triggers would otherwise be refused as a second announcement. Mirrored in
-`ChannelNotificationDedupTest`, and the whole account is on
-[mobile](frontend/mobile.md#one-builder-two-triggers). **OWED: one look on the Mi 9T** - two
-triggers for one salon message is a race no gate here can run.
-
-**THE FIELD IS ANDROID-ONLY BY ARCHITECTURE, AND THE CONTRACT GATE NOW SAYS SO RATHER THAN BEING
-TOLD OFF.** `channelPushFields.test.ts` refused the payload, correctly: `createdAt` is one of the
-three fields measured drifting on 2026-08-15, sent to every device and read by none. It is not that
-now - the second trigger that needs it is `notifier_message_natif` -> `notifyMessageFromWebSocket`,
-whose body is `#[cfg(target_os = "android")]`, so iOS posts nothing from the socket and has no two
-announcements to reconcile. The gate keeps "a key read by NOBODY fails" for every key and gained a
-`PLATFORM_SPECIFIC` table that narrows only WHICH readers are owed; each entry cites the code that
-makes it true, and a test re-reads that code, so the exemption fails on the commit that removes the
-`cfg` rather than on a duplicate banner months later.
-
-Two things outlive it:
-
-1. **A CHANNEL IS TITLED DIFFERENTLY BY THE TWO TRIGGERS.** The push puts `<Communaute> - #<salon>`
-   in the banner and leaves the conversation title empty, because its payload names no human sender;
-   the WebSocket trigger knows the sender and titles the conversation with the salon. Both converge
-   on one notification, so this is a wording, not a duplicate - and now that the two are recognised
-   as one message, whichever posts LAST decides the wording for it, so the difference shows
-   across messages rather than within one. (This read FIRST until 2026-09-23, when the builder's
-   own `showNotification` lines were read in order and showed the second post overwriting the
-   first.) **The payload cannot simply gain a sender NAME**: it is
-   cleartext to FCM, which today sees an id, and no name mirror exists on the device to resolve one
-   locally. That trade-off is the item, not the wording.
-
-   **NOTIF-14 MEASURES THIS, AND ITS `FAIL` IS A RACE (eleven sends of one sequence, `0.18.20`,
-   2026-09-23).** The push alone - and the app KILLED - titles `<community> - #<channel>`, the
-   title the row asks for; NINE sends fired the push alone and drew it, TWO fired both triggers and
-   drew the sender's display name. A first "determinate regression" reading from one reproduction
-   was refuted the same day: "both triggers always fire" is false 9 times in 11.
-
-   **WHAT THE CAUGHT RUN SHOWS, END TO END** (the one send in the second batch where the socket
-   fired; `showNotification` logs the builder's own `group=` decision, so this is read off the
-   builder rather than inferred):
-
-   ```
-   21.037  socket  notifyMessageFromWebSocket: queued        -> native builder
-   21.214          showNotification: notifId=1011 messages=6 group=true    <- the socket's post
-   21.319  push    onMessageReceived
-   21.415          handleChannelMessage: title=<community> - #<channel>
-   21.504          showNotification: notifId=1011 messages=5 group=false   <- the push's post, wins
-   ```
-
-   The two triggers do not merely word the title differently, **they model the conversation
-   differently**: the socket posts a GROUP conversation authored by the human sender, the push a
-   1:1 conversation authored by the PLACE. The second post wins, its `group=false` drops the
-   conversation title, and Android then titles the shade from a message author - the human name the
-   socket wrote. **The message count also falls, `messages=6` -> `messages=5`**: the push's rebuild
-   drops a line, which nothing here has yet explained.
-
-   **AND THE SOCKET'S CONVERSATION TITLE IS A RAW ID, WHICH NOTHING HAS EVER SEEN ON SCREEN.**
-   `notificationGroupName` returns `contactName || name`, and all three channel builders in
-   `useChannelWorkspaces.svelte.ts` write `contactName: channelConversationId` - the raw
-   `channel_<hex>` - with the salon's name in `displayName`. `Conversation.contactName` is declared
-   as the *"human-readable auxiliary identifier"*, so the channel builders contradict their own
-   type; a group writes its title there. The id is invisible today only because the push's re-post
-   erases the conversation title, and the socket alone draws nothing in this premise. **The unit
-   test does not catch it because its fixture feeds the two fields in the opposite order to every
-   real builder** - `notificationGroupName('channel', 'general', 'channel_1')`, where production
-   passes `('channel', 'channel_<hex>', 'general')`. A guardrail whose fixture contradicts the
-   producers asserts a behaviour the app never exhibits.
-
-   **THE FIX SHAPE IS SETTLED, AND THE OBVIOUS ONE IS WRONG (enumerated 2026-09-23).** Writing the
-   qualified title into `contactName` - honouring the declared contract and fixing every reader at
-   once - **would break channel lookup**, because `contactName` is not only a label: it is a MAP
-   KEY. `conversations.get(contactName)` in `useConversations.svelte.ts` reads it as one, and four
-   sites match identity through `(convo.directPeerId ?? convo.contactName).toLowerCase()`. For a
-   channel `contactName` IS the conversation key, which is precisely why all three builders write
-   the id there - deliberate, not a slip. The field carries two jobs, and for a DM the peer's
-   username happens to satisfy both; for a channel the key and the label are different strings, and
-   the notification path picked the key.
-
-   **So the fix belongs at the notification seam**: the socket must title a channel exactly as the
-   push does (`senderName` = the qualified title, `groupName` = empty), and `notificationGroupName`
-   must stop returning `contactName` for a channel at all. **Agreement REQUIRES the workspace
-   name**, which no other shape avoids - the push has no human sender to fall back on, and a
-   builder that infers `isGroup` from `groupName != senderName` cannot be made to agree by naming
-   the salon alone. That name lives in `channelWorkspaces`, `$state` inside
-   `useChannelWorkspaces()`, so the work is plumbing it to where the notification is built. **One
-   spelling of that title already exists on four surfaces** and `channelPushFields.test.ts` holds
-   them together, so the fix extracts it rather than adding a fifth.
-
-   **AND THE SOCKET'S POST MAY BE REDUNDANT FOR A SALON, which would be a simpler fix if it holds.**
-   Across the eleven sends the push fired ELEVEN times and the socket twice - where the code's own
-   comment says a backgrounded app ACKs the frame so no push is sent. That reasoning is about DMs
-   and is not what a salon does. Eleven samples on ONE device is not enough to delete a path on,
-   and it is written here so the question is asked rather than assumed.
-
-   **AND IT IS THE 2026-09-22 DEDUP THAT EXPOSED IT.** This row passed on 2026-09-08 with both
-   titles correct, because the salon push carried no `sent_at` and the two triggers could not
-   recognise each other: the notification the row read was the PUSH's. Giving the channel push
-   `createdAt` correctly collapsed the salon's two notifications into one - and the survivor is the
-   socket's wording. **The fix is not to undo the dedup**: make the two triggers agree, by giving
-   the socket's `conversationTitle` the qualified salon name and by refusing to let a re-post drop a
-   conversation title the notification already has.
-
-2. **THE DOUBLING CANNOT HAPPEN ON DESKTOP OR ON THE WEB, AND THAT IS ARCHITECTURE RATHER THAN
-   LUCK (measured 2026-09-22).** It needs two independent builders reached by two independent
-   triggers, and NEITHER surface has the second trigger: every command in
-   `frontend/src-tauri/src/commands/push.rs` is `#[cfg(any(target_os = "android", target_os =
-   "ios"))]`, so a desktop build registers with no push service at all, and the frontend ships **no
-   service worker of any kind** - no `service-worker.*`, no `firebase-messaging-sw.js`, nothing that
-   could receive a Web Push. So on both, the socket frame is the ONLY trigger and
-   `useNotifications.svelte.ts` the only builder (`@tauri-apps/plugin-notification` on desktop,
-   `Notification` on the web), reached from the one `globalNotifs` singleton.
-
-   **AND A GATE NOW HOLDS THE BUILDER HALF**, because that is the half a future commit can undo
-   without touching notification code at all: a service worker added for offline caching that also
-   handles `push`, or a component reaching for `new Notification` because it is two lines.
-   `useNotifications.singleBuilder.test.ts` walks `src/` and `static/` and fails unless the ONE file
-   that raises a banner is `useNotifications.svelte.ts` - verified by dropping a four-line service
-   worker into `static/` and watching it name the file. The TRIGGER half is held by the same file
-   since 2026-10-04 ([mobile](frontend/mobile.md#one-builder-two-triggers)).
-
-   **WHAT NONE OF IT SETTLES** is the wording: desktop still RENDERS the same event a third way, and
-   nobody has read a desktop banner to see what it says or where a tap lands. That is a different
-   question from the one G1 was opened for, and it is what is left here.
-
-### G2 residue - P3 - THE USER SEARCH PROJECTS ONLY `displayName`, SO TWO CACHE SEEDS CANNOT APPLY THE SHARED PRECEDENCE
-
-**The precedence itself is SETTLED and must not be re-opened**: one contract,
-`libs/contracts/user-display-name.cases.json`, read by a test in chat-delivery-service, in
-social-service and in the frontend ([libs](libs.md#libscontracts), the only copy). `firstName
-lastName` first, `displayName` as the fallback.
-
-What is left is upstream of all three. `GET /api/users/search` projects `id` and `displayName`
-only (`users.service.ts`, `search`), and matches on `NAME_NORM_EXPR` - `unaccent(LOWER(displayName))`
-- so a picked row carries no name PARTS. The two callers that seed the display-name cache from a
-search result (`useMentionAutocomplete.svelte.ts`, `MultiUserSelector.svelte`) therefore seed the
-raw column, and a mention chip can read a name the rest of the app would build differently.
-
-**IT IS LATENT, MEASURED RATHER THAN ASSUMED**: on production, 2026-09-22, `displayName` equals
-`firstName lastName` for **all 436 accounts**, so the two spellings have never differed for anybody.
-That is also why this is not worth a search rewrite on its own - widening the projection means
-widening `NAME_NORM_EXPR`, the ranking and the indexes behind
-[search-contract](search-contract.md), and the honest trigger is the first account whose Authentik
-`name` claim is not its two parts.
-
-The salon half of the launch replay is `G1`'s first residual - one missing payload field closes
-both, and it is not re-derived here.
-
-### G10 - AN IMPORTED AUDIO FILE CANNOT SAY SO ON THE WIRE
-
-`MediaRef.voiceNote` travels as `true | undefined` and never as `false` (`envelope.ts:238` emits the
-key only when true), so an import is ALWAYS undeclared, and `isVoiceNote` separates it from an
-undeclared recording by FILE NAME. An audio file a person happened to name `vocal_<digits>.<ext>` is
-therefore hidden from the tab, and nothing can tell the panel otherwise.
-
-**The fix is sender-side**: either the import path declares `voiceNote: false` and the envelope
-carries it, or the flag becomes a `source: 'recorded' | 'imported'` the sender must set. Written
-down so the name rule is not deleted as a heuristic by somebody who does not know it is
-load-bearing - **not worth doing before anybody has hit the collision.**
-
-## Reported by the USER on 2026-09-17 - six items, verbatim
-
-Each of these started as a REPORT, not a diagnosis. What is written under it is the report and
-whatever has since settled it; anything still owed is marked as owed, and a hypothesis is marked as
-one.
-
-### P3 - a voice note declares itself on the wire and the push notification reads none of it (user, 2026-09-17)
-
-Verbatim: *"Les vocaux ne doivent pas s'afficher dans l'onglet 'Medias' d'une discussion. +1 s'il est
-possible de mettre les fichiers audios qui ont ete importes pour les differencier des audios
-enregistres directement dans la conversation."*
-
-**The in-app half SHIPPED** - the sender declares a voice note on the wire (protobuf `MediaMsg`
-field 11), both tabs exclude it; story in `CHANGELOG.md`, mechanism in
-[chat](frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell).
-
-**WHAT IS LEFT, AND IT IS NOT WHERE THIS ENTRY FIRST SAID IT WAS.** A voice note arriving on a
-locked phone is still announced as an audio FILE - the field is on the wire and nothing reads it.
-But the sentence is not built by `mediaKind` in `CanariFirebaseMessagingService.kt`: there,
-`mediaKind` reaches exactly ONE decision, `if (decrypted.mediaKind != "image") return null`, which
-is the THUMBNAIL, and the service has no kind-to-sentence mapping at all. Its notification body is
-whatever `decrypted.text` holds, and that string arrives already rendered from Rust.
-
-**The four sentences live in `frontend/src-tauri/src/mobile/proto_fields.rs:259-264`**, in the push
-scanner, chosen from `kind_str` - the proto's `MediaKind` varint - whenever the media carries no
-caption. `MEDIA_KIND_AUDIO` yields `🎤 Audio` for a recording and for an import alike, and field 11
-sits unread two lines above. **Whoever takes this reads `kind_str`, not the Kotlin.**
-
-**A SECOND DEFECT AT THE SAME LINES, INDEPENDENT OF THE VOICE NOTE AND OLDER THAN IT**: those
-strings are hardcoded French literals in Rust - `Photo`, `Vidéo`, `Audio`, `Pièce jointe` - so an
-English-locale device is told `📎 Pièce jointe`.
-
-**AND THE COUNT IN THIS ENTRY WAS WRONG UNTIL 2026-09-17: IT IS NOT FOUR STRINGS, IT IS SIXTEEN, AND
-THE CLAIM THAT EVERY OTHER SENTENCE IS LOCALISED IS FALSE.** The same file builds all of them, in
-four places, none of them through Paraglide or `R.string.*`:
-
-| builder | sentences |
-| --- | ---: |
-| `format_system_event_text` - renamed, image changed, member added (2 forms), removed, left, deleted, and the two rename forms | **9** |
-| the reaction arm - `a réagi {emoji}` | **1** |
-| the media arm - the four above | **4** |
-| the call arm - `📹 Appel vidéo entrant`, `📞 Appel entrant` | **2** |
-
-`format_system_event_text`'s own doc comment says *"Builds a short French notification body"*, so this
-is deliberate rather than an oversight - which is exactly why it needed counting instead of
-believing. **One of the sixteen is worse than untranslated**: the fallback arm renders
-`événement de groupe ({event})`, printing a raw protocol event name to a user. The comment beside it
-already records that the arm is a trap rather than live noise, and that its silence list drifted once
-(`read_watermark` replaced `read_receipt` on 2026-08-12 and was never added).
-
-**THE SIZE OF THIS WORK IS THEREFORE NOT "FOUR LINES", AND WHOEVER TAKES IT SHOULD KNOW THAT BEFORE
-STARTING.** The honest fix is not sixteen translations in Rust: it is to stop building a SENTENCE in
-the scanner at all and hand the KIND across, which the JSON already carries as `mediaKind`, letting
-the Kotlin side pick a localised string it already knows how to pick. **That is a cross-language
-change with one consequence this entry cannot settle on its own**: `decrypted.text` is what the FCM
-cache persists and reads back as a message body, so emitting an empty text changes what the cache
-stores - the same seam the photo fix above is about. It is one design decision, not a translation
-chore, and it must not be started as if it were the latter. (The PERSISTENCE of `📷 Photo` as a
-message body is the photo entry above, fixed; this entry owns the strings themselves.)
-
-### P2 - a post its own publisher could not delete, and ONE of the two ways that could happen is fixed (user, 2026-09-17)
-
-Verbatim: *"J'ai cree un post mais je ne pouvais pas le supprimer (je suis admin ?)"*, answered
-since with *"Aucune corbeille dans le menu"*, published **au nom d'une asso**, **sur prod**. The bin
-is drawn by `PostActionsMenu` under `{#if canManage}` and by nothing else, so the row that reached
-the screen carried `canManage: false`.
-
-**WHAT IS FIXED (story in `CHANGELOG.md`)**: `PostsController.createPost` allowed a global admin to
-post as an association and then stamped the response with `isGlobalAdmin` hardcoded `false`, so the
-publisher's own new post came back `canManage: false`. Every other path passed the real flag.
-
-**AND WHY THAT MAY NOT BE THE SCREEN THE USER SAW**: `CreatePostForm` does `await createPost(payload)`
-and **discards the result**, then calls `onPostCreated()`, which refetches the feed through the path
-that was always correct. So the fixed inconsistency is currently invisible to this client.
-
-**WHAT HAS BEEN ELIMINATED BY READING, so nobody re-reads it:** the feed path passes
-`isAdmin: xGlobalAdmin === 'true'` and stamps every row through `shapeListRow`; `getById` passes its
-own flag; the feed cache is keyed per reader (`...:${viewerUserId ?? 'anon'}:...`), so no reader is
-served another's capabilities; `PostCard` reads `localPost.canManage === true` straight from the
-response and no client mapper strips it; and `viewerIsPublisher` resolves an association post through
-`POST_AS_ASSO` for creation and for management alike, so the two gates cannot disagree by design.
-
-**WHAT WOULD SETTLE IT, AND IT IS ONE OBSERVATION**: the post's URL, or `canManage` as served for
-that row - whether the publisher held `POST_AS_ASSO` on that association at that moment, or reached
-the composer through the global-admin route alone. Until then this entry is a fixed inconsistency
-plus an open report, and must not be written up as the user's defect closed.
-
----
-
-### P2 - THE MEMBER WHO COULD NOT PUBLISH IS STILL ON `0.18.14`, AND OWES ONE OBSERVATION (user, 2026-09-21)
-
-Verbatim: *"essaie de faire un post anonyme sur son telephone, mais 'Impossible de publier le
-post'"*, on `0.18.17`. **Nothing repairs the publish path, because nothing is broken in it** - and
-establishing that is what this entry is for, so the next session does not re-run the same tests.
-
-**SETTLED, AND NOT TO BE RE-RUN**: three hypotheses refuted by measurement, the edge log narrowing
-seven stages to two, and the reporter naming the stage himself - `poll` (he was making a sondage).
-The typed failure sentence and stage log (`publishFailure.ts`), the two defects around it
-(`composerReadiness.ts`: a needless `mute-status` round trip, a banner that erased itself after 5 s)
-and the rebuilt per-option poll editor all SHIPPED. Every measurement is on
-[posts](frontend/modules/posts.md#one-catch-said-seven-things),
-[the edge-log reading](frontend/modules/posts.md#what-the-next-report-actually-named-and-the-two-defects-under-it-2026-09-23)
-and [the poll rebuild](frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23).
-
-**WHAT IS LEFT OPEN, AND IT IS SMALL**: `includeForm` is still the one attachment an account can be
-unable to satisfy - this reporter's `GET /api/forms` answers `[]`, which now says so in its own
-sentence rather than asking again for a choice that does not exist - and both toggles are restored
-from the draft, so an abandoned one returns silently at the next composer open. Neither is worth a
-pull request until something is observed. **He is also still on `0.18.14`, seven versions behind and
-before `publishFailure.ts` (`0.18.18`), so he sees none of this until he updates** - which is the
-one observation still owed: whether the composer, on a version that names its stage, still refuses
-him anything.
-
-Note that the evidence for the ORIGINAL 2026-09-21 attempt is gone for a structural reason, not a
-procedural one - see the Infrastructure entry on a deploy destroying production's only log; the
-2026-09-23 retries survived only because the deploy that day landed at ~09:00 UTC.
-
----
 ## Notifications - one builder on Android since 2026-09-18, and the rows that still owe it a run
 
 ### P2 - NOTIF-15 - NOTHING HAS HEARD `canari_reactions` ON A REAL HANDSET
 
-A reaction to your own message notifies on its own channel since 2026-09-17 (`CHANGELOG.md`), and
-`notificationChannels.test.ts` derives from the Kotlin that every declared channel is created and
-named in both locales - which is what makes a forgotten channel fail in CI rather than on a phone,
-since `NotificationManagerCompat` drops a notification whose channel does not exist without a word.
-
-**WHAT NO TEST HERE CAN SEE IS WHETHER IT SOUNDS RIGHT.** NOTIF-15 on a real handset: a reaction to
-the recipient's OWN message arrives on `canari_reactions`, and every other reaction stays silent.
+Owed: NOTIF-15 on a real Android handset - a reaction to the recipient's OWN message rings on
+`canari_reactions`, and every other reaction stays silent. That the channel exists in both locales
+is already asserted (`notificationChannels.test.ts`); how it sounds is not.
 
 ### P3 - THREE SERVICES REFUSE AN UNSIGNED CALLER THREE DIFFERENT WAYS, AND MERGING THEM IS A POLICY DECISION
 
-The assertion that held this back exists: `auth-request-coverage.test.mjs` holds every route behind
-an `auth_request` location to a guard, reads the two Axum routers, and derives from the nginx config
-that all four identity values are set and forwarded by every one of the fifteen locations. **So a
-single guard may now read either discriminator.** What that gate found and fixed is in `CHANGELOG.md`
-and [nginx](infrastructure/nginx.md#auth-subrequest).
+Owed to the USER: a written decision of which refusal is intended, before any file is touched -
+picking one guard as "the" guard silently changes what the other two refuse. The HMAC they share is
+already one declared file (`internal-token.ts`).
 
-**WHAT IS LEFT IS NOT A COLLAPSE, AND CALLING IT ONE WAS THIS ENTRY'S OWN MISTAKE.** Read side by
-side, the three files are not three copies of one guard that drifted in spelling - they are three
-different POLICIES, and only the HMAC block inside them is genuinely duplicated:
+| Where | Refuses on |
+| --- | --- |
+| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` |
+| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET |
+| `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` (logs a denial on `/push/` routes) |
+| `chat-gateway/src/presence.rs` | empty `x-user-id` - Rust, stays where it is |
 
-| Where | Refuses on | Other paths |
-| --- | --- | --- |
-| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` | none |
-| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | none since 2026-09-18 - see below |
-| `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` | logs a denial, `/push/` routes only |
-| `chat-gateway/src/presence.rs:34` | empty `x-user-id` | none - Rust, and it stays where it is |
+The same decision says whether `X-Internal-Token` is required OUTSIDE production too (today only
+production asserts it). Not an access-rule question: presence about an arbitrary user id is parked
+in `presence.rs`'s docblock.
 
-Picking any one of the three as "the" shared guard silently changes what the other two services
-refuse. **Whoever takes this decides, in writing and before touching a file, which refusals are
-intended.** The half that really was three identical copies, the HMAC verification, is ONE file
-since 2026-10-04 - `internal-token.ts`, copied byte for byte into the three services and held
-together by `declared-duplicates.mjs`; each guard keeps its own policy and calls it.
+### P2 (hardware-owed) - a FIRST message from someone you have no conversation with, measured end to end (user, 2026-09-08)
 
-**The bare-`/channels` vite rule and the unverified-Bearer branch it justified were DELETED
-2026-09-18** rather than given an nginx route (the premise was false - nothing requests a bare
-`/channels`); story in `CHANGELOG.md`, asserted by `nginx-auth.guard.spec.ts`.
+Both halves are fixed since `v0.18.18`; nothing has run them on a genuine first contact. Owed:
 
-**WHAT IS STILL OWED HERE IS THE HMAC, AND IT IS THE REST OF THIS ENTRY.** Outside production the
-guard still trusts the `X-User-Id` the local nginx sets without asserting `X-Internal-Token`. That
-is the three-service policy decision above, not a leftover of the deletion, and it was deliberately
-not smuggled in behind it.
+1. **Enrol a third account** (`canari-test-gamma` exists on Authentik, credentials out of tree): a
+   first sign-in through the app (materialises the user row and its display name), a Chrome
+   profile with its `PORTS` / `ORIGIN` / `ACCOUNT_OF` entries, and a third identity in `names.mjs`
+   ([harness entry](#p2---the-rig-can-express-exactly-two-identities-and-the-third-and-fourth-accounts-now-exist-measured-2026-09-10)).
+2. **One run**: A1 backgrounded and alive, the new peer starts a conversation and sends one message;
+   read the shade, whether the tap lands, whether the conversation is in A1's list WITHOUT a
+   restart, and `builtBy`. Then the same with an INVITATION into a community (the user's question
+   of 2026-09-05), and once with A1 COLD, which collects the message from history.
+3. **NOTIF-17b re-run on the `admits` route** (a device added while offline is a recipient of the
+   next message).
+4. **Unexamined: a first-contact Welcome exceeds the FCM data budget** - `[PUSH_SEND][welcome-send-4964245c]
+   proto not inlined: 4608B over a 3716B budget`, so it travels without its payload inlined.
 
-**Do not re-open as an access-rule question.** Whether an authenticated user may ask presence about
-an ARBITRARY user id is a separate and larger question, parked deliberately in `presence.rs`'s
-docblock. This entry is only about the signed-in floor.
+### P3 - three tap/reply rows owed against Android's single notification builder
 
-### P2 (hardware-owed) - a FIRST message from someone you have no conversation with notifies, decrypts, and then goes nowhere: the tap does not land and the conversation is invisible until the app is restarted (user, 2026-09-08, on PRODUCTION)
+Owed on the board, each stating its trigger (`builtBy` - a direct message is notified by the
+WebSocket frame, a salon message by the FCM push, on the same backgrounded phone): NOTIF-6c (quick
+reply, backgrounded, and its 2026-08-30 `403` fix), NOTIF-7c and NOTIF-7d (tap into a CHANNEL,
+backgrounded and killed). Also settle whether NOTIF-11/-12 (`MessagingStyle` stacking) already
+speak for the backgrounded path, which reaches the same builder.
 
-Reported verbatim: *"Quelqu'un m'envoie un message alors que nous n'avons pas encore de discussion. Je
-recois bien la notif, et le message est bien dechiffre. Mais quand je clique sur la notif 1) Je
-n'arrive [pas] dans la conversation 2) la conversation n'apparait pas directement (apres un
-redemarrage de l'app oui a priori, mais pas suite a reception de la notif)."*
+### P3 - an Android phone rotates where an iPhone cannot, and nothing decided that
 
-**BOTH HALVES ARE FIXED AND SHIPPED IN `v0.18.18`, SO THIS IS RE-RATED P1 -> P2 (hardware-owed) ON
-2026-10-01.** Story in `CHANGELOG.md` (search `conversationSourcesSettled` and
-`mergeFcmMessagesIntoConversations`); in one line each:
-
-- **Half two (invisible until restart)**: `mergeFcmMessagesIntoConversations` skipped any
-  conversation the in-memory map did not hold, at resume AND at login, so `consumeFcmCache`'s
-  placeholder row reached the database and never the list. It now creates the conversation from the
-  placeholders `consumeFcmCache` returns, and warns when it has none (`fcmMemoryMerge.test.ts`).
-- **Half one (the tap lands nowhere)**: the deep link resolved 174 ms before the cache was injected,
-  and the landing abandoned its target because `conversationsRestored` answered "is IndexedDB read",
-  not "is the set complete". `pendingConversationSources` / `conversationSourcesSettled` now count the
-  passes that can still add a conversation (`useConversations.landingSources.svelte.test.ts`,
-  `notificationRouting.test.ts`). The OTHER candidate - the plugin builder's tap carries no identity -
-  is a real defect of its own: the two-builders entry below.
-- **A device added while OFFLINE was not a recipient of the next message** (NOTIF-17b, 2026-09-08:
-  `PUBLISHED` to two web devices, the phone absent). DF2 covered it (NOTIF-17b `PASS` 2026-09-28)
-  and was replaced the same day by `admits`
-  ([channel-encryption section 20](protocols/channel-encryption.md#20-whoever-admits-a-newcomer-welcomes-them---decided-by-the-user-2026-09-27)).
-  (verify: NOTIF-17b has not been re-run on the `admits` route.)
-
-**STILL UNEXAMINED**: `[PUSH_SEND][welcome-send-4964245c] proto not inlined: 4608B over a 3716B
-budget` - a first-contact Welcome exceeds the FCM data budget and travels without its payload
-inlined. And a COLD device collects a first message from HISTORY, not from the FCM cache, a route
-no row has measured on first contact.
-
-**THE USER'S INVITATION QUESTION IS THE SAME ROW (merged here 2026-10-01).** Verbatim (2026-09-05):
-*"Inviter dans communaute sans avoir discussion prealable : notification ?"* - a question, not a
-defect report; the current behaviour is unknown rather than wrong. Reading the code can say which
-call is made, not whether a device with no prior anything is ADDRESSABLE when the invitation is sent
-(the server's roster and the push token). The same run, with the peer invited into a community
-instead of messaged, tells apart three outcomes that want different fixes: no notification at all
-(no push sent, or no token), one raised but unreadable (the decrypt failed - the
-[community notification P2](#p2---a-community-message-is-not-decrypted-in-a-background-notification-and-the-killed-case-is-unmeasured-for-both-kinds-user-2026-09-05)),
-or it works. Logcat separates the first two; the shade alone cannot.
-
-**HOW TO MEASURE IT, AND THE PRECONDITION THAT MAKES IT HONEST.** Two accounts with NO shared
-conversation and no shared group; the harness's own pair have talked, so a run that reuses them
-measures nothing. The sequence is: park A1 backgrounded and alive (the state that guarantees the
-plugin builder, not the push one), have the peer start a NEW conversation and send one message, then
-read three things separately - the shade, whether the tap lands on the conversation, and whether the
-conversation exists in A1's list WITHOUT a restart. The third is the one the report is about and the
-one no existing row reads. Read `builtBy` as well: if the plugin builder notified, the tap half is
-the two-builders entry below, not this one.
-
-**WHAT IS OWED, AND THE ACCOUNT HALF OF IT IS DONE (2026-09-10).** The row named above, run against
-a genuine first contact - which needs a THIRD account, because the rig's two have a long shared
-history the HEAL rows depend on and staging this by deleting it would cost more than it answers.
-
-**THAT CONDITION IS LIFTED.** The user granted the means rather than performing the click (*"tu as
-acces a miconnect pour creer autant de comptes test que necessaire"*, 2026-09-10), so `third`
-(`canari-test-gamma`) and `fourth` (`canari-test-delta`) now exist as ordinary Authentik users on
-the production identity provider, cloned from the owner's path, type and attributes, and are written
-into the out-of-tree `test-accounts.json` with their subjects. **Their passwords were verified
-against Authentik's own `check_password`, not assumed** - a created user is not a user that signs
-in. No credential passed through a shell argument, a log line or a transcript: they were generated
-locally, written straight to the out-of-tree file, and handed to the box on stdin.
-
-**WHAT IS STILL OWED IS ENROLMENT, WHICH IS A DIFFERENT THING FROM AN ACCOUNT** and needs the local
-estate up:
-
-1. **A first sign-in through the app**, because a Canari user row - and therefore the DISPLAY NAME a
-   member picker matches - is materialised by `findOrCreateFromOidc` and does not exist until then.
-   Until it happens the rig can log the account in and cannot make anybody *find* it.
-2. **A device each**, which means a Chrome profile plus `PORTS`, `ORIGIN` and `ACCOUNT_OF` entries.
-   A profile IS a device here, so this is not configuration, it is enrolment.
-3. **A name the rig can ask for** - DONE (#1277): names are keyed (`DISPLAY_NAME_OF`), `displayNameFor(key)`
-   answers any account, and `peerNameFor` throws outside the owner/peer pair (`namesderive.mjs`).
-
-### P3 - Android's two notification builders are ONE builder with two triggers since 2026-09-18, and three tap/reply rows still owe a run against it
-
-**THE DEFECT SHIPPED 2026-09-18** (`CHANGELOG.md`, "un message notifiait DEUX fois sur Android";
-mechanism on [mobile](frontend/mobile.md#one-builder-two-triggers)). A WebSocket frame is now a second
-TRIGGER of `CanariFirebaseMessagingService`'s builder (`notifier_message_natif`, Rust into Kotlin),
-both posting under `getStableNotifId(groupId)` - so the icon, channel, `MessagingStyle`, six actions,
-deep-linked tap AND the id space are one. **The former P3 "two notification id spaces in one
-namespace" is merged here and closed by the same change** (Kotlin's SharedPreferences counter from
-1000 vs JS `Math.abs(hash31(conversationId))`, which kept two banners for one message from merging).
-`tauri-plugin-notification` is web/desktop-only now. NOTIF-7 (tap, backgrounded) `PASS` 2026-09-22.
-
-**FACTS A ROW STILL NEEDS.** The server pushes only after ten seconds without an ACK
-(`scheduleDeferredPush`), so a backgrounded app with a live socket is notified by the FRAME trigger
-alone - removing it would restore silence. And which trigger fires is decided by the message's
-ROUTE, not the app's state - measured 2026-09-08 by NOTIF-14, one backgrounded phone, four seconds
-apart:
-
-| what was sent | notified in | trigger (then: builder) |
-| --- | --- | --- |
-| a direct message | 2 223 ms | WebSocket frame (then `tauri-plugin-notification`) |
-| a salon message | 2 170 ms | FCM push, inside the 10 s window (`CanariFirebaseMessagingService`) |
-
-So a device can get either trigger at any moment, and **a row must state WHICH trigger it measures**
-(`builtBy`), the way `notif.mjs` states which transport carries its notification.
-
-**WHAT IS OWED: three rows against the single builder.** NOTIF-6c (quick reply, BACKGROUNDED - it
-was unsatisfiable on the plugin builder, which had no actions; its 2026-08-30 `403` fix is also
-un-remeasured), NOTIF-7c and NOTIF-7d (tap into a CHANNEL, backgrounded and killed), all `pending`
-on the board. (verify: whether NOTIF-11/-12, `MessagingStyle` stacking, now speak for the
-backgrounded path too, since it reaches the same builder.)
-
-### P3 - an Android phone rotates where an iPhone cannot, and nothing decided that (measured 2026-09-07)
-
-`gen/apple/canari_iOS/Info.plist` conditions orientation exactly as one would want:
-`UISupportedInterfaceOrientations` is `Portrait` alone, and `UISupportedInterfaceOrientations~ipad`
-carries all four. `AndroidManifest.xml` declares **no `android:screenOrientation` at all** - only
-`configChanges`, which is about surviving a rotation rather than allowing one. So an Android phone
-turns landscape and an iPhone of the same size does not, and no file records that as a decision.
-
-The user also reports an iPad "not changing the screen rotation when switching from a horizontal
-app into Canari". That cannot be diagnosed here - the iPad already declares all four orientations,
-so the plist is not the cause, and no iPad is attached to this workstation. It belongs with the
-hardware-blocked items rather than with this one.
+Owed to the USER: may an Android PHONE turn landscape? The iPhone is portrait-only and the iPad
+takes all four (`Info.plist`); `AndroidManifest.xml` declares no `android:screenOrientation`, so
+Android rotates by default rather than by decision. Portrait-only is one attribute on the activity.
+The iPad report (no rotation when switching into Canari) needs an iPad.
 
 ## CI and the chain that runs unattended
 
@@ -2365,73 +1968,12 @@ tail is where the real number is. Measure it before believing the shape is as na
 
 ## Background notifications on Android - what the 2026-09-05 investigation left open
 
-Two long accounts lived here until 2026-09-15, one of them explicitly titled "whose conclusion does
-not stand" and carrying a struck-through sentence and two layers of correction. **The user-facing
-half is CLOSED on hardware** - LIFE-2 came back `PASS` / `"clean": true` on 2026-09-08 (6 359 ms
-with the FULL decrypted text, where it had been `afterMs: null` and an empty shade), and the story
-of the fix is in `CHANGELOG.md` (the cause: a backgrounded app ACKs the frame over its WebSocket, so
-the server never pushes, and one early return in the client refused to notify on native mobile).
-LIFE-2 measured a DIRECT conversation only; a salon is another key path, owed its own cells in the
-community entry below.
-
 ### P2 - a COMMUNITY message is not decrypted in a background notification, and the KILLED case is unmeasured for both kinds (user, 2026-09-05)
 
-**Reported by the user, who has seen it**, and asked in the same breath for the question the campaign
-has so far half-answered: *"Notification non dechiffrees en background - Communaute"*, and *"Les
-messages sont ils bien dechiffres en notification quand l'app est tuee OU en background ?"*
-
-**FOUR CELLS, AND ONLY TWO HAVE EVER BEEN MEASURED.** The two axes are the conversation's encryption
-and the app's lifecycle state, and they are independent - so the answer to one cell says nothing
-about any other.
-
-| | app BACKGROUNDED | app KILLED |
-| --- | --- | --- |
-| DM or group (per-conversation MLS ratchet) | **PASS** - LIFE-2, 2026-09-08 on hardware, after the 2026-09-05 fix | **PASS** - LIFE-3, 2026-09-08, clean |
-| Community salon (the community's shared key) | **PASS, measured 2026-09-05** - full plaintext in the shade in 2 244 ms, seed mirrored | **UNMEASURED** with a mirrored seed (verify: whether NOTIF-18/-19/-20 below, all KILLED salon rows, already answer this cell) |
-| Community salon, seed NEVER mirrored | **FIXED on Android 2026-09-21** - the seed was pushed and the push service dropped it unread, so every banner of that session was blind (production 2026-09-20) | **`PASS`** - NOTIF-18 2026-09-21, NOTIF-19 2026-09-27; the seed now travels with the message (#1147, NOTIF-20) |
-
-**THE DM ROW'S CAUSE IS ESTABLISHED, FIXED AND NOT THIS ENTRY'S** (story in `CHANGELOG.md`; see the
-section intro above): a backgrounded app receives the message over its WebSocket and ACKs it, so the server never sends a
-push at all, and the client had an early return refusing to notify on native mobile. **The phone in
-a pocket is the failing case and the phone that was killed is the passing one** - a killed app
-cannot ACK, so its push does fire. *(Until 2026-09-05 evening this paragraph blamed a spent ratchet
-generation. That was measured and is real, and it is not why the notification is missing.)*
-
-**AND THE SALON HALF DOES NOT REPRODUCE.** Measured on device 2026-09-05, app backgrounded with
-HOME, one message into `Canari Test Venue / #general`: the shade held
-`Canari Test Venue - #general | <the full plaintext>` after **2 244 ms**, and the phone logged
-`handleChannelMessage: showNotification title=... body=<the text> mentionsMe=false`. So the salon
-path decrypts in the background, and it does so through a mechanism that has nothing to do with the
-MLS ratchet: `lookupGraineSeed(channelId, sessionId)` against `graine_seeds.json`, a mirror the
-FOREGROUND writes. **That is where the user's report most likely lives**, and it is a different
-question from the one measured: the run above had A1 open the salon first, which is exactly what
-mirrors the seed. The unmeasured case is a session whose seed was never mirrored - a sender who
-started a new Graine session while this device was away - and its symptom is
-`handleChannelMessage: no seed/ciphertext -> generic notification`.
-
-**That line now says which of its four conditions failed** (`missing=<terms>`, 2026-09-24), so a
-seed that was never mirrored and a ciphertext the server declined to inline no longer print the same
-sentence - opposite problems wanting opposite fixes, one a mirroring bound and the other the 4 KB FCM
-budget. The suffix shape, the three readers that forced it and the classifier blind spot it closed
-are [channel-encryption section 14](protocols/channel-encryption.md#what-is-left), the only copy.
-**This was the precondition, not the measurement**: it makes the four runs below readable and
-settles nothing on its own.
-
-**A COMMUNITY SALON CANNOT INHERIT THAT ANSWER, BECAUSE IT IS NOT THE SAME KEY PATH.** A salon is
-encrypted with the community's shared key
-([channel-encryption](protocols/channel-encryption.md)), not with a per-conversation MLS ratchet, so
-the spent-generation argument that explains the DM failure may not apply to it at all - and if it
-does not, the cause is a second, unrelated one wearing the same symptom. **Two causes that produce
-the same screen want opposite fixes**, so the two rows are measured apart before either is touched.
-
-**WHAT IS OWED, and it is measurement first.** Four NOTIF rows - salon x {backgrounded, killed} and
-the two DM cells re-taken on the same build so the comparison is from one afternoon rather than from
-two. All four need the phone, which is
-[owed a human unlock](#owed-to-the-user---decisions-rotations-and-one-off-clicks). Read the salon
-rows with the invitation question, now carried by the
-[first-contact entry](#p2-hardware-owed---a-first-message-from-someone-you-have-no-conversation-with-notifies-decrypts-and-then-goes-nowhere-the-tap-does-not-land-and-the-conversation-is-invisible-until-the-app-is-restarted-user-2026-09-08-on-production): a notification that never arrives and a
-notification that arrives undecryptable are different failures, and only the logcat separates them.
-
+Owed: four NOTIF rows on ONE build - salon x {backgrounded, killed} and DM x {backgrounded, killed} -
+so the comparison is one afternoon. Read the board first: NOTIF-18/-19/-20 (killed salon rows) may
+already answer the killed salon cell with a mirrored seed. A blind banner is counted since
+2026-10-05 (`[PUSH_BLIND]`, `missing=` names the cause), so the fleet rate can be read beside them.
 
 ### P1 (hardware-owed) - an iPhone's salon banner for a session started while it was shut
 
@@ -2951,27 +2493,6 @@ whose creator holds no state should still be offered; and whether an unservable 
 a tile at all. Nothing here should be settled by widening a sweep - the P1 above is precisely what
 happens when a destructive path decides a group is dead from an incomplete read.
 
-### P3 - one client reads a new salon's distribution group TWICE, concurrently (measured 2026-08-27)
-
-`srvlog.mjs` leaves `published=false base=none active=0 devices=0` unexplained on purpose - it is
-the shape that found the concurrent-join race - and on `cb967b6c` it earned that again. Every new
-salon in the COMM rung is served that read **exactly twice, in the same second, to the same user**:
-`93c80263`, `7e91ade3`, `5e09125d`, `d4b3152f`, `2de1a37c`, `ccc67640`, six for six.
-
-Two callers are invoking `ensureDistributionGroup` for one channel concurrently. Neither can be
-stopped by its `getLocalGroups()` guard, because at that instant neither has created anything - the
-guard answers a question that only becomes true after one of them wins.
-
-**It is currently harmless and that is the whole reason it is a P3, not a P2.** The first-publish
-race is handled: the loser's `publish` returns `stored:false`, it calls `forgetGroup` and external
--joins the winner's base instead. So the duplicate costs one wasted group creation per salon and
-nothing else that has been measured. It is filed because it is the SAME two-callers-one-read shape
-that has already shipped one defect, and because a mitigation is not an absence.
-
-**Do not fix it by widening the guard.** The question to answer first is who the second caller is -
-the roster sweep and the channel-open path are both candidates - because a lock around the read
-would hide the duplication rather than remove it.
-
 ### P2 - two COMM rows could not ARM, and the re-run has to say whether that was the debris (measured 2026-08-27)
 
 `f21502e1` left three `VACUOUS` cells. COMM-22 is closed (its story is in `changelog.d`, its mechanism in [mls-protocol](protocols/mls-protocol.md#the-base-travels-inside-every-commit-submission-comm-22)). **The runner half is FIXED for COMM-9/10**
@@ -3164,33 +2685,11 @@ second visible at all.
 
 ### P3 - a mention of a deleted account writes a browser-level console error no client code can suppress, and the row that meets it cannot declare it expected (measured 2026-09-08)
 
-TYPE-5 came back `PASS-DIRTY` on a run whose own subject was green, with three
-`GET /api/users/<64-hex> -> 404` on BOTH clients, the same three ids. They are absent from every
-server table asked - `users` (368 rows), `dm_group_members`, `dm_device_group_memberships`,
-`channel_members`, `key_package`, `push_token`, all zero - so nothing on the server names them. The
-reference is client-local: a stored message mentioning an account that has since been deleted, which
-on this estate is the campaign's own mention fixtures.
-
-**Everything the app can do about it is already done.** `fetchUserProfile` caches a 404 for the full
-30 s TTL rather than evicting it, with a docblock naming the measurement that earned the change - one
-mention of an absent account used to produce three identical 404s in one check, one per mount of the
-chip. So the request is made once per client per window, which is the floor for a client that must
-ASK to find out.
-
-**The line is written by the browser's network stack, not by the app**, so it cannot be caught,
-downgraded or silenced from JavaScript. Two designs remove it, and both are product decisions rather
-than fixes:
-
-- the server answers **200 with a tombstone** (`deleted: true`, no name) instead of 404 - the client
-  then renders "deleted account" from a real answer, and nothing logs;
-- the mention carries a **name snapshot** taken when it was written, so a deleted account needs no
-  fetch at all. This is also the only one of the two that survives the server forgetting the user
-  entirely, and it is what makes an old message readable years later.
-
-**Deliberately NOT declared `ignoringExpectedLog` on the row.** The shape `GET /api/users/<id> -> 404`
-is indistinguishable from a client asking for a user it *should* know - a roster that named an
-identity nobody minted, which is a P1 this campaign already carries. A per-row allowlist here would
-silence the next one of those.
+Owed to the USER: a product choice. `GET /api/users/<id> -> 404` is written by the browser, not the
+app (the client already caches the 404 for its 30 s TTL). Two designs remove it: the server answers
+**200 with a tombstone** (`deleted: true`, no name), or the mention carries a **name snapshot** taken
+when written (the only one that survives the server forgetting the user). Not to be silenced by an
+`ignoringExpectedLog` on the row - the same shape is how an unminted identity in a roster shows.
 
 ### P3 - a mention banner says "someone" where the mentioned member's NAME could be
 
@@ -4163,6 +3662,8 @@ which is why this is written down rather than done.
 
 ### P3 - 108 navigations bypass `resolve()` (92 here, 16 on MiGallery, counted 2026-08-27), and an inherited disable is the only reason nobody sees them
 
+**STATUS 2026-10-05: THE CANARI HALF IS DONE** - every call site goes through `resolve()` (a runtime-computed path through `internalPath()`, `src/lib/utils/internalPath.ts`), `$app/paths` is stubbed for vitest, and `oxvelte.config.json` no longer disables the rule, so the lint gate IS the test that the sweep stays complete. MiGallery's 16 remain.
+
 **FOUND 2026-08-27, while measuring whether `oxvelte.config.json` could be deleted.** It cannot, on
 this repository or on MiGallery, and the reason it cannot IS the finding.
 
@@ -4356,58 +3857,22 @@ deleting anything that is not a build cache.**
 
 ## What the duplicated group notice left behind (2026-09-16)
 
-The notice itself is fixed - `mkVisibleSystem` mints the id at the sender, both readers use it,
-[chat](frontend/modules/chat.md#a-visible-system-notice-needs-an-identity-the-sender-minted). TWO of
-the four things that came out of the same investigation are still open. The third was answered on
-2026-09-16 and its story is in `CHANGELOG.md`: the adder that looked absent from `dm_group_members`
-for five minutes was an arrival date being rewritten by its own owner's next invitation, not a
-missing membership. The evidence for all of them is one prod group,
-`687b2ebb-e2d6-49f2-855f-1df3dcb040ee`, 31 members, created 2026-09-16 14:17.
-
 ### P2 - nothing repairs a notice already duplicated on a device, and nothing should, blind
 
-**The rows are local, durable, and carry distinct random ids** - the fix makes new events converge
-and says nothing about old ones. Every member of every group created before this ships keeps
-whatever copies their device accumulated.
-
-**Do not write a collapse pass on a hunch.** Merging system rows that share a sender, a body and a
-nearby timestamp is a heuristic over user data, it is a destructive control with no allowlist of what
-it may touch, and *hiding the duplication is not removing it*. If it is done at all, the honest shape
-is the one the rest of this repo uses: a pass that runs once, is gated on knowing the state is really
-broken, names exactly which rows it may delete, and reports what it did.
-
-**What is owed first is the POPULATION.** Nobody knows how many rows this is: one screenshot, one
-group. A count of `isSystem` rows sharing `(conversation, content)` on one real device would settle
-whether this is four lines in one group or a permanent fixture of every long conversation - and that
-number decides whether the pass is worth its risk.
+Owed: the POPULATION first - on one real device, the count of `isSystem` rows sharing
+`(conversation, content)`. Only if that number is large is a repair worth its risk, and then only
+the repo's shape for one: a one-shot pass gated on proof that the state is broken, an allowlist of
+the rows it may delete, and a report of what it did. Never a heuristic collapse.
 
 ### P2 - 13 full archive walks and 37 reconciliation answers in ten minutes, for one group
 
-**Measured, not estimated**, from `infrastructure-chat-delivery-service-1` over 14:17-14:49:
-
-- **13 `[HISTORY] after=start`** - a walk of the WHOLE stream from its first entry - covering the
-  announcement at 14:20:37, two of them in the same second (14:23:32) and two more at 14:38:18.
-- **two cursor resumes from BEFORE it** (14:27:33 `after=1789568349700-0`, 14:40:12
-  `after=1789568451147-0`), which re-read it as well.
-- **37 `[HISTORY_REQ] FORWARDED`** over SEVEN requesting devices, distributed 8 / 7 / 6 / 5 / 5 / 4
-  / 1 - so no single device accounts for it and the top three are within two of each other. Plus 14
-  `NO_PEER_ONLINE`. (The devices are not named here, and must not be: this is a PUBLIC repository
-  and the distribution is the whole of what the measurement needs.)
-
-These were the multipliers of the duplicated notice; with the id fixed they multiply nothing visible
-any more, which is exactly why they need a number before they get a name. **A group being built -
-four add commits in five minutes, 31 members arriving in batches - may legitimately reconcile this
-hard.** Establish the rate against the population (how many walks per group per hour across the
-estate, and what fraction are `after=start` rather than a cursor resume) before calling this a
-defect.
-
-**THE FIELD THAT MAKES THAT MEASUREMENT POSSIBLE IS SHIPPED (2026-09-16), AND NOTHING HAS BEEN
-MEASURED WITH IT YET.** `[HISTORY]` and `[HISTORY_BATCH]` now open with `user=... device=...`: the
-user is what nginx put on the request, the device is the client's own `X-Canari-Device`, sent from
-`MlsDeliveryApi.auth()` on every `/api/mls/*` request. The numbers above predate it and remain
-unattributed - **re-measure on a build that carries it before naming any of this a defect**, and
-answer with the same `GROUP BY` the rest of this section asks for: walks per group per hour across
-the estate, and the `after=start` fraction, now also per DEVICE rather than per account.
+Owed (production logs): with `[HISTORY]` / `[HISTORY_BATCH]` now carrying `user=... device=...`,
+measure walks per group per hour across the estate and the `after=start` fraction per DEVICE.
+Only against that population is one group being built (31 members in batches) a defect or not.
+The 2026-09-16 measurement it replaces (one prod group, 31 members, 14:17-14:49): 13 `[HISTORY]
+after=start` walks (two in the same second), two cursor resumes from before the announcement, 37
+`[HISTORY_REQ] FORWARDED` over seven devices (8/7/6/5/5/4/1) and 14 `NO_PEER_ONLINE` - unattributed,
+since it predates the `user=`/`device=` fields.
 
 ## Post-campaign projects - decided, not scheduled
 
@@ -4574,31 +4039,12 @@ estate work is done, cancelling a superseded pre-release's store arms, or simply
 hand - the thing to keep is that the serialisation is correct and only its GRANULARITY is wrong: the
 estate and the stores do not need the same lock.
 
-## THE FIRST iOS FEEDBACK - TWO REPORTS, ONE STILL OWED A READING
+## The first iOS feedback (2026-09-20) - one reading and one measurement
 
-**2026-09-20, from a user's iPhone**, relayed by the user. The first iOS feedback this project has
-ever had, and the ONLY two reports it carries, so neither may be widened into a class. The second
-(Apple emoji instead of the bundled font) was superseded: the fonts were deleted for Noto pictures
-in #1104, first carried by `v0.18.26`
-([emoji](frontend/emoji.md#pictures-replace-the-font---decided-2026-09-25-in-four-pull-requests));
-its iPhone rows are in the emoji campaign rows above.
-
-### 1. The scroll - ONE READING ON THAT iPHONE IS OWED, and nothing here can take it
-
-*"Ca lag assez fort quand je scrolle"*, *"Canari se bave un peu dessus"*, *"le tactile bug un peu
-aussi"*, *"dans associations tout etc..."*, plus an 18.5 s recording of `/posts` showing unpainted
-bands. Cause, mechanism, the frames and what was REFUTED on the Mi 9T are in
-[design-reference section 28](frontend/design-reference.md#28-every-scroll-in-the-app-ran-on-the-main-thread-for-a-gesture-ten-prefixes-cannot-perform),
-the only copy.
-
-**What is owed: the same scroll, on the same iPhone, on a build carrying the fix.** Nothing on this
-workstation can produce that reading - the Mi 9T settles the Chromium half and Chromium is not the
-engine that reported it. Until then the fix is reasoned, tested and unmeasured **on the platform it
-was written for**, which is precisely the standing iOS hazard this repository records. A green
-`bun run test` is not a scroll.
-
-**Two things it did NOT close, both P3 and both measurable here**: the feed is not virtualised, so
-the composited layer grows with every page of infinite scroll; and `loading="lazy"` is still absent
-from the three avatar components, deliberately - they render behind an `imageLoaded` flag a cached
-blob sets eagerly, so a lazy avatar entering the viewport mid-fling would show an empty disc where
-initials are today. That is a memory question, and it is owed a measurement rather than a guess.
+- **One reading on the reporting iPhone**: the `/posts` and associations scroll, on a build carrying
+  the fix ([design-reference section 28](frontend/design-reference.md#28-every-scroll-in-the-app-ran-on-the-main-thread-for-a-gesture-ten-prefixes-cannot-perform));
+  the Mi 9T settles only Chromium, and WebKit is the engine that reported it.
+- **P3 - one memory measurement on a long feed**: the feed is not virtualised (the composited layer
+  grows with every page), and the avatars carry no `loading="lazy"` on purpose (a cached blob sets
+  `imageLoaded` eagerly; a lazy one would show an empty disc mid-fling). Measure before changing
+  either.

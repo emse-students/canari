@@ -1160,7 +1160,13 @@
                 )
             : (msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
           onEdit={isSelectedChannel
-            ? undefined
+            ? (msgId, text) =>
+                void channels.editChannelMessage(
+                  convs.selectedContact ?? '',
+                  msgId,
+                  text,
+                  channelsCtx()
+                )
             : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
           onTogglePin={handleTogglePinMessage}
           onCancelReply={messaging.cancelReply}

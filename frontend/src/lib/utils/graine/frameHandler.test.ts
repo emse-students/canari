@@ -138,7 +138,7 @@ function frame(overrides: Record<string, unknown> = {}) {
 function wire(storage: IStorage) {
   setGraineRuntime({
     storage,
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     userId: 'alice',
     mlsService: graineMls(),
   });
@@ -501,7 +501,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     setGraineRuntime({
       storage,
-      deviceKeyB64: 'device-key',
+      deviceKey: () => 'device-key',
       userId: 'alice',
       mlsService: graineMls({ sendMessage }),
     });
@@ -819,7 +819,7 @@ describe('a history request from a joiner (WP-34)', () => {
         saveGraineSession: async () => undefined,
         getGraineSessionsForWorkspace: async () => sessions,
       } as unknown as IStorage,
-      deviceKeyB64: 'device-key',
+      deviceKey: () => 'device-key',
       userId: 'alice',
       mlsService: graineMls({ sendMessage }),
     });

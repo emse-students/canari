@@ -211,7 +211,7 @@ export interface SendChannelMessageDto {
    * shipped client still sends it.
    */
   messageId?: string;
-  /** When present, this message is a poll: it is auto-pinned and accepts votes. */
+  /** When present, this message is a poll: it is auto-pinned when its author may pin, and accepts votes. */
   poll?: ChannelPollInputDto;
   /**
    * Cleartext list of mentioned user ids, attached by the sender so the server can route

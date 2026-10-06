@@ -13,6 +13,7 @@
     Flag,
   } from '@lucide/svelte';
   import { tick, onMount } from 'svelte';
+  import { getToken } from '$lib/stores/auth';
   import GifPickerModal from '$lib/components/chat/GifPickerModal.svelte';
   import type { PostComment, PostMediaRef } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
@@ -121,7 +122,6 @@
    * animation. Shared by paste, the in-app GIF picker, and keyboard-committed GIFs.
    */
   async function stageMediaFile(file: File) {
-    if (!authToken) return;
     uploadingMedia = true;
     try {
       let uploadFile = file;
@@ -132,7 +132,13 @@
         uploadFile = compressed.file;
         dims = { width: compressed.width, height: compressed.height };
       }
-      const ref = await mediaService.encryptAndUpload(uploadFile, authToken, dims, 'archive');
+      // Read at upload time: the `authToken` prop is a display copy and expires after 15 min.
+      const ref = await mediaService.encryptAndUpload(
+        uploadFile,
+        await getToken(),
+        dims,
+        'archive'
+      );
       const { type: _type, ...mediaFields } = ref;
       clearPendingMedia();
       pendingMedia = mediaFields as PostMediaRef;

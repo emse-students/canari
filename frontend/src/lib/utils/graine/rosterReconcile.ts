@@ -88,7 +88,7 @@ export async function reconcileDistributionGroupRoster(
   log: (message: string) => void = () => {}
 ): Promise<string[]> {
   if (!isGraineReady()) return [];
-  const { mlsService, userId, deviceKeyB64 } = requireGraineRuntime(
+  const { mlsService, userId, deviceKey } = requireGraineRuntime(
     'reconcileDistributionGroupRoster'
   );
 
@@ -156,7 +156,7 @@ export async function reconcileDistributionGroupRoster(
 
   // Persisted here for the same reason the join is: an epoch that only ever existed in memory is
   // an epoch the next load walks back into, and the removed leaves would come back with it.
-  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
+  await persistMlsStateAfterMutation(mlsService, userId, deviceKey(), log);
 
   log(
     `[GRAINE] ${scopeLabel(scope)} distribution group is now at epoch ${mlsService.getEpoch(groupId)} - the next send mints a session they cannot open`

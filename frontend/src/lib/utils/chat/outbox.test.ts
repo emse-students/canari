@@ -125,7 +125,7 @@ function convoWith(id: string, messageIds: string[]): Conversation {
 function makeDeps(over: Partial<OutboxDeps> & { mlsService: any; storage: any }): OutboxDeps {
   return {
     userId: 'u',
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     conversations: new SvelteMap<string, Conversation>(),
     log: () => {},
     requestReAdd: vi.fn().mockResolvedValue(undefined),
@@ -1482,5 +1482,29 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
       'lib/composables/session/promoteOfflineSession.ts': 1,
       'lib/composables/session/sessionAuth.ts': 2,
     });
+  });
+});
+
+describe('outbox flusher - the device key is read at each access', () => {
+  beforeEach(() => {
+    connectivity.reset();
+  });
+
+  // The controller lives for the whole login, and a PIN change moves the session's key while it
+  // does. A key captured at creation kept reading the queue under the abandoned one.
+  it('reads the queue under the key as it is NOW, not as it was at creation', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    let key = 'old-key';
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, isGroupHealthy: () => true, deviceKey: () => key })
+    );
+    key = 'new-key';
+
+    await outbox.flush();
+
+    const keys = storage.getOutboxEntries.mock.calls.map((c: unknown[]) => c[0]);
+    expect(keys.length).toBeGreaterThan(0);
+    expect(keys.every((k: unknown) => k === 'new-key')).toBe(true);
   });
 });

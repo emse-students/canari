@@ -460,7 +460,8 @@ export async function replayConversationHistory(params: {
   id: string;
   contactName: string;
   userId: string;
-  deviceKeyB64: string;
+  /** The key the store is sealed with NOW, read at each store access: a replay can span a PIN change. */
+  deviceKey: () => string;
   /** Write decrypted messages directly to local DB (DB-first architecture). */
   storage: IStorage | null;
   getConversation: (contactName: string) => Conversation | undefined;
@@ -477,7 +478,7 @@ export async function replayConversationHistory(params: {
     id,
     contactName,
     userId,
-    deviceKeyB64,
+    deviceKey,
     storage,
     getConversation,
     setConversation,
@@ -531,7 +532,7 @@ export async function replayConversationHistory(params: {
     const cursorBeforeDbCheck = afterStreamId;
     if (afterStreamId && storage) {
       try {
-        const storedMsgs = await storage.getMessages(id, deviceKeyB64);
+        const storedMsgs = await storage.getMessages(id, deviceKey());
         if (storedMsgs.length === 0) {
           try {
             localStorage.removeItem(lastStreamIdKey(userId, id));
@@ -1122,7 +1123,7 @@ export async function replayConversationHistory(params: {
       // overwrite a backup-imported deleted row with the original non-deleted content.
       const existingById = new Map<string, StoredMessage>();
       try {
-        for (const m of await storage.getMessages(id, deviceKeyB64)) {
+        for (const m of await storage.getMessages(id, deviceKey())) {
           existingById.set(m.id, m);
         }
       } catch (err) {
@@ -1164,7 +1165,7 @@ export async function replayConversationHistory(params: {
           ...(pm.serverTimestamp != null ? { serverTimestamp: pm.serverTimestamp } : {}),
         };
       });
-      await storage.saveMessages(toStore, deviceKeyB64);
+      await storage.saveMessages(toStore, deviceKey());
     }
 
     // The conversation-level state the page carried - read watermarks and the shared floor - applied
@@ -1195,7 +1196,7 @@ export async function replayConversationHistory(params: {
       storage && (reactionUpdates.size > 0 || deletedMessages.size > 0 || editedMessages.size > 0);
     if (needsPostUpdate) {
       try {
-        const allMessages = await storage!.getMessages(id, deviceKeyB64);
+        const allMessages = await storage!.getMessages(id, deviceKey());
         // Collect all mutations keyed by message ID, merging updates for the same message.
         const updatesById = new Map<string, StoredMessage>();
 
@@ -1232,7 +1233,7 @@ export async function replayConversationHistory(params: {
 
         const toUpdate = [...updatesById.values()];
         if (toUpdate.length > 0) {
-          await storage!.saveMessages(toUpdate, deviceKeyB64);
+          await storage!.saveMessages(toUpdate, deviceKey());
         }
       } catch (err) {
         console.warn(

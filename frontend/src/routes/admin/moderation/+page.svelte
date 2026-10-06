@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -82,7 +83,7 @@
     // holding MODERATE. Awaited rather than read off the store - this decides a redirect, and a
     // background probe would bounce a moderator who arrived here first.
     if (!isGlobalAdmin() && !(await ensureContentModerator())) {
-      void goto('/');
+      void goto(resolve('/'));
       return;
     }
     void loadReports();

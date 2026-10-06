@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import ProfileChips from '$lib/components/profile/ProfileChips.svelte';
   import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -81,7 +82,7 @@
       // it. `fetchMyProfile` has thrown `UserProfileFetchError(res.status)` all along; reading the
       // status is the same decision made from what is known rather than from prose.
       if (err instanceof UserProfileFetchError && err.status === 401) {
-        await goto('/login?returnTo=/profile', { replaceState: true });
+        await goto(resolve('/login?returnTo=/profile'), { replaceState: true });
         return;
       }
       error = m.profile_load_error_fallback();
@@ -237,7 +238,7 @@
           <ProfileChips {profile} />
         </div>
         <a
-          href="/settings"
+          href={resolve('/settings')}
           title={m.settings_page_title()}
           class="text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 sm:self-start dark:hover:bg-white/10"
         >

@@ -29,6 +29,7 @@ import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
+import { applyChannelEdits, type DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
   fetchUniqueGroupMembers,
@@ -432,7 +433,7 @@ export function useConversations() {
             id,
             contactName,
             userId: ctx.userId,
-            deviceKeyB64: ctx.deviceKeyB64,
+            deviceKey: () => ctx.deviceKeyB64,
             storage: ctx.storage,
             getConversation: (name) => conversations.get(name),
             setConversation: (name, next) => conversations.set(name, next),
@@ -503,6 +504,7 @@ export function useConversations() {
         }),
       ]);
       const loaded: ChatMessage[] = [];
+      const edits: DecodedChannelEdit[] = [];
       const meLower = ctx.userId.toLowerCase();
 
       const tally = new UnreadableRowTally(rawId);
@@ -517,6 +519,12 @@ export function useConversations() {
           if (decoded.kind === 'reaction') {
             const r = decoded.reaction;
             applyChannelReactionFrame(r.targetMessageId, r.senderId, r.emoji, r.at, r.removed);
+            continue;
+          }
+          // An edit is a row of its own as well: collected and applied once the page is built, so
+          // it lands whatever order the rows came in.
+          if (decoded.kind === 'edit') {
+            edits.push(decoded.edit);
             continue;
           }
 
@@ -536,6 +544,7 @@ export function useConversations() {
 
       tally.report();
       loaded.sort(compareMessageOrder);
+      const loadedEdited = applyChannelEdits(loaded, edits, ctx.log);
 
       const current = conversations.get(channelConversationId);
       if (current) {
@@ -543,7 +552,7 @@ export function useConversations() {
         // live message posted meanwhile used to be discarded when this resolved.
         conversations.set(channelConversationId, {
           ...current,
-          messages: mergeMessagePage(current.messages, loaded),
+          messages: mergeMessagePage(current.messages, loadedEdited),
           readWatermarks:
             mergeReadWatermarks(current.readWatermarks, parseReadWatermarks(rawMarks)) ??
             current.readWatermarks,
@@ -587,8 +596,8 @@ export function useConversations() {
       cap: 2000,
     });
 
-    const decodedAll: ChatMessage[] = [];
-    const matches: { id: string; ts: number }[] = [];
+    const decodedPlain: ChatMessage[] = [];
+    const searchEdits: DecodedChannelEdit[] = [];
     const tally = new UnreadableRowTally(rawId);
     for (const row of rows) {
       const decoded = await decodeChannelMessageRow(rawId, row, meLower, tally);
@@ -600,9 +609,13 @@ export function useConversations() {
         applyChannelReactionFrame(r.targetMessageId, r.senderId, r.emoji, r.at, r.removed);
         continue;
       }
+      if (decoded.kind === 'edit') {
+        searchEdits.push(decoded.edit);
+        continue;
+      }
       const message = decoded.message;
       if (row.poll) setPollMeta(String(row.id), row.poll);
-      decodedAll.push({
+      decodedPlain.push({
         id: message.id,
         senderId: message.senderId,
         content: message.content,
@@ -610,6 +623,12 @@ export function useConversations() {
         isOwn: message.isOwn,
         isSystem: message.isSystem,
       });
+    }
+    // Edits first, THEN the match: a search must find the words a message holds now, not the ones
+    // it was first sent with.
+    const decodedAll = applyChannelEdits(decodedPlain, searchEdits, ctx.log);
+    const matches: { id: string; ts: number }[] = [];
+    for (const message of decodedAll) {
       let text = message.content;
       try {
         text = getPreviewText(parseEnvelope(message.content));
@@ -1122,7 +1141,7 @@ export function useConversations() {
             mlsService,
             storage: ctx.storage,
             userId: ctx.userId,
-            deviceKeyB64: ctx.deviceKeyB64,
+            deviceKey: () => ctx.deviceKeyB64,
             conversations,
             getSelectedContact: () => selectedContact,
             setSelectedContact: (id: string | null) => {

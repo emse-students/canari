@@ -14,7 +14,8 @@ import { m } from '$lib/paraglide/messages';
 /** Dependencies required to insert or update call system messages in a conversation. */
 export interface CallSystemMessageContext {
   userId: string;
-  deviceKeyB64: string;
+  /** The session's CURRENT device key, read at the write - this context outlives a PIN change. */
+  deviceKey: () => string;
   storage: IStorage | null;
   conversations: SvelteMap<string, Conversation>;
   addMessageToChat: (
@@ -119,7 +120,7 @@ export async function recordCallEnded(
     // Rewriting the call-ended text is a mutation of an existing row: only the body changes, and
     // a full-row write here erased every other field the row carried.
     await ctx.storage
-      .updateMessage(messageId, { content: nextContent }, ctx.deviceKeyB64)
+      .updateMessage(messageId, { content: nextContent }, ctx.deviceKey())
       .catch(() => {});
   }
 }

@@ -120,7 +120,7 @@ export async function admitNewcomerToDistributionGroup(
     );
     return { kind: 'no-runtime' };
   }
-  const { mlsService, userId, deviceKeyB64 } = requireGraineRuntime(
+  const { mlsService, userId, deviceKey } = requireGraineRuntime(
     'admitNewcomerToDistributionGroup'
   );
 
@@ -237,7 +237,7 @@ export async function admitNewcomerToDistributionGroup(
 
     // THE EPOCH MOVED, SO THE DISK MOVES WITH IT, before anything else can fail: an Add merged only
     // in memory is one the next load walks back out of, leaving Welcomes for a tree nobody holds.
-    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKey(), log);
 
     const welcomed: string[] = [];
     if (!result.welcome) {

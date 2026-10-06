@@ -53,6 +53,12 @@ every CDP `Input.*` frame as a WDA touch or key (`webkit-input.mjs`) - the WebKi
 `Input` domain. Which rows run on it, and what each still needs, is
 [cross-client-ios](../../docs/wiki/cross-client-ios.md).
 
+**Two I1 traps (2026-10-02).** `pymobiledevice3` must be reachable - set `PYMOBILEDEVICE3` to the
+executable; `attached()` throws without it rather than reporting no phone. And starting WDA brings
+its runner to the foreground, so Canari goes to the background and relocks on the PIN screen: every
+WDA session starts there, and a tap on "Deverrouiller" can land on a logout control when the
+keyboard shifts the layout - screenshot before each tap.
+
 One driver (`cdp.mjs`) speaks to all three - the WebView is a Chrome target like any other. `a1.py`
 is only for surfaces the WebView cannot reach (the notification shade, the system PIN, the launcher).
 

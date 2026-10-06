@@ -1468,6 +1468,8 @@ beside the scale; below it nothing is asserted, which is what lets the join card
 without an exemption list. It collapses whitespace across the whole file before matching, because a
 class attribute that spans lines is how the 2026-09-13 overlay sweep left two components unread.
 
+**The management page (`/associations/[slug]/edit`, 2026-10-05) was the sixth column nobody counted**: it took `PageContainer`'s default `reading` (680px) while the association's own page above sat at `tool`/`grid`, so going from one to the other moved the whole column (user, with screenshots). It is now `width="tool"` (1024px), the same named shape the public page's `about`/`members` tabs use - one declared value, no raw `max-w-*`. The Membres/Paiements/Achats tabs were the reason to look twice and they only gain room.
+
 Every value here was read off the running app, not off the Tailwind docs: `max-w-4xl` 896,
 `max-w-5xl` 1024, `max-w-[42.5rem]` 680, `max-w-2xl` 672, `max-w-md` 448.
 

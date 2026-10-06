@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath, safeInternalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -64,7 +66,7 @@
   /** Who may answer at all; null means anybody. */
   let submitCondition = $state<AudienceCondition | null>(null);
 
-  const returnTo = $derived(page.url.searchParams.get('returnTo') || '/forms');
+  const returnTo = $derived(safeInternalPath(page.url.searchParams.get('returnTo'), '/forms'));
   const fromPostComposer = $derived(
     returnTo === '/posts' && page.url.searchParams.get('attach') === 'form'
   );
@@ -214,9 +216,9 @@
       const created = await createForm(payload);
       if (fromPostComposer) {
         sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
-        goto('/posts');
+        goto(resolve('/posts'));
       } else {
-        goto(returnTo);
+        goto(resolve(internalPath(returnTo)));
       }
     } catch (e: any) {
       error = e.message;

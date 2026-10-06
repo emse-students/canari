@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
 
@@ -11,6 +12,6 @@
    * the honest answer to that is the home feed.
    */
   onMount(() => {
-    void goto('/posts', { replaceState: true });
+    void goto(resolve('/posts'), { replaceState: true });
   });
 </script>

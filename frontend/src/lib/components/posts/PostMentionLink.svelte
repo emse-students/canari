@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
   import AppLink from '$lib/components/shared/AppLink.svelte';
   import {
@@ -47,7 +48,7 @@
 
   function handleMentionClick(e: MouseEvent) {
     e.preventDefault();
-    if (mentionUserId) void goto(`/profile/${mentionUserId}`);
+    if (mentionUserId) void goto(resolve(`/profile/${mentionUserId}`));
   }
 </script>
 
@@ -75,7 +76,7 @@
     {href}
     {title}
     target="_blank"
-    rel="noopener noreferrer"
+    rel="noopener noreferrer external"
     class="text-amber-700 underline underline-offset-2 transition-colors hover:text-amber-500 dark:text-amber-400"
   >
     {@render children?.()}
