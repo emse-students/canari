@@ -345,6 +345,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/release-notes-body.test.sh
 	@bash .github/scripts/tests/scheduled.test.sh
 	@bash .github/scripts/tests/audit-dependencies.test.sh
+	@bash .github/scripts/tests/stream-json-premise.test.sh
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
