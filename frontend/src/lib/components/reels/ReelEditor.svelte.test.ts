@@ -15,6 +15,12 @@ vi.mock('$lib/reels/reelEditor', async (importOriginal) => ({
   renderEditedReelMedia: render,
 }));
 
+// The full picker fetches its dataset over the network; this suite only asks that it opens.
+vi.mock('$lib/utils/emojiCatalog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/emojiCatalog')>()),
+  loadEmojiCatalog: () => Promise.resolve([]),
+}));
+
 const mounted: Record<string, unknown>[] = [];
 
 const FRAME = { left: 0, top: 0, right: 200, bottom: 400, width: 200, height: 400 };
@@ -36,6 +42,7 @@ beforeEach(() => {
     return { ...box, x: box.left, y: box.top, toJSON: () => box } as DOMRect;
   });
   HTMLElement.prototype.setPointerCapture = vi.fn();
+  localStorage.clear();
   render.mockReset();
   render.mockResolvedValue({ blob: new Blob(['edited']), width: 1, height: 1 });
 });
@@ -308,6 +315,20 @@ it('clears everything in one undoable step, and a tap-drawn dot adds nothing', (
   tool(target, 'undo').click();
   flushSync();
   expect(target.querySelectorAll('[data-overlay-id]')).toHaveLength(2);
+});
+
+it('puts the emoji just used first on the shelf, and opens the full picker on demand', () => {
+  const target = mountEditor();
+  addEmoji(target, 5);
+  const used = QUICK_EMOJI[5];
+  tool(target, 'emoji').click();
+  flushSync();
+  const first = target.querySelector<HTMLButtonElement>('[role="group"] button')!;
+  expect(first.getAttribute('aria-label')).toContain(used);
+  expect(target.querySelector('[data-reel-emoji-grid]')).toBeNull();
+  target.querySelector<HTMLButtonElement>('[data-reel-emoji-all]')!.click();
+  flushSync();
+  expect(target.querySelector('[data-reel-emoji-grid]')).not.toBeNull();
 });
 
 it('hands the overlays to the export, and does not export when nothing was added', async () => {

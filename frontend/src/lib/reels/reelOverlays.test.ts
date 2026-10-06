@@ -4,6 +4,9 @@ import {
   broughtToFront,
   createEmojiOverlay,
   createTextOverlay,
+  EMOJI_SHELF_SIZE,
+  QUICK_EMOJI,
+  emojiShelf,
   emojiSize,
   fontStack,
   isLightColor,
@@ -80,6 +83,14 @@ describe('reel overlays', () => {
       pill: null,
     });
     expect(isLightColor('not a colour')).toBe(false);
+  });
+
+  it('builds the emoji shelf from the recents, completed by the starters, without repeats', () => {
+    expect(emojiShelf([])).toEqual([...QUICK_EMOJI]);
+    const shelf = emojiShelf(['\u{1F680}', QUICK_EMOJI[4]]);
+    expect(shelf.slice(0, 2)).toEqual(['\u{1F680}', QUICK_EMOJI[4]]);
+    expect(shelf).toHaveLength(EMOJI_SHELF_SIZE);
+    expect(new Set(shelf).size).toBe(shelf.length);
   });
 
   it('sizes the pill from the font size and picks the font stack', () => {

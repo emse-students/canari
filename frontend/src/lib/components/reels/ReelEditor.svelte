@@ -43,8 +43,8 @@
   } from '$lib/reels/reelStrokes';
   import {
     EMOJI_BASE_SIZE,
-    QUICK_EMOJI,
     TEXT_BASE_SIZE,
+    emojiShelf,
     broughtToFront,
     createEmojiOverlay,
     createTextOverlay,
@@ -62,6 +62,8 @@
     type ReelTextBackground,
     type ReelTextFont,
   } from '$lib/reels/reelOverlays';
+  import EmojiGrid from '$lib/components/messages/EmojiGrid.svelte';
+  import { getRecentEmojis, persistRecentEmoji } from '$lib/components/messages/emojiPickerShared';
   import { emojiSvgSrc } from '$lib/utils/emojiSvg';
   import { m } from '$lib/paraglide/messages';
 
@@ -92,6 +94,11 @@
   let livePath = $state<FramePoint[]>([]);
   let frameSize = $state({ width: 0, height: 0 });
   let trayOpen = $state(false);
+  /** The full picker (categories, search) is open under the quick shelf. */
+  let gridOpen = $state(false);
+  /** What the member used lately, shared with the chat's pickers; read when the tray opens. */
+  let recents = $state<string[]>([]);
+  const shelf = $derived(emojiShelf(recents));
   /** The text field is open: for a new text (`id` null) or to reword the one with that id. */
   let composing = $state<{ id: string | null } | null>(null);
   let draft = $state('');
@@ -314,7 +321,9 @@
     remember();
     overlays = [...overlays, created];
     selectedId = created.id;
+    recents = persistRecentEmoji(emoji);
     trayOpen = false;
+    gridOpen = false;
     mode = 'arrange';
   }
 
@@ -558,7 +567,7 @@
       </form>
     {:else if trayOpen}
       <div class="flex gap-1 overflow-x-auto" role="group" aria-label={m.reels_editor_tool_emoji()}>
-        {#each QUICK_EMOJI as emoji (emoji)}
+        {#each shelf as emoji (emoji)}
           <button
             type="button"
             class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
@@ -568,7 +577,27 @@
             <img src={emojiSvgSrc(emoji) ?? ''} alt="" draggable="false" class="h-7 w-7" />
           </button>
         {/each}
+        <button
+          type="button"
+          class="inline-flex h-11 shrink-0 items-center justify-center rounded-lg px-3 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {gridOpen
+            ? 'bg-white/25'
+            : 'hover:bg-white/15'}"
+          aria-pressed={gridOpen}
+          onclick={() => (gridOpen = !gridOpen)}
+          data-reel-emoji-all
+        >
+          {m.reels_editor_emoji_all()}
+        </button>
       </div>
+      {#if gridOpen}
+        <!-- The chat's own picker body (categories, search, skin tone), on a surface of its own. -->
+        <div
+          class="bg-cn-surface text-cn-ink flex h-64 min-h-0 flex-col overflow-hidden rounded-2xl"
+          data-reel-emoji-grid
+        >
+          <EmojiGrid onPick={(emoji) => addEmoji(emoji)} />
+        </div>
+      {/if}
     {/if}
 
     {#if textToolsVisible}
@@ -665,6 +694,8 @@
         title={m.reels_editor_tool_emoji()}
         onclick={() => {
           trayOpen = !trayOpen;
+          gridOpen = false;
+          if (trayOpen) recents = getRecentEmojis();
           composing = null;
           mode = 'arrange';
         }}

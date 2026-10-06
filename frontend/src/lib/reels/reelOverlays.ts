@@ -199,7 +199,20 @@ export function emojiSize(width: number, height: number, scale = 1): number {
   return EMOJI_BASE_SIZE * Math.min(width, height) * scale;
 }
 
-/** The emoji offered as a first slice: the quick row of the tray (a full picker is a later package). */
+/** How many emoji the tray's quick shelf shows. */
+export const EMOJI_SHELF_SIZE = 12;
+
+/**
+ * The tray's quick shelf: what the member used lately (newest first, the same history the chat's
+ * pickers share), completed with {@link QUICK_EMOJI} so it is never empty and never repeats one.
+ */
+export function emojiShelf(recent: readonly string[]): string[] {
+  const shelf = [...recent];
+  for (const emoji of QUICK_EMOJI) if (!shelf.includes(emoji)) shelf.push(emoji);
+  return shelf.slice(0, EMOJI_SHELF_SIZE);
+}
+
+/** The starter emoji of the tray's shelf, before the member has a history. */
 export const QUICK_EMOJI = [
   '\u{1F600}',
   '\u{1F602}',
