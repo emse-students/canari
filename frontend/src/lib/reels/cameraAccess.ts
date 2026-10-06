@@ -97,7 +97,10 @@ export async function openReelCamera(facing: CameraFacing): Promise<MediaStream>
     );
     const stream = await devices.getUserMedia({
       video: {
-        facingMode: facing,
+        // EXACT, never a bare value: a bare `facingMode` is only an IDEAL, which WKWebView answered with
+        // the BACK lens on an iPhone (alpha.4 reading, 2026-10-06). An unavailable lens is then an
+        // OverconstrainedError, classified below and logged - never a silent switch to the other one.
+        facingMode: { exact: facing },
         width: { ideal: wanted.width },
         height: { ideal: wanted.height },
         frameRate: { ideal: wanted.frameRate },
@@ -105,6 +108,11 @@ export async function openReelCamera(facing: CameraFacing): Promise<MediaStream>
       audio: true,
     });
     const video = stream.getVideoTracks()[0];
+    const reported = video?.getSettings?.().facingMode;
+    if (reported && reported !== facing) {
+      // The engine granted a lens other than the exact one asked for: a defect to read, not to absorb.
+      console.error(`[camera] asked ${facing} exactly, the track reports ${reported}`);
+    }
     console.debug(`[camera] opened ${facing}: ${video?.label ?? 'no video track'}`);
     return stream;
   } catch (err) {

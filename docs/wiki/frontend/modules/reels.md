@@ -33,6 +33,11 @@ What that decided:
   the hardware), `unavailable` (`NotFoundError`, `OverconstrainedError`, or no `getUserMedia` at all).
   An unknown name is logged with the name and read as `unavailable`. Each has its own sentence and a
   retry on the camera screen.
+- **The lens is asked EXACTLY** (`facingMode: { exact }`, 2026-10-06). A bare value is an IDEAL, and
+  WKWebView answered the BACK lens to `user` on an iPhone (alpha.4 reading) against the decision that the
+  camera opens on the FRONT one (`CameraSession.facing` starts at `user`, the flip is per take, nothing
+  persisted). A lens the phone lacks is an `OverconstrainedError` -> `unavailable`, logged; a track that
+  reports another lens than asked is `console.error`ed. Nothing ever retries on the other lens.
 - **The torch is a capability of the LENS**, read from the open track - so its button exists on the
   back lens and not on the Mi 9T's front one.
 - **Releasing a lens before opening the other** is what the session does anyway (a recorder cannot
