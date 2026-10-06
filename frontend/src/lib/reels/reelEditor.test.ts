@@ -78,6 +78,28 @@ describe('drawDecorations', () => {
     expect(names[names.length - 1]).toBe('restore');
   });
 
+  it('paints a pill text: the chosen colour fills the pill, the glyphs take the contrasting ink', () => {
+    const { calls, context } = recorder();
+    (context as unknown as Record<string, unknown>).measureText = () => ({ width: 100 });
+    const text = createTextOverlay('pill', '#ffcf33', { font: 'serif', background: 'pill' })!;
+    drawDecorations(context, { strokes: [], overlays: [text] }, 1000, 2000, 'Nunito', new Map());
+    // 0.07 of the short side (1000) = 70px: padding 0.5em each side, height (1.2 + 0.4)em.
+    expect(calls.find((c) => c[0] === 'set font')![1]).toBe(
+      '700 70px Georgia, "Times New Roman", serif'
+    );
+    expect(calls.find((c) => c[0] === 'roundRect')).toEqual([
+      'roundRect',
+      -85,
+      -56,
+      170,
+      112,
+      24.5,
+    ]);
+    const fills = calls.filter((c) => c[0] === 'set fillStyle').map((c) => c[1]);
+    expect(fills).toEqual(['#ffcf33', '#050505']);
+    expect(calls.some((c) => c[0] === 'set shadowBlur')).toBe(false);
+  });
+
   it('paints an emoji overlay from its loaded picture, centred on its origin', () => {
     const { calls, context } = recorder();
     const emoji = { ...createEmojiOverlay('\u{1F525}'), scale: 1.5 };

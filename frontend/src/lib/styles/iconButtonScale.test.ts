@@ -45,6 +45,10 @@ const cssPath = join(src, 'app.css');
  * button is added or removed - which is exactly when someone should be asked to justify it again.
  */
 const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
+  'lib/components/reels/ReelEditor.svelte': {
+    count: 1,
+    why: 'the pill-background toggle of the text style bar, sized to sit in one row with the 36px font chips beside it',
+  },
   'lib/components/chat/CallOverlay.svelte': {
     count: 15,
     why: 'the primary controls of a full-screen call, not a row of secondary actions; and CALLS_ENABLED is false, so nothing here can be looked at while it changes',

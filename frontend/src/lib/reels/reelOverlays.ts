@@ -22,8 +22,24 @@ interface OverlayBase extends Transform {
   id: string;
 }
 
-/** A line of text, in one colour. */
-export interface ReelTextOverlay extends OverlayBase {
+/** The three typefaces of the text style row: the app's own, a serif and a monospace. */
+export const TEXT_FONTS = ['sans', 'serif', 'mono'] as const;
+export type ReelTextFont = (typeof TEXT_FONTS)[number];
+
+/** The text sits on the picture as is, or on a pill filled with the chosen colour. */
+export type ReelTextBackground = 'none' | 'pill';
+
+/** What a new text starts with, and what the style row edits. */
+export interface ReelTextStyle {
+  font: ReelTextFont;
+  background: ReelTextBackground;
+}
+
+/** The style a text starts with: the app's face, no pill. */
+export const DEFAULT_TEXT_STYLE: ReelTextStyle = { font: 'sans', background: 'none' };
+
+/** A line of text, in one colour, one typeface, on the picture or on a pill. */
+export interface ReelTextOverlay extends OverlayBase, ReelTextStyle {
   kind: 'text';
   text: string;
   color: string;
@@ -50,10 +66,14 @@ export function newOverlayId(): string {
 const CENTRED: Transform = { x: 0.5, y: 0.5, scale: 1, rotation: 0 };
 
 /** A text overlay, or null for text that is empty once trimmed. */
-export function createTextOverlay(text: string, color: string): ReelTextOverlay | null {
+export function createTextOverlay(
+  text: string,
+  color: string,
+  style: ReelTextStyle = DEFAULT_TEXT_STYLE
+): ReelTextOverlay | null {
   const value = text.trim().slice(0, MAX_OVERLAY_TEXT_LENGTH);
   if (!value) return null;
-  return { id: newOverlayId(), kind: 'text', text: value, color, ...CENTRED };
+  return { id: newOverlayId(), kind: 'text', text: value, color, ...style, ...CENTRED };
 }
 
 /** An emoji overlay. */
@@ -82,18 +102,70 @@ export function broughtToFront(overlays: ReelOverlay[], id: string): ReelOverlay
   return [...withoutOverlay(overlays, id), picked];
 }
 
-/** A text overlay recoloured or reworded; any other overlay is returned as is. */
+/** A text overlay reworded, recoloured or restyled; any other overlay is returned as is. */
 export function withTextEdit(
   overlays: ReelOverlay[],
   id: string,
-  edit: { text?: string; color?: string }
+  edit: { text?: string; color?: string; font?: ReelTextFont; background?: ReelTextBackground }
 ): ReelOverlay[] {
   return overlays.map((overlay) => {
     if (overlay.id !== id || overlay.kind !== 'text') return overlay;
     const text =
       edit.text === undefined ? overlay.text : edit.text.trim().slice(0, MAX_OVERLAY_TEXT_LENGTH);
-    return { ...overlay, text: text || overlay.text, color: edit.color ?? overlay.color };
+    return {
+      ...overlay,
+      text: text || overlay.text,
+      color: edit.color ?? overlay.color,
+      font: edit.font ?? overlay.font,
+      background: edit.background ?? overlay.background,
+    };
   });
+}
+
+const FONT_STACKS: Record<Exclude<ReelTextFont, 'sans'>, string> = {
+  serif: 'Georgia, "Times New Roman", serif',
+  mono: 'ui-monospace, Menlo, Consolas, monospace',
+};
+
+/** The CSS font-family of a typeface; `sans` is the app's own, passed in (the export reads it off the DOM). */
+export function fontStack(font: ReelTextFont, appFamily: string): string {
+  return font === 'sans' ? appFamily : FONT_STACKS[font];
+}
+
+/** Whether a `#rrggbb` colour is light enough that dark text reads on it. */
+export function isLightColor(hex: string): boolean {
+  const value = /^#([0-9a-f]{6})$/i.exec(hex)?.[1];
+  if (!value) return false;
+  const [r, g, b] = [0, 2, 4].map((at) => parseInt(value.slice(at, at + 2), 16));
+  return 0.299 * r + 0.587 * g + 0.114 * b > 150;
+}
+
+/**
+ * The two paints of a text: with a pill the CHOSEN colour fills the pill and the glyphs take the
+ * contrasting ink (the Instagram behaviour), otherwise the colour is the glyphs on the bare picture.
+ */
+export function textPaint(overlay: Pick<ReelTextOverlay, 'color' | 'background'>): {
+  fill: string;
+  pill: string | null;
+} {
+  if (overlay.background !== 'pill') return { fill: overlay.color, pill: null };
+  return { fill: isLightColor(overlay.color) ? '#050505' : '#ffffff', pill: overlay.color };
+}
+
+/** Line height, as a share of the font size: the preview's `line-height` and the pill's height. */
+export const TEXT_LINE_HEIGHT = 1.2;
+/** The pill's padding and corner, in em (shares of the font size), read by CSS `em` and by the export. */
+export const PILL_PAD_X_EM = 0.5;
+export const PILL_PAD_Y_EM = 0.2;
+export const PILL_RADIUS_EM = 0.35;
+
+/** The pill's size in px around a text `textWidth` px wide at `fontSize` px. */
+export function pillSize(textWidth: number, fontSize: number) {
+  return {
+    width: textWidth + 2 * PILL_PAD_X_EM * fontSize,
+    height: (TEXT_LINE_HEIGHT + 2 * PILL_PAD_Y_EM) * fontSize,
+    radius: PILL_RADIUS_EM * fontSize,
+  };
 }
 
 /**

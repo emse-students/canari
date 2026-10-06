@@ -17,7 +17,16 @@
    * deselects; a tap on the already-selected text edits it; releasing over the trash deletes.
    */
   import { onDestroy } from 'svelte';
-  import { Check, ChevronLeft, Eraser, Pencil, Smile, Trash2, Type } from '@lucide/svelte';
+  import {
+    Check,
+    ChevronLeft,
+    Eraser,
+    Pencil,
+    RectangleHorizontal,
+    Smile,
+    Trash2,
+    Type,
+  } from '@lucide/svelte';
   import { TAP_SLOP_PX, TransformGesture, pointInRect } from '$lib/gestures/transformGesture';
   import type { ReelClip } from '$lib/reels/reelCapture';
   import { renderEditedReelMedia, type ReelPoint, type ReelStroke } from '$lib/reels/reelEditor';
@@ -28,10 +37,19 @@
     broughtToFront,
     createEmojiOverlay,
     createTextOverlay,
+    PILL_PAD_X_EM,
+    PILL_PAD_Y_EM,
+    PILL_RADIUS_EM,
+    TEXT_FONTS,
+    TEXT_LINE_HEIGHT,
+    fontStack,
+    textPaint,
     withTextEdit,
     withTransform,
     withoutOverlay,
     type ReelOverlay,
+    type ReelTextBackground,
+    type ReelTextFont,
   } from '$lib/reels/reelOverlays';
   import { emojiSvgSrc } from '$lib/utils/emojiSvg';
   import { m } from '$lib/paraglide/messages';
@@ -48,6 +66,9 @@
   let trash = $state<HTMLElement | null>(null);
   let draftInput = $state<HTMLInputElement | null>(null);
   let color = $state('#ffffff');
+  /** The text style in hand: what a new text starts with, and what the row edits on a selected one. */
+  let font = $state<ReelTextFont>('sans');
+  let background = $state<ReelTextBackground>('none');
   let busy = $state(false);
   let error = $state(false);
   let strokes = $state<ReelStroke[]>([]);
@@ -69,9 +90,13 @@
   const source = $derived(URL.createObjectURL(clip.blob));
   const isImage = $derived(clip.blob.type.startsWith('image/'));
   const selected = $derived(overlays.find((overlay) => overlay.id === selectedId) ?? null);
-  const colorToolsVisible = $derived(
-    mode === 'draw' || composing !== null || selected?.kind === 'text'
-  );
+  const textToolsVisible = $derived(composing !== null || selected?.kind === 'text');
+  const colorToolsVisible = $derived(mode === 'draw' || textToolsVisible);
+  const fontLabels: Record<ReelTextFont, () => string> = {
+    sans: () => m.reels_editor_font_sans(),
+    serif: () => m.reels_editor_font_serif(),
+    mono: () => m.reels_editor_font_mono(),
+  };
 
   onDestroy(() => URL.revokeObjectURL(source));
 
@@ -115,7 +140,11 @@
       overlays = broughtToFront(overlays, hit);
       const handled = overlays.find((overlay) => overlay.id === hit)!;
       // The swatches show (and a reword keeps) the colour of the text in hand.
-      if (handled.kind === 'text') color = handled.color;
+      if (handled.kind === 'text') {
+        color = handled.color;
+        font = handled.font;
+        background = handled.background;
+      }
       gesture.begin(handled);
     }
     // A second finger joins the running gesture wherever it lands: that is the pinch.
@@ -150,6 +179,8 @@
       const tapped = overlays.find((overlay) => overlay.id === id);
       if (tapped?.kind === 'text') {
         draft = tapped.text;
+        font = tapped.font;
+        background = tapped.background;
         composing = { id };
       }
     }
@@ -208,9 +239,9 @@
   function commitText() {
     if (!composing) return;
     if (composing.id) {
-      overlays = withTextEdit(overlays, composing.id, { text: draft, color });
+      overlays = withTextEdit(overlays, composing.id, { text: draft, color, font, background });
     } else {
-      const created = createTextOverlay(draft, color);
+      const created = createTextOverlay(draft, color, { font, background });
       if (created) {
         overlays = [...overlays, created];
         selectedId = created.id;
@@ -232,6 +263,15 @@
     color = swatch;
     if (selected?.kind === 'text')
       overlays = withTextEdit(overlays, selected.id, { color: swatch });
+  }
+
+  /** A style change applies at once to the text in hand (selected, or being reworded). */
+  function pickStyle(edit: { font?: ReelTextFont; background?: ReelTextBackground }) {
+    if (edit.font) font = edit.font;
+    if (edit.background) background = edit.background;
+    console.debug(`[reel-editor] text style ${font}/${background}`);
+    const id = composing?.id ?? (selected?.kind === 'text' ? selected.id : null);
+    if (id) overlays = withTextEdit(overlays, id, edit);
   }
 
   function toggleDraw() {
@@ -364,9 +404,12 @@
           style={`left:${overlay.x * 100}%;top:${overlay.y * 100}%;transform:translate(-50%,-50%) rotate(${overlay.rotation}rad)`}
         >
           {#if overlay.kind === 'text'}
+            {@const paint = textPaint(overlay)}
             <span
-              class="block font-bold whitespace-nowrap drop-shadow-[0_1px_3px_rgb(0_0_0/0.6)]"
-              style={`color:${overlay.color};font-size:${TEXT_BASE_SIZE * overlay.scale * 100}cqmin;line-height:1.2`}
+              class="block font-bold whitespace-nowrap {paint.pill
+                ? ''
+                : 'drop-shadow-[0_1px_3px_rgb(0_0_0/0.6)]'}"
+              style={`color:${paint.fill};font-family:${fontStack(overlay.font, 'inherit')};font-size:${TEXT_BASE_SIZE * overlay.scale * 100}cqmin;line-height:${TEXT_LINE_HEIGHT};${paint.pill ? `background:${paint.pill};padding:${PILL_PAD_Y_EM}em ${PILL_PAD_X_EM}em;border-radius:${PILL_RADIUS_EM}em` : ''}`}
               >{overlay.text}</span
             >
           {:else}
@@ -435,6 +478,40 @@
             <img src={emojiSvgSrc(emoji) ?? ''} alt="" draggable="false" class="h-7 w-7" />
           </button>
         {/each}
+      </div>
+    {/if}
+
+    {#if textToolsVisible}
+      <div class="flex items-center gap-1" role="group" aria-label={m.reels_editor_text_style()}>
+        {#each TEXT_FONTS as face (face)}
+          <button
+            type="button"
+            class="inline-flex h-9 min-w-11 items-center justify-center rounded-lg px-2 text-base font-bold outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {font ===
+            face
+              ? 'bg-white/25'
+              : 'hover:bg-white/15'}"
+            style={`font-family:${fontStack(face, 'inherit')}`}
+            aria-label={fontLabels[face]()}
+            aria-pressed={font === face}
+            title={fontLabels[face]()}
+            onclick={() => pickStyle({ font: face })}
+            data-reel-font={face}>Aa</button
+          >
+        {/each}
+        <button
+          type="button"
+          class="inline-flex h-9 min-w-11 items-center justify-center rounded-lg px-2 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {background ===
+          'pill'
+            ? 'bg-white/25'
+            : 'hover:bg-white/15'}"
+          aria-label={m.reels_editor_text_pill()}
+          aria-pressed={background === 'pill'}
+          title={m.reels_editor_text_pill()}
+          onclick={() => pickStyle({ background: background === 'pill' ? 'none' : 'pill' })}
+          data-reel-pill
+        >
+          <RectangleHorizontal size={20} strokeWidth={2.25} />
+        </button>
       </div>
     {/if}
 
