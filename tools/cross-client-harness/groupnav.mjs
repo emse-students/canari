@@ -30,6 +30,18 @@ export const SIDE_PANEL_CLOSE = '.side-panel [aria-label="Fermer"]';
 export const OVERLAY_MARKERS = { addMember: "Envoyer l'invitation", groupPanel: 'Quitter le groupe' };
 
 /**
+ * THE CLOSE CONTROL OF A `Modal` BACKDROP, addressed by the backdrop's own marks and not by a guess.
+ *
+ * `shared/Modal.svelte` draws `<div role="presentation" data-keyboard-aware-overlay class="fixed
+ * z-(--z-modal) ...">` and its title bar carries a `Fermer` icon button. The member picker ("Ajouter
+ * des membres") is one, stacked ON TOP of the group panel. Closing it with a bare `text=Fermer`
+ * resolved among EVERY `Fermer` on screen, the side panel's included, so the modal's control and the
+ * one it covers were not told apart (GRP-3..10, 2026-10-06). Scoped to the backdrop there is exactly
+ * one candidate, and it does not depend on the inner panel carrying `role="dialog"`.
+ */
+export const MODAL_CLOSE = '[role="presentation"][data-keyboard-aware-overlay] [aria-label="Fermer"]';
+
+/**
  * THE COMPOSER IS NOT THE ONLY WAY A CONVERSATION CAN BE OPEN, and assuming it was cost READ-10 its
  * verdict and would have cost every DEL row after it.
  *
@@ -231,7 +243,9 @@ export async function closeOverlays(cx) {
     // AND IT BROKE A SECOND TIME THE SAME WAY: on 2026-09-17 the shell moved into the shared
     // `SidePanel`, whose class is `side-panel`, and `.conversation-side-panel` matched nothing again
     // until NOTIF-17b died here on 2026-09-27. The selftest guards strings, not class names.
-    await realClick(cx, state === 'group-panel' ? SIDE_PANEL_CLOSE : 'text=Fermer').catch((e) => {
+    const closeSelector =
+      state === 'group-panel' ? SIDE_PANEL_CLOSE : state === 'add-member' ? MODAL_CLOSE : 'text=Fermer';
+    await realClick(cx, closeSelector).catch((e) => {
       lastClickError = `${state}: ${e.message}`;
       console.log(`[closeOverlays] pass ${i} click on ${state} failed - ${e.message}`);
     });

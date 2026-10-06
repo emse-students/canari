@@ -215,6 +215,49 @@ if (structuralClaims('.conversation-side-panel [aria-label="Fermer"]', panelSour
   failures += 1;
   console.log('FAIL control: the retired .conversation-side-panel selector was accepted');
 }
+/**
+ * THE MODAL BACKDROP'S CLOSE CONTROL (`MODAL_CLOSE`), pinned against `shared/Modal.svelte`.
+ *
+ * GRP-3..10 of 2026-10-06 left "Ajouter des membres" open and `closeOverlays` could not shut it,
+ * because it clicked a bare `text=Fermer` among every `Fermer` on screen. The selector is now the
+ * backdrop's own marks, so the backdrop's tag and the title bar's button are read out of the
+ * component. Takes the selector as an argument so the control case can hand it a retired shape.
+ */
+const MODAL = join(HERE, '../../../frontend/src/lib/components/shared/Modal.svelte');
+function modalClaims(selector, modalSource) {
+  const parts = /^\[role="(\w+)"\]\[(data-[\w-]+)\] \[aria-label="([^"]+)"\]$/.exec(selector);
+  if (!parts) return [`${selector} is not the "[role][data-attr] [aria-label]" shape this gate can read`];
+  const [, role, attr, label] = parts;
+  const markup = modalSource.slice(modalSource.indexOf('</script>'));
+  const tag = new RegExp(`<div\\s+role="${role}"[^>]*\\s${attr}[\\s>=]`).exec(markup);
+  if (!tag) return [`no <div role="${role}" ${attr}> backdrop in Modal.svelte, so ${selector} matches nothing`];
+  const button = new RegExp(`<button[^>]*aria-label="${label}"`).test(markup.slice(tag.index));
+  return button ? [] : [`no <button aria-label="${label}"> inside the backdrop of Modal.svelte`];
+}
+const MODAL_CLOSE = /export const MODAL_CLOSE =\s*'([^']+)';/.exec(groupnavSource)?.[1] ?? '';
+const modalSource = readFileSync(MODAL, 'utf8');
+if (!MODAL_CLOSE) {
+  failures += 1;
+  console.log('FAIL groupnav.mjs no longer exports MODAL_CLOSE in the shape this gate reads');
+}
+for (const claim of modalClaims(MODAL_CLOSE, modalSource)) {
+  failures += 1;
+  console.log(`FAIL closeOverlays (add-member): ${claim}`);
+}
+// CONTROLS: a backdrop attribute the component does not carry, and a label it does not ship.
+if (modalClaims('[role="presentation"][data-retired-overlay] [aria-label="Fermer"]', modalSource).length === 0) {
+  failures += 1;
+  console.log('FAIL control: a backdrop attribute Modal.svelte does not carry was accepted');
+}
+if (modalClaims('[role="presentation"][data-keyboard-aware-overlay] [aria-label="Close"]', modalSource).length === 0) {
+  failures += 1;
+  console.log('FAIL control: a close label Modal.svelte does not ship was accepted');
+}
+// THE ADD-MEMBERS MODAL IS A `Modal`, so MODAL_CLOSE reaches it at all.
+if (!/<Modal\s[\s\S]{0,300}?title=\{m\.chat_group_invite_modal_title\(\)\}/.test(readFileSync(CHAT_GROUP_PANEL, 'utf8'))) {
+  failures += 1;
+  console.log('FAIL ChatGroupPanel.svelte no longer draws the add-members picker as a <Modal title=...>');
+}
 const groupPanelSource = readFileSync(CHAT_GROUP_PANEL, 'utf8');
 for (const [name, text] of Object.entries(OVERLAY_MARKERS)) {
   const keys = Object.keys(frMessages).filter((k) => frMessages[k] === text);

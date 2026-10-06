@@ -44,6 +44,13 @@ export const GROUP_DEBRIS = [
   // client re-enters on every load. `debris-selftest.mjs` now refuses when a file calls
   // `createGroup(` and is not enumerated there, so the next one fails a gate instead of a sweep.
   /^N17B-[0-9a-z]+$/,
+  // A SANDBOX GROUP, minted by `newgroup.mjs --sandbox <TAG>` as `SBX<TAG>-<mark tail>` (TAG is
+  // 1-8 upper-case letters or digits). THE WHY OF `ORD7496` AND `ORE0185` NOT BEING SWEPT (phone
+  // pass, 2026-10-06): no runner mints that shape - they were created by hand with `--name`, which
+  // is "a person's name for it" and deliberately outside every pattern. Matching them would mean
+  // matching three letters and four digits, which a person types. The fix is a MINTED shape for
+  // hand-made throwaways, not a looser pattern: `SBX` plus the run mark cannot be typed by chance.
+  /^SBX[A-Z0-9]{1,8}-[0-9a-z]+$/,
 ];
 
 /** True when `name` is a group a runner minted, and therefore a group a sweep may delete. */

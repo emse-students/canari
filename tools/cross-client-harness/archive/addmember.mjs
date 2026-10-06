@@ -150,6 +150,12 @@ export async function addMember(cx, who, { openSettings = true, openPickerFirst 
   await typeQuery(cx, who);
   const spot = await optionFor(cx, who);
   if (!spot) throw new Error(`addMember: the picker offers no ${who}`);
+  // THE OPTION PICKED MUST BE THE ONE ASKED FOR. `optionFor` falls back to the list's first child when
+  // no option starts with the name, so a picker holding somebody else would be clicked and submitted
+  // as a success whose roster then never moves (GRP-3..10, 2026-10-06).
+  if (!spot.text.toLowerCase().includes(who.toLowerCase())) {
+    throw new Error(`addMember: the picker's option reads ${JSON.stringify(spot.text)}, not ${who}`);
+  }
   await pointerAt(cx, spot);
   await submitInvite(cx);
   return spot.text;

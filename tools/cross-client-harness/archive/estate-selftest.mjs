@@ -21,6 +21,7 @@
  *
  *   bun archive/estate-selftest.mjs
  */
+import { readFileSync } from 'node:fs';
 import { estateOriginsAmong, estateVerdict, localAliases, NOT_AN_ESTATE } from '../estate-origins.mjs';
 
 const SITE = 'http://localhost:8081';
@@ -92,6 +93,18 @@ ok('the iPhone on the LAN alias is ACCEPTED', estateVerdict(['http://192.168.1.3
 ok('another workstation on the LAN is still a STRANGER', !estateVerdict(['http://192.168.1.40:8081'], SITE, ALIASES).ok);
 ok('the alias cannot rescue a production stray', !estateVerdict(['http://192.168.1.32:8081', PROD], SITE, ALIASES).ok);
 ok('a non-local site has no aliases', localAliases(PROD, IFACES).length === 0);
+
+// ── the gateway restart that makes a stream gap (D5, 2026-10-06) names a container that exists ──────
+// READ AS TEXT: estate.mjs imports names.mjs, which is local to a rig machine and absent from CI.
+{
+  const estateSource = readFileSync(new URL('../estate.mjs', import.meta.url), 'utf8');
+  const compose = readFileSync(new URL('../../../infrastructure/local/docker-compose.yml', import.meta.url), 'utf8');
+  const named = /export const LOCAL_GATEWAY_CONTAINER = '([^']+)';/.exec(estateSource)?.[1] ?? '';
+  const service = /^canari-local-(.+)-1$/.exec(named)?.[1] ?? '';
+  ok('estate.mjs exports the gateway container in the compose-project shape', service !== '');
+  ok('that service is one the local compose file defines', service !== '' && new RegExp(`^  ${service}:`, 'm').test(compose));
+  ok('restartGateway refuses a non-local estate', /if \(!LOCAL\) \{\s*throw new Error\(\s*`restartGateway/.test(estateSource));
+}
 
 console.log(
   failures
