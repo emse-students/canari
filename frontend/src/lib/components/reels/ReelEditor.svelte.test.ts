@@ -185,6 +185,38 @@ it('adds a text through the field, and edits it by tapping it once selected', ()
   expect(target.querySelector<HTMLInputElement>('form input')!.value).toBe('salut');
 });
 
+it('styles a text: the font and the pill apply to the selected text at once, and a new text starts with them', () => {
+  const target = mountEditor();
+  const pill = () => target.querySelector<HTMLButtonElement>('[data-reel-pill]');
+  expect(pill()).toBeNull();
+  target.querySelector<HTMLButtonElement>('[data-reel-tool-text]')!.click();
+  flushSync();
+  // The row is there while composing: choose before writing.
+  target.querySelector<HTMLButtonElement>('[data-reel-font="serif"]')!.click();
+  pill()!.click();
+  flushSync();
+  const input = target.querySelector<HTMLInputElement>('form input')!;
+  input.value = 'salut';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  target
+    .querySelector('form')!
+    .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  flushSync();
+  const span = () => overlay(target).querySelector<HTMLElement>('span')!;
+  expect(span().style.fontFamily).toContain('serif');
+  expect(span().style.borderRadius).not.toBe('');
+  // The selected text keeps the row; switching the pill off restyles it in place.
+  pill()!.click();
+  target.querySelector<HTMLButtonElement>('[data-reel-font="mono"]')!.click();
+  flushSync();
+  expect(span().style.borderRadius).toBe('');
+  expect(span().style.fontFamily).toContain('monospace');
+  // No text selected, no row.
+  const frame = target.querySelector('[data-reel-frame]')!;
+  fire(frame, 'pointerdown', 1, 5, 5);
+  expect(pill()).toBeNull();
+});
+
 it('hands the overlays to the export, and does not export when nothing was added', async () => {
   const cancelled = vi.fn();
   const applied = vi.fn();

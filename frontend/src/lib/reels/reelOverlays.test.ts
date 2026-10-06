@@ -5,7 +5,11 @@ import {
   createEmojiOverlay,
   createTextOverlay,
   emojiSize,
+  fontStack,
+  isLightColor,
   overlayFontSize,
+  pillSize,
+  textPaint,
   withTextEdit,
   withTransform,
   withoutOverlay,
@@ -46,6 +50,42 @@ describe('reel overlays', () => {
     expect(edited[0]).toMatchObject({ text: 'new', color: '#000' });
     expect(withTextEdit([a], a.id, { text: '   ' })[0]).toMatchObject({ text: 'a' });
     expect(withTextEdit([e], e.id, { color: '#000' })[0]).toBe(e);
+  });
+
+  it('starts a text in the default style and restyles it without touching the rest', () => {
+    const a = createTextOverlay('a', '#fff')!;
+    expect(a).toMatchObject({ font: 'sans', background: 'none' });
+    const styled = createTextOverlay('b', '#fff', { font: 'mono', background: 'pill' })!;
+    expect(styled).toMatchObject({ font: 'mono', background: 'pill' });
+    const edited = withTextEdit([a], a.id, { font: 'serif', background: 'pill' });
+    expect(edited[0]).toMatchObject({
+      text: 'a',
+      color: '#fff',
+      font: 'serif',
+      background: 'pill',
+    });
+  });
+
+  it('paints a pill with the chosen colour and a contrasting ink, a bare text with its colour', () => {
+    expect(textPaint({ color: '#ffcf33', background: 'pill' })).toEqual({
+      fill: '#050505',
+      pill: '#ffcf33',
+    });
+    expect(textPaint({ color: '#050505', background: 'pill' })).toEqual({
+      fill: '#ffffff',
+      pill: '#050505',
+    });
+    expect(textPaint({ color: '#5bd0f0', background: 'none' })).toEqual({
+      fill: '#5bd0f0',
+      pill: null,
+    });
+    expect(isLightColor('not a colour')).toBe(false);
+  });
+
+  it('sizes the pill from the font size and picks the font stack', () => {
+    expect(pillSize(100, 70)).toEqual({ width: 170, height: 112, radius: 24.5 });
+    expect(fontStack('sans', 'Nunito')).toBe('Nunito');
+    expect(fontStack('mono', 'Nunito')).toContain('monospace');
   });
 
   it('sizes both kinds from the SHORT side of the frame', () => {

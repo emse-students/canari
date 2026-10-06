@@ -1,5 +1,12 @@
 import { emojiSvgSrc } from '$lib/utils/emojiSvg';
-import { emojiSize, overlayFontSize, type ReelOverlay } from './reelOverlays';
+import {
+  emojiSize,
+  fontStack,
+  overlayFontSize,
+  pillSize,
+  textPaint,
+  type ReelOverlay,
+} from './reelOverlays';
 
 /** A point in the source media's normalized coordinate space. */
 export interface ReelPoint {
@@ -63,12 +70,22 @@ export function drawDecorations(
     context.translate(overlay.x * width, overlay.y * height);
     context.rotate(overlay.rotation);
     if (overlay.kind === 'text') {
-      context.fillStyle = overlay.color;
-      context.font = `700 ${overlayFontSize(width, height, overlay.scale)}px ${fontFamily}`;
+      const fontSize = overlayFontSize(width, height, overlay.scale);
+      const paint = textPaint(overlay);
+      context.font = `700 ${fontSize}px ${fontStack(overlay.font, fontFamily)}`;
       context.textAlign = 'center';
       context.textBaseline = 'middle';
-      context.shadowColor = 'rgba(0, 0, 0, 0.6)';
-      context.shadowBlur = 4;
+      if (paint.pill) {
+        const pill = pillSize(context.measureText(overlay.text).width, fontSize);
+        context.fillStyle = paint.pill;
+        context.beginPath();
+        context.roundRect(-pill.width / 2, -pill.height / 2, pill.width, pill.height, pill.radius);
+        context.fill();
+      } else {
+        context.shadowColor = 'rgba(0, 0, 0, 0.6)';
+        context.shadowBlur = 4;
+      }
+      context.fillStyle = paint.fill;
       context.fillText(overlay.text, 0, 0);
     } else {
       const image = images.get(overlay.id);

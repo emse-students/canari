@@ -78,6 +78,20 @@ re-encodes it AGAIN at publish. Two lossy encodes, real-time duration, and the a
 4. **Sound is separate from the pixels**: `clip.soundRemoved` is read at publish, by
    `prepareVideoForUpload`, so removing the sound never costs a re-record.
 
+## Tranche 2 - the decisions taken (2026-10-06, no video editing: user)
+
+Tranche 2 is built as small independent PRs: text style row, drawing, stickers, Next -> publish,
+exit/discard. **No trim, no cut, no filter on the video itself (user)**, so WP-E5 is dropped. Every
+choice below was the simplest one consistent with this page and is open to the lead's veto.
+
+- **Text style row** (a text being written or selected): three typefaces (`sans` = the app's own,
+  `serif`, `mono`, system stacks so canvas and DOM resolve the same face with no font download) and
+  ONE background switch, the pill. With a pill the chosen colour fills the band and the glyphs take
+  the contrasting ink (`textPaint`); without it the colour is the glyphs on a shadow. **Alignment is
+  NOT built**: a text is a single line (80 characters), so left/centre/right changes nothing; it
+  returns if multi-line text is ever wanted. The pill geometry is in `em` (`PILL_*_EM`,
+  `pillSize`), read by the preview's CSS and by the export, so both draw the same band.
+
 ## Work packages (estimates are focused engineering days, before device readings)
 
 | WP | What | Est. |
