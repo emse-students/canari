@@ -324,3 +324,12 @@ design. An audit trail names the account that ACTED, so it reads the real user, 
   `synchronize` in dev and the prod migration stop describing the same table. Generate it in Node.
 - **Take the client IP from the LAST `X-Forwarded-For` entry.** nginx APPENDS the connecting address
   to whatever the client sent, so the head of the list is attacker-controlled.
+- **An upload that meets a 401 refreshes and retries ONCE; it never ends the session.** The media
+  upload takes a token its caller read BEFORE a long encryption, so a 401 is usually a stale copy.
+  `fetchUpload` in `frontend/src/lib/media.ts` (every `MediaService` upload route) renews through the
+  single-flight `refresh()` and resends; only a 401 on the FRESH token throws `SessionExpiredError`,
+  and a failed refresh is rethrown as it came. Prod 2026-10-06: 9 `POST /api/media/upload` 401 in 30 h
+  from a web client, each followed by logout and sign-in. The salon branch's stale `ctx.authToken`
+  copy (#1472) and the post forms (#1477) fixed WHO hands the token; this fixes the token expiring
+  between the hand-over and the request, for every caller including reels and avatars. Test:
+  `media.uploadRefreshRetry.test.ts`.

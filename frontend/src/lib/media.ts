@@ -148,6 +148,7 @@ import {
   segmentedCiphertextLength,
   writesSegmented,
 } from '$lib/mediaSegmented';
+import { refresh, SessionExpiredError } from '$lib/stores/auth';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
 import { prepareVideoForUpload, type PrepareVideoOptions } from '$lib/video/prepareVideoForUpload';
 import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
@@ -156,6 +157,50 @@ import { mediaUrl } from '$lib/utils/apiUrl';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * `fetch` for an UPLOAD: one 401 renews the access token and repeats the request ONCE.
+ *
+ * `authToken` is handed in by the caller, taken before an encryption that can last long enough for
+ * a 15-minute token to expire, so a 401 here usually means "stale copy", not "no session" - and a
+ * web client that read it as the second used to end up signed out (9 `POST /api/media/upload` 401
+ * in 30 h of production, each followed by a logout and a sign-in). Only a 401 AFTER a refresh may
+ * end the session, and `refresh()` is single-flight, so a burst of uploads shares ONE renewal.
+ *
+ * Throws what `refresh()` throws (dead cookie, refused, unreachable) unchanged, and
+ * `SessionExpiredError` when a freshly minted token is refused too. Any other status is returned
+ * for the caller to type as a `MediaUploadError`. The bodies (`FormData`, `Blob`) are re-readable,
+ * so the retry resends the same bytes.
+ *
+ * @param url       Absolute upload URL.
+ * @param build     Builds the request init for a token (headers + body).
+ * @param authToken The token the caller holds.
+ */
+async function fetchUpload(
+  url: string,
+  build: (token: string) => RequestInit,
+  authToken: string
+): Promise<Response> {
+  const where = url.replace(/^https?:\/\/[^/]+/, '');
+  const res = await fetch(url, build(authToken));
+  if (res.status !== 401) return res;
+  console.warn(`[media] 401 on ${where} - refreshing the token and retrying once`);
+  let fresh: string;
+  try {
+    fresh = await refresh();
+  } catch (e) {
+    const cause = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    console.warn(`[media] refresh failed on ${where} - ${cause}`);
+    throw e;
+  }
+  const retry = await fetch(url, build(fresh));
+  console.log(`[media] ${retry.status} on ${where} (retry after refresh)`);
+  if (retry.status === 401) {
+    console.warn(`[media] double 401 on ${where} - session invalid`);
+    throw new SessionExpiredError();
+  }
+  return retry;
+}
 
 /**
  * Compress an image file using canvas.
@@ -542,10 +587,11 @@ export class MediaService {
     if (ciphertext.byteLength > CHUNK_SIZE) {
       // Chunked upload for large files (>50MB) to bypass limits
       // 3.1 Initialize chunked upload
-      const initRes = await fetch(`${this.baseUrl}/api/media/upload/chunk/init`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
+      const initRes = await fetchUpload(
+        `${this.baseUrl}/api/media/upload/chunk/init`,
+        (t) => ({ method: 'POST', headers: { Authorization: `Bearer ${t}` } }),
+        authToken
+      );
       if (!initRes.ok) {
         throw new MediaUploadError(
           initRes.status,
@@ -567,11 +613,15 @@ export class MediaService {
           'chunk'
         );
 
-        const chunkRes = await fetch(`${this.baseUrl}/api/media/upload/chunk/${uploadId}`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${authToken}` },
-          body: chunkFormData,
-        });
+        const chunkRes = await fetchUpload(
+          `${this.baseUrl}/api/media/upload/chunk/${uploadId}`,
+          (t) => ({
+            method: 'POST',
+            headers: { Authorization: `Bearer ${t}` },
+            body: chunkFormData,
+          }),
+          authToken
+        );
         if (!chunkRes.ok) {
           throw new MediaUploadError(
             chunkRes.status,
@@ -581,16 +631,17 @@ export class MediaService {
       }
 
       // 3.3 Complete chunked upload
-      const completeRes = await fetch(
+      const completeRes = await fetchUpload(
         `${this.baseUrl}/api/media/upload/chunk/${uploadId}/complete`,
-        {
+        (t) => ({
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${authToken}`,
+            Authorization: `Bearer ${t}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ retentionClass }),
-        }
+        }),
+        authToken
       );
       if (!completeRes.ok) {
         throw new MediaUploadError(
@@ -612,11 +663,11 @@ export class MediaService {
       // runs, so it reaches `@Body()` whichever order the parts are in.
       formData.append('retentionClass', retentionClass);
 
-      const res = await fetch(`${this.baseUrl}/api/media/upload`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` },
-        body: formData,
-      });
+      const res = await fetchUpload(
+        `${this.baseUrl}/api/media/upload`,
+        (t) => ({ method: 'POST', headers: { Authorization: `Bearer ${t}` }, body: formData }),
+        authToken
+      );
 
       if (!res.ok) {
         const responseText = await res.text();
@@ -707,11 +758,11 @@ export class MediaService {
     const formData = new FormData();
     formData.append('file', file, file.name);
 
-    const res = await fetch(`${this.baseUrl}/api/media/upload/public`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${authToken}` },
-      body: formData,
-    });
+    const res = await fetchUpload(
+      `${this.baseUrl}/api/media/upload/public`,
+      (t) => ({ method: 'POST', headers: { Authorization: `Bearer ${t}` }, body: formData }),
+      authToken
+    );
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
