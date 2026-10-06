@@ -1267,24 +1267,6 @@ the last incident is not the predicate that names the next one**, and this one h
 on the population it would run on. Cheap and worth doing before deciding anything: count 404s and
 410s on `/api/media/:id` over a week.
 
-### P2 - an inviter that dies between sending a Welcome and registering the joiner leaves a member in the MLS tree with no server-side membership, and nothing repairs it (measured 2026-09-05)
-
-`groupCreation.ts` delivers Welcomes and THEN calls `registerMember` for each user whose Welcome was
-delivered. Between those two the joiner is cryptographically in the group and unknown to the
-delivery service, so nothing routes to it.
-
-A line in `setupMessageHandler.ts` claimed to cover this - the joiner registering ITSELF, described
-as a "safety net ... if the inviter has not yet called registerMember" - and it could not: the
-server's `assertCallerMayMutateMembership` refuses a caller who is not already a member, exempting
-only the creator of an empty group. It has been deleted (see `CHANGELOG.md`), which removes a 403
-on every join and changes nothing about the exposure.
-
-**What would actually close it** is registering before delivering rather than after, so the server
-knows the member before the Welcome can arrive - which is the order the delivery service's own
-docblock already assumes ("Freshly-invited joiners are registered as members BEFORE their Welcome").
-The reason it is not that way is visible in the code: only users whose Welcome was DELIVERED get
-registered, so inverting the order also changes which users end up registered when a delivery fails.
-That is a real design decision and wants measuring, not guessing.
 
 ### P2 - iOS carries none of the window-layout work Android already has (user, 2026-08-28)
 
