@@ -2907,6 +2907,23 @@ independently rather than by sharing the predicate, for the reason section 32 gi
 wins because it is the more specific target**: an edge-swipe-back has the rest of the strip, a reply
 swipe has nowhere else to happen.
 
+### The page stayed shifted left after a sideways drag, on every route (2026-10-06)
+
+Reported from an iPhone: Settings, content parked about 100px left, header cut, bottom bar and banner
+unshifted, and it never came back. `/settings` is not a swipe route - the shift is the tab swipe's
+DRAG TRANSFORM, stranded on `.page-scroll-wrap`, which outlives every route change.
+
+**Cause:** `touchend` and `touchcancel` were listened for on the app shell, but a touch's events go to
+the element it STARTED on. When a re-render removes that element mid-drag, the end never bubbles to any
+ancestor, so `snapSwipeBack` never ran and `swipe-nav-dragging` (`touch-action: none`) stayed too.
+**Measured on the Mi 9T (Chrome WebView, real `Input.dispatchTouchEvent` drag on `/communities`):**
+node removed between drag and release left `translate3d(-120px, 0, 0)` and the class; a normal release
+cleared both. After the fix the removed-node release clears them.
+
+**Fix, at the cause:** `touchGestureEnd.ts` binds the end/cancel listeners to the touch's own start target
+(`handleTouchStart`), so the end cannot be lost. No timer, no sweep. Not reproduced on the iPhone itself
+(no WebKit inspector tooling on the workstation); the mechanism is standard DOM and not engine-specific.
+
 ## 39. A community with many channels, and a channel with a long name - measured by injection (2026-09-14, 2026-09-22)
 
 The estate has one channel per workspace, so the graphical pass (user, 2026-09-13: every page at
