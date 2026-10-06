@@ -2895,3 +2895,13 @@ transport failure.** Three fixes:
 The sidebar sorts in a `$derived` (`Sidebar.svelte`, `filteredConversationEntries`), so it re-sorts on every `conversations.set`. What was wrong was the KEY. It was `Conversation.lastMessageAt`, a stored seed advanced by `addMessageToChat`, `batchAddMessages` and the FCM merge only - history replay, channel history, `renderStoredPage` and older pages replaced `messages` and left it behind - and written from `Date.now()` by `toConversationMeta` (empty conversation) and the DM name repair, which `Math.max` then made permanent. Two devices with the same messages ordered differently.
 
 Now `conversationRecency(convo)` (`utils/chat/conversations.ts`) is the sent time of the newest message in `messages` (sorted by `compareMessageOrder`), falling back to the persisted seed only while nothing is loaded, else 0; `compareConversationRecency` breaks ties by id. A message applied by ANY path - live, pending drain, history seed - moves the row, because the key is read from the list rather than remembered. Reactions, edits and read receipts do not touch `messages` order, so they do not move it. Known residue: the local-only "member joined" notice in `ChatBackgroundService` is stamped with the local clock and does count. Test: `conversations.recency.test.ts`.
+
+### A reply belongs to ONE conversation (2026-10-06)
+
+`useMessaging` held a single `replyingTo`, so a reply armed in a DM stayed above the composer of the
+conversation opened next (measured on the Mi 9T, alpha.4). It is now a `SvelteMap` keyed by conversation
+id: `handleReply(conversationKey, message)`, `replyFor(conversationKey)` and `cancelReply(conversationKey)`
+take the key from the caller (`MainChatPage` passes `convs.selectedContact`), and a send consumes only the
+entry of `ctx.selectedContact`. No clear-on-change effect is needed - nothing is shared, so nothing leaks.
+Returning to the DM shows its reply again, like a draft. Each decision logs `[REPLY]`.
+Test: `useMessaging.replyScope.svelte.test.ts`.

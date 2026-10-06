@@ -1142,8 +1142,8 @@
           onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
           onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
           messageReactions={isSelectedChannel ? channelReactions : messaging.messageReactions}
-          replyingTo={messaging.replyingTo}
-          onReply={messaging.handleReply}
+          replyingTo={messaging.replyFor(convs.selectedContact)}
+          onReply={(message) => messaging.handleReply(convs.selectedContact ?? '', message)}
           onForward={handleForward}
           onReact={isSelectedChannel
             ? (msgId, emoji) =>
@@ -1173,7 +1173,7 @@
                 )
             : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
           onTogglePin={handleTogglePinMessage}
-          onCancelReply={messaging.cancelReply}
+          onCancelReply={() => messaging.cancelReply(convs.selectedContact ?? '')}
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}
           onSendVoiceNote={handleSendVoiceNote}
