@@ -8,6 +8,7 @@
    */
   import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
+  import { CAMERA_DEFAULT_ORIGIN, cameraOriginFrom } from '$lib/reels/cameraOrigin';
   import {
     Camera,
     CameraOff,
@@ -118,22 +119,21 @@
     },
   };
 
-  /** Whether this tab was reached from inside the app - then closing it is a step back. */
-  let cameFromApp = false;
+  /** The tab this camera was opened from (see {@link cameraOriginFrom}). */
+  let origin = CAMERA_DEFAULT_ORIGIN;
   afterNavigate(({ from }) => {
-    cameFromApp = !!from;
+    origin = cameraOriginFrom(from?.url);
   });
 
   /**
-   * Back to where the member came from. A history step when there is one, so the feed comes back
-   * with its scroll; a REPLACE onto the feed when the camera was the first page (a cold link), so
-   * Back from the feed does not reopen the camera.
+   * Back to the tab the member came from, by name and as a REPLACE of the camera's entry, so Back
+   * from that tab does not reopen the camera. Not `history.back()`: its target is whatever entry
+   * sits below, which landed on the Dashboard (Mi 9T, 2026-10-06).
    */
   function close() {
-    console.debug(`[camera] close (from app: ${cameFromApp})`);
+    console.debug(`[camera] close, back to ${origin}`);
     session.stop();
-    if (cameFromApp) history.back();
-    else void goto(resolve('/posts'), { replaceState: true });
+    void goto(resolve(origin as '/'), { replaceState: true });
   }
 
   // The element follows the session's stream; `srcObject` is a property, not an attribute.

@@ -137,3 +137,16 @@ it('shows a captured photo as an image in the review', () => {
   expect(target.querySelector('img')).not.toBeNull();
   expect(target.querySelector('video')).toBeNull();
 });
+
+it('rings every control, so one over the letterbox bars is still drawn', () => {
+  const target = mountReview({
+    clip: { blob: new Blob(['x'], { type: 'video/webm' }), source: 'camera' },
+    ondiscard: () => {},
+    onnext: () => {},
+  });
+  const round = [...target.querySelectorAll('button')].filter((b) =>
+    b.className.includes('rounded-full bg-black')
+  );
+  expect(round.length).toBeGreaterThanOrEqual(3);
+  for (const b of round) expect(b.className).toContain('ring-white/30');
+});

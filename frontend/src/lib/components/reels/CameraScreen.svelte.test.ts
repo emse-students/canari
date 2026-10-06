@@ -11,7 +11,16 @@ import { CameraAccessError, type CameraFacing, type CameraFault } from '$lib/ree
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { m } from '$lib/paraglide/messages';
 
-vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
+const nav = vi.hoisted(() => ({
+  goto: vi.fn(),
+  arrive: null as null | ((n: { from: { url: URL } | null }) => void),
+}));
+vi.mock('$app/navigation', () => ({
+  afterNavigate: (cb: (n: { from: { url: URL } | null }) => void) => {
+    nav.arrive = cb;
+  },
+  goto: nav.goto,
+}));
 let nativeApp = false;
 const openAppSettings = vi.fn(async () => {});
 vi.mock('$lib/reels/gallery', () => ({
@@ -51,6 +60,32 @@ async function render(open: (facing: CameraFacing) => Promise<MediaStream>) {
   flushSync();
   return { target, session };
 }
+
+describe('CameraScreen close', () => {
+  it('goes back to the tab it was opened from, replacing its own entry', async () => {
+    const { target } = await render(() => new Promise(() => {}));
+    nav.arrive?.({ from: { url: new URL('https://x.test/dashboard') } });
+    nav.goto.mockClear();
+
+    (target.querySelector(`[aria-label="${m.reels_camera_close()}"]`) as HTMLElement).click();
+
+    expect(nav.goto).toHaveBeenCalledWith(expect.stringContaining('/dashboard'), {
+      replaceState: true,
+    });
+  });
+
+  it('goes to the feed when the camera was the first page', async () => {
+    const { target } = await render(() => new Promise(() => {}));
+    nav.arrive?.({ from: null });
+    nav.goto.mockClear();
+
+    (target.querySelector(`[aria-label="${m.reels_camera_close()}"]`) as HTMLElement).click();
+
+    expect(nav.goto).toHaveBeenCalledWith(expect.stringContaining('/posts'), {
+      replaceState: true,
+    });
+  });
+});
 
 describe('CameraScreen', () => {
   it('says the camera is opening while the request is out', async () => {

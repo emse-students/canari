@@ -51,8 +51,11 @@
     onsoundchange?.(next);
   }
 
+  // THE RING IS WHAT KEEPS A BUTTON VISIBLE OVER THE LETTERBOX. The controls overflow the video box
+  // (they are not clipped), but a translucent black disc over the black bars beside a narrow clip
+  // is invisible, so the pencil read as losing its left third (Mi 9T, 2026-10-06).
   const roundButton =
-    'ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500';
+    'ui-icon-button rounded-full bg-black/40 ring-1 ring-white/30 outline-none hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-amber-500';
 </script>
 
 <div class="absolute inset-0 z-10 flex flex-col bg-black text-white" data-reel-review>
