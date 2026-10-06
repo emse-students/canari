@@ -71,7 +71,7 @@ import {
   parseDirectoryQuery,
   parseSpaceSelection,
 } from './directory-query';
-import { isInternalSecret } from '../internal/internal-secret.util';
+import { isInternalSecret } from '../internal/is-internal-secret.util';
 
 const LOGO_UPLOAD_MB = 2;
 

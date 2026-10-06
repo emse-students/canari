@@ -1042,7 +1042,7 @@ one that remained: ANY campus or formation could be named in a URL by anyone.
   narrowed to the reader's spaces by `restrictToViewerSpaces`), and a **server-internal** read.
 - **The SEO agenda page** (`serverSeo`) keeps its per-campus reads unchanged and passes its existing
   `X-Internal-Secret` (`internalHeaders()`): the JSON feed treats a valid internal secret as trusted
-  and skips the signature (`isInternalSecret`, timing-safe). No second secret, no public bypass; the
+  and skips the signature (`isInternalSecret`, timing-safe, `internal/is-internal-secret.util.ts`). No second secret, no public bypass; the
   public JSON-LD is untouched.
 - **Fails closed:** with `AGENDA_SIGNING_KEY` unset or under 32 characters the signing route and every
   signed selection answer **503**; nothing is ever served unchecked.
