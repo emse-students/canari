@@ -3543,6 +3543,13 @@ to ghcr and the compose files pull `:latest`, so the image a deploy replaces los
 becomes dangling - reclaimable by the plainest possible prune. What they have in common is that
 **no prune runs at all.**
 
+**SINCE 2026-10-06 PRODUCTION DEPLOYS `v<version>` AND THAT HALF OF THE ABOVE IS NO LONGER TRUE
+THERE**: a replaced image keeps its `v<version>` tag, so it is NOT dangling, and the plain prune
+(and `prune.py`'s dangling-only allowlist) will never reclaim it - eight images per stable, left on
+the host until something removes the old tags. Dev still pulls its moving `dev`. Work: when the
+prune is installed, add an allowlisted removal of `ghcr.io/emse-students/canari/*:v*` images that
+no container runs and that are not among the newest N releases (the rollback margin).
+
 | Host | Root | Free | Dangling images | Dangling volumes | Exited containers |
 | --- | --- | --- | --- | --- | --- |
 | `canari` | 125 G | 73 G (61%) | 57 | 64 | 0 |
@@ -3677,23 +3684,8 @@ campaign rows" (section Composer and reactions), which is their only copy.
 
 *"C'est peut-etre pour ca qu'apres la resolution rapide de ce probleme, il faut qu'on revoie le
 workflow"* (user, 2026-09-06), after an earlier exchange in which the complaint was READABILITY -
-*"C'est pas un peu alambique tout ces workflows ?"*. The outage turned that into seven items (item 5
+*"C'est pas un peu alambique tout ces workflows ?"*. The outage turned that into seven items (items 1 and 5
 shipped) that are DEMONSTRATED rather than argued. Ordered by value, which is not the order they were noticed in.
-
-**1. THERE IS NO ROLLBACK, AND THE ONE ATTEMPTED WAS GREEN WHILE DOING NOTHING.** P1.
-`infrastructure/docker-compose.prod.yml` names its images `:latest`, so what production runs is
-decided entirely by what that tag points at when `docker pull` runs. Re-running v0.16.1's
-`Deploy to Production Server` on 2026-09-06 passed **twenty steps**, authenticated to GHCR, migrated,
-health-checked, and redeployed **v0.16.4** - because `latest` is v0.16.4. A version can be shipped
-and cannot be unshipped. The pipeline ALREADY pushes an immutable `v${version}` tag
-(`build.yml`, `type=raw,value=v${{ inputs.version }}`); deploying by it would make re-running an old
-job a real rollback, which is the shape everybody already assumes it has.
-
-**STILL OPEN, re-read 2026-10-01.** The compose file now takes `${TAG:-latest}`, but `serve-prod.yml`
-passes `--tag latest` deliberately: selective rebuilds mean a service this release did not change has
-no image at this version, so only a moving tag resolves for all of them (its own comment says so).
-A rollback by tag therefore needs every service tagged at every release (a retag of the unchanged
-ones), not only a different `--tag` argument.
 
 **2. A DEPLOYED ESTATE IS NOT ASKED WHETHER IT WORKS.** P1, and it is what let this reach users.
 The release run was green, `canari-emse.fr` and `dev.canari-emse.fr` both answered `HTTP 200`, and

@@ -175,11 +175,11 @@ which is how three chains came to each re-derive the same fact:
 | The release | What is deployed | Image tag it moves |
 | --- | --- | --- |
 | `v0.15.0-alpha.1` (pre-release) | `dev.canari-emse.fr`, plus the Play *internal* track and TestFlight | `:dev` |
-| `v0.15.0` (stable) | production | `:latest` |
+| `v0.15.0` (stable) | production, deployed BY `:v0.15.0` | `:latest` |
 
-1. `detect-changed-services` diffs against the previous release **of the same kind**
-2. Builds the frontend against that estate's `VITE_*` set, then only the changed images → GHCR
-3. Self-hosted runner: sync `.env`, `docker compose pull` + `up -d`
+1. `enumerate-services` names all eight services (no diff: every service is built every release)
+2. Builds the frontend against that estate's `VITE_*` set, then every image → GHCR, each tagged `v<version>`
+3. Self-hosted runner: sync `.env`, `docker compose pull` + `up -d` - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK
 4. Database migrations, then health checks
 5. MiConnect's blueprints: a pre-release DRY-RUNS them against the production MiConnect, and a
    stable APPLIES them before `prod-released` moves. The same runner lives on MiConnect's host, so
@@ -200,20 +200,16 @@ exactly one implementation of that sentence.
 
 `GITHUB_TOKEN` pushes from the version-bump workflow do **not** trigger `on: push`. CD is chained via `workflow_run` instead (no `branches:` filter — GitHub would silently drop release-triggered parents).
 
-#### The baseline is the previous release OF THE SAME KIND, and that is forced by the image tags
+#### There is no baseline: every service is built every release, and production deploys by `v<version>` (2026-10-06)
 
-Production deploys `:latest`, which only a stable release moves; dev deploys `:dev`, which only a
-pre-release moves. A service a release does not rebuild keeps whatever that estate's tag already
-points at - so the honest question is "what changed since the last release THAT ESTATE received".
-Taking the previous release of *either* kind for dev would skip rebuilding a service changed since
-the last alpha but not since the intervening stable, and dev would run a months-old image under a
-tag claiming otherwise. With no previous release of that kind, everything is built: over-building
-is slow, under-building ships an estate referencing an image that does not exist.
-
-**The order comes from the GitHub API, not from `git tag --sort=v:refname`**: git's version sort
-places `v1.0.0-alpha` AFTER `v1.0.0` unless `versionsort.suffix` is configured, which is the wrong
-way round for every pre-release. `gh api .../releases` returns them newest-first by creation, which
-is the order they deployed in.
+The change detector (a baseline = the previous release of the same kind, a diff, a path-to-service
+map) was deleted on 2026-09-03 because it saved nothing a release waits for and its failure mode was
+silent. Eight images, three tags each (`<sha>`, `v<version>`, and the estate's moving tag), every
+release. **That is what makes a rollback real**: production is deployed by `--tag v<version>`, which
+exists for every service, so re-running an old release's `Deploy to Production Server` puts THAT
+release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4 while passing twenty
+steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
+A rollback does not revert a migration the newer release applied: read it before rolling back across one.
 
 **`prod-deployed` is gone, and its replacement answers a different question.** That tag was the
 change detector's INPUT; the detector reads releases now, so the tag survives only as `prod-released`
@@ -724,15 +720,14 @@ ghcr.io/emse-students/canari/<service>:<tag>
 
 | Tag | Meaning | Moved by |
 |---|---|---|
-| `latest` | what production is deploying | a STABLE release |
+| `latest` | the newest stable's images (informational: production deploys by `v<version>`) | a STABLE release |
 | `dev` | what the dev estate is deploying | a PRE-RELEASE |
-| `<sha>` | the immutable one - this exact commit | every release that builds the image |
-| `v0.15.0-alpha.1` | the release that produced it | every release that builds the image |
+| `<sha>` | the immutable one - this exact commit | every release |
+| `v0.15.0` / `v0.15.0-alpha.1` | the release that produced it; **what production deploys** | every release |
 
 **The two moving tags never cross**, and that is what lets one registry feed two estates from two
-different commits. Neither decides what actually runs: both compose files are deployed with an
-explicit tag, and a service a release did not rebuild keeps whatever its estate's tag already points
-at - which is what a selective rebuild means.
+different commits. Production is deployed by the release's `v<version>`; dev by its moving `dev`
+(a rollback of dev is not a goal).
 
 ## Self-hosted runner
 
