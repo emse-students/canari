@@ -879,6 +879,13 @@ package (`stream-json/jsonl/Parser.js`, in its bucket-notification module) and N
 filters the advisory is about, and this service never calls that API at all - its whole use of the
 client is `bucketExists`, `fPutObject`, `getObject`, `makeBucket`, `putObject`, `removeObject`.
 
+**THIRD AND FOURTH, 2026-10-06:** `GHSA-hqr4-qq8f-hg3x` (JSONC parser/verifier re-scan, <= 3.5.0) and
+`GHSA-mjw6-4jj6-33hc` (Assembler prototype pollution, < 3.6.0) on the same `minio > stream-json`
+edge. The override to 3.x was refused: fixed stream-json is `type: module` with `src/` entry points
+where minio's CJS build `require`s it, and nothing proves that boot. Both ride leg one, now an
+ALLOWLIST (minio may import only `stream-json/jsonl/Parser.js`) in `.github/scripts/stream-json-premise.sh`,
+self-tested by `tests/stream-json-premise.test.sh`. The retirement condition is unchanged, with 3.6.0 as the floor.
+
 **What retires this row:** minio publishing a release that moves either pin - dropping
 `query-string@7`, or requiring a `stream-json` at or above 3.5.0 - or `query-string` itself
 depending on a `decode-uri-component` above 0.4.2. Any of those makes an ignore unnecessary, and it
