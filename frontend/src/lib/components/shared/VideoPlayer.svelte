@@ -69,6 +69,11 @@
      * video's own (a conversation's) - see `VideoSoundScope`.
      */
     soundScope?: VideoSoundScope;
+    /**
+     * Whether the bar pads for the home indicator. Off when the player is NOT at the screen's bottom
+     * edge (the reel review keeps its own bar beneath), so the inset is paid once, not twice.
+     */
+    safeBottom?: boolean;
   }
 
   let {
@@ -79,6 +84,7 @@
     class: klass = '',
     videoClass = 'max-h-full max-w-full object-contain',
     soundScope = 'app',
+    safeBottom = true,
   }: Props = $props();
 
   /**
@@ -381,9 +387,9 @@
 
     <div
       data-video-controls
-      class="from-cn-scrim/80 absolute inset-x-0 bottom-0 flex items-center gap-1 bg-linear-to-t to-transparent px-2 pt-8 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-white transition-opacity duration-300 {controlsVisible
-        ? 'opacity-100'
-        : 'pointer-events-none opacity-0'}"
+      class="from-cn-scrim/80 absolute inset-x-0 bottom-0 flex items-center gap-1 bg-linear-to-t to-transparent px-2 pt-8 text-white transition-opacity duration-300 {safeBottom
+        ? 'pb-[max(0.5rem,env(safe-area-inset-bottom))]'
+        : 'pb-2'} {controlsVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}"
       onpointerdown={(e) => e.stopPropagation()}
       onclick={(e) => e.stopPropagation()}
       role="presentation"
@@ -439,6 +445,7 @@
           : 'text-cn-yellow'}"
         aria-label={m.video_sound_label()}
         aria-pressed={!muted}
+        disabled={soundScope === 'silent'}
         onclick={toggleMute}
       >
         {#if muted}

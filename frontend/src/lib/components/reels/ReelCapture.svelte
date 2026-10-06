@@ -349,6 +349,11 @@
         {clip}
         ondiscard={() => send({ type: 'discard' })}
         onedit={() => (editorOpen = true)}
+        onsoundchange={(soundRemoved) => {
+          if (capture.kind === 'review') {
+            capture = { kind: 'review', clip: { ...capture.clip, soundRemoved } };
+          }
+        }}
         onnext={() => (publishOpen = true)}
       />
     {/if}

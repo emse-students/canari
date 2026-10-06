@@ -43,6 +43,11 @@ export interface ReelClip {
   blob: Blob;
   /** Where it came from - a gallery pick is read, never re-recorded. */
   source: 'camera' | 'gallery';
+  /**
+   * The member removed the sound in the review: the publish drops the audio TRACK from the file
+   * (`prepareVideoForUpload`'s `removeAudio`), it is not a playback preference.
+   */
+  soundRemoved?: boolean;
 }
 
 /** Where a capture stands. */

@@ -192,6 +192,10 @@ local MediaRecorder stream before the existing H.264/AAC preparation path.
 
 ## Publishing (R3, on C2 and C3)
 
+**The review, the editor and the sound removal are on [reel-editor](reel-editor.md)** (2026-10-05):
+"Next" has a bar of its own, and a take whose sound the member removed (`clip.soundRemoved`) is
+published with NO audio track (`prepareVideoForUpload`'s `removeAudio`).
+
 "Suivant" on the review opens the publish step (`components/reels/ReelPublishSheet.svelte`) IN
 PLACE of the review, as its own history entry above the take's: Back returns to the take, a second
 Back discards it. It asks what a post asks and nothing a reel cannot carry: a caption (optional on

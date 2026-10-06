@@ -122,7 +122,8 @@ export async function publishReel(
 ): Promise<PostEntity> {
   const { clip, caption, identity, maxDurationMs, video, onStage } = input;
   console.debug(
-    `[reel-publish] start: ${clip.source}, ${clip.blob.type || 'typeless'}, ${clip.blob.size} bytes`
+    `[reel-publish] start: ${clip.source}, ${clip.blob.type || 'typeless'}, ${clip.blob.size} bytes` +
+      (clip.soundRemoved ? ', sound removed' : '')
   );
   let stage: PublishStage = 'moderation';
   const enter = (next: PublishStage) => {
@@ -141,6 +142,8 @@ export async function publishReel(
     const prepared = await deps.prepare(clip.blob, {
       maxSeconds: maxDurationMs / 1000,
       maxBytes: limits?.maxPlaintextBytes,
+      // The member's "remove the sound": the published file carries no audio track at all.
+      removeAudio: clip.soundRemoved === true,
       ...video,
     });
 
