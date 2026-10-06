@@ -433,6 +433,10 @@
         void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx()),
       onReorderCommunities: (newOrder: typeof channels.channelWorkspaces) =>
         void channels.reorderWorkspaces(newOrder, channelsCtx()),
+      onReorderChannels: (
+        workspaceSlug: string,
+        newOrder: (typeof channels.channelWorkspaces)[number]['channels']
+      ) => void channels.reorderChannels(workspaceSlug, newOrder, channelsCtx()),
       onLeaveWorkspace: (workspaceDbId: string) => {
         void channels.leaveCurrentWorkspace(workspaceDbId, channelsCtx());
         if (isSelectedChannel) {

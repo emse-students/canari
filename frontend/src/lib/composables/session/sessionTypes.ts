@@ -54,7 +54,11 @@ export interface ChatSessionCallbacks {
     viewerCanWrite?: boolean;
   }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
-  onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
+  onWorkspaceUpdated?: (event: {
+    workspaceId: string;
+    imageMediaId?: string;
+    channelsReordered?: boolean;
+  }) => void;
   /**
    * This device's own role in a community changed, pushed by the server to the member it concerns.
    *

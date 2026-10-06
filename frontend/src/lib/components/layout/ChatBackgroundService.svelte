@@ -917,8 +917,20 @@
           globalChannels.selectedChannelConversationId = '';
         }
       },
-      onWorkspaceUpdated: (event: { workspaceId: string; imageMediaId?: string }) => {
+      onWorkspaceUpdated: (event: {
+        workspaceId: string;
+        imageMediaId?: string;
+        channelsReordered?: boolean;
+      }) => {
         globalChannels.handleWorkspaceUpdated(event);
+        if (event.channelsReordered) {
+          appendLog(`[CHANNEL_ORDER] community ${event.workspaceId.slice(0, 8)} rearranged`);
+          globalChannels.refreshChannelOrder(event.workspaceId).catch((error: unknown) => {
+            appendLog(
+              `[CHANNEL_ORDER] re-read of ${event.workspaceId.slice(0, 8)} failed: ${String(error)}`
+            );
+          });
+        }
       },
       onWorkspaceRoleChanged: (event: {
         workspaceId: string;

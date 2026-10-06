@@ -2814,3 +2814,38 @@ reading a leader's arrival for the conversation it has open counts it 0, the liv
 **Not changed, owed a reading:** OS notification banners on the other devices are cleared by the
 push-side receipt (`markChannelRead` for salons, the native `read_watermark` for DMs); nothing here
 touches them. The stuck count was reproduced as failing tests, not on two live devices.
+
+## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
+
+**Order.** `channels."sortOrder"` (migration 076; the backfill numbers each never-arranged community
+by creation date, so nothing visibly moves) is written by `PATCH /channels/workspaces/:id/channels/reorder`
+(`ChannelService.reorderChannels`). Both listings sort through `sortChannels` (position, age, id - a
+total order). **Permission: `memberCanManageChannels`**, the grant that already gates creating, renaming
+and deleting a salon - arranging the list is governance of the same object, so weaker would let any
+member rearrange everyone's sidebar and `workspace.manage` alone would lock out a role that may
+already delete the salons. This is NOT the community rail's order, which is personal
+(`reorderWorkspacesForUser`).
+
+- `orderedIds` is the actor's VISIBLE list. A private salon they cannot see is not in it and keeps
+  its slot (the visible ids are written back into the slots the visible salons occupied); any id that
+  is not a visible salon of the community refuses the whole request.
+- **Live update:** `workspace.updated { channelsReordered: true }` to the community with NO ids (a
+  private salon's existence must not leak to members who cannot see it); each device re-reads its own
+  `listChannels` and only reorders what it holds (`refreshChannelOrder`, `orderByIds`).
+- **Client:** `Sidebar.svelte` puts `svelte-dnd-action` on the salon list (one type per community,
+  mouse drag; touch needs a 350 ms long press so a swipe still scrolls; no second tab stop on the
+  wrapper). Keyboard: Alt + ArrowUp/ArrowDown on a focused row (`moveById`), announced in a live
+  region. Only when `viewerCanManageChannels`. Optimistic, rolled back and logged on refusal
+  (`useChannelWorkspaces.reorderChannels`).
+
+**Name.** A salon name is a DISPLAY string, stored as typed (case, accents, emoji, spaces). Server
+`validateChannelName` refuses only: empty after trim, over 80 characters (code points), a control
+character (`\p{Cc}`). Nothing lowercases it any more - not the server (create, rename), not
+`createNewChannel`/`renameCurrentChannel`, not the settings panel. Identity was already the
+channel id everywhere (routes, `channel_<id>` conversations); the one place that used the NAME as
+an identity, the invitation's target salon in `Sidebar.svelte`, now picks the first public salon
+the viewer may open. The unique index `(workspaceId, name)` stays and is case-sensitive.
+
+**Default salon:** `DEFAULT_CHANNEL_NAME` is the accented 'general' (e-acute twice). NEW
+communities only: existing default salons keep the name `general` (user decision, 2026-10-05 - no
+rename migration; a member with the right may rename one by hand).

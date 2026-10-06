@@ -28,6 +28,7 @@ import {
   type GetChannelMessagesQuery,
   type PublishDistributionGroupInfoDto,
   type RenameChannelDto,
+  type ReorderChannelsDto,
   type ReorderWorkspacesDto,
   type SendChannelMessageDto,
   type SetChannelNotificationLevelDto,
@@ -81,6 +82,17 @@ export class ChannelsController {
   @Get('workspaces/user/me')
   listWorkspaces(@Headers('x-user-id') xUserId: string) {
     return this.service.listWorkspacesForUser(xUserId.trim().toLowerCase());
+  }
+
+  /** Persists the order of a community's salons for every member. Needs MANAGE_CHANNEL. */
+  @UseGuards(NginxAuthGuard)
+  @Patch('workspaces/:workspaceId/channels/reorder')
+  reorderChannels(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: ReorderChannelsDto
+  ) {
+    return this.service.reorderChannels(workspaceId, xUserId.trim().toLowerCase(), body.orderedIds);
   }
 
   /** Persists the calling user's personal top-to-bottom order for their communities. */

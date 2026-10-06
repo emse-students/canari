@@ -27,6 +27,39 @@
   import type { Conversation } from '$lib/types';
   import { channelUnreadCount, communityHasUnread } from '$lib/utils/unreadTotal';
   import { m } from '$lib/paraglide/messages';
+  import { moveById } from '$lib/utils/chat/channelOrder';
+
+  /** Channels of the open community while a drag is in flight; null the rest of the time. */
+  let draggedChannels = $state<ChannelItem[] | null>(null);
+  /** Screen-reader announcement of the last keyboard move. */
+  let channelMoveAnnouncement = $state('');
+
+  function handleChannelDndConsider(e: CustomEvent<DndEvent<ChannelItem>>) {
+    draggedChannels = e.detail.items;
+  }
+
+  function handleChannelDndFinalize(workspaceSlug: string, e: CustomEvent<DndEvent<ChannelItem>>) {
+    draggedChannels = null;
+    onReorderChannels?.(workspaceSlug, e.detail.items);
+  }
+
+  /** Alt + Up/Down moves the focused salon one place: the keyboard path of the drag. */
+  function handleChannelKeydown(
+    e: KeyboardEvent,
+    workspace: ChannelWorkspace,
+    channel: ChannelItem
+  ) {
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    e.preventDefault();
+    const next = moveById(workspace.channels, channel.id, e.key === 'ArrowUp' ? -1 : 1);
+    if (!next) return;
+    onReorderChannels?.(workspace.id, next);
+    channelMoveAnnouncement = m.sidebar_channel_moved_announcement({
+      name: channel.name,
+      position: next.findIndex((item) => item.id === channel.id) + 1,
+      total: next.length,
+    });
+  }
 
   interface ChannelItem {
     id: string;
@@ -45,6 +78,8 @@
     workspaceDbId?: string;
     /** Server-authoritative: true when the current user may manage this workspace (MANAGE_WORKSPACE). */
     viewerCanManage?: boolean;
+    /** Server-authoritative: true when the user may govern this community's salons, which includes arranging them. */
+    viewerCanManageChannels?: boolean;
     channels: ChannelItem[];
   }
 
@@ -101,6 +136,8 @@
     onDeleteWorkspace?: (workspaceDbId: string, confirmationName: string) => void;
     /** Callback fired when the user drags a community to a new position in the rail. */
     onReorderCommunities?: (newOrder: ChannelWorkspace[]) => void;
+    /** Callback fired when a salon manager rearranges a community's salons (drag or keyboard). */
+    onReorderChannels?: (workspaceSlug: string, newOrder: ChannelItem[]) => void;
     /** Callback fired when the user selects a direct or group conversation. */
     onSelectConversation: (name: string) => void;
     /** Callback fired when the user selects a channel conversation. */
@@ -151,6 +188,7 @@
     onLeaveWorkspace,
     onDeleteWorkspace,
     onReorderCommunities,
+    onReorderChannels,
     onSelectConversation,
     onSelectChannelConversation,
     onJoinPrivateChannel,
@@ -261,17 +299,6 @@
     isPrivate?: boolean;
     /** False only on a private salon an admin can SEE but has not joined - see the row below. */
     hasAccess?: boolean;
-  }
-
-  interface ChannelWorkspace {
-    id: string;
-    name: string;
-    avatarUserId: string;
-    imageMediaId?: string | null;
-    workspaceDbId?: string;
-    /** Server-authoritative: true when the current user may manage this workspace (MANAGE_WORKSPACE). */
-    viewerCanManage?: boolean;
-    channels: ChannelItem[];
   }
 
   /**
@@ -638,16 +665,37 @@
           (w) => w.id === selectedCommunityWorkspaceId
         )}
         {#if currentWorkspace}
+          {@const canReorderChannels = currentWorkspace.viewerCanManageChannels === true}
           <div class="px-2 py-2">
-            {#each currentWorkspace.channels as channel (channel.id)}
-              {@const unjoined = channel.hasAccess === false}
-              {@const unreadCount = channelUnreadCount(channel, conversations)}
-              <!-- THE WHOLE ROW IN ONE NAME. Sighted users read three signals here - a lock, a
+            <p class="sr-only" aria-live="polite">{channelMoveAnnouncement}</p>
+            {#if canReorderChannels}
+              <p id="channel-reorder-hint" class="sr-only">{m.sidebar_channel_reorder_hint()}</p>
+            {/if}
+            <div
+              use:dndzone={{
+                items: draggedChannels ?? currentWorkspace.channels,
+                flipDurationMs: 150,
+                type: `channels-${currentWorkspace.id}`,
+                dragDisabled: !canReorderChannels,
+                // A long press, so a swipe on the list still scrolls it; the keyboard path is
+                // Alt + arrows on the row, hence no second tab stop on the wrapper.
+                delayTouchStart: 350,
+                zoneItemTabIndex: -1,
+                autoAriaDisabled: true,
+                dropTargetStyle: {},
+              }}
+              onconsider={handleChannelDndConsider}
+              onfinalize={(e) => handleChannelDndFinalize(currentWorkspace.id, e)}
+            >
+              {#each draggedChannels ?? currentWorkspace.channels as channel (channel.id)}
+                {@const unjoined = channel.hasAccess === false}
+                {@const unreadCount = channelUnreadCount(channel, conversations)}
+                <!-- THE WHOLE ROW IN ONE NAME. Sighted users read three signals here - a lock, a
                    name, a badge - and only the middle one was ever exposed: the icon is decorative
                    markup and the badge announced a bare number, so "general 3" was all a screen
                    reader had. `aria-current` is what says WHICH channel is open; the yellow tint
                    says it to everyone else. -->
-              <!--
+                <!--
                 WHICH CHANNEL THIS ROW IS, published rather than left to its rendered name. A
                 channel called `general` puts that word in a dozen places once its conversation is
                 open - the panel header, the pane header, the composer placeholder, every message
@@ -657,59 +705,67 @@
                 has no messages yet. Same one-attribute cost as `data-conversation-tile`, same
                 reason. Measured 2026-09-05: twelve visible elements matched "general".
               -->
-              <button
-                type="button"
-                data-channel-row={channel.name}
-                onclick={() =>
-                  unjoined
-                    ? onJoinPrivateChannel?.(channel.id, channel.name)
-                    : onSelectChannelConversation?.(channel.id)}
-                aria-current={selectedChannelId === channel.id ? 'true' : undefined}
-                aria-label={unjoined
-                  ? m.chat_channel_join_as_admin_aria({ name: channel.name })
-                  : `${
-                      channel.isPrivate
-                        ? `${m.chat_channel_private_label()} ${channel.name}`
-                        : channel.name
-                    }${
-                      unreadCount ? `, ${m.chat_unread_messages_label({ count: unreadCount })}` : ''
-                    }`}
-                class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors pointer-coarse:min-h-11 {selectedChannelId ===
-                channel.id
-                  ? 'text-text-main bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)]'
-                  : 'text-text-muted hover:text-text-main hover:bg-cn-surface dark:hover:bg-black/20'}"
-              >
-                <span class="opacity-70" aria-hidden="true">
-                  {#if channel.isPrivate}
-                    <Lock size={16} />
-                  {:else}
-                    <Hash size={16} />
-                  {/if}
-                </span>
-                <span class="flex-1 truncate font-medium {unjoined ? 'opacity-60' : ''}"
-                  ><EmojiText text={channel.name} /></span
+                <button
+                  type="button"
+                  data-channel-row={channel.name}
+                  animate:flip={{ duration: 150 }}
+                  onkeydown={(e) =>
+                    canReorderChannels && handleChannelKeydown(e, currentWorkspace, channel)}
+                  aria-keyshortcuts={canReorderChannels ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
+                  aria-describedby={canReorderChannels ? 'channel-reorder-hint' : undefined}
+                  onclick={() =>
+                    unjoined
+                      ? onJoinPrivateChannel?.(channel.id, channel.name)
+                      : onSelectChannelConversation?.(channel.id)}
+                  aria-current={selectedChannelId === channel.id ? 'true' : undefined}
+                  aria-label={unjoined
+                    ? m.chat_channel_join_as_admin_aria({ name: channel.name })
+                    : `${
+                        channel.isPrivate
+                          ? `${m.chat_channel_private_label()} ${channel.name}`
+                          : channel.name
+                      }${
+                        unreadCount
+                          ? `, ${m.chat_unread_messages_label({ count: unreadCount })}`
+                          : ''
+                      }`}
+                  class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors pointer-coarse:min-h-11 {selectedChannelId ===
+                  channel.id
+                    ? 'text-text-main bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)]'
+                    : 'text-text-muted hover:text-text-main hover:bg-cn-surface dark:hover:bg-black/20'}"
                 >
-                <!-- The admin sees the salon EXISTS and can enter it in one click. Nothing else is
+                  <span class="opacity-70" aria-hidden="true">
+                    {#if channel.isPrivate}
+                      <Lock size={16} />
+                    {:else}
+                      <Hash size={16} />
+                    {/if}
+                  </span>
+                  <span class="flex-1 truncate font-medium {unjoined ? 'opacity-60' : ''}"
+                    ><EmojiText text={channel.name} /></span
+                  >
+                  <!-- The admin sees the salon EXISTS and can enter it in one click. Nothing else is
                      served until they do: no message, no roster, no seed - all three go through
                      `canAccessChannel`, which says no while this row is showing. -->
-                {#if unjoined}
-                  <span
-                    aria-hidden="true"
-                    class="border-text-muted/30 text-2xs rounded-full border px-2 py-0.5 font-semibold tracking-wide uppercase"
-                  >
-                    {m.chat_channel_join_as_admin_label()}
-                  </span>
-                {/if}
-                {#if unreadCount}
-                  <span
-                    aria-hidden="true"
-                    class="bg-cn-ink text-cn-yellow text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
-                  >
-                    {unreadCount > 99 ? '99+' : unreadCount}
-                  </span>
-                {/if}
-              </button>
-            {/each}
+                  {#if unjoined}
+                    <span
+                      aria-hidden="true"
+                      class="border-text-muted/30 text-2xs rounded-full border px-2 py-0.5 font-semibold tracking-wide uppercase"
+                    >
+                      {m.chat_channel_join_as_admin_label()}
+                    </span>
+                  {/if}
+                  {#if unreadCount}
+                    <span
+                      aria-hidden="true"
+                      class="bg-cn-ink text-cn-yellow text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
+                    >
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
 
             {#if currentWorkspace?.viewerCanManage}
               <button
@@ -788,8 +844,10 @@
       throw new Error('No community selected');
     }
 
+    // The invitation rides on a salon every member can open - the first public one - never on a
+    // salon NAME: names are free text and may be changed, the id is the identity.
     const targetChannel =
-      workspace.channels.find((channel) => channel.name.trim().toLowerCase() === 'general') ||
+      workspace.channels.find((channel) => !channel.isPrivate && channel.hasAccess !== false) ??
       workspace.channels[0];
 
     if (!targetChannel) {

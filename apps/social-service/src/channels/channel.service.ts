@@ -119,6 +119,44 @@ export function channelIsReadableBy(
   return (channel.allowedUsers || []).includes(userId.trim().toLowerCase());
 }
 
+/**
+ * The name of the salon every community is born with. It carries the accent: it is shown as typed,
+ * like any other salon name.
+ */
+export const DEFAULT_CHANNEL_NAME = 'g\u00e9n\u00e9ral';
+
+/** Longest salon name, counted in characters a person sees (code points), not UTF-16 units. */
+export const MAX_CHANNEL_NAME_LENGTH = 80;
+
+/**
+ * A salon name is a DISPLAY name: stored exactly as typed (case, accents, emoji, spaces), and never
+ * an identifier - routing and every reference use the channel id. Only what would break a row of
+ * the sidebar is refused: nothing once trimmed, too long, or a control character.
+ */
+export function validateChannelName(raw: unknown): string {
+  const name = typeof raw === 'string' ? raw.trim() : '';
+  if (!name) throw new BadRequestException('Channel name cannot be empty');
+  if (Array.from(name).length > MAX_CHANNEL_NAME_LENGTH)
+    throw new BadRequestException(
+      `Channel name too long (max ${MAX_CHANNEL_NAME_LENGTH} characters)`
+    );
+  if (/\p{Cc}/u.test(name))
+    throw new BadRequestException('Channel name cannot contain control characters');
+  return name;
+}
+
+/** The community's own order: the arranged position, then age, then id so it is total. */
+export function sortChannels<T extends Pick<Channel, 'id' | 'sortOrder' | 'createdAt'>>(
+  channels: T[]
+): T[] {
+  return [...channels].sort(
+    (a, b) =>
+      (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() ||
+      a.id.localeCompare(b.id)
+  );
+}
+
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
@@ -1012,7 +1050,7 @@ export class ChannelService {
 
   // ================= WORKSPACES =================
 
-  /** Creates a workspace with default Administrateur/Modérateur/Membre roles, adds the creator as admin, and creates a public #general channel. */
+  /** Creates a workspace with default Administrateur/Modérateur/Membre roles, adds the creator as admin, and creates a public default salon (`DEFAULT_CHANNEL_NAME`). */
   /**
    * Returns a workspace slug guaranteed free of collisions with existing communities.
    * Communities may share a display name, but `channel_workspaces.slug`
@@ -1098,8 +1136,9 @@ export class ChannelService {
 
     const generalChannel = this.channelRepo.create({
       workspaceId: savedWs.id,
-      name: 'general',
+      name: DEFAULT_CHANNEL_NAME,
       isPrivate: false,
+      sortOrder: 0,
     });
     await this.channelRepo.save(generalChannel);
 
@@ -1475,7 +1514,9 @@ export class ChannelService {
 
     const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
 
-    const allChannels = await this.channelRepo.find({ where: { workspaceId: ws.id } });
+    const allChannels = sortChannels(
+      await this.channelRepo.find({ where: { workspaceId: ws.id } })
+    );
     // RESOLVED BEFORE THE CHANNEL LOOP, because it now decides what goes IN it. An admin has no
     // access to a private salon they have not joined, so without this they would not see it exists
     // and could never join it - a capability nobody can reach is not a capability.
@@ -1639,6 +1680,84 @@ export class ChannelService {
     );
   }
 
+  /** The sortOrder a salon created now takes: one past the community's current last. */
+  private async nextChannelSortOrder(workspaceId: string): Promise<number> {
+    const last = await this.channelRepo.maximum('sortOrder', { workspaceId });
+    return last === null ? 0 : last + 1;
+  }
+
+  /**
+   * Persists the order of a community's salons, SHARED by every member (unlike the personal order of
+   * the community rail).
+   *
+   * PERMISSION: `memberCanManageChannels` - the one that already gates creating, renaming and
+   * deleting a salon. Arranging the list is governance of the same object, so it must not be
+   * weaker (any member rearranging everyone's sidebar) nor stronger (MANAGE_WORKSPACE alone would
+   * lock out a role that may already delete the salons).
+   *
+   * `orderedIds` is the actor's VISIBLE list in its new order. A private salon the actor cannot see
+   * is not in it and must not move relative to the others, so the visible ids are written back into
+   * the slots the visible salons occupied and the hidden ones keep theirs. Every id must name a
+   * salon of THIS community the actor may see, or the whole request is refused: a partial apply
+   * would persist an order nobody drew.
+   *
+   * Announced as `workspace.updated { channelsReordered }` to the community, with NO ids: each
+   * client re-reads its own filtered list, so a private salon's existence leaks to nobody.
+   */
+  async reorderChannels(
+    workspaceId: string,
+    actorUserId: string,
+    orderedIds: string[]
+  ): Promise<{ success: true; workspaceId: string; orderedIds: string[] }> {
+    this.logger.debug(
+      `[CHANNEL_ORDER] reorder workspace=${workspaceId} count=${orderedIds?.length} by=${actorUserId.slice(0, 8)}`
+    );
+    if (!Array.isArray(orderedIds) || orderedIds.some((id) => typeof id !== 'string')) {
+      throw new BadRequestException('orderedIds must be a list of channel ids');
+    }
+    if (new Set(orderedIds).size !== orderedIds.length) {
+      throw new BadRequestException('orderedIds contains a duplicate');
+    }
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+    if (!(await this.memberCanManageChannels(actorMember)))
+      throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
+
+    const viewerCanManage = await this.memberHasWorkspaceManage(actorMember);
+    const all = sortChannels(await this.channelRepo.find({ where: { workspaceId } }));
+    const visible = new Set(
+      all
+        .filter((c) => viewerCanManage || this.canAccessChannel(c, actorMember, actorUserId))
+        .map((c) => c.id)
+    );
+    const unknown = orderedIds.filter((id) => !visible.has(id));
+    if (unknown.length > 0) {
+      this.logger.warn(
+        `[CHANNEL_ORDER] refused workspace=${workspaceId}: ${unknown.length} id(s) not visible salons of it`
+      );
+      throw new BadRequestException('orderedIds names a salon that is not in this community');
+    }
+
+    const named = new Set(orderedIds);
+    const queue = [...orderedIds];
+    const final = all.map((c) => (named.has(c.id) ? queue.shift()! : c.id));
+    await this.channelRepo.manager.transaction(async (mgr) => {
+      for (const [index, id] of final.entries()) {
+        await mgr.update(Channel, { id, workspaceId }, { sortOrder: index });
+      }
+    });
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(workspaceId);
+    await this.redis.publishChannelEvent(
+      'workspace.updated',
+      { workspaceId, channelsReordered: true },
+      workspaceMemberIds
+    );
+    return { success: true, workspaceId, orderedIds };
+  }
+
   // ================= ROLES =================
 
   /** Creates a new workspace role. Only members with MANAGE_WORKSPACE or MANAGE_ROLES permission may call this. */
@@ -1681,10 +1800,7 @@ export class ChannelService {
     if (!(await this.memberCanManageChannels(actorMember)))
       throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
-    const channelName = (input.name ?? '').trim().toLowerCase();
-    if (!channelName) throw new BadRequestException('Channel name cannot be empty');
-    if (channelName.length > 80)
-      throw new BadRequestException('Channel name too long (max 80 characters)');
+    const channelName = validateChannelName(input.name);
 
     const isPrivate = input.visibility === 'private';
 
@@ -1693,6 +1809,8 @@ export class ChannelService {
       name: channelName,
       isPrivate,
       allowedUsers: isPrivate ? [input.actorUserId.trim().toLowerCase()] : [],
+      // LAST in the community's order: a new salon never lands between two the bureau arranged.
+      sortOrder: await this.nextChannelSortOrder(input.workspaceId),
     });
     const savedChannel = await this.channelRepo.save(channel);
 
@@ -1958,10 +2076,7 @@ export class ChannelService {
     if (!(await this.memberCanManageChannels(actorMember)))
       throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
-    const trimmedName = newName.trim().toLowerCase();
-    if (!trimmedName) throw new BadRequestException('Channel name cannot be empty');
-    if (trimmedName.length > 80)
-      throw new BadRequestException('Channel name too long (max 80 characters)');
+    const trimmedName = validateChannelName(newName);
 
     channel.name = trimmedName;
     await this.channelRepo.save(channel);
@@ -2240,7 +2355,7 @@ export class ChannelService {
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
     const viewerCanManage = await this.memberHasWorkspaceManage(member);
-    const channels = await this.channelRepo.find({ where: { workspaceId } });
+    const channels = sortChannels(await this.channelRepo.find({ where: { workspaceId } }));
     const visible: Array<{
       id: string;
       workspaceId: string;
