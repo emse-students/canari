@@ -8,23 +8,9 @@ import {
   type ReelOverlay,
 } from './reelOverlays';
 
-/** A point in the source media's normalized coordinate space. */
-export interface ReelPoint {
-  x: number;
-  y: number;
-}
-
-/** A freehand stroke painted over a capture. */
-export interface ReelStroke {
-  color: string;
-  width: number;
-  points: ReelPoint[];
-}
-
 /** All decorations the camera editor can apply to a capture. */
 export interface ReelEdits {
-  strokes: ReelStroke[];
-  /** Text and emoji, bottom to top, each placed by a centre, a scale and a rotation. */
+  /** Text, emoji and strokes, bottom to top, each placed by a centre, a scale and a rotation. */
   overlays: ReelOverlay[];
 }
 
@@ -51,25 +37,24 @@ export function drawDecorations(
   fontFamily: string,
   images: OverlayImages
 ) {
-  for (const stroke of edits.strokes) {
-    if (stroke.points.length === 0) continue;
-    context.beginPath();
-    context.strokeStyle = stroke.color;
-    context.lineWidth = stroke.width * Math.min(width, height);
-    context.lineCap = 'round';
-    context.lineJoin = 'round';
-    context.moveTo(stroke.points[0].x * width, stroke.points[0].y * height);
-    for (const point of stroke.points.slice(1)) {
-      context.lineTo(point.x * width, point.y * height);
-    }
-    context.stroke();
-  }
-
   for (const overlay of edits.overlays) {
     context.save();
     context.translate(overlay.x * width, overlay.y * height);
     context.rotate(overlay.rotation);
-    if (overlay.kind === 'text') {
+    if (overlay.kind === 'stroke') {
+      // The points are in short-side units: the same factor sizes the line, as in the preview's SVG.
+      const unit = Math.min(width, height) * overlay.scale;
+      context.beginPath();
+      context.strokeStyle = overlay.color;
+      context.lineWidth = overlay.width * unit;
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+      overlay.points.forEach((point, index) => {
+        if (index === 0) context.moveTo(point.x * unit, point.y * unit);
+        else context.lineTo(point.x * unit, point.y * unit);
+      });
+      context.stroke();
+    } else if (overlay.kind === 'text') {
       const fontSize = overlayFontSize(width, height, overlay.scale);
       const paint = textPaint(overlay);
       context.font = `700 ${fontSize}px ${fontStack(overlay.font, fontFamily)}`;

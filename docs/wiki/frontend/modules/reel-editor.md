@@ -92,6 +92,22 @@ choice below was the simplest one consistent with this page and is open to the l
   returns if multi-line text is ever wanted. The pill geometry is in `em` (`PILL_*_EM`,
   `pillSize`), read by the preview's CSS and by the export, so both draw the same band.
 
+- **Drawing (WP-E6, done)**: a stroke is an OVERLAY (`kind: 'stroke'`), so it selects, drags,
+  pinches, twists and goes to the trash like text and emoji; the old canvas layer is deleted and
+  `ReelEdits` is `{ overlays }`. Points are in short-side units relative to the stroke's centre
+  (`reelStrokes.ts`): the preview is an SVG sized in `cqmin`, the export multiplies by
+  `min(width, height) * scale`. Three pen widths (thin 0.6 %, medium 1.2 %, thick 2.4 % of the short
+  side), the colour row shared with text. **Eraser** = a mode that deletes every stroke the finger
+  crosses (reach 3 % of the short side, hit-tested through the stroke's own transform); text and
+  emoji are removed by the trash, never by the eraser. **Undo** steps back through the layouts
+  before each change (new stroke, erase pass, text/emoji added, recolour, a drag/pinch that moved
+  something, clear), 30 steps; a tap or a reselection takes none. "Clear" is now a trash icon, one
+  undoable step. Not built: redo, per-stroke recolour, marker/neon brushes.
+  **Seen in a browser** (Chrome, 390x844 touch emulation, synthetic pointer events, 2026-10-06): a
+  thick and a thin stroke, moving one, erase removing only the crossed one, undo restoring it,
+  clear then undo, and the exported 720x1280 WebP having its white pixels where the preview drew
+  them (to within the line width). NOT seen on a phone.
+
 ## Work packages (estimates are focused engineering days, before device readings)
 
 | WP | What | Est. |
