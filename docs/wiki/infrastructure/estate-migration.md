@@ -1023,6 +1023,25 @@ move, and the compose file does not declare it `external`. **The webhook row mov
 `canari-prod-social-service-1`). The `/api/` exception still stays: the old name's access log still
 carries browser `GET`s on `/api/` (open tabs, cached pages) - it goes once that traffic has faded.
 
+**THE `/api/` EXCEPTIONS WENT, 2026-10-06.** The two old names' logs (current + rotated, two days)
+held **zero** `/api/` requests - only crawlers and scanners - and no container on the host names
+`sky.mitv.fr` or `cercle.canari-emse.fr` any more (read from each container's environment, secrets
+filtered). `sky.conf` and `cercle.conf` are pure `301`s now (pre-edit copies
+`/root/{sky,cercle}.conf.bak-2026-10-06-before-api-removal`). **The Sky relay on `mitv` STAYS,
+deliberately**: pointing the tunnel straight at the host would make every visitor of the old name
+arrive as `10.0.0.4`, the same address the wiki and Omeka traffic uses, and one abusive crawler
+banned there would take those down with it. The stopped `sky-sky-1` container and its 18 MB
+`/home/mitv/Sky/database` are the last pre-move copy: **deleting them is the user's gesture.**
+
+**EVERY CLIENT OF MICONNECT NOW NAMES `miconnect.emse.fr`, 2026-10-06** (the old name redirects its
+pages and serves the machine endpoints, see above): Le Cercle's CI variables (issuer AND JWKS
+together; its `deploy` was blocked by a dependency-audit gate unrelated to the change, fixed in
+the same sitting), Sky and MiGallery by their defaults, Canari by the `AUTHENTIK_URL` and
+`DEV_AUTHENTIK_URL` secrets - **which take effect with the next pre-release (dev) and stable
+(prod)**, an installed build keeping the old name for good. Wiki.js's strategy is the one left, a
+database edit on `mitv`. The `cercle-data` volume warning is closed by declaring it `external`
+(Le Cercle !26).
+
 **Two traps, both found before they cost anything.** `sky.db` is not the whole state:
 `sky-legacy.db` is written ONCE by `rebuild-db.js`, whenever absent, so the target's first start
 regenerated it from the wrong data, and `positions.json` is recomputed only on a mutation - Sky #132
