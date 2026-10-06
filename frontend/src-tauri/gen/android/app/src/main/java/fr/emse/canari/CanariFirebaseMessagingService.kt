@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.SeedFrameLadder
@@ -1467,6 +1468,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Executors.newSingleThreadExecutor { r -> Thread(r, "canari-ws-notif") }
 
         /**
+         * NOTIF-10 (b): pairs the generic banner of a push MLS refused for good with the real
+         * banner the WebView posts for the same message - see [GenericBannerLedger].
+         */
+        private val GENERIC_BANNERS = GenericBannerLedger()
+
+        /**
+         * Held across each check-and-post of the two triggers, so a real post and a generic post
+         * for one group cannot both decide before either is recorded.
+         */
+        private val GENERIC_BANNERS_LOCK = Any()
+
+        /**
          * Posts the SAME notification a push would, for a message that arrived over the WEBSOCKET.
          *
          * **WHY THIS EXISTS.** Until 2026-09-18 Android had TWO notification builders. A push came
@@ -1520,18 +1533,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             WS_NOTIF_LANE.execute {
                 try {
                     val avatar = if (senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
-                    context.showMessageNotification(
-                        senderName = senderName,
-                        groupName = groupName,
-                        body = body,
-                        largeIcon = avatar ?: generateInitialsBitmap(senderName),
-                        groupId = groupId,
-                        channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
-                        sentAt = sentAt,
-                        // The WebView already decided this reader cannot see the message land.
-                        suppressInForeground = false,
-                        namesEachSender = true,
-                    )
+                    synchronized(GENERIC_BANNERS_LOCK) {
+                        // THE REAL LINE REPLACES THE GENERIC ONE a refused push left for it.
+                        val generic = GENERIC_BANNERS.realPosted(groupId)
+                        if (generic != 0L) {
+                            Log.d(TAG, "notifyMessageFromWebSocket: replacing the generic banner a refused push posted (groupId=${groupId.take(8)})")
+                        }
+                        context.showMessageNotification(
+                            senderName = senderName,
+                            groupName = groupName,
+                            body = body,
+                            largeIcon = avatar ?: generateInitialsBitmap(senderName),
+                            groupId = groupId,
+                            channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
+                            sentAt = sentAt,
+                            // The WebView already decided this reader cannot see the message land.
+                            suppressInForeground = false,
+                            supersedes = generic,
+                            namesEachSender = true,
+                        )
+                    }
                 } catch (e: Exception) {
                     // EVERY SWALLOWED BRANCH LOGS: this lane is the only path to a banner for a
                     // message the server will never push, so a silent throw here is a message the
@@ -2450,7 +2471,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Encrypted MLS message: decrypted on the serialized MLS lane (max 60s per push).
         // Non-blocking for FCM: onMessageReceived returns immediately.
         val silent = data["silent"] == "true"
-        runSerializedWithWakeLock("fcm_decrypt") { handleMlsFrame(data, silent) }
+        // COUNTED FROM RECEIPT, NOT FROM WHEN THE LANE RUNS IT: a burst queues behind the lane, and
+        // the WebView's real post can land while a refused push is still waiting its turn
+        // ([GenericBannerLedger]).
+        val bannerGroup = data["groupId"]?.takeIf { !silent && it.isNotEmpty() }
+        bannerGroup?.let { GENERIC_BANNERS.pushQueued(it) }
+        runSerializedWithWakeLock("fcm_decrypt") {
+            try {
+                handleMlsFrame(data, silent)
+            } finally {
+                bannerGroup?.let { GENERIC_BANNERS.pushFinished(it) }
+            }
+        }
     }
 
     /**
@@ -2691,10 +2723,31 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
         val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
         Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
-        showMessageNotification(
-            senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
-            channel, sentAt = decrypted?.sentAt ?: 0L, namesEachSender = true,
-        )
+        if (outcome is PushDecrypt.RefusedForGood) {
+            // NOTIF-10 (b). Another engine consumed this generation, so it holds the message and
+            // posts the real banner itself. The generic line stays as the floor (nobody else is
+            // proven to post), but it is REPLACED when the real one comes, or not added at all if
+            // that already came - see [GenericBannerLedger].
+            synchronized(GENERIC_BANNERS_LOCK) {
+                if (GENERIC_BANNERS.refusedCoveredByRealPost(groupId)) {
+                    Log.d(TAG, "refused for good, and the real banner is already up -> no generic banner (groupId=${groupId.take(8)})")
+                } else {
+                    val stamp = showMessageNotification(
+                        senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
+                        channel, sentAt = 0L, namesEachSender = true,
+                    )
+                    if (stamp != 0L) {
+                        GENERIC_BANNERS.genericPosted(groupId, stamp)
+                        Log.d(TAG, "refused for good -> generic banner kept until the real one replaces it (groupId=${groupId.take(8)} stamp=$stamp)")
+                    }
+                }
+            }
+        } else {
+            showMessageNotification(
+                senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
+                channel, sentAt = decrypted?.sentAt ?: 0L, namesEachSender = true,
+            )
+        }
 
         // Woken by this incoming message: try to send our own pending outgoing messages
         // (text/reply/control), without waiting for a Welcome push or a reopen. Since the

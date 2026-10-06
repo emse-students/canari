@@ -1764,6 +1764,8 @@ Read from code and from the two `results.ndjson` records; no phone touched.
    `MlsBackgroundWorker` lines = the worker is the consumer. Also read whether the JS engine posts any
    shade notification for a message it drains while paused.
 
+6. **DECIDED AND IMPLEMENTED 2026-10-06: DESIGN (b).** The Mi 9T logcat (`mi9t-notif10-logcat.txt`) is case (i): the JS engine's `[QUEUE] Processing` at 19:46:17.46 came ~1.4 s before the first push `SecretReuse` refusal (18.892), no `onResume` between, no `MlsBackgroundWorker` line - and the JS engine DOES post a real banner (`notifyMessageFromWebSocket`, 18.970), 56 ms BEFORE the push's generic line (19.026), which is why the shade showed both. Kotlin-side only: `push/GenericBannerLedger.kt` pairs the two in either order (see [mobile](frontend/mobile.md)). **OWED: one on-device NOTIF-10 re-read by the lead** (the service itself cannot be compiled outside the Tauri Android project; the ledger is JVM-tested).
+
 **THAT HYPOTHESIS IS NOW REFUTED FOR THE PHONE, 2026-09-08, AND THE REAL MECHANISM IS NOT A RACE AT
 ALL.** This entry said the pull/socket overlap was *"not established"* and that what would settle it
 was a pair of timestamps *"which the phone does not currently log with enough precision to compare"*.
