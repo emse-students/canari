@@ -25,7 +25,8 @@
     <div class="space-y-2">
       <p class="text-text-muted text-xs font-bold tracking-wider uppercase">{label}</p>
       <ul class="space-y-2">
-        {#each members as member (member.sub ?? fullName(member))}
+        <!-- KEYED BY POSITION: no identity here is unique (same-name placeholders, one person as parrain AND adoption), and a duplicate key throws in Svelte 5 and took the whole profile page down. -->
+        {#each members as member, i (i)}
           {@const inner = fullName(member)}
           <li>
             <svelte:element

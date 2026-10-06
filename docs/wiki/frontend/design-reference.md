@@ -3010,3 +3010,25 @@ supersedes any unfinished touch.** `swipeBack` and `pullToRefresh` (same shape: 
 could fire a refresh at the end of an unrelated stroke) now do both; the other touch handlers
 (`MessageBubble`, `ReelViewer`, `MediaLightbox`, `PdfViewerModal`) already handle `touchcancel`.
 Tests: `swipeBack.test.ts` (a cancelled edge touch, then a mid-screen scroll).
+
+## 42. The profile rendered, then broke: a late section threw on a repeated key (2026-10-06)
+
+**Report (production, iPhone store build):** "Mon profil" showed, then a loading state, then the error screen.
+Her associations (two Admin roles) were a red herring: memberships, role history, cotisations and the
+notepad were all replayed against the local estate with that data and rendered.
+
+**Cause, reproduced on the local estate (W1, 390 px, `/api/users/*/parrainage` answered by a fetch
+override):** the sponsorship section only appears once `fetchUserParrainage` is in flight or has rows - it
+is the one section that arrives LATE, hence "shows, loading, breaks". It threw in two ways, both ending in
+`[Layout] page crash` and the generic error screen:
+
+- `each_key_duplicate` - rows were keyed `sub ?? full name`. Two unlinked Sky placeholders with one name,
+  or a person listed as parrain and as adoption, repeat the key. Svelte 5 THROWS on a duplicate key.
+  `ProfileChips` carried the same pattern (`formation + promo`, `post`).
+- `Cannot read properties of undefined (reading 'length')` - core-service relays Sky's body untouched, so
+  a body without `parrains`/`fillots` (e.g. `{ "found": false }`) reached `parrainage?.parrains.length`.
+
+**Fix:** read-only lists are keyed by position; `parseSkyEntourage` turns a missing list into an empty one
+and REFUSES a non-object (the page logs it and shows no section). The three swallowed extras loaders now
+log. Pinned by `ProfileParrainageSection.svelte.test.ts` (fails with `each_key_duplicate` before) and
+`profile/api.test.ts`. No data repair is needed: the rows are Sky's and render as they are.
