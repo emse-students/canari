@@ -1889,6 +1889,46 @@ mechanism did not, which is what this entry predicts - the overlap is still reco
 fact rather than absent, and a handset still pays for it at ERROR. Nothing here is closed by that
 reading; it dates the entry against current code so the next session does not re-derive it.
 
+**RE-READ 2026-10-06 AFTER NOTIF-10 WENT `FAIL` ON THE MI 9T (2026-10-05, TWICE, `7ab8f1780`) - THE
+ENTRY BELOW IS WRONG ABOUT WHO CONSUMES THE GENERATION, AND THE BANNER HAS ITS OWN MECHANISM.**
+Read from code and from the two `results.ndjson` records; no phone touched.
+
+1. **The push path does NOT consume anything durably.** `background.rs`
+   (`decrypt_push_message_with_key`, header "These never persist `mls.bin`") loads the state, decrypts
+   in memory and discards the manager; only the outbox batch and the Welcome paths call
+   `save_encrypted_with_key`. So the 2026-09-08 sentence *"the FCM service writes the advanced state
+   back"* is not what the code does. A push decrypt answering `SecretReuse` was refused because ANOTHER
+   ENGINE persisted that generation first: the JS/WebView engine (socket drain, catch-up pull) or the
+   `MlsBackgroundWorker`. The two consumers are still different layers, which is the entry's point; the
+   consumer is just not the Kotlin service.
+2. **The banner is a straight line, not a leak.** `RefusedForGood` (`mls-refused-for-good`, kind
+   `SecretReuse`) on a VISIBLE push skips the ladder and the worker (#1394) but still falls through
+   `decrypted == null` in `handleMlsFrame` to `buildFallbackText` -> `Fallback notification: Nouveau
+   message de <sender>` -> `showMessageNotification`. Nothing posted earlier is replaced: the generic
+   line IS the notification. It is suppressed only when `MainActivity.isInForeground` is true at post
+   time.
+3. **NOTIF-10, 2026-10-05, both runs, same shape**: FOUR pushes refused `SecretReuse` at one epoch
+   (`msg_epoch=group_epoch=20`, then 26), 0.5-1.4 s apart, four `Fallback notification` lines, and ONLY
+   the last ends in `showMessageNotification: app in foreground -> suppressed`. So three generic
+   banners were posted while `isInForeground` was false and one was suppressed after it flipped - the
+   same "three nameless banners" the 2026-09-23 run saw. 5 of 5 markers still arrive (the JS engine
+   holds all five), which is why the verdict is a banner and not a loss.
+4. **WHY NO FIX WAS WRITTEN.** `foregroundTookOver` only asks `isInForeground`; a WebView engine that is
+   ALIVE BUT BACKGROUNDED (socket reconnected with the radios) advances `mls.bin` with no activity in
+   the foreground, and the guard says no. Two designs exist and they differ in whether the consumer
+   also notifies: (a) a refusal for good on a visible push posts nothing - correct only if the JS engine
+   raises its own notification for what it drained while paused; (b) the generic banner is kept and
+   REPLACED by the real one when the JS side shows it (the `genericStamp` supersede the channel path
+   uses) - correct whoever consumed. Choosing needs the observation below, and (a) on a guess turns a
+   nameless banner into NO banner.
+5. **THE OBSERVATION THAT SEPARATES THEM, owed from one NOTIF-10 logcat** (not run here, the phones
+   were in use): the JS engine's `[QUEUE] Processing qId=<id>` lines against `CanariFCM tryDecrypt` for
+   the same five `queuedMessageId`s, plus `MainActivity onPause/onResume`. (i) JS `Processing` BEFORE
+   the push refusal with no `onResume` between = a backgrounded live engine, which `foregroundTookOver`
+   cannot see (favours b); (ii) `onResume` first = the guard races its own flip; (iii)
+   `MlsBackgroundWorker` lines = the worker is the consumer. Also read whether the JS engine posts any
+   shade notification for a message it drains while paused.
+
 **THAT HYPOTHESIS IS NOW REFUTED FOR THE PHONE, 2026-09-08, AND THE REAL MECHANISM IS NOT A RACE AT
 ALL.** This entry said the pull/socket overlap was *"not established"* and that what would settle it
 was a pair of timestamps *"which the phone does not currently log with enough precision to compare"*.
