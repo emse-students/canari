@@ -44,6 +44,7 @@ import {
 } from '$lib/utils/graine/distributionGroup';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
+import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
 
@@ -227,6 +228,8 @@ export function useChannelWorkspaces() {
     // A `fetch` that reached nobody throws a TypeError; a request cancelled under it throws an
     // AbortError. Neither carries a status, because neither got an answer.
     if (error instanceof TypeError) return true;
+    // The same fact from a send: `fetch` rejected inside the delivery client, classified at the throw.
+    if (error instanceof DeliveryUnreachableError) return true;
     return error instanceof DOMException && error.name === 'AbortError';
   }
 
@@ -1320,9 +1323,15 @@ export function useChannelWorkspaces() {
    * it used to hold that tally in cleartext, which is content by any honest reading.
    *
    * The local merge comes FIRST and with the same `at` the frame carries, so the pill flips at
-   * once and this device's own row, when it comes back, merges to exactly the same state. There is
-   * no rollback on failure and none is possible: what a send failure costs is the peers' copy, and
-   * a device that unflipped its own pill would disagree with the frame it may still have sent.
+   * once and this device's own row, when it comes back, merges to exactly the same state.
+   *
+   * **ROLLED BACK ONLY WHEN NOTHING WAS SENT** (2026-10-06): a transport failure
+   * ({@link DeliveryUnreachableError}) or a seal this device cannot make
+   * ({@link GraineSealUnavailableError}) means no frame left, so the pill that stayed drawn after
+   * the toast was a claim about a reaction nobody else will ever see. The undo is the inverse frame
+   * at a LATER `at`, applied locally and never sent. Any other failure may have reached peers
+   * (a 5xx is an answer we did not read), and unflipping there would disagree with the frame they
+   * hold - so it stays, as before.
    */
   async function toggleChannelReaction(
     channelConversationId: string,
@@ -1371,6 +1380,19 @@ export function useChannelWorkspaces() {
         }).catch(() => {});
       }
     } catch (error) {
+      if (
+        error instanceof DeliveryUnreachableError ||
+        error instanceof GraineSealUnavailableError
+      ) {
+        const undone = applyChannelReactionFrame(
+          messageId,
+          userId,
+          emoji,
+          Math.max(Date.now(), at + 1),
+          !standing
+        );
+        ctx.log(`[CHANNEL] reaction not sent, local pill rolled back: ${undone}`);
+      }
       ctx.log(toUiActionError(m.channel_action_message_react(), error));
     }
   }

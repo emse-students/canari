@@ -6,6 +6,10 @@ import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
 import { GraineNotReadyError } from '$lib/utils/graine/runtime';
 import { GraineUnknownChannelError } from '$lib/utils/graine/channelSeal';
 import { showToast } from '$lib/stores/toast.svelte';
+import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
+import { setCurrentUserId } from '$lib/stores/userState.svelte';
+import { getChannelReactions } from '$lib/stores/reactionStore.svelte';
+import { activeReactions } from '$lib/utils/chat/messageReactions';
 
 // THE ERROR CLASSES COME FROM THE REAL MODULE, not from the mock. `isRetryableLoadError` decides
 // by `instanceof`, and a stand-in class would make every one of those tests pass against a type the
@@ -20,6 +24,7 @@ vi.mock('$lib/stores/auth', async (importOriginal) => ({
 vi.mock('$lib/paraglide/messages', () => ({
   m: {
     channel_action_community_load: vi.fn(() => 'Loading communities'),
+    channel_action_message_react: vi.fn(() => 'Reacting'),
     channel_action_channels_reorder: vi.fn(() => 'Reordering channels'),
     channel_action_error_unknown: vi.fn(({ action }: { action: string }) => `${action}: unknown`),
     channel_action_error_session: vi.fn(
@@ -49,7 +54,9 @@ vi.mock('$lib/stores/toast.svelte', () => ({
 vi.mock('$lib/utils/chat/channelCrypto', () => ({
   isChannelConversationId: (id: string) => id.startsWith('channel_'),
   sendEncryptedChannelMessage: vi.fn(),
+  sendChannelReaction: (...args: unknown[]) => sendChannelReaction(...args),
 }));
+const sendChannelReaction = vi.fn();
 
 const listUserWorkspaces = vi.fn();
 const listChannels = vi.fn();
@@ -870,5 +877,51 @@ describe('useChannelWorkspaces - salon names and order', () => {
     await api.refreshChannelOrder('ws1');
 
     expect(names(api)).toEqual(['two', 'three', 'one']);
+  });
+});
+
+describe('useChannelWorkspaces - a reaction that could not be sent', () => {
+  const standingOn = (messageId: string) =>
+    activeReactions(getChannelReactions(messageId)).filter((r) => r.userId === 'u1');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setCurrentUserId('u1');
+  });
+
+  it('names a transport failure by its TYPE, with the network sentence, and takes the pill back', async () => {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    sendChannelReaction.mockRejectedValue(
+      new DeliveryUnreachableError('error sending request for url (https://x/api/mls/send)')
+    );
+
+    await api.toggleChannelReaction('channel_c1', 'm-rollback-1', '👍', ctx);
+
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('network error'), 'error');
+    expect(standingOn('m-rollback-1')).toHaveLength(0);
+  });
+
+  it('puts a removed reaction back when the removal was not sent', async () => {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    sendChannelReaction.mockResolvedValueOnce(undefined);
+    await api.toggleChannelReaction('channel_c1', 'm-rollback-2', '👍', ctx);
+    expect(standingOn('m-rollback-2')).toHaveLength(1);
+
+    sendChannelReaction.mockRejectedValue(new DeliveryUnreachableError('offline'));
+    await api.toggleChannelReaction('channel_c1', 'm-rollback-2', '👍', ctx);
+
+    expect(standingOn('m-rollback-2')).toHaveLength(1);
+  });
+
+  it('keeps the pill when the failure may have reached peers', async () => {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    sendChannelReaction.mockRejectedValue(new Error('Message send HTTP error: 500'));
+
+    await api.toggleChannelReaction('channel_c1', 'm-rollback-3', '👍', ctx);
+
+    expect(standingOn('m-rollback-3')).toHaveLength(1);
   });
 });

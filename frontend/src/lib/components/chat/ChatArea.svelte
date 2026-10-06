@@ -1022,14 +1022,22 @@
     const slot = chromeSlot;
     const panel = threadPanel;
     if (!slot || !panel) return;
-    const publish = () =>
-      panel.style.setProperty('--chat-header-height', `${slot.getBoundingClientRect().height}px`);
+    // `--chat-chrome-bottom` goes on the ROOT, because the toast layer is a sibling of the whole
+    // app and cannot inherit from this panel: it is the viewport Y where the chrome ends, so a
+    // phone toast sits below the header whatever its height (safe area included, no constant).
+    const root = document.documentElement;
+    const publish = () => {
+      const box = slot.getBoundingClientRect();
+      panel.style.setProperty('--chat-header-height', `${box.height}px`);
+      root.style.setProperty('--chat-chrome-bottom', `${box.bottom}px`);
+    };
     publish();
     const observer = new ResizeObserver(publish);
     observer.observe(slot);
     return () => {
       observer.disconnect();
       panel.style.removeProperty('--chat-header-height');
+      root.style.removeProperty('--chat-chrome-bottom');
     };
   });
 </script>
