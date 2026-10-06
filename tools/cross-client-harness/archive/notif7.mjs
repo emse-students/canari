@@ -10,7 +10,7 @@
  *
  * THE DISCRIMINATOR, and why the app is parked on the FEED first. If A1 were already sitting in the
  * DM, "the DM is on screen after the tap" would be true whether the deep link worked or did nothing
- * at all. So the app is moved to `/posts` before it is backgrounded or killed: after the tap the
+ * at all. So the app is moved to `/calendar` before it is backgrounded or killed: after the tap the
  * conversation must be on screen AND must contain this run's marker, which no default route can
  * produce.
  *
@@ -34,6 +34,11 @@ import { PEER_NAME, PORTS, peerNameFor } from '../names.mjs';
 phone.useDevice('A1');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// THE ROUTE A CLIENT IS PARKED ON, OFF /chat. It was `/posts` until 2026-10-05, when the feed audience
+// gate (spaces, WP6a) began REFUSING an account with no space and no association - which is every rig
+// account - and the app redirected /posts to /chat, so the park parked nothing. `/calendar` is open
+// to every member and is not a chat route.
+const PARK_ROUTE = '/calendar';
 const mode = String(process.argv[2] || 'bg');
 if (!['bg', 'killed'].includes(mode)) throw new Error(`usage: bun notif7.mjs bg|killed`);
 
@@ -120,7 +125,7 @@ stage('parking A1 on the FEED, so a default route cannot fake the verdict');
 // The reload is DECLARED (see `goto`): parking the phone off `/chat` is the precondition this check
 // is built on, and it happens before the notification window opens, so the PIN re-lock is handled by
 // the unlock above and no command is in flight to lose its `runCallback`.
-await goto(a1, '/posts', { relaunch: 'the phone must be parked off /chat before the window opens' });
+await goto(a1, PARK_ROUTE, { relaunch: 'the phone must be parked off /chat before the window opens' });
 await sleep(4_000);
 out.beforeUrl = await evaluate(a1, 'location.href');
 stage(`A1 before: ${out.beforeUrl}`);
@@ -166,7 +171,7 @@ const phoneWindowFrom = Date.now();
 // previous run's log, arriving BEFORE the message push it was meant to dismiss.
 stage('parking W1 off the conversation, so it cannot dismiss the notification by reading it');
 const w1 = await client(PORTS.W1, APP_TAB);
-await goto(w1, '/posts');
+await goto(w1, PARK_ROUTE);
 await sleep(3_000);
 out.w1Url = await evaluate(w1, 'location.href');
 if (/\/chat/.test(out.w1Url)) throw new Error(`W1 is still on the chat (${out.w1Url})`);

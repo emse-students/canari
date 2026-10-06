@@ -213,6 +213,37 @@ configuration) - a console click for the account holder, nothing in this reposit
 same DM afterwards settles it: `FCM sent ... platform=ios` and an `apsd` line, or a different error. Until then every push row on I1 (O4, O11,
 O13, NOTIF-*, MENTION-2/3, LIFE-2/3/5/8) cannot run.
 
+## The notification-tap deep link on the iPhone (first reading, 2026-10-05)
+
+The bench build already on the phone (1.0.3, `local_url` `http://192.168.1.32:8081`, inspectable
+through `pymobiledevice3 webinspector cdp --port 9444`, `bench_native_store` answering) was measured
+with `openDeepLink('fr.emse.canari://chat/<id>')` (O10) and the WebView console recorded over the
+bridge. **No real push is possible on this bench** (sandbox APNs credential, above), so the native
+half of a REAL tap - `didReceiveNotificationResponse` and its own `openURL` - is NOT observed; what
+is proven is everything from the scheme onward.
+
+- **PROVEN, cold and warm**: UIKit delivers `UIOpenURLAction`, and the page logs `[hooks] Deep-link
+  listener registered`, `[hooks] launch URL read on attempt 1, 11ms after the bundle ran` (cold),
+  `[hooks] onOpenUrl called with 1 URL(s)`, `[hooks] Processing URL` and `[notifNav] deep link
+  received`. So the plugin's `current` is NOT empty on iOS and the scheme reaches the page: the
+  `canari_push.mm` half of H1 (a cold `openURL` lost on its way to the plugin) is REFUTED for the
+  scheme path, and H5 (listener late) with it.
+- **FOUND, warm, JS routing (H4)**: a link to the SAME conversation a second time, from another
+  page, is received and then DOES NOTHING - no `[notifNav] routing to /chat` line, the app stays on
+  `/posts`. `ChatBackgroundService`'s `lastNavigatedNotifTarget` is set on the first landing and
+  never reset, so `landingStep` answers `await-arrival` for a target it already routed to once. A
+  link to a DIFFERENT id routes at once (`[notifNav] routing to /chat`, page `/chat`). Android runs
+  the same code. A repeat tap on one conversation in a session is therefore dead; it is not the
+  report of a first tap, which this does not explain.
+- **COLD**: the link reaches the page, which then shows the encryption PIN gate (the app locks on
+  every cold start); `notifNav.pending` is held and `isLoggedIn` gates the landing. Whether it lands
+  after the unlock is NOT observed - an agent does not type the PIN. One human unlock settles it.
+- **UNOBSERVED**: H2 (a notification with no `deepLink` because the NSE expired) and H3 (the
+  self-`openURL` ignored). `canari_push.mm` already logs the tap's `deepLink` or its absence, and a
+  non-URL; this pass adds the completion handler of the `openURL` (`success=0` means the system
+  declined). The next real tap on a TestFlight or sandbox-credentialed build reads: `[CanariPush]
+  notification tap type=... deepLink=...`, then `openURL completed success=...`.
+
 ## Every row
 
 `a` = runs with the adapter (once C1 lands), `b` = needs the observable named, `c` = what the row

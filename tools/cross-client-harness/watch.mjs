@@ -631,6 +631,26 @@ const STATE_CHANGE = [
   // whole point of having split them (the wording used to be "commit or dropped frame", one string
   // for a healthy group and a lossy one).
   /^\[MLS\] No application payload for \S+ - commit applied, none expected$/,
+  // A SURFACE COVERING THE SCREEN OPENING OR CLOSING (`coversScreen.svelte.ts`, #1240): the decision
+  // log of the one counter that hides the native tab bar, written on every modal, sheet and viewer.
+  // Every row that opens one - and every observer of it - read PASS-DIRTY from 2026-09-30 on. Pinned
+  // to the counter's own sentence, so a count that goes wrong in prose would still surface.
+  /^\[coversScreen\] \d+ surface\(s\) cover the screen$/,
+  // THE BOOT AND THE READ MARKER, FOUR MORE DECISION LOGS THE PROJECT'S OWN STANDARD REQUIRES (found
+  // 2026-10-05 on NOTIF-19, whose reloaded W1 replays the boot): the brand fit and the text-zoom
+  // measurement the shell takes at mount, the key-group registry restored before the drain, the
+  // notification preferences read, and the channel read marker's own bookkeeping. Each is pinned to
+  // its whole sentence, so the FAILURE spelling of any of them (`could not`, `failed`) is not here.
+  /^\[CanariBrand: name does not fit in \d+px\]$/,
+  /^\[textZoom: font \d+px over a \d+px rem box -> --text-zoom [\d.]+\]$/,
+  /^\[GRAINE\] key-group registry restored before the drain - \d+ group\(s\)$/,
+  /^\[notificationPreferences\.fetch\]$/,
+  /^\[CHANNEL_READ\] mark [0-9a-f]{8} asked=\d+ stored=\d+$/,
+  // THE ROLE PICKER OPENING AND SETTLING (`[PICKER]`): every members-tab invite goes through it, and
+  // NOTIF-21 / COMM rows that invite read PASS-DIRTY on these two lines alone. Pinned to the two
+  // sentences, so a picker that fails or throws is a different spelling and stays visible.
+  /^\[PICKER\] open ".+" as (popover|sheet), \d+ options?$/,
+  /^\[PICKER\] ".+" -> (unchanged|changed)$/,
 ];
 
 /**
@@ -2471,6 +2491,11 @@ export function logcatReport(lines, label = 'A1') {
     ['fcm-decrypt-refused', /^tryDecrypt refused group=[0-9a-f]+ locality=[A-Z]+$/],
     ['fcm-locality', /^groupLocality: epoch=-?\d+ group=[0-9a-f]+$/],
     ['fcm-catchup', /^(fetchCommitsFromBackend: \d+ commit\(s\) since epoch=-?\d+|catchup: no commit to catch up \(epoch=-?\d+\) -> fallback)$/],
+    // THE BACKGROUND PUSH FETCHING ITS OWN PROTO, the successful half of a wake: the GET and the
+    // answer's size, twice per push on the Mi 9T (the second after the catch-up). It left NOTIF-2, 19
+    // and 20 `PASS-DIRTY` on 2026-10-05 with nothing else - the failure spelling (`proto received=
+    // false`, an HTTP status) is not matched, so it still surfaces.
+    ['fcm-fetch-proto', /^doFetchProto: (GET http:\/\/\S+|proto received=true \(\d+ chars\))$/],
     ['outbox-drain', /^(drainOutboxBackground|sendQueuedMessagePush): /],
     ['worker-flag', /^resetFailureFlag: flag reset/],
     ['paths', /^\[mines_app_lib\] \[Path\] /],

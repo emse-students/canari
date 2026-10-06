@@ -3578,7 +3578,12 @@ static void CanariInstallApnsTokenHook(void) {
     NSURL *url = [NSURL URLWithString:deepLink];
     if (url != nil) {
       dispatch_async(dispatch_get_main_queue(), ^{
-        [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+        [[UIApplication sharedApplication] openURL:url
+                                           options:@{}
+                                 completionHandler:^(BOOL success) {
+                                   // The system's answer to the self-open: NO means it declined.
+                                   NSLog(@"[CanariPush] notification tap: openURL completed success=%d", success);
+                                 }];
       });
     } else {
       NSLog(@"[CanariPush] notification tap: deepLink is not a URL: %@", deepLink);
