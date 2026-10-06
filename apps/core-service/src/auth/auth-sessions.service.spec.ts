@@ -245,6 +245,30 @@ describe('AuthSessionsService', () => {
       expect(repo.rows).toHaveLength(0);
     });
 
+    // Two causes end in the same revocation and only this line tells them apart: a client that LOST
+    // the response of its last rotation (the previous token, outside the window - a suspended phone)
+    // and a token that was spent TWO rotations ago (a real fork of the credential).
+    it('names which kind of replay revoked the session, and how long ago the rotation was', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const { service, repo } = makeService();
+      const first = await service.create('user-1');
+      const second = await service.rotate(first.sessionId, first.tokenId);
+      if (second.status !== 'rotated') throw new Error('setup');
+      repo.rows[0].rotatedAt = new Date(Date.now() - 600 * 1000);
+      await service.rotate(first.sessionId, first.tokenId);
+      const previousLine = String(warn.mock.calls.at(-1)?.[0]);
+      expect(previousLine).toContain('presented=previous');
+      expect(previousLine).toMatch(/rotatedAgo=6\d\ds/);
+
+      const again = await service.create('user-1');
+      const r1 = await service.rotate(again.sessionId, again.tokenId);
+      if (r1.status !== 'rotated') throw new Error('setup');
+      await service.rotate(again.sessionId, r1.tokenId);
+      await service.rotate(again.sessionId, again.tokenId);
+      expect(String(warn.mock.calls.at(-1)?.[0])).toContain('presented=older');
+      warn.mockRestore();
+    });
+
     it('accepts the replaced token inside the grace window and hands back the current one', async () => {
       const { service, repo } = makeService();
       const opened = await service.create('user-1');
