@@ -106,6 +106,23 @@ function blockShadowCss(fontSize: number, color: string): string {
   return `text-shadow:${-offset}px ${offset}px 0 ${color};`;
 }
 
+/** Every event title and the day number sharing its tile are WHITE, whatever the tile's colour. */
+export const EVENT_TEXT_FILL = '#ffffff';
+
+/**
+ * The dark outline that gives that white its contrast, for text of `fontSize` px.
+ *
+ * The Canva draws every title white with a black outline (user, 2026-10-06) and the old rule - a
+ * luminance pick of black or white against the tile colour - made some titles black and others white
+ * with no logic a reader could see, and neither read well over a logo. `paint-order:stroke fill`
+ * paints the stroke UNDER the glyph, so only its outer half shows and the letters keep their weight;
+ * the width follows the size, like the block shadow, so a 9px title is not drowned in a 3px halo.
+ */
+export function textOutlineCss(fontSize: number): string {
+  const width = Math.max(2, Math.round(fontSize * 0.2 * 10) / 10);
+  return `color:${EVENT_TEXT_FILL};-webkit-text-stroke:${width}px #111111;paint-order:stroke fill;stroke-linejoin:round;`;
+}
+
 /**
  * What the sheet still lets a human decide - and it is deliberately short.
  *
@@ -627,7 +644,6 @@ function buildCalendarHtml(
         ...(loneSlot === 1 ? [blankHalf(true)] : []),
         ...visible.map((ev, idx) => {
           const evBg = eventBgCss(ev);
-          const fg = contrastColor(eventHexColors(ev)[0]);
 
           // Resolve logos (primary + co-owners): data URL map for the export, absolutized URL for
           // the preview. The map is keyed by the RAW stored URL, which is what the pre-fetch in
@@ -665,27 +681,19 @@ function buildCalendarHtml(
               : splitLogoWatermark(logoSrcs, logoSize, logoAlpha);
 
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
-          // An event title is read over a logo now, not over a flat colour, so it carries the same
-          // hard outline the Canva gives it - in black rather than the accent, which belongs to the
-          // display faces and would fight the association's own colour.
-          const titleShadow = 'text-shadow:-1px 1px 0 rgba(0,0,0,0.55);';
-
-          if (idx === 0 && loneSlot !== 1) {
-            // First slot: day number on top, title below - flex column so the rasteriser sees
-            // explicit heights and doesn't collapse the text area.
-            const availH = slotH - DAY_NUM_H;
-            const fit = fitEventText(availH);
-            return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sep}display:flex;flex-direction:column;box-sizing:border-box;">
-              ${watermark}
-              <div style="height:${DAY_NUM_H}px;flex-shrink:0;padding:6px 0 0 8px;position:relative;"><span data-pdf-text style="font-size:${DAY_NUM_SIZE}px;font-weight:800;color:${fg};line-height:1;">${day}</span></div>
-              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fit.fontSize}px;font-weight:800;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;${titleShadow}${fit.clampCss}">${emojiHtml(ev.title)}</span></div>
-            </div>`;
-          }
-          // Subsequent slots: no day number, title fully centred.
+          // Every title is white with a dark outline, CENTRED IN ITS WHOLE TILE both ways: the day
+          // number is pinned top-left on top of the tile instead of owning a row the title must
+          // dodge, which is what pushed the first title of a cell below the centre (user,
+          // 2026-10-06). The outline is what keeps the number readable if a long title reaches it.
+          const dayNumber =
+            idx === 0 && loneSlot !== 1
+              ? `<span data-pdf-text style="position:absolute;top:6px;left:8px;font-size:${DAY_NUM_SIZE}px;font-weight:800;line-height:1;${textOutlineCss(DAY_NUM_SIZE)}">${day}</span>`
+              : '';
           const fit = fitEventText(slotH);
           return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sep}display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px;box-sizing:border-box;">
               ${watermark}
-              <span style="font-size:${fit.fontSize}px;font-weight:800;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${titleShadow}${fit.clampCss}">${emojiHtml(ev.title)}</span>
+              ${dayNumber}
+              <span style="font-size:${fit.fontSize}px;font-weight:800;line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${textOutlineCss(fit.fontSize)}${fit.clampCss}">${emojiHtml(ev.title)}</span>
             </div>`;
         }),
         ...(loneSlot === 0 ? [blankHalf(false)] : []),
