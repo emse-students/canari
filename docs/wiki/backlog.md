@@ -1219,6 +1219,32 @@ unshipped, and nothing says so**: `git status` is clean, the push succeeds, and 
 **The prevention already exists and this is why it is there**: THE DEVELOPMENT CYCLE in `CLAUDE.md`
 ends with `git branch -D`. A local branch kept past its merge is the only thing that can be pushed
 back, which is the sentence that line was missing.
+### P1 - a key group classified after the boot drain had its backlog refused on every load, and one behind the server never heals (measured on production 2026-09-28, `v0.18.28`)
+
+**What is wrong**: the user's PC showed Mineurchestre -> `#general` blank for a day; 51 frames on the
+community's key group (8 commits, 43 seeds) were drained and refused as `absent-conversation` on
+every load. The mechanism is [channel-encryption §22](protocols/channel-encryption.md#22-a-key-groups-backlog-was-refused-on-every-load---the-classification-is-device-state---fixed-2026-09-28).
+Three pull requests, in order; the releases `v0.18.29-alpha.1` then `v0.18.29` are this session's
+once all three are merged. **The PC must not be reset meanwhile**: its queue is what proves the
+lossless heal.
+
+| PR | What | State |
+| --- | --- | --- |
+| 1 (B + C) | The registry is device state (IndexedDB v9 / SQLite 11), restored before the drain and allowlisted by the MLS state; registering a key group collects `absent-conversation` and the new `unscoped-distribution-group` | this PR |
+| 2 (A + D + E) | A HELD key group is compared with `activeEpoch` once the first pull settles (`classifyBase`), a gap is armed on `epoch-gap`/`wrong-epoch` and cleared only at the target epoch, the watchdog rejoins through `ensureDistributionGroupFor`; nothing is sealed or asked in a gap (`distributionEpochFor` null) and a rejoin re-asks history once | open |
+| 3 (G + H + I) | P3 noise: `forgetGroupsAbsentFromServer` twice per boot, `ownDevicesOnTheGroup` re-fetching, one unreadable-row line per row, one decline line per own device | open |
+
+**Owed after `v0.18.29`**: `queued_message` for the PC's device at 0, chat-delivery `[ACK] ... deleted=51`,
+zero `past-epoch-application` on the PC, the salon rendered; a dev campaign row (4 communities,
+tab shut, a commit and a post on the 4th).
+
+
+**THIRD AND FOURTH, 2026-10-06:** `GHSA-hqr4-qq8f-hg3x` (JSONC parser/verifier re-scan, <= 3.5.0) and
+`GHSA-mjw6-4jj6-33hc` (Assembler prototype pollution, < 3.6.0) on the same `minio > stream-json`
+edge. The override to 3.x was refused: fixed stream-json is `type: module` with `src/` entry points
+where minio's CJS build `require`s it, and nothing proves that boot. Both ride leg one, now an
+ALLOWLIST (minio may import only `stream-json/jsonl/Parser.js`) in `.github/scripts/stream-json-premise.sh`,
+self-tested by `tests/stream-json-premise.test.sh`. The retirement condition is unchanged, with 3.6.0 as the floor.
 
 **What retires this row:** it is a practice, not a defect, so nothing here can gate it - the push is
 legitimate git against a branch the remote is happy to have. Delete the row when a month of merges
