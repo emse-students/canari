@@ -51,7 +51,20 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://api.stripe.com https://merchant-ui-api.stripe.com https://r.stripe.com https://js.stripe.com https://api.klipy.com https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"' https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com; form-action '"'"'self'"'"' https://checkout.stripe.com; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
 
 # SPA fallback + reverse proxy WebSocket/API vers les services Docker
-RUN printf '# THE COOKIE ADMINER IS GIVEN: the browser sends the Canari adminer session (canari_adminer) with\n\
+RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: every `GET /api/ws` line carried the\n\
+# full `token=<JWT>` query, a live credential for its remaining hour, readable by anyone who can read\n\
+# the container log). The client puts the token in the query on purpose (WebMlsService, CallService:\n\
+# Tauri and proxies that drop the canari_ws_token cookie), so the REQUEST is left alone and only what\n\
+# is WRITTEN is rewritten - `$request` is replaced by the same three parts with the `token` value\n\
+# redacted, on every route and whichever position it has. The rest of the line is the stock `main`\n\
+# format. The format has its own name because redefining `main` is a duplicate-name error.\n\
+map $request_uri $logged_request_uri {\n\
+    "~^(?<uri_before_token>.*[?&])token=[^&]*(?<uri_after_token>.*)$" "${uri_before_token}token=redacted${uri_after_token}";\n\
+    default $request_uri;\n\
+}\n\
+log_format canari_redacted "$remote_addr - $remote_user [$time_local] \\"$request_method $logged_request_uri $server_protocol\\" $status $body_bytes_sent \\"$http_referer\\" \\"$http_user_agent\\" \\"$http_x_forwarded_for\\"";\n\
+\n\
+# THE COOKIE ADMINER IS GIVEN: the browser sends the Canari adminer session (canari_adminer) with\n\
 # every request on /adminer/, and the upstream has no use for it - it is stripped, and the cookies of Adminer\n\
 # itself (adminer_sid, adminer_key ...) are left exactly as they came.\n\
 map $http_cookie $adminer_cookie {\n\
@@ -62,6 +75,10 @@ map $http_cookie $adminer_cookie {\n\
 \n\
 server {\n\
     listen 80;\n\
+    # SERVER LEVEL ON PURPOSE: the base image's nginx.conf declares `access_log ... main` at http level,\n\
+    # and one declared at http level here would ADD to it, writing the unredacted line beside the\n\
+    # redacted one. Declared in this block it REPLACES what is inherited.\n\
+    access_log /var/log/nginx/access.log canari_redacted;\n\
     root /usr/share/nginx/html;\n\
     index index.html;\n\
     # Limite d\'upload pour les médias (évite les 413 nginx par défaut ~1MB)\n\

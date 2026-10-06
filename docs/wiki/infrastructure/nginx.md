@@ -318,3 +318,18 @@ verifies that. The discriminator is carried to where the decision is made rather
 failing - `apps/chat-delivery-service/src/utils/previewTicket.ts` and
 `frontend/src/lib/utils/previewTicket.svelte.ts` are the two halves.
 
+
+## The access log never records a token (2026-10-06)
+
+The web and Tauri clients open the socket as `/api/ws?...&token=<JWT>` on purpose (WebMlsService,
+CallService: Tauri and proxies that drop the `canari_ws_token` cookie), and the default `main` log
+format printed `$request`, so the container's access log held a live bearer token (1 h) per
+connection. Auth is unchanged. `Dockerfile.frontend` now declares a `map $request_uri
+$logged_request_uri` that redacts every `token=` query value (`xtoken=` is left alone), a
+`canari_redacted` format that is `main` with `$request` rebuilt from it, and the `access_log` **inside
+the server block** - at http level it would ADD to the base image's `main` and write the raw line
+beside the redacted one (measured). Gate: `.github/scripts/tests/access-log-redaction.test.mjs`.
+
+**Not covered, and not in this repo:** the host-level nginx on the Portail-etu host
+(`sites-available/canari*.conf`) and the Cloudflare edge log see the same URL; their formats are the
+host's, to be checked by the user ([estate-migration](estate-migration.md)).
