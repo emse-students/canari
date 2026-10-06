@@ -5,7 +5,7 @@
     formatEventTimeRange,
   } from '$lib/calendar/feedEvents';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
-  import { eventOwnersLabel } from '$lib/calendar/feedEvents';
+  import { eventOwnersLabel, pendingRingStyle } from '$lib/calendar/feedEvents';
   import { ChevronRight, CalendarDays } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -89,7 +89,7 @@
           >
             <span
               class="h-9 w-1 shrink-0 rounded-full"
-              style={pending ? `border:1.5px dashed ${accent};` : `background:${accent};`}
+              style={pending ? pendingRingStyle(accent) : `background:${accent};`}
               aria-hidden="true"
             ></span>
             {#if logoSrc && owners}

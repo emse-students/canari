@@ -1263,3 +1263,16 @@ ca cree des problemes"*.
 and every way out; in Chromium on a stand-in thread, light and dark: hovering opens nothing, a held
 mouse opens the list, the release leaves it open, the wheel and a click elsewhere close it. **Owed:**
 the hold under a finger on a phone.
+
+## Scheduled posts: where they show, and the event picker order (2026-10-06)
+
+A scheduled post is visible to its AUTHOR only, in `ScheduledPostsPanel` above the feed of `/posts`
+(`GET /api/posts/my-scheduled`); no feed shows it to anyone else until it is due
+(`landingFeed.ts`). Each row now reads as "not final" in the agenda's own vocabulary: dimmed
+(`opacity-50`) with a dashed ring from `pendingRingStyle()` (`calendar/feedEvents.ts`), the one
+spelling shared with the agenda lists for proposed events ([calendar](calendar.md)). The "published
+on <date>" line is the non-visual cue.
+
+The "link to an event" picker (`linkableEventPickerOptions`, `utils/time.ts`, used by the composer
+and the editor) lists the furthest future event first and the furthest past last; the server answers
+ascending, so the sort lives in that one function.

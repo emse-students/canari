@@ -3,6 +3,7 @@
   import type { ScheduledPost } from '$lib/posts/api';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { pendingRingStyle } from '$lib/calendar/feedEvents';
 
   /**
    * Banner listing the current user's posts that are scheduled for future publication.
@@ -39,8 +40,14 @@
   <ul class="divide-cn-border divide-y">
     {#each posts as sp (sp.id)}
       <li class="flex items-center gap-3 px-4 py-3">
+        <!-- Not published yet: the agenda's proposed-event vocabulary (dimmed row, dashed ring). -->
+        <span
+          class="h-2.5 w-2.5 shrink-0 rounded-full text-amber-500"
+          style={pendingRingStyle('currentColor')}
+          aria-hidden="true"
+        ></span>
         <!-- Markdown preview (truncated) -->
-        <div class="min-w-0 flex-1">
+        <div class="min-w-0 flex-1 opacity-50">
           <p class="text-text-main truncate text-sm">
             {sp.markdown.slice(0, 80)}{sp.markdown.length > 80 ? '…' : ''}
           </p>

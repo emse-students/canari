@@ -41,14 +41,21 @@ export function linkableEventLabel(ev: { startsAt: string; title: string }): str
   return `${date} ${time} - ${ev.title}`;
 }
 
-/** The options of the "link to an event" picker: "no event" (or "loading") first, then each event. */
+/**
+ * The options of the "link to an event" picker: "no event" (or "loading") first, then each event,
+ * the FURTHEST FUTURE at the top and the furthest past at the bottom (descending start date).
+ * Sorted here, the one place, because the server answers ascending and both the composer and the
+ * editor build this list.
+ */
 export function linkableEventPickerOptions(
   events: { id: string; startsAt: string; title: string }[],
   loading: boolean
 ): PickerOption[] {
   return [
     { value: '', label: loading ? m.common_loading_label() : m.post_create_no_event_label() },
-    ...events.map((ev) => ({ value: ev.id, label: linkableEventLabel(ev) })),
+    ...[...events]
+      .sort((a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime())
+      .map((ev) => ({ value: ev.id, label: linkableEventLabel(ev) })),
   ];
 }
 
