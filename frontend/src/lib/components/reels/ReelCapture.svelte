@@ -363,10 +363,12 @@
     <ReelEditor
       clip={capture.clip}
       oncancel={() => (editorOpen = false)}
-      onapply={(blob) => {
+      onnext={(blob) => {
         if (capture.kind !== 'review') return;
-        capture = { kind: 'review', clip: { ...capture.clip, blob } };
+        // The edited media replaces the take (null: untouched), and the publish step opens at once.
+        if (blob) capture = { kind: 'review', clip: { ...capture.clip, blob } };
         editorOpen = false;
+        publishOpen = true;
       }}
     />
   {/if}

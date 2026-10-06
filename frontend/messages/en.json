@@ -3257,7 +3257,6 @@
   "reels_review_sound_remove": "Remove the sound",
   "reels_review_sound_restore": "Keep the sound",
   "reels_review_sound_removed": "Sound removed - the video will be published without audio",
-  "reels_editor_apply": "Use this capture",
   "reels_editor_exporting": "Preparing...",
   "reels_editor_error": "The capture could not be prepared. Try again.",
   "reels_publish_title": "New CanaReel",

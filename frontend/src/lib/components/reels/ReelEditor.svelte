@@ -19,7 +19,7 @@
    */
   import { onDestroy } from 'svelte';
   import {
-    Check,
+    ArrowRight,
     ChevronLeft,
     Eraser,
     Pencil,
@@ -70,10 +70,14 @@
   interface Props {
     clip: ReelClip;
     oncancel: () => void;
-    onapply: (blob: Blob) => void;
+    /**
+     * "Next": on to the publish step. The edited media when the member added anything, null when
+     * the take is untouched (nothing is re-encoded for it).
+     */
+    onnext: (blob: Blob | null) => void;
   }
 
-  let { clip, oncancel, onapply }: Props = $props();
+  let { clip, oncancel, onnext }: Props = $props();
   let frame = $state<HTMLElement | null>(null);
   let trash = $state<HTMLElement | null>(null);
   let draftInput = $state<HTMLInputElement | null>(null);
@@ -367,10 +371,10 @@
     selectedId = null;
   }
 
-  async function apply() {
+  async function next() {
     if (overlays.length === 0) {
-      console.debug('[reel-editor] nothing was added: back to the take as it was');
-      oncancel();
+      console.debug('[reel-editor] nothing was added: on to publish with the take as it was');
+      onnext(null);
       return;
     }
     busy = true;
@@ -379,7 +383,7 @@
     try {
       const fontFamily = frame ? getComputedStyle(frame).fontFamily : 'Nunito Variable, sans-serif';
       const edited = await renderEditedReelMedia(clip.blob, { overlays }, fontFamily);
-      onapply(edited.blob);
+      onnext(edited.blob);
     } catch (cause) {
       console.error('[reel-editor] export failed', cause);
       error = true;
@@ -409,11 +413,11 @@
       type="button"
       class="text-cn-ink inline-flex h-11 items-center gap-1.5 rounded-full bg-amber-500 px-4 text-sm font-bold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
       disabled={busy}
-      onclick={apply}
-      data-reel-editor-apply
+      onclick={next}
+      data-reel-editor-next
     >
-      <Check size={18} strokeWidth={2.5} />
-      {busy ? m.reels_editor_exporting() : m.reels_editor_apply()}
+      {busy ? m.reels_editor_exporting() : m.reels_review_next()}
+      <ArrowRight size={18} strokeWidth={2.5} />
     </button>
   </header>
 
