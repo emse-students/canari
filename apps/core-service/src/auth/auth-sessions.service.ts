@@ -177,8 +177,16 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
     // the cookie exists in two places. Only revoking makes the theft useless -
     // logging it, as Le Cercle does, lets the rotation succeed for whoever asked.
     await this.sessions.delete({ id: sessionId });
+    // Two causes end here and look identical from outside: the previous token presented AFTER the
+    // window (a client that lost the response of its last rotation, e.g. a suspended phone) and a
+    // token spent two or more rotations ago (the credential genuinely forked). Say which, and how
+    // long ago the last rotation was, because nothing else on the server can separate them.
+    const kind = row.previousTokenId === presentedTokenId ? 'previous' : 'older';
+    const ago = row.rotatedAt
+      ? `${Math.round((now.getTime() - row.rotatedAt.getTime()) / 1000)}s`
+      : 'never';
     this.logger.warn(
-      `Refresh token replay detected sid=${sessionId} user=${row.userId} - session revoked`
+      `Refresh token replay detected sid=${sessionId} user=${row.userId} presented=${kind} rotatedAgo=${ago} - session revoked`
     );
     return { status: 'replayed' };
   }
