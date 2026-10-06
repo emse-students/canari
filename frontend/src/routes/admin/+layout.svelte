@@ -21,6 +21,7 @@
     ArrowLeft,
     ShieldAlert,
     UserCog,
+    UserPen,
     Wrench,
     Building2,
     Wallet,
@@ -132,6 +133,11 @@
       ? [
           { href: '/admin/platform', label: m.admin_platform_label(), icon: Wrench },
           { href: '/admin/users', label: m.admin_admins_label(), icon: UserCog },
+          {
+            href: '/admin/profile-corrections',
+            label: m.profile_corrections_nav_label(),
+            icon: UserPen,
+          },
           { href: '/admin/status', label: m.admin_presence_connections_label(), icon: Activity },
         ]
       : [];

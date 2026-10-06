@@ -31,6 +31,10 @@ export class ProfileChange {
   @Column({ type: 'jsonb' })
   after!: ProfileSnapshot;
 
+  /** The correction request this edit answered, when a person asked for it (WP4b). */
+  @Column({ type: 'uuid', nullable: true })
+  requestId!: string | null;
+
   @Column({ type: 'timestamptz', default: () => 'now()' })
   at!: Date;
 }

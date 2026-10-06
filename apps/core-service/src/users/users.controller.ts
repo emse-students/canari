@@ -22,6 +22,7 @@ import { UsersService } from './users.service';
 import { UserBlocksService } from './user-blocks.service';
 import { AvatarService } from './avatar.service';
 import { ProfileEditService } from './profile-edit.service';
+import { ProfileCorrectionService } from './profile-correction.service';
 import {
   CreateUserDto,
   UpdateUserDto,
@@ -74,7 +75,8 @@ export class UsersController {
     private readonly usersService: UsersService,
     private readonly avatarService: AvatarService,
     private readonly blocksService: UserBlocksService,
-    private readonly profileEdit: ProfileEditService
+    private readonly profileEdit: ProfileEditService,
+    private readonly corrections: ProfileCorrectionService
   ) {}
 
   // -- Blocking -------------------------------------------------------------
@@ -99,6 +101,29 @@ export class UsersController {
   @Post('me/blocks')
   blockUser(@Headers('x-user-id') userId: string, @Body() dto: BlockUserDto) {
     return this.blocksService.block(userId, dto.userId);
+  }
+
+  /**
+   * The caller's own correction request: the open one, else the latest answered one, else `null`.
+   * It is what the profile's "request a correction" button shows.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('me/profile-correction')
+  async myProfileCorrection(@Headers('x-user-id') userId: string) {
+    return { request: await this.corrections.latestFor(userId) };
+  }
+
+  /**
+   * Asks the admins to correct the caller's profile (D10). Only an admin edits a profile, so this is
+   * the one way a person gets a wrong campus, formation or name changed. One open request at a time.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('me/profile-correction')
+  async requestProfileCorrection(
+    @Headers('x-user-id') userId: string,
+    @Body() body: { message?: unknown }
+  ) {
+    return { request: await this.corrections.create(userId, body?.message) };
   }
 
   /**
@@ -366,8 +391,40 @@ export class UsersController {
     @Headers('x-user-id') actorId: string,
     @Body() body: unknown
   ) {
-    const { user, changed, changeId } = await this.profileEdit.applyEdit(targetId, actorId, body);
+    // `requestId` names the correction request this edit answers (WP4b): it then closes the request
+    // and tells the person. The rest of the body is the profile, as validated by the edit service.
+    const requestId =
+      body &&
+      typeof body === 'object' &&
+      typeof (body as { requestId?: unknown }).requestId === 'string'
+        ? (body as { requestId: string }).requestId
+        : null;
+    const { user, changed, changeId } = requestId
+      ? await this.corrections.apply(requestId, targetId, actorId, body)
+      : await this.profileEdit.applyEdit(targetId, actorId, body);
     return { user: this.usersService.toPublicDto(user), changed, changeId };
+  }
+
+  /** The admin queue of profile correction requests, oldest first. Global admin only (D10). */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('admin/profile-corrections')
+  listProfileCorrections() {
+    return this.corrections.listPending();
+  }
+
+  /**
+   * Refuses a correction request, with an optional note, and tells the person. Applying one is
+   * `PUT :id/profile` with the request's id in the body, so the two answers are never one gesture.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Post('admin/profile-corrections/:requestId/refuse')
+  @HttpCode(200)
+  async refuseProfileCorrection(
+    @Param('requestId') requestId: string,
+    @Headers('x-user-id') actorId: string,
+    @Body() body: { note?: unknown }
+  ) {
+    return this.corrections.refuse(requestId, actorId, body?.note);
   }
 
   /**

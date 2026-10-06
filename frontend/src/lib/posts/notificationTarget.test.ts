@@ -31,6 +31,13 @@ describe('notificationHref', () => {
     }
   });
 
+  it('sends the answer to a profile correction request to the profile, never to a post of that id', () => {
+    // `postId` is the REQUEST's id, which has no page: `/posts/<request id>` would be a 404.
+    for (const type of ['profile_correction_applied', 'profile_correction_refused']) {
+      expect(notificationHref({ type, postId: 'req-1' }), type).toBe('/profile');
+    }
+  });
+
   it('falls back to the post route for a type it has never heard of', () => {
     // Deliberately not an error: a server that ships a new type before a client knows it must not
     // produce a row that does nothing when tapped.

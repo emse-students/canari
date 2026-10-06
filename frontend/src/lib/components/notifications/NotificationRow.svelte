@@ -8,6 +8,8 @@
     CalendarClock,
     CalendarCheck,
     CalendarX,
+    UserCheck,
+    UserX,
     CalendarCog,
     Newspaper,
     Repeat2,
@@ -129,6 +131,13 @@
     (notif.type === 'association_post' || isRepostNotif || isCoorganiseNotif) &&
       !!notif.associationId
   );
+  /**
+   * THE TWO ANSWERS TO A PROFILE CORRECTION REQUEST (WP4b), listed for the same reason as the agenda's
+   * five: a type this chain does not name would inherit the COMMENT sentence, glyph and colour. The
+   * actor is the platform; `text` holds the admin's note on a refusal, shown after the sentence.
+   */
+  const PROFILE_TYPES = ['profile_correction_applied', 'profile_correction_refused'] as const;
+  const isProfileNotif = $derived((PROFILE_TYPES as readonly string[]).includes(notif.type));
 
   /**
    * A refusal carries its reason after a newline - the one thing a reader cannot reconstruct from
@@ -162,7 +171,9 @@
                   ? 'bg-sky-600 text-white'
                   : isPostNotif || isRepostNotif
                     ? 'bg-indigo-500 text-white'
-                    : 'bg-green-600 text-white'
+                    : notif.type === 'profile_correction_refused'
+                      ? 'bg-red-500 text-white'
+                      : 'bg-green-600 text-white'
   );
 
   // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
@@ -213,6 +224,10 @@
         <CalendarCog size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_pending'}
         <CalendarClock size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'profile_correction_applied'}
+        <UserCheck size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'profile_correction_refused'}
+        <UserX size={glyph} strokeWidth={2.75} />
       {:else if isPostNotif}
         <Newspaper size={glyph} strokeWidth={2.75} />
       {:else if isRepostNotif}
@@ -266,6 +281,11 @@
         <span class="italic"><EmojiText text={eventTitle} /></span>{#if eventReason}&#32;&#8212; <EmojiText
             text={eventReason}
           />{/if}
+      {:else if isProfileNotif}
+        {notif.type === 'profile_correction_applied'
+          ? m.notif_profile_correction_applied_text()
+          : m.notif_profile_correction_refused_text()}
+        {#if bodyText}<span class="italic"><EmojiText text={bodyText} /></span>{/if}
       {:else if isPostNotif}
         {m.notif_post_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>

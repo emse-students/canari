@@ -32,6 +32,11 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'event_deleted':
     case 'event_pending':
       return '/calendar';
+    // The answer to a profile correction request: `postId` holds the REQUEST's id, which has no page
+    // of its own - the profile is where the corrected data, or the request's state, is shown.
+    case 'profile_correction_applied':
+    case 'profile_correction_refused':
+      return '/profile';
     default:
       return `/posts/${notif.postId}`;
   }
