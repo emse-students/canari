@@ -1527,3 +1527,7 @@ deliberately.
 ## The SEO pass: one indexable page per site (2026-10-06)
 
 Decided by the user: Le Cercle shows a presentation only, Sky a minimal public home, MiGallery a presentation plus sign-in (never a photo, album or person), the wiki indexes everything public. The method is the Portail-etu's: absolute URLs from the request origin, JSON-LD with `<` and `&` escaped, `robots.txt` `Allow: /$` + `Disallow: /`, and `X-Robots-Tag: noindex, nofollow` as the second voice. **A thrown `redirect()` bypasses `resolve`**, so each handler catches `isRedirect` and rebuilds the response, or a login redirect goes out without the header (measured on Le Cercle's `/compte`). Shipped: MiGallery `v2.15.9`, Sky `v1.1.5`, Le Cercle MR 28. Each repo's `docs/wiki/seo.md` holds the detail. Left on the wiki: no sitemap (Wiki.js has none) and two pages with placeholder descriptions.
+
+## The `mitv` ports stay open on the School network (user, 2026-10-06)
+
+`10.0.0.4:3002` (Wiki.js), `:8081` (Omeka S) and `:3001` (Sky) answer in plain HTTP to the whole School private network. **Decided: left as they are** - the user judges that network not sensitive, and the simplest option is no firewall rule. Nothing is owed. Revisit only if one of these services starts holding something a neighbour on that network must not read.
