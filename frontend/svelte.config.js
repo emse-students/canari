@@ -21,6 +21,9 @@ import { fileURLToPath } from 'node:url';
 
 const buildsForWeb = !!process.env.BUILD_WEB;
 
+/** Process-wide memo slot: `Symbol.for` survives every re-import of this file, a user-visible env var would not die with the build. */
+const STAMP_KEY = Symbol.for('canari.buildVersionName');
+
 /**
  * THE BUILD NAMES ITS OWN COMMIT. `kit.version.name` is written verbatim into `/_app/version.json`;
  * it used to be `Date.now()` alone, so the cross-client rig INFERRED the commit as "the newest one at
@@ -35,6 +38,8 @@ const buildsForWeb = !!process.env.BUILD_WEB;
  * repository forbids.
  */
 function buildVersionName() {
+  const memo = globalThis[STAMP_KEY];
+  if (memo) return memo;
   let commit;
   try {
     commit = execFileSync('git', ['rev-parse', '--short=9', 'HEAD'], {
@@ -47,7 +52,7 @@ function buildVersionName() {
       { cause: e }
     );
   }
-  return `${Date.now()}-${commit}`;
+  return (globalThis[STAMP_KEY] = `${Date.now()}-${commit}`);
 }
 
 /** @type {import('@sveltejs/kit').Config} */
