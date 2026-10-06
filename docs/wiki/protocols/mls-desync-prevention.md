@@ -223,10 +223,26 @@ Every such seam therefore passes **two** guards, and neither substitutes for the
 - **Epoch-monotonic** (`swapClientMonotonic` on web, `MlsManager::reload_is_monotonic` in mls-core):
   refuses a candidate that would move a live group to a LOWER epoch. This answers "is this snapshot
   from an older epoch" **and nothing else**.
-- **Not-overtaken** (`installUnlessOvertaken` on web, the unpersisted-send watermark in
-  `TauriMlsService.reloadStateFromDisk`): refuses a candidate derived before a send this device has
-  already made. A generation that moved INSIDE one epoch is invisible to the epoch guard, which is
-  why the epoch half alone let this defect run.
+- **Not-overtaken** (`installUnlessOvertaken` on web; on native `MlsManager::has_unsaved_ratchet_advance`,
+  read inside `reload_into` under the manager lock): refuses a candidate derived before a send,
+  burn or DECRYPTED FRAME this device has already made. A generation that moved INSIDE one epoch is
+  invisible to the epoch guard, which is why the epoch half alone let this defect run.
+
+**Native: the flag lives in the manager and covers receives (2026-10-06, RESUME-B-1).** The guard
+that stood in `TauriMlsService` counted SENDS in the WebView, so a received frame the checkpoint did
+not yet hold was invisible to it - and a frame landing between its check and the swap was
+overwritten. Measured on the Mi 9T 2026-09-08 09:53: generations 45 and 46, already read, were
+derived again 112 ms after `mls.bin reloaded on resume` and accepted; the reload was the only event
+between the two pairs and no epoch moved. `recharger_mls_au_resume` now answers a typed
+`ReloadOutcome` (`reloaded` / `nothing-on-disk` / `epoch-regression` / `live-ahead`); on
+`live-ahead` the WebView persists the live state, which is what makes the next resume safe. The flag
+is set by `send_message`, `skip_send_generations` and a decrypted application frame, cleared by
+serialisation, and is NOT set by a load (a fresh manager is "dirty" for the snapshot cache but holds
+exactly the file). Pinned by `mls-core/tests/unsaved_ratchet_advance.rs` (including the rewind
+itself, reproduced without a phone) and `storage.rs::a_reload_is_refused_while_the_live_manager_holds_an_unsaved_receive`.
+It clears at serialisation, not at the write: a failed write is reported by the command and leaves the
+file behind with the flag down. A manager that is ahead on a background engine's advance too is
+resolved in favour of the live one (the persist overwrites it) - the merge nobody has written.
 
 The counter is `BaseMlsService.liveMutations`, read at the snapshot and again at the install: a COUNT
 rather than a flag, because the question compares two instants rather than asking "recently?".

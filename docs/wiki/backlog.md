@@ -3004,10 +3004,12 @@ processes routinely.
 
 **What is owed, in order.**
 
-1. **Defect B's fix - no fix is written or designed yet.** The resume reload
-   (`TauriMlsService`, `mls.bin reloaded on resume (C2)`) must not install a secret tree behind the
-   live one; the epoch comparison in `swapClientMonotonic` cannot see a generation that moved inside
-   one epoch.
+1. **Defect B is FIXED (2026-10-06, branch `fix/resume-ratchet`) AND OWES ONE DEVICE READING.** The native
+   reload asks the live manager whether it holds a send or a decrypted frame the file does not
+   (`has_unsaved_ratchet_advance`) and answers `live-ahead`, on which the WebView persists
+   ([mls-desync-prevention](protocols/mls-desync-prevention.md)). Owed: resume the Mi 9T right after
+   a received frame with no checkpoint between, and read `[MLS][Tauri] Resume reload SKIPPED` instead
+   of a second decrypt of the same generation.
 2. **Defect A's field re-measurement** on a rebuilt APK (above).
 3. **The 2026-09-06 SEND-side rewind**, measured from the phone.
 
