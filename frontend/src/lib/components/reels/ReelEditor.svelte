@@ -1,8 +1,9 @@
 <script lang="ts">
   /**
    * The post-capture editor (CanaReels, docs/wiki/frontend/modules/reel-editor.md): text and emoji
-   * the member places, moves, pinches, twists and drops on a trash zone, plus a freehand pen. What
-   * is drawn here is baked into the file by `renderEditedReelMedia`.
+   * the member places, moves, pinches, twists and drops on a trash zone, plus a freehand pen whose
+   * strokes are overlays too (an eraser wipes them, undo steps back). What is drawn here is baked
+   * into the file by `renderEditedReelMedia`.
    *
    * WHAT YOU SEE IS WHAT IS PUBLISHED: the media sits in a frame of ITS OWN aspect ratio (never a
    * letterboxed one), every overlay is placed in 0..1 of that frame and sized from its short side
@@ -26,10 +27,20 @@
     Smile,
     Trash2,
     Type,
+    Undo2,
   } from '@lucide/svelte';
   import { TAP_SLOP_PX, TransformGesture, pointInRect } from '$lib/gestures/transformGesture';
   import type { ReelClip } from '$lib/reels/reelCapture';
-  import { renderEditedReelMedia, type ReelPoint, type ReelStroke } from '$lib/reels/reelEditor';
+  import { renderEditedReelMedia } from '$lib/reels/reelEditor';
+  import {
+    STROKE_WIDTHS,
+    createStrokeOverlay,
+    erasedAt,
+    layoutChanged,
+    pushedHistory,
+    strokeBox,
+    type FramePoint,
+  } from '$lib/reels/reelStrokes';
   import {
     EMOJI_BASE_SIZE,
     QUICK_EMOJI,
@@ -61,7 +72,6 @@
   }
 
   let { clip, oncancel, onapply }: Props = $props();
-  let canvas = $state<HTMLCanvasElement | null>(null);
   let frame = $state<HTMLElement | null>(null);
   let trash = $state<HTMLElement | null>(null);
   let draftInput = $state<HTMLInputElement | null>(null);
@@ -71,10 +81,16 @@
   let background = $state<ReelTextBackground>('none');
   let busy = $state(false);
   let error = $state(false);
-  let strokes = $state<ReelStroke[]>([]);
   let overlays = $state<ReelOverlay[]>([]);
+  /** The layouts before each change, newest last: what "undo" steps back through. */
+  let history = $state<ReelOverlay[][]>([]);
   let selectedId = $state<string | null>(null);
-  let mode = $state<'arrange' | 'draw'>('arrange');
+  /** arrange = move what is there; draw = a new stroke; erase = wipe the strokes the finger crosses. */
+  let mode = $state<'arrange' | 'draw' | 'erase'>('arrange');
+  let penWidth = $state<number>(STROKE_WIDTHS[1]);
+  /** The stroke being drawn, in frame pixels: shown live, turned into an overlay on release. */
+  let livePath = $state<FramePoint[]>([]);
+  let frameSize = $state({ width: 0, height: 0 });
   let trayOpen = $state(false);
   /** The text field is open: for a new text (`id` null) or to reword the one with that id. */
   let composing = $state<{ id: string | null } | null>(null);
@@ -83,8 +99,11 @@
   let overTrash = $state(false);
   /** The media's width / height, known once it has loaded; the frame takes this shape. */
   let ratio = $state(9 / 16);
-  let drawing = false;
-  let current: ReelPoint[] = [];
+  /** The pointer running a draw or erase pass, and whether that erase pass already took its undo step. */
+  let paintingPointer: number | null = null;
+  let erasedSomething = false;
+  /** The layout when the running arrange gesture began, to tell a move from a mere tap. */
+  let gestureStart: ReelOverlay[] = [];
 
   const colors = ['#ffffff', '#050505', '#ffcf33', '#f05b5b', '#5bd0f0'];
   const source = $derived(URL.createObjectURL(clip.blob));
@@ -92,6 +111,11 @@
   const selected = $derived(overlays.find((overlay) => overlay.id === selectedId) ?? null);
   const textToolsVisible = $derived(composing !== null || selected?.kind === 'text');
   const colorToolsVisible = $derived(mode === 'draw' || textToolsVisible);
+  const widthLabels = [
+    () => m.reels_editor_width_thin(),
+    () => m.reels_editor_width_medium(),
+    () => m.reels_editor_width_thick(),
+  ];
   const fontLabels: Record<ReelTextFont, () => string> = {
     sans: () => m.reels_editor_font_sans(),
     serif: () => m.reels_editor_font_serif(),
@@ -137,6 +161,7 @@
       wasSelected = selectedId === hit;
       selectedId = hit;
       gestureId = hit;
+      gestureStart = overlays;
       overlays = broughtToFront(overlays, hit);
       const handled = overlays.find((overlay) => overlay.id === hit)!;
       // The swatches show (and a reword keeps) the colour of the text in hand.
@@ -184,49 +209,80 @@
         composing = { id };
       }
     }
+    // A tap or a reselection is not a change; a move, a pinch or a drop on the trash is, and is undoable.
+    if (layoutChanged(gestureStart, overlays)) remember(gestureStart);
     dragging = false;
     overTrash = false;
   }
 
-  function point(event: PointerEvent): ReelPoint | null {
+  /** Takes `before` (default: the layout now) as the state "undo" returns to. */
+  function remember(before: ReelOverlay[] = overlays) {
+    history = pushedHistory(history, before);
+  }
+
+  function undo() {
+    const previous = history[history.length - 1];
+    if (!previous) return;
+    console.debug(`[reel-editor] undo: ${overlays.length} -> ${previous.length} overlays`);
+    history = history.slice(0, -1);
+    overlays = previous;
+    selectedId = null;
+  }
+
+  /** A pointer position in the frame's own pixels, clamped to the frame. */
+  function framePoint(event: PointerEvent): FramePoint | null {
     if (!frame) return null;
     const bounds = frame.getBoundingClientRect();
+    frameSize = { width: bounds.width, height: bounds.height };
     return {
-      x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)),
-      y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height)),
+      x: Math.max(0, Math.min(bounds.width, event.clientX - bounds.left)),
+      y: Math.max(0, Math.min(bounds.height, event.clientY - bounds.top)),
     };
   }
 
-  function draw(event: PointerEvent) {
-    if (!drawing) return;
-    const next = point(event);
-    if (next) current.push(next);
-    if (!canvas) return;
-    const context = canvas.getContext('2d');
-    if (!context || current.length < 2) return;
-    const previous = current[current.length - 2];
-    context.strokeStyle = color;
-    context.lineWidth = 0.006 * Math.min(canvas.width, canvas.height);
-    context.lineCap = 'round';
-    context.beginPath();
-    context.moveTo(previous.x * canvas.width, previous.y * canvas.height);
-    context.lineTo(next!.x * canvas.width, next!.y * canvas.height);
-    context.stroke();
+  /** Erase mode: every stroke under the finger goes; the first one of a pass takes the undo step. */
+  function eraseAt(next: FramePoint) {
+    const kept = erasedAt(overlays, next, frameSize.width, frameSize.height);
+    if (kept === overlays) return;
+    if (!erasedSomething) {
+      remember();
+      erasedSomething = true;
+    }
+    console.debug(`[reel-editor] erased ${overlays.length - kept.length} stroke(s)`);
+    overlays = kept;
   }
 
-  function startDrawing(event: PointerEvent) {
-    const next = point(event);
-    if (!next || !canvas) return;
-    drawing = true;
-    current = [next];
-    canvas.setPointerCapture(event.pointerId);
+  function paintDown(event: PointerEvent) {
+    if (paintingPointer !== null) return;
+    const next = framePoint(event);
+    if (!next || !frame) return;
+    paintingPointer = event.pointerId;
+    frame.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    erasedSomething = false;
+    if (mode === 'erase') eraseAt(next);
+    else livePath = [next];
   }
 
-  function stopDrawing() {
-    if (!drawing) return;
-    drawing = false;
-    if (current.length > 1) strokes = [...strokes, { color, width: 0.006, points: current }];
-    current = [];
+  function paintMove(event: PointerEvent) {
+    if (paintingPointer !== event.pointerId) return;
+    const next = framePoint(event);
+    if (!next) return;
+    if (mode === 'erase') eraseAt(next);
+    else livePath = [...livePath, next];
+  }
+
+  function paintUp(event: PointerEvent) {
+    if (paintingPointer !== event.pointerId) return;
+    paintingPointer = null;
+    const path = livePath;
+    livePath = [];
+    // A cancelled pointer (a call, a system gesture) never leaves half a line behind.
+    if (mode !== 'draw' || event.type === 'pointercancel') return;
+    const created = createStrokeOverlay(path, frameSize.width, frameSize.height, color, penWidth);
+    if (!created) return;
+    remember();
+    overlays = [...overlays, created];
   }
 
   function openText() {
@@ -239,10 +295,12 @@
   function commitText() {
     if (!composing) return;
     if (composing.id) {
+      remember();
       overlays = withTextEdit(overlays, composing.id, { text: draft, color, font, background });
     } else {
       const created = createTextOverlay(draft, color, { font, background });
       if (created) {
+        remember();
         overlays = [...overlays, created];
         selectedId = created.id;
       }
@@ -253,6 +311,7 @@
 
   function addEmoji(emoji: string) {
     const created = createEmojiOverlay(emoji);
+    remember();
     overlays = [...overlays, created];
     selectedId = created.id;
     trayOpen = false;
@@ -261,8 +320,15 @@
 
   function pickColor(swatch: string) {
     color = swatch;
-    if (selected?.kind === 'text')
+    if (selected?.kind === 'text') {
+      remember();
       overlays = withTextEdit(overlays, selected.id, { color: swatch });
+    }
+  }
+
+  function pickWidth(width: number) {
+    penWidth = width;
+    console.debug(`[reel-editor] pen width ${width}`);
   }
 
   /** A style change applies at once to the text in hand (selected, or being reworded). */
@@ -271,25 +337,29 @@
     if (edit.background) background = edit.background;
     console.debug(`[reel-editor] text style ${font}/${background}`);
     const id = composing?.id ?? (selected?.kind === 'text' ? selected.id : null);
-    if (id) overlays = withTextEdit(overlays, id, edit);
+    if (id) {
+      remember();
+      overlays = withTextEdit(overlays, id, edit);
+    }
   }
 
-  function toggleDraw() {
-    mode = mode === 'draw' ? 'arrange' : 'draw';
+  /** Draw and erase are modes the same tool button toggles; leaving one returns to arranging. */
+  function toggleMode(target: 'draw' | 'erase') {
+    mode = mode === target ? 'arrange' : target;
     trayOpen = false;
     composing = null;
     selectedId = null;
   }
 
   function clearAll() {
-    strokes = [];
+    if (overlays.length === 0) return;
+    remember();
     overlays = [];
     selectedId = null;
-    canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
   }
 
   async function apply() {
-    if (strokes.length === 0 && overlays.length === 0) {
+    if (overlays.length === 0) {
       console.debug('[reel-editor] nothing was added: back to the take as it was');
       oncancel();
       return;
@@ -299,7 +369,7 @@
     selectedId = null;
     try {
       const fontFamily = frame ? getComputedStyle(frame).fontFamily : 'Nunito Variable, sans-serif';
-      const edited = await renderEditedReelMedia(clip.blob, { strokes, overlays }, fontFamily);
+      const edited = await renderEditedReelMedia(clip.blob, { overlays }, fontFamily);
       onapply(edited.blob);
     } catch (cause) {
       console.error('[reel-editor] export failed', cause);
@@ -352,10 +422,10 @@
       class="relative touch-none overflow-hidden select-none"
       style={`width: min(100cqw, calc(100cqh * ${ratio})); aspect-ratio: ${ratio}; container-type: size`}
       data-reel-frame
-      onpointerdown={arrangeDown}
-      onpointermove={arrangeMove}
-      onpointerup={arrangeUp}
-      onpointercancel={arrangeUp}
+      onpointerdown={(event) => (mode === 'arrange' ? arrangeDown(event) : paintDown(event))}
+      onpointermove={(event) => (mode === 'arrange' ? arrangeMove(event) : paintMove(event))}
+      onpointerup={(event) => (mode === 'arrange' ? arrangeUp(event) : paintUp(event))}
+      onpointercancel={(event) => (mode === 'arrange' ? arrangeUp(event) : paintUp(event))}
     >
       {#if isImage}
         <img
@@ -380,25 +450,13 @@
             setRatio(event.currentTarget.videoWidth, event.currentTarget.videoHeight)}
         ></video>
       {/if}
-      <canvas
-        bind:this={canvas}
-        width="1000"
-        height={Math.round(1000 / ratio)}
-        class="absolute inset-0 h-full w-full touch-none {mode === 'draw'
-          ? ''
-          : 'pointer-events-none'}"
-        onpointerdown={startDrawing}
-        onpointermove={draw}
-        onpointerup={stopDrawing}
-        onpointercancel={stopDrawing}
-      ></canvas>
       {#each overlays as overlay (overlay.id)}
         {@const picked = overlay.id === selectedId}
         <div
           data-overlay-id={overlay.id}
           data-overlay-kind={overlay.kind}
           data-overlay-scale={overlay.scale.toFixed(3)}
-          class="absolute p-2 {mode === 'draw' ? 'pointer-events-none' : ''} {picked
+          class="absolute p-2 {mode !== 'arrange' ? 'pointer-events-none' : ''} {picked
             ? 'outline-2 outline-white/80 outline-dashed'
             : ''} rounded-lg"
           style={`left:${overlay.x * 100}%;top:${overlay.y * 100}%;transform:translate(-50%,-50%) rotate(${overlay.rotation}rad)`}
@@ -412,6 +470,26 @@
               style={`color:${paint.fill};font-family:${fontStack(overlay.font, 'inherit')};font-size:${TEXT_BASE_SIZE * overlay.scale * 100}cqmin;line-height:${TEXT_LINE_HEIGHT};${paint.pill ? `background:${paint.pill};padding:${PILL_PAD_Y_EM}em ${PILL_PAD_X_EM}em;border-radius:${PILL_RADIUS_EM}em` : ''}`}
               >{overlay.text}</span
             >
+          {:else if overlay.kind === 'stroke'}
+            {@const box = strokeBox(overlay)}
+            <!-- The stroke is drawn in short-side units: the viewBox is its padded box, the size the
+                 same box times the scale in `cqmin`, as the export multiplies by the short side. -->
+            <svg
+              viewBox={`${box.x} ${box.y} ${box.width} ${box.height}`}
+              class="block max-w-none"
+              style={`width:${box.width * overlay.scale * 100}cqmin;height:${box.height * overlay.scale * 100}cqmin`}
+              aria-hidden="true"
+            >
+              <rect x={box.x} y={box.y} width={box.width} height={box.height} fill="transparent" />
+              <polyline
+                points={overlay.points.map((p) => `${p.x},${p.y}`).join(' ')}
+                fill="none"
+                stroke={overlay.color}
+                stroke-width={overlay.width}
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
           {:else}
             <img
               src={emojiSvgSrc(overlay.emoji) ?? ''}
@@ -423,6 +501,18 @@
           {/if}
         </div>
       {/each}
+      {#if livePath.length > 1}
+        <svg class="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+          <polyline
+            points={livePath.map((p) => `${p.x},${p.y}`).join(' ')}
+            fill="none"
+            stroke={color}
+            stroke-width={penWidth * Math.min(frameSize.width, frameSize.height)}
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      {/if}
     </div>
 
     {#if dragging}
@@ -533,6 +623,27 @@
       </div>
     {/if}
 
+    {#if mode === 'draw'}
+      <div class="flex items-center gap-2" role="group" aria-label={m.reels_editor_tool_width()}>
+        {#each STROKE_WIDTHS as width, index (width)}
+          <button
+            type="button"
+            class="inline-flex h-9 w-11 items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {penWidth ===
+            width
+              ? 'bg-white/25'
+              : 'hover:bg-white/15'}"
+            aria-label={widthLabels[index]()}
+            aria-pressed={penWidth === width}
+            title={widthLabels[index]()}
+            onclick={() => pickWidth(width)}
+            data-reel-width={index}
+          >
+            <span class="block w-6 rounded-full bg-white" style={`height:${width * 60}rem`}></span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+
     {#if error}<p role="alert" class="text-sm text-red-300">{m.reels_editor_error()}</p>{/if}
 
     <div class="flex items-center justify-center gap-3">
@@ -567,19 +678,43 @@
         aria-label={m.reels_editor_tool_draw()}
         aria-pressed={mode === 'draw'}
         title={m.reels_editor_tool_draw()}
-        onclick={toggleDraw}
+        onclick={() => toggleMode('draw')}
         data-reel-tool-draw
       >
         <Pencil size={22} strokeWidth={2.25} />
       </button>
       <button
         type="button"
-        class="{toolClass} hover:bg-white/15"
-        aria-label={m.reels_editor_clear()}
-        title={m.reels_editor_clear()}
-        onclick={clearAll}
+        class="{toolClass} {mode === 'erase' ? 'bg-white/25' : 'hover:bg-white/15'}"
+        aria-label={m.reels_editor_tool_erase()}
+        aria-pressed={mode === 'erase'}
+        title={m.reels_editor_tool_erase()}
+        onclick={() => toggleMode('erase')}
+        data-reel-tool-erase
       >
         <Eraser size={22} strokeWidth={2.25} />
+      </button>
+      <button
+        type="button"
+        class="{toolClass} hover:bg-white/15 disabled:opacity-40"
+        aria-label={m.reels_editor_undo()}
+        title={m.reels_editor_undo()}
+        disabled={history.length === 0}
+        onclick={undo}
+        data-reel-tool-undo
+      >
+        <Undo2 size={22} strokeWidth={2.25} />
+      </button>
+      <button
+        type="button"
+        class="{toolClass} hover:bg-white/15 disabled:opacity-40"
+        aria-label={m.reels_editor_clear()}
+        title={m.reels_editor_clear()}
+        disabled={overlays.length === 0}
+        onclick={clearAll}
+        data-reel-tool-clear
+      >
+        <Trash2 size={22} strokeWidth={2.25} />
       </button>
     </div>
   </div>

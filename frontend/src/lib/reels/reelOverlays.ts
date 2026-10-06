@@ -52,7 +52,25 @@ export interface ReelEmojiOverlay extends OverlayBase {
   emoji: string;
 }
 
-export type ReelOverlay = ReelTextOverlay | ReelEmojiOverlay;
+/** A point of a stroke, in units of the frame's SHORT side, relative to the stroke's centre. */
+export interface ReelStrokePoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * A freehand stroke, as an overlay so it moves, pinches, twists and is deleted like any other
+ * (`reelStrokes.ts` builds it and owns its geometry). `width` is a share of the short side at
+ * scale 1.
+ */
+export interface ReelStrokeOverlay extends OverlayBase {
+  kind: 'stroke';
+  color: string;
+  width: number;
+  points: ReelStrokePoint[];
+}
+
+export type ReelOverlay = ReelTextOverlay | ReelEmojiOverlay | ReelStrokeOverlay;
 
 let counter = 0;
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { drawDecorations, renderEditedReelMedia, type ReelEdits } from './reelEditor';
+import { createStrokeOverlay } from './reelStrokes';
 import { createEmojiOverlay, createTextOverlay, type ReelOverlay } from './reelOverlays';
 
 describe('renderEditedReelMedia', () => {
@@ -39,7 +40,7 @@ describe('renderEditedReelMedia', () => {
         }
       }
     );
-    const edits: ReelEdits = { strokes: [], overlays: [] };
+    const edits: ReelEdits = { overlays: [] };
     const result = await renderEditedReelMedia(new Blob(['source'], { type: 'image/jpeg' }), edits);
     expect(result.width).toBe(120);
     expect(result.height).toBe(80);
@@ -67,7 +68,7 @@ describe('drawDecorations', () => {
     const { calls, context } = recorder();
     const text = createTextOverlay('salut', '#ffffff')!;
     const overlays: ReelOverlay[] = [{ ...text, x: 0.25, y: 0.75, scale: 2, rotation: 0.5 }];
-    drawDecorations(context, { strokes: [], overlays }, 200, 400, 'Nunito', new Map());
+    drawDecorations(context, { overlays }, 200, 400, 'Nunito', new Map());
     const names = calls.map((c) => c[0]);
     expect(names.indexOf('save')).toBeLessThan(names.indexOf('translate'));
     expect(calls.find((c) => c[0] === 'translate')).toEqual(['translate', 50, 300]);
@@ -78,11 +79,39 @@ describe('drawDecorations', () => {
     expect(names[names.length - 1]).toBe('restore');
   });
 
+  it('paints a stroke overlay in short-side units, moved, turned and scaled like any overlay', () => {
+    const { calls, context } = recorder();
+    const stroke = createStrokeOverlay(
+      [
+        { x: 100, y: 100 },
+        { x: 300, y: 100 },
+      ],
+      400,
+      800,
+      '#f05b5b',
+      0.01
+    )!;
+    drawDecorations(
+      context,
+      { overlays: [{ ...stroke, scale: 2, rotation: 0.25 }] },
+      400,
+      800,
+      'x',
+      new Map()
+    );
+    // Centre (200, 100) of a 400x800 frame: 0.5, 0.125 -> (200, 100); short side 400, scale 2.
+    expect(calls.find((c) => c[0] === 'translate')).toEqual(['translate', 200, 100]);
+    expect(calls.find((c) => c[0] === 'rotate')).toEqual(['rotate', 0.25]);
+    expect(calls.find((c) => c[0] === 'set lineWidth')).toEqual(['set lineWidth', 8]);
+    expect(calls.find((c) => c[0] === 'moveTo')).toEqual(['moveTo', -200, 0]);
+    expect(calls.find((c) => c[0] === 'lineTo')).toEqual(['lineTo', 200, 0]);
+  });
+
   it('paints a pill text: the chosen colour fills the pill, the glyphs take the contrasting ink', () => {
     const { calls, context } = recorder();
     (context as unknown as Record<string, unknown>).measureText = () => ({ width: 100 });
     const text = createTextOverlay('pill', '#ffcf33', { font: 'serif', background: 'pill' })!;
-    drawDecorations(context, { strokes: [], overlays: [text] }, 1000, 2000, 'Nunito', new Map());
+    drawDecorations(context, { overlays: [text] }, 1000, 2000, 'Nunito', new Map());
     // 0.07 of the short side (1000) = 70px: padding 0.5em each side, height (1.2 + 0.4)em.
     expect(calls.find((c) => c[0] === 'set font')![1]).toBe(
       '700 70px Georgia, "Times New Roman", serif'
@@ -106,7 +135,7 @@ describe('drawDecorations', () => {
     const picture = {} as CanvasImageSource;
     drawDecorations(
       context,
-      { strokes: [], overlays: [emoji] },
+      { overlays: [emoji] },
       200,
       400,
       'Nunito',
@@ -127,7 +156,7 @@ describe('drawDecorations', () => {
     const { calls, context } = recorder();
     const first = createTextOverlay('un', '#fff')!;
     const second = createTextOverlay('deux', '#fff')!;
-    drawDecorations(context, { strokes: [], overlays: [first, second] }, 100, 100, 'x', new Map());
+    drawDecorations(context, { overlays: [first, second] }, 100, 100, 'x', new Map());
     const drawn = calls.filter((c) => c[0] === 'fillText').map((c) => c[1]);
     expect(drawn).toEqual(['un', 'deux']);
   });

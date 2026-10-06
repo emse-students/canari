@@ -217,6 +217,99 @@ it('styles a text: the font and the pill apply to the selected text at once, and
   expect(pill()).toBeNull();
 });
 
+function drawLine(target: HTMLElement, id = 1) {
+  const frame = target.querySelector('[data-reel-frame]')!;
+  fire(frame, 'pointerdown', id, 40, 100);
+  fire(frame, 'pointermove', id, 100, 100);
+  fire(frame, 'pointermove', id, 160, 100);
+  fire(frame, 'pointerup', id, 160, 100);
+}
+
+const strokes = (target: HTMLElement) =>
+  target.querySelectorAll<HTMLElement>('[data-overlay-kind="stroke"]');
+const tool = (target: HTMLElement, name: string) =>
+  target.querySelector<HTMLButtonElement>(`[data-reel-tool-${name}]`)!;
+
+it('draws a stroke that is an overlay, undoes it, and clears nothing it should not', () => {
+  const target = mountEditor();
+  expect(tool(target, 'undo').disabled).toBe(true);
+  expect(tool(target, 'clear').disabled).toBe(true);
+  tool(target, 'draw').click();
+  flushSync();
+  target.querySelector<HTMLButtonElement>('[data-reel-width="2"]')!.click();
+  flushSync();
+  drawLine(target);
+  expect(strokes(target)).toHaveLength(1);
+  // Centred on the middle of the path: (100, 100) of a 200x400 frame.
+  expect(strokes(target)[0].getAttribute('style')).toContain('left: 50%');
+  expect(strokes(target)[0].getAttribute('style')).toContain('top: 25%');
+  expect(strokes(target)[0].querySelector('polyline')!.getAttribute('stroke-width')).toBe('0.024');
+  expect(tool(target, 'undo').disabled).toBe(false);
+  tool(target, 'undo').click();
+  flushSync();
+  expect(strokes(target)).toHaveLength(0);
+  expect(tool(target, 'undo').disabled).toBe(true);
+});
+
+it('a drawn stroke moves like any overlay, and that move is undone first', () => {
+  const target = mountEditor();
+  tool(target, 'draw').click();
+  flushSync();
+  drawLine(target);
+  tool(target, 'draw').click();
+  flushSync();
+  const frame = target.querySelector('[data-reel-frame]')!;
+  fire(strokes(target)[0], 'pointerdown', 1, 100, 100);
+  fire(frame, 'pointermove', 1, 100, 200);
+  fire(frame, 'pointerup', 1, 100, 200);
+  expect(strokes(target)[0].getAttribute('style')).toContain('top: 50%');
+  tool(target, 'undo').click();
+  flushSync();
+  expect(strokes(target)[0].getAttribute('style')).toContain('top: 25%');
+  expect(strokes(target)).toHaveLength(1);
+});
+
+it('erases only the strokes the finger crosses, as one undo step', () => {
+  const target = mountEditor();
+  tool(target, 'draw').click();
+  flushSync();
+  drawLine(target);
+  const frame = target.querySelector('[data-reel-frame]')!;
+  fire(frame, 'pointerdown', 1, 40, 300);
+  fire(frame, 'pointermove', 1, 100, 300);
+  fire(frame, 'pointermove', 1, 160, 300);
+  fire(frame, 'pointerup', 1, 160, 300);
+  expect(strokes(target)).toHaveLength(2);
+  tool(target, 'erase').click();
+  flushSync();
+  fire(frame, 'pointerdown', 1, 100, 98);
+  fire(frame, 'pointermove', 1, 101, 99);
+  fire(frame, 'pointerup', 1, 101, 99);
+  expect(strokes(target)).toHaveLength(1);
+  expect(strokes(target)[0].getAttribute('style')).toContain('top: 75%');
+  tool(target, 'undo').click();
+  flushSync();
+  expect(strokes(target)).toHaveLength(2);
+});
+
+it('clears everything in one undoable step, and a tap-drawn dot adds nothing', () => {
+  const target = mountEditor();
+  addEmoji(target);
+  tool(target, 'draw').click();
+  flushSync();
+  const frame = target.querySelector('[data-reel-frame]')!;
+  fire(frame, 'pointerdown', 1, 40, 100);
+  fire(frame, 'pointerup', 1, 40, 100);
+  expect(strokes(target)).toHaveLength(0);
+  drawLine(target);
+  tool(target, 'clear').click();
+  flushSync();
+  expect(target.querySelectorAll('[data-overlay-id]')).toHaveLength(0);
+  tool(target, 'undo').click();
+  flushSync();
+  expect(target.querySelectorAll('[data-overlay-id]')).toHaveLength(2);
+});
+
 it('hands the overlays to the export, and does not export when nothing was added', async () => {
   const cancelled = vi.fn();
   const applied = vi.fn();
