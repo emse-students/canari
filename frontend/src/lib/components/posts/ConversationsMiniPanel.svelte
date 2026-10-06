@@ -6,6 +6,7 @@
   import type { Conversation } from '$lib/types';
   import { getSavedUserId } from '$lib/stores/user';
   import {
+    conversationRecency,
     deriveConversationIdentity,
     resolveConversationListPresentation,
   } from '$lib/utils/chat/conversations';
@@ -80,7 +81,7 @@
         id: key,
         name: conv.name,
         lifecycle: conv.lifecycle,
-        updatedAt: Math.max(baseline?.meta.updatedAt ?? 0, conv.lastMessageAt ?? 0),
+        updatedAt: conversationRecency(conv) || (baseline?.meta.updatedAt ?? 0),
       },
       contactId: pres.contactId,
       displayName: pres.displayName,
