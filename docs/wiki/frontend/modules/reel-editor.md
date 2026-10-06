@@ -120,6 +120,17 @@ choice below was the simplest one consistent with this page and is open to the l
   returns to the REVIEW, from where the pencil reopens the editor on the already-baked media
   (edits stack; the originals are not kept). The "Use this capture" string is deleted.
 
+- **Exit and discard (done)**: three rules. (1) The editor's arrow asks before dropping edits
+  ("Discard your edits?"), says nothing when there are none, and never interrupts an export
+  (`requestLeave`). (2) **Android Back / the iOS swipe with the editor open leaves the EDITOR**
+  (before, it threw away the whole take silently): `ReelCapture`'s take entry re-arms itself and
+  hands the Back to the editor's `requestLeave`, so the arrow and the gesture share one answer; the
+  editor owns no history entry of its own (an entry removed with a `history.back()` while the
+  publish sheet pushed its own would have eaten the sheet's entry). (3) **Discarding a finished
+  take asks first** (the review's X and Back share `confirmDiscardTake`); keeping it re-arms the
+  Back entry the question spent. A take still being recorded keeps the old behaviour (Back ends and
+  discards it, there is nothing yet to protect). The publish sheet's Back is unchanged.
+
 ## Work packages (estimates are focused engineering days, before device readings)
 
 | WP | What | Est. |
