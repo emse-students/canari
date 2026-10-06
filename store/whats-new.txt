@@ -1,7 +1,7 @@
-version: 1.0.3
+version: 1.1.0
 
-Les videos longues se lisent maintenant pendant leur envoi et leur telechargement, et l'on peut avancer dans la video sans attendre la fin.
+Canari s'organise par campus et par formation : l'agenda, les associations et les publications t'arrivent selon tes espaces, et tu peux t'abonner a ton agenda depuis ton application de calendrier.
 
-L'editeur de photo arrive dans la camera. Sous le dernier message lu par chaque membre, de petits avatars montrent qui l'a vu.
+Cree des CanaReels avec un vrai editeur : texte, dessin et stickers. Programme tes publications : elles apparaissent a l'heure choisie.
 
-Les notifications des communautes ne se melangent plus aux discussions, et celles des publications sont regroupees. Plusieurs corrections d'affichage et de stabilite.
+Les discussions se rangent dans le meme ordre sur tous tes appareils, les notifications et l'envoi de photos sont plus fiables, et ta page de profil est corrigee.
