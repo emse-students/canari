@@ -3707,35 +3707,9 @@ smoke account on both estates, its credentials as GitHub secrets, and accepting 
 real login on production. **The alternative - that nobody signs in before users do - is what happened
 on 2026-09-06.**
 
-**4. THE EMERGENCY PATH SHORTENS NOTHING.** P2, measured under real urgency. `gh pr merge --admin`
-skips the ruleset's required check on the PULL REQUEST; `release-preflight.sh` gate 3 then refuses
-the release because `CI passed` never ran on the commit - and the wait is for the same CI, later,
-after a failed release run. The bypass bought zero minutes and cost one refused run. Either write
-that down where somebody reaching for it will read it, or build a short path that is actually short.
-
-(Item 5, the misleading run view, shipped in `v0.18.18` - the three-library split is on
-[cicd](cicd.md). **Any proposal here must keep four visible workflows** - user, not to be relitigated.)
-
-**6. AUTO-MERGE STAYS ARMED DURING AN INCIDENT, AND IT NEARLY UNDID THE FIX.** P2, and it was luck
-rather than design that it did not. While production was down, PR #397 - which edits
-`mls-core/src/state.rs`, the file the hotfix was changing - merged itself on schedule. It landed
-BEFORE the hotfix, so the hotfix squashed on top and both guards survived; had the order been the
-other way round, a green auto-merge would have silently reverted a `cfg` that was holding every web
-login up, and nothing in the chain would have said so. The verification that caught it was a hand
-`grep` of `origin/main` after the fact. **Either arming is suspended while an incident is open, or a
-pull request touching a file the in-flight fix touches is held** - and the second needs no human
-switch, which makes it the better one. Fresh evidence of the same class, 2026-09-29: a session
-re-armed a DELIBERATELY disarmed auto-merge and G2-1b (#1218) merged while held (CLAUDE.md queue 2a).
-
-**7. AN INCIDENT WAITS BEHIND STORE ARTEFACTS IT DOES NOT NEED.** P3, measured on 2026-09-06.
-`release.yml` carries `concurrency: group: release, cancel-in-progress: false`, which is right - two
-releases running at once would race the bump and the markers. But `v0.16.5-alpha.2`, whose only job
-was to move `dev-deployed` one commit so the hotfix could ship, sat `pending` while
-`v0.16.5-alpha.1` finished building an APK and an IPA that nobody was waiting for. **The restoration
-of service was queued behind a TestFlight upload.** Whatever the fix is - a lane for a release whose
-estate work is done, cancelling a superseded pre-release's store arms, or simply knowing to cancel by
-hand - the thing to keep is that the serialisation is correct and only its GRANULARITY is wrong: the
-estate and the stores do not need the same lock.
+(Items 1 and 4 to 7 are closed: 1 and 4 shipped, 5 shipped in `v0.18.18`, and 6 and 7 were DECIDED
+not to be built, with the reasons on [cicd](cicd.md#two-incident-time-items-decided-not-to-be-built-2026-10-06).
+**Any proposal here must keep four visible workflows** - user, not to be relitigated.)
 
 ## The first iOS feedback (2026-09-20) - one reading and one measurement
 
