@@ -349,6 +349,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
+	@bun .github/scripts/tests/assert-frontend-build.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
 	@bun .github/scripts/tests/static-headers.test.mjs
