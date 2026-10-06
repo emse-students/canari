@@ -52,24 +52,24 @@
   const waiting = $derived(current?.status === 'pending');
 </script>
 
-<div class="mt-3 space-y-2 text-sm">
+<div class="mt-3 flex flex-col items-center gap-2 text-sm sm:items-start">
   {#if waiting}
-    <p class="text-text-muted flex items-center gap-2">
+    <p class="text-text-muted flex items-center justify-center gap-2 sm:justify-start">
       <MessageSquareWarning size={16} />
       {m.profile_correction_waiting()}
     </p>
   {:else}
     {#if current?.status === 'applied'}
-      <p class="text-green-ok">{m.profile_correction_last_applied()}</p>
+      <p class="text-green-ok text-center sm:text-left">{m.profile_correction_last_applied()}</p>
     {:else if current?.status === 'refused'}
-      <p class="text-text-muted">
+      <p class="text-text-muted text-center sm:text-left">
         {m.profile_correction_last_refused()}
         {#if current.resolutionNote}<span class="italic">- {current.resolutionNote}</span>{/if}
       </p>
     {/if}
     <button
       type="button"
-      class="text-text-muted flex items-center gap-2 text-xs font-semibold hover:underline"
+      class="text-text-muted inline-flex items-center gap-2 text-xs font-semibold hover:underline"
       onclick={() => (open = true)}
     >
       <MessageSquareWarning size={14} />

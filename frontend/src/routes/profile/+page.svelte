@@ -203,14 +203,12 @@
         one axis runs through all four and the block reads as one identity rather than four stacked
         fragments.
 
-        THE SETTINGS LINK CENTRES WITH THEM even though the user named only three, because it is the
-        fourth thing in the same column: pinning it `self-start` under a centred block would leave a
-        lone left-aligned pill and undo the axis the other three just gained. From `sm` up nothing
-        moves - the row puts it back at the far right, where it belongs beside a name that no longer
-        has to share the width.
+        THE SETTINGS LINK IS A CORNER ICON (user, 2026-10-06: top right): out of the centred column,
+        where it was a lone pill under the correction link, and absolute at the header's top-right at
+        every width. The name's column keeps `sm:pr-12` so a long name never runs under it.
       -->
       <div
-        class="animate-in fade-in slide-in-from-bottom-4 flex flex-col items-center gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
+        class="animate-in fade-in slide-in-from-bottom-4 relative flex flex-col items-center gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
       >
         <div class="relative h-24 w-24 shrink-0 sm:h-28 sm:w-28">
           <div
@@ -231,7 +229,7 @@
             <Camera size={15} strokeWidth={2.5} />
           </button>
         </div>
-        <div class="min-w-0 flex-1 text-center sm:text-left">
+        <div class="min-w-0 flex-1 text-center sm:pr-12 sm:text-left">
           <h1 class="text-text-main mb-1 text-2xl font-bold tracking-tight sm:text-3xl">
             {displayFallbackName}
           </h1>
@@ -242,10 +240,10 @@
         <a
           href={resolve('/settings')}
           title={m.settings_page_title()}
-          class="text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 sm:self-start dark:hover:bg-white/10"
+          aria-label={m.settings_page_title()}
+          class="ui-icon-button text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow absolute top-0 right-0 rounded-xl hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
         >
-          <SlidersHorizontal size={15} strokeWidth={2.5} />
-          <span class="hidden sm:inline">{m.settings_page_title()}</span>
+          <SlidersHorizontal size={18} strokeWidth={2.5} />
         </a>
       </div>
 
