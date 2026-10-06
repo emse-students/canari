@@ -1258,8 +1258,7 @@ has no service worker, so no cached shell can pin a browser to the old origin.
 **PROMOTED TO `301` - measured 2026-10-01**: `/` and `/posts` on the old name answer `301` to the
 same path on `canari.emse.fr`, still with `Cache-Control: no-store`. A `302` told a search engine the
 move was temporary and transferred no ranking, which is why the prudence had to stay short. What is
-left is the user's change of address in Google Search Console (both names verified in one account),
-a one-off gesture the [SEO item](../backlog.md) carries.
+left was the user's change of address in Google Search Console, declared 2026-10-04 (see [the SEO pass](#the-seo-pass-one-indexable-page-per-site-2026-10-06)).
 
 **What stays true, and what does not.** The IndexedDB measurement above is unchanged: a browser
 arriving on the new name from the old one still starts as a new device. What was withdrawn is the
