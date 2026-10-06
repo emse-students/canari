@@ -15,6 +15,8 @@ package fr.emse.canari.push
  *  - real first: a credit is kept, but only while a push for that group is still in flight, and the
  *    refused push that finds it posts nothing. A real post with no push behind it (the ACK won the
  *    race, nothing was ever pushed) leaves no credit, so it can never swallow a later generic banner.
+ *  - ONE REAL POST CAN STAND FOR N MESSAGES (a catch-up flush raises one banner for the last of N),
+ *    so it answers up to N pushes - generic lines and credits alike - not one.
  *
  * Nothing Android may be imported here (see [PushRecoveryLadder]). The caller serialises the
  * check-and-post sections with one lock; this class only holds the arithmetic.
@@ -60,21 +62,32 @@ class GenericBannerLedger {
     }
 
     /**
-     * The WebView is about to post the real banner for [groupId]. Returns the instant of the
-     * generic line it must replace, or 0 when there is none - in which case a credit is kept for a
-     * refused push still in flight.
+     * The WebView is about to post ONE real banner for [groupId] standing for [covers] messages (1
+     * for a live frame, N for a catch-up flush, which raises a single banner for the last of N).
+     * The server may have pushed each of those N messages, so the post answers up to N pushes:
+     * measured on the Mi 9T, 2026-10-06, one banner (`messages=5`) met three refused pushes and a
+     * ledger that paired one post with one push left a generic line behind.
+     *
+     * Returns the instants of the generic lines it must replace (oldest first, at most [covers]).
+     * Whatever part of [covers] no generic line absorbed becomes credits for refused pushes still
+     * in flight, capped by those in flight so a post with no push behind it - the ACK won the race -
+     * leaves nothing to swallow a later generic banner.
      */
     @Synchronized
-    fun realPosted(groupId: String): Long {
+    fun realPosted(groupId: String, covers: Int): List<Long> {
+        val taken = ArrayList<Long>()
         val queue = generics[groupId]
-        if (queue != null && queue.isNotEmpty()) {
-            val stamp = queue.removeFirst()
-            if (queue.isEmpty()) generics.remove(groupId)
-            return stamp
+        while (taken.size < covers && queue != null && queue.isNotEmpty()) {
+            taken.add(queue.removeFirst())
         }
-        val waiting = inFlight[groupId] ?: 0
-        val credit = credits[groupId] ?: 0
-        if (credit < waiting) credits[groupId] = credit + 1
-        return 0L
+        if (queue != null && queue.isEmpty()) generics.remove(groupId)
+        val unmatched = covers - taken.size
+        if (unmatched > 0) {
+            val waiting = inFlight[groupId] ?: 0
+            val credit = credits[groupId] ?: 0
+            val granted = minOf(unmatched, maxOf(waiting - credit, 0))
+            if (granted > 0) credits[groupId] = credit + granted
+        }
+        return taken
     }
 }

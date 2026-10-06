@@ -394,7 +394,9 @@ export function useMessaging() {
     isSystem: boolean,
     isOwn: boolean,
     /** The SENDER's instant in ms - what lets the native builder recognise one message. */
-    sentAt: number
+    sentAt: number,
+    /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
+    covers: number
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
@@ -500,6 +502,7 @@ export function useMessaging() {
       body: notificationBody,
       mentionsMe,
       sentAt,
+      covers,
     });
   }
 
@@ -765,7 +768,8 @@ export function useMessaging() {
       content,
       isSystem,
       isOwn,
-      resolvedTimestamp.getTime()
+      resolvedTimestamp.getTime(),
+      1
     );
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
@@ -1002,7 +1006,9 @@ export function useMessaging() {
         lastInbound.content,
         false,
         false,
-        lastInbound.timestamp.getTime()
+        lastInbound.timestamp.getTime(),
+        // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
+        brandNew.filter((msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId)).length
       );
     }
 
