@@ -74,6 +74,10 @@ pub(crate) struct IdentityBundle {
 pub(crate) struct StateSnapshotCache {
     pub(crate) dirty: bool,
     pub(crate) cached_cbor: Option<Vec<u8>>,
+    /// A ratchet generation was consumed or issued since the last serialisation (see
+    /// [`MlsManager::has_unsaved_ratchet_advance`]). Implies `dirty`; NOT implied by it, because a
+    /// freshly loaded manager is `dirty` (its cache is empty) while holding exactly what is on disk.
+    pub(crate) ratchet_unsaved: bool,
 }
 
 impl StateSnapshotCache {
@@ -81,11 +85,19 @@ impl StateSnapshotCache {
         Self {
             dirty: true,
             cached_cbor: None,
+            ratchet_unsaved: false,
         }
     }
 
     pub(crate) fn invalidate(&mut self) {
         self.dirty = true;
+    }
+
+    /// [`Self::invalidate`] for a mutation that MOVED A RATCHET (a send, a burn, a decrypted
+    /// application frame), which a reload from an older file would put back.
+    pub(crate) fn invalidate_ratchet(&mut self) {
+        self.dirty = true;
+        self.ratchet_unsaved = true;
     }
 
     pub(crate) fn get_or_build<F>(&mut self, build: F) -> Result<Vec<u8>, MlsError>
@@ -106,6 +118,7 @@ impl StateSnapshotCache {
         log::debug!("save_state: rebuilt CBOR snapshot ({} bytes)", bytes.len());
         self.cached_cbor = Some(bytes.clone());
         self.dirty = false;
+        self.ratchet_unsaved = false;
         Ok(bytes)
     }
 }
@@ -578,6 +591,29 @@ impl MlsManager {
     /// Over-invalidating only costs a rebuild and is always safe.
     pub(crate) fn mark_state_dirty(&self) {
         self.state_snapshot.borrow_mut().invalidate();
+    }
+
+    /// Marks the snapshot stale AND records that a ratchet moved. Every path that sends, burns or
+    /// decrypts an application frame calls this instead of [`Self::mark_state_dirty`].
+    pub(crate) fn mark_ratchet_advanced(&self) {
+        self.state_snapshot.borrow_mut().invalidate_ratchet();
+    }
+
+    /// True when this manager has sent, burnt or decrypted a frame whose ratchet advance no
+    /// serialisation has captured yet - i.e. the newest `mls.bin` is BEHIND this manager.
+    ///
+    /// **THE QUESTION A RELOAD MUST ASK, AND ONE THE EPOCH CANNOT ANSWER.** `reload_is_monotonic`
+    /// compares group epochs; a send or a decrypted application frame moves a GENERATION inside one
+    /// epoch, so a snapshot older by a few messages passes it and installs a secret tree behind the
+    /// live one: spent generations are re-derived (a frame already read decrypts a second time and
+    /// vanishes), and the next send re-issues a generation the peers consumed. Read under the
+    /// manager lock, it cannot be crossed by a message arriving between the check and the swap,
+    /// which a counter kept by the caller could.
+    ///
+    /// It is cleared by serialisation, not by the write that follows it: a failed write leaves the
+    /// file behind with the flag down, and that failure is the caller's to report.
+    pub fn has_unsaved_ratchet_advance(&self) -> bool {
+        self.state_snapshot.borrow().ratchet_unsaved
     }
 
     /// Invalidates the in-memory CBOR snapshot so the next [`Self::save_state`] rebuilds it.

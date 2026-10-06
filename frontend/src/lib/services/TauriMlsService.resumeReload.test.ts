@@ -10,31 +10,17 @@ vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }
 import { TauriMlsService } from './TauriMlsService';
 
 /**
- * The native half of `installUnlessOvertaken`, which the web service has had at every off-thread
- * swap and the native resume path never had.
+ * The resume reload must not put a ratchet BACK, and the refusal is decided natively.
  *
- * `recharger_mls_au_resume` guards the reload with `reload_is_monotonic`, which refuses a candidate
- * that would move a live group to a LOWER EPOCH. That is evidence for "is this snapshot from an
- * older epoch" and for nothing else. What a send moves is a GENERATION INSIDE one epoch: the epoch
- * guard sees nothing, the reload is accepted, the live ratchet goes back to wherever `mls.bin` was
- * left, and the next frame re-issues a spent generation. The peer refuses it with
- * `SecretReuseError` and reports, correctly, that the sender's ratchet rewound.
- *
- * The watermark below is the missing half: how many send-ratchet advances the file does NOT hold.
- */
-/**
- * The service with its private members opened up.
- *
- * An intersection with the class collapses to `never` (the same names are private there), so the
- * view is declared standalone and reached through `unknown` - the usual shape for asserting on
- * internals that are private by design and load-bearing by accident.
+ * `recharger_mls_au_resume` answers with a typed outcome. `reload_is_monotonic` grades EPOCHS, and a
+ * send or a decrypted frame moves a GENERATION inside one: the native command asks the live manager
+ * (`has_unsaved_ratchet_advance`) under the manager lock, so a receive is covered as well as a send
+ * and nothing can land between the check and the swap. What THIS side owes is the consequence: on
+ * `live-ahead` it persists the live state, and on every other outcome it does not.
  */
 interface ServiceInternals {
-  liveMutations: number;
   _deviceKeyB64: string;
-  _mutationsAtLastPersist: number;
   reloadStateFromDisk(): Promise<void>;
-  persistState(deviceKeyB64: string): Promise<number>;
 }
 
 function makeService(): ServiceInternals {
@@ -43,43 +29,53 @@ function makeService(): ServiceInternals {
   return svc;
 }
 
+const commands = (): string[] => invoke.mock.calls.map((c) => c[0] as string);
+
 describe('TauriMlsService.reloadStateFromDisk - the resume that must not rewind a ratchet', () => {
   beforeEach(() => {
     invoke.mockReset();
   });
 
-  it('reloads when mls.bin holds every send this device has made', async () => {
+  it('refreshes the group cache when mls.bin was installed', async () => {
     const svc = makeService();
-    invoke.mockResolvedValue(true);
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'recharger_mls_au_resume' ? 'reloaded' : ['g1']
+    );
     await svc.reloadStateFromDisk();
-    expect(invoke).toHaveBeenCalledWith('recharger_mls_au_resume', expect.anything());
+    expect(commands()).toEqual(['recharger_mls_au_resume', 'lister_groupes']);
   });
 
-  it('REFUSES the reload while a send has not reached mls.bin', async () => {
+  it('PERSISTS the live state when the native side reports it is ahead of the file', async () => {
     const svc = makeService();
-    // One send since the last persist: the file is a generation behind the live client.
-    svc.liveMutations = 1;
-    svc._mutationsAtLastPersist = 0;
-    invoke.mockResolvedValue(8);
-
+    // A RECEIVE the file does not hold: no send was counted, which is what the old WebView-side
+    // watermark could not see and why this had to move into Rust.
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'recharger_mls_au_resume' ? 'live-ahead' : 8
+    );
     await svc.reloadStateFromDisk();
-
-    const commands = invoke.mock.calls.map((c) => c[0]);
-    expect(commands).not.toContain('recharger_mls_au_resume');
-  });
-
-  it('persists the live state instead, so the NEXT resume is safe', async () => {
-    const svc = makeService();
-    svc.liveMutations = 3;
-    svc._mutationsAtLastPersist = 1;
-    invoke.mockResolvedValue(8);
-
-    await svc.reloadStateFromDisk();
-
     // Leaving the divergence on disk would only move the same rewind to the next resume, and would
-    // also hand a background engine a starting state that is already behind.
-    expect(invoke.mock.calls.map((c) => c[0])).toContain('sauvegarder_mls_et_persister');
-    expect(svc._mutationsAtLastPersist).toBe(3);
+    // hand a background engine a starting state that is already behind.
+    expect(commands()).toContain('sauvegarder_mls_et_persister');
+    expect(commands()).not.toContain('lister_groupes');
+  });
+
+  it.each(['nothing-on-disk', 'epoch-regression'])(
+    'does nothing more on %s: no persist, no cache refresh',
+    async (outcome) => {
+      const svc = makeService();
+      invoke.mockResolvedValue(outcome);
+      await svc.reloadStateFromDisk();
+      expect(commands()).toEqual(['recharger_mls_au_resume']);
+    }
+  );
+
+  it('survives a failed persist after live-ahead without aborting the resume', async () => {
+    const svc = makeService();
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'recharger_mls_au_resume') return 'live-ahead';
+      throw new Error('disk full');
+    });
+    await expect(svc.reloadStateFromDisk()).resolves.toBeUndefined();
   });
 
   it('skips without touching native state when the session holds no device key', async () => {
@@ -87,23 +83,5 @@ describe('TauriMlsService.reloadStateFromDisk - the resume that must not rewind 
     svc._deviceKeyB64 = '';
     await svc.reloadStateFromDisk();
     expect(invoke).not.toHaveBeenCalled();
-  });
-
-  it('counts a send that lands DURING a persist as still unpersisted', async () => {
-    const svc = makeService();
-    invoke.mockImplementation(async (cmd: string) => {
-      // A send racing the save: the snapshot the native side serialized cannot contain it.
-      if (cmd === 'sauvegarder_mls_et_persister') svc.liveMutations++;
-      // A BYTE COUNT, which is all the command returns since it stopped marshalling the whole
-      // snapshot back across the bridge for callers that discarded it.
-      return 8;
-    });
-
-    svc.liveMutations = 1;
-    await svc.persistState('a'.repeat(44));
-
-    // Erring this way costs one refused reload; erring the other way costs a rewound ratchet.
-    expect(svc._mutationsAtLastPersist).toBe(1);
-    expect(svc.liveMutations).toBe(2);
   });
 });
