@@ -22,6 +22,7 @@ import {
 } from './social-internal-client';
 import { socialUrl } from '../internal/service-urls';
 import { STRIPE_API_VERSION } from './stripe-api-version';
+import { describeHttpError } from '../common/http-error-log';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -200,7 +201,7 @@ export class PaymentWebhookController {
           const error = err as Error & { response?: { data?: unknown } };
           this.logger.error(
             'Failed to notify form-service about payment',
-            error?.response?.data || error?.message || error
+            describeHttpError(error)
           );
           return res.status(500).send('Failed to notify form-service');
         }
@@ -221,7 +222,7 @@ export class PaymentWebhookController {
           const error = err as Error & { response?: { data?: unknown } };
           this.logger.error(
             'Failed to notify social-service about product purchase',
-            error?.response?.data || error?.message || error
+            describeHttpError(error)
           );
           return res.status(500).send('Failed to notify social-service');
         }
@@ -244,7 +245,7 @@ export class PaymentWebhookController {
           const error = err as Error & { response?: { data?: unknown } };
           this.logger.error(
             `Failed to cancel submission after ${event.type}`,
-            error?.response?.data || error?.message || error
+            describeHttpError(error)
           );
           return res.status(500).send('Failed to cancel pending submission');
         }
@@ -264,7 +265,7 @@ export class PaymentWebhookController {
           const error = err as Error & { response?: { data?: unknown } };
           this.logger.error(
             'Failed to cancel submission after payment_intent.payment_failed',
-            error?.response?.data || error?.message || error
+            describeHttpError(error)
           );
           return res.status(500).send('Failed to cancel pending submission');
         }
@@ -295,7 +296,7 @@ export class PaymentWebhookController {
             const error = err as Error & { response?: { data?: unknown } };
             this.logger.error(
               'Failed to notify social-service about stripe onboarding',
-              error?.response?.data || error?.message || error
+              describeHttpError(error)
             );
           }
         }
@@ -377,7 +378,7 @@ export class PaymentWebhookController {
       const error = err as Error & { response?: { data?: unknown } };
       this.logger.error(
         `Lydia request-callback: fan-out failed (outcome=${outcome})`,
-        error?.response?.data || error?.message || error
+        describeHttpError(error)
       );
       throw new BadRequestException('Failed to process callback');
     }

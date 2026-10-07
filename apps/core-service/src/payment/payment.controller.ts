@@ -9,6 +9,7 @@ import {
   HttpCode,
   Param,
   BadRequestException,
+  HttpException,
   Logger,
   Req,
   UnauthorizedException,
@@ -33,6 +34,7 @@ import {
   productPurchaseCompletedUrl,
 } from './social-internal-client';
 import { socialUrl } from '../internal/service-urls';
+import { describeHttpError } from '../common/http-error-log';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Deliberately loose: the provider is the authority on deliverability, this only refuses junk. */
@@ -225,10 +227,7 @@ export class PaymentController {
         );
       } catch (err: unknown) {
         const error = err as Error & { response?: { data?: unknown } };
-        this.logger.error(
-          `Failed to save ${bodyKey} on association`,
-          error?.response?.data || error?.message
-        );
+        this.logger.error(`Failed to save ${bodyKey} on association`, describeHttpError(error));
       }
     }
 
@@ -301,7 +300,7 @@ export class PaymentController {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.warn(
           'connect-status: failed to sync stripe-complete',
-          error?.response?.data || error?.message
+          describeHttpError(error)
         );
       }
     }
@@ -349,10 +348,7 @@ export class PaymentController {
       );
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };
-      this.logger.error(
-        'Failed to disconnect Stripe account',
-        error?.response?.data || error?.message
-      );
+      this.logger.error('Failed to disconnect Stripe account', describeHttpError(error));
       throw new BadRequestException('Could not disconnect the Stripe account');
     }
 
@@ -380,10 +376,7 @@ export class PaymentController {
       );
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };
-      this.logger.error(
-        'Failed to disconnect Lydia account',
-        error?.response?.data || error?.message
-      );
+      this.logger.error('Failed to disconnect Lydia account', describeHttpError(error));
       throw new BadRequestException('Could not disconnect the Lydia account');
     }
 
@@ -427,10 +420,7 @@ export class PaymentController {
       );
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };
-      this.logger.error(
-        'Failed to validate the Lydia onboarding',
-        error?.response?.data || error?.message
-      );
+      this.logger.error('Failed to validate the Lydia onboarding', describeHttpError(error));
       throw new BadRequestException('Could not validate the Lydia onboarding');
     }
 
@@ -532,6 +522,9 @@ export class PaymentController {
       this.logger.debug(`[Payments] Checkout session created: ${session.id}`);
       return { ok: true, url: session.url, id: session.id };
     } catch (err: unknown) {
+      // A typed refusal (the Lydia provider's PAYMENT_PROVIDER_REFUSED) is already the answer:
+      // re-labelling it "Stripe error" would bury both its code and its readable message.
+      if (err instanceof HttpException) throw err;
       const stripeErr = err as { raw?: { message?: string }; message?: string };
       const msg = stripeErr?.raw?.message ?? stripeErr?.message ?? String(err);
       this.logger.error(`[Payments] create-checkout-session failed: ${msg}`);
@@ -569,10 +562,7 @@ export class PaymentController {
       await this.markSubmissionPaidInternal(submissionId, body.sessionId);
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };
-      this.logger.error(
-        'verify-session: mark-paid failed',
-        error?.response?.data || error?.message
-      );
+      this.logger.error('verify-session: mark-paid failed', describeHttpError(error));
       // Non-fatal if already paid - webhook may have already handled it
     }
 
@@ -609,10 +599,7 @@ export class PaymentController {
       await this.cancelPendingSubmissionInternal(submissionId);
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };
-      this.logger.error(
-        'cancel-session: cancel submission failed',
-        error?.response?.data || error?.message
-      );
+      this.logger.error('cancel-session: cancel submission failed', describeHttpError(error));
     }
 
     return { ok: true, submissionId, formId };
@@ -799,7 +786,7 @@ export class PaymentController {
       submissionData = resp.data;
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };
-      this.logger.error('Failed to fetch submission', error?.response?.data || error?.message);
+      this.logger.error('Failed to fetch submission', describeHttpError(error));
       throw new BadRequestException('Could not retrieve submission details');
     }
 
@@ -836,10 +823,7 @@ export class PaymentController {
         await this.markSubmissionPaidInternal(submissionId);
       } catch (err: unknown) {
         const error = err as Error & { response?: { data?: unknown } };
-        this.logger.error(
-          'Failed to mark submission as paid',
-          error?.response?.data || error?.message
-        );
+        this.logger.error('Failed to mark submission as paid', describeHttpError(error));
         // Payment succeeded but marking failed - return ok, user can retry
       }
     } else if (!result.requiresAction) {
@@ -849,7 +833,7 @@ export class PaymentController {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.error(
           'Failed to cancel submission after charge failure',
-          error?.response?.data || error?.message
+          describeHttpError(error)
         );
       }
     }
@@ -917,10 +901,7 @@ export class PaymentController {
       const error = err as Error & {
         response?: { data?: { message?: string } };
       };
-      this.logger.error(
-        'Failed to fetch product charge context',
-        error?.response?.data || error?.message
-      );
+      this.logger.error('Failed to fetch product charge context', describeHttpError(error));
       const msg = error?.response?.data?.message ?? 'Could not retrieve product purchase details';
       throw new BadRequestException(msg);
     }
@@ -956,7 +937,7 @@ export class PaymentController {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.error(
           'Failed to fulfill product purchase after charge',
-          error?.response?.data || error?.message
+          describeHttpError(error)
         );
       }
     }

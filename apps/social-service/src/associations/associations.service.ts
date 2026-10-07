@@ -7,6 +7,7 @@ import {
   NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
+import { describeHttpError } from '../common/http-error-log';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
@@ -532,16 +533,26 @@ export class AssociationsService {
    * @param actorUserId The caller, from `x-user-id`. Required: the point of the line is the name.
    */
   async remove(id: string, actorUserId: string) {
-    const [memberCount, eventCount] = await Promise.all([
+    const [memberCount, eventCount, formCount] = await Promise.all([
       this.memberRepo.count({ where: { associationId: id } }),
       this.calendarRepo.count({ where: { associationId: id } }),
+      this.formRepo.count({ where: { associationId: id } }),
     ]);
     this.logger.warn(
-      `[ASSO] DELETE ${id} by ${actorUserId || 'unknown'} - removing ${memberCount} member(s) and ${eventCount} event(s); this is not reversible`
+      `[ASSO] DELETE ${id} by ${actorUserId || 'unknown'} - removing ${memberCount} member(s), ${eventCount} event(s) and ${formCount} form(s); this is not reversible`
     );
-    await this.calendarRepo.delete({ associationId: id });
-    await this.memberRepo.delete({ associationId: id });
-    await this.assoRepo.delete(id);
+    // ONE TRANSACTION, FORMS INCLUDED. A form is DELETED with its association, as an event is:
+    // `forms.associationId` has no foreign key, so a surviving form kept a dangling id and the
+    // client rendered it as a "Personnel" form - a paid form nobody could attribute or manage any
+    // more (found on dev 2026-10-07). Archiving would keep exactly that orphan; the form's own
+    // delete (`FormsService.delete`) is the precedent. Its submissions are left as that delete
+    // leaves them: they are the payers' records.
+    await this.assoRepo.manager.transaction(async (manager) => {
+      await manager.delete(AssociationCalendarEvent, { associationId: id });
+      await manager.delete(Form, { associationId: id });
+      await manager.delete(AssociationMember, { associationId: id });
+      await manager.delete(Association, id);
+    });
     await this.invalidatePostListCaches();
     return { ok: true };
   }
@@ -618,8 +629,12 @@ export class AssociationsService {
           },
         })
       );
-    } catch {
-      /* non-fatal - object may already be gone */
+    } catch (err) {
+      // non-fatal - the object may already be gone. Logged through describeHttpError because the
+      // raw error carries the x-internal-secret header this call authenticated with.
+      this.logger.debug(
+        `Media delete best-effort failed for ${mediaId}: ${describeHttpError(err)}`
+      );
     }
   }
 

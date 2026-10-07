@@ -31,6 +31,7 @@ import {
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
+import { mapCorePaymentError } from '../common/core-payment-error';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
 import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
 import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
@@ -949,31 +950,36 @@ export class ProductsService {
     const idempotencyKey =
       paymentTarget.provider === 'lydia' ? `product:${product.id}:${userId}` : undefined;
 
-    const resp = await firstValueFrom(
-      this.httpService.post<{ ok: boolean; url: string; id: string }>(
-        coreUrl('payments/create-checkout-session'),
-        {
-          lineItems: [
-            {
-              price_data: {
-                currency: product.currency,
-                product_data: { name: product.name },
-                unit_amount: amountCents,
+    let resp;
+    try {
+      resp = await firstValueFrom(
+        this.httpService.post<{ ok: boolean; url: string; id: string }>(
+          coreUrl('payments/create-checkout-session'),
+          {
+            lineItems: [
+              {
+                price_data: {
+                  currency: product.currency,
+                  product_data: { name: product.name },
+                  unit_amount: amountCents,
+                },
+                quantity: 1,
               },
-              quantity: 1,
-            },
-          ],
-          successUrl,
-          cancelUrl,
-          metadata: { productId: product.id, userId },
-          stripeConnectAccountId: paymentTarget.connectAccountId,
-          customerId,
-          idempotencyKey,
-          payerEmail,
-        },
-        internalCoreRequestConfig()
-      )
-    );
+            ],
+            successUrl,
+            cancelUrl,
+            metadata: { productId: product.id, userId },
+            stripeConnectAccountId: paymentTarget.connectAccountId,
+            customerId,
+            idempotencyKey,
+            payerEmail,
+          },
+          internalCoreRequestConfig()
+        )
+      );
+    } catch (err) {
+      throw mapCorePaymentError(err, this.logger, 'SHOP');
+    }
 
     if (!resp.data?.url) {
       throw new BadRequestException('Payment service did not return a checkout URL');
