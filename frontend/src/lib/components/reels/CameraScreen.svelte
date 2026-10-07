@@ -24,6 +24,7 @@
   import type { CameraFault } from '$lib/reels/cameraAccess';
   import {
     FramedStream,
+    shouldMirrorCapture,
     takeFramedPhoto,
     type CameraCapture,
     type PreviewBox,
@@ -92,12 +93,13 @@
       width: el.clientWidth,
       height: el.clientHeight,
       dpr: window.devicePixelRatio || 1,
+      mirror: shouldMirrorCapture(session.facing),
     };
   }
 
   /**
-   * What the shutter can take. Both captures are the PREVIEW'S crop and are never mirrored (the
-   * mirror is a CSS transform on the element, which a canvas read of its frame ignores).
+   * What the shutter can take. Both captures are the PREVIEW'S crop, drawn mirrored on the front lens
+   * exactly as the preview is (the CSS mirror is invisible to a canvas read, so the capture does it).
    */
   capture = {
     get ready() {
@@ -215,8 +217,8 @@
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
 >
-  <!-- The front lens is mirrored as every camera app shows it; the saved photo and take are not (they
-       are drawn from the decoded frame, which this CSS transform never touches, framedCapture.ts).
+  <!-- The front lens is mirrored as every camera app shows it; the saved photo and take are drawn
+       mirrored too (a canvas read of the decoded frame ignores this CSS transform, framedCapture.ts).
        THE ELEMENT IS KEYED BY THE STREAM: WKWebView keeps a <video> element's media layer at the size
        of its FIRST layout, so an element handed a second stream after the app came back from the
        background drew a ~65 % letterboxed rectangle while its CSS box stayed 390x844 and
