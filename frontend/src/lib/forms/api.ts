@@ -81,7 +81,7 @@ export interface CreateFormPayload {
    * audience criterion that takes several answers - a guest has no identity for any of those.
    */
   isPublic?: boolean;
-  /** Whether cash (physical) payment is accepted as an alternative to Stripe. */
+  /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   allowCashPayment?: boolean;
   /** Days after submission before an unvalidated cash payment expires (null = never). */
   cashPaymentExpiryDays?: number;
@@ -431,7 +431,7 @@ export async function cancelCashSubmission(
   return res.json();
 }
 
-/** Cancels a pending Stripe submission after payment failure or user abort. */
+/** Cancels a pending online-payment submission after payment failure or user abort. */
 export async function cancelPendingSubmission(submissionId: string): Promise<{ ok: boolean }> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/cancel`,
@@ -450,7 +450,7 @@ export async function submitForm(
     answers: any;
     successUrl?: string;
     cancelUrl?: string;
-    paymentMethod?: 'stripe' | 'cash';
+    paymentMethod?: 'online' | 'cash';
   }
 ): Promise<any> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/submit`, {

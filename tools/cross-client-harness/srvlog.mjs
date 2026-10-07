@@ -919,12 +919,10 @@ const NOTABLE = [
   //
   // NOTABLE, AND WITH THE VALUE PINNED TO WHAT WAS READ - which is the whole point and the reason
   // these are not `(yes|no)`. `Lydia configured: no` is LITERALLY the line that changes the day
-  // WP-LYDIA-1 lands, and `Stripe configured: yes` is the line that changes if payments quietly lose
-  // their configuration on a deploy. A rule spanning both values would forgive the flip along with
-  // the boot and delete the only evidence either event ever produces; pinned, the flip lands in
-  // `unexplained` where a configuration change belongs. The homologation URL is pinned for the same
+  // WP-LYDIA-1 lands. A rule spanning both values would forgive the flip along with the boot and
+  // delete the only evidence the event ever produces; pinned, the flip lands in `unexplained` where
+  // a configuration change belongs. The homologation URL is pinned for the same
   // reason - moving to Lydia's production endpoint is an event, not noise.
-  /\[StripePaymentProvider\] Stripe configured: yes$/,
   /\[LydiaPaymentProvider\] Lydia configured: no \(https:\/\/homologation\.lydia-app\.com\)$/,
   // No value to pin: an extension check either reports ready or the service does not start. Its
   // ABSENCE is the finding, and an absence cannot be classified - which is what the boot banner above

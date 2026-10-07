@@ -19,10 +19,6 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Allow Stripe to send raw body for webhook verification on this specific route
-  const webhookPath = '/api/payments/webhook';
-  app.use(webhookPath, bodyParser.raw({ type: 'application/json' }) as any);
-
   // Increase payload limit to accommodate base64 background images for posters
   app.use(bodyParser.json({ limit: '15mb' }));
   app.use(bodyParser.urlencoded({ limit: '15mb', extended: true }));

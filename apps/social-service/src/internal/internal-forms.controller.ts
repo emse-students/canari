@@ -1,18 +1,9 @@
-import {
-  Body,
-  Controller,
-  ForbiddenException,
-  Get,
-  Headers,
-  Logger,
-  Param,
-  Post,
-} from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Headers, Logger, Param, Post } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { FormsService } from '../forms/forms.service';
 
 /**
- * Internal form-submission endpoints for core-service (charge-saved-method, webhooks).
+ * Internal form-submission endpoints for core-service (payment callbacks).
  * Protected by X-Internal-Secret - not exposed through nginx auth headers.
  */
 @Controller('internal/forms')
@@ -35,18 +26,7 @@ export class InternalFormsController {
     }
   }
 
-  /** Returns submission payment details for charge-saved-method. */
-  @Get('submissions/:submissionId')
-  getSubmission(
-    @Param('submissionId') submissionId: string,
-    @Headers('x-internal-secret') headerSecret: string
-  ) {
-    this.assertInternalSecret(headerSecret);
-    this.logger.debug(`[INTERNAL_FORMS] get submission ${submissionId}`);
-    return this.formsService.getSubmissionById(submissionId);
-  }
-
-  /** Marks a submission as paid after Stripe confirms payment. */
+  /** Marks a submission as paid after the payment provider confirms payment. */
   @Post('submissions/:submissionId/mark-paid')
   markPaid(
     @Param('submissionId') submissionId: string,

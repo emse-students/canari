@@ -2,14 +2,8 @@
   import { onMount } from 'svelte';
   import { createProductCheckout, type AssociationProduct } from '$lib/associations/api';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
-  import {
-    listPaymentMethods,
-    chargeProductWithSavedMethod,
-    type PaymentMethod,
-  } from '$lib/stores/user';
-  import { shopCheckoutCallbacks } from '$lib/utils/stripeCallbacks';
+  import { shopCheckoutCallbacks } from '$lib/utils/checkoutCallbacks';
   import { showToast } from '$lib/stores/toast.svelte';
-  import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
   import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
   import {
     activePaymentProvider,
@@ -36,11 +30,6 @@
   }: Props = $props();
 
   let checkingOut = $state(false);
-  let paymentMethods = $state<PaymentMethod[]>([]);
-  let showPaymentModal = $state(false);
-  let pendingCheckoutUrl = $state('');
-  let pendingAmountCents = $state(0);
-  let pendingCurrency = $state('eur');
   let askingPayerEmail = $state(false);
 
   const buttonLabel = $derived(
@@ -60,13 +49,8 @@
         (customAmountEuros == null || customAmountEuros <= 0))
   );
 
-  onMount(async () => {
+  onMount(() => {
     void loadActivePaymentProvider();
-    try {
-      paymentMethods = await listPaymentMethods();
-    } catch {
-      // Stripe may not be configured
-    }
   });
 
   /** Resolves custom amount in cents when applicable. */
@@ -102,15 +86,8 @@
         shopCheckoutCallbacks(product.id),
         payerEmail
       );
-      if (paymentMethods.length > 0 && res.amountCents > 0) {
-        pendingCheckoutUrl = res.checkoutUrl;
-        pendingAmountCents = res.amountCents;
-        pendingCurrency = res.currency ?? product.currency;
-        showPaymentModal = true;
-      } else {
-        const { navigateExternal } = await import('$lib/utils/openExternal');
-        await navigateExternal(res.checkoutUrl);
-      }
+      const { navigateExternal } = await import('$lib/utils/openExternal');
+      await navigateExternal(res.checkoutUrl);
     } catch (err) {
       // A provider refusal (Lydia: blocked venue, bad phone...) is an answer about THIS purchase and
       // carries a readable reason; every other failure keeps the generic line.
@@ -118,26 +95,6 @@
     } finally {
       checkingOut = false;
     }
-  }
-
-  async function handlePayWithSaved(paymentMethodId: string) {
-    const result = await chargeProductWithSavedMethod(
-      product.associationId,
-      product.id,
-      paymentMethodId,
-      resolveCustomCents()
-    );
-    if (result.ok) {
-      showPaymentModal = false;
-      showToast(m.shop_purchase_success());
-    }
-    return result;
-  }
-
-  async function handlePayWithNew() {
-    showPaymentModal = false;
-    const { navigateExternal } = await import('$lib/utils/openExternal');
-    await navigateExternal(pendingCheckoutUrl);
   }
 </script>
 
@@ -163,16 +120,5 @@
       void runCheckout(email);
     }}
     onClose={() => (askingPayerEmail = false)}
-  />
-{/if}
-
-{#if showPaymentModal}
-  <PaymentModal
-    {paymentMethods}
-    totalCents={pendingAmountCents}
-    currency={pendingCurrency}
-    onPayWithSaved={handlePayWithSaved}
-    onPayWithNew={handlePayWithNew}
-    onClose={() => (showPaymentModal = false)}
   />
 {/if}

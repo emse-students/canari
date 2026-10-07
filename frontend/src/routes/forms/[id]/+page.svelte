@@ -7,13 +7,7 @@
   import { onMount } from 'svelte';
   import { getToken } from '$lib/stores/auth';
   import { showToast } from '$lib/stores/toast.svelte';
-  import {
-    currentUserId,
-    listPaymentMethods,
-    chargeWithSavedMethod,
-    setupPaymentMethod,
-    type PaymentMethod,
-  } from '$lib/stores/user';
+  import { currentUserId } from '$lib/stores/user';
   import {
     FormNotFoundError,
     getForm,
@@ -35,7 +29,6 @@
   } from '$lib/associations/api';
   import { useFormReminder } from '$lib/posts/useFormReminder.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
   import FormHeader from '$lib/components/forms/FormHeader.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
   import {
@@ -68,7 +61,6 @@
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
-  import { supportsSavedCards } from '$lib/associations/paymentProviderCopy';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
@@ -98,21 +90,16 @@
   /** False when a `submitCondition` excludes them from the form entirely. */
   let maySubmit = $state(true);
   let submitting = $state(false);
-  let savingCard = $state(false);
   let loading = $state(true);
   let error = $state('');
   let successMessage = $state('');
   let userId = $state('');
 
   // Payment
-  let paymentMethods = $state<PaymentMethod[]>([]);
-  let showPaymentModal = $state(false);
   let askingPayerEmail = $state(false);
-  let pendingCheckoutUrl = $state('');
-  let pendingSubmissionId = $state('');
   let linkedAgendaEvent = $state<AssociationCalendarEvent | null>(null);
   let agendaAssociationSlug = $state('');
-  let paymentMethodChoice = $state<'stripe' | 'cash'>('stripe');
+  let paymentMethodChoice = $state<'online' | 'cash'>('online');
   let copiedLink = $state(false);
 
   // ── Submit bar: sits at the end by default, sticks for good once earned ─────
@@ -171,24 +158,6 @@
    * The two are told apart by whether `totalCount` moved since the last scroll: unchanged means
    * nothing new rendered, so it is safe to check immediately; changed means it is not. */
   let lastScrollTotalCount = $state(0);
-
-  async function handleSaveCard() {
-    savingCard = true;
-    try {
-      const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      const current = `${origin}/forms/${formId}`;
-      const result = await setupPaymentMethod({ successUrl: current, cancelUrl: current });
-      if (result.url) {
-        const { navigateExternal } = await import('$lib/utils/openExternal');
-        await navigateExternal(result.url);
-      }
-    } catch (err: unknown) {
-      Log.d('handleSaveCard failed', err);
-      showToast(m.form_card_registration_error());
-    } finally {
-      savingCard = false;
-    }
-  }
 
   /**
    * The one place this screen says where the form lives, shared by both share controls. A public
@@ -282,16 +251,6 @@
           if (sub?.answers) selections = sub.answers;
         } catch {
           // ignore
-        }
-      }
-
-      // Pre-load saved payment methods for paid forms
-      if (f.requiresPayment && userId) {
-        try {
-          const methods = await listPaymentMethods();
-          paymentMethods = methods;
-        } catch {
-          // Stripe may not be configured
         }
       }
     } catch (e: any) {
@@ -479,7 +438,7 @@
     error = '';
     submitting = true;
     try {
-      const { formCheckoutCallbacks } = await import('$lib/utils/stripeCallbacks');
+      const { formCheckoutCallbacks } = await import('$lib/utils/checkoutCallbacks');
       const res = await submitFormService(form.id, {
         email: '',
         ...(payerEmail ? { payerEmail } : {}),
@@ -488,15 +447,8 @@
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
       if (res.checkoutUrl) {
-        // Payment required - check if user has saved payment methods
-        if (paymentMethods.length > 0 && res.submissionId) {
-          pendingCheckoutUrl = res.checkoutUrl;
-          pendingSubmissionId = res.submissionId;
-          showPaymentModal = true;
-        } else {
-          const { navigateExternal } = await import('$lib/utils/openExternal');
-          await navigateExternal(res.checkoutUrl);
-        }
+        const { navigateExternal } = await import('$lib/utils/openExternal');
+        await navigateExternal(res.checkoutUrl);
       } else {
         submitted = true;
         successMessage = m.form_view_submission_success();
@@ -507,44 +459,6 @@
     } finally {
       submitting = false;
     }
-  }
-
-  async function handlePayWithSaved(paymentMethodId: string) {
-    const result = await chargeWithSavedMethod(pendingSubmissionId, paymentMethodId);
-    if (result.ok) {
-      submitted = true;
-      successMessage = m.form_view_payment_success();
-      showPaymentModal = false;
-      setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
-    }
-    // If requiresAction, PaymentModal handles 3DS inline and calls onSuccess
-    return result;
-  }
-
-  function handlePaySuccess() {
-    submitted = true;
-    successMessage = m.form_view_payment_success();
-    showPaymentModal = false;
-    setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
-  }
-
-  async function handlePayWithNew() {
-    showPaymentModal = false;
-    const { navigateExternal } = await import('$lib/utils/openExternal');
-    await navigateExternal(pendingCheckoutUrl);
-  }
-
-  async function handlePaymentFailed() {
-    if (!pendingSubmissionId) return;
-    try {
-      await cancelPendingSubmission(pendingSubmissionId);
-    } catch {
-      // charge-saved-method may have already cancelled server-side
-    }
-    pendingSubmissionId = '';
-    pendingCheckoutUrl = '';
-    showPaymentModal = false;
-    error = m.form_view_error_payment_failed();
   }
 
   // ── Progress bar ─────────────────────────────────────────────────
@@ -609,19 +523,6 @@
       void handleSubmit(email);
     }}
     onClose={() => (askingPayerEmail = false)}
-  />
-{/if}
-
-{#if showPaymentModal && pendingSubmissionId}
-  <PaymentModal
-    {paymentMethods}
-    totalCents={calculateTotal()}
-    currency={form?.currency ?? 'eur'}
-    onPayWithSaved={handlePayWithSaved}
-    onPayWithNew={handlePayWithNew}
-    onSuccess={handlePaySuccess}
-    onPaymentFailed={handlePaymentFailed}
-    onClose={() => (showPaymentModal = false)}
   />
 {/if}
 
@@ -818,8 +719,8 @@
       {/each}
     </div>
 
-    <!-- ── Payment method (cash vs online). 'stripe' is the backend's wire value for "online"
-         (Lydia today); it is renamed with the backend Stripe removal batch. ── -->
+    <!-- ── Payment method (cash vs online). `online` is the wire value; clients older than the
+         Stripe removal sent `stripe`, which the server still accepts (legacy-compatibility). ── -->
     {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
       <div class="border-cn-border mt-4 rounded-2xl border bg-(--cn-surface) p-5">
         <p class="text-text-muted mb-3 text-xs font-bold tracking-wide uppercase">
@@ -828,14 +729,14 @@
         <div class="grid grid-cols-2 gap-2">
           <label
             class="flex cursor-pointer items-center gap-2.5 rounded-2xl border-2 px-4 py-3 transition-all select-none {paymentMethodChoice ===
-            'stripe'
+            'online'
               ? 'border-cn-yellow bg-cn-yellow/8'
               : 'border-cn-border hover:border-cn-yellow/50'}"
           >
             <input
               type="radio"
               bind:group={paymentMethodChoice}
-              value="stripe"
+              value="online"
               class="accent-cn-yellow"
             />
             <div>
@@ -967,20 +868,6 @@
       <p class="text-text-muted mt-2 text-center text-sm font-medium">
         {m.form_view_form_full_note()}
       </p>
-    {/if}
-
-    {#if !submitted && form.requiresPayment && paymentMethods.length === 0 && userId && supportsSavedCards(activePaymentProvider.current)}
-      <div class="mt-2 flex justify-center">
-        <button
-          type="button"
-          onclick={() => void handleSaveCard()}
-          disabled={savingCard}
-          class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 text-xs underline underline-offset-2 disabled:opacity-50"
-        >
-          <CreditCard size={13} />
-          {savingCard ? m.form_view_saving_card() : m.form_view_save_card()}
-        </button>
-      </div>
     {/if}
   </div>
 

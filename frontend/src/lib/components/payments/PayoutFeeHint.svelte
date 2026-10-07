@@ -1,24 +1,20 @@
 <script lang="ts">
   import {
-    computeStripeCardFeeCents,
-    STRIPE_CARD_FEE_FIXED_CENTS,
+    computeLydiaFeeCents,
+    LYDIA_FEE_FIXED_CENTS,
     eurosInputToCents,
-  } from '$lib/payments/stripeFees';
-  import { computeLydiaFeeCents, LYDIA_FEE_FIXED_CENTS } from '$lib/payments/lydiaFees';
+  } from '$lib/payments/lydiaFees';
   import { fetchActivePaymentProvider, type PaymentProviderId } from '$lib/associations/api';
   import { formatPriceCents } from '$lib/utils/canariLinkPreviewFormat';
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * Renders the payout estimate under whichever fee schedule is actually active - see
+   * Renders the payout estimate under the Lydia fee schedule - see
    * `docs/wiki/frontend/modules/payments.md#where-a-providers-name-may-appear-and-where-it-may-not`.
    *
-   * This component USED TO be `StripeNetPayoutHint`, and the name was deliberate: the arithmetic
-   * really was Stripe's, so a neutral name would have been the lie. It is neutral now because the
-   * arithmetic itself picks a side at runtime - `stripeFees.ts` and `lydiaFees.ts` each stay
-   * provider-specific (correctly), and this component is the seam that chooses between them, the
-   * cheaper of the two options `docs/wiki/backlog.md` already named: ask
-   * `GET /api/payments/provider` rather than have `PaymentProvider` expose its own schedule.
+   * Nothing is drawn until the active provider is KNOWN to be Lydia: an unknown provider (still
+   * loading, or the call failed) gets no estimate rather than a guessed one, and `disabled` has no
+   * payout at all. The schedule is asked of `GET /api/payments/provider`, not assumed.
    */
   interface Props {
     /** Gross price in euros from a number input. */
@@ -43,10 +39,9 @@
   const minCents = $derived(eurosInputToCents(props.minEuros));
   const maxCents = $derived(eurosInputToCents(props.maxEuros));
 
-  // `disabled` hides the hint entirely: there is no payout to estimate.
-  // Server config, not per-association - fetched once and defaulted to `stripe` on failure, the
-  // same posture the association edit page already takes for the same call.
-  let provider = $state<PaymentProviderId>('stripe');
+  // Server config, not per-association - fetched once. `null` (loading or failed) and `disabled`
+  // both hide the hint: there is no schedule to apply and no payout to estimate.
+  let provider = $state<PaymentProviderId | null>(null);
   $effect(() => {
     fetchActivePaymentProvider()
       .then((p) => (provider = p))
@@ -55,13 +50,9 @@
       });
   });
 
-  const computeFeeCents = $derived(
-    provider === 'lydia' ? computeLydiaFeeCents : computeStripeCardFeeCents
-  );
-  const feeFixedCents = $derived(
-    provider === 'lydia' ? LYDIA_FEE_FIXED_CENTS : STRIPE_CARD_FEE_FIXED_CENTS
-  );
-  const feePercent = $derived(provider === 'lydia' ? 1 : 1.5);
+  const computeFeeCents = computeLydiaFeeCents;
+  const feeFixedCents = LYDIA_FEE_FIXED_CENTS;
+  const feePercent = 1;
 
   function computeNetPayoutCents(cents: number): number {
     return Math.max(0, cents - computeFeeCents(cents));
@@ -81,7 +72,7 @@
   }
 </script>
 
-{#if provider !== 'disabled' && (grossCents || memberCents || minCents || maxCents)}
+{#if provider === 'lydia' && (grossCents || memberCents || minCents || maxCents)}
   <div
     class="space-y-1 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-xs text-amber-950/90 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-100/90"
     role="note"

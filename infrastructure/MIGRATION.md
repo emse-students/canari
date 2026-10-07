@@ -59,8 +59,8 @@ for **server deployment**:
 | Admin routes (not a secret) | `ADMINER_ENABLED=true` on core-service, production's compose only, opens the gated `/adminer/` route and needs `INTERNAL_SHARED_SECRET` of 32+ characters - [databases](../docs/wiki/infrastructure/databases.md#the-adminer-route---the-database-in-a-browser-for-global-admins-2026-10-02) |
 | Media storage (Garage, formerly MinIO) | `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN`, `GARAGE_ACCESS_KEY_ID` (>= 8 chars), `GARAGE_SECRET_ACCESS_KEY` (>= 16 chars) - Garage's own minimums, which is why this is a dedicated key rather than reusing `MINIO_ROOT_USER`/`PASSWORD` |
 | Auth (Authentik) | `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `MICONNECT_PG_PASS`, `MICONNECT_AUTHENTIK_SECRET_KEY`. The MiConnect stack's own `.env` on its host also holds `MIGALLERY_AVATAR_SIGNING_KEY`, `MICONNECT_CAS_CONSUMER_SECRET` and `MICONNECT_EDITOR_TOKEN`, written by hand ([authentik/README](authentik/README.md#secrets)) |
-| App / frontend | `BASE_URL`, `STRIPE_PUB_KEY`, `KLIPY_API_KEY`, `ANDROID_APP_LINK_SHA256`, `APPLE_TEAM_ID` |
-| Payments | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `LYDIA_PROVIDER_TOKEN`, `LYDIA_PROVIDER_PRIVATE_TOKEN` (WP-LYDIA-1; core-service only, unlike Stripe's secrets which also reach social-service unused - which provider is actually live is `platform_config.paymentProvider`, an admin setting at `/admin/platform`, not an env var) |
+| App / frontend | `BASE_URL`, `KLIPY_API_KEY`, `ANDROID_APP_LINK_SHA256`, `APPLE_TEAM_ID` |
+| Payments | `LYDIA_PROVIDER_TOKEN`, `LYDIA_PROVIDER_PRIVATE_TOKEN` (WP-LYDIA-1; core-service only - whether payments are live is `platform_config.paymentProvider`, an admin setting at `/admin/platform`, not an env var). **The Stripe secrets (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUB_KEY`) are no longer read anywhere**: delete them from the GitHub secrets, see [stripe-archive](../docs/wiki/stripe-archive.md) |
 | MiConnect profile editor (WP4, production only) | `MICONNECT_EDITOR_TOKEN` - the API token of the authentik service account `miconnect-canari-editor` (RBAC role: view + change users only), read by core-service to write `attributes.profile`. **The SAME value on both sides**: a GitHub secret of that name for Canari, and `MICONNECT_EDITOR_TOKEN` in the MiConnect stack's `/srv/miconnect/.env`, which `blueprints/80-profile-editor.yaml` reads (`!Env`) when a release applies it. No dev counterpart: dev shares production's MiConnect and refuses the edit ([profiles-and-access](../docs/wiki/profiles-and-access.md)) |
 | Push / calls / avatars | `FIREBASE_SERVICE_ACCOUNT_JSON`, `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `MIGALLERY_API_KEY` |
 | iOS calls (CallKit, optional) | `APNS_VOIP_KEY_P8` (APNs .p8 key, raw PEM or base64), `APNS_VOIP_KEY_ID`, `APNS_VOIP_TEAM_ID` (`4CLNB8SR6L`) — direct VoIP push to APNs to ring CallKit when the app is killed; without these, iOS falls back to an FCM banner |
@@ -152,9 +152,9 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 > **Which `DEV_*` secrets to create, and what each absence costs, is the manifest itself** - every row
 > whose DEV column is not `skip`, prefixed `DEV_`. Fourteen are `required` and the deploy refuses
 > without them; eleven are `warn` (the two `DEV_LYDIA_*` homologation tokens included) and each degrades one named feature; three are `silent` because a
-> default answers for them. Rows marked `skip` must NOT be created: Stripe and
-> `CERCLE_API_KEY` are deliberately absent from dev (decided with the user), so that a copy of
-> production's database can never charge a real card nor be answered as production by Le Cercle.
+> default answers for them. Rows marked `skip` must NOT be created: `CERCLE_API_KEY` is deliberately absent from dev
+> (decided with the user), so that a copy of production's database can never be answered as
+> production by Le Cercle.
 > **Push is NOT among them** - `copy-prod-to-dev.sh` truncates `push_token`, so dev has no real
 > device to reach, and both halves of push (FCM and the three APNs values) are ordinary optional
 > credentials.

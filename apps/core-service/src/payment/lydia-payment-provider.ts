@@ -4,8 +4,6 @@ import { signLydiaParams } from './lydia-signature';
 import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
-  ChargeResult,
-  ChargeWithSavedMethodParams,
   CheckoutSessionInfo,
   CheckoutSessionResult,
   ConnectBalanceSummary,
@@ -13,7 +11,6 @@ import type {
   OnboardingParams,
   OnboardingResult,
   PaymentProvider,
-  SavedPaymentMethod,
 } from './payment-provider.interface';
 
 /**
@@ -47,8 +44,8 @@ function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * Lydia API implementation of PaymentProvider (WP-LYDIA-1). Platform config still defaults
- * `paymentProvider` to `stripe` - flipping it live is gated on the two gaps below, not on code.
+ * Lydia API implementation of PaymentProvider (WP-LYDIA-1). Stripe left the product
+ * (docs/wiki/stripe-archive.md); this is the only live provider.
  * Covers checkout (`request/do`, confirmed server-side via its signed per-request callback - see
  * `webhook.controller.ts`'s `lydia-request-callback` route) and session lookup (`request/state`).
  *
@@ -61,8 +58,8 @@ function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
  *   to read Canari's own DB-tracked state (written by the webhook) instead of calling Lydia live.
  *   That webhook receiver is deliberately not built either (2026-08-19): it has no documented
  *   signature and `vendor_token` is PUBLIC, so building it as-is would be forgeable.
- * - Saved payment method methods: retired per the WP-LYDIA-1 decision (see plan) - every purchase
- *   becomes its own `request/do` with payer interaction, there is no server-side vaulted instrument.
+ * - There are no saved payment methods: every purchase is its own `request/do` with payer
+ *   interaction, there is no server-side vaulted instrument.
  * - `createCheckoutSession` requires `payerRecipient`: the payment controller builds it from the
  *   `payerEmail` its caller sends, and a request without one is refused rather than sent.
  */
@@ -293,37 +290,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
 
   async createConnectDashboardLink(_accountId: string): Promise<string> {
     throw new BadRequestException(
-      'Lydia Business dashboard access is via the dashboard_url returned once at business/create, not a re-issuable login link like Stripe.'
-    );
-  }
-
-  async getOrCreateCustomer(): Promise<string> {
-    throw new BadRequestException(
-      'Lydia has no Customer object - payer identity is inline (email/phone) per request/do call, see WP-LYDIA-1.'
-    );
-  }
-
-  async createSetupCheckoutSession(): Promise<{ url: string; sessionId: string }> {
-    throw new BadRequestException(
-      'Saved payment methods are retired for Lydia by decision (WP-LYDIA-1) - every purchase is its own request/do.'
-    );
-  }
-
-  async listPaymentMethods(): Promise<SavedPaymentMethod[]> {
-    throw new BadRequestException(
-      'Saved payment methods are retired for Lydia by decision (WP-LYDIA-1) - every purchase is its own request/do.'
-    );
-  }
-
-  async detachPaymentMethod(): Promise<void> {
-    throw new BadRequestException(
-      'Saved payment methods are retired for Lydia by decision (WP-LYDIA-1) - every purchase is its own request/do.'
-    );
-  }
-
-  async chargeWithSavedMethod(_params: ChargeWithSavedMethodParams): Promise<ChargeResult> {
-    throw new BadRequestException(
-      'Saved payment methods are retired for Lydia by decision (WP-LYDIA-1) - every purchase is its own request/do.'
+      'Lydia Business dashboard access is via the dashboard_url returned once at business/create, not a re-issuable login link.'
     );
   }
 

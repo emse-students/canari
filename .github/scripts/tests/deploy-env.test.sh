@@ -532,16 +532,6 @@ done
 printf '\nthe decisions the user took are locked, not merely documented\n'
 # ═════════════════════════════════════════════════════════════════════════════
 
-# "oublie. Stripe ne sera pas accessible en dev pour le moment, tant pis" (user, 2026-09-01).
-# `skip` rather than `warn`: the absence is the decision, so a warning every deploy would be noise.
-for key in STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET; do
-  if [ "$(manifest_field "$key" 3)" = "skip" ]; then
-    pass "$key is skipped in dev, which is the user's decision"
-  else
-    fail "$key is not skipped in dev - dev has no payment credentials, so the value could only mislead"
-  fi
-done
-
 # LYDIA REACHES DEV (2026-10-04), AND ONLY AS A SANDBOX: the credentials are Lydia's homologation
 # pair, rendered from the DEV_ secrets, and dev's compose PINS the homologation base URL as a literal.
 for key in LYDIA_PROVIDER_TOKEN LYDIA_PROVIDER_PRIVATE_TOKEN; do

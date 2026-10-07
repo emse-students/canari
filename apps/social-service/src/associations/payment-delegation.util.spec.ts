@@ -38,29 +38,9 @@ describe('payment-delegation util', () => {
   });
 
   describe('resolvePaymentTarget', () => {
-    it('uses the association own Stripe account when not delegating and Stripe is active', () => {
+    it('uses the association own Lydia account when not delegating', () => {
       const t = resolvePaymentTarget(
-        asso({ stripeAccountId: 'acct_club', stripeOnboardingComplete: true }),
-        null,
-        'stripe'
-      );
-      expect(t).toEqual({
-        targetAssociationId: 'club',
-        provider: 'stripe',
-        connectAccountId: 'acct_club',
-        ready: true,
-        delegated: false,
-      });
-    });
-
-    it('uses the association own Lydia account when not delegating and Lydia is active', () => {
-      const t = resolvePaymentTarget(
-        asso({
-          stripeAccountId: 'acct_club',
-          stripeOnboardingComplete: true,
-          lydiaAccountId: 'vendor_club',
-          lydiaOnboardingComplete: true,
-        }),
+        asso({ lydiaAccountId: 'vendor_club', lydiaOnboardingComplete: true }),
         null,
         'lydia'
       );
@@ -73,7 +53,16 @@ describe('payment-delegation util', () => {
       });
     });
 
-    it('is not ready when the association onboarded Stripe but Lydia is the active provider', () => {
+    it('is not ready when the Lydia onboarding is not complete, an account id notwithstanding', () => {
+      const t = resolvePaymentTarget(
+        asso({ lydiaAccountId: 'vendor_club', lydiaOnboardingComplete: false }),
+        null,
+        'lydia'
+      );
+      expect(t.ready).toBe(false);
+    });
+
+    it('never reads the historic stripe columns', () => {
       const t = resolvePaymentTarget(
         asso({ stripeAccountId: 'acct_club', stripeOnboardingComplete: true }),
         null,
@@ -86,18 +75,18 @@ describe('payment-delegation util', () => {
     it('routes to the parent account when delegation is approved', () => {
       const parent = asso({
         id: 'parent',
-        stripeAccountId: 'acct_parent',
-        stripeOnboardingComplete: true,
+        lydiaAccountId: 'vendor_parent',
+        lydiaOnboardingComplete: true,
       });
       const t = resolvePaymentTarget(
         asso({ paymentParentAssociationId: 'parent', paymentDelegationStatus: 'approved' }),
         parent,
-        'stripe'
+        'lydia'
       );
       expect(t).toEqual({
         targetAssociationId: 'parent',
-        provider: 'stripe',
-        connectAccountId: 'acct_parent',
+        provider: 'lydia',
+        connectAccountId: 'vendor_parent',
         ready: true,
         delegated: true,
       });
@@ -106,50 +95,34 @@ describe('payment-delegation util', () => {
     it('routes to the parent even when the club also has its own account (explicit toggle, always to parent)', () => {
       const parent = asso({
         id: 'parent',
-        stripeAccountId: 'acct_parent',
-        stripeOnboardingComplete: true,
+        lydiaAccountId: 'vendor_parent',
+        lydiaOnboardingComplete: true,
       });
       const t = resolvePaymentTarget(
         asso({
-          stripeAccountId: 'acct_club',
-          stripeOnboardingComplete: true,
+          lydiaAccountId: 'vendor_club',
+          lydiaOnboardingComplete: true,
           paymentParentAssociationId: 'parent',
           paymentDelegationStatus: 'approved',
         }),
         parent,
-        'stripe'
+        'lydia'
       );
-      expect(t.connectAccountId).toBe('acct_parent');
+      expect(t.connectAccountId).toBe('vendor_parent');
       expect(t.delegated).toBe(true);
     });
 
-    it('is not ready when the delegated parent has not finished onboarding for the active provider', () => {
+    it('is not ready when the delegated parent has not finished onboarding', () => {
       const parent = asso({
         id: 'parent',
-        stripeAccountId: 'acct_parent',
-        stripeOnboardingComplete: false,
-      });
-      const t = resolvePaymentTarget(
-        asso({ paymentParentAssociationId: 'parent', paymentDelegationStatus: 'approved' }),
-        parent,
-        'stripe'
-      );
-      expect(t.ready).toBe(false);
-      expect(t.delegated).toBe(true);
-    });
-
-    it('is not ready when the delegated parent onboarded the other provider only', () => {
-      const parent = asso({
-        id: 'parent',
-        stripeAccountId: 'acct_parent',
-        stripeOnboardingComplete: true,
+        lydiaAccountId: 'vendor_parent',
+        lydiaOnboardingComplete: false,
       });
       const t = resolvePaymentTarget(
         asso({ paymentParentAssociationId: 'parent', paymentDelegationStatus: 'approved' }),
         parent,
         'lydia'
       );
-      expect(t.connectAccountId).toBeNull();
       expect(t.ready).toBe(false);
       expect(t.delegated).toBe(true);
     });
@@ -158,20 +131,20 @@ describe('payment-delegation util', () => {
       const t = resolvePaymentTarget(
         asso({ paymentParentAssociationId: 'gone', paymentDelegationStatus: 'approved' }),
         null,
-        'stripe'
+        'lydia'
       );
       expect(t).toEqual({
         targetAssociationId: 'gone',
-        provider: 'stripe',
+        provider: 'lydia',
         connectAccountId: null,
         ready: false,
         delegated: true,
       });
     });
 
-    it('fails closed when payments are disabled, even for an association with a ready Stripe account', () => {
+    it('fails closed when payments are disabled, even for an association with a ready account', () => {
       const t = resolvePaymentTarget(
-        asso({ stripeAccountId: 'acct_club', stripeOnboardingComplete: true }),
+        asso({ lydiaAccountId: 'vendor_club', lydiaOnboardingComplete: true }),
         null,
         'disabled'
       );
@@ -191,8 +164,6 @@ describe('payment-delegation util', () => {
           id: 'parent',
           lydiaAccountId: 'vendor_parent',
           lydiaOnboardingComplete: true,
-          stripeAccountId: 'acct_parent',
-          stripeOnboardingComplete: true,
         }),
         'disabled'
       );
@@ -211,15 +182,18 @@ describe('payment-delegation util', () => {
       ({ get: jest.fn(() => of({ data: { provider } })) }) as unknown as HttpService;
 
     it('returns the real value for each known provider, disabled included', async () => {
-      for (const p of ['stripe', 'lydia', 'disabled'] as const) {
+      for (const p of ['lydia', 'disabled'] as const) {
         await expect(fetchActivePaymentProvider(http(p))).resolves.toBe(p);
       }
     });
 
-    it('throws on an unknown value instead of guessing Stripe', async () => {
-      await expect(fetchActivePaymentProvider(http('paypal'))).rejects.toThrow(
-        /unknown payment provider/
-      );
-    });
+    it.each(['paypal', 'stripe'])(
+      'throws on the unknown value %s instead of guessing',
+      async (v) => {
+        await expect(fetchActivePaymentProvider(http(v))).rejects.toThrow(
+          /unknown payment provider/
+        );
+      }
+    );
   });
 });

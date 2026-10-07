@@ -1704,7 +1704,8 @@ export interface AssociationPurchase {
   formId: string | null;
   productName: string;
   amountCents: number;
-  paymentMethod: 'stripe' | 'cash';
+  /** `stripe` is the historic value of rows written before the processor left: it means online. */
+  paymentMethod: 'online' | 'stripe' | 'cash';
   paidAt: string;
   firstName: string | null;
   lastName: string | null;
@@ -2124,68 +2125,16 @@ export async function listAssociationForms(associationId: string): Promise<Assoc
   return request<AssociationForm[]>(`/api/associations/${encodeURIComponent(associationId)}/forms`);
 }
 
-// ── Stripe Connect status ───────────────────────────────────────────────────
-
-/** Treasurer-facing Stripe Connect lifecycle (mirrors core-service). */
-export type ConnectAccountStatus =
-  | 'not_started'
-  | 'onboarding_required'
-  | 'pending'
-  | 'active'
-  | 'restricted'
-  | 'unavailable';
-
-/** Stripe Connect balance for a connected association account. */
-export interface ConnectAccountBalance {
-  availableCents: number;
-  pendingCents: number;
-  currency: string;
-}
-
-export interface ConnectAccountStatusResult {
-  status: ConnectAccountStatus;
-  chargesEnabled?: boolean;
-  payoutsEnabled?: boolean;
-  detailsSubmitted?: boolean;
-  currentlyDue?: string[];
-  pendingVerification?: string[];
-  disabledReason?: string | null;
-  stripeAccountId?: string | null;
-  dbOnboardingComplete?: boolean;
-  balance?: ConnectAccountBalance | null;
-  message?: string;
-}
-
-/** Formats a Connect balance amount for display. */
-export function formatConnectAccountAmount(cents: number, currency: string): string {
-  return new Intl.NumberFormat('fr-FR', {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-  }).format(cents / 100);
-}
-
-/** True when the association can accept online payments (live or DB flag). */
-export function isConnectAccountReady(
-  status: ConnectAccountStatusResult | null | undefined
-): boolean {
-  if (!status) return false;
-  return status.status === 'active' || !!status.dbOnboardingComplete;
-}
-
 /**
- * True when the association's account at ONE provider is ready - the flag of that provider, since
- * Stripe and Lydia keep independent account ids and flags (migration 037). Reading the Stripe
- * flag while Lydia is active showed every Lydia association as incomplete for ever (2026-10-03).
- * `null` is a provider not yet known, and `disabled` is payments switched off platform-wide: neither
- * is ever ready.
+ * True when the association's Lydia account is ready. `null` is a provider not yet known, and
+ * `disabled` is payments switched off platform-wide: neither is ever ready. The historic
+ * `stripeOnboardingComplete` flag is never read: it described a processor that has left.
  */
 export function isPaymentAccountReady(
-  asso: Pick<Association, 'stripeOnboardingComplete' | 'lydiaOnboardingComplete'>,
+  asso: Pick<Association, 'lydiaOnboardingComplete'>,
   provider: PaymentProviderId | null
 ): boolean {
-  if (provider === 'lydia') return asso.lydiaOnboardingComplete === true;
-  if (provider === 'stripe') return asso.stripeOnboardingComplete === true;
-  return false;
+  return provider === 'lydia' && asso.lydiaOnboardingComplete === true;
 }
 
 /**
@@ -2197,60 +2146,6 @@ export function canAssociationReceiveFormPayments(
   provider: PaymentProviderId | null
 ): boolean {
   return isPaymentAccountReady(asso, provider);
-}
-
-/** Fetches live Stripe Connect status (requires MANAGE_STRIPE_CONNECT). */
-export async function fetchConnectAccountStatus(
-  associationId: string
-): Promise<ConnectAccountStatusResult> {
-  const base = coreUrl();
-  const res = await apiFetch(
-    `${base}/api/payments/connect-status/${encodeURIComponent(associationId)}`
-  );
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`connect-status ${res.status}: ${details || res.statusText}`);
-  }
-  return (await res.json()) as ConnectAccountStatusResult;
-}
-
-/**
- * Opens the association's Stripe Connect dashboard (payouts, bank account).
- * Requires MANAGE_STRIPE_CONNECT.
- */
-export async function openConnectAccountDashboard(associationId: string): Promise<string> {
-  const base = coreUrl();
-  const res = await apiFetch(
-    `${base}/api/payments/connect-dashboard-link/${encodeURIComponent(associationId)}`,
-    { method: 'POST' }
-  );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(
-      (body as { message?: string })?.message || `Dashboard link failed (${res.status})`
-    );
-  }
-  const data = (await res.json()) as { url: string };
-  if (!data.url) throw new Error('Stripe did not return a dashboard URL');
-  return data.url;
-}
-
-/**
- * Unlinks the association's Stripe Connect account from Canari (MANAGE_STRIPE_CONNECT).
- * Local unlink only - the Stripe account itself is untouched and onboarding can be restarted.
- */
-export async function disconnectConnectAccount(associationId: string): Promise<void> {
-  const base = coreUrl();
-  const res = await apiFetch(
-    `${base}/api/payments/disconnect-connect-account/${encodeURIComponent(associationId)}`,
-    { method: 'POST' }
-  );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(
-      (body as { message?: string })?.message || `Stripe disconnect failed (${res.status})`
-    );
-  }
 }
 
 /**
@@ -2289,34 +2184,10 @@ export async function validateLydiaOnboarding(associationId: string): Promise<vo
   }
 }
 
-// ── Stripe onboarding ───────────────────────────────────────────────────────
-
-export async function startConnectAccountOnboarding(
-  associationId: string,
-  existingAccountId?: string,
-  opts?: { returnUrl?: string; refreshUrl?: string }
-): Promise<{ url: string; accountId: string }> {
-  const base = coreUrl();
-  const res = await apiFetch(`${base}/api/payments/onboarding`, {
-    method: 'POST',
-    body: JSON.stringify({
-      associationId,
-      existingAccountId,
-      returnUrl: opts?.returnUrl,
-      refreshUrl: opts?.refreshUrl,
-    }),
-  });
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`onboarding ${res.status}: ${details || res.statusText}`);
-  }
-  return (await res.json()) as { url: string; accountId: string };
-}
-
 // ── Payment provider (WP-LYDIA-1) ───────────────────────────────────────────
 
 /** `disabled` is the platform declaring payments OFF: no provider, nothing is ever ready. */
-export type PaymentProviderId = 'stripe' | 'lydia' | 'disabled';
+export type PaymentProviderId = 'lydia' | 'disabled';
 
 /** Which payment provider core-service is currently configured to use. */
 export async function fetchActivePaymentProvider(): Promise<PaymentProviderId> {
@@ -2332,7 +2203,7 @@ export async function fetchActivePaymentProvider(): Promise<PaymentProviderId> {
 
 /**
  * The association's legal profile, required upfront by Lydia's business/create - Lydia has no
- * hosted collection page like Stripe's accountLinks, so Canari collects it itself.
+ * hosted collection page, so Canari collects it itself.
  */
 export interface LydiaBusinessLegalProfile {
   name: string;

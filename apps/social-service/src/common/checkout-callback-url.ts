@@ -1,20 +1,22 @@
-/** Validates Stripe success/cancel URLs (HTTPS app origin or mobile deep link). */
-export function resolveStripeCallbackUrl(
+/** Validates checkout success/cancel URLs (HTTPS app origin or mobile deep link). */
+export function resolveCheckoutCallbackUrl(
   candidate: string | undefined,
   fallback: string,
   frontendUrl: string
 ): string {
   const trimmed = candidate?.trim();
-  if (trimmed && isAllowedStripeCallbackUrl(trimmed, frontendUrl)) {
+  if (trimmed && isAllowedCheckoutCallbackUrl(trimmed, frontendUrl)) {
     return trimmed;
   }
   return fallback;
 }
 
-export function isAllowedStripeCallbackUrl(url: string, frontendUrl: string): boolean {
+export function isAllowedCheckoutCallbackUrl(url: string, frontendUrl: string): boolean {
   try {
     const u = new URL(url);
     if (u.protocol === 'fr.emse.canari:') {
+      // The host is still `stripe`: it is the deep-link host every shipped client registered and
+      // sends (docs/wiki/stripe-archive.md), so it outlives the processor it was named for.
       return u.host === 'stripe' && (u.pathname === '/success' || u.pathname === '/cancel');
     }
     const base = new URL(frontendUrl.endsWith('/') ? frontendUrl : `${frontendUrl}/`);

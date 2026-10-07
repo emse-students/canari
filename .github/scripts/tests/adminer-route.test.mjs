@@ -16,7 +16,7 @@
  * - **ONLY GET, HEAD AND POST** reach the upstream.
  * - **THE FOUR IDENTITY HEADERS ARE CLEARED** on the way to Adminer: nothing it receives may name a user.
  * - **THE PAGE IS NEVER CACHED, NEVER FRAMED, NEVER INDEXED**, and its CSP names no third-party host
- *   (the site-wide one allows Stripe and Klipy, which a database console has no business loading).
+ *   (the site-wide one allows Klipy, which a database console has no business loading).
  * - **IT EXISTS WHERE IT IS ENABLED AND NOWHERE ELSE**: `ADMINER_ENABLED` is "true" in production's
  *   compose and an explicit "false" in the dev and local ones.
  *
@@ -117,7 +117,7 @@ if (gate !== null) {
   if (!csp.includes("default-src 'self'")) fail("the /adminer/ CSP does not start from default-src 'self'");
   if (!csp.includes("frame-ancestors 'none'")) fail("the /adminer/ CSP does not say frame-ancestors 'none'");
   if (/snippets\/csp\.conf/.test(gate)) {
-    fail('/adminer/ includes the site-wide CSP, which allows Stripe and Klipy - it needs its own');
+    fail('/adminer/ includes the site-wide CSP, which allows Klipy - it needs its own');
   }
 }
 

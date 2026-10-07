@@ -10,7 +10,6 @@
   import SettingsNotificationsSection from '$lib/components/settings/SettingsNotificationsSection.svelte';
   import SettingsSecuritySection from '$lib/components/settings/SettingsSecuritySection.svelte';
   import SettingsBackupSection from '$lib/components/settings/SettingsBackupSection.svelte';
-  import SettingsPaymentsSection from '$lib/components/settings/SettingsPaymentsSection.svelte';
   import SettingsAboutSection from '$lib/components/settings/SettingsAboutSection.svelte';
   import SettingsStorageSection from '$lib/components/settings/SettingsStorageSection.svelte';
   import SettingsBlockedSection from '$lib/components/settings/SettingsBlockedSection.svelte';
@@ -63,7 +62,6 @@
     <SettingsNotificationsSection />
     <SettingsSecuritySection />
     <SettingsBackupSection />
-    <SettingsPaymentsSection />
     <SettingsBlockedSection />
     <SettingsAboutSection />
     <SettingsStorageSection />

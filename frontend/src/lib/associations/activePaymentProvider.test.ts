@@ -6,8 +6,8 @@ vi.mock('$lib/associations/api', () => ({ fetchActivePaymentProvider }));
 /**
  * THE PROVIDER IS KNOWN, LOADING OR FAILED - NEVER GUESSED.
  *
- * The association edit page used to default to `stripe` until the fetch answered, so a deep link to
- * the payments tab of a Lydia platform drew the Stripe card and its button hit a 400. These cases
+ * The association edit page used to default to a provider until the fetch answered, so a deep link to
+ * the payments tab of a Lydia platform drew the wrong card and its button hit a 400. These cases
  * pin the three states a screen may branch on.
  */
 describe('activePaymentProvider', () => {
@@ -49,9 +49,9 @@ describe('activePaymentProvider', () => {
     expect(activePaymentProvider.current).toBeNull();
     expect(activePaymentProvider.failed).toBe(true);
 
-    fetchActivePaymentProvider.mockResolvedValueOnce('stripe');
+    fetchActivePaymentProvider.mockResolvedValueOnce('disabled');
     await loadActivePaymentProvider();
-    expect(activePaymentProvider.current).toBe('stripe');
+    expect(activePaymentProvider.current).toBe('disabled');
     expect(activePaymentProvider.failed).toBe(false);
   });
 });

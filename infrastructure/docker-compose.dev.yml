@@ -316,12 +316,9 @@ services:
       DB_USERNAME: ${POSTGRES_USER:?POSTGRES_USER is required}
       DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       DB_DATABASE: auth_db
-      # NO STRIPE IN DEV (user, 2026-09-01: "oublie. Stripe ne sera pas accessible en dev pour le
-      # moment, tant pis"). The variables are absent rather than empty so that the payment path is
-      # plainly inert instead of half-configured. The copy procedure CLEARS
-      # `stripe_customer_id`: a live-mode id with no keys behind it can only produce a misleading
-      # failure.
-      #
+      # The copy procedure CLEARS `stripe_customer_id` (a column kept until the Stripe removal
+      # migration drops it, docs/wiki/stripe-archive.md): a live-mode id from a processor that has
+      # left can only mislead.
       #
       # LYDIA IS PRESENT, AND ONLY EVER THE SANDBOX (2026-10-04). The credentials Lydia issued are a
       # homologation pair, and `LYDIA_ENV` is a LITERAL here rather than `${LYDIA_ENV:-...}`: nothing
@@ -373,7 +370,6 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       DB_DATABASE: auth_db
       CHANNELS_ENCRYPTION_SECRET: "${CHANNELS_ENCRYPTION_SECRET:?CHANNELS_ENCRYPTION_SECRET is required - see .env.example}"
-      # No Stripe here either, so no success/cancel URLs - they pointed at `localhost:5173`.
       USER_SERVICE_URL: http://core-service:3012
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}

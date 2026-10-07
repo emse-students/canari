@@ -19,3 +19,11 @@ export function computeLydiaNetPayoutCents(grossCents: number): number {
   if (grossCents <= 0) return 0;
   return Math.max(0, grossCents - computeLydiaFeeCents(grossCents));
 }
+
+/** Converts a euro form field to integer cents, or null when empty/invalid. */
+export function eurosInputToCents(euros: number | '' | null | undefined): number | null {
+  if (euros === '' || euros == null) return null;
+  const value = Number(euros);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.round(value * 100);
+}

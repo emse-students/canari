@@ -417,9 +417,8 @@ DEV_ABSENT_BY_DESIGN="adminer"
 # Nothing internal to this repository belongs in here: an internal key missing
 # on dev is the defect this check exists for.
 #
-#   STRIPE_*            no Stripe is wired to dev; a checkout there would move real money
-#                       through a real account. (Lydia IS wired: its credentials are a
-#                       homologation pair and dev pins LYDIA_ENV=homologation.)
+#   (Lydia IS wired: its credentials are a homologation pair and dev pins
+#   LYDIA_ENV=homologation. Stripe has left the product.)
 #   SKY_API_*           Sky is a separate estate holding one API key.
 #   EXTERNAL_API_KEY    the credential external consumers present to production.
 #   TURN_*, CLOUDFLARE_CALLS_*, CLOUDFLARE_TURN_*
@@ -435,8 +434,6 @@ DEV_ABSENT_BY_DESIGN="adminer"
 #                       the empty string, so both readers see a falsy value and
 #                       behave identically.
 DEV_ABSENT_KEYS="
-  social-service:STRIPE_CANCEL_URL social-service:STRIPE_SECRET_KEY social-service:STRIPE_SUCCESS_URL
-  core-service:STRIPE_SECRET_KEY core-service:STRIPE_WEBHOOK_SECRET
   core-service:SKY_API_KEY core-service:SKY_API_URL core-service:EXTERNAL_API_KEY
   core-service:MICONNECT_EDITOR_TOKEN
   call-service:TURN_URL call-service:TURN_USERNAME call-service:TURN_CREDENTIAL

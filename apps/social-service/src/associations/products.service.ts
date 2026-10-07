@@ -18,8 +18,11 @@ import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
-import { PurchaseRecord } from '../users/entities/purchase-record.entity';
-import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
+import {
+  PurchaseRecord,
+  type PurchasePaymentMethod,
+} from '../users/entities/purchase-record.entity';
+import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
 import { deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
 import {
@@ -139,7 +142,7 @@ export interface FailedDelivery {
   createdAt: string;
 }
 
-/** Boutique CRUD, Stripe Checkout creation, and Cercle webhook dispatch for association products. */
+/** Boutique CRUD, checkout creation, and Cercle webhook dispatch for association products. */
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
@@ -174,7 +177,7 @@ export class ProductsService {
   /**
    * Resolves the payment target for an association, following an approved parent-payment
    * delegation to the parent's account, against the platform's currently active provider
-   * (Stripe/Lydia keep independent account ids). Loads the parent only when the association
+   * (the Lydia account ids). Loads the parent only when the association
    * actually delegates.
    */
   private async resolvePaymentTargetFor(asso: Association): Promise<PaymentTarget> {
@@ -308,7 +311,7 @@ export class ProductsService {
   /**
    * Puts on sale the products that were only ever inactive because payments could not be taken.
    *
-   * Called when an association's payment target becomes ready - its own Stripe or Lydia onboarding
+   * Called when an association's payment target becomes ready - its own Lydia onboarding
    * completing, or a delegation to a parent being approved. Before this existed nothing ever went
    * back: the BDE cotisation was created while onboarding was unfinished, onboarding finished, and
    * the product stayed invisible in the boutique and refused at checkout, with no screen anywhere
@@ -494,7 +497,7 @@ export class ProductsService {
 
   /**
    * Creates a product for an association.
-   * If Stripe Connect onboarding is incomplete the product is created but forced inactive.
+   * If the payment onboarding is incomplete the product is created but forced inactive.
    * `balance_topup` (Cercle) products require the caller to be a platform global admin,
    * even though the endpoint is otherwise reachable with `MANAGE_PRODUCTS` (D7).
    */
@@ -895,11 +898,11 @@ export class ProductsService {
     return resynced.find((p) => p.variantKey === null) ?? resynced[0];
   }
 
-  // ── Stripe Checkout ───────────────────────────────────────────────────────
+  // ── Checkout ───────────────────────────────────────────────────────
 
   /**
-   * Creates a Stripe Checkout session for purchasing a product.
-   * The association must have completed Stripe Connect onboarding.
+   * Creates a checkout session for purchasing a product.
+   * The association must have completed its payment onboarding.
    */
   async createCheckoutSession(
     associationId: string,
@@ -918,37 +921,19 @@ export class ProductsService {
 
     const frontendUrl = this.config.get<string>('FRONTEND_URL') ?? 'http://localhost';
 
-    // Resolve the Stripe customer ID so the card gets saved after checkout
-    let customerId: string | undefined;
-    try {
-      const resp = await firstValueFrom(
-        this.httpService.post<{ customerId: string | null }>(
-          coreUrl('payments/internal/customer-id'),
-          { userId },
-          internalCoreRequestConfig()
-        )
-      );
-      customerId = resp.data.customerId ?? undefined;
-    } catch {
-      this.logger.warn(`Could not resolve Stripe customerId for user ${userId}`);
-    }
-
-    const successUrl = resolveStripeCallbackUrl(
+    const successUrl = resolveCheckoutCallbackUrl(
       callbackUrls?.successUrl,
       `${frontendUrl}/shop?purchase_success=1&productId=${product.id}`,
       frontendUrl
     );
-    const cancelUrl = resolveStripeCallbackUrl(
+    const cancelUrl = resolveCheckoutCallbackUrl(
       callbackUrls?.cancelUrl,
       `${frontendUrl}/shop?purchase_cancel=1`,
       frontendUrl
     );
 
-    // order_ref for Lydia's request/do callback (see webhook.controller.ts) - never sent for
-    // Stripe, which would otherwise read it as its own idempotency key and could wrongly collapse
-    // two genuine same-day purchases of the same product into one cached session.
-    const idempotencyKey =
-      paymentTarget.provider === 'lydia' ? `product:${product.id}:${userId}` : undefined;
+    // order_ref for Lydia's request/do callback (see webhook.controller.ts).
+    const idempotencyKey = `product:${product.id}:${userId}`;
 
     let resp;
     try {
@@ -970,7 +955,6 @@ export class ProductsService {
             cancelUrl,
             metadata: { productId: product.id, userId },
             stripeConnectAccountId: paymentTarget.connectAccountId,
-            customerId,
             idempotencyKey,
             payerEmail,
           },
@@ -989,41 +973,6 @@ export class ProductsService {
       `[SHOP] Checkout session created: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)}`
     );
     return { checkoutUrl: resp.data.url, amountCents, currency: product.currency };
-  }
-
-  /**
-   * Returns charge details for a saved-card PaymentIntent (core-service charge-product-saved-method).
-   * Re-validates purchase limits at charge time.
-   */
-  async getChargeContext(
-    associationId: string,
-    productId: string,
-    userId: string,
-    customAmountCents?: number
-  ): Promise<{
-    productId: string;
-    userId: string;
-    amountCents: number;
-    currency: string;
-    stripeAccountId: string;
-  }> {
-    const { product, amountCents, paymentTarget } = await this.resolvePurchase(
-      associationId,
-      productId,
-      userId,
-      customAmountCents
-    );
-    this.logger.debug(
-      `[SHOP] charge context: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
-    );
-    return {
-      productId: product.id,
-      userId,
-      amountCents,
-      currency: product.currency,
-      // resolvePurchase guarantees paymentTarget.ready + non-null connectAccountId.
-      stripeAccountId: paymentTarget.connectAccountId,
-    };
   }
 
   /**
@@ -1121,7 +1070,7 @@ export class ProductsService {
       formId: string | null;
       productName: string;
       amountCents: number;
-      paymentMethod: 'stripe' | 'cash';
+      paymentMethod: PurchasePaymentMethod;
       paidAt: string;
       firstName: string | null;
       lastName: string | null;
@@ -1212,7 +1161,7 @@ export class ProductsService {
       formId: string | null;
       productName: string;
       amountCents: number;
-      paymentMethod: 'stripe' | 'cash';
+      paymentMethod: PurchasePaymentMethod;
       paidAt: string;
       firstName: string | null;
       lastName: string | null;
@@ -1413,7 +1362,7 @@ export class ProductsService {
     formId: string | null;
     productName: string;
     amountCents: number;
-    paymentMethod: 'stripe' | 'cash';
+    paymentMethod: PurchasePaymentMethod;
     paidAt: string;
     firstName: string | null;
     lastName: string | null;
@@ -1487,7 +1436,7 @@ export class ProductsService {
   // ── Post-purchase ─────────────────────────────────────────────────────────
 
   /**
-   * Called by the Stripe webhook (via core-service) after a successful product purchase.
+   * Called by the payment callback (via core-service) after a successful product purchase.
    * Grants membership tags, dispatches Cercle webhooks, and records the purchase.
    * Idempotent: skips processing if payment intent was already recorded.
    */
@@ -1513,7 +1462,7 @@ export class ProductsService {
       product,
       userId,
       amountCents,
-      paymentMethod: 'stripe',
+      paymentMethod: 'online',
       stripePaymentIntentId: paymentIntentId,
       grantedBy: 'system',
       dispatchWebhook: true,
@@ -1549,7 +1498,7 @@ export class ProductsService {
     product: AssociationProduct;
     userId: string;
     amountCents: number;
-    paymentMethod: 'stripe' | 'cash';
+    paymentMethod: PurchasePaymentMethod;
     stripePaymentIntentId: string | null;
     grantedBy: string;
     dispatchWebhook: boolean;

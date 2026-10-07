@@ -1,13 +1,10 @@
 /**
- * THE HINT PICKS ITS FEE SCHEDULE BY THE PROVIDER ACTUALLY ACTIVE, NOT BY WHICH ONE THIS FILE
- * USED TO BE NAMED AFTER.
+ * THE HINT SHOWS THE LYDIA SCHEDULE, AND ONLY ONCE THE ACTIVE PROVIDER IS KNOWN TO BE LYDIA.
  *
- * `StripeNetPayoutHint` rendered Stripe's arithmetic unconditionally - correct while
- * `payment_provider` stayed `stripe`, wrong the day WP-LYDIA-1 flips it, with no way for a
- * treasurer to tell (`docs/wiki/backlog.md`, now removed there since this closes it). Renamed to
- * `PayoutFeeHint` and made to ask `GET /api/payments/provider` - so this pins the ACTUAL pick,
- * not just that the two fee modules compute the right numbers in isolation (already pinned by
- * `stripeFees.test.ts` and `lydiaFees.test.ts`).
+ * It asks `GET /api/payments/provider` rather than assume the schedule, so this pins the ACTUAL
+ * behaviour - nothing while the call is pending or has failed, the Lydia figure on `lydia`, nothing
+ * on `disabled` - not just that the fee module computes the right numbers in isolation (pinned by
+ * `lydiaFees.test.ts`).
  */
 import { it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -36,16 +33,15 @@ function mountHint() {
   return target;
 }
 
-it("renders Stripe's fee (0,25 € + 1,5 %) while the provider call is still pending", () => {
+it('renders no estimate while the provider call is still pending', () => {
   fetchActivePaymentProvider.mockReturnValue(new Promise(() => {})); // never resolves
   const target = mountHint();
   flushSync();
 
-  // 10 € gross, Stripe: 0.25 + 0.15 = 0.40 fee, 9.60 net.
-  expect(target.textContent).toContain('9,60');
+  expect(target.querySelector('[role="note"]')).toBeNull();
 });
 
-it("switches to Lydia's fee (0,10 € + 1 %) once the active provider resolves to lydia", async () => {
+it("renders Lydia's fee (0,10 € + 1 %) once the active provider resolves to lydia", async () => {
   fetchActivePaymentProvider.mockResolvedValue('lydia');
   const target = mountHint();
   flushSync();
@@ -54,10 +50,9 @@ it("switches to Lydia's fee (0,10 € + 1 %) once the active provider resolves t
 
   // 10 € gross, Lydia: 0.10 + 0.10 = 0.20 fee, 9.80 net.
   expect(target.textContent).toContain('9,80');
-  expect(target.textContent).not.toContain('9,60');
 });
 
-it('defaults to stripe and logs rather than throwing when the provider call fails', async () => {
+it('renders nothing and logs rather than throwing when the provider call fails', async () => {
   fetchActivePaymentProvider.mockRejectedValue(new Error('network'));
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const target = mountHint();
@@ -65,7 +60,7 @@ it('defaults to stripe and logs rather than throwing when the provider call fail
   await flushProvider();
   flushSync();
 
-  expect(target.textContent).toContain('9,60');
+  expect(target.querySelector('[role="note"]')).toBeNull();
   expect(warn).toHaveBeenCalled();
 });
 
@@ -73,10 +68,8 @@ it('renders no hint at all once the platform declares payments disabled', async 
   fetchActivePaymentProvider.mockResolvedValue('disabled');
   const target = mountHint();
   flushSync();
-  expect(target.textContent).toContain('9,60'); // provisional Stripe figure while the call is pending
   await flushProvider();
   flushSync();
 
-  expect(target.textContent).not.toContain('9,60');
   expect(target.querySelector('[role="note"]')).toBeNull();
 });

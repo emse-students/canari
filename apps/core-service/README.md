@@ -1,6 +1,6 @@
 # Core Service
 
-NestJS microservice for authentication, user management, and Stripe payments. Runs on port **3012**.
+NestJS microservice for authentication, user management, and Lydia payments. Runs on port **3012**.
 
 ## Domains
 
@@ -60,20 +60,15 @@ Global platform configuration:
 - **Update config**: `PATCH /api/users/admin/platform` — set maintenance message, toggle maintenance, bump minimum version.
 - **Version endpoint**: `GET /api/version` — public, returns the latest app version and platform gates (used by clients for forced-update checks).
 
-### Payments (Stripe)
+### Payments (Lydia)
 
-Manages Stripe Connect for associations, Checkout sessions, and saved payment methods:
+Online payments run on Lydia ("Paiement Canari"); Stripe left on 2026-10-07 ([archive](../../docs/wiki/stripe-archive.md)).
 
-- **Connect onboarding**: `POST /api/payments/onboarding` — start or resume Stripe Connect onboarding for an association. Returns an account link URL.
-- **Connect status**: `GET /api/payments/connect-status/:associationId` — live Connect status, syncs the database on successful onboarding.
-- **Dashboard link**: `POST /api/payments/connect-dashboard-link/:associationId` — single-use Stripe Dashboard login link.
-- **Checkout**: `POST /api/payments/create-checkout-session` — create a Stripe Checkout session for a product or form submission.
-- **Session verification**: `POST /api/payments/verify-session` — verify completed checkout and mark form submission as paid.
-- **Cancel session**: `POST /api/payments/cancel-session` — cancel an unpaid checkout.
-- **Saved cards**: setup (`POST /api/payments/setup-payment-method`), list (`GET /api/payments/payment-methods`), detach (`DELETE`).
-- **Charge saved card**: for form submissions (`POST /api/payments/charge-saved-method`) or boutique products (`POST /api/payments/charge-product-saved-method`).
-- **Internal API**: `POST /api/payments/internal/customer-id` — get or create a Stripe customer, called by social-service with `InternalSecret`.
-- **Webhooks**: `POST /api/payments/webhook` — handles `checkout.session.*`, `payment_intent.*`, and `account.updated` events from Stripe.
+- **Onboarding**: `POST /api/payments/onboarding` - collect and post the association's legal profile to Lydia.
+- **Checkout**: `POST /api/payments/create-checkout-session` - create a payment request for a product or form submission.
+- **Session verification**: `POST /api/payments/verify-session` - verify a completed checkout and mark the form submission as paid.
+- **Cancel session**: `POST /api/payments/cancel-session` - cancel an unpaid checkout.
+- **Callback**: `POST /api/payments/lydia-request-callback` - Lydia's signed confirmation.
 
 ### Health
 
@@ -89,7 +84,7 @@ Main tables:
 
 | Table | Key columns |
 |---|---|
-| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin`, `notesCiphertext`, `notesKey` |
+| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `admin`, `notesCiphertext`, `notesKey` |
 | `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp` |
 | `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion` |
 
@@ -104,7 +99,7 @@ cd apps/core-service
 bun run start:dev
 ```
 
-Requires a running PostgreSQL instance, Authentik OIDC provider, and Stripe (optional, for payments).
+Requires a running PostgreSQL instance, Authentik OIDC provider, and Lydia (optional, for payments).
 
 ## Environment variables
 
@@ -116,8 +111,6 @@ Requires a running PostgreSQL instance, Authentik OIDC provider, and Stripe (opt
 | `AUTHENTIK_CLIENT_SECRET` | yes | OIDC client secret |
 | `AUTHENTIK_ISSUER` | yes | Authentik issuer URL |
 | `FRONTEND_URL` | yes | OIDC redirect URI base |
-| `STRIPE_SECRET_KEY` | no | Stripe secret key (payments) |
-| `STRIPE_WEBHOOK_SECRET` | no | Stripe webhook signing secret |
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
 
 ## See also

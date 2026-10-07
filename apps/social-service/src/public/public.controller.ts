@@ -24,7 +24,7 @@ import { PostPreviewService, type PostSharePreview } from '../posts/post-preview
 /**
  * Public projection of an association/list for the read-only showcase.
  * Deliberately omits every sensitive column (document vault key, encrypted
- * notes, Stripe account id, quotas, createdBy) - only fields safe for an
+ * notes, payment account id, quotas, createdBy) - only fields safe for an
  * unauthenticated visitor are surfaced.
  */
 export interface PublicAssociation {

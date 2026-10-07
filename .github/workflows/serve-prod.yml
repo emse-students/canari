@@ -131,8 +131,6 @@ jobs:
           EXTERNAL_API_KEY: ${{ secrets.EXTERNAL_API_KEY }}
           SKY_API_KEY: ${{ secrets.SKY_API_KEY }}
           CERCLE_API_KEY: ${{ secrets.CERCLE_API_KEY }}
-          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
-          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           LYDIA_PROVIDER_TOKEN: ${{ secrets.LYDIA_PROVIDER_TOKEN }}
           LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.LYDIA_PROVIDER_PRIVATE_TOKEN }}
           # THE VARIABLE IS NAMED AFTER THE SECRET, NOT AFTER THE KEY IT RENDERS. render-env.sh

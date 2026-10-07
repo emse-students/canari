@@ -222,14 +222,14 @@ if (isTauriRuntime()) {
               continue;
             }
 
-            // Stripe Checkout return: fr.emse.canari://stripe/success|cancel?…
+            // Checkout return: fr.emse.canari://stripe/success|cancel?… (the host kept its old name,
+            // see docs/wiki/stripe-archive.md)
             if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'stripe') {
               const path = u.pathname.replace(/\/$/, '') || '/';
               const sessionId = u.searchParams.get('session_id');
               const submissionId = u.searchParams.get('submission_id');
               const registered = u.searchParams.get('registered');
               const postId = u.searchParams.get('post_id');
-              const paymentSetup = u.searchParams.get('payment_setup');
 
               const navigate = (target: string) => {
                 import('$app/navigation')
@@ -251,8 +251,6 @@ if (isTauriRuntime()) {
                   navigate(`/forms/success?submission_id=${encodeURIComponent(submissionId)}`);
                 } else if (sessionId) {
                   navigate(`/forms/success?session_id=${encodeURIComponent(sessionId)}`);
-                } else if (paymentSetup) {
-                  navigate(`/settings?payment_setup=${encodeURIComponent(paymentSetup)}`);
                 } else if (registered) {
                   const q = new URLSearchParams({ registered });
                   if (postId) q.set('post_id', postId);
@@ -267,8 +265,6 @@ if (isTauriRuntime()) {
                   navigate(`/forms/cancel?submission_id=${encodeURIComponent(submissionId)}`);
                 } else if (sessionId) {
                   navigate(`/forms/cancel?session_id=${encodeURIComponent(sessionId)}`);
-                } else if (paymentSetup) {
-                  navigate(`/settings?payment_setup=${encodeURIComponent(paymentSetup)}`);
                 } else {
                   navigate('/forms');
                 }

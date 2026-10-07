@@ -21,7 +21,6 @@ import { applyFuzzyNameSearch } from './userSearch';
 import { UserBlocksService } from './user-blocks.service';
 import { EMPTY_PROFILE, legacyColumns, type MiconnectProfile } from './miconnect-profile';
 import { chatDeliveryUrl, mediaUrl, socialUrl } from '../internal/service-urls';
-import { STRIPE_API_VERSION } from '../payment/stripe-api-version';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
@@ -481,28 +480,12 @@ export class UsersService implements OnModuleInit {
 
   /**
    * Permanently deletes a user account and all associated data across services.
-   * Order: Stripe customer → chat-delivery data → social data → user row.
+   * Order: chat-delivery data → social data → user row.
    * Downstream failures are logged but do not abort the deletion - the user row
    * is always removed so the account is inaccessible even if a service is down.
    */
   async deleteUser(userId: string): Promise<void> {
     this.logger.log(`[deleteUser] starting userId=${userId}`);
-
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-
-    // Best-effort Stripe customer deletion - skip if not configured or no customer
-    if (user?.stripeCustomerId) {
-      try {
-        const { default: Stripe } = await import('stripe');
-        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
-          apiVersion: STRIPE_API_VERSION,
-        });
-        await stripe.customers.del(user.stripeCustomerId);
-        this.logger.log(`[deleteUser] stripe customer deleted userId=${userId}`);
-      } catch (err) {
-        this.logger.warn(`[deleteUser] stripe deletion failed userId=${userId}: ${String(err)}`);
-      }
-    }
 
     const headers = { 'x-internal-secret': this.internalSecret };
 

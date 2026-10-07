@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { InternalController } from './internal.controller';
 import { InternalFormsController } from './internal-forms.controller';
-import { InternalProductsController } from './internal-products.controller';
 import { InternalInvitesController } from './internal-invites.controller';
 import { InternalLegacyCotisationsController } from './internal-legacy-cotisations.controller';
 import { InternalProfileNotificationsController } from './internal-profile-notifications.controller';
@@ -50,7 +49,6 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
   controllers: [
     InternalController,
     InternalFormsController,
-    InternalProductsController,
     InternalInvitesController,
     InternalLegacyCotisationsController,
     InternalProfileNotificationsController,

@@ -4,7 +4,7 @@ import { publicAppUrl } from '$lib/utils/publicAppUrl';
 import { appDeepLink } from '$lib/mobile/appSiteAssociation';
 
 /**
- * True on Tauri Android / iOS - Stripe Checkout must return via app deep link.
+ * True on Tauri Android / iOS - a checkout must return via app deep link.
  *
  * THE OS IS ASKED, NEVER THE USER AGENT. This used to test `/android|iphone|ipad|ipod/` against
  * `navigator.userAgent`, and an iPad WKWebView calls itself "Macintosh" - so an iPad was handed the
@@ -17,7 +17,12 @@ export function isMobileTauri(): boolean {
   return os === 'android' || os === 'ios';
 }
 
-function stripeDeepLink(path: 'success' | 'cancel', query: string): string {
+/**
+ * The host of the checkout return deep link is still `stripe`: every shipped client registered it
+ * (AndroidManifest, Info.plist, tauri.conf.json) and `hooks.client.ts` routes it, so renaming it
+ * needs a native build first - see `docs/wiki/stripe-archive.md`.
+ */
+function checkoutDeepLink(path: 'success' | 'cancel', query: string): string {
   const q = query ? (query.startsWith('?') ? query : `?${query}`) : '';
   return appDeepLink(`stripe/${path}${q}`);
 }
@@ -26,12 +31,12 @@ function webUrl(path: string): string {
   return publicAppUrl(path.startsWith('/') ? path : `/${path}`);
 }
 
-/** Stripe Checkout callbacks for paid form submissions. */
+/** Checkout callbacks for paid form submissions. */
 export function formCheckoutCallbacks(): { successUrl: string; cancelUrl: string } {
   if (isMobileTauri()) {
     return {
-      successUrl: stripeDeepLink('success', 'session_id={CHECKOUT_SESSION_ID}'),
-      cancelUrl: stripeDeepLink('cancel', 'session_id={CHECKOUT_SESSION_ID}'),
+      successUrl: checkoutDeepLink('success', 'session_id={CHECKOUT_SESSION_ID}'),
+      cancelUrl: checkoutDeepLink('cancel', 'session_id={CHECKOUT_SESSION_ID}'),
     };
   }
   return {
@@ -40,7 +45,7 @@ export function formCheckoutCallbacks(): { successUrl: string; cancelUrl: string
   };
 }
 
-/** Stripe Checkout callbacks for association shop product purchases. */
+/** Checkout callbacks for association shop product purchases. */
 export function shopCheckoutCallbacks(productId: string): {
   successUrl: string;
   cancelUrl: string;
@@ -48,26 +53,12 @@ export function shopCheckoutCallbacks(productId: string): {
   const pid = encodeURIComponent(productId);
   if (isMobileTauri()) {
     return {
-      successUrl: stripeDeepLink('success', `purchase_success=1&productId=${pid}`),
-      cancelUrl: stripeDeepLink('cancel', 'purchase_cancel=1'),
+      successUrl: checkoutDeepLink('success', `purchase_success=1&productId=${pid}`),
+      cancelUrl: checkoutDeepLink('cancel', 'purchase_cancel=1'),
     };
   }
   return {
     successUrl: webUrl(`/shop?purchase_success=1&productId=${pid}`),
     cancelUrl: webUrl('/shop?purchase_cancel=1'),
-  };
-}
-
-/** Stripe Setup Checkout callbacks for saving a card on the settings page. */
-export function settingsSetupCallbacks(): { successUrl: string; cancelUrl: string } {
-  if (isMobileTauri()) {
-    return {
-      successUrl: stripeDeepLink('success', 'payment_setup=success'),
-      cancelUrl: stripeDeepLink('cancel', 'payment_setup=cancel'),
-    };
-  }
-  return {
-    successUrl: webUrl('/settings?payment_setup=success'),
-    cancelUrl: webUrl('/settings?payment_setup=cancel'),
   };
 }

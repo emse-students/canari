@@ -9,7 +9,7 @@ import {
   Index,
 } from 'typeorm';
 
-/** TypeORM entity representing a dynamic form, optionally linked to an association and Stripe payment. */
+/** TypeORM entity representing a dynamic form, optionally linked to an association and an online payment. */
 @Entity('forms')
 export class Form {
   @PrimaryGeneratedColumn('uuid')
@@ -123,7 +123,7 @@ export class Form {
   @Column({ default: false })
   allowMultipleSubmissions: boolean;
 
-  /** Whether cash (physical) payment is accepted as an alternative to Stripe. */
+  /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   @Column({ default: false })
   allowCashPayment: boolean;
 
