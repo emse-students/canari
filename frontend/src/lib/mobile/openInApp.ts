@@ -1,6 +1,7 @@
 import { APP_STORE_URL, PLAY_STORE_URL } from '$lib/utils/appVersion';
 import { isPublicAppUrl } from '$lib/utils/publicAppUrl';
 import {
+  appDeepLink,
   isClaimedAppLinkPath,
   MOBILE_APP_LINK_HOSTS,
   MOBILE_APP_PACKAGE,
@@ -78,7 +79,7 @@ export function openInAppOffer(href: string, userAgent: string): OpenInAppOffer 
   }
   return {
     os,
-    openHref: `${MOBILE_APP_PACKAGE}://open?url=${encodeURIComponent(url.href)}`,
+    openHref: appDeepLink(`open?url=${encodeURIComponent(url.href)}`),
     storeHref: APP_STORE_URL,
   };
 }

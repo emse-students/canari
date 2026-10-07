@@ -1,3 +1,5 @@
+import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
+
 /**
  * The app route behind a `fr.emse.canari://<host>[/<id>]` link that opens a PAGE - the table a
  * notification tap lands through, kept apart from the hook that listens so it can be tested.
@@ -11,7 +13,7 @@
  * handling) or for a host that needs an id and has none, so the caller can log instead of guessing.
  */
 export function appRouteForDeepLink(u: URL): string | null {
-  if (u.protocol !== 'fr.emse.canari:') return null;
+  if (u.protocol !== MOBILE_APP_PROTOCOL) return null;
   const id = decodeURIComponent(u.pathname.replace(/^\//, ''));
   switch (u.host) {
     case 'post':

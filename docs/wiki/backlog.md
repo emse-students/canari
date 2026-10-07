@@ -685,71 +685,9 @@ keeps the session alive across navigation, and it buys nothing on the route the 
 on.
 
 ---
-### P3 - THE PRE-RELEASE CHANNEL IS THE ENVIRONMENT SELECTOR, SO THE BUILD CARRYING A FIX CANNOT MEASURE IT (found 2026-09-15)
+### P3 - a second package id, so a pre-release can be measured against production (decided 2026-09-15)
 
-An APK embeds its frontend and its backend URL, so freezing the environment into the artifact is
-correct and normal. What is not free is the COUPLING: `-alpha.N` means the Play `internal` track AND
-`dev.canari-emse.fr`, one decision doing two jobs. It cost a measurement outright on 2026-09-15.
-
-`v0.18.3-alpha.1` was cut to measure the cold-start fix on the Pixel 6a, which is the only device
-holding an `mls.bin` of production size (8 131 838 bytes - the whole reason the block was 2 731 ms).
-The alpha installed over the production app, keeping its data, and then **could not be measured at
-all**: `coldstart.mjs` reported `START=true PROMPT=false`. The instrument brackets `am start` against
-`BiometricService/handleAuthenticate`, and **that prompt only exists for a session already
-established** - on dev this account has none, so the app stops at the login screen and the bracket
-has no second end. The build carrying the fix is structurally unable to reproduce the condition the
-fix was written for.
-
-Three costs, two of them paid that day:
-
-- **A pre-release cannot be tested or measured against production data**, which is where every
-  device-verification row that depends on real state lives.
-- **Installing an alpha takes the tester's production app away** for the duration - there is one
-  package id, so the two cannot coexist.
-- **The artefact that ships to production is not the artefact that was tested.** Gate 4 reads "dev
-  has already served it", and what it actually asserts is that the same COMMIT served dev, never the
-  same BINARY: the stable is built again with a different backend URL frozen in.
-
-**DECIDED BY THE USER, 2026-09-15: a second package id**, `fr.emse.canari.dev` beside
-`fr.emse.canari`, installable side by side - the classic answer, and the one that would have let the
-2026-09-15 measurement run on the production app without touching it. *"Ca a l'air bien, mais je ne
-sais pas du tout comment mettre en place. Ajoute au backlog, on fera ca a l'occasion."* The runtime
-switch was considered and is NOT the shape: it is a foot-gun in a production build unless gated to a
-debug artefact, which reintroduces the two artefacts it was meant to avoid.
-
-**What it takes, measured against the tree rather than guessed.** The id is not one field: 38 sites
-across 16 files name `fr.emse.canari`, and the reason is that **the package id is ALSO the custom URL
-scheme** - `fr.emse.canari://callback` is the OIDC redirect and `fr.emse.canari://chat/{groupId}` the
-deep link (`hooks.client.ts`). So the work is, in order:
-
-1. **Derive the scheme from the identifier instead of spelling it.** One exported constant, read by
-   `hooks.client.ts`, `stores/auth.ts`, `utils/openExternal.ts`, `utils/stripeCallbacks.ts`,
-   `utils/appVersion.ts`, `mobile/appSiteAssociation.ts` and `src-tauri/src/mobile/navigation.rs`.
-   Six of the sixteen files are their own TESTS, which is what makes this safe to do first and worth
-   doing whatever is decided afterwards - it is the change that turns the id into a parameter.
-2. **A config overlay for the dev artefact.** `tauri.conf.json` carries `identifier` and
-   `bundle.android.versionCode`; Tauri merges a second config file, so the dev build is the same
-   sources with `identifier` and `productName` overridden (the launcher must show which is which).
-3. **A second FCM app entry**, keyed by package name in
-   `frontend/src-tauri/gen/android/app/google-services.json` - a Firebase console action, and the
-   file then carries both. Without it the dev build has no push at all.
-4. **A second Play listing** for `fr.emse.canari.dev`, and `android.yml` picks the artefact by
-   `release_kind()` rather than picking the TRACK. The keystore can be reused; nothing forces a
-   second signing identity.
-5. **The OIDC client must accept the new redirect URI** - `fr.emse.canari.dev://callback` added on
-   miconnect, or the dev build cannot log in at all. This is the step that silently blocks everything
-   after it, so do it before building anything.
-6. **`assetlinks.json` on the dev host** if App Links are wanted there; without it the dev build
-   keeps the custom scheme and loses https deep links only.
-
-The iOS half is the same shape (bundle identifier + a second App Store record) and is NOT required
-for the Android measurement that motivated this.
-
-Until then, the standing consequence is worth stating plainly, because it will waste a session
-again: **anything that must be measured against PRODUCTION state can only be measured on a STABLE**,
-and the versionCode band is what brings a tester back (rank 99 for a stable, so `0.18.3` = 1800399
-outranks `0.18.3-alpha.1` = 1800301 and Play restores it as an ordinary update, data intact). Opting
-out of the tester programme instead forces an uninstall, which wipes the very state being measured.
+To do, in this order: the user adds `fr.emse.canari.dev://callback` to the Canari OIDC client and a second FCM app and Play listing for `fr.emse.canari.dev`; then an agent adds the Tauri config overlay and the `android.yml` artefact choice. The frontend already spells the id once (2026-10-04). Steps and reasons: [dev-environment §9](infrastructure/dev-environment.md#9-a-pre-release-cannot-measure-production-state---the-second-package-id-decided-2026-09-15).
 
 ---
 

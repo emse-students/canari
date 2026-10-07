@@ -2,6 +2,7 @@ import { inAppPathFromHref, isPublicAppUrl } from '$lib/utils/publicAppUrl';
 import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
 import { confirmUnsafeLinkIfNeeded } from '$lib/utils/checkLinkSafety';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
+import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 
 export { isTauriRuntime };
 
@@ -19,7 +20,7 @@ export function shouldOpenExternalHref(
 
   try {
     const url = new URL(trimmed, base);
-    if (url.protocol === 'fr.emse.canari:') return false;
+    if (url.protocol === MOBILE_APP_PROTOCOL) return false;
     if (isPublicAppUrl(url.href, base)) return false;
     if (url.origin === new URL(base).origin) return false;
     return EXTERNAL_PROTOCOLS.has(url.protocol);
