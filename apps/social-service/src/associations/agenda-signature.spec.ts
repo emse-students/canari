@@ -61,6 +61,20 @@ describe('agenda signature', () => {
         false
       );
     });
+    it('lets a reader tied to no formation follow their own campus whole, and nothing else', () => {
+      expect(
+        selectionWithinSpaces({ campus: 'saint-etienne', formation: null }, [], 'saint-etienne')
+      ).toBe(true);
+      expect(
+        selectionWithinSpaces({ campus: 'gardanne', formation: null }, [], 'saint-etienne')
+      ).toBe(false);
+      expect(
+        selectionWithinSpaces({ campus: 'saint-etienne', formation: 'ICM' }, [], 'saint-etienne')
+      ).toBe(false);
+      expect(selectionWithinSpaces({ campus: null, formation: 'ICM' }, [], 'saint-etienne')).toBe(
+        false
+      );
+    });
     it('refuses everything to a reader with no space, but not an association-only selection', () => {
       expect(selectionWithinSpaces({ campus: 'gardanne', formation: null }, [])).toBe(false);
       expect(selectionWithinSpaces({ campus: null, formation: null }, [])).toBe(true);
@@ -78,10 +92,19 @@ describe('AssociationsService.signAgendaFeedSelection', () => {
     else process.env.AGENDA_SIGNING_KEY = previous;
   });
 
-  function makeService(spaces: Array<{ campus: string; formation: string }>) {
+  function makeService(
+    spaces: Array<{ campus: string; formation: string }>,
+    profile: { campus: string | null; cursus: unknown } | null = null
+  ) {
     const svc = Object.create(AssociationsService.prototype) as AssociationsService;
     Object.assign(svc, {
-      assoRepo: { manager: { query: jest.fn(() => Promise.resolve(spaces)) } },
+      assoRepo: {
+        manager: {
+          query: jest.fn((sql: string) =>
+            Promise.resolve(sql.includes('FROM users WHERE') ? (profile ? [profile] : []) : spaces)
+          ),
+        },
+      },
       logger: { warn: jest.fn(), log: jest.fn() },
       findById: jest.fn(() => Promise.resolve({})),
     });
@@ -107,6 +130,43 @@ describe('AssociationsService.signAgendaFeedSelection', () => {
     await expect(refused).rejects.toMatchObject({
       response: { code: 'AGENDA_SELECTION_FORBIDDEN' },
     });
+  });
+
+  it('signs the whole own campus for staff (campus, empty cursus), and nothing narrower or wider', async () => {
+    const svc = makeService([], { campus: 'saint-etienne', cursus: [] });
+    const { sig } = await svc.signAgendaFeedSelection(
+      'staff-1',
+      { campus: 'saint-etienne', formation: null },
+      null
+    );
+    expect(() =>
+      assertAgendaSignature({ campus: 'saint-etienne', formation: null, associationId: null }, sig)
+    ).not.toThrow();
+    for (const selection of [
+      { campus: 'gardanne', formation: null },
+      { campus: 'saint-etienne', formation: 'ICM' },
+      { campus: null, formation: 'ICM' },
+    ] as const) {
+      await expect(svc.signAgendaFeedSelection('staff-1', selection, null)).rejects.toMatchObject({
+        response: { code: 'AGENDA_SELECTION_FORBIDDEN' },
+      });
+    }
+  });
+
+  it('refuses a campus to a reader with no campus, and to a student whose formation has no space', async () => {
+    await expect(
+      makeService([], { campus: null, cursus: [] }).signAgendaFeedSelection(
+        'u',
+        { campus: 'gardanne', formation: null },
+        null
+      )
+    ).rejects.toMatchObject({ response: { code: 'AGENDA_SELECTION_FORBIDDEN' } });
+    await expect(
+      makeService([], {
+        campus: 'gardanne',
+        cursus: [{ formation: 'ICM', promo: 2021 }],
+      }).signAgendaFeedSelection('u', { campus: 'gardanne', formation: null }, null)
+    ).rejects.toMatchObject({ response: { code: 'AGENDA_SELECTION_FORBIDDEN' } });
   });
 
   it('signs an association for a reader with no space and no membership (membership never matters)', async () => {

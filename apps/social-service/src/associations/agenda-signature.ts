@@ -77,9 +77,20 @@ export function assertAgendaSignature(sel: SignedSelection, sig: string | undefi
  * campus. Formation alone: one of their formations. Both: one of their spaces. An association adds
  * no condition of its own - membership does not matter (user, 2026-10-06) and its page is public;
  * the caller checks that it exists.
+ *
+ * `campusWide` is the campus of a reader tied to no formation (`campusWideReaderCampus`, EMSE staff,
+ * user 2026-10-07): they have no space, and may follow their OWN campus whole - `campus=<own>` with
+ * no formation, every formation of it. A formation, or any other campus, stays refused.
  */
-export function selectionWithinSpaces(sel: SpaceSelection, spaces: readonly SpacePair[]): boolean {
+export function selectionWithinSpaces(
+  sel: SpaceSelection,
+  spaces: readonly SpacePair[],
+  campusWide: string | null = null
+): boolean {
   if (sel.campus === null && sel.formation === null) return true;
+  if (campusWide !== null && spaces.length === 0) {
+    return sel.formation === null && sel.campus === campusWide;
+  }
   return spaces.some(
     (s) =>
       (sel.campus === null || s.campus === sel.campus) &&
