@@ -191,9 +191,21 @@ OWED, see below):
   finishing. It used to read an elapsed clock that only a new take zeroed, so a take dismissed by
   Back or discarded from its review left the ring where it stopped (2026-10-07); the clock is also
   zeroed on abandon and on return to `ready`. Its colour is `cn-yellow` (the app's yellow), not red.
-- **Not changed, and a lead if the lag remains:** Android still prefers VP9 WebM in
-  `reelRecorderMimeCandidates`, a SOFTWARE encoder on the Mi 9T; H.264 MP4 (hardware) first is the
-  next candidate, to be measured, not guessed.
+- **THE PHOTO'S 4 SECONDS WERE `canvas.toBlob`, NOT THE CAMERA (2026-10-07, measured on the Mi 9T,
+  alpha.2, through the app's own DevTools socket: `adb forward` to `webview_devtools_remote_<pid>`).**
+  Tap to review was ~4.1 s; in JS the `drawImage` took 2 ms, the `toBlob` callback arrived 4066 ms
+  after the call for a 35 KB JPEG, and the review painted 44 ms after that. It is not the audio
+  track, the recorder, the stream release or the size: a 16x16 canvas, an empty PNG, `OffscreenCanvas.
+  convertToBlob`, `createImageBitmap` then `toBlob` and `willReadFrequently` ALL took 4.0-4.2 s, with
+  the camera live or stopped and on the dashboard too. `toDataURL` (same encoder, calling task) took
+  41 ms. The async encode waits for an idle slot the WebView does not grant (WebView 152; the 'ASR' /
+  'audio glitch' logcat lines were a red herring). iOS WebKit has no such wait (< 0.7 s, Master).
+  FIX: `utils/canvasBlob.ts` (`canvasToBlob`, via `toDataURL`) replaces every `toBlob` that feeds a
+  user wait: the photo, the reel editor's export, the image upload compressor (`media.ts`) and the
+  square cropper. With the same change patched live on the phone: tap to review painted in 69 ms.
+  NOT converted: `pdfDocument.ts` and `qrCode.ts` (large PNG canvases, not on a tap path; they pay the
+  same 4 s on Android). Re-measure before touching `reelRecorderMimeCandidates`: VP9 is NOT the
+  cause of the photo wait; it stays a lead for the TAKE's end only.
 
 **The camera also takes still photos.** A photo is captured from the live frame, reviewed, and can
 be edited before publishing. The editor draws freehand strokes and app-font text, then bakes those

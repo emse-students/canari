@@ -1,3 +1,4 @@
+import { canvasToBlob } from '$lib/utils/canvasBlob';
 import { emojiSvgSrc } from '$lib/utils/emojiSvg';
 import {
   emojiSize,
@@ -102,14 +103,10 @@ export async function loadOverlayImages(edits: ReelEdits): Promise<OverlayImages
   return images;
 }
 
-function canvasBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error('canvas export failed'))),
-      type,
-      quality
-    );
-  });
+function canvasBlob(canvas: HTMLCanvasElement, type: string, quality: number): Blob {
+  const blob = canvasToBlob(canvas, type, quality);
+  if (!blob) throw new Error('canvas export failed');
+  return blob;
 }
 
 async function loadImage(source: Blob): Promise<HTMLImageElement> {
@@ -142,7 +139,7 @@ async function renderImage(
   context.drawImage(image, 0, 0);
   drawDecorations(context, edits, canvas.width, canvas.height, fontFamily, images);
   return {
-    blob: await canvasBlob(canvas, 'image/webp', 0.92),
+    blob: canvasBlob(canvas, 'image/webp', 0.92),
     width: canvas.width,
     height: canvas.height,
   };

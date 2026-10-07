@@ -141,6 +141,7 @@ const SKIP_REENCODE_UNDER_BYTES = 2 * 1024 * 1024;
 const MIN_SIZE_SAVINGS_RATIO = 0.85;
 
 import { encryptMediaBuffer } from '$lib/mediaCrypto';
+import { canvasToBlob } from '$lib/utils/canvasBlob';
 import {
   SEGMENTED_MEDIA_ENCODING,
   SEGMENTED_MEDIA_WRITER_ENABLED,
@@ -359,37 +360,30 @@ export async function compressImage(
         ctx.drawImage(img, 0, 0, width, height);
 
         const outputType = 'image/webp';
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              resolve(
-                keepOriginal('encode-produced-nothing', file, {
-                  width: outWidth,
-                  height: outHeight,
-                })
-              );
-              return;
-            }
+        // Synchronous: `toBlob` waits ~4 s on the Android WebView (utils/canvasBlob.ts).
+        const blob = canvasToBlob(canvas, outputType, quality);
+        if (!blob) {
+          resolve(
+            keepOriginal('encode-produced-nothing', file, {
+              width: outWidth,
+              height: outHeight,
+            })
+          );
+          return;
+        }
 
-            const worthReplacing =
-              blob.size <= file.size * MIN_SIZE_SAVINGS_RATIO ||
-              (needsResize && blob.size < file.size);
+        const worthReplacing =
+          blob.size <= file.size * MIN_SIZE_SAVINGS_RATIO || (needsResize && blob.size < file.size);
 
-            if (worthReplacing) {
-              resolve({
-                file: new File([blob], file.name, { type: outputType, lastModified: Date.now() }),
-                width: outWidth,
-                height: outHeight,
-              });
-            } else {
-              resolve(
-                keepOriginal('webp-not-smaller', file, { width: outWidth, height: outHeight })
-              );
-            }
-          },
-          outputType,
-          quality
-        );
+        if (worthReplacing) {
+          resolve({
+            file: new File([blob], file.name, { type: outputType, lastModified: Date.now() }),
+            width: outWidth,
+            height: outHeight,
+          });
+        } else {
+          resolve(keepOriginal('webp-not-smaller', file, { width: outWidth, height: outHeight }));
+        }
       };
 
       // HEIC lands here on any engine that cannot decode it - i.e. a full-size phone photo

@@ -19,6 +19,7 @@
  * flipped horizontally ({@link shouldMirrorCapture}), the rear lens never. The sensor's frame is never
  * rotated - the engine delivers it upright, and a canvas read applies no EXIF.
  */
+import { canvasToBlob } from '$lib/utils/canvasBlob';
 
 /** A width and a height, in whatever unit the caller states. */
 export interface Size {
@@ -184,16 +185,10 @@ export function takeFramedPhoto(video: HTMLVideoElement, box: PreviewBox): Promi
     `[framed-capture] photo ${out.width}x${out.height} from ${video.videoWidth}x${video.videoHeight}` +
       ` mirror=${box.mirror}`
   );
-  return new Promise((resolve) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) console.error('[framed-capture] photo: the canvas produced no blob');
-        resolve(blob);
-      },
-      'image/jpeg',
-      PHOTO_QUALITY
-    );
-  });
+  // Synchronous on purpose: `toBlob` waited ~4 s on the Android WebView (canvasBlob.ts).
+  const blob = canvasToBlob(canvas, 'image/jpeg', PHOTO_QUALITY);
+  if (!blob) console.error('[framed-capture] photo: the canvas produced no blob');
+  return Promise.resolve(blob);
 }
 
 /**
