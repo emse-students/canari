@@ -41,6 +41,25 @@ object larger than that is refused on the two names that cross the zone; the use
 request-body limit or a transform) and has NOT been read: Master owns that investigation, nobody
 else touches the zone. Done when a 1.2 MB and a 20 MB upload reach `media-service` on both names.
 
+**Measured further, 2026-10-07:** the limit is EXACTLY 1 MiB (1 048 576 bytes pass, 1 100 000 get the
+`413`), the zone is on the Free plan, and neither the old token nor the `D:\Bureau\jeton.txt` one can
+read the zone: both answer `Authentication error` on every rules phase and on page rules, so the
+cause is still unread. The dashboard (Security > Events, filter on status 413) names the rule.
+
+### P3 - Stripe leaves the product: remove it, or archive it as documentation (user, 2026-10-07)
+
+*"Stripe va disparaitre"* - the payments run on Lydia. Remove the Stripe code paths and secrets
+(`apps/core-service`), or keep only an archived note of what they did; the dependency PR for Stripe 23
+(#1495) is ignored meanwhile. Done when no Stripe package, secret or route remains, or the archive says so.
+
+### Open question - may EMSE/ME staff (no cursus) read the association posts of their campus?
+
+User, 2026-10-07: staff have no cursus by definition, and see no association post today; the agenda
+already lets them follow their whole campus. Showing them every association post of the campus may be
+SENSITIVE and the user has not decided. Candidates: personal posts of other staff plus institution
+posts of their campus only (the minimal reading), or the whole campus feed as for the agenda.
+Nothing to build until answered.
+
 ### P2 - the outbox retries a `413` for ever, as if it were transient
 
 `[OUTBOX] <id> transient failure (attempt 806): MediaUploadError: media upload failed (413 )`, once a
