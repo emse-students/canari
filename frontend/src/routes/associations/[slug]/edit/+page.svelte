@@ -15,9 +15,7 @@
     formatConnectAccountAmount,
     isConnectAccountReady,
     isPaymentAccountReady,
-    fetchActivePaymentProvider,
     type ConnectAccountStatusResult,
-    type PaymentProviderId,
     mayActOnAssociation,
     getMyBdeReach,
     AssociationPermissionFlag,
@@ -55,6 +53,12 @@
   import EditDelegationTab from '$lib/components/associations/edit/EditDelegationTab.svelte';
   import EditPartnershipsTab from '$lib/components/associations/edit/EditPartnershipsTab.svelte';
   import EditProposalsTab from '$lib/components/associations/edit/EditProposalsTab.svelte';
+  import {
+    activePaymentProvider,
+    loadActivePaymentProvider,
+  } from '$lib/associations/activePaymentProvider.svelte';
+  import { wordingFor } from '$lib/associations/kindWording';
+  import { setPageTitle } from '$lib/seo/pageTitle.svelte';
   import LydiaBusinessOnboardingForm from '$lib/components/associations/edit/LydiaBusinessOnboardingForm.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -79,13 +83,29 @@
   let disconnecting = $state(false);
   let connectAccountStatus = $state<ConnectAccountStatusResult | null>(null);
   let statusLoading = $state(false);
-  /** Which payment provider core-service is configured to use (WP-LYDIA-1) - defaults to 'stripe' until fetched. */
-  let activePaymentProvider = $state<PaymentProviderId>('stripe');
+  /**
+   * The wording of what is being edited - an association, a list or an institution. The ONE
+   * source of every noun on this page (see `kindWording`); never a ternary at a call site.
+   */
+  let words = $derived(wordingFor(asso?.type ?? 'association'));
 
+  /**
+   * The payment provider core-service is configured to use (WP-LYDIA-1) is the shared store's
+   * `current`: `null` while it loads or when the fetch failed, and NEVER a guess. A provider
+   * -specific card is drawn only once it is known - defaulting to Stripe here drew the Stripe
+   * card on a Lydia platform for a deep link straight onto the payments tab.
+   */
   let onlinePaymentsReady = $derived(
-    (activePaymentProvider === 'stripe' && isConnectAccountReady(connectAccountStatus)) ||
-      (!!asso && isPaymentAccountReady(asso, activePaymentProvider))
+    (activePaymentProvider.current === 'stripe' && isConnectAccountReady(connectAccountStatus)) ||
+      (!!asso && isPaymentAccountReady(asso, activePaymentProvider.current))
   );
+
+  // The tab title names what is edited; the path alone cannot tell an institution from a club.
+  $effect(() => {
+    if (!asso) return;
+    setPageTitle(words.editTitle());
+    return () => setPageTitle(null);
+  });
 
   type EditSection =
     | 'profile'
@@ -204,6 +224,9 @@
   const slug = $derived((page.params as Record<string, string>).slug);
 
   onMount(async () => {
+    // Fetched on arrival, not on the first click of the payments tab: a deep link
+    // (`?section=payments`) draws that tab with no click at all.
+    void loadActivePaymentProvider();
     await loadData();
     // Detect return from Stripe Connect onboarding and poll for webhook confirmation.
     if (
@@ -255,16 +278,6 @@
       error = m.asso_edit_load_error();
     } finally {
       loading = false;
-    }
-  }
-
-  /** Fetches which payment provider is active, once per page visit (it's server config, not per-association). */
-  async function refreshActivePaymentProvider() {
-    try {
-      activePaymentProvider = await fetchActivePaymentProvider();
-    } catch (err) {
-      console.warn('[Payments] Failed to load active provider, defaulting to stripe:', err);
-      activePaymentProvider = 'stripe';
     }
   }
 
@@ -400,9 +413,7 @@
 
 <PageContainer width="tool">
   <PageHeader
-    title={asso?.type === 'institution'
-      ? m.asso_edit_page_title_institution()
-      : m.asso_edit_page_title()}
+    title={words.editTitle()}
     subtitle={asso ? `@${asso.slug}` : undefined}
     backHref="/associations/{encodeURIComponent(slug)}"
     backLabel={m.asso_edit_page_back()}
@@ -462,7 +473,7 @@
               type="button"
               onclick={() => {
                 editSection = 'payments';
-                void refreshActivePaymentProvider();
+                void loadActivePaymentProvider();
                 if (canManageStripeConnect) void refreshConnectAccountStatus();
               }}
               class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
@@ -587,7 +598,27 @@
 
       {#if editSection === 'payments' && canManagePaymentsSection && asso}
         <div class="space-y-6">
-          {#if canManageStripeConnect && activePaymentProvider === 'lydia'}
+          {#if canManageStripeConnect && activePaymentProvider.current === null}
+            <!-- Provider unknown: no provider-specific card until it is. -->
+            <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
+              <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+                <CreditCard size={20} />
+                {m.asso_payments_section_title()}
+              </h2>
+              {#if activePaymentProvider.failed}
+                <p class="text-red-err text-sm" role="alert">{m.asso_payments_provider_error()}</p>
+                <button
+                  type="button"
+                  onclick={() => void loadActivePaymentProvider()}
+                  class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2.5 text-sm font-bold"
+                >
+                  {m.asso_payments_provider_retry()}
+                </button>
+              {:else}
+                <p class="text-text-muted text-sm">{m.asso_payments_provider_loading()}</p>
+              {/if}
+            </div>
+          {:else if canManageStripeConnect && activePaymentProvider.current === 'lydia'}
             <LydiaBusinessOnboardingForm
               {asso}
               onAccountCreated={(accountId, dashboardUrl) => {
@@ -607,7 +638,7 @@
                   };
               }}
             />
-          {:else if canManageStripeConnect && activePaymentProvider === 'disabled'}
+          {:else if canManageStripeConnect && activePaymentProvider.current === 'disabled'}
             <!-- Payments declared OFF platform-wide: the existing "not configured" state, never a
                  Stripe or Lydia onboarding flow. -->
             <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
@@ -838,9 +869,10 @@
       {#if editSection === 'danger' && canArchiveAssociation}
         <EditDangerTab
           {asso}
+          kind={asso.type}
           canDelete={canDeleteAssociation}
           onUpdated={(a) => (asso = a)}
-          onDeleted={() => goto('/associations')}
+          onDeleted={() => goto(resolve(words.directoryHref))}
         />
       {/if}
     {/if}

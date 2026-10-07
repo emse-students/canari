@@ -348,3 +348,18 @@ anything but `lydia` to `stripe`), and `resolvePaymentTarget` resolves `disabled
 account id - a ready Stripe or Lydia account, delegated or not, never routes. The client agrees:
 `isPaymentAccountReady` is false, the association payments card shows the existing "no provider
 configured" line instead of an onboarding flow, and `PayoutFeeHint` renders nothing.
+
+## A provider-specific card waits for the provider (2026-10-07)
+
+Found on dev `v1.1.2-alpha.1`: a direct load of `/associations/<slug>/edit?section=payments` drew the
+Stripe "Configurer les paiements" card on a Lydia platform, and its button got a 400 from
+`/api/payments/onboarding`. The edit page held its OWN `activePaymentProvider` initialised to
+`'stripe'` and fetched it only on a click of the tab, so a deep link (no click) never fetched it, and
+a failed fetch fell back to `'stripe'` too. Both are the fallback `CLAUDE.md` forbids.
+
+- The page now reads the shared store (`activePaymentProvider.svelte.ts`) like every other screen,
+  and starts the load on mount. `current` is `null` until known; `failed` separates "loading" from
+  "the fetch failed" (`activePaymentProvider.test.ts` pins the three states).
+- Payments tab: `null` + not failed draws a loading line, `null` + failed draws a visible error with a
+  retry button, and only a KNOWN provider draws its card (`lydia`, `disabled`, or the Stripe card).
+- `onlinePaymentsReady` is false while the provider is unknown.
