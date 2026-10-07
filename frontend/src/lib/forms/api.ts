@@ -124,6 +124,7 @@ export interface Form extends CreateFormPayload {
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
+import { SocialApiError } from '$lib/associations/api';
 
 /**
  * The server's own sentence for a refused call, or `fallback` when it gave none. A save refused
@@ -152,8 +153,21 @@ export async function getForms(): Promise<Form[]> {
   return res.json();
 }
 
+/**
+ * The server ANSWERED 404: this form does not exist (a deleted one included). A type, not a
+ * sentence, so a screen renders its own localized "form not found" state by `instanceof` instead of
+ * printing whatever English the throw carried.
+ */
+export class FormNotFoundError extends Error {
+  constructor(readonly formId: string) {
+    super(`Form ${formId} not found`);
+    this.name = 'FormNotFoundError';
+  }
+}
+
 export async function getForm(id: string): Promise<Form> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}`);
+  if (res.status === 404) throw new FormNotFoundError(id);
   if (!res.ok) throw new Error('Failed to fetch form');
   const text = await res.text();
   if (!text) throw new Error('Empty response from server');
@@ -445,7 +459,13 @@ export async function submitForm(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || 'Submission failed');
+    // Typed, so a payment-provider refusal (`code`) is worded by the one shared function rather
+    // than shown as the bare reason; every other refusal still reads as its message.
+    throw new SocialApiError(
+      err.message || 'Submission failed',
+      typeof err.code === 'string' ? err.code : null,
+      res.status
+    );
   }
   return res.json();
 }

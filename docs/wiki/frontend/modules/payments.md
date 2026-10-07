@@ -363,3 +363,10 @@ a failed fetch fell back to `'stripe'` too. Both are the fallback `CLAUDE.md` fo
 - Payments tab: `null` + not failed draws a loading line, `null` + failed draws a visible error with a
   retry button, and only a KNOWN provider draws its card (`lydia`, `disabled`, or the Stripe card).
 - `onlinePaymentsReady` is false while the provider is unknown.
+
+## Provider copy and refusals are one function each (2026-10-07)
+
+`paymentProviderCopy.ts` words the form editor's card row per KNOWN provider and decides
+`supportsSavedCards` (Stripe only); `paymentRefusal.ts` turns a typed `PAYMENT_PROVIDER_REFUSED`
+into the one sentence both the shop toast and a paid form's inline error show. Details in
+[forms](forms.md#four-defects-found-on-dev-v112-alpha2-2026-10-07).

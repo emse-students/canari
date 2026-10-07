@@ -15,6 +15,8 @@
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { Check, CreditCard } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { activePaymentProvider } from '$lib/associations/activePaymentProvider.svelte';
+  import { cardPaymentCopy } from '$lib/associations/paymentProviderCopy';
 
   /**
    * Everything about money: whether the form charges, how much, who pays what, and how.
@@ -85,6 +87,9 @@
     if (!associationCanBePaid) return 'no-stripe';
     return null;
   });
+
+  /** The "card" row, worded for the provider that is KNOWN - nothing provider-specific otherwise. */
+  const cardCopy = $derived(cardPaymentCopy(activePaymentProvider.current));
 
   /** The cheapest and dearest cell, so the payout hint spans what the grid can actually charge. */
   const gridRange = $derived(priceRange(priceMatrix));
@@ -179,8 +184,10 @@
           <CreditCard size={20} />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="text-text-main text-sm font-bold">{m.form_card_payment_label()}</p>
-          <p class="text-text-muted text-xs">{m.form_card_payment_desc()}</p>
+          <p class="text-text-main text-sm font-bold">{cardCopy.label}</p>
+          {#if cardCopy.description}
+            <p class="text-text-muted text-xs">{cardCopy.description}</p>
+          {/if}
         </div>
         <div
           class="bg-cn-yellow/30 text-cn-dark flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold"

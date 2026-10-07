@@ -52,6 +52,7 @@
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
   import { gridPriceIsProvisional, gridPriceLabel, gridRefuses } from '$lib/pricing/viewerPrice';
   import { m } from '$lib/paraglide/messages';
+  import { wordingFor } from '$lib/associations/kindWording';
 
   interface Props {
     /** URL slug of the association or list to display. */
@@ -360,7 +361,7 @@
               class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
             >
               <Settings size={16} />
-              {kind === 'list' ? m.asso_manage_list_button() : m.asso_manage_button()}
+              {wordingFor(asso.type).manageButton()}
             </a>
           {/if}
         </div>

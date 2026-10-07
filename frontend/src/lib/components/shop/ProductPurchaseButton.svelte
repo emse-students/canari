@@ -1,10 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import {
-    createProductCheckout,
-    SocialApiError,
-    type AssociationProduct,
-  } from '$lib/associations/api';
+  import { createProductCheckout, type AssociationProduct } from '$lib/associations/api';
+  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import {
     listPaymentMethods,
     chargeProductWithSavedMethod,
@@ -117,11 +114,7 @@
     } catch (err) {
       // A provider refusal (Lydia: blocked venue, bad phone...) is an answer about THIS purchase and
       // carries a readable reason; every other failure keeps the generic line.
-      if (err instanceof SocialApiError && err.code === 'PAYMENT_PROVIDER_REFUSED') {
-        showToast(m.shop_payment_refused({ reason: err.message }));
-      } else {
-        showToast(m.shop_payment_error());
-      }
+      showToast(providerRefusalMessage(err) ?? m.shop_payment_error());
     } finally {
       checkingOut = false;
     }

@@ -17,6 +17,12 @@ interface KindWording {
   editTitle: () => string;
   /** The directory a deleted entity lands back on. */
   directoryHref: '/associations' | '/lists' | '/institutions';
+  /** The button on the public page that leads to the edit page. */
+  manageButton: () => string;
+  /** Placeholder of the profile tab's short description field. */
+  descriptionPlaceholder: () => string;
+  /** Intro line of the shop tab, naming the public page the products also appear on. */
+  boutiqueSubtitle: () => string;
   danger: {
     archiveTitleArchived: () => string;
     archiveTitle: () => string;
@@ -41,6 +47,9 @@ const WORDING: Record<AssociationKind, KindWording> = {
   association: {
     editTitle: () => m.asso_edit_page_title(),
     directoryHref: '/associations',
+    manageButton: () => m.asso_manage_button(),
+    descriptionPlaceholder: () => m.asso_edit_description_placeholder(),
+    boutiqueSubtitle: () => m.asso_boutique_subtitle(),
     danger: {
       archiveTitleArchived: () => m.asso_danger_archive_title_archived_asso(),
       archiveTitle: () => m.asso_danger_archive_title_asso(),
@@ -63,6 +72,9 @@ const WORDING: Record<AssociationKind, KindWording> = {
   list: {
     editTitle: () => m.asso_edit_page_title(),
     directoryHref: '/lists',
+    manageButton: () => m.asso_manage_list_button(),
+    descriptionPlaceholder: () => m.asso_edit_description_placeholder(),
+    boutiqueSubtitle: () => m.asso_boutique_subtitle(),
     danger: {
       archiveTitleArchived: () => m.asso_danger_archive_title_archived_list(),
       archiveTitle: () => m.asso_danger_archive_title_list(),
@@ -86,6 +98,9 @@ const WORDING: Record<AssociationKind, KindWording> = {
   institution: {
     editTitle: () => m.asso_edit_page_title_institution(),
     directoryHref: '/institutions',
+    manageButton: () => m.asso_manage_button_institution(),
+    descriptionPlaceholder: () => m.asso_edit_description_placeholder_institution(),
+    boutiqueSubtitle: () => m.asso_boutique_subtitle_institution(),
     danger: {
       archiveTitleArchived: () => m.asso_danger_archive_title_archived_institution(),
       archiveTitle: () => m.asso_danger_archive_title_institution(),

@@ -15,6 +15,7 @@
     type PaymentMethod,
   } from '$lib/stores/user';
   import {
+    FormNotFoundError,
     getForm,
     submitForm as submitFormService,
     checkSubmission,
@@ -67,6 +68,8 @@
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
+  import { supportsSavedCards } from '$lib/associations/paymentProviderCopy';
+  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
 
@@ -292,7 +295,10 @@
         }
       }
     } catch (e: any) {
-      error = e.message || m.form_view_load_error();
+      error =
+        e instanceof FormNotFoundError
+          ? m.form_view_not_found()
+          : e.message || m.form_view_load_error();
     } finally {
       loading = false;
     }
@@ -497,7 +503,7 @@
         setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
       }
     } catch (e: any) {
-      error = e.message || m.form_view_error_payment_failed();
+      error = providerRefusalMessage(e) ?? (e.message || m.form_view_error_payment_failed());
     } finally {
       submitting = false;
     }
@@ -962,7 +968,7 @@
       </p>
     {/if}
 
-    {#if !submitted && form.requiresPayment && paymentMethods.length === 0 && userId}
+    {#if !submitted && form.requiresPayment && paymentMethods.length === 0 && userId && supportsSavedCards(activePaymentProvider.current)}
       <div class="mt-2 flex justify-center">
         <button
           type="button"

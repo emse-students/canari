@@ -419,10 +419,19 @@ export class FormsService {
     }));
   }
 
-  /** Returns a single form by ID with its current submission count, or null if not found. */
+  /**
+   * Returns a single form by ID with its current submission count.
+   *
+   * A form that does not exist (a deleted one included) is a 404, never `null`: Nest serialises a
+   * returned `null` as a `200` with an EMPTY body, which the client could only read as a raw
+   * "Empty response from server" - a status code is the answer, an empty success is not.
+   */
   async get(id: string) {
     const form = await this.formRepo.findOne({ where: { id } });
-    if (!form) return null;
+    if (!form) {
+      this.logger.debug(`get: form ${id} not found`);
+      throw new NotFoundException('Form not found');
+    }
     const submissionCount = await this.countActiveSubmissions(id);
     return { ...form, submissionCount };
   }

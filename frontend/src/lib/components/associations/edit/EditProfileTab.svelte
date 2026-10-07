@@ -15,6 +15,7 @@
   import { Check } from '@lucide/svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { wordingFor } from '$lib/associations/kindWording';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
@@ -278,7 +279,7 @@
       minHeight="72px"
       class="border-cn-border bg-cn-bg/30 overflow-hidden rounded-xl border"
       editorClass="min-h-[72px] w-full px-4 py-3 text-sm text-text-main leading-relaxed"
-      placeholder={m.asso_edit_description_placeholder()}
+      placeholder={wordingFor(asso.type).descriptionPlaceholder()}
     />
   </div>
   <div class="space-y-2">

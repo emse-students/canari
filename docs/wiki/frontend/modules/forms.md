@@ -751,3 +751,21 @@ Found while scoping it, so it is not re-derived (the paid half itself waits for 
 - **Fulfilment must work without a `userId`**: `markPaid` and the cotisation grant both read it.
 - A fixed price only (no grid, no cotisation grant, no cash). The rate limit and the honeypot the
   free half added (`PublicFormsController`) already cover the submission.
+
+## Four defects found on dev v1.1.2-alpha.2 (2026-10-07)
+
+- **Deleted form = `404`, not an empty `200`.** `FormsService.get` returned `null` and Nest sent a
+  `200` with no body, which `getForm` could only call "Empty response from server" in raw English.
+  It now throws `NotFoundException`; `getForm` throws the typed `FormNotFoundError` on a 404 and the
+  view and edit pages render `form_view_not_found` (Paraglide).
+- **A global admin who is not a member** arrived from an association's Formulaires tab with no
+  selector (the builder lists MEMBERSHIPS) and a preselected id that matched nothing.
+  `lib/associations/requestedAssociation.ts` fetches the requested association when the memberships
+  lack it; the server stays the authority (it lets a global admin create for any association).
+- **A paid form's refusal reason** now carries the same "Le prestataire de paiement a refuse ce
+  paiement" sentence as the shop toast: `submitForm` throws a `SocialApiError` (typed `code`), and
+  `providerRefusalMessage` (`lib/associations/paymentRefusal.ts`) words it for both surfaces.
+- **Stripe copy on a Lydia estate.** `lib/associations/paymentProviderCopy.ts`: the card row and
+  the "save a card" link are provider-specific; an unknown provider gets a neutral line and no
+  description, and saved cards are offered for Stripe only (Lydia has none, see
+  [payments](payments.md)).

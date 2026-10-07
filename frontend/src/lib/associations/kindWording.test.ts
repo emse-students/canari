@@ -8,6 +8,9 @@ describe('wordingFor', () => {
     const w = wordingFor('institution');
     const sentences = [
       w.editTitle(),
+      w.manageButton(),
+      w.descriptionPlaceholder(),
+      w.boutiqueSubtitle(),
       ...Object.values(w.danger).map((f) => f()),
       ...Object.values(w.lydia).map((f) => f()),
     ];
@@ -16,7 +19,13 @@ describe('wordingFor', () => {
 
   it.each(KINDS)('%s resolves a non-empty message for every row', (kind) => {
     const w = wordingFor(kind);
-    for (const f of [...Object.values(w.danger), ...Object.values(w.lydia)]) {
+    for (const f of [
+      w.manageButton,
+      w.descriptionPlaceholder,
+      w.boutiqueSubtitle,
+      ...Object.values(w.danger),
+      ...Object.values(w.lydia),
+    ]) {
       expect(f().trim()).not.toBe('');
     }
   });
