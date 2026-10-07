@@ -246,36 +246,42 @@ export function inlineProtoBudget(input: PushMessageInput): number {
 }
 
 /**
- * Whether a ciphertext that did not fit is worth a line.
+ * How a queued frame's ciphertext travels in the push: the typed outcome of {@link decideProtoCarriage}.
  *
- * **THE LINE IT GUARDS NAMES THE WRONG POPULATION, AND A COUNT SETTLES IT.** `messaging.service`
- * logs `proto not inlined` whenever the ciphertext exceeds {@link inlineProtoBudget}, under a
- * comment saying why that is worth knowing: *"a budget that is routinely too small is the fixed
- * fields growing, and nothing else watches them"*. That reasoning holds for a MESSAGE. It cannot
- * hold for a WELCOME: a welcome packet carries the group's ratchet tree, so its size is a property
- * of the group rather than of `senderName` and `groupName`, and it is far over any budget the 4 KB
- * limit can leave. Measured on the local estate over 90 minutes, 2026-09-08:
- *
- * | push kind | reached FCM | proto not inlined |
- * | --- | --- | --- |
- * | `welcome-send` | 3 | **6 of 6 prepared** |
- * | `send` | 9 | **0 of 9** |
- *
- * One hundred per cent of one population and zero per cent of the other. For welcomes the line is
- * constant, so it carries no information, and a line whose reader learns to skip it is the one that
- * hides the next defect. For messages it has never fired here, which is exactly what makes it worth
- * keeping: it would mean the fixed fields had grown.
- *
- * **NOTHING IS LOST BY NOT SAYING IT.** Not inlining is not a failure - the client fetches the
- * ciphertext instead - and the failure that WOULD matter has its own alarm at the point it happens,
- * `[PUSH_SIZE] refused over size`, which reports the quantities FCM's own error omits. This is a
- * silence about a structural fact, not a demotion of a warning.
- *
- * @param input - The message description, read only for {@link PushMessageInput.isWelcome}.
- * @returns true when a reader should be told; false when the overflow is the shape of the packet.
+ * - `inlined`: the ciphertext rides in the data map (a message that fits the budget).
+ * - `by-reference`: a WELCOME. It is never inlined, by design and not by overflow: the receiving
+ *   client always fetches the whole bundle (ciphertext AND ratchet tree) through `fetch-proto`,
+ *   and the tree is what makes it 4 to 5 KB against a ~3.7 KB budget. Measured: 4608 B against
+ *   3716 B. Nothing is dropped - the push still wakes the device, which fetches by `queuedMessageId`.
+ * - `over-budget`: a MESSAGE whose ciphertext did not fit. Never expected: it means the fixed
+ *   fields (`senderName`, `groupName`, unbounded user text) grew, so it is reported at warn level.
+ * - `empty`: nothing to carry.
  */
-export function uninlinedProtoIsWorthReporting(input: PushMessageInput): boolean {
-  return !input.isWelcome;
+export type ProtoCarriage =
+  | { kind: 'inlined'; proto: string; bytes: number; budget: number }
+  | { kind: 'by-reference'; proto: ''; bytes: number; budget: number }
+  | { kind: 'over-budget'; proto: ''; bytes: number; budget: number }
+  | { kind: 'empty'; proto: ''; bytes: 0; budget: number };
+
+/**
+ * Decides how the ciphertext of a queued frame travels, deciding by packet KIND first.
+ *
+ * A Welcome is carried by reference whatever its size (the Android reader fetches its bundle
+ * unconditionally, because the ratchet tree is never in the push), so for that population the
+ * budget is not a question and no line is owed. A message is inlined when it fits and otherwise
+ * reported as `over-budget`, the one outcome that accuses the fixed fields.
+ *
+ * @param input - The message description, read for `isWelcome` and the fixed fields (not `proto`).
+ * @param protoB64 - The ciphertext as queued.
+ * @returns The outcome, whose `proto` is exactly what must be placed in the payload.
+ */
+export function decideProtoCarriage(input: PushMessageInput, protoB64: string): ProtoCarriage {
+  const budget = inlineProtoBudget(input);
+  const bytes = Buffer.byteLength(protoB64, 'utf8');
+  if (bytes === 0) return { kind: 'empty', proto: '', bytes: 0, budget };
+  if (input.isWelcome) return { kind: 'by-reference', proto: '', bytes, budget };
+  if (bytes <= budget) return { kind: 'inlined', proto: protoB64, bytes, budget };
+  return { kind: 'over-budget', proto: '', bytes, budget };
 }
 
 /** A ready-to-send APNs request: JSON body plus the headers that drive delivery. */

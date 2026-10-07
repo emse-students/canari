@@ -40,8 +40,7 @@ import {
   LONGEST_FALLBACK_LOCALE,
   buildInternalAndroidHalf,
   buildInternalApnsHalf,
-  inlineProtoBudget,
-  uninlinedProtoIsWorthReporting,
+  decideProtoCarriage,
   measureDataFields,
   measureApnsPayload,
   FCM_DATA_LIMIT,
@@ -634,20 +633,21 @@ export class MessagingService {
       createdAt: queued.createdAt.toISOString(),
     };
 
-    const budget = inlineProtoBudget(messageInput);
-    const protoBytes = Buffer.byteLength(protoB64, 'utf8');
-    const inlineProto = protoBytes > 0 && protoBytes <= budget ? protoB64 : '';
+    const carriage = decideProtoCarriage(messageInput, protoB64);
+    const inlineProto = carriage.proto;
     messageInput.proto = inlineProto;
-    if (protoBytes > budget && uninlinedProtoIsWorthReporting(messageInput)) {
-      // Not an error: the client fetches the ciphertext instead. It IS worth a line for a MESSAGE,
-      // because a budget that is routinely too small is the fixed fields growing, and nothing else
-      // watches them - `senderName` and `groupName` are unbounded user text. It is NOT worth one
-      // for a WELCOME, whose size is the ratchet tree and never fits: measured 6 of 6 welcomes over
-      // budget against 0 of 9 messages, so for that population the line is constant and says
-      // nothing. `uninlinedProtoIsWorthReporting` carries the reasoning and the counts.
-      this.logger.log(
-        `[PUSH_SEND][${traceId}] proto not inlined: ${protoBytes}B over a ${budget}B budget ` +
+    if (carriage.kind === 'over-budget') {
+      // A MESSAGE that did not fit is the fixed fields growing (`senderName` and `groupName` are
+      // unbounded user text) and nothing else watches them: accuse. The device still fetches it.
+      this.logger.warn(
+        `[PUSH_SEND][${traceId}] over-budget proto not inlined: ${carriage.bytes}B over a ${carriage.budget}B budget ` +
           `(senderName=${Buffer.byteLength(senderName, 'utf8')}B groupName=${Buffer.byteLength(groupName, 'utf8')}B)`
+      );
+    } else if (carriage.kind === 'by-reference') {
+      // A Welcome is fetched by `queuedMessageId` through fetch-proto (ciphertext + ratchet tree),
+      // by design: expected, so debug, not a line per welcome.
+      this.logger.debug(
+        `[PUSH_SEND][${traceId}] welcome carried by reference: ${carriage.bytes}B, budget ${carriage.budget}B`
       );
     }
 

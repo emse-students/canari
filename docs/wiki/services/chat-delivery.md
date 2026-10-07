@@ -1939,3 +1939,20 @@ core never sees the requester device). Outcome vocabulary: `served` and `absent`
 gallery key on the estate) log at warn. The full id, the secret and the image never appear. A failed
 fetch is found with `grep -E "PUSH_AVATAR|\[AVATAR\]" | grep -v -E "outcome=(served|absent) "`; see also
 [core-service](core-service.md#the-avatar-proxy).
+
+### A Welcome is carried by reference, never inlined (2026-10-08)
+
+**Measured**: a first-contact Welcome is 4608 B against a 3716 B inline budget. The FCM limit (4096 B)
+applies to the whole data map, keys included, so the budget is what `inlineProtoBudget` leaves after
+the fixed fields. The push was never dropped - it went out with `proto` empty - but the outcome was
+an implicit `if` plus a log silenced for Welcomes (`uninlinedProtoIsWorthReporting`).
+
+**Why by reference is the design, not a degradation**: the Android reader
+(`processReceivedWelcomeBackground`) fetches the whole bundle, ciphertext AND ratchet tree, through
+`/api/mls/push/fetch-proto` by `queuedMessageId`, whatever it inlined, because the tree never rides in
+the push; the iOS NSE processes no Welcome at all. So inlining a Welcome could not save a request.
+
+**The decision** is `decideProtoCarriage` in `push-payload.ts`, a typed `ProtoCarriage`: `inlined`
+(a message that fits), `by-reference` (every Welcome, whatever its size; debug line, expected),
+`over-budget` (a MESSAGE that did not fit: the fixed fields grew; `warn`), `empty`. No client change
+and no native work was needed. `push-payload.spec.ts` pins the 4608 B case.
