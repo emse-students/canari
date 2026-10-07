@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { LydiaPaymentProvider } from './lydia-payment-provider';
+import { Logger } from '@nestjs/common';
+import { LydiaPaymentProvider, PAYMENT_PROVIDER_REFUSED } from './lydia-payment-provider';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -310,5 +311,63 @@ describe('LydiaPaymentProvider.verifyRequestCallback', () => {
     const sig = signLydiaParams(fields, 'provider-private-token');
     expect(provider.verifyRequestCallback(fields, sig)).toBe(true);
     expect(provider.verifyRequestCallback(fields, 'wrong-signature')).toBe(false);
+  });
+});
+
+describe('LydiaPaymentProvider - refusals and logs', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  const request = {
+    lineItems: [{ productName: 'x', unitAmountCents: 100, quantity: 1, currency: 'eur' }],
+    successUrl: 's',
+    cancelUrl: 'c',
+    connectAccountId: 'vendor-token-abc',
+    payerRecipient: { value: 'user@example.com', type: 'email' as const },
+  };
+
+  it('throws a TYPED refusal carrying Lydia readable message, not a bare string', async () => {
+    mockedAxios.post.mockResolvedValue({
+      data: { error: '5', message: "Ce lieu d'activite est temporairement bloque" },
+    });
+    await expect(makeProvider().createCheckoutSession(request)).rejects.toMatchObject({
+      status: 400,
+      response: {
+        code: PAYMENT_PROVIDER_REFUSED,
+        providerCode: '5',
+        message: "Ce lieu d'activite est temporairement bloque",
+      },
+    });
+  });
+
+  it('never logs the api_token or api_token_id of a freshly created business', async () => {
+    const lines: string[] = [];
+    const sink = (m: unknown) => void lines.push(String(m));
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(sink);
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(sink);
+    mockedAxios.post.mockResolvedValue({
+      data: {
+        error: '0',
+        api_token: 'VENDORSECRET',
+        api_token_id: 'PRIVATESECRET',
+        dashboard_url: 'https://lydia-app.com/console/xyz',
+      },
+    });
+    await makeProvider().createOnboarding({
+      associationId: 'assoc-1',
+      refreshUrl: 'r',
+      returnUrl: 'u',
+      legalProfile: {
+        name: 'BDE Test',
+        address: '1 rue',
+        zipcode: '42000',
+        city: 'SE',
+        country: 'France',
+        businessEmail: 'b@test.example',
+        businessPhone: '+33100000000',
+      },
+    });
+    const logged = lines.join(' | ');
+    expect(logged).toContain('business/create');
+    expect(logged).not.toMatch(/VENDORSECRET|PRIVATESECRET/);
   });
 });

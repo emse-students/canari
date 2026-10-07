@@ -16,6 +16,13 @@ import type {
   SavedPaymentMethod,
 } from './payment-provider.interface';
 
+/**
+ * The `code` a provider refusal carries in its response body. A refusal (a blocked venue, a bad
+ * phone number) is an ANSWER about the request, not a server fault: social-service reads this code
+ * to answer the SAME 400 with the provider's readable message on every checkout route.
+ */
+export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
+
 const HOMOLOGATION_BASE_URL = 'https://homologation.lydia-app.com';
 const PRODUCTION_BASE_URL = 'https://lydia-app.com';
 
@@ -25,9 +32,11 @@ export const LYDIA_MAX_AMOUNT_CENTS = 100_000;
 
 /**
  * Fields no log line may ever carry in the clear - `api_token_id` is the Business's own
- * private_token (see `createOnboarding`'s docblock on why it is never persisted either).
+ * private_token (see `createOnboarding`'s docblock on why it is never persisted either), and
+ * `api_token` is the Business's vendor token, which `business/create` answers with and which was
+ * logged in clear until 2026-10-07.
  */
-const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id']);
+const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id', 'api_token']);
 
 function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
@@ -121,7 +130,13 @@ export class LydiaPaymentProvider implements PaymentProvider {
     const statusError = res.data?.status === 'error' ? (res.data.code ?? 'unknown') : null;
     const errorCode = numericError ?? statusError;
     if (errorCode) {
-      throw new BadRequestException(`Lydia error ${errorCode}: ${res.data.message ?? ''}`);
+      this.logger.warn(`${path} refused by Lydia: error ${errorCode}: ${res.data.message ?? ''}`);
+      throw new BadRequestException({
+        code: PAYMENT_PROVIDER_REFUSED,
+        provider: 'lydia',
+        providerCode: String(errorCode),
+        message: res.data.message || `Lydia error ${errorCode}`,
+      });
     }
     return res.data;
   }

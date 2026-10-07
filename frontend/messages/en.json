@@ -2869,6 +2869,7 @@
   "shop_product_type_buy": "Buy",
   "shop_indicate_amount": "Please enter an amount",
   "shop_payment_error": "Payment error",
+  "shop_payment_refused": "The payment provider refused this payment: {reason}",
   "payer_email_title": "Your e-mail address",
   "payer_email_hint": "The payment provider needs it to send you the payment request. Canari does not keep it.",
   "payer_email_label": "E-mail",

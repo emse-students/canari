@@ -50,6 +50,7 @@ import {
 import { normaliseCondition, visibleItemIds } from './visibility';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
+import { mapCorePaymentError } from '../common/core-payment-error';
 import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
@@ -1043,15 +1044,8 @@ export class FormsService {
         }
 
         return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
-      } catch (err: any) {
-        const stripeMsg =
-          err?.response?.data?.message ||
-          err?.response?.data?.error ||
-          err?.response?.data ||
-          err?.message ||
-          String(err);
-        this.logger.error('Payment service error', stripeMsg);
-        throw new BadRequestException(`Failed to create checkout session: ${stripeMsg}`);
+      } catch (err: unknown) {
+        throw mapCorePaymentError(err, this.logger, 'Forms');
       }
     }
 

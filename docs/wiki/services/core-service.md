@@ -343,6 +343,23 @@ flag fields only). They used to call `GET /api/associations/:id`, which answers 
 `X-User-Id` since 2026-08-05, so each reported "Association not found" - invisible because
 `BadRequestException` is not logged and the client shows one generic message.
 
+#### How a failed call is logged, and how a provider refusal is answered
+
+Found on dev 2026-10-07 (prod logs clean). **No path may log an axios error, config, headers or a
+provider token object wholesale**: an `AxiosError` carries `config.headers['x-internal-secret']`, and
+Nest's exception filter prints whatever is left uncaught. `common/http-error-log.ts` (byte-identical
+in core-service and social-service, declared in `declared-duplicates.mjs`) renders
+`METHOD url-without-query -> status: provider message` and nothing else; its spec feeds it an
+`AxiosError` carrying a secret header and an `api_token`. Lydia's `business/create` response is logged
+with `api_token` and `api_token_id` redacted.
+
+A Lydia refusal (`request/do` error 5, "lieu d'activite bloque") is an ANSWER about the request:
+`postForm` throws a typed 400 `{ code: 'PAYMENT_PROVIDER_REFUSED', message: <Lydia's text> }`, and
+social-service's `mapCorePaymentError` answers the SAME 400 on the product checkout and the paid form
+submit (a core 5xx or no answer is a 502, never the raw error). The shop toast shows the reason. Deleting
+an association deletes its forms in the same transaction as its events and members (`forms.associationId`
+has no foreign key; the orphan rendered as "Personnel"). Submissions stay, as with a form's own delete.
+
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/payments/provider` | none | Active provider (`stripe` or `lydia`), for the frontend to render the matching onboarding UI |
