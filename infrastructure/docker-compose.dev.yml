@@ -33,6 +33,19 @@
 # system - it is a thing somebody remembers. Now the file carries its own identity.
 name: canari-dev
 
+# Every service carries this block (asserted by compose-logging.test.sh under the CI scripts tests).
+# Without it json-file keeps a container log with NO ceiling for as long as the container lives. The
+# ceiling is 3 x 10 MB per container: measured on the shared host 2026-10-08, the largest log was
+# 46 MB (garage) and the median 0.1 MB, against a disk 88 % used with 5.5 GB free, so the worst case
+# of one estate (13 containers) is ~0.4 GB. Rotation bounds the DISK; it does not keep a log past
+# its container, which `up -d` recreates - that is infrastructure/lib/archive-logs.sh, called by the
+# deploy. See docs/wiki/infrastructure/logging.md.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
 # Ceilings, not reservations. Dev shares a host with production, and the point is that a dev
 # container which misbehaves cannot starve the estate real members use.
 x-dev-limits: &dev-limits
@@ -47,6 +60,7 @@ services:
   # Datastores
   # ─────────────────────────────────────────────────────
   redis:
+    logging: *logging
     # PINNED BY DIGEST TO WHAT PRODUCTION IS PROVEN TO RUN, not to whatever the tag resolved to
     # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
     # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
@@ -86,6 +100,7 @@ services:
           memory: 2560M
 
   postgres:
+    logging: *logging
     # DEV CROSSES WITH PRODUCTION, IN THE SAME COMMIT, AND THAT IS THE POINT OF THIS ENVIRONMENT.
     # It carries a full copy of production's data, so it is the only place an 18 can be met before
     # production meets it - which is why the two lines move together rather than dev going first and
@@ -125,6 +140,7 @@ services:
   # Rust services
   # ─────────────────────────────────────────────────────
   chat-gateway:
+    logging: *logging
     # TAG IS REQUIRED, WITH NO DEFAULT. Production defaults to `:latest`; the previous version of
     # this file defaulted to `:dev`, a MUTABLE tag, which means a redeploy could not be reproduced
     # and a rollback had no name to roll back to. CD passes the commit sha.
@@ -146,6 +162,7 @@ services:
         condition: service_healthy
 
   call-service:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/call-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -164,6 +181,7 @@ services:
   # Node services
   # ─────────────────────────────────────────────────────
   chat-delivery-service:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -217,6 +235,7 @@ services:
   # Garage - S3-compatible object storage for encrypted media blobs
   # ─────────────────────────────────────────────────────
   garage:
+    logging: *logging
     # `v2.3.0` is an exact version rather than a floating tag, which is why it is not digest-pinned
     # the way redis and postgres are - and it matches production exactly, deliberately.
     image: dxflrs/garage:v2.4.1
@@ -255,6 +274,7 @@ services:
 
   # Stores only opaque encrypted blobs; never sees decryption keys.
   media-service:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -287,6 +307,7 @@ services:
 
   # Handles Auth, Users, Payment
   core-service:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -352,6 +373,7 @@ services:
 
   # Handles Channels, Posts, Forms
   social-service:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -430,6 +452,7 @@ services:
   # `dev` is mutable, like production's `latest`, which is why CD pulls before it brings the estate
   # up - `up -d` alone sees no reason to recreate a container whose tag has not changed.
   frontend-ssr:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${FRONTEND_TAG:-dev}
     restart: always
     <<: *dev-limits
@@ -455,6 +478,7 @@ services:
   # `http://localhost:3080`. Dev runs its OWN nginx, so production's single public entry point is
   # never edited to accommodate a second environment.
   frontend:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${FRONTEND_TAG:-dev}
     restart: always
     <<: *dev-limits

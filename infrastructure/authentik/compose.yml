@@ -16,8 +16,23 @@
 # que parce que les deux dossiers successifs s appelaient "miconnect" par chance.
 name: miconnect
 
+# Every service carries this block (asserted by compose-logging.test.sh under the CI scripts tests).
+# Without it json-file keeps a container log with NO ceiling for as long as the container lives. The
+# ceiling is 3 x 10 MB per container: measured on the shared host 2026-10-08, the largest log was
+# 46 MB (garage) and the median 0.1 MB, against a disk 88 % used with 5.5 GB free, so the worst case
+# of one estate (13 containers) is ~0.4 GB. Rotation bounds the DISK; it does not keep a log past
+# its container, which `up -d` recreates - that is infrastructure/lib/archive-logs.sh, called by the
+# deploy. See docs/wiki/infrastructure/logging.md.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+
 services:
   postgresql:
+    logging: *logging
     image: docker.io/library/postgres:16-alpine
     restart: unless-stopped
     env_file:
@@ -36,6 +51,7 @@ services:
       - database:/var/lib/postgresql/data
 
   server:
+    logging: *logging
     image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.0}
     restart: unless-stopped
     command: server
@@ -73,6 +89,7 @@ services:
       - ./custom-templates:/templates
 
   worker:
+    logging: *logging
     image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.0}
     restart: unless-stopped
     command: worker

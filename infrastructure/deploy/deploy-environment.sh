@@ -227,6 +227,13 @@ fi
 # old schema: `relation "spaces" does not exist` and `column "Post.publishedAt" does not exist`
 # were logged by production at 12:16:59 on 2026-10-07, the release that shipped migration 074-075.
 # Only postgres is brought up here; the rest of the estate follows once the schema is current.
+# ── Keep the logs of what this deploy is about to replace ────────────────────
+# `up -d` RECREATES a container, and a container's log dies with it. This is the last moment the
+# old containers exist; docs/wiki/infrastructure/logging.md.
+# shellcheck source-path=SCRIPTDIR source=../lib/archive-logs.sh
+. "$DEPLOY_PATH/infrastructure/lib/archive-logs.sh"
+archive_logs "$DOCKER_CLI" "$PROJECT" "${CANARI_LOG_ARCHIVE:-$HOME/deploy-log-archive}" 10
+
 dc up -d postgres
 
 # POSTGRES_USER comes from the .env this estate was just rendered with, not from a second copy of the
