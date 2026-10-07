@@ -2759,36 +2759,14 @@ since it predates the `user=`/`device=` fields.
 
 ## Post-campaign projects - decided, not scheduled
 
-### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20
+### The MLS + Graine explanation, written FOR THE USER - WRITTEN 2026-10-08
 
-**Asked for earlier, deferred on one question: who reads it.** Three audiences were offered and the
-user chose the first outright.
-
-**Who it is for: the user.** What is guaranteed, against whom, and - as loudly - what is NOT.
-Prose and diagrams. **No file names, no function names, no code**, because those are what a
-maintainer needs and this is not for a maintainer. Readable end to end in one sitting, which is a
-length constraint and therefore a selection constraint: everything that does not change what the
-reader can conclude is cut.
-
-**What it must contain, since the whole point is the boundary.** What the server sees (ciphertext,
-sizes, timings, who talks to whom) and what it cannot see. What a community's shared key means: every
-member of a community holds the key to every PUBLIC salon in it, by design, and until 2026-08-20 to
-every private one too. What a private salon's own group changed, and what it did not - an admin now
-JOINS and is visible in the member list; forward secrecy was decided AGAINST, deliberately, and the
-document says so rather than omitting it. What leaving, being removed, and being re-invited actually
-do to the keys. What a stolen device gets, and what the PIN does and does not protect.
-
-**The two audiences declined, recorded so the choice is not re-litigated.** A maintainer's page (file
-names, invariants, where each is held) would be a wiki page more, long, needing to stay synchronised
-- the wiki already carries that, split across
-[mls-protocol](protocols/mls-protocol.md), [graine](protocols/channel-encryption.md) and
-[the state machine](protocols/mls-graine-state-machine.md). A security
-assessor's document (explicit threat model, what an excluded member can do) is the most demanding of
-the three and nobody has asked for one.
-
-**Written AFTER the campaign**, because the campaign is what turns the design into something
-measured, and a document that says "this is guaranteed" before anything has run is a claim about a
-file rather than about a system.
+[chiffrement-et-historique](../user-guide/chiffrement-et-historique.md) (French, non-technical, linked
+from the user-guide index). **Still owed: the user's read**, and a re-check whenever retention, the
+history rules or the device limits change, since the guide quotes screen wording and the one-year
+salon window. The maintainer and security-assessor audiences were declined 2026-08-20;
+[channel-encryption](protocols/channel-encryption.md) and
+[the state machine](protocols/mls-graine-state-machine.md) are the maintainer's pages.
 
 ### One MLS client in a SharedWorker - decided 2026-08-17
 
