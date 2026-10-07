@@ -3,6 +3,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Building2, Trash2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { wordingFor, type AssociationKind } from '$lib/associations/kindWording';
 
   interface Props {
     asso: Association;
@@ -10,8 +11,8 @@
     onUpdated: (a: Association) => void;
     /** Called after the association is deleted (parent navigates away). */
     onDeleted: () => void;
-    /** 'list' tweaks the wording; defaults to association. */
-    kind?: 'association' | 'list';
+    /** The noun the panel speaks in (see `kindWording`); defaults to association. */
+    kind?: AssociationKind;
     /**
      * Whether to offer the irreversible half of this panel.
      *
@@ -29,6 +30,8 @@
 
   let { asso, onUpdated, onDeleted, kind = 'association', canDelete = false }: Props = $props();
 
+  const words = $derived(wordingFor(kind).danger);
+
   let archiving = $state(false);
   let error = $state('');
 
@@ -36,12 +39,9 @@
     const next = !asso.archived;
     if (
       next &&
-      !(await showConfirm(
-        kind === 'list'
-          ? m.asso_danger_archive_confirm_list()
-          : m.asso_danger_archive_confirm_asso(),
-        { confirmLabel: m.asso_danger_archive_confirm_button() }
-      ))
+      !(await showConfirm(words.archiveConfirm(), {
+        confirmLabel: m.asso_danger_archive_confirm_button(),
+      }))
     )
       return;
     archiving = true;
@@ -57,10 +57,10 @@
 
   async function handleDelete() {
     if (
-      !(await showConfirm(
-        kind === 'list' ? m.asso_danger_delete_confirm_list() : m.asso_danger_delete_confirm_asso(),
-        { danger: true, confirmLabel: m.common_delete_button() }
-      ))
+      !(await showConfirm(words.deleteConfirm(), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
     )
       return;
     try {
@@ -82,22 +82,10 @@
   <div class="border-cn-border bg-cn-surface space-y-3 rounded-2xl border p-6 shadow-sm">
     <h2 class="text-text-main flex items-center gap-2 text-base font-bold">
       <Building2 size={18} />
-      {asso.archived
-        ? kind === 'list'
-          ? m.asso_danger_archive_title_archived_list()
-          : m.asso_danger_archive_title_archived_asso()
-        : kind === 'list'
-          ? m.asso_danger_archive_title_list()
-          : m.asso_danger_archive_title_asso()}
+      {asso.archived ? words.archiveTitleArchived() : words.archiveTitle()}
     </h2>
     <p class="text-text-muted text-sm">
-      {asso.archived
-        ? kind === 'list'
-          ? m.asso_danger_archived_desc_list()
-          : m.asso_danger_archived_desc_asso()
-        : kind === 'list'
-          ? m.asso_danger_unarchived_desc_list()
-          : m.asso_danger_unarchived_desc_asso()}
+      {asso.archived ? words.archivedDesc() : words.unarchivedDesc()}
     </p>
     <button
       type="button"
@@ -105,15 +93,7 @@
       disabled={archiving}
       class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2.5 text-sm font-bold disabled:opacity-50"
     >
-      {archiving
-        ? '…'
-        : asso.archived
-          ? kind === 'list'
-            ? m.asso_danger_reactivate_list()
-            : m.asso_danger_reactivate_asso()
-          : kind === 'list'
-            ? m.asso_danger_archive_list()
-            : m.asso_danger_archive_asso()}
+      {archiving ? '…' : asso.archived ? words.reactivate() : words.archive()}
     </button>
   </div>
 
@@ -124,14 +104,14 @@
         {m.asso_danger_title()}
       </h2>
       <p class="text-red-err text-sm">
-        {kind === 'list' ? m.asso_danger_delete_desc_list() : m.asso_danger_delete_desc_asso()}
+        {words.deleteDesc()}
       </p>
       <button
         type="button"
         onclick={handleDelete}
         class="bg-cn-surface border-red-err/30 text-red-err hover:bg-red-err/20 rounded-xl border px-4 py-2.5 text-sm font-bold"
       >
-        {kind === 'list' ? m.asso_danger_delete_list() : m.asso_danger_delete_asso()}
+        {words.delete()}
       </button>
     </div>
   {/if}

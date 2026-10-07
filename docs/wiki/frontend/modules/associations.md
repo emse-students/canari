@@ -191,3 +191,16 @@ Associations that want to accept online payments must complete Stripe Connect on
 3. Displaying the Stripe Dashboard link for reporting.
 
 Forms with `basePrice > 0` show a warning if Connect is not yet configured.
+
+## An institution is not called an association (2026-10-07)
+
+The edit page is shared by the three kinds and said "association" to an institution in the tab title,
+the Danger tab, the delete confirmation and the Lydia card, and sent a deleted institution to
+`/associations`. `lib/associations/kindWording.ts` is now the ONE table of nouns per kind
+(`association | list | institution`: edit title, danger panel, Lydia card, the directory to land on
+after a delete); components call `wordingFor(kind)` and never ternary over a sentence
+(`EditDangerTab` takes the full `AssociationKind`, the Lydia form reads `asso.type`). A new kind is a
+new row, and `kindWording.test.ts` fails if an institution sentence says association or club.
+The document title cannot come from the path (`/associations/<slug>/edit` does not say the type), so
+the page hands it to `SeoHead` through `lib/seo/pageTitle.svelte.ts`, which stays the only writer of
+`<title>`. Lists already redirected to `/lists`.
