@@ -796,6 +796,18 @@ arrives (see WP-FWD-1):
 | Backoff not persisted | Loses the attempt count, so the entry retries at full speed |
 | Media ref not persisted | A crash before the send re-uploads the same file |
 
+### A 413 ends the entry (2026-10-08)
+
+Cloudflare Free answers `413` to any request body above exactly 1 MiB, and the media upload sends
+the whole ciphertext as ONE body up to 50 MB (chunking starts at `CHUNK_SIZE = 50 MB`, `media.ts`).
+The ladder used to re-post such an upload once a minute for ever (attempt 806). Now `MediaUploadError`
+(an `ApiRefusalError`, status carried at the throw) is read through `refusalStatus(e) === 413` in the
+flush catch: one `console.error` + `[OUTBOX]` line, `failPermanently(..., 'too-large')` - bubble to
+`error`, entry deleted, a system line in the thread (`outbox_upload_too_large`, Paraglide), metric
+cause `too-large`. No banner and no eviction: the group is unchanged. Only 413 is permanent here; a
+5xx still backs off. The cause of the 413 (the edge limit) is NOT fixed by this: see the P1 in
+[backlog](../../backlog.md). Pinned by `outbox.test.ts`.
+
 `enqueue` logs too: it is the first trace of a message on this device, and without it a send that
 never reached the queue cannot be told apart from one the queue accepted and lost. Correlating a
 loss needs `[OUTBOX]` from the sender and `[QUEUE]` from the recipient at the same moment.

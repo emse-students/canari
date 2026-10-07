@@ -38,6 +38,7 @@ import { createOutbox, buildOutboxProto, type OutboxDeps } from './outbox';
 import { GroupDeletedError, SenderNotActiveError } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind } from '$lib/proto/codec';
+import { MediaUploadError } from '$lib/utils/mediaErrors';
 import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { TabOutboxEvent } from '$lib/mls-client/tabMessageSync';
@@ -930,6 +931,100 @@ describe('outbox flusher', () => {
 
     releaseSend();
     await flush;
+  });
+
+  /**
+   * A 413 is the edge's ANSWER about the body (Cloudflare Free refuses above exactly 1 MiB): the
+   * same upload re-posted once a minute reached attempt 806 in production. Classified from the
+   * typed throw, so the entry leaves the queue after ONE attempt, the bubble errors, the author is
+   * told in the thread, and the log accuses.
+   */
+  it('gives up on a 413 after one attempt: typed, removed, noticed, logged as an error', async () => {
+    const mediaEntry: OutboxEntry = {
+      id: 'big',
+      conversationId: 'g1',
+      sentAt: 100,
+      kind: 'media',
+      media: {
+        kind: MediaKind.MEDIA_KIND_VIDEO,
+        mimeType: 'video/mp4',
+        size: 5_000_000,
+        fileName: 'clip.mp4',
+        fileBytes: new Uint8Array([1, 2, 3]),
+      },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+    const storage = makeStorage([mediaEntry]);
+    const mlsService = makeMls();
+    // Message text is deliberately unrelated to "413": only the type may decide.
+    const uploadMedia = vi.fn().mockRejectedValue(new MediaUploadError(413, 'refused'));
+    const addMessageToChat = vi.fn().mockResolvedValue(undefined);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['big'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        uploadMedia,
+        addMessageToChat,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+    await outbox.flush();
+
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('big')).toBe(false);
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    expect(addMessageToChat).toHaveBeenCalledWith(
+      'system',
+      expect.any(String),
+      'g1',
+      expect.objectContaining({ isSystem: true })
+    );
+    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('REFUSED with 413'))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it('still retries a 5xx upload refusal: only a 413 is permanent', async () => {
+    const mediaEntry: OutboxEntry = {
+      id: 'srv',
+      conversationId: 'g1',
+      sentAt: 100,
+      kind: 'media',
+      media: {
+        kind: MediaKind.MEDIA_KIND_IMAGE,
+        mimeType: 'image/png',
+        size: 3,
+        fileName: 'a.png',
+        fileBytes: new Uint8Array([1, 2, 3]),
+      },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+    const storage = makeStorage([mediaEntry]);
+    const uploadMedia = vi.fn().mockRejectedValue(new MediaUploadError(503, 'unavailable'));
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['srv'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(storage._map.get('srv')!.attempts).toBe(1);
+    expect(conversations.get('g1')!.messages[0].status).toBe('pending');
   });
 
   it('does not re-upload media on a retry once uploadedRef is stored', async () => {

@@ -328,6 +328,7 @@
   "chat_send_error_generic": "Échec de l'envoi. Réessayez dans un instant.",
   "chat_media_action_send": "Envoi du média",
   "chat_media_send_error_generic": "Échec de l'envoi du média. Réessayez dans un instant.",
+  "outbox_upload_too_large": "Ce fichier n'a pas pu être envoyé : il est trop volumineux pour être accepté en un seul envoi (limite d'environ 1 Mo). Envoyez une version plus petite ou compressée.",
   "chat_media_too_large": "Fichier trop volumineux ({size} Mo). Limite : {limit} Mo.",
   "video_prepare_progress": "Préparation de la vidéo… {percent} %",
   "video_prepare_cancel": "Annuler la préparation de la vidéo",
