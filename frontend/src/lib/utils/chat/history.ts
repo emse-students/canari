@@ -33,6 +33,7 @@ import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { mergeReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { holdsGroupState } from './groupUsability';
+import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -159,12 +160,13 @@ function loadSeenCipherHashes(userId: string, groupId: string): Set<string> {
   return hydrated;
 }
 
-/** Persist the seen-ciphertext fingerprint set to localStorage, capped at 5 000 entries to bound storage growth. */
+/**
+ * Persist the seen-ciphertext set to localStorage. Fingerprints and row keys each keep their own cap
+ * and the number of ledgers per user is capped too ({@link ./seenLedgerBounds}), so storage cannot
+ * grow without limit and one namespace cannot evict the other.
+ */
 function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<string>): void {
-  // Keep the cache bounded to avoid unbounded localStorage growth.
-  const MAX_HASHES = 5000;
-  const arr = [...hashes];
-  const bounded = arr.length > MAX_HASHES ? arr.slice(arr.length - MAX_HASHES) : arr;
+  const bounded = boundSeenEntries(hashes);
   try {
     localStorage.setItem(seenHistoryKey(userId, groupId), JSON.stringify(bounded));
   } catch (err) {
@@ -172,6 +174,14 @@ function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<strin
       `[HISTORY] The seen-ciphertext set for ${groupId.slice(0, 8)} was not persisted ` +
         `(${bounded.length} entries) - this replay is repeated in full next time: ${String(err)}`
     );
+    return;
+  }
+  for (const evicted of noteLedgerWritten(userId, groupId)) {
+    const evictedKey = seenHistoryKey(userId, evicted);
+    localStorage.removeItem(evictedKey);
+    seenCache.delete(evictedKey);
+    pendingSeenFlush.delete(evictedKey);
+    pendingReplayMarks.delete(evictedKey);
   }
 }
 

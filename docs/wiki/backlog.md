@@ -1342,15 +1342,7 @@ archive replay's own successful pages. A console tailer cannot answer it (the ro
 target it would attach to); it needs a purpose-built reproduction that brings W1 down between a known
 send and a known decrypt.
 
-**Two growth hazards the same read surfaced:**
-
-1. **The 5 000 cap is shared by two namespaces and the wrong one is winning.** Fingerprints (*"I
-   consumed this generation"*) and message ids (*"I walked this row"*) go into one array and
-   `saveSeenCipherHashes` keeps the LAST 5 000 - on the busiest conversation 2 762 message ids crowd
-   out 2 073 fingerprints, so the first thing evicted is the mark whose loss produces the accusation.
-2. **The cap is PER GROUP and nothing bounds the number of groups** - 169 ledgers, 247 kB on W1; at
-   the cap that is several megabytes against a 5-10 MB origin quota, and the failure is silent by
-   design (a caught write error, then a full history re-walk on every boot).
+**The two growth hazards the same read surfaced are FIXED (2026-10-08):** each namespace has its own cap and the ledgers per user are bounded - numbers and reasoning in [history-reconciliation](protocols/history-reconciliation.md#the-seen-ciphertext-ledger-has-two-namespaces-and-two-bounds-2026-10-08).
 
 **And the catch-up is a TIMER - worth a row of its own.** Five cold starts took 61 863 to 62 019 ms
 to show a message sent while the browser was down, a 156 ms spread: something waits about sixty
