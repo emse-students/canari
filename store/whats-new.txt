@@ -1,7 +1,3 @@
-version: 1.1.0
+version: 1.1.1
 
-Canari s'organise par campus et par formation : l'agenda, les associations et les publications t'arrivent selon tes espaces, et tu peux t'abonner a ton agenda depuis ton application de calendrier.
-
-Cree des CanaReels avec un vrai editeur : texte, dessin et stickers. Programme tes publications : elles apparaissent a l'heure choisie.
-
-Les discussions se rangent dans le meme ordre sur tous tes appareils, les notifications et l'envoi de photos sont plus fiables, et ta page de profil est corrigee.
+Le personnel peut maintenant s'abonner a l'agenda de tout son campus, toutes formations confondues, depuis son application de calendrier.
