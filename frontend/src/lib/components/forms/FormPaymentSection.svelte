@@ -13,10 +13,10 @@
   import PriceGridEditor from '$lib/components/pricing/PriceGridEditor.svelte';
   import { emptyMatrix, priceRange, type PriceMatrix } from '$lib/pricing/priceMatrix';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
-  import { Check, CreditCard } from '@lucide/svelte';
+  import { CreditCard } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { activePaymentProvider } from '$lib/associations/activePaymentProvider.svelte';
-  import { cardPaymentCopy } from '$lib/associations/paymentProviderCopy';
+  import { onlinePaymentCopy } from '$lib/associations/paymentProviderCopy';
 
   /**
    * Everything about money: whether the form charges, how much, who pays what, and how.
@@ -43,7 +43,7 @@
     isPublic: boolean;
     /** The single price, in euros. Still the only price for a form with no grid. */
     basePrice: number;
-    /** Whether cash is accepted alongside the card. */
+    /** Whether cash is accepted alongside online payment. */
     allowCashPayment: boolean;
     /** Days before an unvalidated cash submission expires. */
     cashPaymentExpiryDays: number | undefined;
@@ -57,7 +57,7 @@
     items: FormItem[];
     /** The linked association's name; '' for a personal form. */
     associationName: string;
-    /** Whether that association has finished Stripe onboarding and can actually be paid. */
+    /** Whether that association has finished its payment setup and can actually be paid. */
     associationCanBePaid: boolean;
   }
 
@@ -84,12 +84,12 @@
   const paymentBlocker = $derived.by(() => {
     if (!requiresPayment) return null;
     if (!associationName) return 'no-association';
-    if (!associationCanBePaid) return 'no-stripe';
+    if (!associationCanBePaid) return 'not-ready';
     return null;
   });
 
-  /** The "card" row, worded for the provider that is KNOWN - nothing provider-specific otherwise. */
-  const cardCopy = $derived(cardPaymentCopy(activePaymentProvider.current));
+  /** The online-payment row, worded for the provider that is KNOWN - never a default. */
+  const onlineCopy = $derived(onlinePaymentCopy(activePaymentProvider.current));
 
   /** The cheapest and dearest cell, so the payout hint spans what the grid can actually charge. */
   const gridRange = $derived(priceRange(priceMatrix));
@@ -175,8 +175,15 @@
 
     <div class="border-cn-border space-y-3 border-t-2 pt-4">
       <p class="text-text-main text-sm font-bold">{m.form_payment_methods_heading()}</p>
+      <!-- ONE non-selectable line: online payment is Lydia ("Paiement Canari"), there is no
+           provider to choose. Unavailable (a leftover stripe, or disabled) is said, not hidden. -->
       <div
-        class="border-cn-yellow bg-cn-yellow/5 flex items-center gap-4 rounded-2xl border-2 px-4 py-3.5"
+        data-testid="online-payment-line"
+        data-state={onlineCopy.state}
+        class="flex items-center gap-4 rounded-2xl border-2 px-4 py-3.5 {onlineCopy.state ===
+        'unavailable'
+          ? 'border-amber-warn/30 bg-amber-warn/10'
+          : 'border-cn-yellow bg-cn-yellow/5'}"
       >
         <div
           class="bg-cn-yellow/20 text-cn-dark flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
@@ -184,16 +191,10 @@
           <CreditCard size={20} />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="text-text-main text-sm font-bold">{cardCopy.label}</p>
-          {#if cardCopy.description}
-            <p class="text-text-muted text-xs">{cardCopy.description}</p>
+          <p class="text-text-main text-sm font-bold">{onlineCopy.label}</p>
+          {#if onlineCopy.description}
+            <p class="text-text-muted text-xs">{onlineCopy.description}</p>
           {/if}
-        </div>
-        <div
-          class="bg-cn-yellow/30 text-cn-dark flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold"
-        >
-          <Check size={12} strokeWidth={3} />
-          {m.form_card_active_badge()}
         </div>
       </div>
 

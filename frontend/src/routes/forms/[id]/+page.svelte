@@ -818,7 +818,8 @@
       {/each}
     </div>
 
-    <!-- ── Payment method (cash vs Stripe) ── -->
+    <!-- ── Payment method (cash vs online). 'stripe' is the backend's wire value for "online"
+         (Lydia today); it is renamed with the backend Stripe removal batch. ── -->
     {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
       <div class="border-cn-border mt-4 rounded-2xl border bg-(--cn-surface) p-5">
         <p class="text-text-muted mb-3 text-xs font-bold tracking-wide uppercase">

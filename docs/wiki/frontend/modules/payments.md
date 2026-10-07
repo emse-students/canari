@@ -366,7 +366,8 @@ a failed fetch fell back to `'stripe'` too. Both are the fallback `CLAUDE.md` fo
 
 ## Provider copy and refusals are one function each (2026-10-07)
 
-`paymentProviderCopy.ts` words the form editor's card row per KNOWN provider and decides
+`paymentProviderCopy.ts` (`onlinePaymentCopy`) words the form editor's single online line per KNOWN provider (Lydia =
+"Paiement Canari", stripe/disabled = unavailable, no wallet or card-network copy) and decides
 `supportsSavedCards` (Stripe only); `paymentRefusal.ts` turns a typed `PAYMENT_PROVIDER_REFUSED`
 into the one sentence both the shop toast and a paid form's inline error show. Details in
 [forms](forms.md#four-defects-found-on-dev-v112-alpha2-2026-10-07).
