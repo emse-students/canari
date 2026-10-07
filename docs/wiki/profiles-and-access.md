@@ -1025,6 +1025,8 @@ with no audience rule is NOT "members only" for its feed. The anonymous `associa
 returning every event of such an association is therefore **intended**; the leak this closes is the
 one that remained: ANY campus or formation could be named in a URL by anyone.
 
+**Tightened 2026-10-07 (user: *"les gens d'un campus ou d'une formation ne devraient pas pouvoir faire ca"*):** a student is signed ONE space, a campus AND a formation of theirs - never a campus alone, a formation alone or "all campuses"; the selector offers no "any" once the reader has a campus. Staff keep their own campus whole. An event across campuses reaches both agendas through a co-organiser partnership (D39), not through a wider subscription. Links already saved keep working: verification never reads the reader.
+
 **As built:**
 
 - `POST /api/associations/calendar/feed-signature` (signed-in only; body `{campus?, formation?,

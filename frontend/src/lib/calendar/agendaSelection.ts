@@ -48,27 +48,26 @@ export function isAgendaSelected(selection: AgendaSelection): boolean {
 }
 
 /**
- * The campus choices - "any campus" first, then the reader's OWN campus and nothing else: the
- * server signs only a selection inside the reader's own spaces (D40, user 2026-10-06), so offering
- * another campus would offer a link it refuses.
+ * The campus choices - the reader's OWN campus and nothing else, with no "any campus" once they
+ * have one (user, 2026-10-07): an agenda is the one of a space, and an event across campuses reaches
+ * both through a co-organiser partnership (D39). A reader with no campus keeps the lone "any".
  */
 export function campusSelectOptions(reader: AgendaReader | null | undefined): PickerOption[] {
-  return [
-    { value: '', label: m.calendar_selection_any_campus() },
-    ...CAMPUSES.filter((c) => c === reader?.campus).map((c) => ({
-      value: c,
-      label: campusLabel(c),
-    })),
-  ];
+  const own = CAMPUSES.filter((c) => c === reader?.campus).map((c) => ({
+    value: c as string,
+    label: campusLabel(c),
+  }));
+  return own.length > 0 ? own : [{ value: '', label: m.calendar_selection_any_campus() }];
 }
 
-/** The formation choices - "any formation" first, then the formations of the reader's cursus. */
+/** The formation choices - the formations of the reader's cursus; staff, tied to none, get "all". */
 export function formationSelectOptions(reader: AgendaReader | null | undefined): PickerOption[] {
   const own = new Set(reader?.cursus?.map((entry) => entry.formation));
-  return [
-    { value: '', label: m.calendar_selection_any_formation() },
-    ...FORMATIONS.filter((f) => own.has(f)).map((f) => ({ value: f, label: formationLabel(f) })),
-  ];
+  const mine = FORMATIONS.filter((f) => own.has(f)).map((f) => ({
+    value: f as string,
+    label: formationLabel(f),
+  }));
+  return mine.length > 0 ? mine : [{ value: '', label: m.calendar_selection_any_formation() }];
 }
 
 /**
