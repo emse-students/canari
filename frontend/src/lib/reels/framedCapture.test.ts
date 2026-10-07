@@ -2,7 +2,7 @@
  * What is saved is what the preview showed: the crop rectangle, the saved size, the constraints asked
  * of the camera and the bitrate that follows the pixels. All pure - no camera, no canvas.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   REEL_CAPTURE_MAX_LONG_SIDE,
   REEL_RECORD_BITRATE_MAX,
@@ -11,6 +11,7 @@ import {
   draw,
   framedOutputSize,
   shouldMirrorCapture,
+  takeFramedPhoto,
   videoBitrateFor,
 } from './framedCapture';
 
@@ -177,5 +178,33 @@ describe('mirroring of the capture', () => {
     const { calls, context } = recordingContext();
     draw(context, video, crop, out, false);
     expect(calls).toEqual(['drawImage']);
+  });
+});
+
+describe('takeFramedPhoto', () => {
+  it('encodes synchronously, never through the idle-scheduled toBlob (4 s on the Android WebView)', async () => {
+    const toBlob = vi.fn();
+    const toDataURL = vi.fn(() => `data:image/jpeg;base64,${btoa('jpeg')}`);
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({
+        save: vi.fn(),
+        restore: vi.fn(),
+        translate: vi.fn(),
+        scale: vi.fn(),
+        drawImage: vi.fn(),
+      }),
+      toBlob,
+      toDataURL,
+    };
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas as unknown as HTMLElement);
+    const video = { videoWidth: 590, videoHeight: 1280 } as HTMLVideoElement;
+    const blob = await takeFramedPhoto(video, { width: 393, height: 851, dpr: 2.75, mirror: true });
+    expect(blob?.type).toBe('image/jpeg');
+    expect(blob?.size).toBe(4);
+    expect(toDataURL).toHaveBeenCalledWith('image/jpeg', 0.92);
+    expect(toBlob).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 });
