@@ -548,6 +548,12 @@ Five compose projects will share one daemon: `portail-etu`, `canari-prod`, `cana
 - **No `docker system prune` without a project filter.** The durable rule is that a destructive
   control needs an allowlist of what it may touch; on a five-estate machine an unfiltered prune is
   a weapon, and the images of four innocent projects are what it reaches.
+  `infrastructure/docker-prune/prune.py` is that filtered control: since 2026-10-06 production
+  deploys `v<version>`, so replaced images keep their tag and only a name-allowlisted removal
+  (`ghcr.io/emse-students/canari/*:v<semver>`, newest 3 kept, nothing a container references) reclaims
+  them ([README](../../../infrastructure/docker-prune/README.md#release-images---an-allowlist-by-name-and-three-guards)).
+  Measured read-only on the host 2026-10-08: `/` 88 % used (38 G of 45 G), images 12.15 GB of which
+  6.5 GB reclaimable, build cache 6.98 GB, volumes 1.43 GB; not installed yet.
 
 **`tools/ecosystem-shape/shape.mjs` is where this is asserted.** It already affirms that the four
 repositories share one CI shape, across repository boundaries, which is the same job. Extending it
