@@ -16,6 +16,9 @@ import {
   vignetteLayerHtml,
   DAY_NUM_H,
   textOutlineCss,
+  outlineWidth,
+  outlineRoomCss,
+  slotHeights,
   DEFAULT_EXPORT_OPTIONS,
   EVENT_TITLE_LINE_HEIGHT,
   daySlotLayout,
@@ -177,6 +180,33 @@ describe('splitLogoBands', () => {
 function clampLines(clampCss: string): number {
   return Number(clampCss.split('-webkit-line-clamp:')[1].split(';')[0]);
 }
+
+describe('outline room and slot heights', () => {
+  it('gives every title outline room for the outer half of its stroke, cancelled by a margin', () => {
+    for (const size of [9, 10, 12, 13]) {
+      const room = Math.ceil(outlineWidth(size) / 2);
+      expect(outlineRoomCss(size)).toBe(`padding:${room}px;margin:-${room}px;`);
+      expect(room * 2).toBeGreaterThanOrEqual(outlineWidth(size));
+    }
+  });
+
+  it('puts the room on the rendered title, next to its clamp', () => {
+    const html = buildPreviewInnerHtml([makeEvent({ title: 'Titre' })], 2026, 4);
+    expect(html).toContain(`${outlineRoomCss(13)}display:-webkit-box`);
+  });
+
+  it('sums the slot heights EXACTLY to the cell, whatever the slot count', () => {
+    for (let cellH = 100; cellH < 140; cellH++) {
+      for (let n = 1; n <= 5; n++) {
+        const h = slotHeights(cellH, n);
+        expect(h).toHaveLength(n);
+        expect(h.reduce((a, b) => a + b, 0)).toBe(cellH);
+        expect(h.every(Number.isInteger)).toBe(true);
+        expect(Math.max(...h) - Math.min(...h)).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+});
 
 describe('fitEventText', () => {
   it('keeps the sheet on its own 9px floor', () => {

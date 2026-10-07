@@ -109,6 +109,36 @@ function blockShadowCss(fontSize: number, color: string): string {
 /** Every event title and the day number sharing its tile are WHITE, whatever the tile's colour. */
 export const EVENT_TEXT_FILL = '#ffffff';
 
+/** Stroke width in px for text of `fontSize` px: the one number the outline and its room share. */
+export function outlineWidth(fontSize: number): number {
+  return Math.max(2, Math.round(fontSize * 0.2 * 10) / 10);
+}
+
+/**
+ * Room for the outline's OUTER half, which paints outside the glyph box.
+ *
+ * `paint-order:stroke fill` leaves `width / 2` of the stroke beyond the glyph on every side, and a
+ * line-clamped title is `overflow:hidden`, which clips at its padding box - so the outline was cut
+ * at the left and right edges (user, 2026-10-07). The padding is computed FROM the stroke and
+ * cancelled by an equal negative margin, so the box the text wraps in is exactly what it was and
+ * nothing around it moves.
+ */
+export function outlineRoomCss(fontSize: number): string {
+  const room = Math.ceil(outlineWidth(fontSize) / 2);
+  return `padding:${room}px;margin:-${room}px;`;
+}
+
+/**
+ * Integer slot heights that SUM EXACTLY to `cellH`. A flat `floor(cellH / n)` left up to `n - 1`
+ * px of the cell unpainted, which showed as a grey sliver at the bottom of a day; the remainder
+ * is handed out one pixel at a time to the last slots instead.
+ */
+export function slotHeights(cellH: number, nSlots: number): number[] {
+  const base = Math.floor(cellH / nSlots);
+  const extra = cellH - base * nSlots;
+  return Array.from({ length: nSlots }, (_, i) => base + (i >= nSlots - extra ? 1 : 0));
+}
+
 /**
  * The dark outline that gives that white its contrast, for text of `fontSize` px.
  *
@@ -119,7 +149,7 @@ export const EVENT_TEXT_FILL = '#ffffff';
  * the width follows the size, like the block shadow, so a 9px title is not drowned in a 3px halo.
  */
 export function textOutlineCss(fontSize: number): string {
-  const width = Math.max(2, Math.round(fontSize * 0.2 * 10) / 10);
+  const width = outlineWidth(fontSize);
   return `color:${EVENT_TEXT_FILL};-webkit-text-stroke:${width}px #111111;paint-order:stroke fill;stroke-linejoin:round;`;
 }
 
@@ -626,7 +656,9 @@ function buildCalendarHtml(
         visible.map((ev) => dayOccupancy(ev, square)),
         overflowCount
       );
-      const slotH = Math.floor(CELL_H / layout.nSlots);
+      const heights = slotHeights(CELL_H, layout.nSlots);
+      // Rows are emitted in order and each takes the next height, so the slots sum to the cell.
+      let slotPos = 0;
       const loneSlot =
         visible.length === 1 && overflowCount === 0 && layout.nSlots === 2
           ? layout.slotOf[0]
@@ -634,7 +666,7 @@ function buildCalendarHtml(
       // An empty half, carrying the day number when it is the FIRST slot - the number belongs to
       // slot 0, and slot 0 no longer always holds an event.
       const blankHalf = (withDayNumber: boolean) =>
-        `<div style="height:${slotH}px;position:relative;box-sizing:border-box;">${
+        `<div style="height:${heights[slotPos++]}px;position:relative;box-sizing:border-box;">${
           withDayNumber
             ? `<div style="padding:6px 0 0 8px;"><span data-pdf-text style="font-size:${DAY_NUM_SIZE}px;font-weight:800;color:${emptyDayColor};line-height:1;">${day}</span></div>`
             : ''
@@ -643,6 +675,7 @@ function buildCalendarHtml(
       const rows = [
         ...(loneSlot === 1 ? [blankHalf(true)] : []),
         ...visible.map((ev, idx) => {
+          const slotH = heights[slotPos++];
           const evBg = eventBgCss(ev);
 
           // Resolve logos (primary + co-owners): data URL map for the export, absolutized URL for
@@ -693,13 +726,13 @@ function buildCalendarHtml(
           return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sep}display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px;box-sizing:border-box;">
               ${watermark}
               ${dayNumber}
-              <span style="font-size:${fit.fontSize}px;font-weight:800;line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${textOutlineCss(fit.fontSize)}${fit.clampCss}">${emojiHtml(ev.title)}</span>
+              <span style="font-size:${fit.fontSize}px;font-weight:800;line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${textOutlineCss(fit.fontSize)}${outlineRoomCss(fit.fontSize)}${fit.clampCss}">${emojiHtml(ev.title)}</span>
             </div>`;
         }),
         ...(loneSlot === 0 ? [blankHalf(false)] : []),
         ...(overflowCount > 0
           ? [
-              `<div style="height:${slotH}px;background:${hexToRgba(darken(opts.cellBg, 0.16), Math.min(100, opts.cellBgOpacity + 20))};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span data-pdf-text style="font-size:10px;font-weight:800;color:${emptyDayColor};">${safe(m.calendar_export_more_events({ count: overflowCount }))}</span></div>`,
+              `<div style="height:${heights[slotPos++]}px;background:${hexToRgba(darken(opts.cellBg, 0.16), Math.min(100, opts.cellBgOpacity + 20))};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span data-pdf-text style="font-size:10px;font-weight:800;color:${emptyDayColor};">${safe(m.calendar_export_more_events({ count: overflowCount }))}</span></div>`,
             ]
           : []),
       ];
@@ -841,7 +874,7 @@ export async function exportCalendarMonth(
       orientation: 'landscape',
       naturalWidth: 1080,
       naturalHeight: CALENDAR_CONTAINER_HEIGHT,
-      rasterScale: 2,
+      rasterScale: 3,
       backgroundColor: sheetBaseColor(opts),
       // Every face the sheet actually draws with. A face missing here is rasterised in whatever the
       // browser had ready, and the vector re-draw then lands on top of a different shape.
