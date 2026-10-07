@@ -1,4 +1,4 @@
-import { readerSpaces, type SpacePair } from './reader-spaces';
+import { campusWideReaderCampus, readerSpaces, type SpacePair } from './reader-spaces';
 
 /** Every pair the migration seeds (D4 x D6). */
 const SPACES: SpacePair[] = (['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const).flatMap(
@@ -37,5 +37,19 @@ describe('readerSpaces', () => {
     ['a formation no space carries', { campus: 'saint-etienne', cursus: [{ formation: 'CMP' }] }],
   ])('is empty with %s', (_label, user) => {
     expect(readerSpaces(user, SPACES)).toEqual([]);
+  });
+});
+
+describe('campusWideReaderCampus', () => {
+  it('is the campus of a reader with a campus and an empty cursus (EMSE staff)', () => {
+    expect(campusWideReaderCampus({ campus: 'saint-etienne', cursus: [] })).toBe('saint-etienne');
+    expect(campusWideReaderCampus({ campus: 'gardanne', cursus: null })).toBe('gardanne');
+  });
+  it('is null for a student, for no campus, and for a malformed cursus', () => {
+    expect(
+      campusWideReaderCampus({ campus: 'gardanne', cursus: [{ formation: 'ICM', promo: 2021 }] })
+    ).toBeNull();
+    expect(campusWideReaderCampus({ campus: null, cursus: [] })).toBeNull();
+    expect(campusWideReaderCampus({ campus: 'gardanne', cursus: 'ICM' })).toBeNull();
   });
 });

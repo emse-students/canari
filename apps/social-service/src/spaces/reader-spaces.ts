@@ -51,6 +51,18 @@ export function readerSpaces(user: ReaderProfile, spaces: readonly SpacePair[]):
   return spaces.filter((s) => s.campus === user.campus && formations.has(s.formation));
 }
 
+/**
+ * The campus whose agenda a reader tied to NO formation may follow whole (user, 2026-10-07: EMSE
+ * staff have a campus and an empty cursus, so they have no space, yet the agenda is theirs too).
+ * `null` for anyone else: no campus, or a cursus with at least one entry (a student keeps the
+ * own-spaces rule, whether or not a space exists for that entry).
+ */
+export function campusWideReaderCampus(user: ReaderProfile): string | null {
+  if (!user.campus) return null;
+  if (user.cursus === null || user.cursus === undefined) return user.campus;
+  return Array.isArray(user.cursus) && user.cursus.length === 0 ? user.campus : null;
+}
+
 // ── SQL ─────────────────────────────────────────────────────────────────────────────────────────
 // Every helper takes the SQL ALIASES it is spliced against (a `users` row, a `spaces` row, a rule
 // row) and uses its own inner aliases, each distinct, so nesting never shadows a name.
@@ -252,6 +264,9 @@ export async function readInFeedAudience(
 /** The spaces of user `$1`, as pairs - the SQL twin of `readerSpaces`, which the test compares. */
 export const READER_SPACES_SQL = `SELECT s.formation, s.campus FROM spaces s JOIN users u ON u.id = $1
   WHERE ${isReaderSpaceSql('s', 'u')} ORDER BY s.campus, s.formation`;
+
+/** The two profile facts of user `$1`, for `campusWideReaderCampus` (asked for a reader with no space). */
+export const READER_PROFILE_SQL = `SELECT campus, cursus FROM users WHERE id = $1`;
 
 /**
  * Who is told about post `$1`: everyone who can SEE it, minus its author. The scheduler narrows a

@@ -6,6 +6,7 @@ import {
   campusSelectOptions,
   formationSelectOptions,
   hasAgendaSpace,
+  isCampusWideReader,
 } from './agendaSelection';
 import { aggregatedCalendarFeedIcsPath } from '$lib/associations/api';
 
@@ -56,6 +57,18 @@ describe('options - ONLY the reader own spaces (user, 2026-10-06)', () => {
     ).toEqual(['', 'ICM', 'ISMIN']);
   });
 
+  it('offers staff their own campus and "any formation" only, starting on the campus whole', () => {
+    const staff = { campus: 'saint-etienne' as const, cursus: [] };
+    expect(campusSelectOptions(staff).map((o) => o.value)).toEqual(['', 'saint-etienne']);
+    expect(formationSelectOptions(staff).map((o) => o.value)).toEqual(['']);
+    expect(defaultAgendaSelection(staff)).toEqual({ campus: 'saint-etienne', formation: '' });
+    expect(isAgendaSelected(defaultAgendaSelection(staff))).toBe(true);
+    expect(isCampusWideReader(staff)).toBe(true);
+    expect(
+      isCampusWideReader({ campus: 'gardanne', cursus: [{ formation: 'ICM', promo: 1 }] })
+    ).toBe(false);
+  });
+
   it('offers nothing but "any" to a reader with no space, or before the profile loads', () => {
     expect(campusSelectOptions(null).map((o) => o.value)).toEqual(['']);
     expect(formationSelectOptions(null).map((o) => o.value)).toEqual(['']);
@@ -66,7 +79,12 @@ describe('options - ONLY the reader own spaces (user, 2026-10-06)', () => {
 
   it('says whether the reader has a space at all: both a campus and a known formation', () => {
     expect(hasAgendaSpace({ ...reader, cursus: [...reader.cursus] })).toBe(true);
-    expect(hasAgendaSpace({ campus: 'gardanne', cursus: [] })).toBe(false);
+    expect(hasAgendaSpace({ campus: 'gardanne', cursus: [] })).toBe(true); // staff: campus whole
+    expect(
+      hasAgendaSpace({ campus: 'gardanne', cursus: [{ formation: 'X' as never, promo: 1 }] })
+    ).toBe(false);
+    expect(hasAgendaSpace({ campus: null, cursus: [] })).toBe(false);
+    expect(hasAgendaSpace({ campus: null, cursus: null })).toBe(false);
     expect(hasAgendaSpace({ campus: null, cursus: [{ formation: 'ICM', promo: 2021 }] })).toBe(
       false
     );

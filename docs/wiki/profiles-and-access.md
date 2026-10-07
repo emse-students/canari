@@ -1033,7 +1033,7 @@ one that remained: ANY campus or formation could be named in a URL by anyone.
   It signs a campus the reader's spaces contain, a formation their spaces contain, or a pair that is
   one of their spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`); anything else is a 403
   `AGENDA_SELECTION_FORBIDDEN`, an empty body a 400 `AGENDA_SELECTION_REQUIRED`. An association
-  needs only to exist. **A reader with a campus but no cursus has no space and is signed nothing.**
+  needs only to exist. **A reader with a campus but a cursus with no entry (EMSE staff, 11 prod accounts on 2026-10-07; user decision the same day) has no space, yet is signed `campus=<own campus>` with no formation - and nothing else** (another campus, any formation: 403). A reader with a cursus keeps own-spaces exactly; a reader with no campus is signed nothing. The canonical string is unchanged (`v1|campus=saint-etienne|formation=-|association=-`), so the URL stays stateless. The feed of a campus-only selection is what it always was: every event whose organiser's (or accepted co-organiser's) rules reach ANY space of that campus, i.e. every formation of it plus the campus-wide and EMSE-wide audiences (`eventReachesSpaceMatchingSql`, a null formation = any). `campusWideReaderCampus` (`reader-spaces.ts`) is the one predicate, asked only when the reader has no space.
 - `feed.ics` and the ANONYMOUS JSON `feed` take `&sig=`. A `campus` / `formation` /
   `associationId` selection without it is a **403 `AGENDA_SIGNATURE_REQUIRED`**; with a signature made
   for another selection (another campus, a widened or narrowed one, an association) or a tampered one,
@@ -1062,7 +1062,7 @@ one that remained: ANY campus or formation could be named in a URL by anyone.
   (`campusSelectOptions(reader)`, `formationSelectOptions(reader)`) in the subscribe modal and the PDF
   export; `createFeedSigner` (`calendar/signedFeedUrl.svelte.ts`) asks for the signature while the
   modal is open and the URL carries it; the modal states that links saved before 2026-10-06 stopped
-  working. A reader with no space is told to complete their profile.
+  working. A staff reader (campus, empty cursus: `isCampusWideReader`) sees their campus and "all formations"; the "complete your profile" text stays for a reader with neither a campus nor a cursus.
 - **Known cost:** an anonymous visitor on an association's PUBLIC page cannot obtain a subscription
   link - signing needs a session. A calendar subscription needs an account.
 - **Proof:** controller and signature specs (other campus, tampered, unsigned, `eventId` unsigned,

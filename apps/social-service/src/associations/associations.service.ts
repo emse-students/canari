@@ -76,7 +76,9 @@ import {
   eventReachesSpaceMatchingSql,
   associationVisibleToViewerSql,
   eventVisibleToViewerSql,
+  READER_PROFILE_SQL,
   READER_SPACES_SQL,
+  campusWideReaderCampus,
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
@@ -1817,7 +1819,8 @@ export class AssociationsService {
    * Signs the agenda selection a signed-in reader asks to subscribe to (D40 amended 2026-10-06).
    * Only selections inside the reader's OWN spaces are signed - their campus, their formations, a
    * pair of both (`READER_SPACES_SQL`, the twin of `readerSpaces`); an association needs no
-   * membership, only to exist. The returned `sig` goes into the feed URL unchanged.
+   * membership, only to exist. A reader with a campus and NO cursus (EMSE staff) is signed their
+   * own campus alone, no formation = every formation of it (user, 2026-10-07). The returned `sig` goes into the feed URL unchanged.
    */
   async signAgendaFeedSelection(
     userId: string,
@@ -1826,7 +1829,17 @@ export class AssociationsService {
   ): Promise<{ sig: string }> {
     if (associationId) await this.findById(associationId);
     const spaces = (await this.assoRepo.manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
-    if (!selectionWithinSpaces(selection, spaces)) {
+    // A reader tied to no formation (EMSE staff) has no space: they may follow their own campus
+    // whole (user, 2026-10-07). Only asked when there is no space, so a student never reaches it.
+    let campusWide: string | null = null;
+    if (spaces.length === 0) {
+      const rows = (await this.assoRepo.manager.query(READER_PROFILE_SQL, [userId])) as Array<{
+        campus: string | null;
+        cursus: unknown;
+      }>;
+      campusWide = rows[0] ? campusWideReaderCampus(rows[0]) : null;
+    }
+    if (!selectionWithinSpaces(selection, spaces, campusWide)) {
       this.logger.warn(
         `[AGENDA_SIG] refused to sign campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
       );

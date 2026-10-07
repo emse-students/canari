@@ -3335,7 +3335,7 @@
   "calendar_selection_any_campus": "Tous les campus",
   "calendar_selection_any_formation": "Toutes les formations",
   "calendar_selection_required": "Choisissez un campus et/ou une formation pour continuer.",
-  "calendar_selection_no_space": "Renseignez votre campus et votre cursus dans votre profil pour vous abonner à l'agenda de votre campus et de votre formation.",
+  "calendar_selection_no_space": "Renseignez votre campus (et votre cursus si vous êtes étudiant) dans votre profil pour vous abonner à l'agenda de votre campus.",
   "calendar_subscribe_old_links_notice": "Les liens d'abonnement enregistrés avant le 6 octobre 2026 ne fonctionnent plus : abonnez-vous à nouveau avec le lien ci-dessous.",
   "calendar_subscribe_signing": "Préparation du lien...",
   "calendar_subscribe_sign_failed": "Impossible de créer le lien : vous ne pouvez vous abonner qu'à l'agenda de votre campus, de vos formations ou d'une association, une fois connecté.",

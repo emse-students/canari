@@ -71,8 +71,20 @@ export function formationSelectOptions(reader: AgendaReader | null | undefined):
   ];
 }
 
-/** Whether the reader has an own space to choose from at all: no campus or no known formation is none. */
+/**
+ * A reader with a campus and NO cursus entry - EMSE staff - is tied to no formation: they may
+ * follow their OWN campus whole ("all formations"), the one thing the server signs for them (D40,
+ * user 2026-10-07). A cursus with entries, even unknown ones, is a student and keeps own-spaces.
+ */
+export function isCampusWideReader(reader: AgendaReader | null | undefined): boolean {
+  return CAMPUSES.some((c) => c === reader?.campus) && (reader?.cursus?.length ?? 0) === 0;
+}
+
+/**
+ * Whether the reader has anything to subscribe to: an own space (a campus and a known formation),
+ * or, for staff, their campus whole. Neither campus nor cursus - or a campus-less student - is none.
+ */
 export function hasAgendaSpace(reader: AgendaReader | null | undefined): boolean {
   const own = defaultAgendaSelection(reader);
-  return own.campus !== '' && own.formation !== '';
+  return (own.campus !== '' && own.formation !== '') || isCampusWideReader(reader);
 }
