@@ -1,19 +1,37 @@
 import { describe, expect, it } from 'vitest';
-import { cardPaymentCopy, supportsSavedCards } from './paymentProviderCopy';
+import { onlinePaymentCopy, supportsSavedCards } from './paymentProviderCopy';
 import { m } from '$lib/paraglide/messages';
 
-describe('cardPaymentCopy', () => {
-  it('speaks Stripe wallets only for Stripe', () => {
-    expect(cardPaymentCopy('stripe').label).toBe(m.form_card_payment_label());
-    expect(cardPaymentCopy('lydia').label).not.toBe(m.form_card_payment_label());
-    expect(cardPaymentCopy('lydia').description).not.toBe(m.form_card_payment_desc());
+describe('onlinePaymentCopy', () => {
+  it('names Paiement Canari and the Lydia page for Lydia', () => {
+    const copy = onlinePaymentCopy('lydia');
+    expect(copy.state).toBe('available');
+    expect(copy.label).toBe(m.form_online_payment_label());
+    expect(copy.description).toBe(m.form_online_payment_desc());
   });
 
-  it('says nothing provider-specific while the provider is unknown or disabled', () => {
-    for (const provider of [null, 'disabled'] as const) {
-      const copy = cardPaymentCopy(provider);
-      expect(copy.description).toBeNull();
-      expect(copy.label).not.toBe(m.form_card_payment_label());
+  it('says online payment is unavailable for a leftover stripe or a disabled provider', () => {
+    for (const provider of ['stripe', 'disabled'] as const) {
+      const copy = onlinePaymentCopy(provider);
+      expect(copy.state).toBe('unavailable');
+      expect(copy.label).toBe(m.form_online_payment_unavailable_label());
+      expect(copy.description).toBe(m.form_online_payment_unavailable_desc());
+    }
+  });
+
+  it('claims nothing while the provider is unknown', () => {
+    const copy = onlinePaymentCopy(null);
+    expect(copy.state).toBe('unknown');
+    expect(copy.description).toBeNull();
+    expect(copy.label).not.toBe(m.form_online_payment_label());
+  });
+
+  it('never speaks wallets or card networks in any state', () => {
+    for (const provider of ['lydia', 'stripe', 'disabled', null] as const) {
+      const copy = onlinePaymentCopy(provider);
+      expect(`${copy.label} ${copy.description ?? ''}`).not.toMatch(
+        /stripe|visa|mastercard|amex|wallet|apple pay|google pay/i
+      );
     }
   });
 });

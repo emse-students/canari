@@ -4,29 +4,38 @@ import type { PaymentProviderId } from '$lib/associations/api';
 /**
  * WHAT A SCREEN MAY SAY ABOUT HOW A PAYMENT IS TAKEN, BY THE PROVIDER THAT IS KNOWN.
  *
- * The form editor used to print Stripe's wallet sentence under every estate, so a Lydia platform
- * promised Apple Pay and a saved card it cannot offer. A provider's name or capability is spoken
- * only for that provider; `null` (not loaded yet, or the load failed) and `disabled` get the
- * neutral line and NO description - never a default, which is how Stripe copy reached Lydia.
+ * Canari has two payment ways: Lydia, shown to members as "Paiement Canari", and cash (user,
+ * 2026-10-07). Stripe is leaving the product, so there is no Stripe wording and no provider
+ * choice: the form editor shows ONE non-selectable online line. When the platform's active provider
+ * is anything but Lydia (a leftover `stripe` on some estate, or `disabled`) the line says
+ * explicitly that online payment is unavailable - never a default. While the provider is still
+ * unknown (loading, or the load failed) the line is neutral and carries no description.
  */
-export interface CardPaymentCopy {
+export interface OnlinePaymentCopy {
+  /** `available` only for Lydia; `unavailable` for stripe/disabled; `unknown` for null. */
+  state: 'available' | 'unavailable' | 'unknown';
   label: string;
-  /** `null` when nothing true can be said about the methods without knowing the provider. */
+  /** `null` when nothing true can be said without knowing the provider. */
   description: string | null;
 }
 
-/** The "card" row of a paid form's payment methods. Call at render time (Paraglide). */
-export function cardPaymentCopy(provider: PaymentProviderId | null): CardPaymentCopy {
-  if (provider === 'stripe') {
-    return { label: m.form_card_payment_label(), description: m.form_card_payment_desc() };
-  }
+/** The online-payment row of a paid form's payment methods. Call at render time (Paraglide). */
+export function onlinePaymentCopy(provider: PaymentProviderId | null): OnlinePaymentCopy {
   if (provider === 'lydia') {
     return {
-      label: m.form_card_payment_label_lydia(),
-      description: m.form_card_payment_desc_lydia(),
+      state: 'available',
+      label: m.form_online_payment_label(),
+      description: m.form_online_payment_desc(),
     };
   }
-  return { label: m.form_card_payment_label_generic(), description: null };
+  if (provider === null) {
+    return { state: 'unknown', label: m.form_online_payment_unknown_label(), description: null };
+  }
+  return {
+    state: 'unavailable',
+    label: m.form_online_payment_unavailable_label(),
+    description: m.form_online_payment_unavailable_desc(),
+  };
 }
 
 /**

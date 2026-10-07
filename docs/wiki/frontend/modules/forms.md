@@ -765,7 +765,9 @@ Found while scoping it, so it is not re-derived (the paid half itself waits for 
 - **A paid form's refusal reason** now carries the same "Le prestataire de paiement a refuse ce
   paiement" sentence as the shop toast: `submitForm` throws a `SocialApiError` (typed `code`), and
   `providerRefusalMessage` (`lib/associations/paymentRefusal.ts`) words it for both surfaces.
-- **Stripe copy on a Lydia estate.** `lib/associations/paymentProviderCopy.ts`: the card row and
-  the "save a card" link are provider-specific; an unknown provider gets a neutral line and no
-  description, and saved cards are offered for Stripe only (Lydia has none, see
-  [payments](payments.md)).
+- **No Stripe copy anywhere in the form UI (2026-10-07, user: only Lydia "Paiement Canari" and
+  cash).** `lib/associations/paymentProviderCopy.ts` `onlinePaymentCopy`: the form editor shows ONE
+  non-selectable online line ("Paiement Canari", paid on Lydia's secure page) and the cash toggle.
+  A leftover `stripe` or `disabled` provider shows an explicit "unavailable" line, an unknown one a
+  neutral line without description - never a default. Saved cards stay Stripe-only via
+  `supportsSavedCards` until the backend batch (see [payments](payments.md)).

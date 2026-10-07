@@ -62,6 +62,12 @@ cause is still unread. The dashboard (Security > Events, filter on status 413) n
 (`apps/core-service`), or keep only an archived note of what they did; the dependency PR for Stripe 23
 (#1495) is ignored meanwhile. Done when no Stripe package, secret or route remains, or the archive says so.
 
+Already removed from the UI (forms PR, 2026-10-07): the form builder's selectable card with Stripe
+wallet/Visa/Mastercard/Amex copy and its "Active" badge, `cardPaymentCopy`, the `form_card_*`
+Paraglide keys; the builder now shows one "Paiement Canari" line and the member form says
+"Paiement Canari" instead of "Carte / wallet". Still to do: the saved-card flow
+(`supportsSavedCards`), the `stripe` wire value of `paymentMethod`, and everything backend.
+
 ### Open question - may EMSE/ME staff (no cursus) read the association posts of their campus?
 
 User, 2026-10-07: staff have no cursus by definition, and see no association post today; the agenda
