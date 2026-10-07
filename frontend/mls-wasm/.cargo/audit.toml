@@ -4,20 +4,6 @@
 
 [advisories]
 ignore = [
-  # quick-xml, both resolved versions, wants >=0.41.0: quadratic attribute checking, and unbounded
-  # namespace allocation. Both are compiled, and neither is ours to move - 0.39.4 arrives through
-  # plist <- tauri, 0.37.5 through tauri-winrt-notification <- notify-rust <-
-  # tauri-plugin-notification. Lifted by tauri and notify-rust bumping past 0.41.
-  "RUSTSEC-2026-0194",
-  "RUSTSEC-2026-0195",
-  # rkyv 0.7.46, wants >=0.8.17: out-of-bounds read validating archives holding Rc/Arc. NOT BUILT -
-  # it hangs off an optional feature of rust_decimal that nothing enables, so it exists only in the
-  # lockfile. Lifted by rust_decimal moving to rkyv 0.8.
-  "RUSTSEC-2026-0235",
-  # rsa 0.9.10, Marvin attack. NOT BUILT here either: it is an optional dependency of sqlx-mysql,
-  # and this app opens SQLite only, so the MySQL driver is never enabled. Unlike the two services,
-  # whose argument is that no RSA key is ever constructed, here the code is not even compiled in.
-  "RUSTSEC-2023-0071",
   # libcrux-kem 0.0.9, wants >=0.0.10: a panic in the HYBRID KEM (encapsulation from a short seed,
   # decoding a short hybrid key). Both advisories were issued 2026-10-07. NOT REACHABLE: it is compiled
   # because hpke-rs-libcrux needs it, but the MLS cipher suite is MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519
