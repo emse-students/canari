@@ -1532,7 +1532,7 @@ network for the notification's face. The id comes from `Avatar.svelte`, which ho
 the URL. The file name is spelt twice, Kotlin and Rust, and `avatarMirror.test.ts` holds the two
 together. **The clock**: the mirror's mtime is the moment of the write, so the native 24 h now
 measures "since the app last drew this face" - a contact seen daily never ages out, and a changed
-photo can be up to two days stale in the shade (the browser's 24 h `max-age`, then the native one).
+photo can be up to two days stale in the shade (the browser's 24 h `max-age` until 2026-10-08, now only the native one).
 No ETag is carried: a cross-origin `fetch` cannot read it without an `Access-Control-Expose-Headers`
 nobody sends, and the reader would need the network to compare it. **The bytes go as a plain array
 (`{ userId, data }`, the shape `save_mls_state` takes), never a raw invoke body**: the first version

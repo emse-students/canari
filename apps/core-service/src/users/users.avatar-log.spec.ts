@@ -1,5 +1,5 @@
 import { BadRequestException, Logger } from '@nestjs/common';
-import { UsersController } from './users.controller';
+import { UsersController, etagMatches } from './users.controller';
 import type { AvatarOutcome, AvatarService } from './avatar.service';
 import type { UsersService } from './users.service';
 import type { UserBlocksService } from './user-blocks.service';
@@ -25,7 +25,7 @@ describe('GET /users/:id/avatar logging', () => {
     warn.mockRestore();
   });
 
-  async function run(fetchUserAvatar: () => Promise<AvatarOutcome>) {
+  async function run(fetchUserAvatar: () => Promise<AvatarOutcome>, ifNoneMatch?: string) {
     const controller = new UsersController(
       {} as UsersService,
       { fetchUserAvatar } as unknown as AvatarService,
@@ -35,7 +35,11 @@ describe('GET /users/:id/avatar logging', () => {
     );
     const res = { set: jest.fn(), status: jest.fn(), end: jest.fn(), send: jest.fn() };
     res.status.mockReturnValue(res);
-    await controller.getAvatar(ID, res as never);
+    await controller.getAvatar(
+      ID,
+      { headers: ifNoneMatch ? { 'if-none-match': ifNoneMatch } : {} } as never,
+      res as never
+    );
     return res;
   }
 
@@ -46,6 +50,50 @@ describe('GET /users/:id/avatar logging', () => {
       /^\[AVATAR\] outcome=served status=200 ms=\d+ target=abcdef01$/
     );
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  /** The headers the browser, Cloudflare and the browser cache actually receive. */
+  function headersOf(res: { set: jest.Mock }): Record<string, unknown> {
+    return Object.assign({}, ...res.set.mock.calls.map((c) => c[0]));
+  }
+  const IMAGE = {
+    kind: 'image',
+    body: Buffer.from([1, 2]),
+    contentType: 'image/png',
+    etag: '"asset-1"',
+  } as const;
+
+  it('image: no-cache + the upstream ETag, never a max-age', async () => {
+    const res = await run(async () => IMAGE);
+    const h = headersOf(res);
+    expect(h['Cache-Control']).toBe('public, no-cache');
+    expect(String(h['Cache-Control'])).not.toMatch(/max-age/);
+    expect(h['ETag']).toBe('"asset-1"');
+    expect(res.send).toHaveBeenCalledWith(IMAGE.body);
+  });
+
+  it('image: a matching If-None-Match is a bodyless 304 that keeps the validator', async () => {
+    const res = await run(async () => IMAGE, '"other", W/"asset-1"');
+    expect(res.status).toHaveBeenCalledWith(304);
+    expect(res.send).not.toHaveBeenCalled();
+    expect(headersOf(res)['ETag']).toBe('"asset-1"');
+    expect(headersOf(res)['Cache-Control']).toBe('public, no-cache');
+    expect(String(info.mock.calls[0][0])).toContain('outcome=not-modified status=304');
+  });
+
+  it('image: a stale If-None-Match gets the full 200', async () => {
+    const res = await run(async () => IMAGE, '"asset-0"');
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.send).toHaveBeenCalledWith(IMAGE.body);
+  });
+
+  it('etagMatches: weak comparison, lists and *', () => {
+    expect(etagMatches(undefined, '"a"')).toBe(false);
+    expect(etagMatches('"a"', 'W/"a"')).toBe(true);
+    expect(etagMatches('W/"a"', '"a"')).toBe(true);
+    expect(etagMatches('"b", "a"', '"a"')).toBe(true);
+    expect(etagMatches('*', '"a"')).toBe(true);
+    expect(etagMatches('"b"', '"a"')).toBe(false);
   });
 
   it('absent: info, 404', async () => {
