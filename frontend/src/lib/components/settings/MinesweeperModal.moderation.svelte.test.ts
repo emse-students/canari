@@ -88,7 +88,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Opens the modal on its leaderboard tab and lets the lists load. */
+/** Opens the modal, presses the floating leaderboard button and lets the lists load. */
 async function openLeaderboard() {
   const app = mount(MinesweeperModal, {
     target: document.body,
@@ -97,10 +97,10 @@ async function openLeaderboard() {
   mounted.push(() => unmount(app, { outro: false }));
   flushSync();
   await tick();
-  const tab = [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
-    (t) => t.getAttribute('aria-selected') === 'false'
+  const opener = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+    (b) => b.textContent?.trim() === 'Classement'
   );
-  tab!.click();
+  opener!.click();
   for (let i = 0; i < 5; i++) {
     await Promise.resolve();
     flushSync();
