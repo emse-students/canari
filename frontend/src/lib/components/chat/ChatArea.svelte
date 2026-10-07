@@ -827,8 +827,13 @@
 
   // An edit belongs to ONE conversation: the composer's text is cleared on a switch, and the draft
   // saved by the session belonged to the conversation that was left.
+  // The id goes through a $derived on purpose: an effect reading `conversation?.id` depends on the
+  // `conversation` OBJECT, which the parent replaces on every incoming message (same id, new
+  // object) - that re-ran the reset and dropped the banner. A derived is compared by value, so
+  // the effect below fires only when the id really changes.
+  const conversationId = $derived(conversation?.id ?? null);
   $effect(() => {
-    void conversation?.id;
+    void conversationId;
     untrack(() => editSession.reset());
   });
 
