@@ -73,8 +73,8 @@ export function assertAgendaSignature(sel: SignedSelection, sig: string | undefi
 }
 
 /**
- * May a reader whose spaces are `spaces` be handed a signature for `sel`? Campus alone: their
- * campus. Formation alone: one of their formations. Both: one of their spaces. An association adds
+ * May a reader whose spaces are `spaces` be handed a signature for `sel`? Only one of
+ * their spaces, a campus AND a formation (user, 2026-10-07). An association adds
  * no condition of its own - membership does not matter (user, 2026-10-06) and its page is public;
  * the caller checks that it exists.
  *
@@ -91,9 +91,8 @@ export function selectionWithinSpaces(
   if (campusWide !== null && spaces.length === 0) {
     return sel.formation === null && sel.campus === campusWide;
   }
-  return spaces.some(
-    (s) =>
-      (sel.campus === null || s.campus === sel.campus) &&
-      (sel.formation === null || s.formation === sel.formation)
-  );
+  // A student follows ONE space, a campus AND a formation of theirs (user, 2026-10-07); a wider
+  // selection is refused - an event across campuses arrives by co-organiser partnership (D39).
+  if (sel.campus === null || sel.formation === null) return false;
+  return spaces.some((s) => s.campus === sel.campus && s.formation === sel.formation);
 }

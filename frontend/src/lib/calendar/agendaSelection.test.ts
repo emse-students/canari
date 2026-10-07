@@ -48,18 +48,18 @@ describe('options - ONLY the reader own spaces (user, 2026-10-06)', () => {
     ],
   } as const;
 
-  it('offers "any" first, then the own campus and the own formations only', () => {
+  it('offers the own campus and the own formations only, never "any"', () => {
     expect(
       campusSelectOptions({ ...reader, cursus: [...reader.cursus] }).map((o) => o.value)
-    ).toEqual(['', 'gardanne']);
+    ).toEqual(['gardanne']);
     expect(
       formationSelectOptions({ ...reader, cursus: [...reader.cursus] }).map((o) => o.value)
-    ).toEqual(['', 'ICM', 'ISMIN']);
+    ).toEqual(['ICM', 'ISMIN']);
   });
 
   it('offers staff their own campus and "any formation" only, starting on the campus whole', () => {
     const staff = { campus: 'saint-etienne' as const, cursus: [] };
-    expect(campusSelectOptions(staff).map((o) => o.value)).toEqual(['', 'saint-etienne']);
+    expect(campusSelectOptions(staff).map((o) => o.value)).toEqual(['saint-etienne']);
     expect(formationSelectOptions(staff).map((o) => o.value)).toEqual(['']);
     expect(defaultAgendaSelection(staff)).toEqual({ campus: 'saint-etienne', formation: '' });
     expect(isAgendaSelected(defaultAgendaSelection(staff))).toBe(true);
