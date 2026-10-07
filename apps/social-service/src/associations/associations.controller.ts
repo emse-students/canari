@@ -556,7 +556,7 @@ export class AssociationsController {
         throw new ForbiddenException('Global admin or BDE MANAGE_ASSO permission required');
       }
     }
-    return this.service.create(dto, userId);
+    return this.service.create(dto, userId, isGlobalAdmin);
   }
 
   /**

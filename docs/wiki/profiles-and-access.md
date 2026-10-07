@@ -1118,7 +1118,18 @@ WHERE a.type IN ('association', 'list')
 GROUP BY a.type;
 ```
 
-Open: a BDE star CREATING an association gets its profile campus as default even when that is not a campus it governs (it could then not edit it); bind creation by a non-admin to the governed campuses if that case exists.
+Closed by WP-B (2026-10-08): `AssociationsService.create` refuses a NON-admin creator `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` when the default campus is not one `BDE_GOVERNED_CAMPUSES_SQL` returns for them, inside the transaction (the row rolls back; `assertCreatorCampusGoverned` in `audience-policy.ts`). A global admin is unchanged and runs no governed-campus query. Cases in `associations.service.create-default-audience.spec.ts`.
+
+### Audiences client presets as built (WP-B, 2026-10-08)
+
+Client half of the seven decisions. Files: `lib/associations/audiencePresets.ts` (pure: `offeredPresets`, `presetToRules`, `readPreset`), `audienceRefusal.ts` (the five codes), `components/associations/edit/EditAudienceTab.svelte`, `components/profile/ProfileCampusPrompt.svelte`.
+
+- **Three presets, and `everyone` only for an institution.** Decision 1 lists three presets but also says `everyone` is for institutions, so an association or a list is offered TWO (`campus`, `formations`) and an institution THREE. `presetToRules` maps them to `(null, campus)`, `(formation, campus)` per ticked formation, and `(null, null)`; a half-filled choice yields NO rule, never a wider one. The server stays the rule (`AUDIENCE_EVERYONE_INSTITUTION_ONLY`).
+- **Where.** An "Audience" tab on the association edit page, for a global admin, or a BDE star of THIS association (`me/bde-reach`) when it is not an institution. A member of the association alone does not see it: the server refuses them (`AUDIENCE_ADMIN_OR_BDE_REQUIRED`), so offering it would be a button that can only fail. The global admin keeps the campus picker and a link to the `/admin/spaces` grid.
+- **A star cannot READ the current audience.** `GET /api/associations/:id/audiences` is still global-admin only, so the editor opens with no preset ticked for a star and says that saving replaces what is in force. A global admin reads it (`listAllAudiences`) and sees a custom (grid-edited) audience reported as custom. Opening the read to a star is a decision left to the user.
+- **Typed refusals.** `audienceRefusalCode` reads `SocialApiError.code` (set by `request()` from the body), never the message; each of the five codes has a Paraglide sentence (`audience_err_*`).
+- **No campus: the profile prompt** (decision 5). `AssociationCreatePage` reads the own profile on mount and, for an association or a list with no valid campus, shows `ProfileCampusPrompt` instead of the form; a stale profile that the server still refuses (`AUDIENCE_CREATOR_CAMPUS_REQUIRED`) lands on the same prompt. The campus is MiConnect's and only an admin edits it, so "complete the profile" is the EXISTING correction request (`ProfileCorrectionRequest`) plus the link to `/profile`.
+- Tests: `audiencePresets.test.ts`, `audienceRefusal.test.ts`; server `associations.service.create-default-audience.spec.ts`.
 
 ### FEED_GATE - a 403 is a verdict, not a failure (2026-10-06)
 
