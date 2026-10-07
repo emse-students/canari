@@ -1,6 +1,7 @@
 import { isTauri } from '@tauri-apps/api/core';
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { publicAppUrl } from '$lib/utils/publicAppUrl';
+import { appDeepLink } from '$lib/mobile/appSiteAssociation';
 
 /**
  * True on Tauri Android / iOS - Stripe Checkout must return via app deep link.
@@ -18,7 +19,7 @@ export function isMobileTauri(): boolean {
 
 function stripeDeepLink(path: 'success' | 'cancel', query: string): string {
   const q = query ? (query.startsWith('?') ? query : `?${query}`) : '';
-  return `fr.emse.canari://stripe/${path}${q}`;
+  return appDeepLink(`stripe/${path}${q}`);
 }
 
 function webUrl(path: string): string {

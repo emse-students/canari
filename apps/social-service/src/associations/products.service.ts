@@ -30,6 +30,7 @@ import {
 } from './payment-delegation.util';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { coreUrl } from '../internal/service-urls';
+import { internalCoreRequestConfig } from '../internal/core-request';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
 import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
 import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
@@ -923,7 +924,7 @@ export class ProductsService {
         this.httpService.post<{ customerId: string | null }>(
           coreUrl('payments/internal/customer-id'),
           { userId },
-          { maxRedirects: 0 }
+          internalCoreRequestConfig()
         )
       );
       customerId = resp.data.customerId ?? undefined;
@@ -970,7 +971,7 @@ export class ProductsService {
           idempotencyKey,
           payerEmail,
         },
-        { maxRedirects: 0 }
+        internalCoreRequestConfig()
       )
     );
 

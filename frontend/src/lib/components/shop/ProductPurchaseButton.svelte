@@ -22,7 +22,6 @@
     customAmountEuros?: number;
     /** Override the default action label (Cotiser / Recharger / Acheter). */
     label?: string;
-    variant?: 'accent' | 'yellow';
     class?: string;
     disabled?: boolean;
   }
@@ -31,7 +30,6 @@
     product,
     customAmountEuros,
     label,
-    variant = 'accent',
     class: className = '',
     disabled = false,
   }: Props = $props();
@@ -144,9 +142,7 @@
   type="button"
   onclick={handlePurchase}
   disabled={isDisabled}
-  class="{variant === 'yellow'
-    ? 'bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover'
-    : 'bg-cn-accent text-white hover:opacity-90'} inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-opacity disabled:cursor-not-allowed disabled:opacity-50 {className}"
+  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-opacity disabled:cursor-not-allowed disabled:opacity-50 {className}"
 >
   {#if checkingOut}
     <span

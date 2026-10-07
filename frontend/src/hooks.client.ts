@@ -19,6 +19,7 @@ import { openClaimedAppLink } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
 import { fetchInputUrl, shouldUseNativeFetch } from '$lib/utils/fetchRouting';
+import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones.
@@ -147,7 +148,7 @@ if (isTauriRuntime()) {
             // fr.emse.canari://open?url=<public Canari URL> (`$lib/mobile/openInApp`). Opened only
             // if it is a CLAIMED Canari page, exactly as the Universal Link would have been - anyone
             // can write this URL, so it must not reach anything a Universal Link cannot.
-            if (u.protocol === 'fr.emse.canari:' && u.host === 'open') {
+            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'open') {
               const target = u.searchParams.get('url') ?? '';
               if (!openClaimedAppLink(target)) {
                 console.warn('[hooks] open link names no claimed Canari page, ignoring:', target);
@@ -157,7 +158,7 @@ if (isTauriRuntime()) {
 
             // Chat conversation deep link: fr.emse.canari://chat/{groupId}
             // A community channel target (`channel_<uuid>`) opens under /communities, not /chat.
-            if (u.protocol === 'fr.emse.canari:' && u.host === 'chat') {
+            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'chat') {
               const groupId = u.pathname.replace(/^\//, '');
               // WP-XP-5: the user answered an incoming call from a system surface (Android
               // CallStyle notification / iOS CallKit). Record the intent; CallService
@@ -222,7 +223,7 @@ if (isTauriRuntime()) {
             }
 
             // Stripe Checkout return: fr.emse.canari://stripe/success|cancel?…
-            if (u.protocol === 'fr.emse.canari:' && u.host === 'stripe') {
+            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'stripe') {
               const path = u.pathname.replace(/\/$/, '') || '/';
               const sessionId = u.searchParams.get('session_id');
               const submissionId = u.searchParams.get('submission_id');
@@ -276,7 +277,7 @@ if (isTauriRuntime()) {
             }
 
             // Only handle OIDC callback scheme
-            if (u.protocol !== 'fr.emse.canari:' || u.host !== 'callback') {
+            if (u.protocol !== MOBILE_APP_PROTOCOL || u.host !== 'callback') {
               console.log('[hooks] URL is not our deep link, ignoring');
               continue;
             }

@@ -14,6 +14,7 @@ import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/us
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
+import { OIDC_MOBILE_REDIRECT_URI } from '$lib/mobile/appSiteAssociation';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { customTabsCommand } from '$lib/services/customTabsCommands';
@@ -239,7 +240,7 @@ function oidcRedirectUri(): string {
   // redirects back to the app via the OS URL handler (Android intent-filter /
   // iOS CFBundleURLTypes) rather than navigating the main WebView away.
   if (isMobileTauriRuntime()) {
-    return 'fr.emse.canari://callback';
+    return OIDC_MOBILE_REDIRECT_URI;
   }
   return `${window.location.origin}/auth/callback`;
 }

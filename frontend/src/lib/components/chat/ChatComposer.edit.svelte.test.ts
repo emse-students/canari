@@ -7,7 +7,7 @@
  * text (`messageText`) is the edit - the parent loaded it and keeps the draft it replaced.
  */
 import { describe, it, expect, afterAll, afterEach, vi } from 'vitest';
-import { flushSync, mount, unmount } from 'svelte';
+import { flushSync, mount, tick, unmount } from 'svelte';
 import ChatComposer from './ChatComposer.svelte';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
@@ -73,6 +73,25 @@ const key = (name: string) => {
 };
 
 describe('ChatComposer - editing a message', () => {
+  it('focuses the field with the caret at the END of the loaded text', async () => {
+    const { props } = mountComposer({ messageText: '', editingText: null });
+    props.messageText = 'bonjour a tous';
+    props.editingText = 'bonjour a tous';
+    flushSync();
+    await tick();
+    await tick();
+    expect(document.activeElement).toBe(editor());
+    const sel = window.getSelection()!;
+    expect(sel.rangeCount).toBe(1);
+    const range = sel.getRangeAt(0);
+    expect(range.collapsed).toBe(true);
+    // The caret sits after the last character: nothing of the text lies beyond it.
+    const tail = document.createRange();
+    tail.selectNodeContents(editor());
+    tail.setStart(range.endContainer, range.endOffset);
+    expect(tail.toString()).toBe('');
+  });
+
   it('names the message being edited in a banner, with a way out', () => {
     mountComposer({ editingText: 'bonjour a tous' });
     expect(document.body.textContent).toContain(m.chat_editing_message_label());

@@ -598,7 +598,6 @@
                 <ProductPurchaseButton
                   {product}
                   customAmountEuros={shopCustomAmounts[product.id]}
-                  variant="yellow"
                   disabled={gridRefuses(product)}
                   class="w-full"
                 />
