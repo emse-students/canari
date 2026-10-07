@@ -100,7 +100,7 @@
         cy="50"
         r="45"
         fill="none"
-        class="stroke-red-500"
+        class="stroke-cn-yellow"
         stroke-width="6"
         stroke-linecap="round"
         stroke-dasharray={CIRCUMFERENCE}
@@ -111,7 +111,7 @@
     </svg>
     <span
       class="absolute inset-3 rounded-full transition-all duration-150 {recording
-        ? 'inset-6 rounded-lg bg-red-500'
+        ? 'bg-cn-yellow inset-6 rounded-lg'
         : 'bg-white'}"
     ></span>
   </button>

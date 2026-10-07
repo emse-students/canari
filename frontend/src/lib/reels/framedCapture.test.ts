@@ -8,7 +8,9 @@ import {
   REEL_RECORD_BITRATE_MAX,
   cameraVideoConstraints,
   coverCropRect,
+  draw,
   framedOutputSize,
+  shouldMirrorCapture,
   videoBitrateFor,
 } from './framedCapture';
 
@@ -141,5 +143,39 @@ describe('videoBitrateFor', () => {
     const small = videoBitrateFor({ width: 360, height: 640 });
     expect(small).toBeLessThan(REEL_RECORD_BITRATE_MAX);
     expect(small).toBe(Math.round(360 * 640 * 30 * 0.15));
+  });
+});
+
+describe('mirroring of the capture', () => {
+  it('mirrors exactly the lens whose preview is mirrored', () => {
+    expect(shouldMirrorCapture('user')).toBe(true);
+    expect(shouldMirrorCapture('environment')).toBe(false);
+  });
+
+  function recordingContext() {
+    const calls: string[] = [];
+    const context = {
+      save: () => calls.push('save'),
+      restore: () => calls.push('restore'),
+      translate: (x: number, y: number) => calls.push(`translate ${x} ${y}`),
+      scale: (x: number, y: number) => calls.push(`scale ${x} ${y}`),
+      drawImage: () => calls.push('drawImage'),
+    } as unknown as CanvasRenderingContext2D;
+    return { calls, context };
+  }
+  const crop = { sx: 0, sy: 0, sw: 720, sh: 1280 };
+  const out = { width: 360, height: 640 };
+  const video = {} as HTMLVideoElement;
+
+  it('flips horizontally around the frame width, draws, then undoes the flip', () => {
+    const { calls, context } = recordingContext();
+    draw(context, video, crop, out, true);
+    expect(calls).toEqual(['save', 'translate 360 0', 'scale -1 1', 'drawImage', 'restore']);
+  });
+
+  it('draws the rear lens untouched', () => {
+    const { calls, context } = recordingContext();
+    draw(context, video, crop, out, false);
+    expect(calls).toEqual(['drawImage']);
   });
 });

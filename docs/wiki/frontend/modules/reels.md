@@ -179,11 +179,18 @@ OWED, see below):
   aspect, capped at `REEL_CAPTURE_MAX_LONG_SIDE` (1280, what the upload is prepared to), plus 30 fps;
   the saved size never exceeds the screen, the cap or the crop (`framedOutputSize`), and the bitrate
   follows the pixels (`videoBitrateFor`).
-- **Mirroring.** The front preview is mirrored by a CSS transform; a canvas read of the decoded
-  frame ignores it, so the saved photo and take are NOT mirrored - Instagram's convention, so text in
-  frame reads right. The rear lens is never mirrored. The code never flipped a saved frame; if a
-  device still shows a flip, it is the review comparing an un-mirrored take with a mirrored preview,
-  or a platform fact to read on that device - not a transform to find here.
+- **Mirroring - REVERSED 2026-10-07.** The front preview is mirrored by a CSS transform; a canvas
+  read of the decoded frame ignores it, so the photo and take used to be saved NOT mirrored
+  (Instagram's convention). The user then reported the photo as "inverted": it was exactly that, the
+  review showing left and right swapped against the preview a second earlier. The capture now
+  REPRODUCES THE PREVIEW: `draw` flips the front lens horizontally (`shouldMirrorCapture`, carried in
+  `PreviewBox.mirror`), the rear lens never. Applies to photo and take alike, so the review always
+  matches the viewfinder (Snapchat's convention; text on a shirt reads mirrored, as in the
+  viewfinder). Nothing is rotated: the frame arrives upright and a canvas read applies no EXIF.
+- **The ring is a function of the capture state** (`shutterRingFraction`): empty unless recording or
+  finishing. It used to read an elapsed clock that only a new take zeroed, so a take dismissed by
+  Back or discarded from its review left the ring where it stopped (2026-10-07); the clock is also
+  zeroed on abandon and on return to `ready`. Its colour is `cn-yellow` (the app's yellow), not red.
 - **Not changed, and a lead if the lag remains:** Android still prefers VP9 WebM in
   `reelRecorderMimeCandidates`, a SOFTWARE encoder on the Mi 9T; H.264 MP4 (hardware) first is the
   next candidate, to be measured, not guessed.

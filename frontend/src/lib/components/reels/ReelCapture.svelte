@@ -23,7 +23,7 @@
     captureReducer,
     classifyLimitsFault,
     formatTakeTime,
-    ringFraction,
+    shutterRingFraction,
     SHUTTER_HOLD_THRESHOLD_MS,
     type CaptureEvent,
     type CaptureState,
@@ -121,6 +121,7 @@
       holdTakeEntry();
     }
     if (after.kind === 'ready') {
+      elapsedMs = 0;
       publishOpen = false;
       releaseTakeEntry();
     }
@@ -274,6 +275,7 @@
 
   function abandonRecording() {
     stopClock();
+    elapsedMs = 0;
     recorder?.abort();
     recorder = null;
     stopFraming();
@@ -316,7 +318,9 @@
   });
 
   const recording = $derived(capture.kind === 'recording' || capture.kind === 'finishing');
-  const fraction = $derived(limits ? ringFraction(elapsedMs, limits.maxDurationMs) : 0);
+  const fraction = $derived(
+    limits ? shutterRingFraction(capture, elapsedMs, limits.maxDurationMs) : 0
+  );
 </script>
 
 <div class="relative h-full w-full">

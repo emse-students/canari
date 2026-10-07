@@ -10,6 +10,7 @@ import {
   formatTakeTime,
   pickReelRecorderMime,
   ringFraction,
+  shutterRingFraction,
   type CaptureState,
   type ReelClip,
 } from './reelCapture';
@@ -123,5 +124,18 @@ describe('classifyLimitsFault', () => {
     expect(classifyLimitsFault(500)).toBe('refused');
     expect(classifyLimitsFault(400)).toBe('refused');
     expect(classifyLimitsFault(404)).toBe('refused');
+  });
+});
+
+describe('shutterRingFraction', () => {
+  it('follows the take while it records and while it finishes', () => {
+    expect(shutterRingFraction({ kind: 'recording', pressedAt: 0 }, 45_000, 90_000)).toBe(0.5);
+    expect(shutterRingFraction({ kind: 'finishing' }, 90_000, 90_000)).toBe(1);
+  });
+
+  it('is EMPTY in every other state, whatever the clock still holds (a cancelled take)', () => {
+    for (const state of [ready, pressing, { kind: 'photo' }, { kind: 'review', clip }] as const) {
+      expect(shutterRingFraction(state, 60_000, 90_000)).toBe(0);
+    }
   });
 });

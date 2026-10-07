@@ -124,6 +124,19 @@ export function ringFraction(elapsedMs: number, maxMs: number): number {
 }
 
 /**
+ * What the ring shows: the take's progress while one is being recorded or finished, and EMPTY in every
+ * other state. The elapsed clock is only advanced by a running take, so a take that ended in a way
+ * that never zeroed it (dismissed by Back, discarded after its review, a failed start) left the ring
+ * where it stopped (user, 2026-10-07: the ring did not reset after a cancelled recording). The ring
+ * is a function of the capture STATE, so no exit path can forget to reset it.
+ */
+export function shutterRingFraction(state: CaptureState, elapsedMs: number, maxMs: number): number {
+  return state.kind === 'recording' || state.kind === 'finishing'
+    ? ringFraction(elapsedMs, maxMs)
+    : 0;
+}
+
+/**
  * Why the reel limits could not be read, which decides what the capture screen says.
  *
  * - `unreachable`: no status, so nobody answered (the network, or the server is down).
