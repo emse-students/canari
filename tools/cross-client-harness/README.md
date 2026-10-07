@@ -53,6 +53,12 @@ every CDP `Input.*` frame as a WDA touch or key (`webkit-input.mjs`) - the WebKi
 `Input` domain. Which rows run on it, and what each still needs, is
 [cross-client-ios](../../docs/wiki/cross-client-ios.md).
 
+**Two I1 traps (2026-10-02).** `pymobiledevice3` must be reachable - set `PYMOBILEDEVICE3` to the
+executable; `attached()` throws without it rather than reporting no phone. And starting WDA brings
+its runner to the foreground, so Canari goes to the background and relocks on the PIN screen: every
+WDA session starts there, and a tap on "Deverrouiller" can land on a logout control when the
+keyboard shifts the layout - screenshot before each tap.
+
 One driver (`cdp.mjs`) speaks to all three - the WebView is a Chrome target like any other. `a1.py`
 is only for surfaces the WebView cannot reach (the notification shade, the system PIN, the launcher).
 
@@ -683,6 +689,21 @@ next one's symptom names the wrong cause.
   `--no-build` installs what is already on disk; `--reverse` alone is what a replug costs. It is a
   MODULE too (`armA1`), so a phase that arms the phone calls it instead of shelling out.
 
+  **`adb reverse --remove` DOES NOT CUT AN OPEN WEBSOCKET, so it cannot simulate a stream gap**
+  (LIFE-6 measured it on 2026-09-07, the Mi 9T pass's D5 met it again on 2026-10-06): it closes the
+  listener and the socket the app already holds keeps delivering. A gap is made by `restartGateway()`
+  in `estate.mjs` - `docker restart canari-local-chat-gateway-1`, which worked for D1 - and it throws
+  on any estate but the local one.
+
+- **Hand-made throwaway groups use `bun newgroup.mjs --sandbox <TAG>`**, which mints `SBX<TAG>-<mark>`,
+  a shape `debris.mjs` allowlists. A group made with `--name` (`ORD7496`, `ORE0185` on 2026-10-06) is a
+  person's name and is deliberately never swept: no runner mints it, and a three-letters-four-digits
+  pattern is one a person types. The allowlist was not widened; `debris-selftest.mjs` pins both names
+  as SPARED.
+- **`closeOverlays` closes the "Ajouter des membres" modal by its backdrop's own control**
+  (`MODAL_CLOSE` in `groupnav.mjs`), pinned against `Modal.svelte` by `selector-selftest.mjs`, and
+  `grp.mjs`'s `addPeer` throws, naming the reason, when the picker returns no candidate.
+
   **Two flags exist for check R and for nothing else.** `--release` builds the MINIFIED,
   resource-shrunk variant - the only one in which a stripped class or resource can surface - and
   installing it **costs the device**: it is signed with another key, so the tool uninstalls the
@@ -803,6 +824,13 @@ is the part that needs no account and would have caught THIS one. `EXIT 2` means
 find the asset, which is **not** a pass - "I could not look" and "it is clean" are different answers
 and the script keeps them apart.
 
+**IT IS A GATE SINCE 2026-10-06.** `serve-dev.yml` runs it against the dev estate BEFORE it moves the
+`dev-deployed` marker, and the stable's fourth preflight gate reads that marker - so a refused wasm
+cannot reach production. With an explicit origin it needs no `names.mjs` (git-ignored, so absent in
+CI); the landing page is fetched under its own query so the edge's 60 s shell cache cannot answer for
+the previous build. `archive/deployed-wasm-selftest.mjs` drives the real script against a loopback
+estate for the three exit codes.
+
 **Its sibling guards the build**: `frontend/scripts/check-wasm-no-unsupported.mjs`, wired into
 `bun run wasm:build`. Both are needed - a build can be fixed while an estate still serves the old
 image, which is exactly the state production was in for the twenty minutes after the fix was merged.
@@ -856,6 +884,8 @@ Two environment traps worth repeating here, because they read as application bug
   broadcast until a manual launch, so any push-dependent check must use a swipe from recents or
   `am kill` - and `am kill` will not reclaim a foreground process, so go HOME first and assert the
   death.
+
+The browser report attributes every console line to the ORIGIN that emitted it (`consoleorigin.mjs`: execution-context origin, then the top stack frame, then a non-network log entry's url; a network entry's url names the resource and is never an emitter). Lines from a foreign origin (the identity provider's console during `login.mjs`) are removed from `unexplained` and REPORTED as `foreignOrigins`, a count per origin, mirroring the phone report's `foreign` bucket; an unattributable line is never forgiven (#1277).\n
 
 ## Standing constraints
 

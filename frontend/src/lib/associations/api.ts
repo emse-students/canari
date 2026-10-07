@@ -11,6 +11,7 @@ import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
+import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 
 /**
  * Permission flags for association members (mirrors the backend enum).
@@ -166,7 +167,7 @@ export interface Association {
   /** Primary thematic category (managed table). Null when uncategorized. Used by the "Carte de la Vie Asso" poster. */
   categoryId?: string | null;
   /** Discriminates a regular association from a promo list. */
-  type: 'association' | 'list';
+  type: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year the list belongs to. */
   promo?: number | null;
   /** Lists only: optional parent association (e.g. the owning BDE). */
@@ -198,8 +199,8 @@ export interface CreateAssociationPayload {
   bioMarkdown?: string;
   logoUrl?: string;
   contactEmail?: string;
-  /** 'association' (default) or 'list'. */
-  type?: 'association' | 'list';
+  /** 'association' (default), 'list' or 'institution' (global admins only, WP6e). */
+  type?: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year. */
   promo?: number;
   /** Lists only: optional parent association. */
@@ -215,8 +216,6 @@ export interface UpdateAssociationPayload {
   description?: string | null;
   bioMarkdown?: string | null;
   logoUrl?: string;
-  /** Global admin only - marks this association as the BDE. */
-  isBDE?: boolean;
   /** Global admin only - sets the document vault quota in bytes. */
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
@@ -263,6 +262,16 @@ export interface CalendarEventCoOwner {
   logoUrl: string | null;
 }
 
+/** Where a co-organiser stands (D39). Only `accepted` ones are on `coOwners` and on the agenda. */
+export type CoOrganiserStatus = 'accepted' | 'pending' | 'refused';
+
+/** One co-organiser of an event with its state, from `GET .../events/:eventId/co-organisers`. */
+export interface CalendarEventCoOrganiserState extends CalendarEventCoOwner {
+  status: CoOrganiserStatus;
+  /** The proposal behind the state (null only for a row with none). */
+  proposalId: string | null;
+}
+
 export interface AssociationCalendarEvent {
   id: string;
   associationId: string;
@@ -285,7 +294,7 @@ export interface AssociationCalendarEvent {
   linkedFormId: string | null;
   /** Poster/banner image URL (public, served via media-service). */
   imageUrl: string | null;
-  /** Other associations co-managing this event. */
+  /** The ACCEPTED co-organisers (D39); one asked and not yet answering is not here. */
   coOwners: CalendarEventCoOwner[];
 }
 
@@ -313,7 +322,7 @@ export interface CreateAssociationCalendarEventPayload {
   linkedFormId?: string;
   /** BDE / global admin only: create on behalf of another association. */
   targetAssocId?: string;
-  /** IDs of associations co-managing this event (max 10). */
+  /** Associations ASKED to co-organise this event (D39, max 10): each decides. */
   coOwnerIds?: string[];
 }
 
@@ -325,7 +334,12 @@ export interface UpdateAssociationCalendarEventPayload {
   /** `event` or `break` (a full-day background band). */
   kind?: AssociationCalendarEventKind;
   linkedFormId?: string | null;
-  /** Replaces the full co-owner list. Omit to leave unchanged. */
+  /**
+   * The co-organisers the form now names, accepted and pending included (D39): a new one is asked,
+   * a pending one left out is withdrawn, an accepted one left out is ended. Omit to leave unchanged
+   * - and omitted it MUST be when the current states could not be read, or a pending one the form
+   * never knew about would be withdrawn.
+   */
   coOwnerIds?: string[];
 }
 
@@ -449,16 +463,62 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
  * is, called by every write below that can change what this returns. The TTL is the floor under a
  * change made somewhere this client cannot see (another member's browser, a moderator), which is
  * the only case it has to cover.
+ *
+ * PER READER SINCE D37: the directory scope depends on WHO asks (their spaces, their memberships),
+ * so a list held across a sign-in would show the previous account's directory.
  */
-const associationDirectory = new SharedCache<Association[]>(5 * 60_000);
+const associationDirectory = new SharedCache<Association[]>(5 * 60_000, { perReader: true });
 
-const directoryKey = (type?: 'association' | 'list') => type ?? 'all';
+/** What the server lists (D37): the reader's directory, or the whole catalogue. */
+type DirectoryScope = 'directory' | 'all';
 
-export async function listAssociations(type?: 'association' | 'list'): Promise<Association[]> {
-  return associationDirectory.load(directoryKey(type), () => {
-    const qs = type ? `?type=${type}` : '';
-    return request<Association[]>(`/api/associations${qs}`);
+/** The association map's filter: associations whose rules reach a space matching it. */
+export interface AssociationDirectoryFilter {
+  campus?: Campus;
+  formation?: Formation;
+}
+
+const directoryKey = (
+  scope: DirectoryScope,
+  type?: 'association' | 'list' | 'institution',
+  filter: AssociationDirectoryFilter = {}
+) => `${scope}|${type ?? 'all'}|${filter.campus ?? '*'}|${filter.formation ?? '*'}`;
+
+function loadDirectory(
+  scope: DirectoryScope,
+  type?: 'association' | 'list' | 'institution',
+  filter: AssociationDirectoryFilter = {}
+): Promise<Association[]> {
+  return associationDirectory.load(directoryKey(scope, type, filter), () => {
+    const qs = new URLSearchParams({ scope });
+    if (type) qs.set('type', type);
+    if (filter.campus) qs.set('campus', filter.campus);
+    if (filter.formation) qs.set('formation', filter.formation);
+    return request<Association[]>(`/api/associations?${qs.toString()}`);
   });
+}
+
+/**
+ * THE WHOLE CATALOGUE, for every screen that PICKS an association rather than browsing them - a
+ * co-organiser, a list's parent, a delegation, a past role, the shop's names, the admin pages. It
+ * asks `scope=all` by name: the server's default is the reader's directory (D37).
+ */
+export async function listAssociations(
+  type?: 'association' | 'list' | 'institution'
+): Promise<Association[]> {
+  return loadDirectory('all', type);
+}
+
+/**
+ * THE READER'S DIRECTORY (D37): the associations whose audience reaches one of the reader's spaces,
+ * plus the ones they belong to. Only the two directory pages (`/associations`, `/lists`) read it -
+ * a hidden association is not listed there, and its page stays reachable by its link.
+ */
+export async function listAssociationDirectory(
+  type?: 'association' | 'list' | 'institution',
+  filter: AssociationDirectoryFilter = {}
+): Promise<Association[]> {
+  return loadDirectory('directory', type, filter);
 }
 
 /**
@@ -510,6 +570,9 @@ export async function listAggregatedCalendarFeed(opts: {
   from: string;
   to: string;
   associationId?: string;
+  /** D40: keep the events a space of this campus / formation reaches. */
+  campus?: Campus | null;
+  formation?: Formation | null;
   /** Opt-in: includes pending events (honoured only for proposers/BDE/admin). Never passed for the PDF export. */
   includePending?: boolean;
 }): Promise<AssociationCalendarFeedEvent[]> {
@@ -517,8 +580,34 @@ export async function listAggregatedCalendarFeed(opts: {
   q.set('from', opts.from);
   q.set('to', opts.to);
   if (opts.associationId?.trim()) q.set('associationId', opts.associationId.trim());
+  if (opts.campus) q.set('campus', opts.campus);
+  if (opts.formation) q.set('formation', opts.formation);
   if (opts.includePending) q.set('includePending', 'true');
   return request<AssociationCalendarFeedEvent[]>(`/api/associations/calendar/feed?${q.toString()}`);
+}
+
+/** The selection a subscription URL is signed for: a side left empty is "any". */
+export interface AgendaFeedSelection {
+  campus?: Campus | '' | null;
+  formation?: Formation | '' | null;
+  associationId?: string;
+}
+
+/**
+ * Asks the server to SIGN a feed selection (D40 amended 2026-10-06): it answers only for the
+ * reader's OWN campus, formations and pairs of them (403 `AGENDA_SELECTION_FORBIDDEN` otherwise), or
+ * for an association, and the `sig` it returns goes into the `.ics` URL unchanged. Needs a session.
+ */
+export async function signAgendaFeed(selection: AgendaFeedSelection): Promise<string> {
+  const body: Record<string, string> = {};
+  if (selection.campus) body.campus = selection.campus;
+  if (selection.formation) body.formation = selection.formation;
+  if (selection.associationId?.trim()) body.associationId = selection.associationId.trim();
+  const res = await request<{ sig: string }>('/api/associations/calendar/feed-signature', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  return res.sig;
 }
 
 /**
@@ -541,12 +630,20 @@ export function aggregatedCalendarFeedIcsPath(opts: {
   associationId?: string;
   /** Narrows the feed to this one event - the link that adds a single evening to a calendar. */
   eventId?: string;
+  /** D40: the public feed is one per selection; the server REFUSES a bare one. */
+  campus?: Campus | null;
+  formation?: Formation | null;
+  /** The server's signature of that selection (`signAgendaFeed`); a selection feed is refused without it. */
+  sig?: string;
 }): string {
   const q = new URLSearchParams();
   q.set('from', opts.from);
   q.set('to', opts.to);
   if (opts.associationId?.trim()) q.set('associationId', opts.associationId.trim());
+  if (opts.campus) q.set('campus', opts.campus);
+  if (opts.formation) q.set('formation', opts.formation);
   if (opts.eventId?.trim()) q.set('eventId', opts.eventId.trim());
+  if (opts.sig?.trim()) q.set('sig', opts.sig.trim());
   return `/api/associations/calendar/feed.ics?${q.toString()}`;
 }
 
@@ -558,6 +655,9 @@ export function aggregatedCalendarFeedIcsAbsoluteUrl(opts: {
   to: string;
   associationId?: string;
   eventId?: string;
+  campus?: Campus | null;
+  formation?: Formation | null;
+  sig?: string;
 }): string {
   const path = aggregatedCalendarFeedIcsPath(opts);
   const base = socialUrl();
@@ -586,6 +686,20 @@ export async function updateAssociationCalendarEvent(
   return request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}`,
     { method: 'PATCH', body: JSON.stringify(payload) }
+  );
+}
+
+/**
+ * Every co-organiser of an event with its state (D39): `accepted` co-organises (rights and reach),
+ * `pending` was asked and has not answered, `refused` said no and is not asked again. For the
+ * event's editors only (the same right as editing it through `associationId`).
+ */
+export async function listEventCoOrganisers(
+  associationId: string,
+  eventId: string
+): Promise<CalendarEventCoOrganiserState[]> {
+  return request<CalendarEventCoOrganiserState[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/co-organisers`
   );
 }
 
@@ -658,11 +772,23 @@ export async function deleteCalendarEventImage(
   );
 }
 
+/** A row of the pending queue: the event, and whether THIS caller may decide it. */
+export interface PendingCalendarEvent extends AssociationCalendarFeedEvent {
+  /**
+   * Computed by the server per event: a global admin, or VALIDATE_EVENTS in the BDE of a space the
+   * event's association reaches (WP6c step 2). The validate and reject buttons follow it alone.
+   */
+  canValidate: boolean;
+}
+
 /** Response shape for the pending-events queue. */
 export interface PendingCalendarEventsResponse {
-  /** True when the caller has VALIDATE_EVENTS in a BDE association, or is global admin. */
+  /**
+   * True when the caller validates SOMETHING - a global admin, or VALIDATE_EVENTS in the BDE of at
+   * least one space. It opens the queue; which rows it may decide is each event's `canValidate`.
+   */
   canValidate: boolean;
-  events: AssociationCalendarFeedEvent[];
+  events: PendingCalendarEvent[];
 }
 
 /** Pending events the caller may see, plus a flag indicating whether they can validate them. */
@@ -732,6 +858,9 @@ export async function getPostLinkedToCalendarEvent(eventId: string): Promise<{
  */
 const myMemberships = new SharedCache<Association[]>(5 * 60_000, { perReader: true });
 
+/** The caller's BDE reach (`getMyBdeReach`), cleared WITH the memberships: they move together. */
+const myBdeReach = new SharedCache<BdeReach>(5 * 60_000, { perReader: true });
+
 export async function listMyAssociations(): Promise<Association[]> {
   return myMemberships.load('me', () => request<Association[]>('/api/associations/me/list'));
 }
@@ -744,7 +873,33 @@ export async function listMyAssociations(): Promise<Association[]> {
  */
 export function invalidateMyAssociations(): void {
   myMemberships.invalidate();
+  myBdeReach.invalidate();
   myAssociationsProbe = null;
+}
+
+/**
+ * The associations whose BDE grants the caller each SCOPED power (WP6c step 2), as the server's
+ * own predicate computes them: `validateEvents` (validate, edit, deposit on, declare a break for)
+ * and `manageAsso` (administer as a super-admin). A BDE governs the associations reaching its
+ * space, never all of them, so "is a BDE somewhere" (`holdsBdeFlag`) cannot draw a control on ONE
+ * association. A global admin holds every power and is not in these lists - callers OR that tier.
+ */
+export interface BdeReach {
+  validateEvents: string[];
+  manageAsso: string[];
+}
+
+/**
+ * The caller's BDE reach, cached per reader. A failure is an EMPTY reach, logged: it hides the
+ * per-association BDE controls, which the server would have refused anyway, and the log says why.
+ */
+export async function getMyBdeReach(): Promise<BdeReach> {
+  try {
+    return await myBdeReach.load('me', () => request<BdeReach>('/api/associations/me/bde-reach'));
+  } catch (err) {
+    console.error('[associations] BDE reach probe failed, every scoped BDE control hidden', err);
+    return { validateEvents: [], manageAsso: [] };
+  }
 }
 
 /** Session cache for the membership probe; deduplicates concurrent callers. */
@@ -1866,7 +2021,8 @@ export async function createProductCheckout(
   associationId: string,
   productId: string,
   customAmountCents?: number,
-  callbacks?: { successUrl?: string; cancelUrl?: string }
+  callbacks?: { successUrl?: string; cancelUrl?: string },
+  payerEmail?: string
 ): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
   return request<{ checkoutUrl: string; amountCents: number; currency: string }>(
     `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/checkout`,
@@ -1876,6 +2032,7 @@ export async function createProductCheckout(
         ...(customAmountCents !== undefined ? { customAmountCents } : {}),
         ...(callbacks?.successUrl ? { successUrl: callbacks.successUrl } : {}),
         ...(callbacks?.cancelUrl ? { cancelUrl: callbacks.cancelUrl } : {}),
+        ...(payerEmail ? { payerEmail } : {}),
       }),
     }
   );
@@ -2011,7 +2168,8 @@ export function isConnectAccountReady(
  * True when the association's account at ONE provider is ready - the flag of that provider, since
  * Stripe and Lydia keep independent account ids and flags (migration 037). Reading the Stripe
  * flag while Lydia is active showed every Lydia association as incomplete for ever (2026-10-03).
- * `null` is a provider not yet known, which is never ready.
+ * `null` is a provider not yet known, and `disabled` is payments switched off platform-wide: neither
+ * is ever ready.
  */
 export function isPaymentAccountReady(
   asso: Pick<Association, 'stripeOnboardingComplete' | 'lydiaOnboardingComplete'>,
@@ -2149,7 +2307,8 @@ export async function startConnectAccountOnboarding(
 
 // ── Payment provider (WP-LYDIA-1) ───────────────────────────────────────────
 
-export type PaymentProviderId = 'stripe' | 'lydia';
+/** `disabled` is the platform declaring payments OFF: no provider, nothing is ever ready. */
+export type PaymentProviderId = 'stripe' | 'lydia' | 'disabled';
 
 /** Which payment provider core-service is currently configured to use. */
 export async function fetchActivePaymentProvider(): Promise<PaymentProviderId> {
@@ -2602,4 +2761,56 @@ export function eventIcsAbsoluteUrl(eventId: string, startsAt: string | Date): s
     to: new Date(start.getTime() + DAY_MS).toISOString(),
     eventId,
   });
+}
+
+// ── Spaces (WP6d) ─────────────────────────────────────────────────────────
+
+/** An open space: a formation x campus pair governed by at most one BDE. */
+export interface SpaceRow {
+  id: string;
+  formation: Formation;
+  campus: Campus;
+  openedAt: string;
+  bde: { id: string; name: string } | null;
+  /** How many associations' audience rules reach this space. */
+}
+
+/** One audience rule of one association. */
+export interface AssociationRuleRow extends AudienceRule {
+  associationId: string;
+}
+
+/** One audience rule; `null` means "any" (every formation, or every campus). */
+export interface AudienceRule {
+  formation: Formation | null;
+  campus: Campus | null;
+}
+
+/** Lists every formation x campus space with its BDE. Global admins only. */
+export function listSpaces(): Promise<SpaceRow[]> {
+  return request<SpaceRow[]>('/api/associations/spaces');
+}
+
+/** The audience rules of EVERY association, in one call: the admin grid draws itself from them. */
+export function listAllAudiences(): Promise<AssociationRuleRow[]> {
+  return request<AssociationRuleRow[]>('/api/associations/spaces/audiences');
+}
+
+/** Designates, or clears with `null`, the BDE of a space (D22). */
+export function setSpaceBde(spaceId: string, associationId: string | null): Promise<void> {
+  return request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}/bde`, {
+    method: 'PUT',
+    body: JSON.stringify({ associationId }),
+  });
+}
+
+/** Replaces the audience rules of an association; at least one rule is required. */
+export function setAssociationAudiences(
+  associationId: string,
+  rules: AudienceRule[]
+): Promise<AudienceRule[]> {
+  return request<AudienceRule[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/audiences`,
+    { method: 'PUT', body: JSON.stringify({ rules }) }
+  );
 }

@@ -475,6 +475,11 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // opening as the body. `actorName` is the ASSOCIATION for the first, the author for the second.
     @"social_association_post" : @"association_post",
     @"social_followed_post" : @"followed_post",
+    // Republication (D38): the republishing, then the proposing, association names the title.
+    @"social_association_repost" : @"association_repost",
+    @"social_repost_proposed" : @"repost_proposed",
+    // Co-organisation (D39): the organising association names the title, the event is the body.
+    @"social_coorganise_proposed" : @"coorganise_proposed",
   };
   NSString *stem = actorTitled[key];
   if (stem) {
@@ -3564,12 +3569,24 @@ static void CanariInstallApnsTokenHook(void) {
   if ([userInfo[@"deepLink"] isKindOfClass:[NSString class]]) {
     deepLink = userInfo[@"deepLink"];
   }
+  // THE TAP OPENS WHAT THE PAYLOAD NAMES AND NOTHING ELSE, so an absent link is a payload that lost
+  // its field and says so: a post, form or agenda push used to arrive with none (the server sent
+  // only postId / formId) and the tap launched the app and stayed put, with nothing in the log.
+  NSLog(@"[CanariPush] notification tap type=%@ deepLink=%@", userInfo[@"type"] ?: @"?",
+        deepLink.length > 0 ? deepLink : @"ABSENT - the payload names no target");
   if (deepLink.length > 0) {
     NSURL *url = [NSURL URLWithString:deepLink];
     if (url != nil) {
       dispatch_async(dispatch_get_main_queue(), ^{
-        [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+        [[UIApplication sharedApplication] openURL:url
+                                           options:@{}
+                                 completionHandler:^(BOOL success) {
+                                   // The system's answer to the self-open: NO means it declined.
+                                   NSLog(@"[CanariPush] notification tap: openURL completed success=%d", success);
+                                 }];
       });
+    } else {
+      NSLog(@"[CanariPush] notification tap: deepLink is not a URL: %@", deepLink);
     }
   }
   completionHandler();

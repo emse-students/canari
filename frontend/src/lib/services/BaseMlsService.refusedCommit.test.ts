@@ -65,11 +65,14 @@ const runCommit = (ctx: Ctx, groupId: string) =>
     BaseMlsService.prototype as unknown as {
       runCommitTransaction: (
         g: string,
-        stageFn: () => Promise<{ commit: Uint8Array }>,
+        stageFn: () => Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>,
         opts?: Record<string, unknown>
       ) => Promise<unknown>;
     }
-  ).runCommitTransaction.call(ctx, groupId, async () => ({ commit: new Uint8Array([1, 2, 3]) }));
+  ).runCommitTransaction.call(ctx, groupId, async () => ({
+    commit: new Uint8Array([1, 2, 3]),
+    groupInfo: new Uint8Array([7, 8, 9]),
+  }));
 
 describe('BaseMlsService - a commit refused for a stale epoch', () => {
   beforeEach(() => resetEpochGapRegistry());
@@ -135,5 +138,31 @@ describe('BaseMlsService - a commit refused for a stale epoch', () => {
     expect(ctx.mergePendingCommit).toHaveBeenCalledWith('g');
     expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
     expect(isInEpochGap('g')).toBe(false);
+  });
+
+  // COMM-22: the base for the epoch a STAGED commit creates rides inside its submission, so the
+  // server stores it with the advance. Nothing is minted afterwards, hence nothing is left to lose.
+  it('submits the base for the epoch it creates WITH the commit, and mints nothing afterwards', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 196 });
+
+    await runCommit(ctx, 'g');
+
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
+    const args = ctx.delivery.submitCommit.mock.calls[0];
+    expect(args[1]).toBe(195);
+    // 5th argument: base64 of [7, 8, 9], the bytes the stage step handed back.
+    expect(args[4]).toBe('BwgJ');
+    // The old fire-and-forget follow-up is gone: the one publisher left is the holder repair.
+    expect(ctx.refreshGroupInfo).not.toHaveBeenCalled();
+  });
+
+  it('never publishes a base for a refused commit - the base only exists inside the submission', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: false, reason: 'not_a_member' });
+
+    await expect(runCommit(ctx, 'g')).rejects.toThrow('Staged commit rejected');
+
+    expect(ctx.refreshGroupInfo).not.toHaveBeenCalled();
   });
 });

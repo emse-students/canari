@@ -97,6 +97,23 @@ describe('publishReel', () => {
     expect(d.upload).toHaveBeenCalledWith(expect.any(File), 'tok', { width: 720, height: 1280 });
   });
 
+  it('keeps the sound by default and asks the encoder to REMOVE the audio track when the member did', async () => {
+    const kept = deps();
+    await publishReel(input(), kept);
+    expect(kept.prepare).toHaveBeenCalledWith(
+      clip.blob,
+      expect.objectContaining({ removeAudio: false })
+    );
+
+    const silent = deps();
+    const soundless = { ...clip, soundRemoved: true };
+    await publishReel(input({ clip: soundless }), silent);
+    expect(silent.prepare).toHaveBeenCalledWith(
+      soundless.blob,
+      expect.objectContaining({ removeAudio: true })
+    );
+  });
+
   it('creates a reel with its declared duration, its caption and one video', async () => {
     const d = deps();
     await publishReel(input(), d);

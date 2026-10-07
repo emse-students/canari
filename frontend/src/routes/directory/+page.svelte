@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -50,7 +51,7 @@
 
   onMount(async () => {
     if (!currentUserId()) {
-      await goto('/login?returnTo=/directory', { replaceState: true });
+      await goto(resolve('/login?returnTo=/directory'), { replaceState: true });
       return;
     }
     try {

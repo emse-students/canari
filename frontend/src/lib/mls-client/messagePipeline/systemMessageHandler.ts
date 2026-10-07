@@ -36,6 +36,7 @@ import {
   parseReadWatermarks,
   watermarkAfterReading,
   watermarkFor,
+  withOwnReadAdvanced,
 } from '$lib/utils/chat/readState';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -156,7 +157,7 @@ export async function handleSystemEvent(
     mlsService,
     storage,
     userId,
-    deviceKeyB64,
+    deviceKey,
     conversations,
     messageReactions,
     addMessageToChat,
@@ -226,7 +227,12 @@ export async function handleSystemEvent(
     // describes a store it is in the middle of completing, so the asker diffs against a snapshot
     // that was already wrong when it was taken.
     answerAfterMailboxDrained(mlsService, convoKey, () =>
-      sendHistoryDigest(convoKey, me, { storage, deviceKeyB64, mlsService, log }).catch((e) =>
+      sendHistoryDigest(convoKey, me, {
+        storage,
+        deviceKeyB64: deviceKey(),
+        mlsService,
+        log,
+      }).catch((e) =>
         log(`[HISTORY_DIGEST] Could not answer ${senderNorm}: ${String(e).slice(0, 120)}`)
       )
     );
@@ -286,7 +292,7 @@ export async function handleSystemEvent(
           selfIdentity: digestIdentity(userId, mlsService.getDeviceId()),
           digest,
           since,
-          deps: { storage, deviceKeyB64, mlsService, log },
+          deps: { storage, deviceKeyB64: deviceKey(), mlsService, log },
         }).catch((e) =>
           log(
             `[HISTORY_DIGEST] Late answer failed for ${convoKey.slice(0, 8)}…: ${String(e).slice(0, 120)}`
@@ -378,7 +384,7 @@ export async function handleSystemEvent(
     const puller = probeSender(data, senderNorm, log, 'HISTORY_PULL');
     if (!puller) return true;
 
-    const deps = { storage, deviceKeyB64, mlsService, log };
+    const deps = { storage, deviceKeyB64: deviceKey(), mlsService, log };
     const ids = Array.isArray(data?.ids)
       ? (data.ids as unknown[]).filter((id): id is string => typeof id === 'string' && !!id.trim())
       : [];
@@ -706,14 +712,16 @@ export async function handleSystemEvent(
             );
       const merged = mergeReadWatermark(c.readWatermarks, senderNorm, at);
       // Read by OURSELVES on another device: clear the badge here too, which is the whole point of
-      // the watermark travelling between our own devices.
+      // the watermark travelling between our own devices. The count follows the watermark rather
+      // than being zeroed, so a message newer than what was read there stays counted.
       const selfRead = senderNorm === userId;
-      if (merged || selfRead) {
-        conversations.set(convoKey, {
-          ...c,
-          ...(merged ? { readWatermarks: merged } : {}),
-          ...(selfRead ? { unreadCount: 0 } : {}),
-        });
+      const next = selfRead
+        ? withOwnReadAdvanced(c, senderNorm, at)
+        : merged
+          ? { ...c, readWatermarks: merged }
+          : c;
+      if (next !== c) {
+        conversations.set(convoKey, next);
         // The read state lives on the conversation row, so this save is what persists it - for a
         // peer's watermark as much as for our own.
         await saveConversation?.(convoKey).catch(() => {});
@@ -750,7 +758,7 @@ export async function handleSystemEvent(
             await storage.updateMessage(
               deletedMsg.id,
               { isDeleted: true, content: deletedMsg.content },
-              deviceKeyB64
+              deviceKey()
             );
           } catch {
             // Non-blocking
@@ -814,7 +822,7 @@ export async function handleSystemEvent(
             await storage.updateMessage(
               editedMsg.id,
               { content: editedContent, isEdited: true, editedAt: editedAt.getTime() },
-              deviceKeyB64
+              deviceKey()
             );
           } catch {
             // Non-blocking
@@ -1048,7 +1056,7 @@ export async function handleSystemEvent(
                       ...(msg.isEdited ? { isEdited: true } : {}),
                       ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
                     },
-                    deviceKeyB64
+                    deviceKey()
                   );
                 } catch (e) {
                   // Non-blocking: memory already holds the merge, the next bundle restates it.
@@ -1098,7 +1106,7 @@ export async function handleSystemEvent(
         conversations.set(convoKey, { ...c, messages: nextMsgs });
         if (storage) {
           try {
-            await storage.updateMessage(nextMsgs[msgIdx].id, { reactions: updated }, deviceKeyB64);
+            await storage.updateMessage(nextMsgs[msgIdx].id, { reactions: updated }, deviceKey());
           } catch {
             // Non-blocking
           }

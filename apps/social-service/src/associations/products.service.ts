@@ -30,6 +30,7 @@ import {
 } from './payment-delegation.util';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { coreUrl } from '../internal/service-urls';
+import { internalCoreRequestConfig } from '../internal/core-request';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
 import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
 import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
@@ -904,7 +905,8 @@ export class ProductsService {
     productId: string,
     userId: string,
     customAmountCents?: number,
-    callbackUrls?: { successUrl?: string; cancelUrl?: string }
+    callbackUrls?: { successUrl?: string; cancelUrl?: string },
+    payerEmail?: string
   ): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
     const { product, amountCents, paymentTarget } = await this.resolvePurchase(
       associationId,
@@ -922,7 +924,7 @@ export class ProductsService {
         this.httpService.post<{ customerId: string | null }>(
           coreUrl('payments/internal/customer-id'),
           { userId },
-          { maxRedirects: 0 }
+          internalCoreRequestConfig()
         )
       );
       customerId = resp.data.customerId ?? undefined;
@@ -967,8 +969,9 @@ export class ProductsService {
           stripeConnectAccountId: paymentTarget.connectAccountId,
           customerId,
           idempotencyKey,
+          payerEmail,
         },
-        { maxRedirects: 0 }
+        internalCoreRequestConfig()
       )
     );
 

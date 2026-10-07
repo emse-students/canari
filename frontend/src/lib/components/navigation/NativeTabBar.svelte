@@ -6,6 +6,8 @@
 </script>
 
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import { onDestroy, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -148,7 +150,7 @@
         listener = await onTabSelected(({ id }) => {
           const place = MOBILE_NAV_PLACES.find((p) => p.id === id);
           Log.d('NativeTabBar', `tab selected: ${id}`);
-          if (place) void goto(place.href);
+          if (place) void goto(resolve(internalPath(place.href)));
         });
         if (destroyed) return;
         nativeTabBar.status = 'native';

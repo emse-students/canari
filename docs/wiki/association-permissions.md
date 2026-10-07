@@ -20,7 +20,7 @@ Three tiers, widest first:
 | Tier | Who | How it is known |
 | --- | --- | --- |
 | Platform administrator | Holds **every** association right, member or not | `X-Global-Admin: true`, set by nginx from the `auth_request` `$global_admin` variable |
-| Cross-association super-admin | A member of a **BDE** association holding `MANAGE_ASSO`; administers any association | `isAssociationSuperAdmin` -> `callerHasAnyBdeFlag(MANAGE_ASSO)` |
+| Cross-association super-admin | `MANAGE_ASSO` in the BDE of a space THIS association reaches; administers the associations its spaces reach, no others (WP6c step 2) | `isAssociationSuperAdminOf(user, association)` -> `holdsBdeFlagOver` -> `spaces/bde.ts` `holdsBdeFlagOverSql` |
 | The association's own member | Judged on their `permissions` bitmask alone | `callerHasFlag` |
 
 The middle tier does not inherit everything. `SUPER_ADMIN_EXCLUDED_FLAGS` -
@@ -30,7 +30,40 @@ administration. The platform administrator keeps both.
 
 The client mirrors it with `mayActOnAssociation(flag, { isGlobalAdmin, isSuperAdmin,
 memberPermissions })` in `frontend/src/lib/associations/api.ts`, reading the same exclusion set, so
-a hidden control and a refused request cannot disagree.
+a hidden control and a refused request cannot disagree. `isSuperAdmin` there is THIS association's
+tier: the page reads it from `GET /api/associations/me/bde-reach` (`getMyBdeReach`), the server's
+own list of the associations each scoped BDE power reaches - never from "is a BDE somewhere".
+
+### WP6c step 2: a BDE governs the associations its spaces reach (2026-10-04)
+
+**THE ONE PREDICATE IS `holdsBdeFlagOverSql(user, association, flag)` in `spaces/bde.ts`**: the user
+holds `flag` in the BDE of a space that one of the association's `association_audiences` rules
+reaches. An association reaching SEVERAL spaces is governed by the BDE of ANY of them; one reaching
+NO space (no rule) by no BDE - a global admin only. A BDE always reaches what it governs (the
+spaces page holds that), so it governs its own association. It is read for:
+
+| Power | Scoped through | Where |
+| --- | --- | --- |
+| `VALIDATE_EVENTS`: validate, reject, edit, delete, poster | `mayValidateEvent(user, eventId)` - the EVENT's own association, read from the row, never the URL's | `assertMayDecideEvent`, `assertMayWriteEvent` |
+| `VALIDATE_EVENTS`: deposit on another association, declare a `break` | `mayValidateEventsOf(user, target)` - the `targetAssocId`; a deposit on one the caller does not govern is a 403, never filed on `:id` | `createCalendarEvent` (controller) |
+| `VALIDATE_EVENTS`: who is told of a proposal | `BDE_FLAG_HOLDERS_OVER_SQL` - the same predicate, so the people told are the people who may act | `notifyEventValidatorsOfProposal` |
+| `VALIDATE_EVENTS`: the pending queue | rows of the associations they govern plus their own; each row carries `canValidate` | `listPendingCalendarEvents` |
+| `VALIDATE_EVENTS`: the last-admin bypass on member edits | `mayValidateEventsOf(caller, :id)` | `updateMemberRole`, `removeMember` |
+| `MANAGE_ASSO`: the super-admin tier of `mayAct` / `mayActOnAny`, the membership-only guard path, `DELETE :id` | `isAssociationSuperAdminOf(user, association)` | `mayAct`, `GlobalAdminOrAssociationRoleGuard`, `remove` |
+
+**STILL UNSCOPED, ON PURPOSE - a route that names no association has nothing to scope to**:
+`isAssociationSuperAdmin(user)` ("MANAGE_ASSO in the BDE of at least one space") still opens
+`POST /associations` (creating one), the categories, the carte, the document-reviewer grants and the
+reviewer document listing (`GlobalAdminOrBdeSuperAdminGuard`, `ReviewerAccessGuard`), and the
+client's admin navigation. `isUserBdeAdmin` ("a validator somewhere") opens the pending queue and
+the greyed pending events on the agenda. `MODERATE` stays global (D23). Whether a BDE should keep
+those cross-space routes is WP7's question (a BDE grants within its space; cross-space capabilities
+stay with global admins) - it is not decided here.
+
+Proof: `spaces/bde.integration.spec.ts` runs the predicate against PostgreSQL with migrations 071 and
+072 (two BDEs, one governing two spaces; clubs reaching one space, a whole campus, two spaces, every
+space, a space with no BDE, and none) and asserts who validates, who is told, each user's reach and
+the list filter; a control with the space test removed fails 10 of its 13 cases.
 
 ### Why it exists
 
@@ -59,8 +92,8 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_MEMBERS` | 2 | 14 | members (add / rename / remove / reorder), the logo, `PATCH :id` itself, tags, cotisants and cotisation tiers, plus the exports. Also whether `listMembers` returns bitmasks at all, and whether a form may grant a cotisation tag |
 | `MANAGE_DOCUMENTS` | 3 | 8 | the private document vault (including `GET :id/vault-key`) and the association notes |
 | `MANAGE_FORMS` | 4 | 1 | `GET :id/forms`, plus `assertFormManager` on every form write and every submission read |
-| `VALIDATE_EVENTS` | 5 | 0 | BDE only. `isUserBdeAdmin` - validating, editing and deleting **any** association's events, and depositing one on any association's calendar. **It never validates by typing**: a deposit is a proposal like any other (2026-09-14) |
-| `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association AND **deleting one** (`DELETE :id`, widened from global-admin-only 2026-09-10), and **being the super-admin tier above** - so it grants nearly every other flag everywhere |
+| `VALIDATE_EVENTS` | 5 | 0 | BDE only, **scoped to the associations its spaces reach** (WP6c step 2, above). `mayValidateEvent` / `mayValidateEventsOf` - validating, rejecting, editing and deleting those associations' events, and depositing one on their calendars. **It never validates by typing**: a deposit is a proposal like any other (2026-09-14) |
+| `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association (unscoped: there is none yet), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
 | `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing, deleting and PINNING any post (`assertMayManage`, `pinPost`/`unpinPost`, and the `canManage` / `canPin` fields they are drawn from) |
 | `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
 | `MANAGE_STRIPE_CONNECT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding |
@@ -120,8 +153,8 @@ is what made the report button appear on a post the reader had published and the
 | The post's publisher | its author, or `POST_AS_ASSO` on the association it speaks for | yes, on its own | no | no - it would be reporting itself |
 | Any other logged-in reader | - | no | no | yes |
 
-`isContentModerator` is not `mayAct`: like `isUserBdeAdmin` for the calendar, it asks "does the BDE
-curate the whole feed", which is not association-scoped. It lives on `AssociationsService` because
+`isContentModerator` is not `mayAct`: it asks "does the BDE curate the whole feed", which is not
+association-scoped - and stays GLOBAL after WP6c step 2 scoped the calendar and MANAGE_ASSO (D23). It lives on `AssociationsService` because
 two surfaces ask it - the moderation endpoints and the post controls - and the second used to say
 `isGlobalAdmin` alone, which is how a BDE holding `MODERATE` could delete a reported COMMENT and not
 touch the post around it.
@@ -140,9 +173,11 @@ round trips. `associations.service.may-act.spec.ts` asserts the two agree id by 
 
 Three shapes look like the same question and are not. Folding them in would have been wrong:
 
-1. **`isUserBdeAdmin` (`VALIDATE_EVENTS` in any BDE).** A genuinely different right - "the BDE
-   curates the whole calendar" - not "may act on THIS association". It is not association-scoped, so
-   `mayAct` cannot express it.
+1. **The event validator grant (`VALIDATE_EVENTS` in a BDE).** A genuinely different right - "the
+   BDE curates the calendar of the associations its spaces reach" - not a member flag on THIS
+   association, so `mayAct` (which reads the association's own bitmask) cannot express it. Since
+   WP6c step 2 it IS scoped to an association, through `mayValidateEventsOf`; `isUserBdeAdmin`
+   survives only as "a validator somewhere", which opens the queue.
 2. **The listing queries** - `associationsWhereUserHasFlag`, `canViewPendingCalendarEvents`,
    `callerHasAnyBdeFlag`. They answer "which associations" or "any at all", not "may they here".
    `forms.service.list()` needs the first shape and correctly keeps it.

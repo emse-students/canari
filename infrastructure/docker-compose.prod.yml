@@ -109,7 +109,7 @@ services:
     # PINNED BY DIGEST, not `:latest` - and `:latest` was the worst of the three floating tags, on a
     # database admin UI, in PRODUCTION. The image carries no version label, so the digest is the only
     # name it has.
-    image: adminer@sha256:b87a22863ed8c18437c7241a5d39ae2e05669d4d2eb9d78591d5087a09258bc8
+    image: adminer@sha256:74f29c416e148b98305e84446a18db7cd2c1038264dec464359d36774ef080ce
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:8080"
@@ -428,6 +428,9 @@ services:
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
       CERCLE_API_KEY: ${CERCLE_API_KEY:-}
+      # Signs the calendar subscription URLs; unset, the signing route answers 503 and every
+      # selection feed is refused (fails closed). Rotating it ends every saved subscription URL.
+      AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
     healthcheck:
       # `/api/health` since 2026-09-24, like the other three services. It probed
       # `/api/channels/health` - a route that belongs to ChannelsController and answers about the

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -18,12 +19,12 @@
     type ConnectAccountStatusResult,
     type PaymentProviderId,
     mayActOnAssociation,
-    ensureAssociationSuperAdmin,
+    getMyBdeReach,
     AssociationPermissionFlag,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
-  import { currentUserId, isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
+  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import {
@@ -41,6 +42,7 @@
     HandCoins,
     Share2,
     Handshake,
+    Inbox,
   } from '@lucide/svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
@@ -52,6 +54,7 @@
   import EditCotisationsTab from '$lib/components/associations/edit/EditCotisationsTab.svelte';
   import EditDelegationTab from '$lib/components/associations/edit/EditDelegationTab.svelte';
   import EditPartnershipsTab from '$lib/components/associations/edit/EditPartnershipsTab.svelte';
+  import EditProposalsTab from '$lib/components/associations/edit/EditProposalsTab.svelte';
   import LydiaBusinessOnboardingForm from '$lib/components/associations/edit/LydiaBusinessOnboardingForm.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -64,8 +67,12 @@
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((mb) => mb.userId === userId));
   let isGlobalAdminUser = $derived(isGlobalAdmin());
-  /** BDE super-admin (MANAGE_ASSO): may administer this association without being a member. */
-  let isSuperAdminUser = $derived(isAssociationSuperAdmin());
+  /**
+   * BDE super-admin OF THIS association (MANAGE_ASSO in the BDE of a space it reaches, WP6c step
+   * 2): may administer it without being a member. `superAdminOf` is the server's `me/bde-reach`.
+   */
+  let superAdminOf = $state<string[]>([]);
+  let isSuperAdminUser = $derived(!!asso && superAdminOf.includes(asso.id));
 
   let onboardingLoading = $state(false);
   let dashboardLoading = $state(false);
@@ -90,6 +97,7 @@
     | 'delegation'
     | 'formulaires'
     | 'partnerships'
+    | 'republications'
     | 'danger';
 
   const EDIT_SECTIONS: EditSection[] = [
@@ -102,6 +110,7 @@
     'delegation',
     'formulaires',
     'partnerships',
+    'republications',
     'danger',
   ];
 
@@ -143,6 +152,17 @@
     mayActOnAssociation(AssociationPermissionFlag.MANAGE_PARTNERSHIPS, permissionContext)
   );
   /**
+   * The proposal queue: republications (D38) and co-organisations (D39). `POST_AS_ASSO` accepts
+   * both (and sends republications - only an association does, the server refuses the rest);
+   * `PROPOSE_EVENT` sends and withdraws co-organisations. The server filters the rows per kind, so
+   * holding either is what makes the tab worth drawing. The section key stays `republications`:
+   * notifications already in people's lists deep-link to it.
+   */
+  let canHandleProposals = $derived(
+    mayActOnAssociation(AssociationPermissionFlag.POST_AS_ASSO, permissionContext) ||
+      mayActOnAssociation(AssociationPermissionFlag.PROPOSE_EVENT, permissionContext)
+  );
+  /**
    * The super-admin tier drops out on its own: `MANAGE_STRIPE_CONNECT` is in
    * `SUPER_ADMIN_EXCLUDED_FLAGS`, so the exception is read from the same data the server reads it
    * from instead of being an omission in this expression.
@@ -174,9 +194,10 @@
    *
    * `DELETE :id` moved to `GlobalAdminOrBdeSuperAdminGuard` on 2026-09-10 (user), so it now admits
    * exactly what CREATE has always admitted: a global admin, or a BDE member holding
-   * `MANAGE_ASSO`. It is deliberately NOT `mayActOnAssociation`, because it is not a flag on THIS
-   * association at all - a BDE super-admin holds it everywhere and an association's own admin
-   * never holds it, however many flags they have.
+   * `MANAGE_ASSO`. It is deliberately NOT `mayActOnAssociation`, because an association's own
+   * admin never holds it, however many flags they have. Since WP6c step 2 the server checks it in
+   * the handler, scoped: the BDE must govern THIS association (a space it reaches), which is what
+   * `isSuperAdminUser` already reads.
    */
   let canDeleteAssociation = $derived(isGlobalAdminUser || isSuperAdminUser);
 
@@ -222,11 +243,12 @@
       }
       const uid = currentUserId();
       const mine = members.find((mb) => mb.userId === uid);
-      // Await the BDE super-admin probe so the access decision is deterministic.
-      const superAdmin = await ensureAssociationSuperAdmin();
-      const canEdit = isGlobalAdmin() || superAdmin || (!!mine && mine.isAdmin);
+      // Await the BDE reach so the access decision is deterministic. It is THIS association's
+      // super-admin tier (WP6c step 2): MANAGE_ASSO in the BDE of a space it reaches.
+      superAdminOf = (await getMyBdeReach()).manageAsso;
+      const canEdit = isGlobalAdmin() || isSuperAdminUser || (!!mine && mine.isAdmin);
       if (!canEdit) {
-        await goto(`/associations/${encodeURIComponent(slug)}`);
+        await goto(resolve(`/associations/${encodeURIComponent(slug)}`));
         return;
       }
     } catch (err) {
@@ -376,7 +398,7 @@
   }
 </script>
 
-<PageContainer>
+<PageContainer width="tool">
   <PageHeader
     title={m.asso_edit_page_title()}
     subtitle={asso ? `@${asso.slug}` : undefined}
@@ -528,6 +550,19 @@
               {m.asso_edit_tab_partenariats()}
             </button>
           {/if}
+          {#if canHandleProposals}
+            <button
+              type="button"
+              onclick={() => (editSection = 'republications')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'republications'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <Inbox size={17} />
+              {m.asso_edit_tab_proposals()}
+            </button>
+          {/if}
           {#if canArchiveAssociation}
             <button
               type="button"
@@ -570,6 +605,16 @@
                   };
               }}
             />
+          {:else if canManageStripeConnect && activePaymentProvider === 'disabled'}
+            <!-- Payments declared OFF platform-wide: the existing "not configured" state, never a
+                 Stripe or Lydia onboarding flow. -->
+            <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
+              <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+                <CreditCard size={20} />
+                {m.asso_payments_section_title()}
+              </h2>
+              <p class="text-amber-warn text-sm">{m.asso_payments_unavailable()}</p>
+            </div>
           {:else if canManageStripeConnect}
             <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
               <div class="flex flex-wrap items-start justify-between gap-3">
@@ -782,6 +827,10 @@
 
       {#if editSection === 'partnerships' && canManagePartnerships && asso}
         <EditPartnershipsTab {asso} />
+      {/if}
+
+      {#if editSection === 'republications' && canHandleProposals && asso}
+        <EditProposalsTab {asso} />
       {/if}
 
       {#if editSection === 'danger' && canArchiveAssociation}

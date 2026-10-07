@@ -251,14 +251,6 @@
       pollIssue = blocker?.pollIssue ?? null;
       if (blocker) throw new LocalizedError(blocker.message);
 
-      if (newFiles.length > 0 && !currentAuthToken) {
-        try {
-          currentAuthToken = await getToken();
-        } catch {
-          throw new LocalizedError(m.post_create_image_token_error());
-        }
-      }
-
       // Upload new media files and get their refs.
       const uploadedRefs: PostMediaRef[] = [];
       const limits = newFiles.length > 0 ? await mediaService.uploadLimits() : null;
@@ -268,7 +260,14 @@
           videoPreparation.optionsFor(limits?.maxPlaintextBytes)
         );
         videoPreparation.finish();
-        const ref = await mediaService.encryptAndUpload(file, currentAuthToken, dims, 'archive');
+        // Read at upload time: `currentAuthToken` is a display copy and expires after 15 min.
+        let uploadToken: string;
+        try {
+          uploadToken = await getToken();
+        } catch {
+          throw new LocalizedError(m.post_create_image_token_error());
+        }
+        const ref = await mediaService.encryptAndUpload(file, uploadToken, dims, 'archive');
         const caption = newMediaCaptions[i]?.trim();
         uploadedRefs.push({ ...ref, ...(caption ? { caption } : {}) });
       }

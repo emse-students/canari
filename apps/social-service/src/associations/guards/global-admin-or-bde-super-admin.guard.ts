@@ -6,6 +6,9 @@ import { AssociationsService } from '../associations.service';
  * BDE super-admins (a member of a BDE association holding `MANAGE_ASSO`). Used for
  * cross-association routes that carry no `:id` param (e.g. managing the global
  * document-reviewer grants).
+ *
+ * UNSCOPED ON PURPOSE, and only for those routes: a route naming an association asks
+ * `isAssociationSuperAdminOf`, the BDE governing that association's spaces (WP6c step 2).
  */
 @Injectable()
 export class GlobalAdminOrBdeSuperAdminGuard implements CanActivate {

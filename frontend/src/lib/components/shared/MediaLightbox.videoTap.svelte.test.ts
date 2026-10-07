@@ -78,6 +78,34 @@ describe('MediaLightbox - a tap inside a video player', () => {
 });
 
 /**
+ * A VIEWER TAKEN OFF THE SCREEN TAKES ITS TIMERS WITH IT (CI, 2026-10-05).
+ *
+ * A single tap waits out the double-tap window before it toggles the bars, and a zoom shows its
+ * indicator for a while. Unmounted inside that window, the viewer left both timers running: the tap's
+ * fired on a component that no longer existed and logged `mediaLightbox.chrome` after the test file
+ * had ended - which vitest reported as `Closing rpc while "onUserConsoleLog" was pending` and failed
+ * the whole run on, every test green.
+ */
+describe('MediaLightbox - unmounted with a gesture pending', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('leaves no tap or zoom timer behind', () => {
+    vi.useFakeTimers();
+    open();
+    tap(document.getElementById('picture')!);
+    document
+      .querySelector<HTMLElement>('[role="presentation"][style*="scale("]')!
+      .dispatchEvent(new WheelEvent('wheel', { deltaY: -800, bubbles: true, cancelable: true }));
+    expect(vi.getTimerCount(), 'the tap and the zoom indicator are waiting').toBeGreaterThan(0);
+
+    while (mounted.length) mounted.pop()!();
+    expect(vi.getTimerCount(), 'nothing outlives the viewer').toBe(0);
+  });
+});
+
+/**
  * THE CONTROLS ARE AN OVERLAY ON A ZOOMABLE, MOVABLE PICTURE (user, 2026-10-02: *"les controles
  * devraient etre une ui par dessus l'element video zoomable et deplacable"*).
  *

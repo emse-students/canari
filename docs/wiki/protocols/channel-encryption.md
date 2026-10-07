@@ -1944,6 +1944,14 @@ Four tests hold it: two concurrent callers produce one read, one join and one re
 caller that waited SAYS it waited, so it is not indistinguishable from the one that worked; nothing
 survives the call; and a rejection is shared without poisoning the next attempt.
 
+**A new private salon, driven end to end (2026-10-05).** `useChannelWorkspaces.salonCreation.test.ts`
+overlaps the three moments that reach a fresh salon's group on the creating device - the creation,
+its own `channel.member.joined` (published before the POST answers) and a workspace load - and pins
+ONE read and ONE `ensureDistributionGroup`. So the "same salon read twice in one second for one user"
+seen on the COMM rung (2026-08-27) is the user's OTHER device answering the same
+`channel.member.joined`: a first-publish race between two devices, settled by `stored: false` by
+design, not a duplicate caller.
+
 #### The sequel: the call was already one, the PRECONDITION was three (G-D1, 2026-09-13)
 
 The audit row read *"`ensureDistributionGroupFor`, 5 call sites, deduplicated only by an in-flight
@@ -2297,12 +2305,17 @@ waiting for one would never end. `PendingChannelFrameTest` holds the eight cases
 
 ### What is left
 
-iOS, and the degradation is still uncounted. The NSE runs on an alert push and a silent
-`keyMaterial` frame does not wake it at all, so nothing above reaches an iPhone;
-`isKeyDistribution` already travels there through `buildApnsRequest`, so what is owed is the wake,
-not the discriminator. On Android the blind banner is now distinguishable in logcat - `seed absent
--> generic banner, frame HELD` against `no seed/ciphertext`, the frame that can never be retried -
-but nothing counts either. See [backlog](../backlog.md).
+iOS. The NSE runs on an alert push and a silent `keyMaterial` frame does not wake it at all, so
+nothing above reaches an iPhone; `isKeyDistribution` already travels there through
+`buildApnsRequest`, so what is owed is the wake, not the discriminator. See [backlog](../backlog.md).
+
+**THE DEGRADATION IS COUNTED SINCE 2026-10-05, ON BOTH PLATFORMS.** A blind salon banner that
+reaches the shade is reported to `POST /api/mls/push/blind-banner` (PushSecret, nothing stored),
+which prints one WARN line per banner: `[PUSH_BLIND] user= device= platform= channel=
+missing=<terms> held=<bool>`. `held=true` is Android's frame waiting for a late seed (it may still be
+redrawn); `missing=ciphertext` is the FCM budget, generic for ever; an iPhone is never `held`, since
+nothing redraws its banner. So the rate per platform and per cause is one `GROUP BY` over the
+chat-delivery log. The terms are the same four, from one helper (`blindBannerMissing`) on Android.
 
 **AND THE SECOND OF THOSE NAMES ITS OWN CAUSE SINCE 2026-09-24.** `no seed/ciphertext` is one `if`
 with four terms - `seedB64`, `ciphertext`, `nonce`, `messageIndex` - and the line named none of
@@ -2896,10 +2909,21 @@ temporary mirror, with each refusal falsified. `background.rs` covers the sender
 three endorsement cases (endorsed, forged by another member, minted by a device the tree does not
 hold). `channelPushFields.test.ts` now expects `signature` in the inline group on all three readers.
 
+### 21.5b What a salon EDIT trusts (2026-10-05)
+
+A salon edit is a silent row whose authorship every reader checks against the row's sender
+(`applyChannelEdit`, [chat](../frontend/modules/chat.md#editing-your-own-message-in-a-salon-2026-10-05)).
+**That sender is PROVEN only for a row under a v2 session** (signature and minter checked by
+`openChannelMessage`). A row still opened under a v1 session carries a server-supplied, unsigned
+`senderId`, so a malicious server, or a v1 row from before G2-5, could forge an edit "from" the
+author. This is the same trust level as DELETE today (the server alone decides whose delete it
+honours), so it is not a regression, and edits are deliberately NOT restricted to v2. It closes when
+the last v1 session ages out with the v1 reader ([legacy-compatibility](../legacy-compatibility.md)).
+
 ### 21.6 The writer (WP-G2-5)
 
-Every send is v2 from this release on. It ships only once `minClientVersion` is R1 (the G2-4
-reader) AND both stores serve R1: a v1 reader shown a v2 row fails to open it (production is at `1.0.0`, 2026-10-04). This is the
+Every send is v2 from this release on (#1221, first in the stable `v1.0.3`, 2026-10-05). It ships only once `minClientVersion` is R1 (the G2-4
+reader) AND both stores serve R1: a v1 reader shown a v2 row fails to open it (production is at `1.0.0`, 2026-10-04, and the floor is raised by the user only; refusing an ARRIVING v1 seed, G2-5b, waits for a floor >= `1.0.3`). This is the
 reader-then-writer order of CORRUPT ([durable-rules](../durable-rules.md)).
 
 **Minting endorses first** (`reserveOutboundSlot` in `utils/graine/sessionManager.ts`). A new

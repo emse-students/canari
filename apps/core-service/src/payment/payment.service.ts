@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type Stripe from 'stripe';
 import { StripePaymentProvider } from './stripe-payment-provider';
 import { LydiaPaymentProvider } from './lydia-payment-provider';
+import { DisabledPaymentProvider } from './disabled-payment-provider';
 import { PlatformService } from '../platform/platform.service';
 
 import type {
@@ -37,6 +38,7 @@ export type { ChargeResult, CheckoutSessionInfo, ConnectBalanceSummary };
 export class PaymentService {
   private readonly stripeProvider: PaymentProvider;
   private readonly lydiaProvider: LydiaPaymentProvider;
+  private readonly disabledProvider = new DisabledPaymentProvider();
   private readonly logger = new Logger(PaymentService.name);
 
   constructor(private readonly platformService: PlatformService) {
@@ -51,6 +53,7 @@ export class PaymentService {
   /** Reads the admin-configured provider choice and returns the matching instance. */
   private async getProvider(): Promise<PaymentProvider> {
     const { paymentProvider } = await this.platformService.getConfig();
+    if (paymentProvider === 'disabled') return this.disabledProvider;
     return paymentProvider === 'lydia' ? this.lydiaProvider : this.stripeProvider;
   }
 

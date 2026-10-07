@@ -80,7 +80,8 @@ vi.mock('mediabunny', () => {
         }));
         let rejectRun: ((e: Error) => void) | null = null;
         const conversion = {
-          isValid: discarded.length === 0,
+          // As the real one: a track the caller DISCARDED does not invalidate the conversion.
+          isValid: discarded.every((d) => d.reason === 'discarded_by_user'),
           discardedTracks: discarded,
           onProgress: undefined as ((f: number) => void) | undefined,
           async execute() {
@@ -150,6 +151,22 @@ describe('prepareVideoForUpload', () => {
     });
     expect((state.init!.audio as Record<string, unknown>).codec).toBe('aac');
     expect((state.init!.output as unknown as { target: unknown }).target).toBeDefined();
+  });
+
+  it('drops the audio track from the OUTPUT when the sound is removed, and still refuses any other drop', async () => {
+    state.script.discarded = [{ type: 'audio', reason: 'discarded_by_user' }];
+    const out = await prepareVideoForUpload(SOURCE, { removeAudio: true });
+    expect(out.file.name).toBe('clip.mp4');
+    expect(state.init!.audio).toEqual({ discard: true });
+
+    // The member did not ask for this drop: it is the engine's refusal, whatever the flag says.
+    state.script.discarded = [{ type: 'video', reason: 'no_encodable_target_codec' }];
+    expect(await faultOf(prepareVideoForUpload(SOURCE, { removeAudio: true }))).toBe('unsupported');
+  });
+
+  it('keeps the audio and its AAC options when the sound is kept', async () => {
+    await prepareVideoForUpload(SOURCE, { removeAudio: false });
+    expect(state.init!.audio).toMatchObject({ codec: 'aac', forceTranscode: true });
   });
 
   it('refuses a source over maxSeconds, past the half-second grace only', async () => {

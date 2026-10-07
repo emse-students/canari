@@ -50,7 +50,7 @@ beforeEach(() => {
   };
   setGraineRuntime({
     storage: {} as never,
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     userId: 'admin',
     mlsService: mls as never,
   });

@@ -11,7 +11,14 @@ vi.mock('$lib/associations/api', () => ({
 
 import {
   buildPreviewInnerHtml,
+  blurLayerCss,
+  BLUR_MAX_PX,
+  vignetteLayerHtml,
   DAY_NUM_H,
+  textOutlineCss,
+  outlineWidth,
+  outlineRoomCss,
+  slotHeights,
   DEFAULT_EXPORT_OPTIONS,
   EVENT_TITLE_LINE_HEIGHT,
   daySlotLayout,
@@ -174,6 +181,33 @@ function clampLines(clampCss: string): number {
   return Number(clampCss.split('-webkit-line-clamp:')[1].split(';')[0]);
 }
 
+describe('outline room and slot heights', () => {
+  it('gives every title outline room for the outer half of its stroke, cancelled by a margin', () => {
+    for (const size of [9, 10, 12, 13]) {
+      const room = Math.ceil(outlineWidth(size) / 2);
+      expect(outlineRoomCss(size)).toBe(`padding:${room}px;margin:-${room}px;`);
+      expect(room * 2).toBeGreaterThanOrEqual(outlineWidth(size));
+    }
+  });
+
+  it('puts the room on the rendered title, next to its clamp', () => {
+    const html = buildPreviewInnerHtml([makeEvent({ title: 'Titre' })], 2026, 4);
+    expect(html).toContain(`${outlineRoomCss(13)}display:-webkit-box`);
+  });
+
+  it('sums the slot heights EXACTLY to the cell, whatever the slot count', () => {
+    for (let cellH = 100; cellH < 140; cellH++) {
+      for (let n = 1; n <= 5; n++) {
+        const h = slotHeights(cellH, n);
+        expect(h).toHaveLength(n);
+        expect(h.reduce((a, b) => a + b, 0)).toBe(cellH);
+        expect(h.every(Number.isInteger)).toBe(true);
+        expect(Math.max(...h) - Math.min(...h)).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+});
+
 describe('fitEventText', () => {
   it('keeps the sheet on its own 9px floor', () => {
     // The PDF is rasterised at A4 and read on paper, so it may go where the screen may not. This
@@ -324,5 +358,75 @@ describe('buildPreviewInnerHtml - what the on-screen sheet points its logos at',
 
     expect(html).toContain('src="https://media.test/api/media/public/m-1"');
     expect(html).not.toContain('src="/api/media/public/m-1"');
+  });
+});
+
+describe('background vignette and blur', () => {
+  const withBg = (extra: object) =>
+    buildPreviewInnerHtml([], 2026, 4, {
+      ...DEFAULT_EXPORT_OPTIONS,
+      bgDataUrl: 'data:image/png;base64,AAAA',
+      ...extra,
+    });
+
+  it('defaults leave the sheet unchanged', () => {
+    expect(DEFAULT_EXPORT_OPTIONS.vignetteOpacity).toBe(0);
+    expect(DEFAULT_EXPORT_OPTIONS.bgBlur).toBe(0);
+    const html = withBg({});
+    expect(html).not.toContain('radial-gradient');
+    expect(html).not.toContain('filter:blur');
+  });
+
+  it('draws a vignette layer and a blurred, oversized image layer when asked', () => {
+    const html = withBg({ vignetteOpacity: 60, bgBlur: 10 });
+    expect(html).toContain('radial-gradient(ellipse at center');
+    expect(html).toContain('rgba(11,18,32,0.60)');
+    expect(html).toContain('inset:-20px;filter:blur(10px);will-change:filter;');
+  });
+
+  it('draws neither without an image', () => {
+    const html = buildPreviewInnerHtml([], 2026, 4, {
+      ...DEFAULT_EXPORT_OPTIONS,
+      bgDataUrl: null,
+      vignetteOpacity: 60,
+      bgBlur: 10,
+    });
+    expect(html).not.toContain('data-full-bg');
+    expect(html).not.toContain('radial-gradient');
+  });
+
+  it('clamps the blur radius and the vignette strength', () => {
+    expect(blurLayerCss(9999)).toContain(`blur(${BLUR_MAX_PX}px)`);
+    expect(blurLayerCss(-5)).toBe('inset:0;');
+    expect(vignetteLayerHtml(500)).toContain('rgba(11,18,32,1.00)');
+    expect(vignetteLayerHtml(0)).toBe('');
+  });
+});
+
+describe('event titles - white with a dark outline, centred in the tile', () => {
+  it('outlines the glyph from underneath, at a width that follows the size', () => {
+    const css = textOutlineCss(13);
+    expect(css).toContain('color:#ffffff');
+    expect(css).toContain('paint-order:stroke fill');
+    expect(css).toContain('-webkit-text-stroke:2.6px');
+    expect(textOutlineCss(9)).toContain('-webkit-text-stroke:2px');
+  });
+
+  it('paints a pale and a dark tile the same white, and centres the first title of a cell', () => {
+    const html = buildPreviewInnerHtml(
+      [
+        makeEvent({ id: 'a', title: 'Pale', associationColor: '#ffee00' }),
+        makeEvent({ id: 'b', title: 'Dark', associationColor: '#001133' }),
+      ],
+      2026,
+      4,
+      { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null }
+    );
+    // No title or event day number is black any more (the luminance pick is gone).
+    expect(html.match(/paint-order:stroke fill/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(html).not.toContain('text-shadow:-1px 1px 0 rgba(0,0,0,0.55)');
+    // The day number is pinned over the tile, not given a row the title must dodge.
+    expect(html).toContain('position:absolute;top:6px;left:8px');
+    expect(html).not.toContain(`height:${DAY_NUM_H}px;flex-shrink:0`);
   });
 });

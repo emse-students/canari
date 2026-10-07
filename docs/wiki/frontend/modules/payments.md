@@ -273,6 +273,48 @@ dashboard or balance.
 - [../../cotisations.md](../../cotisations.md) - membership dues (also routed through Stripe Connect).
 - [admin.md](admin.md) - platform admin surfaces (Cercle top-ups).
 
+## The payer types an e-mail, and Lydia bounds the amount (2026-10-05)
+
+Lydia's `request/do` sends the payment request to a **recipient**, and Canari stores no e-mail
+address (the OIDC sign-in carries none). So the payer types one at payment: `PayerEmailPrompt` opens
+from the boutique button and the form page ONLY when `GET /api/payments/provider` says `lydia`, the
+address travels as `payerEmail` (social-service -> `POST /api/payments/create-checkout-session`),
+core-service turns it into the provider's `payerRecipient`, and nothing keeps it. A malformed one is
+refused before any provider call. The recipient is NOT an invoice address: Canari issues no invoices.
+
+**The prompt and `PaymentModal` are portalled to `body` and sit on `--z-modal` (2026-10-07).** Both
+were written in place at a raw `z-50`. The form page renders them inside `.page-scroll-wrap`, whose
+`will-change: transform` makes it the containing block and a stacking context
+([the layer ladder](../../../../frontend/src/app.css)): the "fixed" overlay was laid out against the
+wrapper, so it started under the banner and scrolled away with the form (measured on dev's CSS at
+390 px: overlay top `84`, then `-316` after a 400 px scroll), and the form's sticky submit bar, also
+`z-50` and written later in the tree, painted over the hint, the field and its own "save a card"
+link. `layerLadder.test.ts` now treats `data-keyboard-aware-overlay` as what it is - a window-covering
+layer - and fails one that is not portalled or carries no named rung.
+
+Lydia confirmed on 2026-10-04 that a request must be between **0,50 EUR and 1000 EUR**;
+`LydiaPaymentProvider.createCheckoutSession` refuses anything outside it with a message instead of
+letting Lydia answer. In homologation the payer page offers a card form and, at its end, buttons to
+choose the final status - a real card is refused at the 3-D Secure step, so never type one there.
+
+## Where Lydia sends the payer back (2026-10-05)
+
+Stripe replaces `{CHECKOUT_SESSION_ID}` in a return URL when it redirects; **Lydia does not**, so a
+paid form's page received the literal braces, `verify-session` refused it and the screen said
+"payment not found" while the signed callback had in fact marked the submission paid. For Lydia,
+`forms.service.ts` now swaps that placeholder for `submission_id=<id>` (the id exists before the
+request does), the success page reads the submission and keeps asking while it is `pending` (the
+callback may land after the redirect; `paymentReturnVerdict` is the one rule, at most 10 reads 3 s
+apart, then an honest "awaiting confirmation" instead of an error), and the cancel page cancels that
+pending submission. The boutique needs none of this: its return URLs carry no session id and its
+fulfilment is the callback.
+
+**Not verified, and owed to Lydia or a phone**: whether Lydia appends parameters to
+`browser_success_url`, whether it accepts the `fr.emse.canari://` deep link the phone app sends,
+and the mobile deep-link branch itself (`hooks.client.ts` reads `submission_id` now). A return URL
+you see in a test is the one the request was created with: a link made by hand with `/ok` and
+`/ko` returns there, which is how a test once ended on `/ko`.
+
 ## Which onboarding flag a screen reads (2026-10-03)
 
 Stripe and Lydia keep independent account ids and `*OnboardingComplete` flags (migration 037), so
@@ -290,3 +332,19 @@ false (`POST /api/payments/complete-lydia-account/:associationId`, `NginxAuthGua
 `GlobalAdminGuard`, refused without a linked Lydia account). It calls social-service's existing
 `lydia-complete`, which also releases withheld products. Not open to the club's own managers: they
 would be declaring their own account ready. Removal of Lydia (`disconnect`) resets it.
+
+## The platform can declare payments DISABLED (2026-10-05)
+
+`platform_config.payment_provider` takes a third value, `disabled` (admin platform page, "Paiements
+desactives"; `VARCHAR(16)` holds it, no migration). Core-service answers it with
+`DisabledPaymentProvider`: `isConfigured()` is false, so every route gated on it gives its existing
+"not configured" answer, and anything that reaches the provider anyway fails with a 400,
+`Payments are disabled on this platform`. `GET /api/payments/provider` returns `{provider:'disabled'}`.
+
+It is NOT a kill switch for money already moving: the Stripe webhook and the Lydia request callback
+verify with their own secrets, independent of the active provider, so a payment in flight still
+completes. Social-service's `fetchActivePaymentProvider` returns the real value (it used to map
+anything but `lydia` to `stripe`), and `resolvePaymentTarget` resolves `disabled` to not ready with no
+account id - a ready Stripe or Lydia account, delegated or not, never routes. The client agrees:
+`isPaymentAccountReady` is false, the association payments card shows the existing "no provider
+configured" line instead of an onboarding flow, and `PayoutFeeHint` renders nothing.

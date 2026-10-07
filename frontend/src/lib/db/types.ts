@@ -35,6 +35,12 @@ export interface ConversationMeta {
    * does not have to wait for a group sweep to learn that nothing older can exist.
    */
   startedAt?: number;
+  /**
+   * The group photo's media id. Persisted so the sidebar draws the photo from the local row at first
+   * render: it used to be learned only from the server's group list, after the connection came up,
+   * so group photos appeared seconds after people's (which need no id). `null` = no photo.
+   */
+  imageMediaId?: string | null;
 }
 
 /** A decrypted message as stored in and read from the local database. */

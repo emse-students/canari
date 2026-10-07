@@ -92,7 +92,8 @@ describe('loadAndInitWasm', () => {
     // faster than a working one, which is the one direction a benchmark must never be wrong in.
     resetBootBench();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
-    WasmMlsClient.mockImplementationOnce(() => {
+    // A `function`, not an arrow: the loader calls it with `new`, and vitest warns on an arrow there.
+    WasmMlsClient.mockImplementationOnce(function () {
       throw new Error('constructor refused the snapshot');
     });
 

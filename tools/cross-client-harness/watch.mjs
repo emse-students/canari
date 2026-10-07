@@ -631,6 +631,26 @@ const STATE_CHANGE = [
   // whole point of having split them (the wording used to be "commit or dropped frame", one string
   // for a healthy group and a lossy one).
   /^\[MLS\] No application payload for \S+ - commit applied, none expected$/,
+  // A SURFACE COVERING THE SCREEN OPENING OR CLOSING (`coversScreen.svelte.ts`, #1240): the decision
+  // log of the one counter that hides the native tab bar, written on every modal, sheet and viewer.
+  // Every row that opens one - and every observer of it - read PASS-DIRTY from 2026-09-30 on. Pinned
+  // to the counter's own sentence, so a count that goes wrong in prose would still surface.
+  /^\[coversScreen\] \d+ surface\(s\) cover the screen$/,
+  // THE BOOT AND THE READ MARKER, FOUR MORE DECISION LOGS THE PROJECT'S OWN STANDARD REQUIRES (found
+  // 2026-10-05 on NOTIF-19, whose reloaded W1 replays the boot): the brand fit and the text-zoom
+  // measurement the shell takes at mount, the key-group registry restored before the drain, the
+  // notification preferences read, and the channel read marker's own bookkeeping. Each is pinned to
+  // its whole sentence, so the FAILURE spelling of any of them (`could not`, `failed`) is not here.
+  /^\[CanariBrand: name does not fit in \d+px\]$/,
+  /^\[textZoom: font \d+px over a \d+px rem box -> --text-zoom [\d.]+\]$/,
+  /^\[GRAINE\] key-group registry restored before the drain - \d+ group\(s\)$/,
+  /^\[notificationPreferences\.fetch\]$/,
+  /^\[CHANNEL_READ\] mark [0-9a-f]{8} asked=\d+ stored=\d+$/,
+  // THE ROLE PICKER OPENING AND SETTLING (`[PICKER]`): every members-tab invite goes through it, and
+  // NOTIF-21 / COMM rows that invite read PASS-DIRTY on these two lines alone. Pinned to the two
+  // sentences, so a picker that fails or throws is a different spelling and stays visible.
+  /^\[PICKER\] open ".+" as (popover|sheet), \d+ options?$/,
+  /^\[PICKER\] ".+" -> (unchanged|changed)$/,
 ];
 
 /**
@@ -1299,6 +1319,8 @@ export async function report(w) {
   let untrackedFailures = 0;
   const console_ = [];
   const ws = [];
+  /** Socket handshakes that completed in the window - informational, never gating. */
+  const wsOpen = [];
   const exceptions = [];
   /** epoch_ms - monotonic_ms, read off the one event carrying both clocks. Null until one is seen. */
   let monoToWallOffset = null;
@@ -1354,6 +1376,15 @@ export async function report(w) {
       case 'Network.webSocketClosed':
         ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}` });
         break;
+      // A SOCKET THAT (RE)OPENED, recorded OUTSIDE the gate. A close with no open after it and a
+      // close followed by a reconnection are different findings, and before this the second half was
+      // invisible by construction (GRP-3's unexplained live close, backlog 2026-08-25). The handshake
+      // RESPONSE rather than `webSocketCreated`, because only the response carries a `timestamp` and
+      // an undated open cannot be placed against the close it answers. Never part of `clean`: a
+      // socket opening is the healthy half, and the gate already judges the close.
+      case 'Network.webSocketHandshakeResponseReceived':
+        wsOpen.push({ mono: p.timestamp, text: `${e.method} status=${p.response?.status ?? '?'} ${p.requestId}` });
+        break;
       case 'Runtime.exceptionThrown': {
         // WHERE IT WAS THROWN IS PART OF THE REPORT. `description` carries a stack only when the
         // thrown value is an Error with one; an exception raised from a script the native side
@@ -1407,6 +1438,7 @@ export async function report(w) {
   const monoRef = monoToWallOffset;
   const wall = (mono) => (monoRef === null || mono === undefined ? null : mono * 1000 + monoRef);
   for (const w of ws) w.at = wall(w.mono);
+  for (const w of wsOpen) w.at = wall(w.mono);
 
   // De-duplicate: Log.entryAdded and consoleAPICalled surface the same line twice.
   //
@@ -1601,6 +1633,7 @@ export async function report(w) {
     knownBadHttp: knownBadHttp.map((r) => `${r.method} ${r.url} -> ${r.status ?? r.failed}`),
     ...(untrackedFailures ? { untrackedFailures } : {}),
     wsEvents: ws.map((w) => `${hhmmss(w.at)} ${w.text}`),
+    ...(wsOpen.length ? { wsOpened: wsOpen.map((w) => `${hhmmss(w.at)} ${w.text}`) } : {}),
     documentsReplaced,
     warnings: warnings.map(renderLine),
     notable: notable.map(renderLine),
@@ -1619,7 +1652,7 @@ export async function report(w) {
     // offline` fired a second time ten seconds after the first, and the classifier had thrown the
     // second one away as a duplicate of the first. A repeat is not noise - it is often the entire
     // finding.
-    timeline: timelineOf(console_.map((l) => ({ ...l, text: renderLine(l) })), ws),
+    timeline: timelineOf(console_.map((l) => ({ ...l, text: renderLine(l) })), [...ws, ...wsOpen]),
   });
 }
 
@@ -1991,6 +2024,24 @@ export const AUTH_TEARDOWN_NARRATION = [/^\[A\] clear$/, /^\[A\] ws-$/];
 export const BLOCK_LIST_READ_NARRATION = [/^\[blocks\.listBlockedUsers\]$/];
 
 /**
+ * WHAT ANY PAGE LOAD SAYS ABOUT ITSELF, so a row that RELOADS a client names it instead of widening
+ * the classifier. Four lines, each a function-entry or restore log the project's standard requires
+ * and each carrying no value that could be a finding: the brand's fit measurement, the text-zoom
+ * measurement, the notification-preference fetch, and the Graine key-group registry being restored
+ * before the drain (the boot step of the v2 reader - its COUNT is not asserted here).
+ *
+ * THEY ARE PINNED TO THEIR OWN SENTENCES and applied only by a row that provoked a reload
+ * (`graineauth.mjs` reloads W2 on purpose to re-read history). A client that did not reload and
+ * says one of these has booted without being asked, which is a finding.
+ */
+export const PAGE_BOOT_NARRATION = [
+  /^\[CanariBrand: name (?:fits|does not fit) in \d+px\]$/,
+  /^\[textZoom: font \d+px over a \d+px rem box -> --text-zoom [\d.]+\]$/,
+  /^\[notificationPreferences\.fetch\]$/,
+  /^\[GRAINE\] key-group registry restored before the drain - \d+ group\(s\)/,
+];
+
+/**
  * WHAT CREATING A GROUP SAYS ABOUT ITSELF, and both lines are load-bearing rather than chatter.
  *
  * `[blocks.isBlockedWith] <payload>` is the function-entry log this project's own standard requires
@@ -2346,6 +2397,9 @@ export function logcatReport(lines, label = 'A1') {
     // REQUIRED - the call site emits it unconditionally since 2026-09-24, and a rule that tolerated
     // its absence would go on matching a build that had quietly lost the discriminator.
     ['fcm-channel-generic', /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S* missing=\S+$/],
+    // The generic banner above, COUNTED: the phone tells `/api/mls/push/blind-banner` once the
+    // banner is up. Only a 2xx is explained - a refused report is a blind banner the fleet never saw.
+    ['fcm-channel-blind-reported', /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/],
     ['fcm-channel-redraw', /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/],
     ['fcm-channel-notify', /^handleChannelMessage: notification title=.*mentionsMe=(true|false)$/],
     // The seed arriving on its own push, and being stored. `decryptProto: graine key material` is a
@@ -2455,6 +2509,11 @@ export function logcatReport(lines, label = 'A1') {
     ['fcm-decrypt-refused', /^tryDecrypt refused group=[0-9a-f]+ locality=[A-Z]+$/],
     ['fcm-locality', /^groupLocality: epoch=-?\d+ group=[0-9a-f]+$/],
     ['fcm-catchup', /^(fetchCommitsFromBackend: \d+ commit\(s\) since epoch=-?\d+|catchup: no commit to catch up \(epoch=-?\d+\) -> fallback)$/],
+    // THE BACKGROUND PUSH FETCHING ITS OWN PROTO, the successful half of a wake: the GET and the
+    // answer's size, twice per push on the Mi 9T (the second after the catch-up). It left NOTIF-2, 19
+    // and 20 `PASS-DIRTY` on 2026-10-05 with nothing else - the failure spelling (`proto received=
+    // false`, an HTTP status) is not matched, so it still surfaces.
+    ['fcm-fetch-proto', /^doFetchProto: (GET http:\/\/\S+|proto received=true \(\d+ chars\))$/],
     ['outbox-drain', /^(drainOutboxBackground|sendQueuedMessagePush): /],
     ['worker-flag', /^resetFailureFlag: flag reset/],
     ['paths', /^\[mines_app_lib\] \[Path\] /],

@@ -42,6 +42,7 @@ function basePost(overrides: Partial<PostEntity>): PostEntity {
     images: [],
     polls: [],
     createdAt: new Date().toISOString(),
+    publishedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,
   };

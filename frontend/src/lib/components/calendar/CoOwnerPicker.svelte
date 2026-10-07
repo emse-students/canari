@@ -5,9 +5,15 @@
   "partenariat" is a discount an outside business offers students (`asso_partnership_*`, its own
   screen, its own table) - so a label reading "Associations partenaires" named a relationship that
   neither exists nor is checked here. What this control actually does is name the associations
-  co-hosting ONE event: it offers every association on the platform, asks none of them, and puts the
-  chosen names and colours on the card. The label and its hint now say exactly that, which is the
+  co-hosting ONE event: it offers every association on the platform, and (since D39, below) ASKS each
+  one chosen before its name and colour reach the card. The label and its hint now say exactly that, which is the
   arbitration ("toute asso, et le libelle le dit") rather than a narrowing nobody asked for.
+
+  SINCE D39 (user, 2026-10-04) NAMING ONE ASKS IT. Each chip says where that association stands -
+  accepted (it co-organises: rights and reach), pending (asked, no answer yet: nothing of it on the
+  event), or new (asked when the form is saved). Removing a pending chip withdraws the proposal,
+  removing an accepted one ends the co-organisation. A refused association is listed under the chips
+  and is not offered again: its refusal stands.
 
   This one is a multi-select over its own dropdown rather than the single-choice `Picker`. It reads
   the SAME grouping helper, so
@@ -21,7 +27,11 @@
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listAssociations, type Association } from '$lib/associations/api';
+  import {
+    listAssociations,
+    type Association,
+    type CalendarEventCoOrganiserState,
+  } from '$lib/associations/api';
   import { groupAssociationsForSelect, listOptionLabel } from '$lib/associations/selectGroups';
   import { m } from '$lib/paraglide/messages';
   import { X, Users } from '@lucide/svelte';
@@ -31,9 +41,23 @@
     selectedIds: string[];
     /** Association excluded from candidates (the event's primary owner). */
     excludeId?: string;
+    /** The server's state of each co-organiser of an existing event (D39); empty for a new one. */
+    states?: CalendarEventCoOrganiserState[];
   }
 
-  let { selectedIds = $bindable([]), excludeId = '' }: Props = $props();
+  let { selectedIds = $bindable([]), excludeId = '', states = [] }: Props = $props();
+
+  const statusById = $derived(new Map(states.map((s) => [s.associationId, s.status])));
+  /** Refused associations: shown, never offered again (the refusal stands). */
+  const refused = $derived(states.filter((s) => s.status === 'refused'));
+
+  /** The badge of one chip: its server state, or "will be asked" for one added in this form. */
+  function statusLabel(id: string): string {
+    const status = statusById.get(id);
+    if (status === 'accepted') return m.asso_calendar_co_owner_status_accepted();
+    if (status === 'pending') return m.asso_calendar_co_owner_status_pending();
+    return m.asso_calendar_co_owner_status_new();
+  }
 
   let allAssociations = $state<Association[]>([]);
   let searchQuery = $state('');
@@ -52,6 +76,7 @@
       (a) =>
         a.id !== excludeId &&
         !selectedIds.includes(a.id) &&
+        statusById.get(a.id) !== 'refused' &&
         (searchQuery.trim() === '' || a.name.toLowerCase().includes(searchQuery.toLowerCase()))
     )
   );
@@ -93,6 +118,10 @@
             ></span>
           {/if}
           {optionLabel(asso)}
+          <span
+            class="text-text-muted font-normal"
+            data-co-owner-status={statusById.get(asso.id) ?? 'new'}>{statusLabel(asso.id)}</span
+          >
           <button
             type="button"
             onclick={() => remove(asso.id)}
@@ -104,6 +133,11 @@
         </span>
       {/each}
     </div>
+  {/if}
+  {#if refused.length > 0}
+    <p class="text-text-muted text-xs">
+      {m.asso_calendar_co_owner_refused_line({ names: refused.map((s) => s.name).join(', ') })}
+    </p>
   {/if}
   <div class="relative">
     <input

@@ -195,6 +195,16 @@ Conversation-list avatars are **48x48 with `border-radius: 16px`** - squircles. 
 reference surfaces is `50%`, a circle, 80 times per page. Nothing in Canari's identity depends on the
 squircle.
 
+**Decision 2026-10-05 (user): every NON-round avatar is a true squircle, groups included; circles stay
+circles.** One utility, `squircle` in `src/app.css` (`border-radius: var(--radius-squircle)` = 32%, a
+ratio so one token fits 24px to 56px, plus `corner-shape: squircle`), used by `Avatar`,
+`AssociationAvatar`, `AnonymousAvatar`, `GroupAvatar` and the group-photo button of `ChatGroupPanel`.
+Where `corner-shape` is unsupported the declaration is ignored and the plain percentage radius stays:
+progressive enhancement of one property, not a second code path. The conversation header draws its
+avatar in ONE 40px box that the avatar fills (it used to draw a 48px avatar inside a 40px wrapper),
+and the phone apps' glass title pill, being a `rounded-full` surface, holds a CIRCLE avatar so the
+two corners are concentric - a squircle inscribed in a pill was the mismatch.
+
 ---
 
 ## 7. The target - what the redesign adopted (SHIPPED, see section 9)
@@ -1467,6 +1477,8 @@ max-width of **640px or more** is a page column, whatever the file calls it. 640
 beside the scale; below it nothing is asserted, which is what lets the join cards keep their 448
 without an exemption list. It collapses whitespace across the whole file before matching, because a
 class attribute that spans lines is how the 2026-09-13 overlay sweep left two components unread.
+
+**The management page (`/associations/[slug]/edit`, 2026-10-05) was the sixth column nobody counted**: it took `PageContainer`'s default `reading` (680px) while the association's own page above sat at `tool`/`grid`, so going from one to the other moved the whole column (user, with screenshots). It is now `width="tool"` (1024px), the same named shape the public page's `about`/`members` tabs use - one declared value, no raw `max-w-*`. The Membres/Paiements/Achats tabs were the reason to look twice and they only gain room.
 
 Every value here was read off the running app, not off the Tailwind docs: `max-w-4xl` 896,
 `max-w-5xl` 1024, `max-w-[42.5rem]` 680, `max-w-2xl` 672, `max-w-md` 448.
@@ -2895,6 +2907,25 @@ independently rather than by sharing the predicate, for the reason section 32 gi
 wins because it is the more specific target**: an edge-swipe-back has the rest of the strip, a reply
 swipe has nowhere else to happen.
 
+### The page stayed shifted left after a sideways drag, on every route (2026-10-06)
+
+Reported from an iPhone: Settings, content parked about 100px left, header cut, bottom bar and banner
+unshifted, and it never came back. `/settings` is not a swipe route - the shift is the tab swipe's
+DRAG TRANSFORM, stranded on `.page-scroll-wrap`, which outlives every route change.
+
+**Cause:** `touchend` and `touchcancel` were listened for on the app shell, but a touch's events go to
+the element it STARTED on. When a re-render removes that element mid-drag, the end never bubbles to any
+ancestor, so `snapSwipeBack` never ran and `swipe-nav-dragging` (`touch-action: none`) stayed too.
+**Measured on the Mi 9T (Chrome WebView, real `Input.dispatchTouchEvent` drag on `/communities`):**
+node removed between drag and release left `translate3d(-120px, 0, 0)` and the class; a normal release
+cleared both. After the fix the removed-node release clears them.
+
+**Fix, at the cause:** `touchGestureEnd.ts` binds the end/cancel listeners to the touch's own start target
+(`handleTouchStart`), so the end cannot be lost. No timer, no sweep. Not reproduced on the iPhone itself
+(no WebKit inspector tooling on the workstation); the mechanism is standard DOM and not engine-specific.
+
+**If a mounted pager is ever reopened, its price was audited 2026-09-29 and re-read 2026-10-01:** nothing knows which page is on screen. `MainChatPage` marks read and sends the read receipt on document focus alone (`isWindowFocused`/`isTabVisible`), handles every `canari-keyboard-media` GIF whatever is focused, consumes `canari_pending_contact` only at mount, and resets on a tab switch only through a remount (`lastActiveRouteMode`); `/chat` and `/communities` share one `globalConvs.selectedContact`, so two mounted instances draw one thread with duplicate `msg-<id>` ids (`ChatArea` jumps by `getElementById`) and one `--chat-composer-height`. The feed reads its `load` data (`data.feedParams`) and binds pull-to-refresh to the FIRST `.page-scroll-wrap` in the document, and `app.css` keys the chat layout on `.page-scroll-wrap:has(.app-layout)` - one wrapper for every page.\n
+
 ## 39. A community with many channels, and a channel with a long name - measured by injection (2026-09-14, 2026-09-22)
 
 The estate has one channel per workspace, so the graphical pass (user, 2026-09-13: every page at
@@ -2961,3 +2992,43 @@ Before / after (frames at 15 fps, the same swipe from the feed, Mi 9T):
 | --- | --- | --- |
 | Feed -> camera, the frames between the slide and the first preview frame | black "Ouverture de la camera" for 600 ms, then ONE frame of the grey glyph | Canari's navy stand-in throughout, cross-faded to the preview |
 | Camera -> feed, the bar | absent on the 4 frames of the slide, present at +270 ms | present on the first frame of the slide |
+
+## 41. The system back gesture takes the edge touch, and the swipe back stayed armed (Mi 9T, 2026-10-05)
+
+**Reported by the user as a P1: open the keyboard in a conversation, close it with the Android back
+swipe from the left edge, scroll up - and the conversation closes.** Reproduced on the Mi 9T, and the
+cause read from the page's own history rather than guessed: a `history.back()` hook showed
+`goBackToMenu` called from `swipeBack`'s `onBack` at the moment of the scroll.
+
+`swipeBack` arms on any touch within 28px of the left edge. On Android the SYSTEM back gesture owns
+that strip: it takes the touch, so the WebView gets `touchcancel` and never `touchend`. Nothing
+listened to `touchcancel`, so `tracking` stayed true with `startX` at the edge, and the next stroke -
+a vertical scroll at mid-screen - read as a 540px rightward drag from there and committed.
+
+The rule: **a gesture that arms on `touchstart` must disarm on `touchcancel`, and a new `touchstart`
+supersedes any unfinished touch.** `swipeBack` and `pullToRefresh` (same shape: a stale `active`
+could fire a refresh at the end of an unrelated stroke) now do both; the other touch handlers
+(`MessageBubble`, `ReelViewer`, `MediaLightbox`, `PdfViewerModal`) already handle `touchcancel`.
+Tests: `swipeBack.test.ts` (a cancelled edge touch, then a mid-screen scroll).
+
+## 42. The profile rendered, then broke: a late section threw on a repeated key (2026-10-06)
+
+**Report (production, iPhone store build):** "Mon profil" showed, then a loading state, then the error screen.
+Her associations (two Admin roles) were a red herring: memberships, role history, cotisations and the
+notepad were all replayed against the local estate with that data and rendered.
+
+**Cause, reproduced on the local estate (W1, 390 px, `/api/users/*/parrainage` answered by a fetch
+override):** the sponsorship section only appears once `fetchUserParrainage` is in flight or has rows - it
+is the one section that arrives LATE, hence "shows, loading, breaks". It threw in two ways, both ending in
+`[Layout] page crash` and the generic error screen:
+
+- `each_key_duplicate` - rows were keyed `sub ?? full name`. Two unlinked Sky placeholders with one name,
+  or a person listed as parrain and as adoption, repeat the key. Svelte 5 THROWS on a duplicate key.
+  `ProfileChips` carried the same pattern (`formation + promo`, `post`).
+- `Cannot read properties of undefined (reading 'length')` - core-service relays Sky's body untouched, so
+  a body without `parrains`/`fillots` (e.g. `{ "found": false }`) reached `parrainage?.parrains.length`.
+
+**Fix:** read-only lists are keyed by position; `parseSkyEntourage` turns a missing list into an empty one
+and REFUSES a non-object (the page logs it and shows no section). The three swallowed extras loaders now
+log. Pinned by `ProfileParrainageSection.svelte.test.ts` (fails with `each_key_duplicate` before) and
+`profile/api.test.ts`. No data repair is needed: the rows are Sky's and render as they are.

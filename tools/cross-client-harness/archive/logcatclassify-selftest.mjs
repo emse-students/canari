@@ -61,6 +61,10 @@ const CASES = [
   [line('D', 'CanariFCM', 'markMembershipActive: HTTP 201 group=0adecec2-718a'), 'explained'],
   [line('D', 'CanariFCM', 'tryDecrypt refused group=0adecec2: its Welcome is queued behind this frame -> re-queued after it'), 'notable'],
   [line('D', 'CanariFCM', 'handleChannelMessage: the Welcome into key group 0adecec2 is queued behind this push -> re-queued after it channel=c0ffee00 index=0'), 'notable'],
+  // A blind salon banner, counted - and a refused count is a banner the fleet never saw.
+  [line('D', 'CanariFCM', 'reportBlindBanner: HTTP 201 channel=c0ffee00 missing=seed held=true'), 'explained'],
+  [line('D', 'CanariFCM', 'reportBlindBanner: HTTP 201 channel=c0ffee00 missing=seed,ciphertext held=false'), 'explained'],
+  [line('D', 'CanariFCM', 'reportBlindBanner: HTTP 403 channel=c0ffee00 missing=seed held=true'), 'unexplained'],
   // A seat the server refused to promote is not the join working.
   [line('D', 'CanariFCM', 'markMembershipActive: HTTP 403 group=0adecec2-718a'), 'unexplained'],
   [line('W', 'CanariFCM', 'openSeedFrame: seed frame refused group=2513c207 locality=LOCAL -> commit catch-up'), 'notable'], // explained, and reported: it carries `refused`
@@ -165,6 +169,10 @@ const CASES = [
   [line('D', 'CanariFCM', 'groupLocality: epoch=144 group=2bd5add9'), 'notable'],
   [line('D', 'CanariFCM', 'fetchCommitsFromBackend: 0 commit(s) since epoch=144'), 'notable'],
   [line('D', 'CanariFCM', 'catchup: no commit to catch up (epoch=144) -> fallback'), 'notable'],
+  // The successful half of a background proto fetch is explained; its failure spelling is not.
+  [line('D', 'CanariFCM', 'doFetchProto: GET http://10.0.2.2:3000/api/mls/groups/2bd5add9/proto'), 'explained'],
+  [line('D', 'CanariFCM', 'doFetchProto: proto received=true (1337 chars)'), 'explained'],
+  [line('D', 'CanariFCM', 'doFetchProto: proto received=false'), 'unexplained'],
   [line('I', 'mines_app_lib', '[mines_app_lib] [Path] app_data_dir = /data/user/0/fr.emse.canari'), 'explained'],
   // The byte count is deliberately not a round four-digit number: `idcheck.mjs` reads the staged
   // index for every identity string in `test-accounts.json`, and the first draft of this line

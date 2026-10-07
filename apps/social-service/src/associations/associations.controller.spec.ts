@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
@@ -10,6 +10,8 @@ import { PartnershipsService } from './partnerships.service';
 import { FollowsService } from '../follows/follows.service';
 import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
+import { signAgendaSelection } from './agenda-signature';
+import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 
 describe('AssociationsController cotisation config gating (D5)', () => {
   function makeController() {
@@ -129,7 +131,7 @@ describe('AssociationsController secret stripping', () => {
   }
 
   it.each([
-    ['list', async (c: AssociationsController) => (await c.list())[0]],
+    ['list', async (c: AssociationsController) => (await c.list('u1'))[0]],
     ['findBySlug', (c: AssociationsController) => c.findBySlug('bde')],
     ['findOne', (c: AssociationsController) => c.findOne('asso1')],
   ])('never lets %s answer with the vault key or the private notes', async (_name, read) => {
@@ -139,6 +141,59 @@ describe('AssociationsController secret stripping', () => {
     expect(result.notesCiphertext).toBeNull();
     // The rest of the row still has to reach the app - the fix is a strip, not an allowlist.
     expect(result).toMatchObject({ id: 'asso1', name: 'BDE', stripeOnboardingComplete: true });
+  });
+});
+
+/**
+ * THE DIRECTORY (D37) IS THE DEFAULT, THE CATALOGUE IS ASKED FOR BY NAME. The listing hands the
+ * service a viewer only in the directory scope - that viewer is what narrows the SQL - and passes
+ * the map filters through in either scope. A typo in a new parameter is a 400, never a silent
+ * widening.
+ */
+describe('AssociationsController directory scope (D37)', () => {
+  function makeController() {
+    const service = { list: jest.fn(() => Promise.resolve([])) };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService
+    );
+    return { controller, service };
+  }
+
+  it('lists the caller directory by default', async () => {
+    const { controller, service } = makeController();
+    await controller.list('u1', 'list');
+    expect(service.list).toHaveBeenCalledWith('list', {
+      viewerId: 'u1',
+      campus: null,
+      formation: null,
+    });
+  });
+
+  it('lists the whole catalogue with scope=all, filters kept', async () => {
+    const { controller, service } = makeController();
+    await controller.list('u1', undefined, 'all', 'gardanne', 'ISMIN');
+    expect(service.list).toHaveBeenCalledWith(undefined, {
+      viewerId: undefined,
+      campus: 'gardanne',
+      formation: 'ISMIN',
+    });
+  });
+
+  it.each([
+    ['scope', ['u1', undefined, 'everything']],
+    ['campus', ['u1', undefined, undefined, 'paris']],
+    ['formation', ['u1', undefined, undefined, undefined, 'MBA']],
+  ] as const)('refuses an unknown %s', async (_name, args) => {
+    const { controller, service } = makeController();
+    await expect(
+      controller.list(...(args as unknown as Parameters<typeof controller.list>))
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(service.list).not.toHaveBeenCalled();
   });
 });
 
@@ -176,21 +231,11 @@ describe('AssociationsController read guards', () => {
  * AND.
  */
 describe('AssociationsController delete tier', () => {
-  it('admits a global admin OR a BDE MANAGE_ASSO holder, and nothing narrower', () => {
-    // Indexed rather than dotted, like the read-guard block above: a bare `prototype.remove` is an
-    // unbound method reference and the linter is right to say so, even though nothing calls it.
-    const guards = Reflect.getMetadata(
-      GUARDS_METADATA,
-      AssociationsController.prototype['remove']
-    ) as unknown[] | undefined;
-
-    expect(guards).toContain(NginxAuthGuard);
-    expect(guards).toContain(GlobalAdminOrBdeSuperAdminGuard);
-    expect(guards).not.toContain(GlobalAdminGuard);
-  });
-
-  it('hands the caller down, because the service line that records the deletion needs a name', () => {
-    const service = { remove: jest.fn(() => Promise.resolve({ ok: true })) };
+  function makeController(governs: boolean) {
+    const service = {
+      remove: jest.fn(() => Promise.resolve({ ok: true })),
+      isAssociationSuperAdminOf: jest.fn(() => Promise.resolve(governs)),
+    };
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
       {} as ProductsService,
@@ -199,10 +244,48 @@ describe('AssociationsController delete tier', () => {
       {} as UserTagService,
       {} as UserProfileService
     );
+    return { controller, service };
+  }
 
-    void controller.remove('asso1', 'user-42');
+  it('is a signed-in route whose tier is checked in the handler, never a narrower guard', () => {
+    // Indexed rather than dotted, like the read-guard block above: a bare `prototype.remove` is an
+    // unbound method reference and the linter is right to say so, even though nothing calls it.
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      AssociationsController.prototype['remove']
+    ) as unknown[] | undefined;
 
+    expect(guards).toContain(NginxAuthGuard);
+    // The unscoped guard would admit a BDE of ANOTHER space (WP6c step 2).
+    expect(guards).not.toContain(GlobalAdminOrBdeSuperAdminGuard);
+    expect(guards).not.toContain(GlobalAdminGuard);
+  });
+
+  it('hands the caller down, because the service line that records the deletion needs a name', async () => {
+    const { controller, service } = makeController(true);
+
+    await controller.remove('asso1', 'user-42', undefined);
+
+    expect(service.isAssociationSuperAdminOf).toHaveBeenCalledWith('user-42', 'asso1');
     expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
+  });
+
+  it('refuses MANAGE_ASSO in the BDE of a space the association does not reach', async () => {
+    const { controller, service } = makeController(false);
+
+    await expect(controller.remove('asso1', 'user-42', undefined)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(service.remove).not.toHaveBeenCalled();
+  });
+
+  it('lets a global admin delete without consulting any BDE', async () => {
+    const { controller, service } = makeController(false);
+
+    await controller.remove('asso1', 'admin', 'true');
+
+    expect(service.isAssociationSuperAdminOf).not.toHaveBeenCalled();
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
   });
 });
 
@@ -217,14 +300,18 @@ describe('AssociationsController delete tier', () => {
  */
 describe('AssociationsController calendar event writes', () => {
   function makeController(mayAct: boolean, isBde = false) {
-    const service = {
+    // On the service's own prototype, so `assertMayWriteEvent` is the REAL rule (it moved into the
+    // service so the co-organiser route shares it), run over the two answers mocked below - these
+    // cases still pin the rule, not a stub of it.
+    const service = Object.assign(Object.create(AssociationsService.prototype) as object, {
       mayAct: jest.fn(() => Promise.resolve(mayAct)),
-      isUserBdeAdmin: jest.fn(() => Promise.resolve(isBde)),
+      mayValidateEvent: jest.fn(() => Promise.resolve(isBde)),
       updateCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev1' })),
       deleteCalendarEvent: jest.fn(() => Promise.resolve({ ok: true })),
       setEventImageFromUpload: jest.fn(() => Promise.resolve({ id: 'ev1' })),
       clearEventImage: jest.fn(() => Promise.resolve({ id: 'ev1' })),
-    };
+      logger: { debug: jest.fn() },
+    });
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
       {} as ProductsService,
@@ -284,9 +371,128 @@ describe('AssociationsController calendar event writes', () => {
     expect(service.updateCalendarEvent).not.toHaveBeenCalled();
     expect(service.deleteCalendarEvent).not.toHaveBeenCalled();
   });
+
+  it('crosses associations for a BDE governing THE EVENT, judged on the event id', async () => {
+    const { controller, service } = makeController(false, true);
+    await controller.updateCalendarEvent('user1', undefined, 'other-asso', 'ev1', {} as never);
+    expect(service.mayValidateEvent).toHaveBeenCalledWith('user1', 'ev1');
+    expect(service.updateCalendarEvent).toHaveBeenCalledWith(
+      'other-asso',
+      'ev1',
+      {},
+      {
+        isGlobalAdmin: false,
+        isBde: true,
+        callerUserId: 'user1',
+      }
+    );
+  });
 });
 
-describe('AssociationsController feed.ics eventId', () => {
+/**
+ * WP6c STEP 2: A VERDICT ON AN EVENT BELONGS TO THE BDE OF THE EVENT ASSOCIATION'S SPACE.
+ *
+ * The controller asks `mayValidateEvent(user, eventId)` - the event's own association, never the
+ * one in the URL - and the SQL behind it is proven against PostgreSQL in `bde.integration.spec.ts`.
+ */
+describe('AssociationsController event verdicts and deposits (WP6c step 2)', () => {
+  function makeController(governsEvent: boolean, governsTarget = governsEvent) {
+    const service = {
+      mayValidateEvent: jest.fn(() => Promise.resolve(governsEvent)),
+      mayValidateEventsOf: jest.fn(() => Promise.resolve(governsTarget)),
+      validateCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev1' })),
+      rejectCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev1' })),
+      createCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev2' })),
+    };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService
+    );
+    return { controller, service };
+  }
+
+  it('lets the BDE of the event association space validate and reject', async () => {
+    const { controller, service } = makeController(true);
+    await controller.validateCalendarEvent('bde1', undefined, 'asso1', 'ev1');
+    await controller.rejectCalendarEvent('bde1', undefined, 'asso1', 'ev1', { reason: 'no' });
+    expect(service.mayValidateEvent).toHaveBeenCalledWith('bde1', 'ev1');
+    expect(service.validateCalendarEvent).toHaveBeenCalledWith('asso1', 'ev1', 'bde1');
+    expect(service.rejectCalendarEvent).toHaveBeenCalledWith('asso1', 'ev1', 'bde1', 'no');
+  });
+
+  it('refuses the BDE of another space, on both verdicts', async () => {
+    const { controller, service } = makeController(false);
+    await expect(
+      controller.validateCalendarEvent('bde2', undefined, 'asso1', 'ev1')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      controller.rejectCalendarEvent('bde2', undefined, 'asso1', 'ev1', {})
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.validateCalendarEvent).not.toHaveBeenCalled();
+    expect(service.rejectCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it('lets a global admin decide without asking any BDE', async () => {
+    const { controller, service } = makeController(false);
+    await controller.validateCalendarEvent('admin', 'true', 'asso1', 'ev1');
+    expect(service.mayValidateEvent).not.toHaveBeenCalled();
+    expect(service.validateCalendarEvent).toHaveBeenCalled();
+  });
+
+  it('reads the deposit grant on the TARGET association, not the one routed through', async () => {
+    const { controller, service } = makeController(false, true);
+    await controller.createCalendarEvent('bde1', undefined, 'bde-asso', {
+      targetAssocId: 'club',
+    } as never);
+    expect(service.mayValidateEventsOf).toHaveBeenCalledWith('bde1', 'club');
+    expect(service.createCalendarEvent).toHaveBeenCalledWith(
+      'bde-asso',
+      { targetAssocId: 'club' },
+      'bde1',
+      { isGlobalAdmin: false, isBde: true }
+    );
+  });
+
+  it('refuses a deposit on an association the caller BDE does not govern, instead of filing it on :id', async () => {
+    const { controller, service } = makeController(false, false);
+    await expect(
+      controller.createCalendarEvent('bde2', undefined, 'bde-asso', {
+        targetAssocId: 'club',
+      } as never)
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.createCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it('files a plain proposal on :id with the grant read on :id', async () => {
+    const { controller, service } = makeController(false, false);
+    await controller.createCalendarEvent('member', undefined, 'club', {} as never);
+    expect(service.mayValidateEventsOf).toHaveBeenCalledWith('member', 'club');
+    expect(service.createCalendarEvent).toHaveBeenCalledWith('club', {}, 'member', {
+      isGlobalAdmin: false,
+      isBde: false,
+    });
+  });
+});
+
+describe('AssociationsController feed.ics eventId and the signed selection', () => {
+  const KEY = 'agenda-test-key-0123456789abcdef0123456789';
+  const previousKey = process.env.AGENDA_SIGNING_KEY;
+  const previousInternal = process.env.INTERNAL_SECRET;
+  beforeAll(() => {
+    process.env.AGENDA_SIGNING_KEY = KEY;
+    process.env.INTERNAL_SECRET = 'internal-secret-for-tests';
+  });
+  afterAll(() => {
+    if (previousKey === undefined) delete process.env.AGENDA_SIGNING_KEY;
+    else process.env.AGENDA_SIGNING_KEY = previousKey;
+    if (previousInternal === undefined) delete process.env.INTERNAL_SECRET;
+    else process.env.INTERNAL_SECRET = previousInternal;
+  });
+
   const rows = [1, 2].map((n) => ({
     id: `ev${n}`,
     title: `Soiree ${n}`,
@@ -309,28 +515,200 @@ describe('AssociationsController feed.ics eventId', () => {
     );
   }
   const res = { setHeader: jest.fn() } as never;
-
-  it('keeps only the named event, so a phone can add ONE evening to its calendar', async () => {
-    const body = await makeController().aggregatedCalendarFeedIcs(
+  const sigOf = (campus: SpaceCampus | null, formation: SpaceFormation | null = null) =>
+    signAgendaSelection({ campus, formation, associationId: null });
+  const ics = (
+    controller: AssociationsController,
+    args: {
+      campus?: string;
+      formation?: string;
+      associationId?: string;
+      eventId?: string;
+      sig?: string;
+    }
+  ) =>
+    controller.aggregatedCalendarFeedIcs(
       undefined,
       undefined,
-      undefined,
-      'ev2',
-      res
+      args.associationId,
+      args.eventId,
+      res,
+      args.campus,
+      args.formation,
+      args.sig
     );
+  const json = (args: { campus?: string; userId?: string; internal?: string; sig?: string }) =>
+    makeController().aggregatedCalendarFeed(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      args.userId,
+      undefined,
+      args.campus,
+      undefined,
+      args.sig,
+      args.internal
+    );
+
+  it('keeps only the named event, UNSIGNED, so a phone can add ONE evening to its calendar', async () => {
+    const body = await ics(makeController(), { eventId: 'ev2' });
     expect(body).toContain('UID:ev2@canari');
     expect(body).not.toContain('UID:ev1@canari');
   });
 
-  it('serves the whole window without an eventId', async () => {
-    const body = await makeController().aggregatedCalendarFeedIcs(
+  it('hands a SIGNED selection to the feed, and refuses an unknown campus with a 400 (D40)', async () => {
+    const controller = makeController();
+    await ics(controller, { campus: 'gardanne', formation: 'ICM', sig: sigOf('gardanne', 'ICM') });
+    const service = (
+      controller as unknown as { service: { listAggregatedCalendarFeed: jest.Mock } }
+    ).service;
+    expect(service.listAggregatedCalendarFeed).toHaveBeenCalledWith(
       undefined,
       undefined,
       undefined,
-      undefined,
-      res
+      {
+        selection: { campus: 'gardanne', formation: 'ICM' },
+      }
     );
+    await expect(ics(controller, { campus: 'paris' })).rejects.toThrow('Unknown campus: paris');
+  });
+
+  it('serves the whole window of a signed selection without an eventId', async () => {
+    const body = await ics(makeController(), { campus: 'gardanne', sig: sigOf('gardanne') });
     expect(body).toContain('UID:ev1@canari');
     expect(body).toContain('UID:ev2@canari');
+  });
+
+  it('REFUSES the bare public feed with a typed 400 (D40), but not one event', async () => {
+    await expect(ics(makeController(), {})).rejects.toMatchObject({
+      response: { code: 'AGENDA_SELECTION_REQUIRED' },
+    });
+    await expect(json({})).rejects.toMatchObject({
+      response: { code: 'AGENDA_SELECTION_REQUIRED' },
+    });
+    // A signed-in reader is narrowed to their own spaces, so the JSON feed answers them.
+    await expect(json({ userId: 'u1' })).resolves.toBeDefined();
+    await expect(ics(makeController(), { eventId: 'ev1' })).resolves.toContain('BEGIN:VCALENDAR');
+  });
+
+  describe('the signature (2026-10-06)', () => {
+    it('REFUSES an unsigned campus, formation or association with a typed 403', async () => {
+      for (const args of [{ campus: 'gardanne' }, { formation: 'ICM' }, { associationId: 'a1' }]) {
+        await expect(ics(makeController(), args)).rejects.toMatchObject({
+          status: 403,
+          response: { code: 'AGENDA_SIGNATURE_REQUIRED' },
+        });
+      }
+      await expect(json({ campus: 'gardanne' })).rejects.toMatchObject({
+        response: { code: 'AGENDA_SIGNATURE_REQUIRED' },
+      });
+    });
+
+    it('REFUSES a tampered signature', async () => {
+      const sig = sigOf('gardanne');
+      const flipped = `${sig.slice(0, -1)}${sig.endsWith('A') ? 'B' : 'A'}`;
+      await expect(
+        ics(makeController(), { campus: 'gardanne', sig: flipped })
+      ).rejects.toMatchObject({ status: 403, response: { code: 'AGENDA_SIGNATURE_INVALID' } });
+      await expect(
+        ics(makeController(), { campus: 'gardanne', sig: 'short' })
+      ).rejects.toMatchObject({ response: { code: 'AGENDA_SIGNATURE_INVALID' } });
+    });
+
+    it('REFUSES the signature of another selection: another campus, a widened or narrowed one', async () => {
+      const invalid = { response: { code: 'AGENDA_SIGNATURE_INVALID' } };
+      const c = makeController();
+      await expect(
+        ics(c, { campus: 'saint-etienne', sig: sigOf('gardanne') })
+      ).rejects.toMatchObject(invalid);
+      await expect(
+        ics(c, { campus: 'gardanne', formation: 'ICM', sig: sigOf('gardanne') })
+      ).rejects.toMatchObject(invalid);
+      await expect(
+        ics(c, { formation: 'ICM', sig: sigOf('gardanne', 'ICM') })
+      ).rejects.toMatchObject(invalid);
+      await expect(ics(c, { associationId: 'a1', sig: sigOf('gardanne') })).rejects.toMatchObject(
+        invalid
+      );
+    });
+
+    it('accepts an association signature for that association only', async () => {
+      const sig = signAgendaSelection({ campus: null, formation: null, associationId: 'a1' });
+      await expect(ics(makeController(), { associationId: 'a1', sig })).resolves.toContain(
+        'BEGIN:VCALENDAR'
+      );
+      await expect(ics(makeController(), { associationId: 'a2', sig })).rejects.toMatchObject({
+        response: { code: 'AGENDA_SIGNATURE_INVALID' },
+      });
+    });
+
+    it('refuses a signature made under another key (rotation ends every saved URL)', async () => {
+      const sig = sigOf('gardanne');
+      process.env.AGENDA_SIGNING_KEY = `${KEY}-rotated`;
+      try {
+        await expect(ics(makeController(), { campus: 'gardanne', sig })).rejects.toMatchObject({
+          response: { code: 'AGENDA_SIGNATURE_INVALID' },
+        });
+      } finally {
+        process.env.AGENDA_SIGNING_KEY = KEY;
+      }
+    });
+
+    it('fails CLOSED with a 503 when the key is unset', async () => {
+      delete process.env.AGENDA_SIGNING_KEY;
+      try {
+        await expect(ics(makeController(), { campus: 'gardanne', sig: 'x' })).rejects.toMatchObject(
+          { status: 503 }
+        );
+      } finally {
+        process.env.AGENDA_SIGNING_KEY = KEY;
+      }
+    });
+
+    it('lets the server-internal caller (the SEO page) read a selection with no signature', async () => {
+      await expect(
+        json({ campus: 'gardanne', internal: 'internal-secret-for-tests' })
+      ).resolves.toBeDefined();
+      await expect(json({ campus: 'gardanne', internal: 'wrong' })).rejects.toMatchObject({
+        response: { code: 'AGENDA_SIGNATURE_REQUIRED' },
+      });
+    });
+  });
+});
+
+describe('AssociationsController POST calendar/feed-signature (2026-10-06)', () => {
+  it('is behind the sign-in guard', () => {
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      AssociationsController.prototype['signCalendarFeedSelection']
+    ) as unknown[] | undefined;
+    expect(guards).toContain(NginxAuthGuard);
+  });
+
+  it('asks the service to sign the parsed selection, and refuses an empty one with a 400', async () => {
+    const service = { signAgendaFeedSelection: jest.fn(() => Promise.resolve({ sig: 's' })) };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService
+    );
+    await expect(
+      controller.signCalendarFeedSelection('u1', { campus: 'gardanne', formation: 'ICM' })
+    ).resolves.toEqual({ sig: 's' });
+    expect(service.signAgendaFeedSelection).toHaveBeenCalledWith(
+      'u1',
+      { campus: 'gardanne', formation: 'ICM' },
+      null
+    );
+    await expect(controller.signCalendarFeedSelection('u1', {})).rejects.toMatchObject({
+      response: { code: 'AGENDA_SELECTION_REQUIRED' },
+    });
+    await expect(controller.signCalendarFeedSelection('u1', { campus: 'paris' })).rejects.toThrow(
+      'Unknown campus: paris'
+    );
   });
 });

@@ -6,6 +6,7 @@ import {
   ForbiddenException,
   Get,
   Headers,
+  Logger,
   Param,
   Patch,
   Post,
@@ -63,12 +64,22 @@ import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
+import { sanitizeLog } from '../common/log.utils';
+import {
+  AGENDA_SELECTION_REQUIRED,
+  assertAgendaAccess,
+  parseDirectoryQuery,
+  parseSpaceSelection,
+} from './directory-query';
+import { isInternalSecret } from '../internal/is-internal-secret.util';
 
 const LOGO_UPLOAD_MB = 2;
 
 /** Manages association resources including membership, logo, Stripe onboarding, follow relationships, and boutique products. */
 @Controller('associations')
 export class AssociationsController {
+  private readonly logger = new Logger(AssociationsController.name);
+
   constructor(
     private readonly service: AssociationsService,
     private readonly productsService: ProductsService,
@@ -146,12 +157,33 @@ export class AssociationsController {
   // `/api/public/associations*` (`PublicController`, `toPublic`), which is also what the SSR head
   // reads. Adding a field there is a deliberate act; adding a column to the entity must not be.
 
-  /** Returns associations. Pass `?type=association|list` to restrict; omit for both. */
+  /**
+   * Returns associations. `?type=association|list` restricts; omit for both.
+   *
+   * THE DIRECTORY (D37) BY DEFAULT: only the associations whose rules reach one of the caller's
+   * spaces, plus those the caller is a member of - a global admin included, as in the feed.
+   * `?scope=all` is the whole catalogue, for screens that PICK an association (see
+   * `directory-query.ts`); it is open to any signed-in caller because a hidden association is not
+   * a secret - its page stays reachable by its link. `?campus=` / `?formation=` keep only the
+   * associations whose rules reach a space matching them (the association map), in either scope.
+   */
   @UseGuards(NginxAuthGuard)
   @Get()
-  async list(@Query('type') type?: string) {
-    const filter = type === 'association' || type === 'list' ? type : undefined;
-    return (await this.service.list(filter)).map(toSafeAssociation);
+  async list(
+    @Headers('x-user-id') userId: string,
+    @Query('type') type?: string,
+    @Query('scope') scope?: string,
+    @Query('campus') campus?: string,
+    @Query('formation') formation?: string
+  ) {
+    const query = parseDirectoryQuery({ type, scope, campus, formation });
+    return (
+      await this.service.list(query.type, {
+        viewerId: query.scope === 'directory' ? userId?.trim() : undefined,
+        campus: query.campus,
+        formation: query.formation,
+      })
+    ).map(toSafeAssociation);
   }
 
   /** Returns an association looked up by its URL slug. */
@@ -166,6 +198,23 @@ export class AssociationsController {
   @Get('me/list')
   myAssociations(@Headers('x-user-id') userId: string) {
     return this.service.listByUser(userId);
+  }
+
+  /**
+   * The associations whose BDE grants the caller each scoped power (WP6c step 2): `validateEvents`
+   * (VALIDATE_EVENTS - validate, edit, deposit on, declare a break for) and `manageAsso`
+   * (MANAGE_ASSO - administer as a super-admin). Computed by the server's own predicate so the
+   * client draws per-association controls from the rule that will judge them, never from "is a BDE
+   * somewhere". A global admin holds every power and the client already knows that tier.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('me/bde-reach')
+  async myBdeReach(@Headers('x-user-id') userId: string) {
+    const [validateEvents, manageAsso] = await Promise.all([
+      this.service.associationsUnderBdeFlag(userId, AssociationPermissionFlag.VALIDATE_EVENTS),
+      this.service.associationsUnderBdeFlag(userId, AssociationPermissionFlag.MANAGE_ASSO),
+    ]);
+    return { validateEvents, manageAsso };
   }
 
   /** Returns all associations the calling user is following. */
@@ -228,8 +277,20 @@ export class AssociationsController {
     @Query('associationId') associationId?: string,
     @Query('includePending') includePending?: string,
     @Headers('x-user-id') userId?: string,
-    @Headers('x-global-admin') ga?: string
+    @Headers('x-global-admin') ga?: string,
+    @Query('campus') campus?: string,
+    @Query('formation') formation?: string,
+    @Query('sig') sig?: string,
+    @Headers('x-internal-secret') internalSecret?: string
   ) {
+    const selection = parseSpaceSelection({ campus, formation });
+    assertAgendaAccess({
+      selection,
+      associationId,
+      sig,
+      signedIn: Boolean(userId?.trim()),
+      trusted: isInternalSecret(internalSecret),
+    });
     // includePending is opt-in (the PDF export does not set it -> validated events only).
     // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
     let include = false;
@@ -242,6 +303,7 @@ export class AssociationsController {
     return this.service.listAggregatedCalendarFeed(from, to, associationId, {
       includePending: include,
       viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
+      selection,
     });
   }
 
@@ -254,6 +316,10 @@ export class AssociationsController {
    *
    * `eventId` (optional) keeps only that event of the window - see the filter below.
    *
+   * `campus` / `formation` (D40, optional): ONE FEED PER SELECTION - only the events a space of that
+   * campus / formation reaches. An anonymous read with neither (and no `associationId` / `eventId`)
+   * is REFUSED with a 400 `AGENDA_SELECTION_REQUIRED`; an unknown value is a 400 too.
+   *
    * **NO PROMO CUTOFF HERE, AND THAT IS NOT A HOLE.** A calendar app sends no identity and never
    * will, so there is no promo to cut at; and the cutoff is a relevance limit on a public agenda,
    * not a confidentiality boundary - see `promo-visibility.ts`. Anything that must be SECRET is
@@ -265,9 +331,17 @@ export class AssociationsController {
     @Query('to') to: string | undefined,
     @Query('associationId') associationId: string | undefined,
     @Query('eventId') eventId: string | undefined,
-    @Res({ passthrough: true }) res: Response
+    @Res({ passthrough: true }) res: Response,
+    @Query('campus') campus?: string,
+    @Query('formation') formation?: string,
+    @Query('sig') sig?: string
   ) {
-    const all = await this.service.listAggregatedCalendarFeed(from, to, associationId);
+    const selection = parseSpaceSelection({ campus, formation });
+    // `.ics` is always anonymous: a calendar app sends no identity.
+    assertAgendaAccess({ selection, associationId, eventId, sig, signedIn: false });
+    const all = await this.service.listAggregatedCalendarFeed(from, to, associationId, {
+      selection,
+    });
     const wanted = eventId?.trim();
     // `eventId` narrows the feed to ONE event: the link a phone's browser opens to hand a single
     // evening to the calendar app (iOS Safari shows its "Add to Calendar" sheet for a text/calendar
@@ -283,9 +357,31 @@ export class AssociationsController {
   }
 
   /**
+   * The signature a subscription URL needs (D40 amended 2026-10-06): signed-in readers only, and
+   * only for a selection inside their own spaces (403 `AGENDA_SELECTION_FORBIDDEN` otherwise; 400
+   * `AGENDA_SELECTION_REQUIRED` for an empty one). The result names no one, see `agenda-signature.ts`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('calendar/feed-signature')
+  async signCalendarFeedSelection(
+    @Headers('x-user-id') userId: string,
+    @Body() body: { campus?: string; formation?: string; associationId?: string }
+  ) {
+    const selection = parseSpaceSelection({ campus: body?.campus, formation: body?.formation });
+    const associationId = body?.associationId?.trim() || null;
+    if (selection.campus === null && selection.formation === null && !associationId) {
+      throw new BadRequestException({
+        code: AGENDA_SELECTION_REQUIRED,
+        message: 'Name a campus, a formation or an association to sign',
+      });
+    }
+    return this.service.signAgendaFeedSelection(userId, selection, associationId);
+  }
+
+  /**
    * Pending agenda events the caller may see.
-   * Global admin or BDE admin (VALIDATE_EVENTS) sees all; association admins (PROPOSE_EVENT) see only their own.
-   * Response includes `canValidate` so the frontend can conditionally show the validate button.
+   * A global admin sees all; a BDE validator sees those of the associations its spaces reach, plus
+   * (like any association admin) those of its own associations. Every event carries `canValidate`.
    */
   @UseGuards(NginxAuthGuard)
   @Get('calendar/pending')
@@ -303,6 +399,8 @@ export class AssociationsController {
       }
     }
     const events = await this.service.listPendingCalendarEvents(userId, { isGlobalAdmin });
+    // `canValidate` here says the caller validates SOMETHING (it opens the queue); which rows is
+    // each event's own `canValidate`, scoped to the BDE governing the event association.
     return { canValidate: isGlobalAdmin || isBde, events };
   }
 
@@ -444,6 +542,10 @@ export class AssociationsController {
     @Body() dto: CreateAssociationDto
   ) {
     const isGlobalAdmin = ga === 'true';
+    if (dto.type === 'institution' && !isGlobalAdmin) {
+      // D20/D24: a BDE's MANAGE_ASSO scopes to its own space; institutions are cross-space.
+      throw new ForbiddenException('Only a global admin creates an institution');
+    }
     if (!isGlobalAdmin) {
       // isUserBdeAdmin checks VALIDATE_EVENTS; MANAGE_ASSO is a separate flag
       const canCreateAsso = await this.service.callerHasAnyBdeFlag(
@@ -470,10 +572,25 @@ export class AssociationsController {
    * Archiving stays the reversible answer and is a `PATCH` at `MANAGE_MEMBERS`; this is the one
    * that does not come back, which is why the caller reaches `remove` rather than the service
    * being trusted to identify them.
+   *
+   * SCOPED SINCE WP6c STEP 2: the BDE must GOVERN this association (`isAssociationSuperAdminOf`, a
+   * space it reaches); `MANAGE_ASSO` in the BDE of another space no longer ends it.
    */
-  @UseGuards(NginxAuthGuard, GlobalAdminOrBdeSuperAdminGuard)
+  @UseGuards(NginxAuthGuard)
   @Delete(':id')
-  remove(@Param('id') id: string, @Headers('x-user-id') userId: string) {
+  async remove(
+    @Param('id') id: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined
+  ) {
+    if (ga !== 'true' && !(await this.service.isAssociationSuperAdminOf(userId, id))) {
+      this.logger.debug(
+        `[PERM] delete association refused: no BDE MANAGE_ASSO over ${sanitizeLog(id)}`
+      );
+      throw new ForbiddenException(
+        "Global admin or MANAGE_ASSO in the BDE of the association's space required"
+      );
+    }
     return this.service.remove(id, userId);
   }
 
@@ -481,7 +598,7 @@ export class AssociationsController {
 
   /**
    * Updates association details.
-   * `isBDE` and `documentQuotaBytes` are silently ignored unless the caller is a global admin.
+   * `documentQuotaBytes` is silently ignored unless the caller is a global admin.
    * Cotisation config fields (`cotisationEnabled`/`cotisationMode`/`cotisationExpiresAt`) require
    * MANAGE_PRODUCTS (D5), stricter than this endpoint's baseline MANAGE_MEMBERS. When enabling,
    * the canonical cotisation product is provisioned/synced (see `provisionCotisationProduct`).
@@ -498,8 +615,7 @@ export class AssociationsController {
     const patch = { ...dto };
     const isGlobalAdmin = ga === 'true';
     if (!isGlobalAdmin) {
-      // Only global admins may toggle BDE status or adjust document quota
-      delete patch.isBDE;
+      // Only global admins may adjust document quota
       delete patch.documentQuotaBytes;
     }
 
@@ -595,7 +711,7 @@ export class AssociationsController {
     @Body() dto: UpdateMemberRoleDto
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(callerId);
+    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
     return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permissions, {
       bypassLastAdmin: isGlobalAdmin || isBde,
     });
@@ -612,7 +728,7 @@ export class AssociationsController {
     @Headers('x-global-admin') ga?: string
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(callerId);
+    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
     return this.service.removeMember(id, targetUserId, { bypassLastAdmin: isGlobalAdmin || isBde });
   }
 
@@ -634,7 +750,20 @@ export class AssociationsController {
     @Body() dto: CreateAssociationCalendarEventDto
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(userId);
+    // THE BDE OF THE TARGET'S SPACE, not any BDE (WP6c step 2): the validator grant is read on the
+    // association the event will BELONG to, which is `targetAssocId` when one is named.
+    const target = dto.targetAssocId?.trim() || id;
+    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(userId, target);
+    if (target !== id && !isGlobalAdmin && !isBde) {
+      // Refused rather than silently filed on `:id`: a deposit aimed at another association and
+      // landing on the caller's own would put the event on the wrong calendar with nobody told.
+      this.logger.debug(
+        `[PERM] deposit refused: no BDE VALIDATE_EVENTS over target ${sanitizeLog(target)}`
+      );
+      throw new ForbiddenException(
+        "VALIDATE_EVENTS in the BDE of the target association's space required"
+      );
+    }
     return this.service.createCalendarEvent(id, dto, userId, { isGlobalAdmin, isBde });
   }
 
@@ -648,29 +777,18 @@ export class AssociationsController {
    * twice is a rule the third route forgets: it is written ONCE here now, and the routes call it.
    *
    * Returns the tier it established, since the callers need it for the cross-association paths.
+   * `isBde` is scoped to THE EVENT (WP6c step 2): VALIDATE_EVENTS in the BDE of a space the event's
+   * own association reaches, read from the row - never "a BDE somewhere".
    */
-  private async assertMayWriteEvent(
+  private assertMayWriteEvent(
     userId: string,
     ga: string | undefined,
-    associationId: string
+    associationId: string,
+    eventId: string
   ): Promise<{ isGlobalAdmin: boolean; isBde: boolean }> {
-    const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(userId);
-    if (!isGlobalAdmin && !isBde) {
-      // Regular admin must be granted PROPOSE_EVENT on this association. Through `mayAct`, so a
-      // cross-association super-admin may act on an event in an association they administer - the
-      // guard on `POST :id/events` already lets them CREATE one there.
-      const hasPerm = await this.service.mayAct(
-        userId,
-        associationId,
-        AssociationPermissionFlag.PROPOSE_EVENT,
-        { isGlobalAdmin }
-      );
-      if (!hasPerm) {
-        throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
-      }
-    }
-    return { isGlobalAdmin, isBde };
+    // The rule itself is the service's, because the co-organiser route (`coorganisation/`) asks it
+    // too, and a rule written twice is the one the third route forgets.
+    return this.service.assertMayWriteEvent(userId, ga === 'true', associationId, eventId);
   }
 
   /**
@@ -686,7 +804,7 @@ export class AssociationsController {
     @Param('eventId') eventId: string,
     @Body() dto: UpdateAssociationCalendarEventDto
   ) {
-    const { isGlobalAdmin, isBde } = await this.assertMayWriteEvent(userId, ga, id);
+    const { isGlobalAdmin, isBde } = await this.assertMayWriteEvent(userId, ga, id, eventId);
     return this.service.updateCalendarEvent(id, eventId, dto, {
       isGlobalAdmin,
       isBde,
@@ -706,7 +824,7 @@ export class AssociationsController {
     @Param('id') id: string,
     @Param('eventId') eventId: string
   ) {
-    const { isGlobalAdmin, isBde } = await this.assertMayWriteEvent(userId, ga, id);
+    const { isGlobalAdmin, isBde } = await this.assertMayWriteEvent(userId, ga, id, eventId);
     return this.service.deleteCalendarEvent(id, eventId, {
       isGlobalAdmin,
       isBde,
@@ -715,8 +833,28 @@ export class AssociationsController {
   }
 
   /**
+   * May the caller decide (validate or reject) event `eventId`? A global admin, or VALIDATE_EVENTS
+   * in the BDE of a space the EVENT'S association reaches (WP6c step 2) - read from the row, so the
+   * association named in the URL cannot widen it. One check for both verdicts, so they cannot drift.
+   */
+  private async assertMayDecideEvent(
+    userId: string,
+    ga: string | undefined,
+    eventId: string
+  ): Promise<void> {
+    if (ga === 'true') return;
+    if (await this.service.mayValidateEvent(userId, eventId)) return;
+    this.logger.debug(
+      `[PERM] verdict refused on event ${sanitizeLog(eventId)}: no BDE governing its association`
+    );
+    throw new ForbiddenException(
+      "VALIDATE_EVENTS in the BDE of the event association's space, or global admin, required"
+    );
+  }
+
+  /**
    * Validates a pending calendar event (makes it publicly visible).
-   * Requires VALIDATE_EVENTS in a BDE association, or global admin.
+   * Requires VALIDATE_EVENTS in the BDE of the event association's space, or global admin.
    */
   @UseGuards(NginxAuthGuard)
   @Post(':id/events/:eventId/validate')
@@ -726,21 +864,13 @@ export class AssociationsController {
     @Param('id') id: string,
     @Param('eventId') eventId: string
   ) {
-    const isGlobalAdmin = ga === 'true';
-    if (!isGlobalAdmin) {
-      const isBde = await this.service.isUserBdeAdmin(userId);
-      if (!isBde) {
-        throw new ForbiddenException(
-          'Only BDE admins (VALIDATE_EVENTS flag) or global admins can validate events'
-        );
-      }
-    }
+    await this.assertMayDecideEvent(userId, ga, eventId);
     return this.service.validateCalendarEvent(id, eventId, userId);
   }
 
   /**
    * Rejects a pending calendar event; keeps it visible to asso admins with an optional reason.
-   * Requires VALIDATE_EVENTS in a BDE association, or global admin.
+   * Requires VALIDATE_EVENTS in the BDE of the event association's space, or global admin.
    */
   @UseGuards(NginxAuthGuard)
   @Post(':id/events/:eventId/reject')
@@ -751,15 +881,7 @@ export class AssociationsController {
     @Param('eventId') eventId: string,
     @Body() dto: RejectCalendarEventDto
   ) {
-    const isGlobalAdmin = ga === 'true';
-    if (!isGlobalAdmin) {
-      const isBde = await this.service.isUserBdeAdmin(userId);
-      if (!isBde) {
-        throw new ForbiddenException(
-          'Only BDE admins (VALIDATE_EVENTS flag) or global admins can reject events'
-        );
-      }
-    }
+    await this.assertMayDecideEvent(userId, ga, eventId);
     return this.service.rejectCalendarEvent(id, eventId, userId, dto.reason);
   }
 
@@ -781,7 +903,7 @@ export class AssociationsController {
     @Headers('authorization') authorization: string | undefined
   ) {
     if (!file) throw new BadRequestException('No file provided');
-    const tier = await this.assertMayWriteEvent(userId, ga, id);
+    const tier = await this.assertMayWriteEvent(userId, ga, id, eventId);
     return this.service.setEventImageFromUpload(id, eventId, file, authorization, tier);
   }
 
@@ -798,7 +920,7 @@ export class AssociationsController {
     @Param('eventId') eventId: string,
     @Headers('authorization') authorization: string | undefined
   ) {
-    const tier = await this.assertMayWriteEvent(userId, ga, id);
+    const tier = await this.assertMayWriteEvent(userId, ga, id, eventId);
     return this.service.clearEventImage(id, eventId, authorization, tier);
   }
 
@@ -1211,14 +1333,21 @@ export class AssociationsController {
     @Param('id') id: string,
     @Param('productId') productId: string,
     @Headers('x-user-id') userId: string,
-    @Body() body?: { customAmountCents?: number; successUrl?: string; cancelUrl?: string }
+    @Body()
+    body?: {
+      customAmountCents?: number;
+      successUrl?: string;
+      cancelUrl?: string;
+      payerEmail?: string;
+    }
   ) {
     return this.productsService.createCheckoutSession(
       id,
       productId,
       userId,
       body?.customAmountCents,
-      { successUrl: body?.successUrl, cancelUrl: body?.cancelUrl }
+      { successUrl: body?.successUrl, cancelUrl: body?.cancelUrl },
+      body?.payerEmail
     );
   }
 

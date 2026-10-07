@@ -15,6 +15,8 @@
   import { m } from '$lib/paraglide/messages';
   import { nearViewport } from '$lib/actions/nearViewport';
   import { SvelteSet } from 'svelte/reactivity';
+  import { postGalleryLayout } from '$lib/utils/posts/postGalleryLayout';
+  import { Log } from '$lib/utils/Log';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -71,15 +73,22 @@
     return type === 'image' || type === 'video';
   }
 
-  // Compacted on purpose: a document is skipped. A grid position is therefore NOT
-  // a lightbox index - openLightbox is always given the index in THIS array.
+  // Compacted on purpose: a document is skipped. The gallery's cells are drawn FROM this array, so
+  // a cell's position IS its lightbox index - a document can never renumber the pictures after it.
   const lightboxMedia = $derived<PostMediaRef[]>(postMedia.filter(isLightboxable));
+  /** Files and audio: never squeezed into a square cell, drawn as rows under the grid instead. */
+  const documentMedia = $derived<PostMediaRef[]>(
+    postMedia.filter((media) => !isLightboxable(media))
+  );
+  /** Square cells and a "+N" past four (`postGalleryLayout`), for a post of two media or more. */
+  const gallery = $derived(postGalleryLayout(lightboxMedia.length));
 
   /** Who published the post and when: the media viewer's title and information panel. */
-  const postInfo = $derived({ senderName: postAuthorName(post), sentAt: post.createdAt });
+  const postInfo = $derived({ senderName: postAuthorName(post), sentAt: post.publishedAt });
   const lightboxItem = $derived(lightboxIndex === null ? null : lightboxMedia[lightboxIndex]);
 
   function openLightbox(i: number) {
+    Log.d('PostContent.openLightbox', { postId: post.id, index: i, of: lightboxMedia.length });
     lightboxIndex = i;
   }
 
@@ -173,68 +182,111 @@
         <ReelViewer startPost={post} {authToken} onClose={() => (reelViewerOpen = false)} />
       {/if}
     {:else if postMedia.length === 1}
-      {@const media = postMedia[0]}
-      {@const reserved = reservesAspectRatio(resolveMediaType(media))}
-      <div use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}>
-        <!-- A PICTURE IS INSET AND ROUNDED, NO LONGER FULL-BLEED (user, 2026-10-01, Mi 9T): run
-             edge to edge, its square corners cut across the card's 18 px ones. The block's `px-3` +
-             `rounded-lg` is the concentric pair - 18 px outside, 12 px in, 8 px left, which is also
-             the scale's card corner. The inset is PADDING on the block, never a margin on the box:
-             the box is sized by `aspect-ratio` under a `max-height`, so without `w-full` a tall
-             video shrinks its width to fit the ceiling instead of being cropped by it. A document
-             card adds `px-2`, which lands it on the post text's 20 px. -->
-        <div
-          class="relative overflow-hidden {reserved
-            ? 'w-full rounded-lg bg-black/5 dark:bg-white/5'
-            : 'w-full px-2 pb-1'}"
-          style={reserved ? mediaAspectStyle(media.width, media.height) : ''}
-        >
-          <!-- Single attachment: PostMedia handles its own lightbox/download -->
-          <PostMedia
-            {media}
-            {authToken}
-            letterbox={reserved}
-            deferred={!nearMedia.has(media.mediaId)}
-            {postInfo}
-          />
-        </div>
-        {#if media.caption}
-          <p class="text-text-muted px-2 pt-2 pb-1 text-xs italic">{media.caption}</p>
-        {/if}
-      </div>
+      {@render singleMedia(postMedia[0])}
     {:else}
-      <!-- Multi-media gallery: preserve each media's shape, like Instagram/Facebook galleries. -->
-      <div
-        class="grid grid-cols-2 gap-0.5 overflow-hidden rounded-lg bg-white/20 sm:gap-1 dark:bg-black/20"
-      >
-        {#each postMedia as media (media.mediaId)}
-          {@const lightboxIdx = lightboxMedia.indexOf(media)}
-          <div
-            use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}
-            class="relative w-full overflow-hidden bg-black/5 dark:bg-white/5 {lightboxIdx === -1
-              ? 'flex items-center p-2'
-              : ''}"
-            style={lightboxIdx === -1 ? '' : mediaAspectStyle(media.width, media.height)}
-          >
-            <PostMedia
-              {media}
-              {authToken}
-              deferred={!nearMedia.has(media.mediaId)}
-              onOpen={lightboxIdx === -1 ? undefined : () => openLightbox(lightboxIdx)}
-            />
-            {#if media.caption}
-              <p
-                class="text-2xs pointer-events-none absolute right-0 bottom-0 left-0 truncate bg-black/50 px-2 py-1 text-white/90"
-              >
-                {media.caption}
-              </p>
-            {/if}
-          </div>
-        {/each}
-      </div>
+      <!-- MULTI-MEDIA: SQUARE CELLS, A "+N" PAST FOUR (user, 2026-10-05). Cells that kept their own
+           shapes left blank areas beside the shorter pictures of a two-column grid. A square is
+           also a height known before the download, so the box below never moves. Only pictures
+           and videos are cells - drawn FROM `lightboxMedia`, so a cell's position IS its viewer
+           index; files and audio are rows under the grid, drawn as a single attachment is. -->
+      {#if gallery.shape === 'single'}
+        {@render singleMedia(lightboxMedia[0])}
+      {:else if gallery.shape !== 'none'}
+        <!-- `feature` is a 3x2 grid: the first cell spans 2x2, so it is a square twice the size of
+             the two stacked on its right - three squares in a row are a third of the width each,
+             too small to read on a phone. EVERY cell, the spanning one included, carries
+             `aspect-square`: its height then comes from its width and never from the picture inside
+             it, which would otherwise stretch the rows it spans. -->
+        <div
+          class="grid gap-0.5 overflow-hidden rounded-lg {gallery.shape === 'feature'
+            ? 'grid-cols-3 grid-rows-2'
+            : 'grid-cols-2'}"
+          data-post-gallery={gallery.shape}
+        >
+          {#each lightboxMedia.slice(0, gallery.visible) as media, i (media.mediaId)}
+            {@const featured = gallery.shape === 'feature' && i === 0}
+            {@const overflowCell = gallery.overflow > 0 && i === gallery.visible - 1}
+            <div
+              use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}
+              class="relative aspect-square overflow-hidden bg-black/5 dark:bg-white/5 {featured
+                ? 'col-span-2 row-span-2'
+                : ''}"
+              data-gallery-cell
+            >
+              <!-- For a VIDEO, `letterbox` is what fills the caller's box, cropped (`object-cover`);
+                   without it the clip draws its own 16:9 card inside the square. A still keeps the
+                   plain `object-cover` crop, which is what a square cell is for. -->
+              <PostMedia
+                {media}
+                {authToken}
+                letterbox={resolveMediaType(media) === 'video'}
+                deferred={!nearMedia.has(media.mediaId)}
+                onOpen={() => openLightbox(i)}
+              />
+              {#if overflowCell}
+                <button
+                  type="button"
+                  onclick={() => openLightbox(i)}
+                  class="bg-cn-scrim/60 absolute inset-0 flex items-center justify-center text-white outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:ring-inset"
+                  aria-label={m.post_gallery_more_label({ count: gallery.overflow })}
+                  data-gallery-more
+                >
+                  <span class="text-3xl font-bold" aria-hidden="true"
+                    >{m.post_gallery_more_count({ count: gallery.overflow })}</span
+                  >
+                </button>
+              {:else if media.caption}
+                <p
+                  class="text-2xs pointer-events-none absolute right-0 bottom-0 left-0 truncate bg-black/50 px-2 py-1 text-white/90"
+                >
+                  {media.caption}
+                </p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+      {#each documentMedia as media, i (media.mediaId)}
+        <div class={gallery.shape !== 'none' || i > 0 ? 'mt-2' : ''} data-gallery-document>
+          {@render singleMedia(media)}
+        </div>
+      {/each}
     {/if}
   </div>
 {/if}
+
+<!-- One attachment drawn at its own shape: a single-attachment post, a lone picture beside files,
+     and each file row under a gallery. -->
+{#snippet singleMedia(media: PostMediaRef)}
+  {@const reserved = reservesAspectRatio(resolveMediaType(media))}
+  <div use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}>
+    <!-- A PICTURE IS INSET AND ROUNDED, NO LONGER FULL-BLEED (user, 2026-10-01, Mi 9T): run
+         edge to edge, its square corners cut across the card's 18 px ones. The block's `px-3` +
+         `rounded-lg` is the concentric pair - 18 px outside, 12 px in, 8 px left, which is also
+         the scale's card corner. The inset is PADDING on the block, never a margin on the box:
+         the box is sized by `aspect-ratio` under a `max-height`, so without `w-full` a tall
+         video shrinks its width to fit the ceiling instead of being cropped by it. A document
+         card adds `px-2`, which lands it on the post text's 20 px. -->
+    <div
+      class="relative overflow-hidden {reserved
+        ? 'w-full rounded-lg bg-black/5 dark:bg-white/5'
+        : 'w-full px-2 pb-1'}"
+      style={reserved ? mediaAspectStyle(media.width, media.height) : ''}
+    >
+      <!-- Single attachment: PostMedia handles its own lightbox/download -->
+      <PostMedia
+        {media}
+        {authToken}
+        letterbox={reserved}
+        deferred={!nearMedia.has(media.mediaId)}
+        {postInfo}
+      />
+    </div>
+    {#if media.caption}
+      <p class="text-text-muted px-2 pt-2 pb-1 text-xs italic">{media.caption}</p>
+    {/if}
+  </div>
+{/snippet}
 
 <!-- Gallery lightbox with navigation -->
 {#if lightboxIndex !== null && lightboxMedia[lightboxIndex]}

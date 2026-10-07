@@ -106,6 +106,53 @@ function blockShadowCss(fontSize: number, color: string): string {
   return `text-shadow:${-offset}px ${offset}px 0 ${color};`;
 }
 
+/** Every event title and the day number sharing its tile are WHITE, whatever the tile's colour. */
+export const EVENT_TEXT_FILL = '#ffffff';
+
+/** Stroke width in px for text of `fontSize` px: the one number the outline and its room share. */
+export function outlineWidth(fontSize: number): number {
+  return Math.max(2, Math.round(fontSize * 0.2 * 10) / 10);
+}
+
+/**
+ * Room for the outline's OUTER half, which paints outside the glyph box.
+ *
+ * `paint-order:stroke fill` leaves `width / 2` of the stroke beyond the glyph on every side, and a
+ * line-clamped title is `overflow:hidden`, which clips at its padding box - so the outline was cut
+ * at the left and right edges (user, 2026-10-07). The padding is computed FROM the stroke and
+ * cancelled by an equal negative margin, so the box the text wraps in is exactly what it was and
+ * nothing around it moves.
+ */
+export function outlineRoomCss(fontSize: number): string {
+  const room = Math.ceil(outlineWidth(fontSize) / 2);
+  return `padding:${room}px;margin:-${room}px;`;
+}
+
+/**
+ * Integer slot heights that SUM EXACTLY to `cellH`. A flat `floor(cellH / n)` left up to `n - 1`
+ * px of the cell unpainted, which showed as a grey sliver at the bottom of a day; the remainder
+ * is handed out one pixel at a time to the last slots instead.
+ */
+export function slotHeights(cellH: number, nSlots: number): number[] {
+  const base = Math.floor(cellH / nSlots);
+  const extra = cellH - base * nSlots;
+  return Array.from({ length: nSlots }, (_, i) => base + (i >= nSlots - extra ? 1 : 0));
+}
+
+/**
+ * The dark outline that gives that white its contrast, for text of `fontSize` px.
+ *
+ * The Canva draws every title white with a black outline (user, 2026-10-06) and the old rule - a
+ * luminance pick of black or white against the tile colour - made some titles black and others white
+ * with no logic a reader could see, and neither read well over a logo. `paint-order:stroke fill`
+ * paints the stroke UNDER the glyph, so only its outer half shows and the letters keep their weight;
+ * the width follows the size, like the block shadow, so a 9px title is not drowned in a 3px halo.
+ */
+export function textOutlineCss(fontSize: number): string {
+  const width = outlineWidth(fontSize);
+  return `color:${EVENT_TEXT_FILL};-webkit-text-stroke:${width}px #111111;paint-order:stroke fill;stroke-linejoin:round;`;
+}
+
 /**
  * What the sheet still lets a human decide - and it is deliberately short.
  *
@@ -130,6 +177,16 @@ export interface CalendarExportOptions {
    * Only has an effect when `bgDataUrl` is set.
    */
   scrimOpacity?: number;
+  /**
+   * Vignette strength in percent (0-{@link VIGNETTE_MAX}): the edges of the background IMAGE darken
+   * toward the scrim colour. Default: 0 (off). Only has an effect when `bgDataUrl` is set.
+   */
+  vignetteOpacity?: number;
+  /**
+   * Gaussian blur radius, in sheet pixels (0-{@link BLUR_MAX_PX}), applied to the background IMAGE
+   * only. Default: 0 (off). Only has an effect when `bgDataUrl` is set.
+   */
+  bgBlur?: number;
   /** Month title + weekday name colour (hex). Default: '#ffffff'. */
   textColor?: string;
   /**
@@ -155,6 +212,8 @@ export interface CalendarExportOptions {
 export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDataUrl'>> = {
   bgOpacity: 100,
   scrimOpacity: 0,
+  vignetteOpacity: 0,
+  bgBlur: 0,
   textColor: '#ffffff',
   accentColor: '#a01f2d',
   cellBg: '#8b939c',
@@ -164,6 +223,35 @@ export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDat
 
 /** Colour of the scrim - a legibility device over a photograph, never a design choice. */
 const SCRIM_COLOR = '#0b1220';
+/** Same colour as {@link SCRIM_COLOR}, as the channels a gradient stop with an alpha needs. */
+const SCRIM_RGB = '11,18,32';
+
+/** Upper bound of the vignette slider, in percent. */
+export const VIGNETTE_MAX = 100;
+/** Upper bound of the blur slider, in sheet pixels: past it a blur costs the GPU and shows nothing more. */
+export const BLUR_MAX_PX = 40;
+
+/**
+ * The vignette layer: a radial gradient from clear in the middle to the scrim colour at the corners.
+ * A plain gradient, never a filter, so it rasterises like the scrim does. Empty when off.
+ */
+export function vignetteLayerHtml(vignetteOpacity: number): string {
+  const pct = Math.min(VIGNETTE_MAX, Math.max(0, vignetteOpacity || 0));
+  if (pct <= 0) return '';
+  const alpha = (pct / 100).toFixed(2);
+  return `<div style="position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(${SCRIM_RGB},0) 45%,rgba(${SCRIM_RGB},${alpha}) 100%);"></div>`;
+}
+
+/**
+ * Position and filter CSS for the image layer. With a blur the layer is grown past the sheet by
+ * twice the radius so the blurred edge (which fades to transparent) falls outside the clipping box
+ * instead of showing as a pale frame; `will-change` keeps it on its own GPU layer.
+ */
+export function blurLayerCss(bgBlur: number): string {
+  const px = Math.min(BLUR_MAX_PX, Math.max(0, Math.round(bgBlur || 0)));
+  if (px <= 0) return 'inset:0;';
+  return `inset:-${px * 2}px;filter:blur(${px}px);will-change:filter;`;
+}
 
 type ResolvedOpts = Required<CalendarExportOptions>;
 
@@ -568,7 +656,9 @@ function buildCalendarHtml(
         visible.map((ev) => dayOccupancy(ev, square)),
         overflowCount
       );
-      const slotH = Math.floor(CELL_H / layout.nSlots);
+      const heights = slotHeights(CELL_H, layout.nSlots);
+      // Rows are emitted in order and each takes the next height, so the slots sum to the cell.
+      let slotPos = 0;
       const loneSlot =
         visible.length === 1 && overflowCount === 0 && layout.nSlots === 2
           ? layout.slotOf[0]
@@ -576,7 +666,7 @@ function buildCalendarHtml(
       // An empty half, carrying the day number when it is the FIRST slot - the number belongs to
       // slot 0, and slot 0 no longer always holds an event.
       const blankHalf = (withDayNumber: boolean) =>
-        `<div style="height:${slotH}px;position:relative;box-sizing:border-box;">${
+        `<div style="height:${heights[slotPos++]}px;position:relative;box-sizing:border-box;">${
           withDayNumber
             ? `<div style="padding:6px 0 0 8px;"><span data-pdf-text style="font-size:${DAY_NUM_SIZE}px;font-weight:800;color:${emptyDayColor};line-height:1;">${day}</span></div>`
             : ''
@@ -585,8 +675,8 @@ function buildCalendarHtml(
       const rows = [
         ...(loneSlot === 1 ? [blankHalf(true)] : []),
         ...visible.map((ev, idx) => {
+          const slotH = heights[slotPos++];
           const evBg = eventBgCss(ev);
-          const fg = contrastColor(eventHexColors(ev)[0]);
 
           // Resolve logos (primary + co-owners): data URL map for the export, absolutized URL for
           // the preview. The map is keyed by the RAW stored URL, which is what the pre-fetch in
@@ -624,33 +714,25 @@ function buildCalendarHtml(
               : splitLogoWatermark(logoSrcs, logoSize, logoAlpha);
 
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
-          // An event title is read over a logo now, not over a flat colour, so it carries the same
-          // hard outline the Canva gives it - in black rather than the accent, which belongs to the
-          // display faces and would fight the association's own colour.
-          const titleShadow = 'text-shadow:-1px 1px 0 rgba(0,0,0,0.55);';
-
-          if (idx === 0 && loneSlot !== 1) {
-            // First slot: day number on top, title below - flex column so the rasteriser sees
-            // explicit heights and doesn't collapse the text area.
-            const availH = slotH - DAY_NUM_H;
-            const fit = fitEventText(availH);
-            return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sep}display:flex;flex-direction:column;box-sizing:border-box;">
-              ${watermark}
-              <div style="height:${DAY_NUM_H}px;flex-shrink:0;padding:6px 0 0 8px;position:relative;"><span data-pdf-text style="font-size:${DAY_NUM_SIZE}px;font-weight:800;color:${fg};line-height:1;">${day}</span></div>
-              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fit.fontSize}px;font-weight:800;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;${titleShadow}${fit.clampCss}">${emojiHtml(ev.title)}</span></div>
-            </div>`;
-          }
-          // Subsequent slots: no day number, title fully centred.
+          // Every title is white with a dark outline, CENTRED IN ITS WHOLE TILE both ways: the day
+          // number is pinned top-left on top of the tile instead of owning a row the title must
+          // dodge, which is what pushed the first title of a cell below the centre (user,
+          // 2026-10-06). The outline is what keeps the number readable if a long title reaches it.
+          const dayNumber =
+            idx === 0 && loneSlot !== 1
+              ? `<span data-pdf-text style="position:absolute;top:6px;left:8px;font-size:${DAY_NUM_SIZE}px;font-weight:800;line-height:1;${textOutlineCss(DAY_NUM_SIZE)}">${day}</span>`
+              : '';
           const fit = fitEventText(slotH);
           return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sep}display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px;box-sizing:border-box;">
               ${watermark}
-              <span style="font-size:${fit.fontSize}px;font-weight:800;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${titleShadow}${fit.clampCss}">${emojiHtml(ev.title)}</span>
+              ${dayNumber}
+              <span style="font-size:${fit.fontSize}px;font-weight:800;line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${textOutlineCss(fit.fontSize)}${outlineRoomCss(fit.fontSize)}${fit.clampCss}">${emojiHtml(ev.title)}</span>
             </div>`;
         }),
         ...(loneSlot === 0 ? [blankHalf(false)] : []),
         ...(overflowCount > 0
           ? [
-              `<div style="height:${slotH}px;background:${hexToRgba(darken(opts.cellBg, 0.16), Math.min(100, opts.cellBgOpacity + 20))};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span data-pdf-text style="font-size:10px;font-weight:800;color:${emptyDayColor};">${safe(m.calendar_export_more_events({ count: overflowCount }))}</span></div>`,
+              `<div style="height:${heights[slotPos++]}px;background:${hexToRgba(darken(opts.cellBg, 0.16), Math.min(100, opts.cellBgOpacity + 20))};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span data-pdf-text style="font-size:10px;font-weight:800;color:${emptyDayColor};">${safe(m.calendar_export_more_events({ count: overflowCount }))}</span></div>`,
             ]
           : []),
       ];
@@ -676,7 +758,7 @@ function buildCalendarHtml(
   // The image layer carries the opacity and the scrim is its SIBLING, not its child: the scrim is a
   // legibility device over the photo and must not be faded along with it.
   const fullBgHtml = opts.bgDataUrl
-    ? `<div data-full-bg style="position:absolute;inset:0;overflow:hidden;pointer-events:none;"><div style="position:absolute;inset:0;background-image:url('${opts.bgDataUrl}');background-size:cover;background-position:center;background-repeat:no-repeat;opacity:${(opts.bgOpacity / 100).toFixed(2)};"></div>${scrimLayer}</div>`
+    ? `<div data-full-bg style="position:absolute;inset:0;overflow:hidden;pointer-events:none;"><div style="position:absolute;${blurLayerCss(opts.bgBlur)}background-image:url('${opts.bgDataUrl}');background-size:cover;background-position:center;background-repeat:no-repeat;opacity:${(opts.bgOpacity / 100).toFixed(2)};"></div>${vignetteLayerHtml(opts.vignetteOpacity)}${scrimLayer}</div>`
     : '';
 
   return `
@@ -792,7 +874,7 @@ export async function exportCalendarMonth(
       orientation: 'landscape',
       naturalWidth: 1080,
       naturalHeight: CALENDAR_CONTAINER_HEIGHT,
-      rasterScale: 2,
+      rasterScale: 3,
       backgroundColor: sheetBaseColor(opts),
       // Every face the sheet actually draws with. A face missing here is rasterised in whatever the
       // browser had ready, and the vector re-draw then lands on top of a different shape.

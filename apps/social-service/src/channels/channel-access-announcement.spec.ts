@@ -203,6 +203,7 @@ describe('ChannelService.createChannel - a creation is a grant', () => {
   function makeService() {
     const saved: Record<string, unknown>[] = [];
     const channelRepo = {
+      maximum: jest.fn().mockResolvedValue(null),
       create: jest.fn((c: Record<string, unknown>) => ({ ...c })),
       save: jest.fn((c: Record<string, unknown>) => {
         const row = { ...c, id: 'ch-new' };

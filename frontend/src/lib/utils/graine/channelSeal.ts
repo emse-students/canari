@@ -1,3 +1,4 @@
+import { GraineSealUnavailableError } from './sealUnavailable';
 import { openWithGraine } from '$lib/crypto/graine';
 import { GraineSignatureError, openWithGraineV2, sealWithGraineV2 } from '$lib/crypto/graineV2';
 import type { StoredGraineSession, StoredGraineV2 } from '$lib/db/types';
@@ -150,7 +151,7 @@ export class GraineReplayError extends Error {
 }
 
 /** Thrown when a channel's community is unknown to this session, so nothing can be sealed for it. */
-export class GraineUnknownChannelError extends Error {
+export class GraineUnknownChannelError extends GraineSealUnavailableError {
   constructor(readonly channelId: string) {
     super(
       `[GRAINE] channel ${channelId.slice(0, 8)} belongs to no community this session has loaded`
@@ -171,7 +172,7 @@ export async function sealChannelMessage(
   payload: Uint8Array
 ): Promise<SealedChannelMessage> {
   const channel = rawChannelId(channelId);
-  const { storage, deviceKeyB64, userId, mlsService } = requireGraineRuntime(
+  const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     `cannot seal a message for channel ${channel.slice(0, 8)}`
   );
 
@@ -191,7 +192,7 @@ export async function sealChannelMessage(
   const slot = await reserveOutboundSlot(
     {
       storage,
-      deviceKeyB64,
+      deviceKeyB64: deviceKey(),
       distributionEpoch,
       distribute: (session) => distributeGraineSeed(mlsService, scope, session),
       endorse: (session) => endorseNewSession(mlsService, session),
@@ -262,12 +263,12 @@ export async function openChannelMessage(
     throw new GraineSessionUnavailableError(row.senderSessionId ?? '(none)', channel);
   }
 
-  const { storage, deviceKeyB64, mlsService } = requireGraineRuntime(
+  const { storage, deviceKey, mlsService } = requireGraineRuntime(
     `cannot open a message of channel ${channel.slice(0, 8)}`
   );
   let session = cachedGraineSession(row.senderSessionId);
   if (!session) {
-    session = await storage.getGraineSession(row.senderSessionId, deviceKeyB64);
+    session = await storage.getGraineSession(row.senderSessionId, deviceKey());
     if (session) cacheGraineSession(session);
   }
   if (!session) throw new GraineSessionUnavailableError(row.senderSessionId, channel);

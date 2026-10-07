@@ -62,10 +62,13 @@ export class CreateAssociationDto {
   @MaxLength(255)
   contactEmail?: string;
 
-  /** 'association' (default) or 'list' (promo list). */
-  @IsIn(['association', 'list'])
+  /**
+   * 'association' (default), 'list' (promo list) or 'institution' (the School, a ME, the Alumni
+   * association: WP6e, D20). An institution is created by a global admin only.
+   */
+  @IsIn(['association', 'list', 'institution'])
   @IsOptional()
-  type?: 'association' | 'list';
+  type?: 'association' | 'list' | 'institution';
 
   /** Lists only: the promotion year the list belongs to (e.g. 2027). */
   @IsInt()
@@ -111,11 +114,6 @@ export class UpdateAssociationDto {
   @IsString()
   @IsOptional()
   logoUrl?: string;
-
-  /** Only global admins may toggle this. */
-  @IsBoolean()
-  @IsOptional()
-  isBDE?: boolean;
 
   /** Only global admins may change this. Default 500 MiB. */
   @IsInt()
@@ -213,7 +211,8 @@ export class AddMemberDto {
   @Min(0)
   @Max(ALL_PERMISSION_FLAGS) // derived from the enum - never a literal, see the entity
   // Note: BDE-only flags (VALIDATE_EVENTS=32, MANAGE_ASSO=64, MODERATE=128) are silently
-  // inert when the association is not marked isBDE=true in the DB.
+  // inert unless the association is the BDE of a space (`spaces/bde.ts`), and then reach only
+  // the associations that space governs (MODERATE excepted: global).
   permissions: number;
 }
 
@@ -340,7 +339,10 @@ export class CreateAssociationCalendarEventDto {
   @IsUUID()
   targetAssocId?: string;
 
-  /** Additional associations co-managing this event (max 10). */
+  /**
+   * Associations ASKED to co-organise this event (D39, max 10): each gets a `coorganise` proposal
+   * and co-organises only once its publishers accept it.
+   */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)
@@ -381,7 +383,10 @@ export class UpdateAssociationCalendarEventDto {
   @IsUUID()
   linkedFormId?: string | null;
 
-  /** Replaces the full co-owner list for this event (max 10). */
+  /**
+   * The co-organisers the form now names (D39, max 10): a new one is proposed, a pending one left
+   * out is withdrawn, an accepted one left out is ended. Omit to leave them unchanged.
+   */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)

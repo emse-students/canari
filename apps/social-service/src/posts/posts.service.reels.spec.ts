@@ -59,6 +59,8 @@ function makeService(opts: {
       query: jest.fn((sql: string, params: unknown[] = []) => {
         queries.push({ sql, params });
         if (/SELECT NOW\(\) AS now/.test(sql)) return Promise.resolve([{ now: new Date(NOW) }]);
+        // The one-row visibility read (WP6b): every reader here is inside the reel's audience.
+        if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
         return Promise.resolve([]);
       }),
     },

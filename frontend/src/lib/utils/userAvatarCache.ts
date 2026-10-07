@@ -1,6 +1,7 @@
 import { Log } from '$lib/utils/Log';
 import { BlobUrlPool } from '$lib/utils/blobUrlPool';
 import { mirrorAvatarToNative } from '$lib/utils/avatarMirror';
+import { registerPerReaderCache } from '$lib/utils/sharedCache';
 
 /**
  * The Cache Storage bucket this module used to write, kept ONLY so it can be deleted.
@@ -27,6 +28,22 @@ const RETIRED_CACHE_NAME = 'canari-user-avatars-v1';
 const blobs = new BlobUrlPool({ evictDelayMs: 0, maxEntries: Infinity });
 /** In-progress load per canonical avatar URL, so N simultaneous mounts cost ONE request. */
 const inFlightByUrl = new Map<string, Promise<AvatarDisplay>>();
+
+/**
+ * The avatar URLs the server answered 404 for: there is no photo, and nobody is asked again.
+ *
+ * NO TIMER, BY DECISION (user, 2026-10-06; production 2026-10-04..06: 5121 of 6587 avatar requests
+ * in 30 h were 404 retries). A 10-minute lifetime used to bound it, mirroring the server's own
+ * `max-age`, and it was a clock deciding whether to send traffic: a wrong clock meant more requests.
+ * An absence now lives until the page does, or until the signed-in reader changes
+ * ({@link registerPerReaderCache} clears it) - the two events this client actually sees.
+ *
+ * WHAT WOULD MAKE A HELD ABSENCE WRONG: the user adds a photo. That happens in MiGallery, outside
+ * Canari, and nothing here is told; the initials stay until the next load of the app, which is the
+ * accepted cost. The id changing needs no event: the URL is the key.
+ */
+const absentUrls = new Set<string>();
+registerPerReaderCache(() => absentUrls.clear());
 
 /**
  * What to draw for one avatar, and where the bytes are.
@@ -57,7 +74,15 @@ async function loadAvatar(url: string, subjectUserId: string | undefined): Promi
     // A RESPONSE THAT IS NOT OK IS STILL AN ANSWER. Handing the same URL to an `<img>` would ask
     // the same server the same question and receive the same refusal, at the cost of a second
     // request and a second console line.
-    if (!fetched.ok) return { kind: 'none' };
+    if (!fetched.ok) {
+      // ONLY A 404 IS AN ANSWER ABOUT THE PHOTO. A 502 `unavailable` says nothing about whether there
+      // is one, so remembering it would turn an outage into minutes of initials.
+      if (fetched.status === 404) {
+        absentUrls.add(url);
+        Log.d('AvatarCache', `404 for ${url}: absent for the rest of the session`);
+      }
+      return { kind: 'none' };
+    }
     const blob = await fetched.blob();
     if (!blob.size) return { kind: 'none' };
     // Once per LOAD, not per mount: the notification's cache wants these bytes, and a list of
@@ -95,6 +120,10 @@ export async function resolveUserAvatarDisplayUrl(
 ): Promise<AvatarDisplay> {
   if (!httpUrl?.trim()) return { kind: 'none' };
   const url = httpUrl.trim();
+
+  // A FACE KNOWN TO HAVE NO PHOTO COSTS NOTHING TO REMOUNT. `none` used to be dropped with the mount
+  // that received it, so every conversation switch or list redraw asked again.
+  if (absentUrls.has(url)) return { kind: 'none' };
 
   const held = blobs.tryRetain(url);
   if (held) return { kind: 'blob', url: held };

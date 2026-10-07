@@ -89,6 +89,23 @@ export class NotAGroupMemberError extends Error {
 }
 
 /**
+ * The delivery service could not be ASKED: `fetch` itself rejected (no route, DNS, a reset
+ * connection - on Tauri `plugin-http` rejects with the reqwest sentence, `error sending request
+ * for url ...`, as a bare string). A status code is an answer; this is the absence of one, so
+ * nothing was decided and the frame most probably never arrived.
+ *
+ * CLASSIFIED AT THE THROW so a caller reads `instanceof` and never the sentence - the sentence is
+ * what reached the log as "unclassified" on the Mi 9T (2026-10-06). The raw rejection is kept in
+ * `cause` for the log. A cancelled request (`AbortError`) is NOT this: somebody chose it.
+ */
+export class DeliveryUnreachableError extends Error {
+  constructor(readonly cause: unknown) {
+    super(`[DELIVERY] the delivery service could not be reached: ${String(cause)}`);
+    this.name = 'DeliveryUnreachableError';
+  }
+}
+
+/**
  * The delivery service refused an application frame because THIS DEVICE holds no leaf in the group.
  *
  * A membership row that is not `active` means the device is not in the ratchet tree, so whatever it
@@ -702,11 +719,10 @@ export class MlsDeliveryApi {
    * failure (not on a business reject). [[C7]]
    *
    * `groupInfoBase64` carries the external-join base for the epoch this commit CREATES
-   * (`baseEpoch + 1`), and the server stores it in the same transaction as the epoch advance. Only
-   * a caller that already holds the resulting epoch's tree can supply it - which the external-join
-   * path does, and a staged add/remove does not (its commit is unapplied at this point). Where it
-   * is absent the base is still minted by the follow-up `refreshGroupInfo`, whose loss is what
-   * COMM-22 measured; see `docs/wiki/backlog.md`.
+   * (`baseEpoch + 1`), and the server stores it in the same transaction as the epoch advance. Every
+   * caller supplies it: the external join exports it from its applied instance, a staged add/remove
+   * takes the GroupInfo OpenMLS built with the commit (COMM-22,
+   * `docs/wiki/protocols/mls-protocol.md`). Only a legacy client omits it.
    *
    * `admits` names the devices this commit ADDS to the tree. The server records each `pending` at
    * the epoch the commit creates, in the same transaction as the advance, which makes it a recipient
@@ -999,18 +1015,26 @@ export class MlsDeliveryApi {
     protoBase64: string,
     delivery: FrameDelivery = DELIVERY.visible
   ): Promise<void> {
-    const res = await this.f(`${this.historyUrl}/api/mls/send`, {
-      method: 'POST',
-      headers: await this.auth({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        senderId: this.userId,
-        senderDeviceId: this.deviceId,
-        groupId,
-        proto: protoBase64,
-        silent: delivery.silent,
-        durable: delivery.durable,
-      }),
-    });
+    const headers = await this.auth({ 'Content-Type': 'application/json' });
+    let res: Response;
+    try {
+      res = await this.f(`${this.historyUrl}/api/mls/send`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          senderId: this.userId,
+          senderDeviceId: this.deviceId,
+          groupId,
+          proto: protoBase64,
+          silent: delivery.silent,
+          durable: delivery.durable,
+        }),
+      });
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') throw e;
+      console.warn(`[DELIVERY] send to ${groupId.slice(0, 8)} could not be reached:`, e);
+      throw new DeliveryUnreachableError(e);
+    }
     if (!res.ok) {
       // CLASSIFIED AT THE THROW, because exactly one thing can be said about a `sender_not_active`
       // that cannot be said about any other failure here: no retry lifts it. See
@@ -1219,12 +1243,46 @@ export class MlsDeliveryApi {
    * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
    * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
    */
-  async getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
-    const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
-      headers: await this.auth(),
+  getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
+    // Simultaneous askers share ONE request (membership guards, stray sweeps and peer resolution all
+    // ask per conversation). Never held past the answer: callers decide security and repairs on it.
+    return this.joinInFlight(`user-members:${groupId}`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
+        headers: await this.auth(),
+      });
+      if (!res.ok) throw new Error(`getGroupUserMembers failed: ${res.status}`);
+      return await res.json();
     });
-    if (!res.ok) throw new Error(`getGroupUserMembers failed: ${res.status}`);
-    return await res.json();
+  }
+
+  /** Requests currently on the wire, by key: a second identical ask joins instead of repeating. */
+  private readonly inFlightReads = new Map<string, Promise<unknown>>();
+
+  /**
+   * Joins an identical read already in flight. THE ENTRY LIVES EXACTLY AS LONG AS THE REQUEST - no
+   * clock, no staleness: a caller arriving after the answer asks again, so nothing here can serve a
+   * roster or a group row older than the request it joined.
+   */
+  private joinInFlight<T>(key: string, run: () => Promise<T>): Promise<T> {
+    const pending = this.inFlightReads.get(key) as Promise<T> | undefined;
+    if (pending) return pending;
+    const p = run().finally(() => this.inFlightReads.delete(key));
+    this.inFlightReads.set(key, p);
+    return p;
+  }
+
+  /**
+   * `GET /api/mls/groups/:id` as status + body text, shared by every simultaneous reader. The two
+   * public readers ({@link getGroupMeta}, {@link getGroupServerStatus}) parse it differently but ask
+   * the same question, and each used to send its own request (14 calls for 7 groups, HAR 2026-10-05).
+   */
+  private readGroupRow(groupId: string): Promise<{ ok: boolean; status: number; text: string }> {
+    return this.joinInFlight(`group:${groupId}`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
+        headers: await this.auth(),
+      });
+      return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '' };
+    });
   }
 
   /** Returns all groups `userId` belongs to, including soft-deleted tombstones (`deletedAt`). */
@@ -1250,11 +1308,9 @@ export class MlsDeliveryApi {
    *    conversation locally (banner + manual deletion).
    */
   async getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta> {
-    let res: Response;
+    let res: { ok: boolean; status: number; text: string };
     try {
-      res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
-        headers: await this.auth(),
-      });
+      res = await this.readGroupRow(groupId);
     } catch {
       return 'error';
     }
@@ -1267,9 +1323,7 @@ export class MlsDeliveryApi {
     // or "null" 2xx body from THIS endpoint therefore unambiguously means "group absent" (not a
     // network error). This distinction lets discovery purge a deleted group instead of keeping
     // it indefinitely as "uncertain status". [[lifecycle]]
-    const text = await res.text().catch(() => null);
-    if (text === null) return 'error';
-    const trimmed = text.trim();
+    const trimmed = res.text.trim();
     if (trimmed === '' || trimmed === 'null') return 'absent';
     let g: unknown;
     try {
@@ -1371,11 +1425,9 @@ export class MlsDeliveryApi {
    */
   async getGroupMeta(groupId: string): Promise<GroupMeta | null> {
     try {
-      const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
-        headers: await this.auth(),
-      });
+      const res = await this.readGroupRow(groupId);
       if (!res.ok) return null;
-      const g = await res.json();
+      const g = JSON.parse(res.text);
       if (!g || typeof g !== 'object') return null;
       const id = (g as { id?: string; groupId?: string }).groupId ?? (g as { id?: string }).id;
       if (typeof id !== 'string' || !id) return null;

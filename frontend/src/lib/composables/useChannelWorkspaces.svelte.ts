@@ -14,6 +14,7 @@ import {
 } from '$lib/envelope';
 import {
   isChannelConversationId,
+  sendChannelEdit,
   sendChannelReaction,
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
@@ -25,6 +26,7 @@ import {
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
 import { currentUserId } from '$lib/stores/userState.svelte';
+import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame, getChannelReactions } from '$lib/stores/reactionStore.svelte';
 import {
   activeReactions,
@@ -40,6 +42,9 @@ import {
   ensureCommunityDistributionGroup,
   enterPrivateSalonGroup,
 } from '$lib/utils/graine/distributionGroup';
+import { orderByIds } from '$lib/utils/chat/channelOrder';
+import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
+import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
 
@@ -223,6 +228,8 @@ export function useChannelWorkspaces() {
     // A `fetch` that reached nobody throws a TypeError; a request cancelled under it throws an
     // AbortError. Neither carries a status, because neither got an answer.
     if (error instanceof TypeError) return true;
+    // The same fact from a send: `fetch` rejected inside the delivery client, classified at the throw.
+    if (error instanceof DeliveryUnreachableError) return true;
     return error instanceof DOMException && error.name === 'AbortError';
   }
 
@@ -454,6 +461,10 @@ export function useChannelWorkspaces() {
       message = m.channel_action_error_permission({ action, detail: detail ?? '' });
     } else if (status === 409) {
       message = m.channel_action_error_conflict({ action });
+    } else if (error instanceof GraineSealUnavailableError) {
+      // Nothing was sent: this device holds no key for the scope yet (join not landed, session not
+      // wired). Said as a TYPE at the throw, so it no longer lands in the nameless arm below.
+      message = m.channel_action_error_not_ready({ action });
     } else if (isRetryableLoadError(error)) {
       // ONE PREDICATE, NOT TWO. "Worth retrying" and "say it is the network" are the same
       // question - the server did not decide anything - and they were two hand-kept lists that
@@ -464,6 +475,9 @@ export function useChannelWorkspaces() {
       message = m.channel_action_error_generic({ action, detail });
     } else {
       // The server said nothing we can quote, so the sentence says only what was attempted.
+      // THE CAUSE IS LOGGED HERE, because the sentence cannot carry it: this arm is a non-API
+      // error, and without this line a failed send left nothing to read it from.
+      console.error(`[CHANNEL] ${action}: unclassified failure`, error);
       message = m.channel_action_error_unknown({ action });
     }
 
@@ -893,7 +907,9 @@ export function useChannelWorkspaces() {
       ctx.log('Cannot create channel: select a community first.');
       return;
     }
-    const normalizedChannelName = nameRaw.trim().toLowerCase();
+    // Stored as typed: a salon name is a display string, the id is its identity. The server is the
+    // authority on what is refused (empty, too long, control characters).
+    const normalizedChannelName = nameRaw.trim();
     if (!normalizedChannelName) return;
 
     try {
@@ -1252,6 +1268,54 @@ export function useChannelWorkspaces() {
   }
 
   /**
+   * Edits the caller's OWN text message in a salon: sealed as a silent encrypted row, then applied
+   * locally with the SAME instant.
+   *
+   * Nothing here asks the server anything, because it cannot answer: a salon row is an opaque blob
+   * (Graine), so the server does not know the frame is an edit or whose message it names. The
+   * ownership check is made here for the menu's sake and AGAIN by every reader on arrival
+   * (`applyChannelEdit`), the one that counts since this side can be bypassed. The local write
+   * waits for the send, unlike a reaction: a text the peers never received would otherwise stay on
+   * this screen as if shared.
+   */
+  async function editChannelMessage(
+    channelConversationId: string,
+    messageId: string,
+    text: string,
+    ctx: ChannelWorkspaceContext
+  ) {
+    const userId = currentUserId();
+    const convo = ctx.conversations.get(channelConversationId);
+    const target = convo?.messages.find((msg) => msg.id === messageId);
+    if (
+      !convo ||
+      !target ||
+      !userId ||
+      (target.senderId ?? '').toLowerCase() !== userId.toLowerCase()
+    ) {
+      ctx.log(`[CHANNEL] edit of ${messageId.slice(0, 8)} not sent - not the author's message`);
+      return;
+    }
+    const editedAt = Date.now();
+    try {
+      await sendChannelEdit(channelConversationId, messageId, text, editedAt);
+    } catch (error) {
+      ctx.log(toUiActionError(m.channel_action_message_edit(), error));
+      return;
+    }
+    // Re-read: the send awaited, and a live message may have changed the list meanwhile.
+    const latest = ctx.conversations.get(channelConversationId);
+    if (!latest) return;
+    const { messages, applied } = applyChannelEdit(
+      latest.messages,
+      { targetMessageId: messageId, senderId: userId, newContent: text, editedAt },
+      ctx.log
+    );
+    if (applied) ctx.conversations.set(channelConversationId, { ...latest, messages });
+    ctx.invalidateChannelHistoryCache?.(channelConversationId);
+  }
+
+  /**
    * Places or takes back the caller's emoji reaction on a channel message.
    *
    * **The reaction IS the message (WP-40).** It is sealed under this device's Graine session and
@@ -1259,9 +1323,15 @@ export function useChannelWorkspaces() {
    * it used to hold that tally in cleartext, which is content by any honest reading.
    *
    * The local merge comes FIRST and with the same `at` the frame carries, so the pill flips at
-   * once and this device's own row, when it comes back, merges to exactly the same state. There is
-   * no rollback on failure and none is possible: what a send failure costs is the peers' copy, and
-   * a device that unflipped its own pill would disagree with the frame it may still have sent.
+   * once and this device's own row, when it comes back, merges to exactly the same state.
+   *
+   * **ROLLED BACK ONLY WHEN NOTHING WAS SENT** (2026-10-06): a transport failure
+   * ({@link DeliveryUnreachableError}) or a seal this device cannot make
+   * ({@link GraineSealUnavailableError}) means no frame left, so the pill that stayed drawn after
+   * the toast was a claim about a reaction nobody else will ever see. The undo is the inverse frame
+   * at a LATER `at`, applied locally and never sent. Any other failure may have reached peers
+   * (a 5xx is an answer we did not read), and unflipping there would disagree with the frame they
+   * hold - so it stays, as before.
    */
   async function toggleChannelReaction(
     channelConversationId: string,
@@ -1310,6 +1380,19 @@ export function useChannelWorkspaces() {
         }).catch(() => {});
       }
     } catch (error) {
+      if (
+        error instanceof DeliveryUnreachableError ||
+        error instanceof GraineSealUnavailableError
+      ) {
+        const undone = applyChannelReactionFrame(
+          messageId,
+          userId,
+          emoji,
+          Math.max(Date.now(), at + 1),
+          !standing
+        );
+        ctx.log(`[CHANNEL] reaction not sent, local pill rolled back: ${undone}`);
+      }
       ctx.log(toUiActionError(m.channel_action_message_react(), error));
     }
   }
@@ -1357,7 +1440,7 @@ export function useChannelWorkspaces() {
     newName: string,
     ctx: ChannelWorkspaceContext
   ) {
-    const trimmed = newName.trim().toLowerCase();
+    const trimmed = newName.trim();
     if (!channelConversationId || !trimmed) return;
     try {
       await service.renameChannel(channelConversationId, trimmed);
@@ -1438,6 +1521,50 @@ export function useChannelWorkspaces() {
   }
 
   /**
+   * Applies a drag or keyboard reorder of one community's salons optimistically, then persists it
+   * for every member. Rolls back to the previous order if the request fails.
+   */
+  async function reorderChannels(
+    workspaceSlug: string,
+    newOrder: ChannelSidebarItem[],
+    ctx: ChannelWorkspaceContext
+  ) {
+    const workspace = channelWorkspaces.find((ws) => ws.id === workspaceSlug);
+    if (!workspace?.workspaceDbId) return;
+    const previous = channelWorkspaces;
+    channelWorkspaces = channelWorkspaces.map((ws) =>
+      ws.id === workspaceSlug ? { ...ws, channels: newOrder } : ws
+    );
+    try {
+      await service.reorderChannels(
+        workspace.workspaceDbId,
+        newOrder.map((channel) => channel.id)
+      );
+    } catch (error) {
+      channelWorkspaces = previous;
+      ctx.log(toUiActionError(m.channel_action_channels_reorder(), error));
+    }
+  }
+
+  /**
+   * Re-reads one community's salon order from the server, after another member rearranged it.
+   * The announcement carries no ids on purpose (a private salon must not leak to members who cannot
+   * see it), so each device asks for its own filtered list and only reorders what it already has.
+   */
+  async function refreshChannelOrder(workspaceDbId: string): Promise<void> {
+    const channels = (await service.listChannels(workspaceDbId)) as ChannelDto[];
+    const orderedIds = channels
+      .map((channel) => channel.id || channel._id)
+      .filter((id): id is string => Boolean(id))
+      .map((id) => `channel_${id}`);
+    channelWorkspaces = channelWorkspaces.map((ws) =>
+      ws.workspaceDbId === workspaceDbId
+        ? { ...ws, channels: orderByIds(ws.channels, orderedIds) }
+        : ws
+    );
+  }
+
+  /**
    * Applies an incoming real-time workspace-updated event (cover image, history rule).
    *
    * The history rule is applied to the Graine layer too, and not only to the sidebar: a member
@@ -1447,8 +1574,9 @@ export function useChannelWorkspaces() {
   /**
    * Applies this device's own new role in a community, pushed by the server.
    *
-   * TWO FLAGS ARE CACHED, and each is stated rather than re-derived: `viewerCanManage` (the
-   * community) and `viewerCanManageChannels` (its salons) come from `listWorkspacesForUser`, which
+   * THREE FLAGS ARE CACHED, and each is stated rather than re-derived: `viewerCanManage` (the
+   * community), `viewerCanManageChannels` (its salons) and `viewerCanModerate` (other members'
+   * messages - the pin and delete affordances) come from `listWorkspacesForUser`, which
    * reads the permission set of the roles a member holds. The event carries the same answers
    * computed by the same service, so applying them here cannot disagree with what the next load
    * will say.
@@ -1466,6 +1594,7 @@ export function useChannelWorkspaces() {
     roleName: string;
     canManage: boolean;
     canManageChannels?: boolean;
+    canModerate?: boolean;
     permissions: string[];
   }) {
     channelWorkspaces = channelWorkspaces.map((ws) =>
@@ -1476,6 +1605,7 @@ export function useChannelWorkspaces() {
             ...(event.canManageChannels === undefined
               ? {}
               : { viewerCanManageChannels: event.canManageChannels }),
+            ...(event.canModerate === undefined ? {} : { viewerCanModerate: event.canModerate }),
           }
         : ws
     );
@@ -1588,6 +1718,10 @@ export function useChannelWorkspaces() {
     updateCurrentWorkspaceImage,
     /** Applies a drag-and-drop reorder of the sidebar communities and persists it server-side. */
     reorderWorkspaces,
+    /** Applies a reorder of one community's salons and persists it for every member. */
+    reorderChannels,
+    /** Re-reads a community's salon order after another member rearranged it. */
+    refreshChannelOrder,
     /** Applies an incoming real-time workspace-updated event (cover image change). */
     handleWorkspaceRoleChanged,
     /** What each workspace role grants right now, keyed by role id - see the state's own note. */
@@ -1605,6 +1739,8 @@ export function useChannelWorkspaces() {
     handleRemovedFromWorkspace,
     /** Deletes a channel message (own message, or anyone's with `channel.moderate`). */
     deleteChannelMessage,
+    /** Edits the caller's own text message (silent encrypted edit row, see `applyChannelEdit`). */
+    editChannelMessage,
     /** Toggles the caller's emoji reaction on a channel message. */
     toggleChannelReaction,
     /** Applies an incoming real-time channel-message-deleted event. */

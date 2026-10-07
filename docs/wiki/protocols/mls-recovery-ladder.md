@@ -57,7 +57,7 @@ and [`mls-graine-state-machine.md`](mls-graine-state-machine.md) — the same la
    merely missed, and it is non-destructive when it is wrong. What the log then says is the
    difference: `replayed 0 commit(s) … healed=false` followed by `still behind after rung 1`.
 
-   **Rung 2 recovery is self-service first.** The re-add seam `requestReAdd` tries **`externalJoin`** before any peer Welcome: it fetches the latest GroupInfo (**`GET /api/mls/group-info/:groupId`**, membership-gated), builds a native openmls external commit, and submits it under the standard epoch gate (**`POST /api/mls/commit`** at the GroupInfo's base epoch; on an epoch race it discards the group and retries with a fresher GroupInfo — no peer liveness required). The committer refreshes the stored GroupInfo after every accepted commit (**`POST /api/mls/group-info/:groupId`**, monotonic). Only when no GroupInfo is available does it fall back to a `welcome_request` (a reachable member re-adds us via a Welcome). The reboot/CAS/successor machinery was fully retired — external join is the self-service recovery; welcome_request is the thin fallback.
+   **Rung 2 recovery is self-service first.** The re-add seam `requestReAdd` tries **`externalJoin`** before any peer Welcome: it fetches the latest GroupInfo (**`GET /api/mls/group-info/:groupId`**, membership-gated), builds a native openmls external commit, and submits it under the standard epoch gate (**`POST /api/mls/commit`** at the GroupInfo's base epoch; on an epoch race it discards the group and retries with a fresher GroupInfo — no peer liveness required). Every commit carries the GroupInfo for the epoch it creates inside its own submission, so the stored base never trails an accepted commit; **`POST /api/mls/group-info/:groupId`** (monotonic) is now only the holder repair for a base that fell behind for another cause. Only when no GroupInfo is available does it fall back to a `welcome_request` (a reachable member re-adds us via a Welcome). The reboot/CAS/successor machinery was fully retired — external join is the self-service recovery; welcome_request is the thin fallback.
 
    **A joiner publishes the base its OWN commit created, inside the submission (2026-08-26).** An
    external commit advances the group by one epoch, so the base the joiner built on is stale the
@@ -71,9 +71,11 @@ and [`mls-graine-state-machine.md`](mls-graine-state-machine.md) — the same la
    travels in **`POST /api/mls/commit`** as `groupInfo`, and `validateCommit` writes it with the epoch
    advance in one transaction. The client refuses to publish unless its instance is exactly at
    `base + 1` and abandons the join otherwise — a monotonic base stored under the wrong epoch cannot
-   be walked back. **Ordinary staged commits still mint their base by follow-up**: their commit is
-   unapplied at submit time, so the device is still at the old epoch and has nothing to export; see
-   [backlog](../backlog.md) for the openmls bundle GroupInfo that would close that half too.
+   be walked back. **Ordinary staged commits carry theirs too (2026-10-04)**: their commit is
+   unapplied at submit time, so `export_group_info` would describe the base the group is leaving -
+   but OpenMLS already builds the post-commit GroupInfo while building the commit, and the
+   add/remove paths now hand it back (see
+   [mls-protocol](mls-protocol.md#the-base-travels-inside-every-commit-submission-comm-22)).
 
    **A refused GroupInfo read ENDS the ladder; it does not descend it.** "Or the device is not an authorized member" used to be in the sentence above, and it was a defect: the endpoint is gated on a `dm_group_members` row, so its **403 is the roster answering** that we hold no membership — which no retry and no peer can change. It now arrives as `NotAGroupMemberError`, thrown by `fetchGroupInfo`, propagated by `externalJoin`, and terminates the recovery through the same seam as a server-side tombstone (`stopRecovering`: cancel, `clearGroupNotReady`, retire the conversation). Until then it was flattened to `null`, read as *no base published yet*, and fell to the fallback — so a group we had LEFT was chased once a minute for as long as it existed, one 403 and one broadcast per pass, contained only by the `RECOVERY_TIMEOUT_MS` throttle. Any OTHER failure (a 5xx, a transport error) says nothing about membership and must still descend to the fallback, or a bad deploy retires live conversations.
 

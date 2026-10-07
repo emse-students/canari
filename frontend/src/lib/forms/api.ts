@@ -303,6 +303,17 @@ export async function getSubmissions(formId: string): Promise<Submission[]> {
   return res.json();
 }
 
+/** The payment state of the caller's own submission, read by the return page after Lydia. */
+export async function getSubmissionPayment(
+  submissionId: string
+): Promise<{ id: string; formId: string; paymentStatus: string }> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}`
+  );
+  if (!res.ok) throw new Error('Failed to read the submission');
+  return res.json();
+}
+
 /** Deletes a submission. Requires form manager access. */
 export async function deleteSubmission(submissionId: string): Promise<void> {
   const res = await apiFetch(
@@ -420,6 +431,8 @@ export async function submitForm(
   id: string,
   payload: {
     email?: string;
+    /** Where the payment request goes when Lydia is the provider. Never stored by Canari. */
+    payerEmail?: string;
     answers: any;
     successUrl?: string;
     cancelUrl?: string;

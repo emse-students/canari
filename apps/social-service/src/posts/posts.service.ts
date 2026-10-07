@@ -35,11 +35,19 @@ import {
   type PostKind,
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
+import { publicationTime } from './publication-time';
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
+import { postVisibleToViewerSql, readInFeedAudience } from '../spaces/reader-spaces';
+import {
+  REPUBLISHING_ASSOCIATION_TYPES,
+  dropRepublicationsOf,
+  republishersOf,
+  type Republisher,
+} from './republication-sql';
 
 /**
  * Who is reading, and what they already hold - resolved once per request and carried into every
@@ -54,6 +62,12 @@ interface PostViewerContext {
   isModerator: boolean;
   /** Associations where the reader holds `POST_AS_ASSO`, hence may manage what was said in their name. */
   managedAssociationIds: Set<string>;
+  /**
+   * Every association, of a kind that republishes, in whose name the reader may publish - the
+   * associations they could republish a post AS (D38). Empty for a global admin, who may republish
+   * as any (`isGlobalAdmin` decides that).
+   */
+  republishAsIds: Set<string>;
 }
 
 /**
@@ -72,6 +86,18 @@ interface PostCapabilities {
   canReport: boolean;
   /** Clears an anonymous post's flag, revealing its author. Same tier as `canPin`. */
   canUnmaskAnonymous: boolean;
+  /**
+   * "Republier" (D38): an association post, and the reader may publish as at least one OTHER
+   * association that has not republished it yet. The server checks the chosen one again.
+   */
+  canRepublish: boolean;
+  /** "Proposer a une association": an association post its reader may publish in the name of. */
+  canProposeRepublication: boolean;
+  /**
+   * The republishers (ids among `republishedBy`) whose republication this reader may withdraw - an
+   * association removes its OWN (D38), so these are the ones the reader may publish as.
+   */
+  canUnrepublishAs: string[];
 }
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
@@ -170,6 +196,7 @@ export class PostsService {
     isGlobalAdmin: false,
     isModerator: false,
     managedAssociationIds: new Set(),
+    republishAsIds: new Set(),
   };
 
   /**
@@ -191,18 +218,52 @@ export class PostsService {
         isGlobalAdmin: true,
         isModerator: true,
         managedAssociationIds: new Set(),
+        republishAsIds: new Set(),
       };
     }
     const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
-    const [managedAssociationIds, isModerator] = await Promise.all([
+    const [managedAssociationIds, isModerator, republishAsIds] = await Promise.all([
       this.associationsService.mayActOnAny(
         viewerId,
         associationIds,
         AssociationPermissionFlag.POST_AS_ASSO
       ),
       this.associationsService.isContentModerator(viewerId),
+      this.republishAsIdsOf(viewerId),
     ]);
-    return { viewerId, isGlobalAdmin: false, isModerator, managedAssociationIds };
+    return { viewerId, isGlobalAdmin: false, isModerator, managedAssociationIds, republishAsIds };
+  }
+
+  /**
+   * The associations `viewerId` could republish a post AS: membership rows holding `POST_AS_ASSO`,
+   * of a type that republishes. Membership alone is exact here because `POST_AS_ASSO` is in
+   * `SUPER_ADMIN_EXCLUDED_FLAGS` - no BDE tier borrows another association's voice.
+   */
+  private async republishAsIdsOf(viewerId: string): Promise<Set<string>> {
+    const rows: unknown = await this.postRepo.manager.query(
+      `SELECT am."associationId" FROM association_members am
+         JOIN associations a ON a.id = am."associationId"
+        WHERE am."userId" = $1 AND (am.permissions & $2) <> 0 AND a.type = ANY($3::text[])`,
+      [viewerId, AssociationPermissionFlag.POST_AS_ASSO, REPUBLISHING_ASSOCIATION_TYPES]
+    );
+    return new Set(
+      Array.isArray(rows) ? rows.map((r: { associationId: string }) => r.associationId) : []
+    );
+  }
+
+  /**
+   * Stamps `republishedBy` (D38: "Republie par X, Y") onto each association post of a page, in
+   * ONE query, BEFORE the rows are shaped - `canRepublish` reads it to leave out the associations
+   * that already did.
+   */
+  private async attachRepublishers(
+    rows: { id: string; associationId?: string | null; republishedBy?: Republisher[] }[]
+  ): Promise<void> {
+    const ids = rows.filter((r) => r.associationId).map((r) => r.id);
+    const byPost = await republishersOf(this.postRepo.manager, ids);
+    for (const row of rows) {
+      if (row.associationId) row.republishedBy = byPost.get(row.id) ?? [];
+    }
   }
 
   /**
@@ -243,7 +304,12 @@ export class PostsService {
    * corrects and withdraws its own words and pins nothing.
    */
   private viewerCapabilities(
-    post: { authorId?: string | null; associationId?: string | null; anonymous?: boolean },
+    post: {
+      authorId?: string | null;
+      associationId?: string | null;
+      anonymous?: boolean;
+      republishedBy?: Republisher[];
+    },
     viewer: PostViewerContext
   ): PostCapabilities {
     const isPublisher = this.viewerIsPublisher(post, viewer);
@@ -253,7 +319,26 @@ export class PostsService {
       canPin: isModeratorTier,
       canReport: !!viewer.viewerId && !isPublisher,
       canUnmaskAnonymous: !!post.anonymous && isModeratorTier,
+      canRepublish: this.viewerMayRepublish(post, viewer),
+      canProposeRepublication:
+        !!viewer.viewerId && !!post.associationId && (viewer.isGlobalAdmin || isPublisher),
+      canUnrepublishAs: viewer.viewerId
+        ? (post.republishedBy ?? [])
+            .map((r) => r.id)
+            .filter((id) => viewer.isGlobalAdmin || viewer.republishAsIds.has(id))
+        : [],
     };
+  }
+
+  /** `canRepublish`: see `PostCapabilities`. A personal post is never republished (D38). */
+  private viewerMayRepublish(
+    post: { associationId?: string | null; republishedBy?: Republisher[] },
+    viewer: PostViewerContext
+  ): boolean {
+    if (!viewer.viewerId || !post.associationId) return false;
+    if (viewer.isGlobalAdmin) return true;
+    const already = new Set((post.republishedBy ?? []).map((r) => r.id));
+    return [...viewer.republishAsIds].some((id) => id !== post.associationId && !already.has(id));
   }
 
   /**
@@ -320,7 +405,8 @@ export class PostsService {
     if (Array.isArray(raw.media)) {
       raw.images = raw.media;
     }
-    Object.assign(raw, this.viewerCapabilities(post, viewer));
+    await this.attachRepublishers([raw]);
+    Object.assign(raw, this.viewerCapabilities(raw, viewer));
     if (raw.polls !== undefined) raw.polls = servePolls(raw.polls, viewer.viewerId);
     if (!raw.associationId) {
       if (this.mustHideAnonymousAuthor(post, viewer)) {
@@ -478,6 +564,30 @@ export class PostsService {
     }
   }
 
+  /** Whether `userId` may use the feed at all - the gate's question, for `GET /posts/audience`. */
+  async isInFeedAudience(userId: string): Promise<boolean> {
+    const inAudience = await readInFeedAudience(this.postRepo.manager, userId);
+    this.logger.debug(`[FEED_GATE] audience of ${userId.slice(0, 8)}: ${inAudience}`);
+    return inAudience;
+  }
+
+  /**
+   * Refuses with 404 a post `viewerId` may not see (WP6b decision 3) - `postVisibleToViewerSql`,
+   * asked of one row. 404 and not 403: for that reader the post does not exist, and saying
+   * "forbidden" would confirm the id. An absent viewer, or an absent post, sees nothing. A global
+   * admin may open any post BY ITS ID (a report or moderation link) but is not shown it by browsing.
+   */
+  async assertVisible(postId: string, viewerId: string | undefined): Promise<void> {
+    const rows: { visible: boolean }[] = await this.postRepo.manager.query(
+      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
+      [postId, viewerId ?? null]
+    );
+    if (rows[0]?.visible !== true) {
+      this.logger.debug(`[VISIBILITY] post ${postId} withheld from ${viewerId?.slice(0, 8)}`);
+      throw new NotFoundException('Post not found');
+    }
+  }
+
   async createPost(data: any, isGlobalAdmin: boolean) {
     if (data.linkedCalendarEventId) {
       data.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
@@ -519,10 +629,11 @@ export class PostsService {
       delete data.durationMs;
     }
 
-    const post = this.postRepo.create(data);
-    let saved;
+    const post = this.postRepo.create(data) as unknown as Post;
+    post.publishedAt = publicationTime(post.scheduledAt, new Date());
+    let entity: Post;
     try {
-      saved = await this.postRepo.save(post);
+      entity = await this.postRepo.save(post);
     } catch (e) {
       // The blob was claimed for a reel that now will not exist. Hand it back to the idle clock so
       // it is not an exempt object nothing will ever reap - best-effort and logged by `release`.
@@ -530,7 +641,6 @@ export class PostsService {
       throw e;
     }
     await this.invalidateListCache();
-    const entity = Array.isArray(saved) ? saved[0] : saved;
 
     // Fire-and-forget mention notifications
     if (mentionedIds.length > 0 && entity.id) {
@@ -616,9 +726,10 @@ export class PostsService {
     const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewer?.viewerUserId);
     const params: unknown[] = [limit, offset, `%${term}%`];
     const promoSql = promoCutoff
-      ? `AND COALESCE(posts."scheduledAt", posts."createdAt") >= $${params.push(promoCutoff)}::timestamptz`
+      ? `AND posts."publishedAt" >= $${params.push(promoCutoff)}::timestamptz`
       : '';
     const bp = blockedIds.length > 0 ? params.push(blockedIds) : null;
+    const viewerParam = params.push(viewer?.viewerUserId ?? null);
 
     const rawPosts: any[] = await this.postRepo.manager.query(
       `SELECT ${this.postSelectBody(bp)}
@@ -631,7 +742,8 @@ export class PostsService {
          ${this.liveReelFilterSql()}
          ${this.serviceAccountFilterSql(isAdmin, viewer?.viewerUserId)}
          ${this.blockedAuthorSql(bp)}
-       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+         AND ${postVisibleToViewerSql('posts', `$${viewerParam}`)}
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
        LIMIT $1 OFFSET $2`,
       params
     );
@@ -673,6 +785,7 @@ export class PostsService {
       );
     }
 
+    await this.attachRepublishers(rawPosts);
     const viewerCtx = await this.viewerContext(rawPosts, viewer?.viewerUserId, isAdmin);
     const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
 
@@ -723,7 +836,7 @@ export class PostsService {
              FROM jsonb_array_elements(COALESCE(posts.comments, '[]'::jsonb)) AS elem
              ${visibleComment})`;
     return `posts.id,
-         posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."updatedAt",
+         posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."publishedAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts."linkedCalendarEventId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
@@ -846,9 +959,7 @@ export class PostsService {
     // SQL fragment added to every query when a promo cutoff applies.
     // The parameter index is computed per-query below.
     const promoSql = (idx: number) =>
-      promoCutoff
-        ? `AND COALESCE(posts."scheduledAt", posts."createdAt") >= $${idx}::timestamptz`
-        : '';
+      promoCutoff ? `AND posts."publishedAt" >= $${idx}::timestamptz` : '';
 
     let followedAssocIds: string[] | undefined;
     let followedUserIds: string[] | undefined;
@@ -870,6 +981,11 @@ export class PostsService {
     // A dead reel is excluded in EVERY arm, and `kind` (absent = both) narrows every arm alike.
     const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind)}`;
     const serviceAccountFilter = this.serviceAccountFilterSql(isAdmin === true, viewerUserId);
+    // WHICH POSTS THIS READER MAY SEE (WP6b), in every arm. The viewer goes LAST, after the optional
+    // promo cutoff and blocked list (`tail`), so its placeholder is the next free index of each arm.
+    const tail = [...(promoCutoff ? [promoCutoff] : []), ...blockedParams];
+    const viewerParam = viewerUserId ?? null;
+    const visibleAt = (index: number) => `AND ${postVisibleToViewerSql('posts', `$${index}`)}`;
 
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
@@ -887,9 +1003,10 @@ export class PostsService {
          ${reelFilters}
          ${serviceAccountFilter}
          ${promoSql(3)}
-       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+         ${visibleAt(3 + tail.length)}
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset, ...(promoCutoff ? [promoCutoff] : []), ...blockedParams]
+        [limit, offset, ...tail, viewerParam]
       );
     } else if (feed === 'all') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
@@ -904,9 +1021,10 @@ export class PostsService {
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
-       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+         ${visibleAt(3 + tail.length)}
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset, ...(promoCutoff ? [promoCutoff] : []), ...blockedParams]
+        [limit, offset, ...tail, viewerParam]
       );
     } else if (feed === 'followed') {
       // $1=limit, $2=offset, $3=followedAssocIds, $4=followedUserIds, $5=promoCutoff (optional),
@@ -930,16 +1048,10 @@ export class PostsService {
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
-       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+         ${visibleAt(5 + tail.length)}
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
        LIMIT $1 OFFSET $2`,
-        [
-          limit,
-          offset,
-          followedAssocIds,
-          followedUserIds,
-          ...(promoCutoff ? [promoCutoff] : []),
-          ...blockedParams,
-        ]
+        [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );
     } else {
       // $1=limit, $2=offset, $3=promoParam, $4=formationParam, $5=promoCutoff (optional),
@@ -959,16 +1071,10 @@ export class PostsService {
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
-       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+         ${visibleAt(5 + tail.length)}
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
        LIMIT $1 OFFSET $2`,
-        [
-          limit,
-          offset,
-          promoParam,
-          formationParam,
-          ...(promoCutoff ? [promoCutoff] : []),
-          ...blockedParams,
-        ]
+        [limit, offset, promoParam, formationParam, ...tail, viewerParam]
       );
     }
 
@@ -1009,6 +1115,7 @@ export class PostsService {
       );
     }
 
+    await this.attachRepublishers(rawPosts);
     const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin === true);
     const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
 
@@ -1066,7 +1173,15 @@ export class PostsService {
     if (!post) throw new NotFoundException('Post not found');
     if (!post.hiddenByModeration) {
       post.hiddenByModeration = true;
-      await this.postRepo.save(post);
+      await this.postRepo.manager.transaction(async (manager) => {
+        await manager.save(post);
+        // D38: a hidden post loses every republication and pending repost proposal.
+        const dropped = await dropRepublicationsOf(manager, postId);
+        this.logger.log(
+          `[MODERATION] post ${postId} hidden: ${dropped.republications} republication(s), ` +
+            `${dropped.proposals} pending proposal(s) removed`
+        );
+      });
       await this.invalidateListCache();
     }
     return { ok: true };
@@ -1138,12 +1253,14 @@ export class PostsService {
          AND NOT COALESCE(posts."hiddenByModeration", false)
          ${this.liveReelFilterSql()}
          ${this.blockedAuthorSql(bp)}
-       ORDER BY posts."createdAt" DESC
+         AND ${postVisibleToViewerSql('posts', `$${blockedIds.length > 0 ? 3 : 2}`)}
+       ORDER BY posts."publishedAt" DESC
        LIMIT 1`,
-      [eventId, ...(blockedIds.length > 0 ? [blockedIds] : [])]
+      [eventId, ...(blockedIds.length > 0 ? [blockedIds] : []), viewerId ?? null]
     );
     const post = rows[0];
     if (!post) return null;
+    await this.attachRepublishers([post]);
     const viewerCtx = await this.viewerContext([post], viewerId, isGlobalAdmin);
     return this.stripBigIntForJson(this.shapeListRow(post, viewerCtx));
   }
@@ -1160,6 +1277,9 @@ export class PostsService {
       this.logger.debug(`getById ${id} withheld: reel expired at ${String(post.expiresAt)}`);
       throw new NotFoundException('Post not found');
     }
+    // A POST THIS READER MAY NOT SEE (WP6b) IS ONE THAT DOES NOT EXIST for them: 404, and BEFORE the
+    // moderation check, whose 403 would otherwise confirm the id to someone outside its audience.
+    await this.assertVisible(id, opts?.viewerId);
     if (post.hiddenByModeration && !opts?.allowHidden) {
       throw new ForbiddenException('Post not available');
     }
@@ -1281,8 +1401,15 @@ export class PostsService {
       }
     }
 
-    if ('scheduledAt' in data)
+    if ('scheduledAt' in data) {
+      // A post already visible and un-scheduled keeps the instant it appeared; every other change
+      // re-derives it, so the order key never disagrees with the visibility predicate.
+      const wasVisible = !post.scheduledAt || post.scheduledAt.getTime() <= Date.now();
       post.scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
+      if (post.scheduledAt || !wasVisible) {
+        post.publishedAt = publicationTime(post.scheduledAt, new Date());
+      }
+    }
 
     const mentionedIds = post.markdown
       ? this.notifications

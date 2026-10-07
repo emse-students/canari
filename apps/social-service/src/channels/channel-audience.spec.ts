@@ -181,8 +181,13 @@ describe('channel audience', () => {
     });
 
     it('keeps a pin off an outsider socket', async () => {
-      const { service, redis } = makeService(privateChannel);
-      await service.setMessagePinned('ch-staff', 'msg-1', INSIDER, true);
+      // Pinned by an admin who joined the salon: since 2026-10-05 a pin is moderation for every
+      // message, so a plain member - even the author - is refused before anything is published.
+      const { service, redis } = makeService({
+        ...privateChannel,
+        allowedUsers: [INSIDER, ADMIN],
+      });
+      await service.setMessagePinned('ch-staff', 'msg-1', ADMIN, true);
       expect(audienceOf(redis, 'channel.pin')).not.toContain(OUTSIDER);
     });
 

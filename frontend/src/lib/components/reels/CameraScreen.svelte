@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   /**
    * The CanaReels camera tab (C5): a full-screen preview, the app's own - never the system camera.
    *
@@ -7,6 +8,7 @@
    */
   import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
+  import { CAMERA_DEFAULT_ORIGIN, cameraOriginFrom } from '$lib/reels/cameraOrigin';
   import {
     Camera,
     CameraOff,
@@ -20,6 +22,12 @@
   import { hasNativeGallery, openAppSettings } from '$lib/reels/gallery';
   import { CameraSession } from '$lib/reels/cameraSession.svelte';
   import type { CameraFault } from '$lib/reels/cameraAccess';
+  import {
+    FramedStream,
+    takeFramedPhoto,
+    type CameraCapture,
+    type PreviewBox,
+  } from '$lib/reels/framedCapture';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
@@ -33,7 +41,9 @@
      */
     lensLocked?: boolean;
     /** What sits over the live preview at the bottom: the shutter and its neighbours. */
-    controls?: Snippet<[capturePhoto: () => Promise<Blob | null>]>;
+    controls?: Snippet;
+    /** What a capture can take, handed to the owner of the shutter (bind it). */
+    capture?: CameraCapture;
     /**
      * Holds the camera OFF while true - a take under review needs no preview, and an open camera
      * would keep the phone's privacy dot lit for nothing. Turning it false opens the camera again.
@@ -52,6 +62,7 @@
     controls,
     paused = false,
     onBeforeRelease,
+    capture = $bindable(),
   }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
@@ -75,40 +86,54 @@
     frameReady = true;
   }
 
-  /** Captures the current live frame without mirroring the stored photo. */
-  async function capturePhoto(): Promise<Blob | null> {
-    if (!video || !frameReady) {
-      console.warn('[camera] photo asked for before the first frame');
-      return null;
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const context = canvas.getContext('2d');
-    if (!context) {
-      console.error('[camera] photo capture has no canvas context');
-      return null;
-    }
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.94));
+  /** The preview element's layout box: the rectangle a capture must reproduce (framedCapture.ts). */
+  function previewBox(el: HTMLVideoElement): PreviewBox {
+    return {
+      width: el.clientWidth,
+      height: el.clientHeight,
+      dpr: window.devicePixelRatio || 1,
+    };
   }
 
-  /** Whether this tab was reached from inside the app - then closing it is a step back. */
-  let cameFromApp = false;
+  /**
+   * What the shutter can take. Both captures are the PREVIEW'S crop and are never mirrored (the
+   * mirror is a CSS transform on the element, which a canvas read of its frame ignores).
+   */
+  capture = {
+    get ready() {
+      return frameReady && session.phase === 'live';
+    },
+    photo() {
+      if (!video || !frameReady) {
+        console.warn('[camera] photo asked for before the first frame');
+        return Promise.resolve(null);
+      }
+      return takeFramedPhoto(video, previewBox(video));
+    },
+    startFramedStream() {
+      if (!video || !frameReady) {
+        console.warn('[camera] a take was asked for before the first frame');
+        return null;
+      }
+      return FramedStream.start(video, previewBox(video), session.stream?.getAudioTracks() ?? []);
+    },
+  };
+
+  /** The tab this camera was opened from (see {@link cameraOriginFrom}). */
+  let origin = CAMERA_DEFAULT_ORIGIN;
   afterNavigate(({ from }) => {
-    cameFromApp = !!from;
+    origin = cameraOriginFrom(from?.url);
   });
 
   /**
-   * Back to where the member came from. A history step when there is one, so the feed comes back
-   * with its scroll; a REPLACE onto the feed when the camera was the first page (a cold link), so
-   * Back from the feed does not reopen the camera.
+   * Back to the tab the member came from, by name and as a REPLACE of the camera's entry, so Back
+   * from that tab does not reopen the camera. Not `history.back()`: its target is whatever entry
+   * sits below, which landed on the Dashboard (Mi 9T, 2026-10-06).
    */
   function close() {
-    console.debug(`[camera] close (from app: ${cameFromApp})`);
+    console.debug(`[camera] close, back to ${origin}`);
     session.stop();
-    if (cameFromApp) history.back();
-    else void goto('/posts', { replaceState: true });
+    void goto(resolve(origin as '/'), { replaceState: true });
   }
 
   // The element follows the session's stream; `srcObject` is a property, not an attribute.
@@ -190,7 +215,8 @@
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
 >
-  <!-- The front lens is mirrored as every camera app shows it; the recording is not (the track is).
+  <!-- The front lens is mirrored as every camera app shows it; the saved photo and take are not (they
+       are drawn from the decoded frame, which this CSS transform never touches, framedCapture.ts).
        THE ELEMENT IS KEYED BY THE STREAM: WKWebView keeps a <video> element's media layer at the size
        of its FIRST layout, so an element handed a second stream after the app came back from the
        background drew a ~65 % letterboxed rectangle while its CSS box stayed 390x844 and
@@ -316,7 +342,7 @@
 
   {#if controls && session.phase === 'live'}
     <div class="absolute inset-x-0 bottom-0 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]">
-      {@render controls(capturePhoto)}
+      {@render controls()}
     </div>
   {/if}
 </section>

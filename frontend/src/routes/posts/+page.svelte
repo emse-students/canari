@@ -1,5 +1,8 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
+  import { feedToShowAfterPublish } from '$lib/posts/landingFeed';
   import { onMount, untrack } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import { page } from '$app/state';
@@ -13,6 +16,7 @@
     type PostFeed,
     type ScheduledPost,
   } from '$lib/posts/api';
+  import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
   import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
   import { progressiveCount } from '$lib/utils/progressiveMount.svelte';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
@@ -65,6 +69,8 @@
     batch: 2,
   });
   let errorMessage = $state('');
+  /** The server said this reader has no space and no association: an empty state, not an error. */
+  let noAudience = $state(false);
   let lastSeenTs = $state(0);
   const elementPostTs = new SvelteMap<Element, number>();
   let seenObserver: IntersectionObserver | null = null;
@@ -123,6 +129,15 @@
    * a share or a back gesture then lands on the feed rather than on a modal or a search box the
    * reader did not ask for twice.
    */
+  /**
+   * This route carrying `u`'s query and hash, for `resolve`. Built from the route rather than from
+   * `u.pathname`, which already carries any base path and would then get it twice.
+   */
+  function feedPath(u: URL): string {
+    const query = u.searchParams.toString();
+    return `/posts${query ? `?${query}` : ''}${u.hash}`;
+  }
+
   $effect(() => {
     const params = page.url.searchParams;
     const compose = params.get('compose') === '1';
@@ -139,7 +154,11 @@
     const u = new URL(page.url);
     u.searchParams.delete('compose');
     u.searchParams.delete('search');
-    void goto(u, { replaceState: true, noScroll: true, keepFocus: true });
+    void goto(resolve(internalPath(feedPath(u))), {
+      replaceState: true,
+      noScroll: true,
+      keepFocus: true,
+    });
   });
 
   /**
@@ -298,11 +317,16 @@
    */
   function navigateFeed(feed: PostFeed) {
     settings.setPreferredPostFeed(feed);
+    showFeed(feed);
+  }
+
+  /** Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice. */
+  function showFeed(feed: PostFeed) {
     const u = new URL(page.url);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
-    void goto(u, { invalidateAll: true, noScroll: true });
+    void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
   }
 
   async function refreshPosts() {
@@ -316,7 +340,8 @@
       writeFeedCache(feedCacheKey(data.feedParams), { posts, hasMore });
     } catch (err) {
       Log.d('refreshPosts failed', err);
-      errorMessage = m.posts_load_error_title();
+      if (isOutsideFeedAudience(err)) noAudience = true;
+      else errorMessage = m.posts_load_error_title();
     } finally {
       loading = false;
     }
@@ -340,14 +365,26 @@
     }
   }
 
-  function onPostCreated() {
+  /**
+   * A post must be visible where its author lands. `all` shows everything, so a reader on it stays;
+   * anyone else is taken to the feed that holds the post - Associations for an association's,
+   * All for a personal one - rather than back to a list that does not contain it.
+   */
+  function onPostCreated(landing: PostFeed | null) {
     showCreateModal = false;
+    const target = feedToShowAfterPublish(activeFeed, landing);
+    if (target) {
+      Log.d('POSTS', `published post lands in "${target}", leaving "${activeFeed}"`);
+      showFeed(target);
+      void loadScheduled();
+      return;
+    }
     void refreshPosts();
     void loadScheduled();
   }
 
   function postPublishedAt(post: PostEntity): number {
-    return new Date(post.scheduledAt ?? post.createdAt).getTime();
+    return new Date(post.publishedAt).getTime();
   }
 
   function isNew(post: PostEntity): boolean {
@@ -566,9 +603,19 @@
             {@render skeletonCards()}
           {:then initialPosts}
             {@render feedList(initialPosts)}
-          {:catch _err}
+          {:catch err}
             {#if loading}
               {@render skeletonCards()}
+            {:else if noAudience || isFeedAudienceRefusal(err)}
+              <div
+                class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"
+              >
+                <Inbox size={48} class="text-text-muted mx-auto mb-3 opacity-40" />
+                <h3 class="text-text-main mb-1 text-lg font-bold">
+                  {m.posts_no_audience_title()}
+                </h3>
+                <p class="text-text-muted text-sm">{m.posts_no_audience_hint()}</p>
+              </div>
             {:else}
               <div
                 class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"

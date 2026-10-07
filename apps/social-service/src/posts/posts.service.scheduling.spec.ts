@@ -19,7 +19,12 @@ describe('PostsService.getById scheduling', () => {
   function makeService(post: Partial<Post> | null) {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
-      manager: { query: jest.fn(() => Promise.resolve([])) },
+      // Every reader here is inside the post's audience (WP6b): what is asserted is the schedule.
+      manager: {
+        query: jest.fn((sql: string) =>
+          Promise.resolve(sql.includes('AS visible') ? [{ visible: true }] : [])
+        ),
+      },
     };
     const service = new PostsService(
       postRepo as unknown as Repository<Post>,

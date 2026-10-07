@@ -345,13 +345,16 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/release-notes-body.test.sh
 	@bash .github/scripts/tests/scheduled.test.sh
 	@bash .github/scripts/tests/audit-dependencies.test.sh
+	@bash .github/scripts/tests/stream-json-premise.test.sh
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
+	@bun .github/scripts/tests/assert-frontend-build.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
 	@bun .github/scripts/tests/static-headers.test.mjs
 	@bun .github/scripts/tests/adminer-route.test.mjs
+	@bun .github/scripts/tests/access-log-redaction.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bun .github/scripts/tests/undeclared-duplicates.test.mjs
@@ -431,6 +434,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/transport-selftest.mjs
 	@bun tools/cross-client-harness/archive/imports-selftest.mjs
 	@bun tools/cross-client-harness/archive/origin-selftest.mjs
+	@bun tools/cross-client-harness/archive/deployed-wasm-selftest.mjs
 	@bun tools/cross-client-harness/archive/ready-selftest.mjs
 	@bun tools/cross-client-harness/archive/servable-selftest.mjs
 	@bun tools/cross-client-harness/archive/residue-selftest.mjs

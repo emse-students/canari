@@ -24,6 +24,7 @@ import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
 import { isUnreadForUser, watermarkFor } from './readState';
+import { messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -91,11 +92,13 @@ export function toConversationMeta(
         ? canonicalDirectName(userId, convo.directPeerId ?? convo.contactName)
         : convo.name,
     lifecycle: convo.lifecycle,
-    // The last-message timestamp, so the sidebar sort order survives DB reloads.
-    updatedAt: convo.lastMessageAt ?? Date.now(),
+    // The last-message timestamp, so the sidebar sort order survives DB reloads. Never the local
+    // clock: a conversation with no message has recency 0, identical on every device.
+    updatedAt: conversationRecency(convo),
     readWatermarks: convo.readWatermarks,
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
+    imageMediaId: convo.imageMediaId ?? null,
   };
 }
 
@@ -749,7 +752,7 @@ export async function mergeDirectConversationDuplicates(
       continue;
     }
     try {
-      const updatedMeta = { ...meta, name: normalizedDirectName, updatedAt: Date.now() };
+      const updatedMeta = { ...meta, name: normalizedDirectName };
       await storage.saveConversation(updatedMeta);
       normalizedMetas.push(updatedMeta);
     } catch (e) {
@@ -860,7 +863,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           displayName: resolvedName,
           directPeerId: prev?.directPeerId ?? identity.directPeerId,
         },
-        imageMediaId: prev?.imageMediaId ?? null,
+        imageMediaId: prev?.imageMediaId ?? meta.imageMediaId ?? null,
         // Seed from DB so the sidebar can sort before messages are loaded.
         lastMessageAt: meta.updatedAt,
         // The conversation-level state, restored from the row it was written to. This seed is the
@@ -956,7 +959,6 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
                   await ctx.storage.saveConversation({
                     ...meta,
                     name: normalizedName,
-                    updatedAt: Date.now(),
                   });
                 }
               }
@@ -993,7 +995,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           id: meta.id,
           contactName: meta.id,
           userId: ctx.userId,
-          deviceKeyB64: ctx.deviceKeyB64,
+          deviceKey: () => ctx.deviceKeyB64,
           storage: ctx.storage,
           getConversation: (name) => ctx.conversations.get(name),
           setConversation: (name, next) => ctx.conversations.set(name, next),
@@ -1048,6 +1050,39 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
 
   // Encrypted checkpoint has flushed: durable progress markers are now safe to record.
   for (const commit of pendingCommits) commit();
+}
+
+/**
+ * THE ONE SIDEBAR ORDERING KEY: the sent time of the conversation's newest message, in ms.
+ *
+ * Read from the message list whenever there is one, and only otherwise from the persisted seed
+ * (`lastMessageAt`, which loads before the messages do). It used to be the seed alone, kept up to
+ * date by two of the ~ten writers that replace `messages` - history replay, channel history, stored
+ * pages and the like never touched it - and the seed was also written from `Date.now()`
+ * (`toConversationMeta`, DM name repair), a local arrival clock that `Math.max` then made permanent.
+ * Two devices holding the same messages therefore ordered them differently. `messages` is kept
+ * sorted by `compareMessageOrder` (sent time first), so its last element IS the newest.
+ *
+ * @param convo the conversation row, only its `messages` and `lastMessageAt` are read
+ * @returns the key, 0 for a conversation with no message and no seed
+ */
+export function conversationRecency(
+  convo: Pick<Conversation, 'messages' | 'lastMessageAt'>
+): number {
+  const newest = convo.messages.at(-1);
+  if (newest) {
+    const at = messageTime(newest);
+    if (Number.isFinite(at)) return at;
+  }
+  return convo.lastMessageAt ?? 0;
+}
+
+/** Newest first; equal keys fall back to the id so every device breaks a tie the same way. */
+export function compareConversationRecency(
+  a: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'>,
+  b: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'>
+): number {
+  return conversationRecency(b) - conversationRecency(a) || a.id.localeCompare(b.id);
 }
 
 /**

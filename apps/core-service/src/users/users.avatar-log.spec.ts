@@ -4,6 +4,7 @@ import type { AvatarOutcome, AvatarService } from './avatar.service';
 import type { UsersService } from './users.service';
 import type { UserBlocksService } from './user-blocks.service';
 import type { ProfileEditService } from './profile-edit.service';
+import type { ProfileCorrectionService } from './profile-correction.service';
 
 /**
  * `GET /users/:id/avatar` - ONE `[AVATAR]` line per request, whatever the outcome. Status codes are
@@ -29,7 +30,8 @@ describe('GET /users/:id/avatar logging', () => {
       {} as UsersService,
       { fetchUserAvatar } as unknown as AvatarService,
       {} as UserBlocksService,
-      {} as ProfileEditService
+      {} as ProfileEditService,
+      {} as ProfileCorrectionService
     );
     const res = { set: jest.fn(), status: jest.fn(), end: jest.fn(), send: jest.fn() };
     res.status.mockReturnValue(res);

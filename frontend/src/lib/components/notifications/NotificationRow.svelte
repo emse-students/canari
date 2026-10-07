@@ -8,8 +8,12 @@
     CalendarClock,
     CalendarCheck,
     CalendarX,
+    UserCheck,
+    UserX,
     CalendarCog,
     Newspaper,
+    Repeat2,
+    CalendarPlus,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -111,6 +115,31 @@
   const isPostNotif = $derived((POST_TYPES as readonly string[]).includes(notif.type));
 
   /**
+   * THE TWO REPUBLICATION NOTICES (D38), named for the same reason as the two above: left to the
+   * `{:else}` they would read "a commente". `actorName` is an ASSOCIATION in both - the one that
+   * republished, or the one proposing - so both draw its avatar.
+   */
+  const REPOST_TYPES = ['association_repost', 'repost_proposed'] as const;
+  const isRepostNotif = $derived((REPOST_TYPES as readonly string[]).includes(notif.type));
+  /**
+   * A CO-ORGANISATION PROPOSAL (D39), named for the same reason: the ORGANISING association asks,
+   * and the body is the event's title.
+   */
+  const isCoorganiseNotif = $derived(notif.type === 'coorganise_proposed');
+  /** The actor is an association, whose logo stands in for a person's avatar. */
+  const actorIsAssociation = $derived(
+    (notif.type === 'association_post' || isRepostNotif || isCoorganiseNotif) &&
+      !!notif.associationId
+  );
+  /**
+   * THE TWO ANSWERS TO A PROFILE CORRECTION REQUEST (WP4b), listed for the same reason as the agenda's
+   * five: a type this chain does not name would inherit the COMMENT sentence, glyph and colour. The
+   * actor is the platform; `text` holds the admin's note on a refusal, shown after the sentence.
+   */
+  const PROFILE_TYPES = ['profile_correction_applied', 'profile_correction_refused'] as const;
+  const isProfileNotif = $derived((PROFILE_TYPES as readonly string[]).includes(notif.type));
+
+  /**
    * A refusal carries its reason after a newline - the one thing a reader cannot reconstruct from
    * the title. Split here so the title can stay italic and the reason can read as prose.
    */
@@ -138,11 +167,13 @@
               ? 'bg-red-500 text-white'
               : notif.type === 'event_pending'
                 ? 'bg-amber-500 text-cn-ink'
-                : isEventNotif
+                : isEventNotif || isCoorganiseNotif
                   ? 'bg-sky-600 text-white'
-                  : isPostNotif
+                  : isPostNotif || isRepostNotif
                     ? 'bg-indigo-500 text-white'
-                    : 'bg-green-600 text-white'
+                    : notif.type === 'profile_correction_refused'
+                      ? 'bg-red-500 text-white'
+                      : 'bg-green-600 text-white'
   );
 
   // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
@@ -164,7 +195,7 @@
     drawing an outline.
   -->
   <span class="relative shrink-0 {avatarBox}">
-    {#if notif.type === 'association_post' && notif.associationId}
+    {#if actorIsAssociation}
       <AssociationAvatar name={notif.actorName} logoUrl={notif.associationLogoUrl} fill />
     {:else}
       <Avatar userId={notif.actorId} fill fallbackLabel={notif.actorName} />
@@ -193,8 +224,16 @@
         <CalendarCog size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_pending'}
         <CalendarClock size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'profile_correction_applied'}
+        <UserCheck size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'profile_correction_refused'}
+        <UserX size={glyph} strokeWidth={2.75} />
       {:else if isPostNotif}
         <Newspaper size={glyph} strokeWidth={2.75} />
+      {:else if isRepostNotif}
+        <Repeat2 size={glyph} strokeWidth={2.75} />
+      {:else if isCoorganiseNotif}
+        <CalendarPlus size={glyph} strokeWidth={2.75} />
       {:else}
         <MessageCircle size={glyph} strokeWidth={2.75} />
       {/if}
@@ -242,8 +281,21 @@
         <span class="italic"><EmojiText text={eventTitle} /></span>{#if eventReason}&#32;&#8212; <EmojiText
             text={eventReason}
           />{/if}
+      {:else if isProfileNotif}
+        {notif.type === 'profile_correction_applied'
+          ? m.notif_profile_correction_applied_text()
+          : m.notif_profile_correction_refused_text()}
+        {#if bodyText}<span class="italic"><EmojiText text={bodyText} /></span>{/if}
       {:else if isPostNotif}
         {m.notif_post_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isRepostNotif}
+        {notif.type === 'repost_proposed'
+          ? m.notif_repost_proposed_text()
+          : m.notif_association_repost_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isCoorganiseNotif}
+        {m.notif_coorganise_proposed_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else}
         {m.notif_comment_text()}

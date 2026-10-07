@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
@@ -21,7 +22,7 @@
 
   onMount(async () => {
     if (!currentUserId()) {
-      await goto(`/login?returnTo=${encodeURIComponent(`/g/join/${token}`)}`, {
+      await goto(resolve(`/login?returnTo=${encodeURIComponent(`/g/join/${token}`)}`), {
         replaceState: true,
       });
       return;
@@ -77,7 +78,7 @@
           {m.group_join_sent_desc({ name: preview?.groupName ?? m.group_join_group_fallback() })}
         </p>
         <a
-          href="/chat"
+          href={resolve('/chat')}
           class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-1 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
         >
           {m.group_join_go_to_chat()}
@@ -88,7 +89,7 @@
         <CircleAlert size={36} class="text-red-500" />
         <p class="text-text-main text-sm font-semibold">{m.invite_invalid_or_expired()}</p>
         {#if error}<p class="text-text-muted text-xs">{error}</p>{/if}
-        <a href="/chat" class="text-cn-dark text-sm font-semibold hover:underline">
+        <a href={resolve('/chat')} class="text-cn-dark text-sm font-semibold hover:underline">
           {m.group_join_back_chat()}
         </a>
       </div>
@@ -112,7 +113,7 @@
       >
         {joining ? m.common_sending_label() : m.group_join_btn()}
       </button>
-      <a href="/chat" class="text-text-muted hover:text-text-main block text-xs"
+      <a href={resolve('/chat')} class="text-text-muted hover:text-text-main block text-xs"
         >{m.common_cancel_button()}</a
       >
     {/if}

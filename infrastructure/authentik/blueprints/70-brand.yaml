@@ -15,7 +15,7 @@ entries:
     identifiers:
       default: true
     attrs:
-      domain: "auth.canari-emse.fr"
+      domain: "miconnect.emse.fr"
       branding_title: "MiConnect"
       branding_logo: "https://rootz-emse.fr/logo.png"
       branding_favicon: "https://rootz-emse.fr/logo.png"

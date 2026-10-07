@@ -1023,6 +1023,25 @@ move, and the compose file does not declare it `external`. **The webhook row mov
 `canari-prod-social-service-1`). The `/api/` exception still stays: the old name's access log still
 carries browser `GET`s on `/api/` (open tabs, cached pages) - it goes once that traffic has faded.
 
+**THE `/api/` EXCEPTIONS WENT, 2026-10-06.** The two old names' logs (current + rotated, two days)
+held **zero** `/api/` requests - only crawlers and scanners - and no container on the host names
+`sky.mitv.fr` or `cercle.canari-emse.fr` any more (read from each container's environment, secrets
+filtered). `sky.conf` and `cercle.conf` are pure `301`s now (pre-edit copies
+`/root/{sky,cercle}.conf.bak-2026-10-06-before-api-removal`). **The Sky relay on `mitv` STAYS,
+deliberately**: pointing the tunnel straight at the host would make every visitor of the old name
+arrive as `10.0.0.4`, the same address the wiki and Omeka traffic uses, and one abusive crawler
+banned there would take those down with it. The stopped `sky-sky-1` container and its 18 MB
+`/home/mitv/Sky/database` are the last pre-move copy: **deleting them is the user's gesture.**
+
+**EVERY CLIENT OF MICONNECT NOW NAMES `miconnect.emse.fr`, 2026-10-06** (the old name redirects its
+pages and serves the machine endpoints, see above): Le Cercle's CI variables (issuer AND JWKS
+together; its `deploy` was blocked by a dependency-audit gate unrelated to the change, fixed in
+the same sitting), Sky and MiGallery by their defaults, Canari by the `AUTHENTIK_URL` and
+`DEV_AUTHENTIK_URL` secrets - **which take effect with the next pre-release (dev) and stable
+(prod)**, an installed build keeping the old name for good. Wiki.js's strategy is the one left, a
+database edit on `mitv`. The `cercle-data` volume warning is closed by declaring it `external`
+(Le Cercle !26).
+
 **Two traps, both found before they cost anything.** `sky.db` is not the whole state:
 `sky-legacy.db` is written ONCE by `rebuild-db.js`, whenever absent, so the target's first start
 regenerated it from the wrong data, and `positions.json` is recomputed only on a mutation - Sky #132
@@ -1239,8 +1258,7 @@ has no service worker, so no cached shell can pin a browser to the old origin.
 **PROMOTED TO `301` - measured 2026-10-01**: `/` and `/posts` on the old name answer `301` to the
 same path on `canari.emse.fr`, still with `Cache-Control: no-store`. A `302` told a search engine the
 move was temporary and transferred no ranking, which is why the prudence had to stay short. What is
-left is the user's change of address in Google Search Console (both names verified in one account),
-a one-off gesture the [SEO item](../backlog.md) carries.
+left was the user's change of address in Google Search Console, declared 2026-10-04 (see [the SEO pass](#the-seo-pass-one-indexable-page-per-site-2026-10-06)).
 
 **What stays true, and what does not.** The IndexedDB measurement above is unchanged: a browser
 arriving on the new name from the old one still starts as a new device. What was withdrawn is the
@@ -1316,6 +1334,33 @@ every live token was minted under. It is the one interruption with no gradual pa
 survive it, and a forced re-login of every member has been accepted for exactly that reason.
 Several issuers are accepted during the transition; the end state is one. The redirect URIs live in
 Authentik's database, not in this repository - see [authentik](authentik.md).
+
+#### THE OLD NAME OF MICONNECT REDIRECTS, AND THE DSI REPLACED THE CAS CALLBACK (2026-10-06)
+
+**The DSI swapped the CAS callback instead of adding to it.** Measured the same day, on the same
+`/source/oauth/login/cas-emse/`: `miconnect.emse.fr` reached the CAS login page, and
+`auth.canari-emse.fr` ended in **`401 Not Authorized to Use CAS`** - every sign-in through the
+School's account on the old name was cut at that moment, for every client still naming it. The
+requirement above ("a DSI request, and it must land BEFORE any client points at the new name") had a
+mirror image nobody wrote down: **the request must say KEEP the old callback.** The next DSI message
+owes that sentence.
+
+**The repair is the old name's vhost, not a client change** (`authentik.conf` on the host, pre-edit
+copy `/root/authentik.conf.bak-2026-10-06-before-redirect`): every PAGE - `/`, `/if/` (flow, user UI,
+admin), `/source/`, `/application/o/authorize/`, end-session - answers `301` + `no-store` to
+`https://miconnect.emse.fr$request_uri`; the MACHINE endpoints stay proxied
+(`/application/o/{token,userinfo,introspect,revoke,device}/`, each provider's `.well-known/` and
+`jwks/`, `/api/`, `/-/health/`). A client that still names the old name keeps exchanging its code
+and reading `userinfo` there - a `POST` that gets a `301` is replayed as a `GET`, and the `iss` it
+expects is built from the Host of ITS request - while its browser leg runs on the new name, where
+the CAS accepts it. Measured: the old name's CAS path now lands on the CAS login page, and the old
+`authorize` lands on the new name's flow with the same query. The native clients' navigation guard
+(`navigation.rs`) accepts any `https://`, so an installed app follows the hop.
+
+**Nothing has to flip at once, and nothing may be removed early.** Each client switches to
+`miconnect.emse.fr` on its own release (Cercle: issuer AND JWKS together, it validates `iss`; Canari
+validates nothing and only exchanges at `AUTHENTIK_BASE_URL`); the old name stays for as long as an
+installed build or a store binary names it, which is for ever on Android and iOS.
 
 #### What the rename touches, read from Authentik 2026-09-27 (`ak shell`, read-only)
 
@@ -1477,3 +1522,11 @@ has produced an archive containing Authentik, not before, and deleting a backup 
 gesture. `fix/batch-diagnostic-reads-the-app-not-the-document` is the one local branch still kept
 (its own worktree, an eight-line comment and one backlog row) - ship it or drop it
 deliberately.
+
+## The SEO pass: one indexable page per site (2026-10-06)
+
+Decided by the user: Le Cercle shows a presentation only, Sky a minimal public home, MiGallery a presentation plus sign-in (never a photo, album or person), the wiki indexes everything public. The method is the Portail-etu's: absolute URLs from the request origin, JSON-LD with `<` and `&` escaped, `robots.txt` `Allow: /$` + `Disallow: /`, and `X-Robots-Tag: noindex, nofollow` as the second voice. **A thrown `redirect()` bypasses `resolve`**, so each handler catches `isRedirect` and rebuilds the response, or a login redirect goes out without the header (measured on Le Cercle's `/compte`). Shipped: MiGallery `v2.15.9`, Sky `v1.1.5`, Le Cercle MR 28. Each repo's `docs/wiki/seo.md` holds the detail. Left on the wiki: no sitemap (Wiki.js has none) and two pages with placeholder descriptions.
+
+## The `mitv` ports stay open on the School network (user, 2026-10-06)
+
+`10.0.0.4:3002` (Wiki.js), `:8081` (Omeka S) and `:3001` (Sky) answer in plain HTTP to the whole School private network. **Decided: left as they are** - the user judges that network not sensitive, and the simplest option is no firewall rule. Nothing is owed. Revisit only if one of these services starts holding something a neighbour on that network must not read.

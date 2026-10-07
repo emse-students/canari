@@ -51,8 +51,7 @@ describe('PostsService.searchPosts applies the promo cutoff', () => {
     await service.searchPosts('gala', 20, 0, { viewerUserId: 'viewer-1' });
 
     const [sql, params] = searchCall(query);
-    const cutoff =
-      /COALESCE\(posts\."scheduledAt", posts\."createdAt"\) >= \$(\d+)::timestamptz/.exec(sql);
+    const cutoff = /posts\."publishedAt" >= \$(\d+)::timestamptz/.exec(sql);
     expect(cutoff).not.toBeNull();
     expect(params[Number(cutoff![1]) - 1]).toBe('2024-08-01');
     // The block list still lands at the placeholder ITS clause names, after the cutoff.

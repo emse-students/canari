@@ -20,6 +20,16 @@ here and nothing else.**
 
 ## Where the pass stands
 
+**2026-10-07, `v1.0.4-alpha.5` on the iPhone 12 (iOS 27.0.1, TestFlight build 100000405, `dev.canari-emse.fr`).** Read and `PASS`: the signed calendar subscription for the reader's own campus and formation, copied and opened in Calendar (#1541, #1551), the reel camera opening on the FRONT lens (#1552), the post composer draft per account (#1549), the glass tab bar, the profile page, the tab swipe and the reel review controls. **Not read: the reaction toast, the send path and the reply context (#1548)** - `canari-test-gamma` is the service account and cannot discover or be discovered by a non-admin peer. Detail and owed causes: [backlog](backlog.md).
+
+**2026-10-06, `v1.0.4-alpha.4` on the iPhone 12 (iOS 27.0.1, the TestFlight build, `dev.canari-emse.fr`).** Read and `PASS`: the profile page and header (#1513), the glass tab bar, the tab swipe showing its destination and a drift staying put (#1515), the reel review letterbox with its controls, Next to publish and the confirmed discard (#1539, #1505, #1506), Noto emoji, the feed scroll. `FAIL`: the signed calendar subscription refuses the reader's own campus (#1541). Not reached: the reaction toast, the send path and the scheduled-post time (no second account on dev). Detail and owed causes: [backlog](backlog.md).
+
+**2026-10-06, `v1.0.4-alpha.3` on the Mi 9T (a debug build of the same tree on the LOCAL estate - the harness accounts exist nowhere else; the release APK is signed with another key and cannot replace the debug app without an uninstall that costs the device).** Read and `PASS`: the tab swipe with no leftover shift (#1515), the profile header (#1513), conversation order across both accounts (#1510), the top-placed reaction-failure toast (#1509), the reel editor end to end (#1504-#1506), the own-message reply swipe icon, #1287, #1288, D1 and D4. **FAIL or owed, with the evidence on [backlog](backlog.md#after-the-102-release---what-the-user-asked-for-on-2026-10-02-and-what-is-owed-a-reading)**: no haptic on Android (the manifest lacks `VIBRATE`), NOTIF-10, GRP-3..10 ([cross-client-testing](cross-client-testing.md)), D2, D3 and #1520 (not reachable from the phone account).
+
+**2026-10-06 (second pass), `v1.0.4-alpha.4` on the Mi 9T, same method.** Read and `PASS`: VIBRATE granted (#1535, no haptic can be felt on this phone's silent ringer), the salon reaction failure toast and rolled-back pill (#1536), the review pencil ring and the camera close (#1539), a scheduled post listed then published (#1520), the profile page (#1531), the signed calendar subscription (#1541), the tab swipe, the resume reload (`reloaded`). **Still `FAIL`: NOTIF-10** - one batched real banner and three refused pushes leave one nameless line ([backlog](backlog.md#after-the-102-release---what-the-user-asked-for-on-2026-10-02-and-what-is-owed-a-reading)).
+
+**2026-10-07 (third pass), `v1.0.4-alpha.5` on the Mi 9T (debug APK built from tag `1be223001`, identical to `10115526c` apart from the version bump, versionCode 100000405, installed over the previous one; LOCAL estate rebuilt from the same tree).** Read and `PASS`: the reply context is per conversation (#1548: armed in the DM, absent in the salon, back in the DM), the reel camera opens on the FRONT lens and the flip control swaps front and back both ways (#1552, log `[camera] opened user: camera 1, facing front`, then `environment: camera 0, facing back`), the signed calendar subscription (sign 201, feed 200 signed, 403 unsigned), the post composer draft is keyed by an owner hash (#1549; only ONE account is enrolled on the phone, so the cross-account isolation itself is not observable here), the profile page, the four-tab bar, the tab swipe, a scheduled post listed then published on the minute. The JNI call of #1550 (`ZJI`, `covers`) ran with no `UnsatisfiedLinkError` or `NoSuchMethodError`. **Still `FAIL`: NOTIF-10** - the batching works only when one banner stands for several messages; a run where each message got its own real banner long before its push arrived still leaves one nameless line ([backlog](backlog.md#after-the-102-release---what-the-user-asked-for-on-2026-10-02-and-what-is-owed-a-reading)).
+
 **Android is done except B-bis, H, K, L, M and R.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
 archived on the user's desktop) after partial runs on v0.11.5 and v0.11.6. Two defects came out of
 it, both tracked as WP-NOTIF-1 and both re-checked by **check K**. **Check H was recorded PASS and
@@ -33,6 +43,8 @@ cells are now OWED and schedulable; check S is the only one that has actually ru
 no iPad, and on 2026-08-30 that stopped being an academic gap**: App Review ran one, and the login
 defect it found had been in every build the store ever had - check T, and the paragraph there saying
 why an iPhone settles that particular check for both.
+
+**iPad: switching into Canari from another app does not rotate the window (reported 2026-08-28)** - needs an iPad. Android phone rotation is decided: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)). **iOS lifecycle classes (suspension and resume, the WebView evicted under memory pressure, a socket that does not come back; named by the user 2026-08-27) are closed by lettered checks here, one at a time, never by a fix written against a lifecycle bug nobody has seen** - three of three iOS defects so far were invisible to every gate.
 
 Two consequences to carry deliberately rather than rediscover:
 
@@ -1050,6 +1062,8 @@ throws a typed `KEYSTORE_KEY_UNAVAILABLE` instead of the sentence two call sites
 and the English error became `auth_biometric_no_user`.
 Still owed: a real finger (the proof written by a success), the Settings radio (step 4), and all of
 iOS.
+
+## iPad and rotation - owed on an iPad\n\nSwitching into Canari from another app does not rotate the window on an iPad (reported 2026-08-28); it needs an iPad. The Android phone rotation is decided and shipped: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)).\n
 
 ## Traps that outlived the work that found them
 

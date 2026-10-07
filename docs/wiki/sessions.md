@@ -160,6 +160,20 @@ add, no entitlement, no `Info.plist` key - and the two ways to make the cookie f
 more than they buy (serving the app from `https://canari-emse.fr` inside the WebView would end
 offline launch, and Tauri has no https-origin mode on iOS anyway).
 
+**A replay line says WHICH replay it was (2026-10-06).** Three `Refresh token replay detected` events in
+30 h of production came from one native iPhone, and nothing could separate the two causes that end in
+that revocation. The line now carries `presented=previous|older` and `rotatedAgo=<s>`:
+`previous` outside the 60 s window is a client that LOST the response of its last rotation (iOS
+suspended between the server's rotation and the client's awaited store write, so the stored copy is
+one generation behind); `older` is a token spent two or more rotations ago, a real fork. **Paths
+cleared by reading, 2026-10-06:** no second JS context refreshes (the Rust side and the Swift/Kotlin
+code never call `/api/auth/refresh`; `bench.rs` only deletes the stored key), `_pendingRefresh` is set
+synchronously and cleared only after the awaited store write, every other caller goes through
+`refresh()`. **Open, by construction and not yet observed:** a lost response older than the grace
+window is revoked as a replay; if the next replay line reads `presented=previous` with a large
+`rotatedAgo`, the fix is to end the grace on proof of receipt rather than on a clock. Not built before
+that line has been seen.
+
 ## The cookie's own attributes are a DEPLOYMENT fact, not a per-request one
 
 `secure` and `sameSite` decide whether a refresh credential crosses the network protected. Until
@@ -324,3 +338,12 @@ design. An audit trail names the account that ACTED, so it reads the real user, 
   `synchronize` in dev and the prod migration stop describing the same table. Generate it in Node.
 - **Take the client IP from the LAST `X-Forwarded-For` entry.** nginx APPENDS the connecting address
   to whatever the client sent, so the head of the list is attacker-controlled.
+- **An upload that meets a 401 refreshes and retries ONCE; it never ends the session.** The media
+  upload takes a token its caller read BEFORE a long encryption, so a 401 is usually a stale copy.
+  `fetchUpload` in `frontend/src/lib/media.ts` (every `MediaService` upload route) renews through the
+  single-flight `refresh()` and resends; only a 401 on the FRESH token throws `SessionExpiredError`,
+  and a failed refresh is rethrown as it came. Prod 2026-10-06: 9 `POST /api/media/upload` 401 in 30 h
+  from a web client, each followed by logout and sign-in. The salon branch's stale `ctx.authToken`
+  copy (#1472) and the post forms (#1477) fixed WHO hands the token; this fixes the token expiring
+  between the hand-over and the request, for every caller including reels and avatars. Test:
+  `media.uploadRefreshRetry.test.ts`.

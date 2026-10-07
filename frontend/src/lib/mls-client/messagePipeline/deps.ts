@@ -16,7 +16,16 @@ export interface MessageHandlerDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
-  deviceKeyB64: string;
+  /**
+   * The key the local store is sealed with NOW, read at every write.
+   *
+   * A function and never a value, because these deps live for the whole session while the key does
+   * not: an in-session PIN change re-seals the store and moves the session's key
+   * (`performPinChange` -> `SessionContext.setDeviceKey`), and a value captured at login kept sealing
+   * every later message under the key the store had just been migrated off. Call it at the write,
+   * never once up front - a copy is exactly what went stale.
+   */
+  deviceKey: () => string;
   historyBaseUrl: string;
   conversations: SvelteMap<string, Conversation>;
   messageReactions: SvelteMap<string, MessageReaction[]>;
@@ -72,7 +81,12 @@ export interface MessageHandlerDeps {
     viewerCanWrite?: boolean;
   }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
-  onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
+  onWorkspaceUpdated?: (event: {
+    workspaceId: string;
+    imageMediaId?: string;
+    /** The community's salons were rearranged: re-read the order, the event names no salon. */
+    channelsReordered?: boolean;
+  }) => void;
   /** This device's own role in a community changed - see `sessionTypes.onWorkspaceRoleChanged`. */
   onWorkspaceRoleChanged?: (event: {
     workspaceId: string;
@@ -80,6 +94,11 @@ export interface MessageHandlerDeps {
     canManage: boolean;
     /** Whether the role lets this member govern salons. Absent (an older server) = unchanged. */
     canManageChannels?: boolean;
+    /**
+     * Whether the role lets this member pin or delete OTHER members' messages. Absent (an older
+     * server) = unchanged.
+     */
+    canModerate?: boolean;
     permissions: string[];
   }) => void;
   onWorkspaceDeleted?: (event: { workspaceId: string; deletedBy?: string }) => void;

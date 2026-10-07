@@ -18,13 +18,13 @@
 
 {#if cursus.length || posts.length || profile.campus}
   <div class="mt-2 flex flex-wrap justify-center gap-2 sm:justify-start">
-    {#each cursus as entry (entry.formation + entry.promo)}
+    {#each cursus as entry, i (i)}
       <div class={chip}>
         <GraduationCap size={14} strokeWidth={2.5} />
         {entry.formation}
       </div>
     {/each}
-    {#each posts as post (post)}
+    {#each posts as post, i (i)}
       <div class={chip}>{postLabel(post)}</div>
     {/each}
     {#if profile.campus}

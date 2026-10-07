@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
   import MentionDropdown from './MentionDropdown.svelte';
   import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
@@ -206,7 +207,7 @@
     if (userId) {
       e.preventDefault();
       e.stopPropagation();
-      void goto(`/profile/${userId}`);
+      void goto(resolve(`/profile/${userId}`));
     }
   }
 

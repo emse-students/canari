@@ -91,6 +91,54 @@ apps themselves (no WebView here), a real account, and the keyboard on a phone.
 | `ComposerEmojiPicker.svelte` | Emoji picker for the text input itself, desktop only |
 | `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
 
+### A community in the rail carries a dot when any of its salons has unread messages (2026-10-05)
+
+`Sidebar.svelte` draws a red dot on the rail's community button, a SIBLING of the button because the
+button clips its avatar. It is DERIVED, never stored: `communityHasUnread` (`utils/unreadTotal.ts`)
+asks `channelUnreadCount` of every salon - the same function the salon row's badge calls, over the
+live `conversations` map that `useMessaging` bumps on an incoming message and zeroes on read - so the
+dot lights live and clears with the last read, with no second ledger. The state is spoken by the
+button's label (`sidebar_community_unread_label`), the dot is `aria-hidden`.
+
+**There is no mute filter, on purpose:** a salon's notification level (`all`/`mentions`/`none`) is a
+server-held PUSH preference read one channel at a time by the settings panel; the salon rows' badges
+ignore it too, so the dot agrees with what it summarises. Filtering it would need a new bulk read of
+a preference, decided with the user, not guessed. Read-receipt settings do not enter: the count is
+local and receipts are only what OTHERS see. `Sidebar.communityUnreadDot.svelte.test.ts`.
+
+### Every member list reads by family name, and a row never moves because its name arrived (2026-10-05)
+
+Asked by the user: the community admin panel listed its members by user id, the group panel and a
+channel's member list in the server's order. All three now render through `membersByFamilyName`
+(`utils/users/memberOrder.svelte.ts`) - `SidebarCommunityAdminPanel`, `ChatGroupPanel` and
+`ChannelMembersList` (inside each of its two sections).
+
+- **The order is ONE pure helper**, `sortByFamilyName` in `utils/users/familyNameOrder.ts`, shared
+  with the poster's directory ([carte-vie-asso](../../carte-vie-asso.md)): `lastName`, else the
+  printed name, then `firstName`, under `Intl.Collator('fr', { sensitivity: 'base' })` - accents
+  and case never reorder, hyphens and particles compare as written - and the id as the last,
+  locale-free tie-break. A member nothing names sorts LAST, in id order.
+- **The name columns come from the profile** (`fetchUserProfile`), never from splitting the
+  "Prenom NOM" string, which guesses wrong on a compound surname. The lookup is the same batched,
+  cached request the rows' `UserName` cells already make.
+- **No reshuffle.** An id is listed only once its lookup has SETTLED, and its key is then FROZEN:
+  until the first one settles the panel shows its loading line; a lookup that failed sorts last and
+  stays there when the name later repaints in place; a member who joins appears at their place. The
+  community panel stays mounted while closed, so it empties its list on close and the next opening
+  re-reads every name. Pinned by `memberOrder.svelte.test.ts`, `familyNameOrder.test.ts` and
+  `ChannelMembersList.order.svelte.test.ts`.
+- **A newcomer is never absent (2026-10-05, user: they appeared, vanished, reappeared).** The
+  group roster is `dm_device_group_memberships` (active devices), refetched when the invite ends;
+  the newcomer's profile lookup is still in flight, so the roster HOLDS the id while the ordered
+  list does not LIST it. `ChatGroupPanel` hid its "Inviting..." row on roster membership: appeared
+  (pending), vanished (roster, not listed), reappeared (listed). `joiningRows` now decides by what
+  the list renders: a row stays until the member row replaces it, one hand-over, no timer. NOT an
+  MLS ordering problem - commit, welcome and roster were already in order. Pinned by
+  `memberOrder.svelte.test.ts` ("a member added while the panel is open").
+
+Association rosters (`EditMembersTab`, `AssociationDetailView`) are NOT sorted: their order is the
+one the bureau arranges by drag (`sortOrder`), and the president is its first row.
+
 ### One attachment menu, and a GIF panel in the keyboard's place (2026-10-02)
 
 Two reports from the user on the iPhone 12, with a screen recording. *"Deux menus similaires, n'en
@@ -185,6 +233,37 @@ focus), the panel (`ChatComposer.gifPanel.svelte.test.ts`: last in the footer at
 height, tiles sized from declared dimensions, send closes it, Back closes it, the hand-off), the Rust
 allowlist (`picked_files.rs` tests) and a source pin that the command is registered.
 
+### The GIF search is the whole screen, and a quoted GIF is a picture (2026-10-05)
+
+**Two reports from the user.** Typing in the panel's search left the picker as a 200 px strip above
+the keyboard with the conversation around it; and a reply to a GIF quoted the GIF's raw URL as text
+(Messenger quotes the picture, small and dimmed).
+
+- **The search is the whole screen.** Once the panel's search takes focus, `ChatComposer` sets
+  `gifFullscreen` and `ComposerGifPanel` lifts its CONTENT out as a fixed layer
+  (`.composer-gif-fullscreen`, `app.css`): `top: --visual-viewport-offset-top`, `height:
+  --app-viewport-height` - the box `[data-keyboard-aware-overlay]` already uses, which is the space the
+  keyboard leaves on iOS (native resize), the Android app (padding) and a phone browser (visual
+  viewport) alike, so no keyboard height is computed here. The panel's own box in the footer is
+  untouched, so the conversation lays out exactly as before and its scroll position is never
+  disturbed; closing puts it back. The mode is STICKY until the surface ends (a tap on a result
+  blurs the search first and must not collapse the layer under the finger); the trailing control is
+  then Close (it keeps focus: `mousedown` cancelled), Back and a send close it as ever
+  (`DismissReason` `close`). The layer registers with `coversScreen`, so the iOS native tab bar
+  stays away. **Owed: one look on an iPhone and an Android keyboard** - happy-dom has no keyboard.
+- **A quoted GIF is a picture.** `gifPreviewUrl(text)` (`messageDisplay.ts`) is the ONE test of "this
+  message is a GIF and here is its picture" - the list preview (`[GIF]`), the thread quote
+  (`MessageReplyQuote`) and the composer's reply strip all use it, over `isGifUrl` and
+  `getGifEmbedUrl` that the bubble's `GifEmbed` uses. `ReplyGifThumb` draws it at most 5 rem tall,
+  `opacity-60`, boxed from the `#cn-size` fragment, and becomes `[GIF]` if it cannot load. The quote
+  text is the sender's stored `preview`, which was cut at 100 characters: a GIF's URL is now kept whole
+  (`messaging.ts`); **every other cut goes through `cutReplyPreview` and ends with an ellipsis**
+  (2026-10-05: a raw `@[id]` mention weighs ~40 characters but draws short, so a bare cut at 100
+  fell under the display's 84 and ended mid-word with no mark; a cut inside a token is pulled back
+  before it. Quotes stored before that stay unmarked); a quote already stored cut short is not a GIF URL any more and stays text.
+  **Not done: an image or video quote still reads `[Media]`** - drawing it needs a thumbnail the
+  quote does not carry.
+
 ### A photo or video with text fills its bubble, and a video keeps its shape (2026-10-02)
 
 **Two reports from the user.** *"message avec texte + image -> l'image est au dessus de la bulle,
@@ -236,19 +315,37 @@ deleted); it now only ANNOUNCES the edit.
   from one edit to another keeps the FIRST draft. `confirm` saves only a text that is non-empty and
   changed (`onEdit`, the unchanged `handleEditMessage` path and its ordering rules below). `reset`
   runs when the conversation changes: the text went with it, the draft belonged to the one left.
+  **It must run on a change of conversation ID, never of the conversation OBJECT** (2026-10-07): the parent
+  replaces that object on every incoming message, and an effect reading `conversation?.id` depends on the object, so
+  each arrival dropped the banner. `ChatArea` reads the id through a `$derived`, compared by value.
+  **Entering an edit focuses the field with the caret at the END** (`ChatComposer`, after a `tick()` so the input has
+  rendered the loaded text); `ChatComposer.edit.svelte.test.ts` covers the caret.
 - **`ChatComposer` takes `editingText`, `onCancelEdit`, `onConfirmEdit`.** While `editingText` is set:
   a banner (the reply strip's skin) names the message, Send becomes a Save check that stays disabled
   until the text is non-empty and different, **Escape or the banner's X cancels**, and the "+", the
   paperclip, poll, GIF and microphone step aside (`actionsHidden`). `submit()` is the one send path
   for Enter and the button; **an edit does NOT clear the field**, because the parent hands the draft
   back and a clear would reach it after and wipe it.
-- **Channels cannot edit**, as before: `MainChatPage` passes no `onEdit` there, so no action shows.
+- **Salons CAN edit since 2026-10-05** (user: *why can I not edit my own message in a community?*). It was never refused on purpose: `MainChatPage` passed no `onEdit` for a channel because nothing had been built, so the bubble was never handed `onBeginEdit`. The mechanism is [below](#editing-your-own-message-in-a-salon-2026-10-05).
 
 Verified in Chromium on the composer in edit mode at 390 and 1000 px. Tests:
 `ChatComposer.edit.svelte.test.ts` (banner, Save rule, Enter and button, no clear, Escape and X, the
 "+" put away and present otherwise) and `editSession.svelte.test.ts` (draft kept and returned, first
 draft kept across two edits, unchanged and empty saved as nothing, reset). **Not exercised:** a real
 edit through `handleEditMessage` end to end on a phone.
+
+### Editing your own message in a salon (2026-10-05)
+
+**An edit is a SILENT ENCRYPTED CHANNEL ROW, exactly like a reaction** ([channel-encryption 4.7](../../protocols/channel-encryption.md)): a new `EditMsg` (`AppMessage.edit`, field 13: the target's SERVER row id, the replacement TEXT, `edited_at`), sealed under the author's Graine session by `sendChannelEdit` (`channelCrypto.ts`). The server stores an opaque row flagged `silent`, so **there is no new push and no server change, no endpoint, no migration** - and none COULD validate it: it cannot tell the row is an edit or whose message it names.
+
+- **Authorship is checked by every reader**, in ONE function, `applyChannelEdit` (`utils/chat/channelEdit.ts`), used by the live handler (`channelEventHandler`), a history page and the search sweep (`useConversations`) and the sender's own write (`editChannelMessage`). The edit's sender is the ROW's - what Graine v2 proves, unforgeable by the server and by other members - and it must equal the target's author. **A moderator may remove someone's message (`channel.moderate`), never rewrite it.** A refusal is logged (`REFUSED`), silent to the user.
+- **"Proven" holds for v2 sessions only.** A row opened under a v1 session has a server-supplied, unsigned `senderId`, so a malicious server or a pre-G2-5 v1 row could forge an edit from the author - the same trust level as DELETE today, not a regression, and deliberately not restricted. It ends with the v1 reader ([channel-encryption 21.5b](../../protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05), [backlog](../../backlog.md)).
+- **Paging limit, stated exactly.** `listMessages` returns silent rows only inside `[oldest body of the page, before)`, and the server cannot know which silent row targets which message (opaque), so no clean server-side fix exists. With a `before` cursor an edit made AFTER the cursor is not in that page. Nothing affected today: the history load takes the newest page (no cursor), channels have no older-page load (`loadOlderMessages` returns false), and the search sweep applies edits over ALL pages it collected. Reactions share the limit. Backlog item below.
+- It edits a plain TEXT message only: not a poll, a notice, a media message or a tombstone (a delete is final). Empty text is refused. Order is `editSupersedes` (later `editedAt` wins, tie on the text), so two devices converge in any arrival order; the author's own echo is a quiet no-op.
+- **The history load applies the edit rows after the page is built**, because a salon is not stored locally: the marker and the new text come back from the same silent rows. The page limit counts non-silent rows and brings every newer silent row, so an edit of a loaded message is always on the page.
+- UI: `MainChatPage` now passes `onEdit` for a channel (`channels.editChannelMessage`); the inline edit is the composer's, shared with DMs and groups, and the edited marker is the existing `isEdited`.
+- **Old clients** read `AppMessage` with an unknown oneof, which decodes to an empty frame: the row is not rendered and nothing breaks, they simply keep the original text. **Not exercised: two real devices round-trip, and the 365-day retention purge of an edit row whose (pinned) target outlives it** - the edit is then lost with its row, the original text stays.
+- Tests: `channelEdit.test.ts` (author, other member, moderator, empty, emoji and newline round trip through the proto, poll/notice/deleted/absent, reply kept, order independence, echo), `channelCrypto.test.ts` (`sendChannelEdit` silent, own row id), `MessageBubble.editAction.svelte.test.ts` (the menu entry only on an own, live, non-poll message with a handler).
 
 ### A message body and a media CAPTION are two render paths, and only one of them parsed mentions (2026-09-23)
 
@@ -747,6 +844,34 @@ l'onglet 'Medias' d'une discussion. +1 s'il est possible de mettre les fichiers 
 importes pour les differencier des audios enregistres directement dans la conversation."*). A voice
 note is a turn in the conversation, like the sentence it replaces; a file someone picked from disk
 is something they chose to send, and it stays under Fichiers where it was.
+
+**An import cannot say so on the wire, and the file-name rule is load-bearing.** `voiceNote` travels
+as `true | undefined` and never as `false` (`envelope.ts` emits the key only when true), so an import
+is always UNDECLARED, and `isVoiceNote` separates it from an undeclared OLD recording by the
+`vocal_<digits>` name. An audio file a person happened to name that way is hidden from the tab. The
+fix is sender-side - the import path declares `voiceNote: false`, or the flag becomes a
+`source: 'recorded' | 'imported'` the sender must set - and nobody has hit the collision, so it is
+not built. Do not delete the name rule as a heuristic: it is what keeps pre-2026-09-17 recordings
+out of the tab.
+
+**A push does not read the field.** A voice note on a locked phone is still announced as an audio
+file: the sentence is chosen in the Rust push scanner (`mobile/proto_fields.rs`,
+`extract_full_message_info`, from the `MediaKind` varint), not in Kotlin, and field 11 sits unread
+beside it. The same file writes SIXTEEN user-visible sentences as French literals, whatever the
+app's language:
+
+| builder | sentences |
+| --- | ---: |
+| `format_system_event_text` - renamed (2 forms), image changed, member added (2 forms), removed, left, deleted, invitation | **9** |
+| the reaction arm - `a réagi {emoji}` | **1** |
+| the media arm - `Photo`, `Vidéo`, `Audio`, `Pièce jointe` | **4** |
+| the call arm - `Appel vidéo entrant`, `Appel entrant` | **2** |
+
+Its fallback arm prints `événement de groupe ({event})`, a raw protocol name; the silence list beside
+it is what keeps that a trap rather than live noise. The text is what the FCM cache persists as a
+message body, so emitting a KIND for the native side to word (which `appLocaleContext` already
+localises on Android) changes what that cache stores - which is why it is a design, not a
+translation chore.
 
 ### A system event is executed, never displayed
 
@@ -2004,27 +2129,51 @@ skipped whatever path welcomed the device - the overlap no longer exists - and a
 says how long ago this tab's Welcome left. In memory on purpose, and reset at logout: a Welcome
 sent before a reload is one the requester has had time to lose.
 
-### A DM has two keys, depending on which side created it
+### One key per conversation - the "a DM has two keys" premise, audited and refuted (2026-10-04)
 
-`conversations` is keyed by `groupId` for a DM created on this device, and by the PEER'S USER ID for
-one learnt from a Welcome - `deriveConversationIdentity` returns the other participant out of an
-`"a::b"` group name, and that becomes `contactName`, which is the key. Both are opaque strings, both
-are stable, and the store works fine; what does not work is any reader that spells
-`for (const [id] of conversations)` and hands `id` to something expecting a group id.
+**THE MAP KEY IS THE ROW'S `id`, FOR EVERY ROW.** The section that stood here (2026-09-01) said a DM
+learnt from a Welcome is keyed by the PEER'S USER ID, and wrote the rule *treat any `[key]` lookup
+over this heterogeneously-keyed map as a defect on sight* - without enumerating the consumers. The
+enumeration, done 2026-10-04 against `main`, refutes the premise instead: **no writer of
+`conversations` keys a row by anything but its `id`** (the MLS group id, or `channel_<id>`), and none
+did on 2026-09-01 either (`git grep` at `a939b6f97^`). The single-key store dates from `a6d5fb203`
+(2026-04-07, *"only one id will be used now"*). What misled the reading is a name: the key parameter
+is still spelled `contactName` / `selectedContact` in `useConversations` and `history.ts`, and
+`deriveConversationIdentity` DOES return the peer as `contactName` - as a FIELD of the row, never as
+its key.
 
-Two did. The sync watchdog asked the server to recover a group id no `dm_groups` row can carry, for
-every DM this device had RECEIVED - so the answer was a confirmed absent, which returns before the
-throttle is armed, so nothing paced it: two HTTP round trips every five seconds, per received DM, for
-the whole session, driving a recovery that could never fire for any of them. And `stopRecovering`
-looked the conversation up by key, so on that same population it could not find the row it existed to
-retire, and `requestReAdd`'s idempotence check never matched - a recovery holding its own terminating
-answer went on asking.
+The writers, which are the mechanism that holds the invariant:
 
-The readers are fixed, not the store: the watchdog takes the id from `convo.id`, and `recovery.ts`
-resolves a group id through one exported `findByGroupId` helper. Re-keying a persisted store is a
-data migration and would have to carry every device's existing rows; correcting three lookups is a
-repair. **Treat `[key]` destructuring over this map as a defect on sight** - the key names the
-conversation, `id` names the group, and only one of them is on the wire.
+| Writer | Key it writes |
+| --- | --- |
+| boot restore (`conversations.ts`) | `meta.id`; `saveConversation` persists `toConversationMeta(key, ...)` with `id = key`, so the loop is closed |
+| `createNewGroup`, `startNewConversation`, the existing-server-DM path (`groupCreation.ts`) | the group id |
+| the Welcome's early placeholder and `upsertConversation` (`setupMessageHandler.ts`) | `joinedGroupId`; a DM matched by PEER under another group is deleted and **re-keyed onto `joinedGroupId`** - the one writer whose key is computed, pinned by `setupMessageHandler.test.ts` (*"a Welcome into a DM keys the row by the joined group id"*) |
+| `onWelcomeProcessed` (`sessionAuth.ts`), the FCM merge, channel builders, tab sync | the group / conversation id they were handed |
+| every other `set` (retire, unread, watermarks, rename, avatar, messages) | read-modify-write of a key already in the map |
+
+The consumers that look a conversation up by a group id, and the verdict on each:
+
+| Consumer | Lookup | Verdict |
+| --- | --- | --- |
+| `processPendingInvitations` (`actions.ts`) | `get(groupId)` / `has(groupId)` | correct - the key is the id |
+| `handleWelcomeRequest`, *"No ready conversation - deferring"* (`actions.ts`) | `get(groupId)` | correct |
+| `handleHistoryRequest`, the history-serving gate (`actions.ts`) | `get(groupId)` | correct |
+| the promotion after a successful external join (`recovery.ts`) | `findByGroupId` (by `id`), saved by the found key | correct |
+| `requestReAdd` idempotence, `stopRecovering`, `purgePhantomConversation` (`recovery.ts`) | `findByGroupId` | correct |
+| the redelivered-Welcome branch (`setupMessageHandler.ts`) | `get(terminalId)` | correct |
+| `upsertConversation`'s migrated-peer read (`setupMessageHandler.ts`) | `get(joinedGroupId)` | correct |
+| SYNC_WATCHDOG candidates (`sessionWatchdogs.ts`) | `convo.id`, channels skipped on the key | correct |
+| `onWelcomeProcessed` (`sessionAuth.ts`) | `has(groupId)` | correct |
+| group avatar refresh (`actions.ts`), call notices (`callSystemMessages.ts`) | `get(groupId)` | correct |
+
+**No defect, so nothing was re-routed.** `findByGroupId` stays private to `recovery.ts`: it reads by
+`id` and is right whatever the key, and replacing the `get`s above with an O(n) scan would buy
+nothing while the writers hold. The `recovery.test.ts` cases with a key different from the id stay as
+a pin on that helper - they describe a state no writer produces. **The rule that survives is the
+writer table**: a new writer that keys a row by anything but its `id` breaks every `get(groupId)`
+above at once, so it goes in the table and in the `setupMessageHandler.test.ts` pin, rather than
+teaching the readers to scan.
 
 ### An exit is owed to the SERVER, and the local purge is not what pays it (DEL-10)
 
@@ -2343,7 +2492,12 @@ can attribute.
   draws no head on its owner's message. Who can appear is what `readWatermarks` holds - for a salon
   the server's `read-marks`, restricted to who may read it now
   ([social-service](../../services/social-service.md#read-receipts-in-a-salon)). One drawing,
-  `SeenByHeads.svelte`, serves both: three heads, then `+N`.
+  `SeenByHeads.svelte`, serves both: three heads, then `+N`. Each head's tooltip is its owner's
+  name (`Avatar`); the `+N` counter's tooltip names the readers it folds, and the screen-reader
+  text names every reader (`msg_statut_lu_par_noms`), resolved live by `userDisplayNames`. There is
+  no per-member "hide my read state" setting: what `readWatermarks` holds IS the predicate, so the
+  placement never filters a second time. A reader whose watermark is older than the loaded page
+  gets no head (every loaded row is one they have not read); one past the newest row sits on it.
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.
@@ -2614,6 +2768,16 @@ draws text over text while scrolling - the scroll-to-bottom button and the send-
 `bottom: 10rem`, the composer reserves its own height, reactions are in flow under their bubble, and
 there is no unread divider in the list to collide with.
 
+### A jump to a message scrolls the LIST, never the page (2026-10-05)
+
+Reported by the user (web desktop): opening the pinned-messages banner and clicking the pinned
+message made the salon header disappear. `navigateToMessage` called `scrollIntoView`, which scrolls
+EVERY scrollable ancestor, so the page wrapper moved too and the chat column slid up. All jumps -
+pinned banner, poll banner, reply quote, search result, notification deep link - end in that one
+function, which now calls `scrollMessageIntoList` (`utils/chat/scrollToMessage.ts`): the offset is
+computed against the list container and applied with `container.scrollTo`, so nothing else can move.
+Not driven in a browser by the agent that wrote it; owed a look at 390 and 1280 px.
+
 ## Routes
 
 | Route | Description |
@@ -2626,3 +2790,123 @@ There is **no per-conversation URL**. `/chat/[groupId]`, `/c/[groupId]` and `/g/
 documented for a while and never existed as routes; opening one renders an empty shell. A
 conversation is opened by publishing its id to `notifNav` (see the deep-link section above), which
 is why a notification tap works from any route while a hand-written URL does not.
+
+### The unread count follows my own read point (2026-10-05)
+
+**Reported with a screenshot:** the tab read `(2) Discussions - Canari` and the red dot stayed with
+nothing left to read. The title, the favicon dot and the nav badges all sum `unreadCount` over
+`globalConvs` (`utils/unreadTotal.ts`), and `unreadCount` is a counter kept BESIDE the read
+watermark, not derived from it. Single-tab DMs were fine (`selectConversation` zeroes it); the
+count stuck wherever the watermark moved without a caller remembering the counter:
+
+- **a salon read on another device** - `channel.read` carrying MY mark merged the watermark and
+  stopped, so tile, dot and title kept the count until the salon was opened here too (the DM twin
+  `read_watermark` did zero it, unconditionally);
+- **a conversation open in a FOLLOWER tab** - the follower took the leader's `unreadCount`
+  verbatim from `message_added`, and its own read (the debounced watermark effect in
+  `MainChatPage`) set the watermark only, never the count, and told no other tab (`conversation_read`
+  was published on selection alone). Leader and follower both kept `(N)` for good.
+
+**The fix is one function, `withOwnReadAdvanced` (`readState.ts`)**: the watermark rises and the
+count becomes `min(count, still-unread-at-the-new-watermark among held messages)`. It replaces the
+unconditional zero in the DM self-read (a message NEWER than the read stays counted), runs for the
+salon self-mark (`ChannelEventContext` now carries `userId`), runs in the optimistic mark of the
+open conversation, which now also publishes `conversation_read` to the other tabs, and a follower
+reading a leader's arrival for the conversation it has open counts it 0, the live path's
+`isConversationOpen` rule. Tests: `readState.test.ts`, `channelEventHandler.read.test.ts`,
+`systemMessageHandler.readState.test.ts` (two fail on the old code).
+
+**Not changed, owed a reading:** OS notification banners on the other devices are cleared by the
+push-side receipt (`markChannelRead` for salons, the native `read_watermark` for DMs); nothing here
+touches them. The stuck count was reproduced as failing tests, not on two live devices.
+
+## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
+
+**Order.** `channels."sortOrder"` (migration 076; the backfill numbers each never-arranged community
+by creation date, so nothing visibly moves) is written by `PATCH /channels/workspaces/:id/channels/reorder`
+(`ChannelService.reorderChannels`). Both listings sort through `sortChannels` (position, age, id - a
+total order). **Permission: `memberCanManageChannels`**, the grant that already gates creating, renaming
+and deleting a salon - arranging the list is governance of the same object, so weaker would let any
+member rearrange everyone's sidebar and `workspace.manage` alone would lock out a role that may
+already delete the salons. This is NOT the community rail's order, which is personal
+(`reorderWorkspacesForUser`).
+
+- `orderedIds` is the actor's VISIBLE list. A private salon they cannot see is not in it and keeps
+  its slot (the visible ids are written back into the slots the visible salons occupied); any id that
+  is not a visible salon of the community refuses the whole request.
+- **Live update:** `workspace.updated { channelsReordered: true }` to the community with NO ids (a
+  private salon's existence must not leak to members who cannot see it); each device re-reads its own
+  `listChannels` and only reorders what it holds (`refreshChannelOrder`, `orderByIds`).
+- **Client:** `Sidebar.svelte` puts `svelte-dnd-action` on the salon list (one type per community,
+  mouse drag; touch needs a 350 ms long press so a swipe still scrolls; no second tab stop on the
+  wrapper). Keyboard: Alt + ArrowUp/ArrowDown on a focused row (`moveById`), announced in a live
+  region. Only when `viewerCanManageChannels`. Optimistic, rolled back and logged on refusal
+  (`useChannelWorkspaces.reorderChannels`).
+
+**Name.** A salon name is a DISPLAY string, stored as typed (case, accents, emoji, spaces). Server
+`validateChannelName` refuses only: empty after trim, over 80 characters (code points), a control
+character (`\p{Cc}`). Nothing lowercases it any more - not the server (create, rename), not
+`createNewChannel`/`renameCurrentChannel`, not the settings panel. Identity was already the
+channel id everywhere (routes, `channel_<id>` conversations); the one place that used the NAME as
+an identity, the invitation's target salon in `Sidebar.svelte`, now picks the first public salon
+the viewer may open. The unique index `(workspaceId, name)` stays and is case-sensitive.
+
+**Default salon:** `DEFAULT_CHANNEL_NAME` is the accented 'general' (e-acute twice). NEW
+communities only: existing default salons keep the name `general` (user decision, 2026-10-05 - no
+rename migration; a member with the right may rename one by hand).
+
+## A repeat tap on the same conversation is a new landing (2026-10-06)
+
+Found on the iPhone bench (phone campaign 2026-10-05, [cross-client-ios](../../cross-client-ios.md) H4), the same code runs on Android. `ChatBackgroundService` kept `lastNavigatedNotifTarget`, the conversation ID it had routed for, and never cleared it. The pending target also stays set while the user walks away from `/chat`, so a second tap on the same conversation published the same ID: `notifNav.pending` did not change, and the effect that did re-run on the route change answered `landingStep` -> `await-arrival` for ever. The log showed `[notifNav] deep link received` and no `routing to /chat`. A different ID routed at once.
+
+**The guard is an identity, not an ID.** `notifNav.navigate` bumps a counter (`notifNav.landing`, never reset); the effect reads it and the route-once guard is `lastRoutedLanding === notifNav.landing`. Every tap is a new landing and routes once; the same landing re-running because the user left the page still answers `await-arrival`, so nothing pulls them back. Clearing on "landed" or "left the route" was rejected: `pending` has to outlive the landing for the selection watchdog, so a second clearing rule would be a second owner of the same state. No timer is involved. Test: `notificationRouting.test.ts`, "a repeat tap on the same conversation is a new landing" (fails when the bump is removed).
+
+### A failed reaction said "cela n'a pas abouti" and named nothing, and its toast covered the bubble (2026-10-06)
+
+A Mi 9T screenshot of the salon `general` showed `Reaction au message : cela n'a pas abouti`. That sentence is
+the NAMELESS arm of `toUiActionError` (`useChannelWorkspaces`): it is reached only by an error that is not a
+`ChannelApiError` (those carry a status and an envelope) and is not a transport failure. A reaction is a sealed
+message, so the candidates are the seal's own refusals - `GraineNotReadyError`, `GraineUnknownChannelError`,
+`GraineDistributionUnavailableError` - all of which mean "nothing was sent, this device holds no key for the
+scope yet". **The exact cause on that phone is NOT established**: the failure was swallowed with no log, which
+is the defect. Now:
+
+- the three share one base, `GraineSealUnavailableError` (`utils/graine/sealUnavailable.ts`, import-free to avoid
+  a cycle), and `toUiActionError` answers it by TYPE with `channel_action_error_not_ready`;
+- the nameless arm logs the error object (`console.error`) so the next occurrence has a cause to read.
+
+The toast container sat at `bottom: 5rem`, sized for the bottom nav. Inside a conversation the nav is hidden and
+that offset lands on the last bubbles and the composer, so on a phone toasts now sit at the TOP (below the safe
+area); desktop keeps its bottom-right corner (`ToastContainer.svelte`).
+
+**Follow-up, same day (build `5b56dcb74` on the Mi 9T): the top toast overlapped the header, and the cause was a
+transport failure.** Three fixes:
+
+- the toast's top is `--chat-chrome-bottom`, the viewport Y where the conversation chrome ends, published on the
+  ROOT by `ChatArea` (the toast layer is a sibling of the app and cannot inherit the panel's
+  `--chat-header-height`); with no conversation open it falls back to the safe area;
+- `MlsDeliveryApi.postApplicationMessage` classifies a `fetch` rejection at the throw as
+  `DeliveryUnreachableError` (Tauri's `plugin-http` rejects with the bare reqwest string `error sending request
+  for url .../api/mls/send`, which was "unclassified"); `isRetryableLoadError` reads it, so the toast is the
+  existing network sentence. A cancelled request (`AbortError`) is not it;
+- **the optimistic reaction is rolled back, but ONLY when nothing was sent** (`DeliveryUnreachableError` or
+  `GraineSealUnavailableError`): the inverse frame at a later `at`, applied locally, never sent. A 5xx may have
+  reached peers, so there the pill stays - the earlier "no rollback is possible" reasoning still holds for that
+  case. Other sends (`/api/mls/send` callers beyond reactions) now also see the typed error; the outbox treats any
+  throw as a failure, as before. Owed ONE on-device re-read: airplane mode, react, toast below the header, pill gone.
+
+## The conversation list has one ordering key (2026-10-06)
+
+The sidebar sorts in a `$derived` (`Sidebar.svelte`, `filteredConversationEntries`), so it re-sorts on every `conversations.set`. What was wrong was the KEY. It was `Conversation.lastMessageAt`, a stored seed advanced by `addMessageToChat`, `batchAddMessages` and the FCM merge only - history replay, channel history, `renderStoredPage` and older pages replaced `messages` and left it behind - and written from `Date.now()` by `toConversationMeta` (empty conversation) and the DM name repair, which `Math.max` then made permanent. Two devices with the same messages ordered differently.
+
+Now `conversationRecency(convo)` (`utils/chat/conversations.ts`) is the sent time of the newest message in `messages` (sorted by `compareMessageOrder`), falling back to the persisted seed only while nothing is loaded, else 0; `compareConversationRecency` breaks ties by id. A message applied by ANY path - live, pending drain, history seed - moves the row, because the key is read from the list rather than remembered. Reactions, edits and read receipts do not touch `messages` order, so they do not move it. Known residue: the local-only "member joined" notice in `ChatBackgroundService` is stamped with the local clock and does count. Test: `conversations.recency.test.ts`.
+
+### A reply belongs to ONE conversation (2026-10-06)
+
+`useMessaging` held a single `replyingTo`, so a reply armed in a DM stayed above the composer of the
+conversation opened next (measured on the Mi 9T, alpha.4). It is now a `SvelteMap` keyed by conversation
+id: `handleReply(conversationKey, message)`, `replyFor(conversationKey)` and `cancelReply(conversationKey)`
+take the key from the caller (`MainChatPage` passes `convs.selectedContact`), and a send consumes only the
+entry of `ctx.selectedContact`. No clear-on-change effect is needed - nothing is shared, so nothing leaks.
+Returning to the DM shows its reply again, like a draft. Each decision logs `[REPLY]`.
+Test: `useMessaging.replyScope.svelte.test.ts`.

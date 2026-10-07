@@ -12,7 +12,7 @@ import { isExpiredReel } from './reel.constants';
  * WHAT A SHARED `/posts/:id` LINK MAY DISCLOSE TO SOMEBODY WITH NO CANARI SESSION.
  *
  * WHY THIS EXISTS AT ALL. `GET /api/posts/:id` is behind `NginxAuthGuard` + `FeedAudienceGuard`
- * since 2026-09-10, and that gate is correct - the social feed is for ICM students. But the head
+ * since 2026-09-10, and that gate is correct - the social feed is for its readers' spaces. But the head
  * injector (`frontend/src/hooks.server.ts`) has no session either, so every post link shared into
  * a conversation outside Canari previewed as the bare shell: `Publication - Canari`, the site
  * logo, one generic sentence. Measured on production 2026-09-20 in `frontend-ssr`'s own log -
@@ -27,8 +27,9 @@ import { isExpiredReel } from './reel.constants';
  * both the JSON preview and the image bytes go through it.
  *
  * WHAT IT REFUSES, each of these being a row somebody could otherwise fish out with a guessed id:
- * a post whose association is archived, a moderation-hidden post, and a scheduled post before its
- * publication instant. Reactions, comments, poll results, mentions and the author's user id are
+ * a post whose association is archived, a moderation-hidden post, a scheduled post before its
+ * publication instant, and a post whose author narrowed its audience with rules of its own (D33,
+ * WP6b): an author who chose who sees a post did not choose "anyone holding the link". Reactions, comments, poll results, mentions and the author's user id are
  * not in the payload at all - a preview card needs none of them, and the cheapest way not to leak
  * a field is not to select it.
  */
@@ -201,7 +202,7 @@ export class PostPreviewService {
     return {
       id: post.id,
       markdown: post.markdown ?? '',
-      createdAt: new Date(post.createdAt).toISOString(),
+      createdAt: new Date(post.publishedAt).toISOString(),
       updatedAt: new Date(post.updatedAt).toISOString(),
       association,
       image: media ? { width: media.width ?? null, height: media.height ?? null } : null,
@@ -282,7 +283,7 @@ export class PostPreviewService {
       .where('p.associationId IS NOT NULL')
       .andWhere('p.hiddenByModeration = false')
       .andWhere('(p.scheduledAt IS NULL OR p.scheduledAt <= NOW())')
-      .orderBy('p.createdAt', 'DESC')
+      .orderBy('p.publishedAt', 'DESC')
       .limit(limit)
       .getMany();
 

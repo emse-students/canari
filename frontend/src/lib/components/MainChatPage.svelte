@@ -18,10 +18,11 @@
   import { sendReadWatermark } from '$lib/utils/chat/messaging';
   import { isAppInForeground } from '$lib/utils/appForeground';
   import {
-    mergeReadWatermark,
     watermarkAfterReading,
     watermarkFor,
+    withOwnReadAdvanced,
   } from '$lib/utils/chat/readState';
+  import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import {
     isChannelConversationId,
@@ -30,6 +31,7 @@
   } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+  import { mayPinMessage } from '$lib/utils/chat/pinPermission';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
   // whole service into this page's module graph for a `catch` - see `callFailure.ts`.
   import { describeCallFailure } from '$lib/utils/callFailure';
@@ -431,6 +433,10 @@
         void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx()),
       onReorderCommunities: (newOrder: typeof channels.channelWorkspaces) =>
         void channels.reorderWorkspaces(newOrder, channelsCtx()),
+      onReorderChannels: (
+        workspaceSlug: string,
+        newOrder: (typeof channels.channelWorkspaces)[number]['channels']
+      ) => void channels.reorderChannels(workspaceSlug, newOrder, channelsCtx()),
       onLeaveWorkspace: (workspaceDbId: string) => {
         void channels.leaveCurrentWorkspace(workspaceDbId, channelsCtx());
         if (isSelectedChannel) {
@@ -560,9 +566,13 @@
       setTimeout(() => {
         const fresh = convs.conversations.get(currentContact);
         if (!fresh) return;
-        const merged = mergeReadWatermark(fresh.readWatermarks, meNorm, target);
-        if (!merged) return;
-        convs.conversations.set(currentContact, { ...fresh, readWatermarks: merged });
+        // The count moves with the watermark (the open conversation is read, so it falls to 0),
+        // and the OTHER TABS of this account are told: a leader tab that counted the arrival while
+        // this tab had the conversation open would otherwise keep its `(N)` for good.
+        const next = withOwnReadAdvanced(fresh, meNorm, target);
+        if (next === fresh) return;
+        convs.conversations.set(currentContact, next);
+        publishConversationRead(currentContact, next.lastMessageAt ?? 0);
         void convs.saveConversation(currentContact, convCtx());
       }, 0);
     });
@@ -940,13 +950,26 @@
     if (!key) return;
     const convo = convs.conversations.get(key);
     if (!convo) return;
+    // THE SAME RULE THE MENUS WERE BUILT FROM, so a pin no menu offers is not sent from here either.
+    if (!mayPinMessage({ inChannel: isSelectedChannel, canModerate: canModerateSelectedChannel })) {
+      log(`[PIN] not sent: ${messageId.slice(0, 8)} - the viewer may not moderate this salon`);
+      return;
+    }
     if (isSelectedChannel) {
       const next = !isMessagePinned(convo.id, messageId);
-      applyPin(convo.id, messageId, next, Date.now());
-      void channelService.setMessagePinned(convo.id, messageId, next).catch(() => {
-        // Revert if the server rejects. A LATER instant, or the revert would not supersede the
-        // optimistic apply it exists to undo.
-        applyPin(convo.id, messageId, !next, Date.now());
+      const at = Date.now();
+      applyPin(convo.id, messageId, next, at);
+      void channelService.setMessagePinned(convo.id, messageId, next).catch((e: unknown) => {
+        // Revert if the server rejects. STRICTLY LATER than the optimistic apply, or a refusal
+        // landing in the same millisecond would tie with it - and a tie keeps a pin, so a refused
+        // unpin would never come back.
+        applyPin(convo.id, messageId, !next, Math.max(Date.now(), at + 1));
+        const status = refusalStatus(e);
+        log(`[PIN] refused (status=${status ?? 'none'}) pinned=${next}: ${String(e)}`);
+        showToast(
+          describeApiRefusal(status, m.channel_action_pin()) ?? m.channel_pin_error(),
+          'warning'
+        );
       });
     } else {
       void messaging.handleTogglePin(messageId, msgCtx());
@@ -1119,8 +1142,8 @@
           onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
           onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
           messageReactions={isSelectedChannel ? channelReactions : messaging.messageReactions}
-          replyingTo={messaging.replyingTo}
-          onReply={messaging.handleReply}
+          replyingTo={messaging.replyFor(convs.selectedContact)}
+          onReply={(message) => messaging.handleReply(convs.selectedContact ?? '', message)}
           onForward={handleForward}
           onReact={isSelectedChannel
             ? (msgId, emoji) =>
@@ -1141,10 +1164,16 @@
                 )
             : (msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
           onEdit={isSelectedChannel
-            ? undefined
+            ? (msgId, text) =>
+                void channels.editChannelMessage(
+                  convs.selectedContact ?? '',
+                  msgId,
+                  text,
+                  channelsCtx()
+                )
             : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
           onTogglePin={handleTogglePinMessage}
-          onCancelReply={messaging.cancelReply}
+          onCancelReply={() => messaging.cancelReply(convs.selectedContact ?? '')}
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}
           onSendVoiceNote={handleSendVoiceNote}

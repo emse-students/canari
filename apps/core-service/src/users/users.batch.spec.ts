@@ -5,6 +5,7 @@ import { UsersService } from './users.service';
 import type { AvatarService } from './avatar.service';
 import type { UserBlocksService } from './user-blocks.service';
 import type { ProfileEditService } from './profile-edit.service';
+import type { ProfileCorrectionService } from './profile-correction.service';
 import { User } from './entities/user.entity';
 
 /**
@@ -36,7 +37,8 @@ describe('GET /users/batch', () => {
       service,
       {} as AvatarService,
       blocks,
-      {} as ProfileEditService
+      {} as ProfileEditService,
+      {} as ProfileCorrectionService
     );
     return { controller, find };
   }

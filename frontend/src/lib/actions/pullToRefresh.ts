@@ -84,6 +84,8 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
   }
 
   function onTouchStart(e: TouchEvent) {
+    // A new touch supersedes an unfinished one: a cancelled pull has no `touchend` to clear it.
+    active = false;
     if (node.scrollTop > 0 || refreshing) return;
     // ASKED PER GESTURE, not once at mount: whether a refresh has work is a property of the moment
     // (the socket is up, or it is not), and an action bound at mount would answer for ever.
@@ -157,6 +159,20 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
     syncMoveBinding();
   }
 
+  /** The system took the touch (an Android edge back gesture): the pull is over, nothing refreshes. */
+  function onTouchCancel() {
+    if (!active) return;
+    active = false;
+    startY = 0;
+    if (indicator) {
+      indicator.style.transition = 'height 0.2s ease, opacity 0.2s ease';
+      indicator.style.height = '0';
+      indicator.style.opacity = '0';
+      setTimeout(() => removeIndicator(), 220);
+    }
+    syncMoveBinding();
+  }
+
   let moveBound = false;
 
   function bindMove(): void {
@@ -202,6 +218,7 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
 
   node.addEventListener('touchstart', onTouchStart, { passive: true });
   node.addEventListener('touchend', onTouchEnd, { passive: true });
+  node.addEventListener('touchcancel', onTouchCancel, { passive: true });
   node.addEventListener('scroll', syncMoveBinding, { passive: true });
   syncMoveBinding();
 
@@ -209,6 +226,7 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
     destroy() {
       node.removeEventListener('touchstart', onTouchStart);
       node.removeEventListener('touchend', onTouchEnd);
+      node.removeEventListener('touchcancel', onTouchCancel);
       node.removeEventListener('scroll', syncMoveBinding);
       unbindMove();
       removeIndicator();

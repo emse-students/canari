@@ -17,6 +17,18 @@ use tokio::sync::mpsc;
 
 use crate::models::{AuthParams, Claims};
 use crate::state::AppState;
+
+/// Heartbeat cadence: one WebSocket ping every this many seconds.
+const PING_INTERVAL_SECS: u64 = 15;
+/// A client is declared dead once more than this many pings are outstanding.
+const MAX_MISSED_PONGS: u32 = 4;
+/// Worst-case time before a dead-but-open socket is closed by the heartbeat.
+const DEAD_SOCKET_DETECTION_SECS: u64 = PING_INTERVAL_SECS * (MAX_MISSED_PONGS as u64 + 1);
+/// TTL of the `user:online:{userId}:{deviceId}` key. It MUST outlive the detection window: a
+/// shorter TTL made the key vanish while the socket still looked connected ("WS connected, Redis
+/// empty" for ~55 s on the admin presence screen, prod 2026-10-05).
+pub const PRESENCE_TTL_SECS: u64 = 90;
+const _: () = assert!(PRESENCE_TTL_SECS > DEAD_SOCKET_DETECTION_SECS);
 use crate::ws_dispatch::{
     WsConn, WsFrame, handle_disconnect, handle_typing, handle_welcome_request,
 };
@@ -127,7 +139,7 @@ impl Drop for ConnectionGuard {
         let redis_key = self.redis_key.clone();
         let conn_key = self.conn_key.clone();
         // Retry up to 3 times so a brief Redis blip doesn't leave a stale key
-        // (TTL=20s is the last-resort fallback if all attempts fail).
+        // (the presence TTL is the last-resort fallback if all attempts fail).
         tokio::spawn(async move {
             for attempt in 0u8..3 {
                 if attempt > 0 {
@@ -326,14 +338,21 @@ async fn handle_socket(
     {
         Ok(mut con) => {
             // ── Set initial presence key ───────────────────────────────
-            if let Err(e) = con.set_ex::<_, _, ()>(&redis_key, "true", 20).await {
+            if let Err(e) = con
+                .set_ex::<_, _, ()>(&redis_key, "true", PRESENCE_TTL_SECS)
+                .await
+            {
                 tracing::warn!(
                     "[presence] set_ex on connect failed for {}: {}",
                     conn_key,
                     e
                 );
             } else {
-                tracing::info!("[presence] Online: {} (TTL=20s)", conn_key);
+                tracing::info!(
+                    "[presence] Online: {} (TTL={}s)",
+                    conn_key,
+                    PRESENCE_TTL_SECS
+                );
             }
 
             // ── Drain pending welcome_request signals ─────────────────
@@ -403,8 +422,6 @@ async fn handle_socket(
     // proxy_read_timeout (120s) so that pings keep the tunnel alive.
     // Essential tolerance: a single late pong (network jitter) must not
     // close the connection (cause of repeated 1006 disconnections).
-    const PING_INTERVAL_SECS: u64 = 15;
-    const MAX_MISSED_PONGS: u32 = 4;
     let conn_key_ping = conn_key.clone();
     let pong_flag_send = awaiting_pong.clone();
     let mut send_task = tokio::spawn(async move {
@@ -607,7 +624,7 @@ async fn handle_socket(
 
 // ── Presence refresh helper ───────────────────────────────────────────────
 
-/// Refresh the `user:online:{userId}:{deviceId}` Redis TTL to 20 seconds.
+/// Refresh the `user:online:{userId}:{deviceId}` Redis TTL to [`PRESENCE_TTL_SECS`].
 ///
 /// Uses the socket-local multiplexed connection to avoid opening a new TCP
 /// connection per frame.  If the connection is missing or has gone stale, it
@@ -624,7 +641,10 @@ async fn refresh_presence(
 
     // Try the existing connection first.
     if let Some(con) = con_opt.as_mut() {
-        match con.set_ex::<_, _, ()>(&redis_key, "true", 20).await {
+        match con
+            .set_ex::<_, _, ()>(&redis_key, "true", PRESENCE_TTL_SECS)
+            .await
+        {
             Ok(_) => return,
             Err(e) => {
                 tracing::warn!(
@@ -640,7 +660,10 @@ async fn refresh_presence(
     // Connection is dead or was never established - attempt a single reconnect.
     match state.redis_client.get_multiplexed_async_connection().await {
         Ok(mut new_con) => {
-            if let Err(e) = new_con.set_ex::<_, _, ()>(&redis_key, "true", 20).await {
+            if let Err(e) = new_con
+                .set_ex::<_, _, ()>(&redis_key, "true", PRESENCE_TTL_SECS)
+                .await
+            {
                 tracing::warn!(
                     "[presence] set_ex after reconnect failed for {}: {}",
                     conn_key,
@@ -727,6 +750,7 @@ async fn log_routing_diagnostics(
 
 #[cfg(test)]
 mod tests {
+
     use super::{SocketEnd, classify_socket_error};
     use tokio_tungstenite::tungstenite::{Error as WsError, error::ProtocolError};
 

@@ -87,3 +87,16 @@ describe('the avatar cache remembers "no picture", and only that', () => {
     expect(kotlin).toContain('File(filesDir, "avatar_$safeId.jpg")');
   });
 });
+
+describe('a conversation notification shows one identity (user, 2026-10-05)', () => {
+  it('hands a group-shaped post to the platform as a conversation, through a shortcut', () => {
+    expect(kotlin).toContain('if (!isReactionNotif && (isGroup || namesEachSender))');
+    expect(kotlin).toContain('ShortcutManagerCompat.pushDynamicShortcut(context, info)');
+    expect(kotlin).toContain('.setLongLived(true)');
+    expect(kotlin).toContain('setShortcutId(conversationShortcutId)');
+  });
+
+  it('keeps the plain large icon only where the shortcut-less shape is kept', () => {
+    expect(kotlin).toContain('else setLargeIcon(largeIcon)');
+  });
+});

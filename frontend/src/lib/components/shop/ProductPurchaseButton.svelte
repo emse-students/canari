@@ -9,6 +9,11 @@
   import { shopCheckoutCallbacks } from '$lib/utils/stripeCallbacks';
   import { showToast } from '$lib/stores/toast.svelte';
   import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
+  import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
+  import {
+    activePaymentProvider,
+    loadActivePaymentProvider,
+  } from '$lib/associations/activePaymentProvider.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -17,7 +22,6 @@
     customAmountEuros?: number;
     /** Override the default action label (Cotiser / Recharger / Acheter). */
     label?: string;
-    variant?: 'accent' | 'yellow';
     class?: string;
     disabled?: boolean;
   }
@@ -26,7 +30,6 @@
     product,
     customAmountEuros,
     label,
-    variant = 'accent',
     class: className = '',
     disabled = false,
   }: Props = $props();
@@ -37,6 +40,7 @@
   let pendingCheckoutUrl = $state('');
   let pendingAmountCents = $state(0);
   let pendingCurrency = $state('eur');
+  let askingPayerEmail = $state(false);
 
   const buttonLabel = $derived(
     label ??
@@ -56,6 +60,7 @@
   );
 
   onMount(async () => {
+    void loadActivePaymentProvider();
     try {
       paymentMethods = await listPaymentMethods();
     } catch {
@@ -72,19 +77,29 @@
     return undefined;
   }
 
-  async function handlePurchase() {
+  /** Lydia's request/do needs the payer's address and Canari stores none, so the payer types it. */
+  function handlePurchase() {
+    const customCents = resolveCustomCents();
+    if (product.allowCustomAmount && product.amountCents === null && customCents === undefined) {
+      showToast(m.shop_indicate_amount());
+      return;
+    }
+    if (activePaymentProvider.current === 'lydia') {
+      askingPayerEmail = true;
+      return;
+    }
+    void runCheckout();
+  }
+
+  async function runCheckout(payerEmail?: string) {
     checkingOut = true;
     try {
-      const customCents = resolveCustomCents();
-      if (product.allowCustomAmount && product.amountCents === null && customCents === undefined) {
-        showToast(m.shop_indicate_amount());
-        return;
-      }
       const res = await createProductCheckout(
         product.associationId,
         product.id,
-        customCents,
-        shopCheckoutCallbacks(product.id)
+        resolveCustomCents(),
+        shopCheckoutCallbacks(product.id),
+        payerEmail
       );
       if (paymentMethods.length > 0 && res.amountCents > 0) {
         pendingCheckoutUrl = res.checkoutUrl;
@@ -125,11 +140,9 @@
 
 <button
   type="button"
-  onclick={() => void handlePurchase()}
+  onclick={handlePurchase}
   disabled={isDisabled}
-  class="{variant === 'yellow'
-    ? 'bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover'
-    : 'bg-cn-accent text-white hover:opacity-90'} inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-opacity disabled:cursor-not-allowed disabled:opacity-50 {className}"
+  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-opacity disabled:cursor-not-allowed disabled:opacity-50 {className}"
 >
   {#if checkingOut}
     <span
@@ -139,6 +152,16 @@
     {buttonLabel}
   {/if}
 </button>
+
+{#if askingPayerEmail}
+  <PayerEmailPrompt
+    onSubmit={(email) => {
+      askingPayerEmail = false;
+      void runCheckout(email);
+    }}
+    onClose={() => (askingPayerEmail = false)}
+  />
+{/if}
 
 {#if showPaymentModal}
   <PaymentModal

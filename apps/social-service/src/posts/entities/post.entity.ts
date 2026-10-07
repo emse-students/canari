@@ -108,6 +108,15 @@ export class Post {
   @Index()
   createdAt: Date;
 
+  /**
+   * THE instant this post became visible, and the ONE key the feed orders by and the card
+   * displays: `scheduledAt` for a scheduled post, the creation time for an immediate one.
+   * `createdAt` is when the author pressed the button, which for a scheduled post is hours before
+   * anyone could see it. Written only through `publicationTime` (migration 077 backfills it).
+   */
+  @Column({ type: 'timestamptz', default: () => 'now()' })
+  publishedAt: Date;
+
   @UpdateDateColumn()
   updatedAt: Date;
 }

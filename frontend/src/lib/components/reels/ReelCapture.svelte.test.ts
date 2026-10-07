@@ -1,20 +1,25 @@
 /**
- * The capture screen end to end, with the camera and the recorder replaced: the shutter waits for the
- * server's cap, a tap films until the next tap, a hold films until it lifts, the take is reviewed, and
- * a discard brings the preview back. Every step is driven by an event the test sends - no clock.
+ * The capture screen end to end, with the camera, the canvas and the recorder replaced: the shutter
+ * waits for the server's cap and a decoded frame, ONE tap takes a photo, a press held past the
+ * threshold films until it lifts, the result is reviewed, and a discard brings the preview back. The
+ * threshold's timer is the only clock, advanced by the test.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelCapture from './ReelCapture.svelte';
+import { SHUTTER_HOLD_THRESHOLD_MS } from '$lib/reels/reelCapture';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import { installFakeMediaRecorder } from '$lib/reels/fakeMediaRecorder.test-helper';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
+import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // The publish step fades in, and a test closes it mid-fade.
 afterAll(adoptTransitionAnimations());
 
+const showConfirm = vi.hoisted(() => vi.fn());
+vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm }));
 const getReelLimits = vi.fn();
 vi.mock('$lib/posts/api', () => ({ getReelLimits: () => getReelLimits() }));
 vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
@@ -35,21 +40,39 @@ vi.mock('$lib/components/shared/VideoPlayer.svelte', async () => ({
   default: (await import('./VideoPlayerStub.test-helper.svelte')).default,
 }));
 
+const framed = vi.hoisted(() => ({
+  stop: vi.fn(),
+  start: vi.fn(),
+  photo: vi.fn(),
+}));
+vi.mock('$lib/reels/framedCapture', async (orig) => ({
+  ...(await orig<typeof import('$lib/reels/framedCapture')>()),
+  takeFramedPhoto: framed.photo,
+  FramedStream: { start: framed.start },
+}));
+
 const mounted: Record<string, unknown>[] = [];
+let Recorder: ReturnType<typeof installFakeMediaRecorder>;
 
 function stream(): MediaStream {
   const track = { stop: vi.fn(), getCapabilities: () => ({}) };
-  const s = { getTracks: () => [track], getVideoTracks: () => [track] };
+  const s = { getTracks: () => [track], getVideoTracks: () => [track], getAudioTracks: () => [] };
   Object.setPrototypeOf(s, MediaStream.prototype);
   return s as unknown as MediaStream;
 }
 
 beforeEach(() => {
-  installFakeMediaRecorder();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  framed.photo.mockResolvedValue(new Blob(['jpg'], { type: 'image/jpeg' }));
+  framed.start.mockReturnValue({ stream: stream(), bitrate: 3_000_000, stop: framed.stop });
+  Recorder = installFakeMediaRecorder();
   vi.stubGlobal(
     'URL',
     Object.assign(URL, { createObjectURL: () => 'blob:take', revokeObjectURL: () => {} })
   );
+  showConfirm.mockReset();
+  showConfirm.mockResolvedValue(true);
+  vi.mocked(pushHistoryOverlay).mockClear();
   getReelLimits.mockResolvedValue({
     maxDurationMs: 90_000,
     retentionDays: 30,
@@ -58,6 +81,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   while (mounted.length) unmount(mounted.pop()!);
   document.body.innerHTML = '';
   vi.unstubAllGlobals();
@@ -78,13 +102,32 @@ async function render() {
   document.body.appendChild(target);
   mounted.push(mount(ReelCapture, { target, props: { session } }));
   await settle();
+  // The shutter waits for a decoded frame, which jsdom never decodes: report one.
+  const video = target.querySelector('video')!;
+  Object.defineProperty(video, 'videoWidth', { value: 720, configurable: true });
+  video.dispatchEvent(new Event('loadeddata'));
+  await settle();
   const shutter = () => target.querySelector<HTMLButtonElement>('[data-reel-shutter]')!;
   const pointer = (type: string, timeStamp: number) => {
     const event = new PointerEvent(type, { pointerId: 1, bubbles: true });
     Object.defineProperty(event, 'timeStamp', { value: timeStamp });
     shutter().dispatchEvent(event);
   };
-  return { target, shutter, pointer };
+  /** A tap: down and up, the threshold never reached. */
+  const tap = async () => {
+    pointer('pointerdown', 1000);
+    pointer('pointerup', 1100);
+    await settle();
+  };
+  /** A hold: down, the threshold elapses with the finger still down, then the release. */
+  const hold = async (release: 'pointerup' | 'pointercancel' = 'pointerup') => {
+    pointer('pointerdown', 1000);
+    vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+    await settle();
+    pointer(release, 4000);
+    await settle();
+  };
+  return { target, shutter, pointer, tap, hold };
 }
 
 describe('ReelCapture', () => {
@@ -98,40 +141,130 @@ describe('ReelCapture', () => {
     expect(shutter().disabled).toBe(false);
   });
 
-  it('a tap films until the next tap, then the take is reviewed', async () => {
+  it('there is no separate photo button: the shutter is the only capture control', async () => {
+    const { target } = await render();
+    expect(target.querySelectorAll('[data-reel-shutter]')).toHaveLength(1);
+    expect(target.textContent).not.toContain('Photo');
+  });
+
+  it('a TAP takes a photo and reviews it, and never starts a recorder', async () => {
+    const { target, tap } = await render();
+    await tap();
+    expect(framed.photo).toHaveBeenCalledTimes(1);
+    expect(framed.start).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  });
+
+  it('a HOLD films from the moment the threshold passes, and ends where it lifts', async () => {
     const { target, shutter, pointer } = await render();
     pointer('pointerdown', 1000);
-    pointer('pointerup', 1100);
+    await settle();
+    // Still down, under the threshold: nothing is recording yet.
+    expect(shutter().getAttribute('aria-pressed')).toBe('false');
+    vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
     await settle();
     expect(shutter().getAttribute('aria-pressed')).toBe('true');
+    expect(framed.start).toHaveBeenCalledTimes(1);
+    expect(framed.photo).not.toHaveBeenCalled();
+    pointer('pointerup', 4000);
+    await settle();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    // The drawing stops with the take, after its last chunk.
+    expect(framed.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('records at the bitrate the framed stream asks for', async () => {
+    const { hold } = await render();
+    await hold();
+    expect(Recorder.instances[0].options.videoBitsPerSecond).toBe(3_000_000);
+  });
+
+  it('a cancelled touch after the threshold ends the take and keeps it', async () => {
+    const { target, hold } = await render();
+    await hold('pointercancel');
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  });
+
+  it('a cancelled touch before the threshold takes nothing', async () => {
+    const { target, pointer } = await render();
+    pointer('pointerdown', 1000);
+    pointer('pointercancel', 1050);
+    vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS * 2);
+    await settle();
+    expect(framed.photo).not.toHaveBeenCalled();
+    expect(framed.start).not.toHaveBeenCalled();
     expect(target.querySelector('[data-reel-review]')).toBeNull();
-
-    pointer('pointerdown', 9000);
-    await settle();
-    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
   });
 
-  it('a hold films until it lifts', async () => {
-    const { target, pointer } = await render();
-    pointer('pointerdown', 1000);
-    await settle();
-    pointer('pointerup', 4000);
-    await settle();
-    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  it('a photo that cannot be made says so and returns to the preview', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    framed.photo.mockResolvedValue(null);
+    const { target, tap } = await render();
+    await tap();
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
   });
 
-  it('a discarded take brings the live preview back', async () => {
-    const { target, pointer } = await render();
-    pointer('pointerdown', 1000);
-    pointer('pointerup', 4000);
-    await settle();
-    const discard = target.querySelector<HTMLButtonElement>(
+  const discardButton = (target: HTMLElement) =>
+    target.querySelector<HTMLButtonElement>(
       `[data-reel-review] button[aria-label="${m.reels_review_discard()}"]`
     )!;
-    discard.click();
+  /** The Back handler of the take's history entry: what Android's Back / the iOS swipe call. */
+  const backHandler = () => {
+    const calls = vi.mocked(pushHistoryOverlay).mock.calls;
+    return calls[calls.length - 1][0];
+  };
+
+  it('a discarded take brings the live preview back, once the member confirmed', async () => {
+    const { target, hold } = await render();
+    await hold();
+    discardButton(target).click();
+    await settle();
+    expect(showConfirm).toHaveBeenCalledOnce();
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+  });
+
+  it('keeps the take when the member does not confirm the discard', async () => {
+    showConfirm.mockResolvedValueOnce(false);
+    const { target, hold } = await render();
+    await hold();
+    discardButton(target).click();
+    await settle();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  });
+
+  it('Back on a review asks first, and keeping the take re-arms Back', async () => {
+    const { target, hold } = await render();
+    await hold();
+    const pushes = vi.mocked(pushHistoryOverlay).mock.calls.length;
+    showConfirm.mockResolvedValueOnce(false);
+    backHandler()();
+    await settle();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    expect(vi.mocked(pushHistoryOverlay).mock.calls.length).toBe(pushes + 1);
+
+    backHandler()();
     await settle();
     expect(target.querySelector('[data-reel-review]')).toBeNull();
     expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+  });
+
+  it('Back with the editor open leaves the editor, never the take', async () => {
+    const { target, hold } = await render();
+    await hold();
+    target
+      .querySelector<HTMLButtonElement>(
+        `[data-reel-review] [aria-label="${m.reels_review_edit()}"]`
+      )!
+      .click();
+    await settle();
+    backHandler()();
+    await settle();
+    // No edits: the editor closes without asking, and the review (not the camera) is back.
+    expect(showConfirm).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-reel-editor]')).toBeNull();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
   });
 
   it('says so, and offers a retry, when the cap cannot be read', async () => {
@@ -159,11 +292,26 @@ describe('ReelCapture', () => {
     expect(alert.querySelector('button')).not.toBeNull();
   });
 
-  it('Suivant opens the publish step over the take, and its back arrow returns to the take', async () => {
-    const { target, pointer } = await render();
-    pointer('pointerdown', 1000);
-    pointer('pointerup', 4000);
+  it("the editor's Next goes straight to the publish step, with no stop at the review", async () => {
+    const { target, hold } = await render();
+    await hold();
+    target
+      .querySelector<HTMLButtonElement>(
+        `[data-reel-review] [aria-label="${m.reels_review_edit()}"]`
+      )!
+      .click();
     await settle();
+    expect(target.querySelector('[data-reel-editor]')).not.toBeNull();
+    target.querySelector<HTMLButtonElement>('[data-reel-editor-next]')!.click();
+    await settle();
+    expect(target.querySelector('[data-reel-editor]')).toBeNull();
+    expect(target.querySelector('[data-reel-publish]')).not.toBeNull();
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+  });
+
+  it('Suivant opens the publish step over the take, and its back arrow returns to the take', async () => {
+    const { target, hold } = await render();
+    await hold();
     target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
     await settle();
     expect(target.querySelector('[data-reel-publish]')).not.toBeNull();

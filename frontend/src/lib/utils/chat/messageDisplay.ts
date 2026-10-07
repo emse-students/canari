@@ -3,6 +3,26 @@ import { foldForSearch, foldWithIndex } from '$lib/utils/textFold';
 
 /** Pure display utilities for rendering message text, URLs, GIFs, and bubble shapes. */
 
+/** Longest raw reply preview a sender stores, before the ellipsis mark. */
+export const REPLY_PREVIEW_STORED_MAX = 100;
+
+/**
+ * Cuts the preview a reply STORES, and MARKS the cut with an ellipsis.
+ *
+ * It used to be a bare `slice(0, 100)` of the raw text, where an `@[uuid]` mention token weighs ~40
+ * characters but is drawn as a short name: the quote of a message with a mention was cut at 100 raw
+ * characters, rendered under the 84 that `shortenReplyPreview` allows, and so ended mid-word with
+ * NO ellipsis (user, 2026-10-05). A cut that lands inside a token is pulled back before it, or the
+ * token stops parsing and the quote shows the raw `@[3f9a` instead of a name.
+ */
+export function cutReplyPreview(text: string): string {
+  if (text.length <= REPLY_PREVIEW_STORED_MAX) return text;
+  let cut = text.slice(0, REPLY_PREVIEW_STORED_MAX);
+  const open = cut.lastIndexOf('@[');
+  if (open > cut.lastIndexOf(']')) cut = cut.slice(0, open);
+  return `${cut.trimEnd()}…`;
+}
+
 /** Shortens a reply preview to at most 84 characters. */
 export function shortenReplyPreview(text: string): string {
   if (!text) return '';
@@ -172,6 +192,20 @@ export function getGifEmbedUrl(url: string): string {
     /* fallback */
   }
   return url;
+}
+
+/**
+ * The GIF a message IS, when its whole body is one GIF link: the URL a reply preview draws, else
+ * `null`. The same test the list preview (`[GIF]`) and the bubble (`GifEmbed`) already make - a body
+ * that is exactly one URL and `isGifUrl` says so - so a quote, the composer's reply strip and the
+ * renderer cannot disagree about what counts as a GIF. The fragment (`#cn-size`) is kept: it is the
+ * size a reader's frame reserves.
+ */
+export function gifPreviewUrl(text: string): string | null {
+  const trimmed = text.trim();
+  const url = extractFirstUrl(trimmed);
+  if (!url || trimmed !== url || !isGifUrl(url)) return null;
+  return getGifEmbedUrl(url);
 }
 
 export type TextLinkSegment =

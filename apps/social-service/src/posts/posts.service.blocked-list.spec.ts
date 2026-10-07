@@ -64,6 +64,8 @@ describe('PostsService hides a blocked account, and only where the author was vi
       if (sql.includes('FROM user_blocks')) {
         return Promise.resolve(blocks.map((otherId) => ({ otherId })));
       }
+      // The one-row visibility read (WP6b): every reader here is inside the post's audience.
+      if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
       if (sql.includes('FROM posts')) return Promise.resolve([{ ...POST }]);
       if (sql.includes('FROM users WHERE id = ANY')) return Promise.resolve([]);
       return Promise.resolve([]);

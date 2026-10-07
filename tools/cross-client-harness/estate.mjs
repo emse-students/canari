@@ -23,7 +23,7 @@
  * and an ESTATE is not**, so they are different modules - the same split `native-residue.mjs`,
  * `servable.mjs`, `usability.mjs` and `marker.mjs` each exist for.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { SITE } from './names.mjs';
 import { ssh } from './ssh.mjs';
 
@@ -82,6 +82,22 @@ export const psql = (sql, opts) =>
 const ANSI = /\u001b\[[0-9;]*m/g;
 
 /**
+ * A container's whole log, STDOUT AND STDERR. `docker logs` replays each stream on the stream it was
+ * written to, and Nest writes its ERROR lines to stderr - so `execFileSync` (stdout only) was blind
+ * to every ERROR a local service logged, while the production branch's `2>&1` saw them. Measured
+ * 2026-10-05: GRAINE-AUTH-3 failed on a `[CHANNEL_KEY_REUSED]` line that was in the container log.
+ */
+function dockerLogsBothStreams(service, since) {
+  const r = spawnSync('docker', ['logs', '--since', since, `canari-local-${service}-1`], {
+    encoding: 'utf8',
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  if (r.error || r.status !== 0) throw new Error(`docker logs canari-local-${service}-1 failed: ${r.error ?? r.stderr}`);
+  return `${r.stdout}
+${r.stderr}`;
+}
+
+/**
  * One service's log lines in the window, from WHICHEVER ESTATE `SITE` NAMES - ANSI stripped, blanks
  * dropped.
  *
@@ -108,11 +124,7 @@ const ANSI = /\u001b\[[0-9;]*m/g;
  */
 export function srvLines(service, since) {
   const out = LOCAL
-    ? execFileSync(
-        'docker',
-        ['logs', '--since', since, `canari-local-${service}-1`],
-        { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }
-      )
+    ? dockerLogsBothStreams(service, since)
     : ssh('canari', `docker logs --since ${since} infrastructure-${service}-1 2>&1 || true`, {
         timeoutMs: 90_000,
       });
@@ -121,4 +133,32 @@ export function srvLines(service, since) {
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
+}
+
+/** The local estate's chat gateway container: the compose project prefix plus the service name. */
+export const LOCAL_GATEWAY_CONTAINER = 'canari-local-chat-gateway-1';
+
+/**
+ * CUTS EVERY ESTABLISHED WEBSOCKET, THE ONLY WAY KNOWN TO WORK ON THE PHONE: restart the gateway.
+ *
+ * It is how a STREAM GAP is made on a client (Mi 9T pass D1-D6, 2026-10-06: D1 used it, and the
+ * socket dropped and reopened as the app's reconnect expects). The obvious lever does NOT do it:
+ * `adb reverse --remove` closes the LISTENER while the socket the app already holds keeps carrying
+ * data, so D5 saw no gap at all - `estateReverse` in `a1apk.mjs` says so, and so does LIFE-6 on the
+ * board, which measured the same on 2026-09-07. `archive/net.mjs` is the web client's equivalent.
+ *
+ * LOCAL ESTATE ONLY, and it throws rather than reaching for another one: restarting the gateway of
+ * production or dev would drop every real member's socket. There is no remote branch to fall back to.
+ *
+ * @returns {string} the container that was restarted
+ */
+export function restartGateway() {
+  if (!LOCAL) {
+    throw new Error(
+      `restartGateway: SITE ${SITE} is not the local estate - a gateway restart drops every member's socket`
+    );
+  }
+  console.log(`[estate] docker restart ${LOCAL_GATEWAY_CONTAINER}`);
+  execFileSync('docker', ['restart', LOCAL_GATEWAY_CONTAINER], { encoding: 'utf8' });
+  return LOCAL_GATEWAY_CONTAINER;
 }

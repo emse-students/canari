@@ -23,12 +23,13 @@ export class PlatformConfig {
   })
   minClientVersion!: string;
 
-  /** Which payment provider PaymentService routes to (WP-LYDIA-1). Admin-editable, no restart needed. */
+  /** Which payment provider PaymentService routes to (WP-LYDIA-1). Admin-editable, no restart needed.
+   *  'disabled' (9 chars, fits VARCHAR(16): no migration) turns every checkout and onboarding off. */
   @Column({
     name: 'payment_provider',
     type: 'varchar',
     length: 16,
     default: 'stripe',
   })
-  paymentProvider!: 'stripe' | 'lydia';
+  paymentProvider!: 'stripe' | 'lydia' | 'disabled';
 }

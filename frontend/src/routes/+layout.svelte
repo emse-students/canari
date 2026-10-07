@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import '../app.css';
   import { DEFAULT_PUBLIC_APP_ORIGIN } from '$lib/utils/publicAppUrl';
   import {
@@ -58,6 +60,7 @@
     type SwipeNavDirection,
     type SwipeNavGestureState,
   } from '$lib/utils/swipeNavigation';
+  import { onTouchGestureEnd } from '$lib/utils/touchGestureEnd';
   import { claimTouchMove } from '$lib/utils/touchClaim';
   import { hasActiveTextSelection, onTextSelectionActive } from '$lib/utils/textSelection';
   import { onViewportChange, SWIPE_NAV_QUERY } from '$lib/utils/viewport';
@@ -322,8 +325,16 @@
     snapSwipeBack();
   }
 
+  /** Detaches the end listeners of the touch being tracked (see `onTouchGestureEnd`). */
+  let releaseGestureEnd: (() => void) | null = null;
+
   function handleTouchStart(e: TouchEvent) {
+    releaseGestureEnd?.();
+    releaseGestureEnd = null;
     if (!isSwipeNavActive(swipeNavContext())) return;
+    // THE END IS HEARD ON THE ELEMENT THE TOUCH STARTED ON, not on the shell: a re-render that
+    // removes that element mid-gesture would otherwise swallow the end and strand the drag transform.
+    if (e.target) releaseGestureEnd = onTouchGestureEnd(e.target, handleTouchEnd);
     if (shouldIgnoreSwipeTarget(e.target) || hasActiveTextSelection()) {
       swipeGesture = { startX: 0, startY: 0, startedAt: 0, phase: 'ignored', dragPx: 0 };
       return;
@@ -417,7 +428,7 @@
     pageScrollWrap.style.transition = `transform ${swipeNavTransitionMs}ms ease-out`;
     pageScrollWrap.style.transform = `translate3d(${direction === 'next' ? -width : width}px, 0, 0)`;
     swipeNavSlide = { direction };
-    void goto(href).catch((err) => {
+    void goto(resolve(internalPath(href))).catch((err) => {
       console.error('[SwipeNav] navigation failed:', href, err);
       swipeNavSlide = null;
       snapSwipeBack();
@@ -491,6 +502,11 @@
   });
 
   function handleTouchEnd(e: TouchEvent) {
+    releaseGestureEnd = null;
+    if (e.type === 'touchcancel') {
+      handleTouchCancel();
+      return;
+    }
     if (!swipeGesture || swipeGesture.phase === 'ignored') {
       swipeGesture = null;
       return;
@@ -518,6 +534,7 @@
   }
 
   function handleTouchCancel() {
+    releaseGestureEnd = null;
     swipeGesture = null;
     snapSwipeBack();
   }
@@ -556,16 +573,14 @@
 
     node.addEventListener('touchstart', handleTouchStart, { passive: true });
     node.addEventListener('touchmove', handleTouchMove, { passive: false });
-    node.addEventListener('touchend', handleTouchEnd, { passive: true });
-    node.addEventListener('touchcancel', handleTouchCancel, { passive: true });
     const stopSelectionWatch = onTextSelectionActive(abandonSwipeForSelection);
 
     return () => {
       stopSelectionWatch();
       node.removeEventListener('touchstart', handleTouchStart);
       node.removeEventListener('touchmove', handleTouchMove);
-      node.removeEventListener('touchend', handleTouchEnd);
-      node.removeEventListener('touchcancel', handleTouchCancel);
+      releaseGestureEnd?.();
+      releaseGestureEnd = null;
       // DISARMING MID-GESTURE NEVER SEES ITS `touchend`, so the state that handler would have
       // cleared is cleared here instead - otherwise a rotation, or a keyboard opening under the
       // finger, leaves the wrapper parked at whatever `translate3d` the last move wrote with no

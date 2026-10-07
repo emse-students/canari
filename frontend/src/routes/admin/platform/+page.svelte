@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -12,11 +13,13 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
 
+  type PaymentProviderChoice = 'stripe' | 'lydia' | 'disabled';
+
   type PlatformConfig = {
     maintenanceEnabled: boolean;
     maintenanceMessage: string | null;
     minClientVersion: string;
-    paymentProvider: 'stripe' | 'lydia';
+    paymentProvider: PaymentProviderChoice;
   };
 
   let loading = $state(true);
@@ -27,12 +30,13 @@
   let maintenanceEnabled = $state(false);
   let maintenanceMessage = $state('');
   let minClientVersion = $state('0.0.0');
-  let paymentProvider = $state<'stripe' | 'lydia'>('stripe');
-  /** Product names, not prose: they read the same in every locale. */
-  const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = [
+  let paymentProvider = $state<PaymentProviderChoice>('stripe');
+  /** Two product names, which read the same in every locale, and the localized "off" switch. */
+  const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
     { value: 'stripe', label: 'Stripe' },
     { value: 'lydia', label: 'Lydia' },
-  ];
+    { value: 'disabled', label: m.admin_platform_payment_provider_disabled() },
+  ]);
 
   /** The live announcement as the server holds it, or null when none is published. */
   type ActiveAnnouncement = {
@@ -207,7 +211,7 @@
 
   onMount(() => {
     if (!isGlobalAdmin()) {
-      void goto('/admin', { replaceState: true });
+      void goto(resolve('/admin'), { replaceState: true });
       return;
     }
     void loadConfig();
@@ -303,7 +307,7 @@
           label={m.admin_platform_payment_provider_label()}
           triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
           onValueChange={(v) => {
-            if (v === 'stripe' || v === 'lydia') paymentProvider = v;
+            if (v === 'stripe' || v === 'lydia' || v === 'disabled') paymentProvider = v;
           }}
         />
         <p class="text-text-muted text-xs">

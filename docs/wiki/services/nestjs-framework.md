@@ -8,6 +8,12 @@ Per-service behaviour lives on that service's own page ([core](core-service.md),
 [chat-delivery](chat-delivery.md), [media](media-service.md), [social](social-service.md)). This
 page is only about the framework underneath them.
 
+> **2026-10-05: THE HOLD IS OVER AND THE TABLE BELOW IS HISTORY.** `@nestjs/throttler` 6.7.1 declares
+> `^12.0.0`, so `chat-delivery-service` and `social-service` moved to 12 in ONE pull request. The
+> seven Dependabot PRs (#1193-#1196, #1204-#1206) were never mergeable: one package each, so core 11
+> sat beside common 12 - the skew described under STEP 4 below. A framework bump is ONE branch per
+> service.
+
 ## Where each service stands, 2026-08-31
 
 | Service | `@nestjs/common` / `core` / `platform-express` | Satellites | Suite |

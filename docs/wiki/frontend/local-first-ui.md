@@ -58,8 +58,9 @@ posts request had not left the device until `GET /api/users/me` came back. Two s
 first paint where one was owed, and `fetchMyProfile` had no cache at all, unlike `fetchUserProfile`
 beside it. The verdict is now remembered per account (`feedAudienceState`, persisted, cleared on
 logout and on a change of account) and revalidated **behind** the render; the request is issued
-before the gate, since the gate is a redirect and not an authorization - the API answers
-`GET /api/posts` to anybody who asks, which that helper's docblock has always said.
+before the gate, since the gate is a redirect and not an authorization - `FeedAudienceGuard` is
+what refuses on the server, and since WP6b the verdict is asked of `GET /api/posts/audience`, the
+same SQL, rather than read from the profile's formation.
 
 **A transport failure was read as an answer.** The old `catch` redirected on everything, so a
 reader on a train was ejected from the feed to `/chat` by a timeout. Only a 404 - the account does

@@ -1,10 +1,20 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
+  import { isGlobalAdmin, isAssociationSuperAdmin, fetchMyProfile } from '$lib/stores/user';
+  import AgendaSelectionFields from '$lib/components/calendar/AgendaSelectionFields.svelte';
+  import {
+    defaultAgendaSelection,
+    EMPTY_AGENDA_SELECTION,
+    isAgendaSelected,
+    type AgendaReader,
+    type AgendaSelection,
+  } from '$lib/calendar/agendaSelection';
+  import { Log } from '$lib/utils/Log';
   import {
     listAggregatedCalendarFeed,
     ensureAssociationSuperAdmin,
@@ -14,6 +24,8 @@
     buildPreviewInnerHtml,
     exportCalendarMonth,
     DEFAULT_EXPORT_OPTIONS,
+    VIGNETTE_MAX,
+    BLUR_MAX_PX,
     CALENDAR_CONTAINER_HEIGHT,
     CALENDAR_CONTAINER_WIDTH,
     fileToDataUrl,
@@ -46,7 +58,25 @@
   let events = $state<AssociationCalendarFeedEvent[]>([]);
   let loading = $state(false);
 
+  /**
+   * THE AGENDA IS ONE PER SELECTION (D40): the sheet is a campus's and/or a formation's, so the page
+   * ALWAYS sends one (the reader's own spaces by default, a required choice when they have none).
+   * One association's sheet needs none: the association IS the selection.
+   */
+  let selection = $state<AgendaSelection>(EMPTY_AGENDA_SELECTION);
+  /** Whose own campus and formations the selector offers (and nothing else, user 2026-10-06). */
+  let reader = $state<AgendaReader | null>(null);
+
+  function selectionChanged(next: AgendaSelection) {
+    selection = next;
+    void loadMonth();
+  }
+
   async function loadMonth() {
+    if (!filterAssociationId && !isAgendaSelected(selection)) {
+      events = [];
+      return;
+    }
     loading = true;
     try {
       const start = new Date(focusDate.getFullYear(), focusDate.getMonth(), 1, 0, 0, 0, 0);
@@ -55,6 +85,8 @@
         from: start.toISOString(),
         to: end.toISOString(),
         associationId: filterAssociationId || undefined,
+        campus: filterAssociationId ? undefined : selection.campus || undefined,
+        formation: filterAssociationId ? undefined : selection.formation || undefined,
       });
     } catch {
       events = [];
@@ -157,7 +189,7 @@
     } else {
       mayExport = await ensureAssociationSuperAdmin().catch(() => false);
       if (!mayExport) {
-        await goto('/calendar');
+        await goto(resolve('/calendar'));
         return;
       }
     }
@@ -166,6 +198,12 @@
     if (monthParam) {
       const d = new Date(`${monthParam}-01`);
       if (!isNaN(d.getTime())) focusDate = d;
+    }
+    try {
+      reader = await fetchMyProfile();
+      selection = defaultAgendaSelection(reader);
+    } catch (err) {
+      Log.d('calendar.export: profile unavailable, the selection stays a required choice', err);
     }
     void loadMonth();
   });
@@ -209,6 +247,11 @@
         <div
           class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-5 shadow-sm lg:sticky lg:top-4"
         >
+          {#if !filterAssociationId}
+            <AgendaSelectionFields {selection} {reader} onChange={selectionChanged} />
+            <hr class="border-cn-border/60" />
+          {/if}
+
           <!-- Month navigation -->
           <div>
             <p class="text-text-muted mb-2 text-xs font-bold tracking-wider uppercase">
@@ -265,20 +308,20 @@
                 <input type="file" accept="image/*" class="sr-only" onchange={handleBgChange} />
               </label>
             {/if}
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs"
-                >{m.calendar_export_image_intensity({ value: opts.bgOpacity })}</span
-              >
-              <input
-                type="range"
-                min="0"
-                max="100"
-                bind:value={opts.bgOpacity}
-                class="accent-cn-dark w-28"
-              />
-            </div>
-            <!-- A scrim only darkens the photograph, so it has nothing to do without one. -->
+            <!-- Every control below acts on the photograph, so none has anything to do without one. -->
             {#if opts.bgDataUrl}
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs"
+                  >{m.calendar_export_image_intensity({ value: opts.bgOpacity })}</span
+                >
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  bind:value={opts.bgOpacity}
+                  class="accent-cn-dark w-28"
+                />
+              </div>
               <div class="flex items-center justify-between gap-2">
                 <span class="text-text-muted text-xs"
                   >{m.calendar_export_scrim({ value: opts.scrimOpacity })}</span
@@ -288,6 +331,30 @@
                   min="0"
                   max="80"
                   bind:value={opts.scrimOpacity}
+                  class="accent-cn-dark w-28"
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs"
+                  >{m.calendar_export_vignette({ value: opts.vignetteOpacity })}</span
+                >
+                <input
+                  type="range"
+                  min="0"
+                  max={VIGNETTE_MAX}
+                  bind:value={opts.vignetteOpacity}
+                  class="accent-cn-dark w-28"
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs"
+                  >{m.calendar_export_blur({ value: opts.bgBlur })}</span
+                >
+                <input
+                  type="range"
+                  min="0"
+                  max={BLUR_MAX_PX}
+                  bind:value={opts.bgBlur}
                   class="accent-cn-dark w-28"
                 />
               </div>

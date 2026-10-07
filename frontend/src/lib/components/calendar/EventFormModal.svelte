@@ -311,10 +311,24 @@
           {/if}
         {/if}
 
-        <CoOwnerPicker
-          bind:selectedIds={values.coOwnerIds}
-          excludeId={values.targetAssociationId}
-        />
+        <!--
+          D39: the list is editable only once the co-organisers' STATES are read - the event's own
+          payload names only the accepted ones, and saving a list built from it would withdraw every
+          pending proposal. Until then (or if they never arrive) the list is shown as unchanged.
+        -->
+        {#if values.coOwnersLoad === 'ready'}
+          <CoOwnerPicker
+            bind:selectedIds={values.coOwnerIds}
+            excludeId={values.targetAssociationId}
+            states={values.coOwnerStates}
+          />
+        {:else}
+          <p class="text-text-muted text-xs" data-co-owners-load={values.coOwnersLoad}>
+            {values.coOwnersLoad === 'loading'
+              ? m.asso_calendar_co_owner_loading()
+              : m.asso_calendar_co_owner_failed()}
+          </p>
+        {/if}
 
         {#if capabilities.canLinkForm && linkableForms}
           <div class="border-cn-border/70 bg-cn-bg/30 space-y-3 rounded-xl border p-3">

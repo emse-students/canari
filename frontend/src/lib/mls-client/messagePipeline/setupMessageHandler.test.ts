@@ -76,7 +76,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       mlsService: mls,
       storage: null,
       userId: 'user-a',
-      deviceKeyB64: 'device-key',
+      deviceKey: () => 'device-key',
       historyBaseUrl: 'https://hist',
       conversations,
       messageReactions: createTestMessageReactions(),
@@ -275,6 +275,74 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // at ERROR level either way. GRP-5 and GRP-8 recorded PASS-DIRTY on nothing else.
     expect(mls.registerMember).not.toHaveBeenCalled();
     expect(deps.conversations.get(groupId)?.lifecycle).toBe('active');
+  });
+
+  /**
+   * A RECEIVED DM IS KEYED BY ITS GROUP ID, LIKE EVERY OTHER ROW - the fact the 2026-10-04 key-vs-id
+   * audit rests on (`docs/wiki/frontend/modules/chat.md`, "One key per conversation").
+   *
+   * `upsertConversation` is the only writer of the conversation map whose key is not spelled `id`
+   * at the call: it matches an existing DM by PEER and keeps that row's key. If it ever kept a key
+   * that is not the joined group id, every `conversations.get(groupId)` consumer
+   * (`processPendingInvitations`, `handleWelcomeRequest`, `handleHistoryRequest`, the redelivery
+   * branch above) would miss the conversation silently. So both shapes are pinned here: a first DM
+   * with this peer, and a Welcome into a second group for a peer this device already has a DM with.
+   */
+  describe('a Welcome into a DM keys the row by the joined group id, never by the peer', () => {
+    const dmGroup = '22222222-2222-4222-8222-222222222222';
+    const olderDmGroup = '33333333-3333-4333-8333-333333333333';
+
+    async function deliverDmWelcome(
+      initial: Array<[string, ReturnType<typeof emptyConversation>]>
+    ) {
+      const deps = baseDeps({ conversations: createTestConversations(initial) });
+      const mls = deps.mlsService as any;
+      mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'user-a::peer-user', isGroup: false });
+      mls.processWelcome = vi.fn().mockResolvedValue(dmGroup);
+      mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (
+        a: string,
+        b: Uint8Array,
+        c?: string,
+        d?: boolean
+      ) => Promise<boolean>;
+      expect(await onMsg('peer-user', new Uint8Array([1]), dmGroup, true)).toBe(true);
+      return deps;
+    }
+
+    function expectEveryKeyIsItsRowId(conversations: Map<string, { id: string }>) {
+      for (const [key, convo] of conversations) expect(key).toBe(convo.id);
+    }
+
+    it('a first DM with this peer', async () => {
+      const deps = await deliverDmWelcome([]);
+
+      const row = deps.conversations.get(dmGroup);
+      expect(row?.conversationType).toBe('direct');
+      expect(row?.directPeerId).toBe('peer-user');
+      expect(deps.conversations.has('peer-user')).toBe(false);
+      expectEveryKeyIsItsRowId(deps.conversations);
+    });
+
+    it('a DM with a peer this device already holds under another group is RE-KEYED onto the new one', async () => {
+      const deps = await deliverDmWelcome([
+        [
+          olderDmGroup,
+          emptyConversation(olderDmGroup, {
+            lifecycle: 'active',
+            conversationType: 'direct',
+            directPeerId: 'peer-user',
+            contactName: 'peer-user',
+          }),
+        ],
+      ]);
+
+      expect(deps.conversations.get(dmGroup)?.directPeerId).toBe('peer-user');
+      expect(deps.conversations.has(olderDmGroup)).toBe(false);
+      expect(deps.conversations.has('peer-user')).toBe(false);
+      expectEveryKeyIsItsRowId(deps.conversations);
+    });
   });
 
   it('routes plaintext channel.message.created to addMessageToChat', async () => {
@@ -847,6 +915,73 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       groupId,
       expect.objectContaining({})
     );
+  });
+
+  /**
+   * A PIN CHANGE MOVES THE KEY UNDER A HANDLER THAT LIVES ON. The handler is set up once per login
+   * and nothing rebuilds it; `performPinChange` re-seals the store and calls `setDeviceKey`. It used
+   * to capture the key as a value, so every message written after the change was sealed under the
+   * key the store had just been migrated off - unreadable at the next launch. The deps carry a
+   * getter now, and these pin that every write reads it at the write.
+   */
+  describe('the device key is read at each write, never captured at setup', () => {
+    it('seals a reaction arriving after the key changed under the NEW key', async () => {
+      let currentKey = 'key-before-pin-change';
+      const updateMessage = vi.fn().mockResolvedValue(undefined);
+      const conversations = createTestConversations([
+        [
+          groupId,
+          emptyConversation(groupId, {
+            messages: [{ id: 'm-target', senderId: 'user-a', content: 'hi' } as any],
+          }),
+        ],
+      ]);
+      const deps = baseDeps({
+        conversations,
+        storage: { updateMessage },
+        deviceKey: () => currentKey,
+      });
+      const mls = deps.mlsService as any;
+      mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([7]));
+      mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0];
+
+      // The PIN change happens AFTER setup, exactly as it does in a session.
+      currentKey = 'key-after-pin-change';
+      vi.mocked(codec.decodeAppMessage).mockReturnValueOnce({
+        reaction: { messageId: 'm-target', emoji: '+1', at: 1, removed: false },
+        messageId: 'mid-r',
+      } as any);
+      const ok = await onMsg('peer', new Uint8Array([1]), groupId, false, undefined, false);
+
+      expect(ok).toBe(true);
+      expect(updateMessage).toHaveBeenCalledTimes(1);
+      expect(updateMessage.mock.calls[0][2]).toBe('key-after-pin-change');
+    });
+
+    it('republishes key material under the NEW key after a PIN change', async () => {
+      let currentKey = 'key-before-pin-change';
+      // Unique groupId: the NoMatchingKeyPackage failure counter is module-level.
+      const gid = 'a5555555-1111-4111-8111-111111111111';
+      const deps = baseDeps({
+        conversations: createTestConversations([
+          [gid, emptyConversation(gid, { lifecycle: 'pending' })],
+        ]),
+        deviceKey: () => currentKey,
+      });
+      const mls = deps.mlsService as any;
+      mls.processWelcome = vi.fn().mockRejectedValue(new Error('NoMatchingKeyPackage'));
+      mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0];
+
+      currentKey = 'key-after-pin-change';
+      await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
+
+      expect(mls.republishKeyMaterial).toHaveBeenCalledWith('key-after-pin-change');
+      expect(mls.republishKeyMaterial).not.toHaveBeenCalledWith('key-before-pin-change');
+    });
   });
 
   /**

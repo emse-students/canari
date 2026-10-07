@@ -12,6 +12,7 @@
     aggregatedCalendarFeedIcsAbsoluteUrl,
     icsSubscriptionRangeISO,
     getCalendarEventLinkedToPost,
+    listEventCoOrganisers,
     type AssociationCalendarEvent,
     type AssociationCalendarFeedEvent,
     type AssociationLinkCandidates,
@@ -40,6 +41,7 @@
   import {
     blankEventFormValues,
     eventFormValuesFrom,
+    loadCoOrganiserFields,
     toCreatePayload,
     toUpdatePayload,
     type EventFormValues,
@@ -50,6 +52,7 @@
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
+  import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
@@ -125,10 +128,11 @@
   let showSubscribeModal = $state(false);
 
   /** ~15 months window for feed subscription (server max ~18 months). */
+  const feedSigner = createFeedSigner(() => (showSubscribeModal ? { associationId } : null));
   const calendarIcsUrl = $derived.by(() => {
-    if (!browser) return '';
+    if (!browser || !feedSigner.sig) return '';
     const { from, to } = icsSubscriptionRangeISO();
-    return aggregatedCalendarFeedIcsAbsoluteUrl({ from, to, associationId });
+    return aggregatedCalendarFeedIcsAbsoluteUrl({ from, to, associationId, sig: feedSigner.sig });
   });
 
   function associationPageUrl(): string {
@@ -255,6 +259,12 @@
     formValues = eventFormValuesFrom(ev);
     poster.set(ev.imageUrl ?? null);
     modalOpen = true;
+    // D39: the co-organisers' states (accepted / pending / refused) arrive after the form opens; the
+    // list stays unsent until they do. Through THIS association, the route the save will use.
+    const fields = await loadCoOrganiserFields(formValues, () =>
+      listEventCoOrganisers(associationId, ev.id)
+    );
+    if (editingId === ev.id) formValues = { ...formValues, ...fields };
     await ensureLinkCandidates();
   }
 
@@ -578,5 +588,6 @@
   open={showSubscribeModal}
   onClose={() => (showSubscribeModal = false)}
   icsUrl={calendarIcsUrl}
+  signing={feedSigner.status}
   intro={m.asso_calendar_subscribe_intro()}
 />

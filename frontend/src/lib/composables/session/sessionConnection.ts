@@ -4,6 +4,7 @@
  * startConnectionWatchdog, stopConnectionWatchdog, runGroupDiscovery.
  */
 import { goto } from '$app/navigation';
+import { resolve } from '$app/paths';
 import { appendLog } from '$lib/utils/sessionLog';
 import { discoverMissingGroups } from '$lib/utils/chat/actions';
 import {
@@ -181,7 +182,7 @@ export async function attemptReconnectImpl(
       ctx.setIsLoggedIn(false);
       cb.log('[AUTH] Session expired - redirecting to /login.');
       console.warn('[WS] Session expired, stopping reconnect loop');
-      void goto('/login', { replaceState: true });
+      void goto(resolve('/login'), { replaceState: true });
       return;
     }
     cb.log(`Reconnection failed: ${String(err)}`);

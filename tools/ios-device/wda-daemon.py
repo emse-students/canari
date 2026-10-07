@@ -16,7 +16,10 @@ The runner is `fr.emse.canari.wda.xctrunner`, installed by `sign-install.mjs`'s 
 
 import asyncio
 import logging
+import socket
 import sys
+import urllib.error
+import urllib.request
 
 from pymobiledevice3 import usbmux
 from pymobiledevice3.lockdown import create_using_usbmux
@@ -56,8 +59,34 @@ async def forward(udid: str, port: int, client_r: asyncio.StreamReader, client_w
     await asyncio.gather(pipe(client_r, dev_w), pipe(dev_r, client_w))
 
 
+def refuse_if_ports_are_held() -> None:
+    """Stops BEFORE the tunnel when another process already holds a forwarded port.
+
+    A second daemon used to get through the whole tunnel and runner start and only then die on
+    `OSError 10048`, with no hint whose port it was (found 2026-10-02). The question is answerable
+    up front: bind each port, and when 8100 is taken ask it `/status` - a WDA answering there is
+    another daemon, which is the usual case and needs no second one.
+    """
+    for port in (PORT, MJPEG_PORT):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            holder = "something that is not WDA"
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/status", timeout=3) as r:
+                    holder = f"a WDA already answering /status ({r.status}) - another wda-daemon.py is running"
+            except (urllib.error.URLError, OSError) as e:
+                log.debug("port %d held and /status unreadable: %s", port, e)
+            log.error("port %d is already in use by %s; stop it or reuse it, refusing to start", port, holder)
+            sys.exit(1)
+        finally:
+            probe.close()
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    refuse_if_ports_are_held()
     lockdown = await create_using_usbmux()
     udid = lockdown.udid
     log.info("starting %s on %s (iOS %s)", RUNNER, udid, lockdown.product_version)

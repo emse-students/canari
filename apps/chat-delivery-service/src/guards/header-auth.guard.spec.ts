@@ -45,6 +45,32 @@ describe('HeaderAuthGuard', () => {
     expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
   });
 
+  it('throws when x-user-logged-in is empty or forged without the edge token', () => {
+    process.env.INTERNAL_SHARED_SECRET = 'test-secret-32bytes-long-enough';
+    try {
+      expect(() => guard.canActivate(makeContext({ 'x-user-logged-in': '' }))).toThrow(
+        UnauthorizedException
+      );
+      expect(() =>
+        guard.canActivate(makeContext({ 'x-user-logged-in': 'true', 'x-user-id': 'victim' }))
+      ).toThrow(UnauthorizedException);
+    } finally {
+      delete process.env.INTERNAL_SHARED_SECRET;
+    }
+  });
+
+  it('fails closed in production when INTERNAL_SHARED_SECRET is unset, even with the header', () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      expect(() => guard.canActivate(makeContext({ 'x-user-logged-in': 'true' }))).toThrow(
+        UnauthorizedException
+      );
+    } finally {
+      process.env.NODE_ENV = previous;
+    }
+  });
+
   describe('with INTERNAL_SHARED_SECRET set', () => {
     const SECRET = 'test-secret-32bytes-long-enough';
 

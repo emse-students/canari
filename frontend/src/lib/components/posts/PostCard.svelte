@@ -12,6 +12,7 @@
     pinPost as pinPostApi,
     unpinPost as unpinPostApi,
     unmaskPost as unmaskPostApi,
+    unrepublishPost as unrepublishPostApi,
     type PostEntity,
     type PostComment,
     type Poll,
@@ -38,6 +39,7 @@
   import PostCornerBadge from './PostCornerBadge.svelte';
   import PostFeedback from './PostFeedback.svelte';
   import EditPostForm from './EditPostForm.svelte';
+  import RepublishDialog from './RepublishDialog.svelte';
   import { Pin, CalendarCheck } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
@@ -507,6 +509,40 @@
     }
   }
 
+  /** Which republication dialog is open (D38), or `null`. */
+  let republishMode = $state<'republish' | 'propose' | null>(null);
+
+  /**
+   * Re-reads the post after a republication changed it. The "Republie par" line and the three
+   * republication controls are all the server's answer, so the card asks again rather than
+   * guessing which of them moved.
+   */
+  async function reloadAfterRepublication() {
+    try {
+      const fresh = await getPost(localPost.id);
+      localPost = { ...localPost, ...fresh };
+    } catch (err) {
+      Log.d('PostCard', `post reload after republication failed: ${String(err)}`);
+    }
+  }
+
+  /** An association withdraws its own republication (D38). */
+  async function unrepublish(associationId: string) {
+    try {
+      await unrepublishPostApi(localPost.id, associationId);
+      actionMessage = m.post_unrepublish_done();
+      await reloadAfterRepublication();
+    } catch (err) {
+      Log.d('PostCard', `unrepublish ${associationId.slice(0, 8)} failed: ${String(err)}`);
+      errorMessage = m.post_republish_error();
+    }
+  }
+
+  /** The republishers this reader may withdraw, named for the menu. */
+  const unrepublishAs = $derived(
+    (localPost.republishedBy ?? []).filter((r) => (localPost.canUnrepublishAs ?? []).includes(r.id))
+  );
+
   /** Whether the post's own report dialog is open. A comment's is keyed by the comment instead. */
   let reportingPost = $state(false);
   let reportSubmitting = $state(false);
@@ -614,6 +650,12 @@
         onReport={() => (reportingPost = true)}
         onUnmaskAnonymous={unmaskAnonymous}
         postId={localPost.id}
+        canRepublish={localPost.canRepublish === true}
+        canProposeRepublication={localPost.canProposeRepublication === true}
+        {unrepublishAs}
+        onRepublish={() => (republishMode = 'republish')}
+        onProposeRepublication={() => (republishMode = 'propose')}
+        onUnrepublish={unrepublish}
       />
     </div>
 
@@ -756,3 +798,16 @@
   onSubmit={submitReport}
   onClose={() => (reportingPost = false)}
 />
+
+<!-- Mounted only while open: a feed of fifty cards does not need fifty idle pickers. -->
+{#if republishMode}
+  <RepublishDialog
+    mode={republishMode}
+    post={localPost}
+    onClose={() => (republishMode = null)}
+    onDone={() => {
+      republishMode = null;
+      void reloadAfterRepublication();
+    }}
+  />
+{/if}

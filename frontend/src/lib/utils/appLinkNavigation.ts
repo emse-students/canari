@@ -1,4 +1,6 @@
 import { goto } from '$app/navigation';
+import { internalPath } from '$lib/utils/internalPath';
+import { resolve } from '$app/paths';
 import { isClaimedAppLinkPath } from '$lib/mobile/appSiteAssociation';
 import { inAppPathFromHref, inAppPathFromPublicUrl, isPublicAppUrl } from '$lib/utils/publicAppUrl';
 
@@ -12,7 +14,7 @@ export async function navigateInAppFromHref(href: string): Promise<boolean> {
 
   console.log('[appLink] In-app navigation →', path);
   try {
-    await goto(path);
+    await goto(resolve(internalPath(path)));
   } catch {
     if (typeof window !== 'undefined') window.location.href = path;
   }

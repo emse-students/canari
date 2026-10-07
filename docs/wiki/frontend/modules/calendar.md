@@ -203,6 +203,12 @@ grid's bands, the day panel and the event dialog - and every list of them is key
 `associationId`. **A name is a label two associations may share and a slug is a URL; neither is an
 identity, and a key that can repeat is a crash rather than a cosmetic slip.**
 
+**Since D39 a co-owner row means ACCEPTED** (migration 074): naming a co-organiser in the event form
+asks it, and it reaches nothing - this list, its rights, its readers' agenda - until its publishers
+accept. The form reads the states from `GET .../events/:eventId/co-organisers` after it opens and
+sends `coOwnerIds` only once they arrived (`coOwnersLoad`), because the event's own `coOwners` names
+only the accepted ones ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
+
 The same fact decides what a row says: the day panel takes `ownAssociationId` (not a
 `hideAssociationName` boolean) and the dialog is told `showAssociation` per event, so a row the page
 merely co-owns still names, colours and badges its real owner.
@@ -484,8 +490,19 @@ at `BREAK_LABEL_ANGLE` -20deg.
 | the Canva | this sheet | why |
 | --- | --- | --- |
 | the first row is filled with September's last evenings | those squares are NOT DRAWN - the background runs through them | the feed is one month wide; widening the fetch was refused (*"non, c'est bon"*), then the squares themselves were (*"on peut supprimer les cases qui ne contiennent pas de jour"*) |
-| the day number is large, bottom-right, UNDER the event cards | small, top-left, in a row nothing else may enter | *"tout doit etre lisible et rien ne doit se chevaucher"* |
+| the day number is large, bottom-right, UNDER the event cards | small, top-left, pinned over the tile (no longer a row of its own, 2026-10-06) | *"tout doit etre lisible et rien ne doit se chevaucher"*; the outline below keeps it readable if a long title reaches it |
 | no distinction for a weekend or a holiday | both recede, and a weekend IN a holiday recedes twice | *"on peut garder une distinction de fond quand meme, c'est plus lisible"*, then *"le WE et les jours de pause pourraient etre en un peu plus fonce"* |
+
+**EVERY EVENT TITLE IS WHITE WITH A DARK OUTLINE, CENTRED IN ITS OWN TILE (user, 2026-10-06, who works in Canva).**
+The old rule picked `contrastColor(tile colour)` - black above 55 % luminance, white below - so a
+yellow tile had a black title and a blue one a white title, with no logic a reader could see. Now
+`textOutlineCss()` gives white fill + `-webkit-text-stroke` with `paint-order:stroke fill` (only the
+outer half of the stroke shows, the glyph keeps its weight) on every title AND on the day number
+inside an event tile; a number on an empty day keeps `contrastColor(cellBg)`. The first title of a
+cell used to sit below the centre because the day number owned a row above it; the number is now
+absolutely pinned top-left and the title is centred both ways in the whole tile (each band of a
+stacked cell in its own). Long titles still shrink/clamp through `fitEventText(slotH)`.
+`DAY_NUM_H` remains the SCREEN grid's reserved row only.
 
 **A SQUARE OUTSIDE THE MONTH KEEPS ITS PLACE AND PAINTS NOTHING.** Dropping the element would slide
 the 1st onto the wrong weekday, so the cell is still emitted - with no background at all, which is
@@ -520,6 +537,21 @@ as a static TTF for jsPDF (`@expo-google-fonts/*`, in `$lib/pdf/appFonts.ts`). `
 names every face it draws with in its `fonts:` wait list; a face missing there is rasterised in
 whatever the browser had ready.
 
+### THE OUTLINE HAS ROOM AND THE SLOTS SUM TO THE CELL (2026-10-07)
+
+Two defects reproduced by rendering October with two half-day events on the 13th (before/after in
+`F:/Programmation/canari-export-preview/export-bugs-*.png`, outside the repo).
+
+- **The outline was cut left and right.** A title is `overflow:hidden` for its line clamp, which clips
+  at the padding box, while `paint-order:stroke fill` paints the stroke's outer half beyond the glyph.
+  `outlineRoomCss(fontSize)` pads the title by `ceil(strokeWidth / 2)` and cancels it with the same
+  negative margin, so the wrapping width is unchanged. The room is derived from `outlineWidth`, the
+  same number `textOutlineCss` strokes with.
+- **A grey sliver under the cell.** `floor(CELL_H / nSlots)` per slot left up to `nSlots - 1` px of the
+  cell unpainted. `slotHeights(cellH, n)` returns integers that sum exactly to the cell (the remainder
+  goes to the last slots) and every row, blank halves and the "+N" row included, takes the next one.
+- **Resolution.** `rasterScale` went from 2 to 3 (3240 px wide instead of 2160 for the A4 page).
+
 ### THE PDF AND ITS PREVIEW DIVERGED THREE WAYS (2026-09-27)
 
 Reported on prod for October 2026 and reproduced offline by rendering the preview and the exported
@@ -551,6 +583,8 @@ weekday label colours are one text colour, `emptyDayColor` is whatever contrasts
 the shadow offset follows the font size. `weekdayFullNames` is gone the same way, always true
 (*"supprime ce parametre [...] les conventions du Canva sont generalement les bonnes"*). `pageBg` is
 derived: it only shows through where no image is set, so it is the cell colour lightened.
+
+**THE PHOTOGRAPH'S CONTROLS EXIST ONLY WITH A PHOTOGRAPH (2026-10-05).** Image strength, scrim, vignette (radial gradient to the scrim colour, 0-100 %) and blur (0-40 px) are all hidden until an image is loaded. Blur is a CSS `filter` on the image layer alone, grown `2 x radius` past the sheet so the faded edge is clipped; vignette is a gradient, not a filter. Both default to 0, so an existing sheet is unchanged. The options are page state (not stored), so `resetOptions` restores them with the rest. Helpers: `vignetteLayerHtml`, `blurLayerCss` in `calendarExport.ts`.
 
 ### THE PALETTE IS READ OFF THE PHOTOGRAPH
 
@@ -616,6 +650,20 @@ fact. When omitted, `AssociationsService.defaultCalendarFeedRange()` supplies a 
 3-months-back/12-months-forward window - the same window the frontend computes for the link it
 builds (`icsSubscriptionRangeISO()` in `frontend/src/lib/associations/api.ts`, shared by
 `AssociationCalendarSection.svelte` and `routes/calendar/+page.svelte`).
+
+## The subscription link is SIGNED, and the selector offers only the reader's own spaces (2026-10-06)
+
+`feed.ics` refuses a campus / formation / association selection without the `sig` the server made for
+it, and signs only the reader's own spaces (design and codes:
+[profiles-and-access, D40 amended](../../profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
+In the frontend: `signAgendaFeed` (`associations/api.ts`) calls `POST /api/associations/calendar/feed-signature`;
+`createFeedSigner` (`calendar/signedFeedUrl.svelte.ts`) asks while the subscribe modal is open and holds
+`sig` apart from the selection it was made for, so a URL is never built from the PREVIOUS choice;
+`/calendar` and the association's calendar section pass `sig` to `aggregatedCalendarFeedIcsAbsoluteUrl`.
+`CalendarSubscribeModal` takes `signing` and states that links saved before 2026-10-06 stopped working.
+`AgendaSelectionFields` takes the `reader` and offers `campusSelectOptions(reader)` /
+`formationSelectOptions(reader)` - "any" plus the reader's own values - on both the modal and the PDF export.
+The one-event link (`eventIcsAbsoluteUrl`) stays unsigned.
 
 ## A post links an event; the event does not link a post
 
@@ -700,3 +748,10 @@ right column and the right date, and that it is absent for an admin and for an a
 **Nothing has run this against a database**, so the `::timestamptz` cast is asserted as text and not
 as a plan. The population it will meet is also unmeasured - how many events on prod start before the
 cutoff of a current promo is one `GROUP BY` nobody has run.
+
+## THE PUBLIC FEED PER SELECTION (D40, 2026-10-05)
+
+`calendar/feed` and `feed.ics` accept `?campus=` / `?formation=`; see
+[profiles-and-access](../../profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05).
+A bare anonymous feed is refused (400); the subscribe modal and the PDF export page therefore carry a
+campus/formation selector (`AgendaSelectionFields`), defaulted from the reader's own spaces.

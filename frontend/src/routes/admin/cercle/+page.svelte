@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -58,7 +59,7 @@
   onMount(() => {
     if (!isGlobalAdmin()) {
       console.error('[ADMIN][CERCLE] non-global-admin blocked client-side, redirecting');
-      void goto('/admin', { replaceState: true });
+      void goto(resolve('/admin'), { replaceState: true });
       return;
     }
     ready = true;

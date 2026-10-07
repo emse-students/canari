@@ -18,7 +18,7 @@
 export type ComposerSurface = 'idle' | 'menu' | 'gif' | 'handoff';
 
 /** Why a surface was dismissed without a pick - logged, and identical in effect. */
-export type DismissReason = 'outside' | 'escape' | 'back';
+export type DismissReason = 'outside' | 'escape' | 'back' | 'close';
 
 /** What a menu entry leads to: a system picker or a modal (the surface ends), or the GIF panel. */
 export type PickTarget = 'away' | 'gif';

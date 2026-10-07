@@ -48,7 +48,7 @@ fn pair(gid: &str) -> (MlsManager, MlsManager) {
 
 /// alice removes bob and returns the commit, merged on alice's side.
 fn evict_bob(alice: &mut MlsManager, gid: &str) -> Vec<u8> {
-    let commit = alice
+    let (commit, _base) = alice
         .remove_members_for_devices(gid, &["bob:dev1"])
         .expect("remove bob");
     alice.merge_pending_commit_for(gid).expect("merge remove");

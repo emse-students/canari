@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -9,10 +10,11 @@
     listMembers,
     mayActOnAssociation,
     AssociationPermissionFlag,
+    getMyBdeReach,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
-  import { currentUserId, isAssociationSuperAdmin, isGlobalAdmin } from '$lib/stores/user';
+  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import { Building2, Users, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -35,10 +37,15 @@
    * page used to spell the expression out by hand and omit the middle one, so a BDE `MANAGE_ASSO`
    * super-admin - whom the server grants `MANAGE_MEMBERS` on every association - was refused the
    * controls here. That omission is the exact drift `mayActOnAssociation` exists to end.
+   *
+   * The super-admin tier is THIS list's (WP6c step 2): `MANAGE_ASSO` in the BDE of a space it
+   * reaches, read from the server's `me/bde-reach` - a BDE of another space holds nothing here.
    */
+  let superAdminOf = $state<string[]>([]);
+  let isSuperAdminUser = $derived(!!list && superAdminOf.includes(list.id));
   let permissionContext = $derived({
     isGlobalAdmin: isGlobalAdminUser,
-    isSuperAdmin: isAssociationSuperAdmin(),
+    isSuperAdmin: isSuperAdminUser,
     memberPermissions: myMembership?.permissions,
   });
   let canManageMembers = $derived(
@@ -50,8 +57,8 @@
    * second - see the same pair on the association edit page.
    */
   let canArchiveList = $derived(canManageMembers);
-  /** Deleting is `DELETE :id`: a global admin, or a BDE `MANAGE_ASSO` holder - see the association page. */
-  let canDeleteList = $derived(isGlobalAdminUser || isAssociationSuperAdmin());
+  /** Deleting is `DELETE :id`: a global admin, or MANAGE_ASSO in the BDE governing this list. */
+  let canDeleteList = $derived(isGlobalAdminUser || isSuperAdminUser);
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -60,11 +67,14 @@
   async function loadData() {
     loading = true;
     error = '';
+    void getMyBdeReach().then((reach) => (superAdminOf = reach.manageAsso));
     try {
       const a = await getAssociationBySlug(slug);
       // A regular association is managed from the association edit page.
       if (a.type !== 'list') {
-        await goto(`/associations/${encodeURIComponent(slug)}/edit`, { replaceState: true });
+        await goto(resolve(`/associations/${encodeURIComponent(slug)}/edit`), {
+          replaceState: true,
+        });
         return;
       }
       list = a;
@@ -82,7 +92,7 @@
       const mine = members.find((m) => m.userId === currentUserId());
       const canEdit = isGlobalAdmin() || (!!mine && mine.isAdmin);
       if (!canEdit) {
-        await goto(`/lists/${encodeURIComponent(slug)}`);
+        await goto(resolve(`/lists/${encodeURIComponent(slug)}`));
         return;
       }
     } catch {

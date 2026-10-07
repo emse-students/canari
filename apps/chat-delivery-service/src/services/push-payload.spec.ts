@@ -256,6 +256,19 @@ describe('buildApnsRequest', () => {
 });
 
 describe('buildInternalApnsRequest', () => {
+  it('keeps deepLink a top-level key of the payload, where the iOS tap handler reads it', () => {
+    // The tap handler opens `userInfo["deepLink"]` and derives nothing from postId or formId, so a
+    // link the server wrote must survive into the APNs payload next to `aps`, never nested.
+    const deepLink = 'fr.emse.canari://post/post-7';
+    const req = buildInternalApnsRequest('Asso', 'A new post', {
+      type: 'association_post',
+      postId: 'post-7',
+      deepLink,
+    });
+    expect(req.payload.deepLink).toBe(deepLink);
+    expect((req.payload.aps as Record<string, unknown>).deepLink).toBeUndefined();
+  });
+
   it('builds a mutable-content alert for an encrypted channel message', () => {
     const data = {
       type: 'channel',

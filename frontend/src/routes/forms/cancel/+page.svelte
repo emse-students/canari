@@ -4,11 +4,25 @@
   import { CircleX } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { apiFetch } from '$lib/utils/apiFetch';
+  import { cancelPendingSubmission, getSubmissionPayment } from '$lib/forms/api';
 
   const sessionId = $derived(page.url.searchParams.get('session_id'));
+  /** Lydia's return carries the submission id (it cannot fill in a Stripe session id). */
+  const submissionId = $derived(page.url.searchParams.get('submission_id'));
   let formId = $state<string | null>(null);
 
   onMount(async () => {
+    if (submissionId) {
+      try {
+        const submission = await getSubmissionPayment(submissionId);
+        formId = submission.formId;
+        await cancelPendingSubmission(submissionId);
+      } catch (err) {
+        // Non-fatal - the submission stays pending and is reused on the next attempt
+        console.error('[forms/cancel] could not cancel the pending submission:', err);
+      }
+      return;
+    }
     if (!sessionId) return;
     try {
       const coreUrl = (import.meta as any).env?.VITE_CORE_URL?.trim() || '';

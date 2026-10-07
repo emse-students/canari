@@ -109,9 +109,10 @@ let _feedAudience = $state<boolean | null>(initialFeedAudience ?? null);
  * WHY THE VERDICT IS REMEMBERED AND NOT RE-ASKED. It used to be a `GET /api/users/me` awaited
  * before the feed route's `load` even created its posts promise, so opening the Fil tab cost a
  * round trip before anything rendered - measured at 2045 ms to first paint against 262 ms on a
- * healthy link, on an account whose feed then turned out to be EMPTY. The answer changes when a
- * registrar changes someone's formation, which is not a per-tab-switch event, so the last answer
- * is the right thing to render from while a fresh one is fetched behind it.
+ * healthy link, on an account whose feed then turned out to be EMPTY. The answer (`GET
+ * /api/posts/audience` since WP6b) changes when someone's campus, cursus or memberships change,
+ * which is not a per-tab-switch event, so the last answer is the right thing to render from while
+ * a fresh one is fetched behind it.
  *
  * It is persisted rather than kept in memory because a cold start is exactly when the network is
  * least likely to be there, and it is cleared on logout and on a switch of account so a verdict

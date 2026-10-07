@@ -42,11 +42,21 @@ const inflightRaw = new Map<string, SharedLoad>();
  * The controller fires when the count reaches zero, which is exactly "nobody wants this any more";
  * an entry abandoned that way leaves the map at once, so a caller arriving a moment later starts a
  * fresh load instead of joining one that is already doomed.
+ *
+ * A LOAD ALREADY ON THE WIRE CANNOT BE ABANDONED, SO IT STAYS JOINABLE (user, 2026-10-05: a sent
+ * picture drawn as its blurred placeholder and its file name - an `<img>` on a dead URL - until a
+ * reload). The gate cancels a QUEUED request only; once the fetch has started it runs to completion
+ * whatever the signal says. Dropping such a load from the map left it running unseen, and the
+ * re-rendered row started a second download of the same object: the first was pooled, and the
+ * second one's URL was revoked by the pool and handed to the row anyway. So `started` is set the
+ * moment the request leaves the queue, and from then on the entry stays until it settles.
  */
 interface SharedLoad {
   promise: Promise<string>;
   controller: AbortController;
   holders: number;
+  /** The request has left the gate's queue: an abort can no longer stop it. */
+  started: boolean;
 }
 
 /** Registers one more holder of `entry`; when the last one's signal aborts, the load is abandoned. */
@@ -62,6 +72,11 @@ function holdSharedLoad(
   const leave = () => {
     entry.holders -= 1;
     if (entry.holders > 0) return;
+    if (entry.started) {
+      // Nothing to abandon: the bytes are coming, and the next row to ask joins them.
+      console.debug(`[mediaBlobCache] ${key}: last holder left a load on the wire - kept joinable`);
+      return;
+    }
     if (map.get(key) === entry) map.delete(key);
     entry.controller.abort(signal.reason);
   };
@@ -73,6 +88,51 @@ function holdSharedLoad(
   // Once the load has settled there is nothing left to abandon.
   const settled = () => signal.removeEventListener('abort', leave);
   entry.promise.then(settled, settled);
+}
+
+/**
+ * The one shape of a pooled, shared load - decrypted media and raw media alike.
+ *
+ * A warm pool entry answers at once; a load in flight is joined; otherwise `load` runs, given its
+ * abort signal and a callback reporting that its request has left the queue. ITS RESULT IS POOLED
+ * AND THE POOL'S ANSWER IS RETURNED: when the key is already held, `retain` keeps the URL on screen
+ * and REVOKES the new one, so returning the new one would hand the caller a dead URL.
+ */
+async function sharedPooledLoad(
+  pool: BlobUrlPool,
+  map: Map<string, SharedLoad>,
+  key: string,
+  signal: AbortSignal | undefined,
+  load: (signal: AbortSignal, onStart: () => void) => Promise<string>
+): Promise<string> {
+  const cached = pool.tryRetain(key);
+  if (cached) return cached;
+
+  const pending = map.get(key);
+  if (pending) {
+    holdSharedLoad(map, key, pending, signal);
+    const url = await pending.promise;
+    return pool.tryRetain(key) ?? url;
+  }
+
+  const controller = new AbortController();
+  const entry: SharedLoad = {
+    promise: Promise.resolve(''),
+    controller,
+    holders: 0,
+    started: false,
+  };
+  entry.promise = (async () => {
+    const blobUrl = await load(controller.signal, () => (entry.started = true));
+    return pool.retain(key, blobUrl);
+  })();
+  map.set(key, entry);
+  holdSharedLoad(map, key, entry, signal);
+  try {
+    return await entry.promise;
+  } finally {
+    if (map.get(key) === entry) map.delete(key);
+  }
 }
 
 function decryptedKey(ref: MediaRef): string {
@@ -93,14 +153,19 @@ function cipherCacheKey(baseUrl: string, mediaId: string): string {
  *
  * Only the `fetch` itself is wrapped as unreachable: a request abandoned while still queued
  * rejects from the gate with its own `AbortError`, which the caller ignores and must keep seeing.
+ *
+ * @param onStart Called when the request leaves the gate's queue - the moment an abort stops counting.
  */
 async function fetchMediaObject(
   mediaId: string,
   baseUrl: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onStart?: () => void
 ): Promise<Response> {
   const url = `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`;
   const res = await mediaRequestGate.run(async () => {
+    // Out of the queue: from here the gate no longer honours an abort (see `SharedLoad`).
+    onStart?.();
     const headers = { Authorization: `Bearer ${await getToken()}` };
     try {
       return await fetch(url, { headers });
@@ -138,7 +203,8 @@ async function evictCiphertext(mediaId: string, baseUrl: string): Promise<void> 
 async function fetchCiphertext(
   mediaId: string,
   baseUrl: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onStart?: () => void
 ): Promise<ArrayBuffer> {
   const cacheKey = cipherCacheKey(baseUrl, mediaId);
 
@@ -164,7 +230,7 @@ async function fetchCiphertext(
   // THE CACHE LOOKUP ABOVE IS FREE AND IS NOT GATED; ONLY THE BYTES ARE. An object already held
   // answers instantly whatever else is in flight, which is what makes the cap invisible to a
   // reader scrolling back through media they have seen.
-  const res = await fetchMediaObject(mediaId, baseUrl, signal);
+  const res = await fetchMediaObject(mediaId, baseUrl, signal, onStart);
   const ciphertext = await res.arrayBuffer();
 
   if (typeof caches !== 'undefined' && ciphertext.byteLength > 0) {
@@ -204,86 +270,42 @@ async function decryptByEncoding(ref: MediaRef, ciphertext: ArrayBuffer): Promis
   return decryptMediaBuffer(ciphertext, ref.key, ref.iv);
 }
 
-async function loadDecryptedBlobUrl(
+function loadDecryptedBlobUrl(
   ref: MediaRef,
   baseUrl: string,
   signal?: AbortSignal
 ): Promise<string> {
-  const key = decryptedKey(ref);
-  const cached = decryptedPool.tryRetain(key);
-  if (cached) return cached;
-
-  const pending = inflightDecrypted.get(key);
-  if (pending) {
-    holdSharedLoad(inflightDecrypted, key, pending, signal);
-    const url = await pending.promise;
-    return decryptedPool.tryRetain(key) ?? url;
-  }
-
-  const controller = new AbortController();
-  const promise = (async () => {
-    const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, controller.signal);
-    let plaintext: ArrayBuffer;
-    try {
-      plaintext = await decryptByEncoding(ref, ciphertext);
-    } catch (err) {
-      // An encoding or header version this client does not know was written by a NEWER client:
-      // the bytes are fine, so they are kept, and the reader's typed error goes up unchanged
-      // (`mediaFailureCause` reads it as 'other', never as damage).
-      if (isWrittenByNewerClient(err)) throw err;
-      // A cached copy that will never decrypt would answer every retry the same way: the retry
-      // the reader is offered must download the object again, not re-read the damaged one. A
-      // segmented blob refused for what it holds (a tag, a length) is the same cause.
-      await evictCiphertext(ref.mediaId, baseUrl);
-      throw new MediaDecryptError(err);
+  return sharedPooledLoad(
+    decryptedPool,
+    inflightDecrypted,
+    decryptedKey(ref),
+    signal,
+    async (loadSignal, onStart) => {
+      const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, loadSignal, onStart);
+      let plaintext: ArrayBuffer;
+      try {
+        plaintext = await decryptByEncoding(ref, ciphertext);
+      } catch (err) {
+        // An encoding or header version this client does not know was written by a NEWER client:
+        // the bytes are fine, so they are kept, and the reader's typed error goes up unchanged
+        // (`mediaFailureCause` reads it as 'other', never as damage).
+        if (isWrittenByNewerClient(err)) throw err;
+        // A cached copy that will never decrypt would answer every retry the same way: the retry
+        // the reader is offered must download the object again, not re-read the damaged one. A
+        // segmented blob refused for what it holds (a tag, a length) is the same cause.
+        await evictCiphertext(ref.mediaId, baseUrl);
+        throw new MediaDecryptError(err);
+      }
+      return URL.createObjectURL(new Blob([plaintext], { type: ref.mimeType }));
     }
-    const blobUrl = URL.createObjectURL(new Blob([plaintext], { type: ref.mimeType }));
-    decryptedPool.retain(key, blobUrl);
-    return blobUrl;
-  })();
-
-  const entry: SharedLoad = { promise, controller, holders: 0 };
-  inflightDecrypted.set(key, entry);
-  holdSharedLoad(inflightDecrypted, key, entry, signal);
-  try {
-    return await promise;
-  } finally {
-    if (inflightDecrypted.get(key) === entry) inflightDecrypted.delete(key);
-  }
+  );
 }
 
-async function loadRawBlobUrl(
-  mediaId: string,
-  baseUrl: string,
-  signal?: AbortSignal
-): Promise<string> {
-  const key = mediaId;
-  const cached = rawPool.tryRetain(key);
-  if (cached) return cached;
-
-  const pending = inflightRaw.get(key);
-  if (pending) {
-    holdSharedLoad(inflightRaw, key, pending, signal);
-    const url = await pending.promise;
-    return rawPool.tryRetain(key) ?? url;
-  }
-
-  const controller = new AbortController();
-  const promise = (async () => {
-    const res = await fetchMediaObject(mediaId, baseUrl, controller.signal);
-    const blobUrl = URL.createObjectURL(await res.blob());
-    rawPool.retain(key, blobUrl);
-    return blobUrl;
-  })();
-
-  const entry: SharedLoad = { promise, controller, holders: 0 };
-  inflightRaw.set(key, entry);
-  holdSharedLoad(inflightRaw, key, entry, signal);
-  try {
-    return await promise;
-  } finally {
-    if (inflightRaw.get(key) === entry) inflightRaw.delete(key);
-  }
+function loadRawBlobUrl(mediaId: string, baseUrl: string, signal?: AbortSignal): Promise<string> {
+  return sharedPooledLoad(rawPool, inflightRaw, mediaId, signal, async (loadSignal, onStart) => {
+    const res = await fetchMediaObject(mediaId, baseUrl, loadSignal, onStart);
+    return URL.createObjectURL(await res.blob());
+  });
 }
 
 /**

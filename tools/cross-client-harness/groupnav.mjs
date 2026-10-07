@@ -17,6 +17,31 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const COMPOSER = '.chat-composer-footer .chat-composer-editor';
 
 /**
+ * THE TWO HOOKS `closeOverlays` AND `overlayOn` STAND ON, spelt once so `archive/selector-selftest.mjs`
+ * can pin them against the component source. Both broke before by renaming something in the app
+ * (#455 a sentence, 2026-09-17 a class) and the rig only said so on a phone, four retries later.
+ *
+ * - `SIDE_PANEL_CLOSE`: the shared `SidePanel` shell's `<aside class="side-panel">` and the
+ *   `common_close_label` button inside it. SCOPED to the panel because the label is also the GIF
+ *   picker's and the modals'.
+ * - `OVERLAY_MARKERS`: the one control each stacked overlay alone carries, as `fr.json` spells it.
+ */
+export const SIDE_PANEL_CLOSE = '.side-panel [aria-label="Fermer"]';
+export const OVERLAY_MARKERS = { addMember: "Envoyer l'invitation", groupPanel: 'Quitter le groupe' };
+
+/**
+ * THE CLOSE CONTROL OF A `Modal` BACKDROP, addressed by the backdrop's own marks and not by a guess.
+ *
+ * `shared/Modal.svelte` draws `<div role="presentation" data-keyboard-aware-overlay class="fixed
+ * z-(--z-modal) ...">` and its title bar carries a `Fermer` icon button. The member picker ("Ajouter
+ * des membres") is one, stacked ON TOP of the group panel. Closing it with a bare `text=Fermer`
+ * resolved among EVERY `Fermer` on screen, the side panel's included, so the modal's control and the
+ * one it covers were not told apart (GRP-3..10, 2026-10-06). Scoped to the backdrop there is exactly
+ * one candidate, and it does not depend on the inner panel carrying `role="dialog"`.
+ */
+export const MODAL_CLOSE = '[role="presentation"][data-keyboard-aware-overlay] [aria-label="Fermer"]';
+
+/**
  * THE COMPOSER IS NOT THE ONLY WAY A CONVERSATION CAN BE OPEN, and assuming it was cost READ-10 its
  * verdict and would have cost every DEL row after it.
  *
@@ -189,8 +214,8 @@ export function overlayOn(cx) {
       var t = document.body.innerText;
       if (document.querySelector('#new-group-name')) return 'new-conversation';
       if (/Nouvelle discussion Contact Groupe/.test(t.replace(/\s+/g, ' '))) return 'new-conversation';
-      if (/Envoyer l'invitation/.test(t)) return 'add-member';
-      if (/Quitter le groupe/.test(t)) return 'group-panel';
+      if (t.indexOf(${JSON.stringify(OVERLAY_MARKERS.addMember)}) !== -1) return 'add-member';
+      if (t.indexOf(${JSON.stringify(OVERLAY_MARKERS.groupPanel)}) !== -1) return 'group-panel';
       return 'none';
     })()`
   );
@@ -198,6 +223,11 @@ export function overlayOn(cx) {
 
 /** Closes whatever overlay is open, by that overlay's own control, and proves the screen is clear. */
 export async function closeOverlays(cx) {
+  // WHY THE LAST CLICK FAILED, kept for the throw. The click may not fail a pass (an overlay can
+  // vanish between the read and the click), but a swallowed branch must leave its reason: without
+  // it "still on group-panel" cannot tell a selector matching nothing from a control a layer
+  // covers, and GRP-3..10 of 2026-10-05 were filed as selector drift on that sentence alone.
+  let lastClickError = null;
   for (let i = 0; i < 4; i++) {
     const state = await overlayOn(cx);
     if (state === 'none') return i === 0 ? 'already clear' : 'closed';
@@ -213,13 +243,18 @@ export async function closeOverlays(cx) {
     // AND IT BROKE A SECOND TIME THE SAME WAY: on 2026-09-17 the shell moved into the shared
     // `SidePanel`, whose class is `side-panel`, and `.conversation-side-panel` matched nothing again
     // until NOTIF-17b died here on 2026-09-27. The selftest guards strings, not class names.
-    await realClick(
-      cx,
-      state === 'group-panel' ? '.side-panel [aria-label="Fermer"]' : 'text=Fermer'
-    ).catch(() => {});
+    const closeSelector =
+      state === 'group-panel' ? SIDE_PANEL_CLOSE : state === 'add-member' ? MODAL_CLOSE : 'text=Fermer';
+    await realClick(cx, closeSelector).catch((e) => {
+      lastClickError = `${state}: ${e.message}`;
+      console.log(`[closeOverlays] pass ${i} click on ${state} failed - ${e.message}`);
+    });
     await sleep(1200);
   }
-  throw new Error(`could not close the overlay, still on ${await overlayOn(cx)}`);
+  throw new Error(
+    `could not close the overlay, still on ${await overlayOn(cx)}` +
+      (lastClickError ? ` (last click failed: ${lastClickError})` : ' (every click was dispatched)')
+  );
 }
 
 /**

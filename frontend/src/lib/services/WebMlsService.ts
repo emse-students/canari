@@ -1081,7 +1081,8 @@ export class WebMlsService extends BaseMlsService {
 
   /**
    * WASM client wrapper - stages an Add commit WITHOUT merging via `this.client.add_members_bulk`.
-   * Returns `[commit, welcome, added_indices, skipped]`. `added_indices` are the positions
+   * Returns `[commit, welcome, added_indices, skipped, group_info]`; `group_info` is the base for
+   * the epoch the commit creates. `added_indices` are the positions
    * in `keyPackages` actually included in the commit - WASM silently skips invalid key packages and
    * ones already belonging to an existing member, so a bare count would misalign whenever a skip
    * isn't the very last entry. `skipped` lists `{ index, reason }` for every INVALID/undeserializable
@@ -1093,6 +1094,7 @@ export class WebMlsService extends BaseMlsService {
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
+    groupInfo: Uint8Array;
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }> {
@@ -1106,28 +1108,34 @@ export class WebMlsService extends BaseMlsService {
       welcome: res[1] as Uint8Array | undefined,
       addedIndices: res[2] as number[],
       skipped: (res[3] as SkippedKeyPackage[] | undefined) ?? [],
+      groupInfo: res[4] as Uint8Array,
     };
   }
 
   /** WASM client wrapper - stages a Remove commit for all devices of the given users (no merge). */
-  protected async stageRemoveMembers(groupId: string, userIds: string[]): Promise<Uint8Array> {
+  protected async stageRemoveMembers(
+    groupId: string,
+    userIds: string[]
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const jsArray = userIds.reduce((arr, id) => {
       arr.push(id);
       return arr;
     }, [] as string[]);
-    return this.client.remove_members(groupId, jsArray) as Uint8Array;
+    const res = this.client.remove_members(groupId, jsArray);
+    return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
   }
 
   /** WASM client wrapper - stages a Remove commit for specific device identities (no merge). */
   protected async stageRemoveMembersByDevice(
     groupId: string,
     deviceIdentities: string[]
-  ): Promise<Uint8Array> {
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const jsArray = deviceIdentities.reduce((arr, id) => {
       arr.push(id);
       return arr;
     }, [] as string[]);
-    return this.client.remove_members_by_device(groupId, jsArray) as Uint8Array;
+    const res = this.client.remove_members_by_device(groupId, jsArray);
+    return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
   }
 
   /** WASM client wrapper - merges the pending staged commit (server accepted). */

@@ -19,6 +19,7 @@ import { PaymentService } from './payment.service';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { assertInternalSecret } from '../internal/internal-secret.util';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { ChargeResult } from './payment.service';
 import Stripe from 'stripe';
@@ -26,6 +27,7 @@ import axios from 'axios';
 import { resolveStripeCallbackUrl } from './stripe-callback-url';
 import {
   internalSocialRequestConfig,
+  internalPaymentAccountUrl,
   internalProductChargeContextUrl,
   internalSubmissionUrl,
   productPurchaseCompletedUrl,
@@ -33,6 +35,14 @@ import {
 import { socialUrl } from '../internal/service-urls';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Deliberately loose: the provider is the authority on deliverability, this only refuses junk. */
+/**
+ * Shape of a payer e-mail. Domain labels exclude the dot so every dot has ONE reading (the old
+ * `[^\s@]+\.[^\s@]+` could split a run of dots many ways: polynomial backtracking, CodeQL
+ * js/polynomial-redos). Matched only after the `PAYER_EMAIL_MAX_LENGTH` cap, RFC 5321's limit.
+ */
+const PAYER_EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+const PAYER_EMAIL_MAX_LENGTH = 254;
 /** A Stripe Checkout session id (`cs_...`) or a Lydia `request_uuid` - retrieveSession() routes to whichever provider issued it. */
 export const SESSION_ID_RE =
   /^(cs_[a-zA-Z0-9_]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -249,7 +259,8 @@ export class PaymentController {
       const assoRes = await axios.get<{
         stripeAccountId?: string | null;
         stripeOnboardingComplete?: boolean;
-      }>(socialUrl(`associations/${encodeURIComponent(associationId)}`), {
+      }>(internalPaymentAccountUrl(associationId), {
+        ...internalSocialRequestConfig(),
         validateStatus: () => true,
       });
       if (assoRes.status >= 400) {
@@ -398,8 +409,8 @@ export class PaymentController {
     this.logger.log(`Lydia onboarding validated by hand for association ${associationId}`);
 
     const assoRes = await axios.get<{ lydiaAccountId?: string | null }>(
-      socialUrl(`associations/${encodeURIComponent(associationId)}`),
-      { validateStatus: () => true }
+      internalPaymentAccountUrl(associationId),
+      { ...internalSocialRequestConfig(), validateStatus: () => true }
     );
     if (assoRes.status >= 400) {
       throw new BadRequestException('Association not found');
@@ -446,8 +457,8 @@ export class PaymentController {
     }
 
     const assoRes = await axios.get<{ stripeAccountId?: string | null }>(
-      socialUrl(`associations/${encodeURIComponent(associationId)}`),
-      { validateStatus: () => true }
+      internalPaymentAccountUrl(associationId),
+      { ...internalSocialRequestConfig(), validateStatus: () => true }
     );
     if (assoRes.status >= 400) {
       throw new BadRequestException('Association not found');
@@ -462,8 +473,13 @@ export class PaymentController {
     return { url };
   }
 
-  /** Creates a Stripe Checkout session for the given line items and returns the session URL. */
-  @UseGuards(NginxAuthGuard)
+  /**
+   * Creates a checkout session for the given line items and returns its URL.
+   *
+   * SERVER-TO-SERVER ONLY: social-service calls it (paid form, product) straight at this service, past
+   * nginx, so there is no `X-User-Id` for `NginxAuthGuard` to read - it answered 401 `Missing X-User-Id
+   * header` to every call, on dev 2026-10-07. The shared internal secret is what that caller carries.
+   */
   @Post('create-checkout-session')
   @HttpCode(200)
   async createCheckout(
@@ -478,8 +494,12 @@ export class PaymentController {
       saveForFuture?: boolean;
       /** order_ref for Lydia's request/do callback (webhook.controller.ts) - ignored by Stripe's provider unless set. */
       idempotencyKey?: string;
-    }
+      /** The payer's address, which Lydia's request/do needs as its recipient. Never stored. */
+      payerEmail?: string;
+    },
+    @Headers('x-internal-secret') secret?: string
   ) {
+    assertInternalSecret(secret);
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
       throw new BadRequestException('Invalid payload');
     }
@@ -488,8 +508,17 @@ export class PaymentController {
       return { ok: false, message: 'Stripe not configured' };
     }
 
+    const payerEmail = body.payerEmail?.trim();
+    if (
+      payerEmail &&
+      (payerEmail.length > PAYER_EMAIL_MAX_LENGTH || !PAYER_EMAIL_RE.test(payerEmail))
+    ) {
+      throw new BadRequestException('Invalid payerEmail');
+    }
+
     try {
       const session = await this.paymentService.createCheckoutSession({
+        payerRecipient: payerEmail ? { value: payerEmail, type: 'email' } : undefined,
         lineItems: body.lineItems,
         successUrl: body.successUrl,
         cancelUrl: body.cancelUrl,
@@ -679,14 +708,15 @@ export class PaymentController {
   /**
    * Returns the Stripe customer ID for a user, creating one if necessary.
    * Called by social-service when creating a checkout session for a paid form.
-   * Protected by NginxAuthGuard so it rejects direct requests bypassing nginx.
+   * Guarded by the internal secret: the caller is social-service, with no nginx in between.
    */
-  @UseGuards(NginxAuthGuard)
   @Post('internal/customer-id')
   @HttpCode(200)
   async getOrCreateCustomerForUser(
-    @Body() body: { userId: string }
+    @Body() body: { userId: string },
+    @Headers('x-internal-secret') secret?: string
   ): Promise<{ customerId: string | null }> {
+    assertInternalSecret(secret);
     if (!(await this.paymentService.isConfigured())) {
       return { customerId: null };
     }

@@ -48,7 +48,7 @@ impl MlsManager {
                 other => MlsError::OpenMls(format!("Encrypt error: {:?}", other)),
             })?;
 
-        self.mark_state_dirty();
+        self.mark_ratchet_advanced();
         msg_out
             .tls_serialize_detached()
             .map_err(|e| MlsError::Serialization(e.to_string()))
@@ -95,14 +95,14 @@ impl MlsManager {
             // part-way is reported WITH what was already burnt, because those generations are spent
             // whatever the caller decides next - reporting `count` or `0` would both be lies.
             if let Err(e) = group.create_message(&self.provider, &self.keypair, &[]) {
-                self.mark_state_dirty();
+                self.mark_ratchet_advanced();
                 return Err(MlsError::OpenMls(format!(
                     "Burn error after {burnt}/{count} generation(s): {e:?}"
                 )));
             }
         }
 
-        self.mark_state_dirty();
+        self.mark_ratchet_advanced();
         log::info!(
             "Burnt {} send generation(s) for group {} - the ratchet is back where the peers left it",
             count,
@@ -377,7 +377,7 @@ impl MlsManager {
 
         match processed_message.into_content() {
             ProcessedMessageContent::ApplicationMessage(app_msg) => {
-                state_snapshot.borrow_mut().invalidate();
+                state_snapshot.borrow_mut().invalidate_ratchet();
                 Ok(Some(IncomingApplication {
                     plaintext: app_msg.into_bytes(),
                     sender_identity,

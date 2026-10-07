@@ -13,7 +13,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     mlsService: { forgetGroup: vi.fn(), persistCheckpoint: vi.fn().mockResolvedValue(undefined) },
     storage: null,
     userId: 'me',
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     conversations,
     messageReactions: new Map(),
     addMessageToChat: vi.fn().mockResolvedValue(undefined),

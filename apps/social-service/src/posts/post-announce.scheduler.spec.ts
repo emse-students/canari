@@ -3,6 +3,7 @@
 import { Logger } from '@nestjs/common';
 import { PostAnnounceScheduler } from './post-announce.scheduler';
 import type { Post } from './entities/post.entity';
+import { announceRecipientsSql } from '../spaces/reader-spaces';
 
 /**
  * NOBODY WAS TOLD ABOUT A POST, and these pin the things that decide who now is.
@@ -27,6 +28,10 @@ describe('PostAnnounceScheduler', () => {
 
   /** A scheduler over `rows`, with the three tables it reads answered by `answer`. */
   function scheduler(rows: Row[], answer: (sql: string) => unknown[] = () => []) {
+    const query = (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      return Promise.resolve(answer(sql));
+    };
     const postRepo = {
       find: () => Promise.resolve(rows),
       update: (id: string, patch: Record<string, unknown>) => {
@@ -34,10 +39,15 @@ describe('PostAnnounceScheduler', () => {
         return Promise.resolve({});
       },
       manager: {
-        query: (sql: string, params?: unknown[]) => {
-          queries.push({ sql, params });
-          return Promise.resolve(answer(sql));
-        },
+        query,
+        // The stamp and the recipient read share ONE transaction (the row lock a republication
+        // waits on); its manager writes through `postRepo.update` so a test can wrap that.
+        transaction: (fn: (m: unknown) => Promise<unknown>) =>
+          fn({
+            update: (_entity: unknown, id: string, patch: Record<string, unknown>) =>
+              postRepo.update(id, patch),
+            query,
+          }),
       },
     };
     const notifications = {
@@ -49,7 +59,11 @@ describe('PostAnnounceScheduler', () => {
     return new PostAnnounceScheduler(postRepo as never, notifications as never);
   }
 
-  /** Answers the three tables the sweeper reads, by what the SQL is asking for. */
+  /**
+   * Answers what the sweeper reads, by what the SQL is asking for. `audience` stands for "who can
+   * see this post" and `followers` for "the followers among them" - WHO that is, is decided by the
+   * SQL and proven against PostgreSQL in `reader-spaces.integration.spec.ts`, not here.
+   */
   const tables =
     (opts: {
       audience?: string[];
@@ -59,10 +73,9 @@ describe('PostAnnounceScheduler', () => {
       associationLogoMediaId?: string | null;
     }) =>
     (sql: string) => {
-      if (sql.includes('FROM users')) return (opts.audience ?? []).map((id) => ({ id }));
-      if (sql.includes('user_follows'))
-        return (opts.followers ?? []).map((followerUserId) => ({ followerUserId }));
-      if (sql.includes('associations'))
+      if (sql === announceRecipientsSql(true)) return (opts.followers ?? []).map((id) => ({ id }));
+      if (sql === announceRecipientsSql(false)) return (opts.audience ?? []).map((id) => ({ id }));
+      if (sql.includes('FROM associations'))
         return opts.associationName === null
           ? []
           : [
@@ -120,7 +133,7 @@ describe('PostAnnounceScheduler', () => {
     expect(updates[0].patch.feedNotifiedAt).toBeInstanceOf(Date);
   });
 
-  it('tells the whole feed audience about an association post, under the association name', async () => {
+  it('tells everyone who can see an association post, under the association name', async () => {
     const post: Row = { id: 'p1', authorId: 'a1', associationId: 'asso1', markdown: 'Soiree' };
     await scheduler(
       [post],
@@ -155,6 +168,9 @@ describe('PostAnnounceScheduler', () => {
       pushData: { postId: 'p1' },
     });
     expect(batches[0].recipientIds).toEqual(['u1', 'u2', 'a1']);
+    // ASKED ABOUT THIS POST, not about the feed: the recipients are the post's own readers (WP6b).
+    const asked = queries.find((q) => q.sql === announceRecipientsSql(false));
+    expect(asked?.params).toEqual(['p1']);
   });
 
   it('passes a null logo through rather than a placeholder, for an association with none yet', async () => {
@@ -175,7 +191,10 @@ describe('PostAnnounceScheduler', () => {
     expect(batches[0]).toMatchObject({ type: 'followed_post', actorId: 'a2', text: 'coucou' });
     expect(batches[0].recipientIds).toEqual(['f1']);
     // The audience query must not even run: a personal post is not an announcement to the school.
-    expect(queries.some((q) => q.sql.includes('FROM users'))).toBe(false);
+    // Its followers are asked through the SAME visibility predicate, so a follower outside the
+    // author's spaces is not told about a post they would get a 404 for.
+    expect(queries.some((q) => q.sql === announceRecipientsSql(false))).toBe(false);
+    expect(queries.find((q) => q.sql === announceRecipientsSql(true))?.params).toEqual(['p2']);
   });
 
   it('never announces an anonymous personal post - not masked, skipped entirely', async () => {
@@ -207,8 +226,7 @@ describe('PostAnnounceScheduler', () => {
       { id: 'p2', authorId: 'a2', markdown: 'y' },
     ];
     await scheduler(rows, (sql) => {
-      if (sql.includes('associations')) return [];
-      if (sql.includes('user_follows')) return [{ followerUserId: 'f1' }];
+      if (sql === announceRecipientsSql(true)) return [{ id: 'f1' }];
       return [];
     }).announcePosts();
 

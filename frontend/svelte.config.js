@@ -15,8 +15,45 @@
 import adapterNode from '@sveltejs/adapter-node';
 import adapterStatic from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+import { execFileSync } from 'node:child_process';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const buildsForWeb = !!process.env.BUILD_WEB;
+
+/** Process-wide memo slot: `Symbol.for` survives every re-import of this file, a user-visible env var would not die with the build. */
+const STAMP_KEY = Symbol.for('canari.buildVersionName');
+
+/**
+ * THE BUILD NAMES ITS OWN COMMIT. `kit.version.name` is written verbatim into `/_app/version.json`;
+ * it used to be `Date.now()` alone, so the cross-client rig INFERRED the commit as "the newest one at
+ * or before that instant" - an inference that moves when a commit lands carrying an earlier date
+ * (a pull, a rebase). `<builtAtMs>-<sha>` keeps the timestamp, which is what tells two builds of the
+ * SAME commit apart for the `updated` poll, and adds the identity. Read by
+ * `tools/cross-client-harness/results.mjs` (`parseBuildStamp`).
+ *
+ * IT THROWS WITHOUT GIT, deliberately: every build of this app runs from a checkout (CI's jobs, the
+ * Tauri builds, a workstation - the Docker image COPIES a build, it never makes one), so a missing
+ * repository is a build nobody could attribute, and naming it by a guess would be the fallback this
+ * repository forbids.
+ */
+function buildVersionName() {
+  const memo = globalThis[STAMP_KEY];
+  if (memo) return memo;
+  let commit;
+  try {
+    commit = execFileSync('git', ['rev-parse', '--short=9', 'HEAD'], {
+      cwd: dirname(fileURLToPath(import.meta.url)),
+      encoding: 'utf8',
+    }).trim();
+  } catch (e) {
+    throw new Error(
+      `svelte.config.js: cannot read the commit being built (git rev-parse HEAD failed) - a build must run from a checkout: ${e instanceof Error ? e.message : e}`,
+      { cause: e }
+    );
+  }
+  return (globalThis[STAMP_KEY] = `${Date.now()}-${commit}`);
+}
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -45,6 +82,7 @@ const config = {
     // Absolute paths cost the web build nothing: it is served from the origin root by nginx and by
     // adapter-node alike. So the polarity follows the adapter, exactly as it does above.
     paths: { relative: !buildsForWeb },
+    version: { name: buildVersionName() },
     prerender: {
       // `/sitemap.xml` is NOT here: it is built per request now, because a crawler can only learn
       // an association or post URL from it (see routes/sitemap.xml/+server.ts).

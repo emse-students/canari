@@ -34,7 +34,8 @@
   import GifPickerModal from './GifPickerModal.svelte';
   import ComposerGifPanel from './ComposerGifPanel.svelte';
   import { KLIPY_KEY, type GifResult } from '$lib/utils/chat/gifSearch';
-  import { withGifSize } from '$lib/utils/chat/messageDisplay';
+  import { withGifSize, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
+  import ReplyGifThumb from '$lib/components/messages/ReplyGifThumb.svelte';
   import {
     gifPanelHeight,
     nextComposerSurface,
@@ -210,6 +211,8 @@
   let surface = $state<ComposerSurface>('idle');
   /** The panel's search field has the keyboard up: the panel then rides above it. */
   let gifSearchFocused = $state(false);
+  /** The search was opened: the picker is then the WHOLE screen above the keyboard, until it closes. */
+  let gifFullscreen = $state(false);
   /** The panel's height, fixed when it opens: the last keyboard measured here, else the first guess. */
   let panelHeight = $state(0);
   /** The history entry that lets Back close the menu or the panel - one for the whole surface. */
@@ -233,7 +236,10 @@
         keyboard.isOpen ? keyboard.viewportHeight + keyboard.keyboardHeight : window.innerHeight
       );
     }
-    if (!surfaceReservesPanel(next)) gifSearchFocused = false;
+    if (!surfaceReservesPanel(next)) {
+      gifSearchFocused = false;
+      gifFullscreen = false;
+    }
     surface = next;
     const takesBack = surfaceTakesBack(next);
     if (takesBack && !historyClose) {
@@ -573,6 +579,13 @@
     }
   });
 
+  /** Set when the message being answered is a GIF: the strip shows the picture, not its address. */
+  const replyGifUrl = $derived.by(() => {
+    if (!replyingTo?.content) return null;
+    const env = parseEnvelope(replyingTo.content);
+    return env.kind === 'text' ? gifPreviewUrl(env.text) : null;
+  });
+
   let replySenderDisplayName = $state('');
 
   $effect(() => {
@@ -779,9 +792,23 @@
   });
 
   $effect(() => {
-    if (replyingTo || isEditing) {
+    if (replyingTo && !isEditing) {
       mentionComposer?.focusEditor();
     }
+  });
+
+  // ENTERING AN EDIT puts the caret at the END of the loaded text. The parent loads the message into
+  // `messageText` and the input re-renders its DOM from it in its own effect, so focusing at once
+  // lands on the empty field (caret far left); `tick()` waits for that render. Keyed on the boolean
+  // `isEditing`, a $derived, so it runs once per edit and not once per text change.
+  $effect(() => {
+    if (!isEditing) return;
+    void tick().then(() => {
+      const end = untrack(() => messageText.length);
+      Log.d('ChatComposer', `edit entered, caret to ${end}`);
+      mentionComposer?.focusEditor();
+      mentionComposer?.setSelectionRange(end);
+    });
   });
 
   /** Publishes composer stack height for message list padding (--chat-composer-height). */
@@ -903,9 +930,13 @@
               })}</span
             >
           </div>
-          <div class="text-text-muted truncate text-xs leading-snug font-medium">
-            <EmojiText text={replyPreviewText} />
-          </div>
+          {#if replyGifUrl}
+            <ReplyGifThumb url={replyGifUrl} class="text-text-muted text-xs" />
+          {:else}
+            <div class="text-text-muted truncate text-xs leading-snug font-medium">
+              <EmojiText text={replyPreviewText} />
+            </div>
+          {/if}
         </div>
         {#if onCancelReply}
           <button
@@ -1345,9 +1376,14 @@
     <ComposerGifPanel
       active={surface === 'gif'}
       spacerPx={panelSpacer}
-      contentPx={gifSearchFocused ? panelSpacer : panelHeight}
+      contentPx={panelHeight}
+      fullscreen={gifFullscreen && surface === 'gif'}
+      onClose={() => dispatchSurface({ type: 'dismiss', reason: 'close' })}
       onPick={sendGif}
-      onSearchFocusChange={(focused) => (gifSearchFocused = focused)}
+      onSearchFocusChange={(focused) => {
+        gifSearchFocused = focused;
+        if (focused) gifFullscreen = true;
+      }}
       onKeyboard={() => mentionComposer?.focusEditor()}
     />
   {/if}

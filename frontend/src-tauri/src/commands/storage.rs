@@ -14,12 +14,31 @@ pub(crate) fn save_mls_state(app: tauri::AppHandle, data: Vec<u8>) -> Result<(),
     write_mls_state_blob(&app, &data)
 }
 
+/// What a resume reload did, and WHY when it did nothing - a TYPE, because the caller must act
+/// differently on each refusal and a `bool` made two of them look identical.
+///
+/// `LiveAhead` is the one with an obligation: the live manager holds a ratchet advance the file
+/// does not, so the caller persists the live state (otherwise the NEXT resume refuses again and a
+/// background engine starts from a file that is already behind). The other three owe nothing.
+#[derive(serde::Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ReloadOutcome {
+    /// `mls.bin` was installed over the live manager.
+    Reloaded,
+    /// No `mls.bin` yet - nothing to reload.
+    NothingOnDisk,
+    /// The snapshot would move a live group to a LOWER epoch; the live state is kept.
+    EpochRegression,
+    /// The live manager sent, burnt or decrypted a frame no checkpoint holds; the live state is
+    /// kept and must be persisted.
+    LiveAhead,
+}
+
 /// C2: reloads `mls.bin` from disk into the in-memory foreground manager, under the global lock,
 /// and marks the foreground active. Called on foreground return BEFORE any operation: while in the
 /// background a JNI engine (Welcome/send/worker) may have advanced `mls.bin`; without this reload
 /// the hot manager is stale and its next persist would OVERWRITE the background advance
-/// (lost-update -> SecretReuse + epoch regression). Returns `true` if a reload happened, `false` if
-/// `mls.bin` is absent (nothing to do). Callers are mobile-only (no background engine on desktop).
+/// (lost-update -> SecretReuse + epoch regression). Returns a [`ReloadOutcome`]: installed, or the reason it was not. Callers are mobile-only (no background engine on desktop).
 #[tauri::command]
 pub(crate) async fn recharger_mls_au_resume(
     user_id: String,
@@ -27,7 +46,7 @@ pub(crate) async fn recharger_mls_au_resume(
     device_key_b64: String,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<bool, String> {
+) -> Result<ReloadOutcome, String> {
     // Mark active BEFORE reading: any in-flight background write completes (lock) and subsequent
     // ones give up -> the read below picks up the latest background advance.
     mark_foreground_active();
@@ -99,7 +118,32 @@ fn reload_into(
     user_id: &str,
     device_id: &str,
     device_key_b64: &str,
-) -> Result<bool, String> {
+) -> Result<ReloadOutcome, String> {
+    // THE LIVE MANAGER IS ASKED FIRST WHETHER IT IS AHEAD OF THE FILE, before the file is even read.
+    //
+    // A frame this process sent, burnt or decrypted since the last serialisation moved a ratchet
+    // GENERATION inside an epoch, and the newest `mls.bin` does not hold it. `reload_is_monotonic`
+    // below grades epochs and accepts that snapshot, which installs a secret tree behind the live
+    // one: measured on the Mi 9T 2026-09-08 09:53:16, generations 45 and 46 - already read - were
+    // derived AGAIN 112 ms after the reload and the engine accepted them. A frame read twice is a
+    // frame dropped once (the second read overwrites the first), and the next send re-issues a
+    // generation the peers consumed.
+    //
+    // THE ANSWER IS READ HERE, UNDER THE MANAGER LOCK THE CALLER HOLDS, because that is the only
+    // place a message arriving between "check" and "swap" cannot exist. The check this replaces
+    // lived in the WebView and counted SENDS only: a receive moved nothing it could see, and a
+    // frame decrypted after it ran was still overwritten. The reload is REFUSED rather than merged
+    // (the background advance it exists to rescue is lost to a persist of the live state, as it
+    // already was for a send): the caller persists the live state, which closes the gap for good.
+    if live
+        .as_ref()
+        .is_some_and(MlsManager::has_unsaved_ratchet_advance)
+    {
+        log::warn!(
+            "[RESUME] reload REFUSED - the live manager holds a ratchet advance (a send or a decrypted frame) that no checkpoint has captured; installing mls.bin would put the secret tree BACK. The caller must persist the live state."
+        );
+        return Ok(ReloadOutcome::LiveAhead);
+    }
     // Read the file UNDER the write lock too (never read while a JNI engine writes). Released
     // before the decrypt; the manager lock above is what now spans the whole operation.
     let bytes = {
@@ -114,7 +158,7 @@ fn reload_into(
     };
     let Some(bytes) = bytes else {
         log::debug!("[RESUME] mls.bin absent - nothing to reload (C2)");
-        return Ok(false);
+        return Ok(ReloadOutcome::NothingOnDisk);
     };
     let key = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64)
         .map_err(|e| format!("invalid device_key_b64: {e}"))?;
@@ -128,7 +172,7 @@ fn reload_into(
             log::warn!(
                 "[RESUME] reload refused - mls.bin would regress a live group epoch, keeping live state (C2)"
             );
-            return Ok(false);
+            return Ok(ReloadOutcome::EpochRegression);
         }
         // THE GUARD ABOVE GRADES ON GROUP EPOCHS, AND KEY MATERIAL IS NOT A GROUP EPOCH.
         //
@@ -184,7 +228,7 @@ fn reload_into(
     }
     *live = Some(candidate);
     log::debug!("[RESUME] foreground manager reloaded from mls.bin (C2)");
-    Ok(true)
+    Ok(ReloadOutcome::Reloaded)
 }
 
 /// Foreground heartbeat: refreshes the guard while the WebView is visible. As long as it stays
@@ -663,7 +707,11 @@ mod tests {
 
         let mut live: Option<MlsManager> = Some(before);
         let reloaded = reload_into(&mut live, &path, "u-resume", "d1", DEV_KEY_B64).unwrap();
-        assert!(reloaded, "a present mls.bin must reload");
+        assert_eq!(
+            reloaded,
+            ReloadOutcome::Reloaded,
+            "a present mls.bin must reload"
+        );
 
         let installed = live.as_ref().unwrap().key_package_keys().unwrap();
         let lost: Vec<_> = minted_keys.difference(&installed).collect();
@@ -671,6 +719,59 @@ mod tests {
             lost.is_empty(),
             "{} bundle(s) the completed mint persisted are absent from the installed keystore -              the snapshot was read before the call rather than during it",
             lost.len()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE RECEIVE HALF OF THE RESUME REWIND (RESUME-B-1), AT THE COMMAND'S OWN SEAM.
+    ///
+    /// The live manager read a frame after `mls.bin` was written. The file holds every group at the
+    /// same epoch, so the epoch guard accepts it - and installing it would let the spent generation
+    /// decrypt a second time. The reload must refuse with `LiveAhead` (so the caller persists), keep
+    /// the live ratchet, and after that persist a reload is allowed again.
+    #[test]
+    fn a_reload_is_refused_while_the_live_manager_holds_an_unsaved_receive() {
+        let dir = temp_dir("resume-ahead");
+        let path = dir.join("mls.bin");
+        let gid = "g-resume-ahead";
+
+        let mut alice = MlsManager::load_or_create("u-ra-alice", "d1", None).unwrap();
+        let mut bob = MlsManager::load_or_create("u-ra-bob", "d1", None).unwrap();
+        alice.create_group(gid.to_string()).unwrap();
+        let kp = bob.generate_key_package().unwrap();
+        let (_, welcome, _, _) = alice.add_members_bulk(gid, &[&kp]).unwrap();
+        alice.merge_pending_commit_for(gid).unwrap();
+        let tree = alice.export_ratchet_tree_for(gid).unwrap();
+        bob.process_welcome(welcome.as_deref().unwrap(), Some(&tree))
+            .unwrap();
+        // The checkpoint on disk, then a frame read AFTER it.
+        persist(&bob, &path);
+        let frame = alice
+            .send_message(gid, b"read after the checkpoint")
+            .unwrap();
+        bob.process_incoming_message(gid, &frame).unwrap();
+
+        let mut live: Option<MlsManager> = Some(bob);
+        let outcome = reload_into(&mut live, &path, "u-ra-bob", "d1", DEV_KEY_B64).unwrap();
+        assert_eq!(outcome, ReloadOutcome::LiveAhead);
+        assert!(
+            live.as_mut()
+                .unwrap()
+                .process_incoming_message(gid, &frame)
+                .is_err(),
+            "the live ratchet must still know it spent that generation"
+        );
+
+        // The caller's obligation: persist the live state. Then a reload is safe and proceeds.
+        persist(live.as_ref().unwrap(), &path);
+        let outcome = reload_into(&mut live, &path, "u-ra-bob", "d1", DEV_KEY_B64).unwrap();
+        assert_eq!(outcome, ReloadOutcome::Reloaded);
+        assert!(
+            live.as_mut()
+                .unwrap()
+                .process_incoming_message(gid, &frame)
+                .is_err(),
+            "the installed snapshot holds the spent generation"
         );
         std::fs::remove_dir_all(&dir).ok();
     }

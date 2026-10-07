@@ -1,7 +1,3 @@
-version: 1.0.2
+version: 1.1.1
 
-Les reels arrivent : un onglet camera pour filmer 90 secondes et publier dans le fil. La camera s'ouvre sur l'objectif avant, en plein ecran.
-
-Les videos des conversations se lancent avec un bouton lecture, une seule joue a la fois, et reprennent ou elles en etaient en grand.
-
-Le retour au fil et l'ouverture d'une conversation sont plus fluides. Le calendrier ajoute un evenement a votre agenda, et le theme Automatique suit l'appareil.
+Le personnel peut maintenant s'abonner a l'agenda de tout son campus, toutes formations confondues, depuis son application de calendrier.

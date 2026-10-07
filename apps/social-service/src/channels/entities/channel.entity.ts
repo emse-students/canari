@@ -20,6 +20,13 @@ export class Channel {
   @Column()
   name: string;
 
+  /**
+   * Position in the community's list of salons, shared by every member and arranged by whoever may
+   * manage salons (`PATCH workspaces/:id/channels/reorder`). Ties break on `createdAt`.
+   */
+  @Column({ type: 'int', default: 0 })
+  sortOrder: number;
+
   @Column({ default: false })
   isPrivate: boolean;
 

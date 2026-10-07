@@ -14,6 +14,653 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-07
+
+### Fixed - EMSE staff can subscribe to the agenda of their own campus
+
+A reader with a campus and no formation (staff) could not subscribe and was told to complete their profile; they may now follow every formation of their own campus, students keep their own spaces ([profiles-and-access](docs/wiki/profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
+
+### Fixed - the agenda PDF no longer clips the title outline or leaves a grey sliver under a day
+
+The outline of a clamped title was cut at its left and right edges and a cell lost up to a pixel at its bottom; the sheet is also rasterised at 3x instead of 2x ([calendar](docs/wiki/frontend/modules/calendar.md#the-outline-has-room-and-the-slots-sum-to-the-cell-2026-10-07)).
+
+### Changed - the staff agenda subscription is read on a real runtime
+
+Signing, the signed and unsigned feed and the subscribe modal were read on the rebuilt local estate for a campus-only reader ([profiles-and-access](docs/wiki/profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
+
+### Changed - the store notes for 1.1.1 are written
+
+The 1.1.1 notes tell staff they can subscribe to their whole campus agenda, see [profiles-and-access](docs/wiki/profiles-and-access.md).
+
+## [1.1.0] - 2026-10-06
+
+### Fixed - a 503 or an offline agenda link no longer reads as a campus refusal, and a short signing key fails the deploy
+
+The subscribe modal now says "unavailable, try later" for a 5xx or network failure, and `render-env.sh` refuses an `AGENDA_SIGNING_KEY` under 32 characters. See [profiles-and-access](docs/wiki/profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06).
+
+### Fixed - Android haptics never fired: the manifest did not declare `VIBRATE`
+
+Every `navigator.vibrate` (message long-press, reel capture, notifications) was refused by Chromium. See [mobile](docs/wiki/frontend/mobile.md#vibrate-is-a-manifest-permission-and-navigatorvibrate-fails-silently-without-it-2026-10-06).
+
+### Changed - the public agenda is one feed per campus and/or formation (D40); a bare subscription URL is refused
+
+`feed` and `feed.ics` take `?campus=` and `?formation=`, and the subscribe modal and PDF export now ask for one (defaulting to the reader's own). **A bare anonymous feed URL is refused with a 400 `AGENDA_SELECTION_REQUIRED`: calendar subscriptions to the whole agenda saved before this release stop updating until re-subscribed** (user decision). See [profiles-and-access](docs/wiki/profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05) and [legacy-compatibility](docs/wiki/legacy-compatibility.md#nothing-to-remove---a-calendar-subscription-saved-before-d40-now-gets-a-400-2026-10-05).
+
+### Fixed - the association management page is as wide as the association's own page
+
+"Gestion de l'association" was drawn at the 680 px reading column while the public page sits at 1024 px; both now use the same `tool` width ([design-reference](docs/wiki/frontend/design-reference.md#1710-the-five-columns-the-sweep-could-not-see-and-the-guard-that-can-2026-09-14)).
+
+### Two new security advisories are closed in every dependency tree
+
+`proxy-addr` (critical, IP spoofing via an IPv4-mapped IPv6 trust subnet) is pinned to `^2.0.8` in the four services, and `source-map-js` is raised to 1.2.2 in the frontend; the audit job was red on all five trees.
+
+### A face with no photo is asked about once per session, with no timer
+
+The avatar 404 memory (10 minutes) now lasts until the app reloads or the reader changes ([core-service](docs/wiki/services/core-service.md#an-absence-is-remembered-and-a-group-photo-is-stored-2026-10-05)). Test: `userAvatarCache.test.ts`.
+
+### Fixed - people without a photo are asked once, group photos draw at first render, duplicate group reads share one request
+
+A 404 avatar is remembered for the server's own 10 minutes (it was re-asked 11-12 times per user), the group photo id is stored with the local conversation row, and simultaneous `groups/:id` and `user-members` reads join one request ([core-service](docs/wiki/services/core-service.md#an-absence-is-remembered-and-a-group-photo-is-stored-2026-10-05)).
+
+### Changed - the backlog is trimmed to what is still owed
+
+Twelve sections proven shipped or stale are gone, three durable rules were added (a new read path needs its old data repaired first, an uninstallable artifact is no delivery path, a floor is raised against the recorded population), and one CI item was filed ([backlog](docs/wiki/backlog.md), [durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd)).
+
+### Changed - the backlog sheds what shipped, and the evidence moves to the wiki
+
+Shipped halves, histories and refuted-cause tables are gone from [backlog](docs/wiki/backlog.md); the captures and tables now live on [mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md), [cold-start](docs/wiki/frontend/cold-start.md) and [calls](docs/wiki/frontend/modules/calls.md), and four rules joined [durable-rules](docs/wiki/durable-rules.md).
+
+### Fixed - a build names its own commit
+
+The frontend build version is now `<builtAtMs>-<sha>`, and the test rig reads the commit off the bundle instead of inferring it from a clock ([testing-methodology](docs/wiki/testing-methodology.md)).
+
+### Fixed - the build stamp is computed once per build, so main builds again
+
+#1476 stamped `kit.version.name` at every load of `svelte.config.js`, giving one output two build ids and failing the bundle check in every release build. See [testing-methodology](docs/wiki/testing-methodology.md).
+
+### Added - a vignette and a blur for the calendar export background, shown only once an image is loaded
+
+Image strength and scrim no longer show without a photo ([calendar](docs/wiki/frontend/modules/calendar.md#twenty-controls-became-seven-and-nine-of-them-had-nothing-left-to-colour)).
+
+### Changed - the camera has ONE shutter: tap for a photo, hold for a video, saved as the preview shows it
+
+The separate Photo button is gone; photos and takes are cropped to the preview's rectangle, never mirrored, and captured at the screen's own size instead of the sensor's whole frame ([reels](docs/wiki/frontend/modules/reels.md#one-shutter-and-a-capture-that-is-the-preview-2026-10-05)).
+
+### Added - salons can be rearranged by drag and drop, and a salon name keeps exactly what was typed
+
+The order is shared by every member and live-updated; names keep case, accents and emoji; new communities start with an accented "general" ([chat](docs/wiki/frontend/modules/chat.md#a-communitys-salons-have-an-order-everyone-shares-and-a-name-that-is-only-a-name-2026-10-05)).
+
+### Sending a file in a community no longer fails with "your session expired"
+
+The salon upload reused the token copied at sign-in, which expires after 15 minutes (`401 JWT expired`). It now asks `getToken` at every send, like the DM path. Test: `useMessaging.channelUploadToken.svelte.test.ts`.
+
+### Security - the tunnel run token no longer appears on any command line
+
+On all three tunnel hosts the token moved into a root-only environment file and was rotated; an unprivileged user can no longer read it with `systemctl show` ([cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md)).
+
+### Fixed - payer e-mail check bounded against ReDoS, and the guard's alert justified
+
+The Lydia payer e-mail is length-capped and matched by an unambiguous pattern; the regex escape in one test is complete; the `HeaderAuthGuard` bypass alert is a false positive, justified and tested ([nginx](docs/wiki/infrastructure/nginx.md)).
+
+### Added - a dot on a community in the rail when any of its salons has unread messages
+
+It clears when the last one is read ([chat](docs/wiki/frontend/modules/chat.md#a-community-in-the-rail-carries-a-dot-when-any-of-its-salons-has-unread-messages-2026-10-05)).
+
+### Fixed - the conversation list is ordered by one key, the newest message's sent time, identical on every device
+
+The order read a stored seed that history replay, channel loads and pending drains never advanced, and that two paths wrote from the local clock. It is now derived from the messages themselves, ties broken by id. See [chat](docs/wiki/frontend/modules/chat.md#the-conversation-list-has-one-ordering-key-2026-10-06).
+
+### Fixed - a dev deploy now refuses a wasm that can panic
+
+`serve-dev.yml` runs `deployed-wasm-check.mjs` before the `dev-deployed` marker moves, so such a build cannot be promoted to a stable ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - a direct message no longer offers "Quitter le groupe"
+
+The info sheet of a one-to-one conversation showed the leave-group button; it now appears on groups only, and a DM keeps its delete button ([backlog](docs/wiki/backlog.md)).
+
+### Changed - a refused admin-merge release says what it is waiting for
+
+Gate 3 of the release preflight names the emergency path: admin-merge, wait for main's CI, rerun, no new tag ([cicd](docs/wiki/cicd.md)).
+
+### Changed - the name migration is closed, and Cercle, Sky, MiGallery and the wiki each index ONE page
+
+Every project has its `emse.fr` name, every old name redirects, the old Sky is deleted. Each public site allows only its home page in `robots.txt` and answers `noindex` elsewhere. See [estate-migration](docs/wiki/infrastructure/estate-migration.md).
+
+### Fixed - a reader with no space and no association sees an empty state on the posts page, not "Impossible de charger les posts"
+
+The feed guard answers such a reader 403; the page rendered every rejection as the generic error. A 403 is now classified by status as "outside the audience" (dedicated empty state, remembered verdict corrected); other failures keep the generic error. See [profiles-and-access](docs/wiki/profiles-and-access.md#feed_gate---a-403-is-a-verdict-not-a-failure-2026-10-06).
+
+### Added - the PDIS formation in the MiConnect enrolment and the profile edit
+
+A new person can pick `PDIS` as their formation, and an admin can write it into a profile (core-service refused it before); same shape as ICM, ISMIN and FSSS, nobody in it yet. Production takes the enrolment prompt with the stable's blueprint apply ([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Added - main's CI builds the production frontend once and asserts what it carries
+
+A build-only defect (a bundle naming no commit, two build ids) now fails `main` instead of surfacing at a release tag ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - Android: one batched banner now answers every refused push it covers
+
+A catch-up banner for N messages used to credit one push, leaving a nameless generic line behind. See [mobile](docs/wiki/frontend/mobile.md#background-mls-decrypt-ladder).
+
+### Fixed - the GIF search takes the whole screen above the keyboard, and a reply to a GIF quotes the picture
+
+On a phone, focusing the GIF search lifts the picker over the conversation, which returns untouched when it closes; a quote of a GIF is a small dimmed picture, no longer its address ([chat](docs/wiki/frontend/modules/chat.md#the-gif-search-is-the-whole-screen-and-a-quoted-gif-is-a-picture-2026-10-05)).
+
+### Fixed - an invited member is registered with the server before its Welcome is sent
+
+Inviting someone to a group delivered the Welcome and only then registered the joiner, so an inviter dying in between left a member in the MLS tree the delivery service did not know. The order is inverted; see [mls-protocol](docs/wiki/protocols/mls-protocol.md).
+
+### Fixed - tapping a post, form or agenda notification on iPhone opens its target
+
+The server sent only `postId` / `formId`, Android built the link itself and iOS opens nothing but `deepLink`; the push now carries it ([mobile](docs/wiki/frontend/mobile.md#what-each-notification-names-as-its-tap-target-and-who-routes-it-2026-10-05)).
+
+### Documented - the iPhone reading campaign on v1.0.4-alpha.4: what passed, and the calendar subscription that refuses a reader's own campus
+
+The readings and the owed causes are on [backlog](docs/wiki/backlog.md) and [device-verification](docs/wiki/device-verification.md).
+
+### Documented - the iPhone reading campaign on v1.0.4-alpha.5: the signed calendar link, the front-lens reel camera and the per-account draft pass; the reaction and reply readings are blocked by the service account's visibility
+
+The readings and the owed causes are on [backlog](docs/wiki/backlog.md) and [device-verification](docs/wiki/device-verification.md).
+
+### Fixed - jumping to a pinned message no longer pushes the salon header off screen
+
+Every jump to a message now scrolls only the message list, not the page around it ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a paid form paid through Lydia no longer lands on "payment not found"
+
+Lydia cannot fill in Stripe's `{CHECKOUT_SESSION_ID}`, so its return URLs carry the submission id and the page reads that submission until the signed callback has marked it paid ([payments](docs/wiki/frontend/modules/payments.md#where-lydia-sends-the-payer-back-2026-10-05)).
+
+### Fixed - a Lydia payment can now name its payer, and its amount is checked
+
+The payer types an e-mail at payment (never stored) and a request outside Lydia's 0,50-1000 EUR range is refused with a clear message ([payments](docs/wiki/frontend/modules/payments.md#the-payer-types-an-e-mail-and-lydia-bounds-the-amount-2026-10-05)).
+
+### Fixed - the media viewer clears its tap and zoom timers when it is unmounted
+
+A tap timer outliving the viewer logged after its test file ended and failed the frontend CI run with every test green ([architecture](docs/wiki/frontend/architecture.md#a-timer-a-component-starts-dies-with-the-component-not-only-with-its-closed-state)).
+
+### Fixed - the dependency audit is green again: two more stream-json advisories are ignored on an asserted premise
+
+`GHSA-hqr4-qq8f-hg3x` and `GHSA-mjw6-4jj6-33hc` reach media-service only through `minio > stream-json`, and minio imports nothing but `stream-json/jsonl/Parser.js`; that premise is now an allowlist asserted by `stream-json-premise.sh` and its self-test. See [backlog](docs/wiki/backlog.md).
+
+### Fixed - a member you add to a group no longer appears, vanishes and reappears
+
+The panel dropped its "Inviting..." row as soon as the roster held the newcomer, before the member list had their name ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - member lists are in alphabetical order of family name
+
+A community's, a group's and a channel's member lists now read by family name, then given name, and
+a row never moves when its name arrives ([chat](docs/wiki/frontend/modules/chat.md#every-member-list-reads-by-family-name-and-a-row-never-moves-because-its-name-arrived-2026-10-05)).
+
+### Fixed - messages and Graine seeds received after an in-session PIN change are sealed under the new key
+
+The message pipeline and the Graine runtime captured the device key at login and kept sealing under it after a PIN change, leaving data unreadable at the next launch; they now read the key at each write ([durable-rules](docs/wiki/durable-rules.md#mls-state-and-keys---mls-protocol-auth)).
+
+### Documented - the Mi 9T reading campaign on v1.0.4-alpha.3: what passed, and five defects it found
+
+The readings, the missing `VIBRATE` permission (no Android haptic fires), the NOTIF-10 ordering and the GRP-3..10 root cause are on [backlog](docs/wiki/backlog.md) and [cross-client-testing](docs/wiki/cross-client-testing.md).
+
+### Documented - the Mi 9T readings on v1.0.4-alpha.4: most owed readings pass, NOTIF-10 still fails
+
+What passed, the measured cause of the remaining nameless banner and four smaller findings are on [backlog](docs/wiki/backlog.md) and [device-verification](docs/wiki/device-verification.md).
+
+### Docs - Mi 9T readings on 1.0.4-alpha.5: reply context, front lens and signed feed pass, NOTIF-10 still fails
+
+The third pass is on [device-verification](docs/wiki/device-verification.md); the new NOTIF-10 shape is on [backlog](docs/wiki/backlog.md).
+
+### Changed - the clients of MiConnect name miconnect.emse.fr, the old Sky and Cercle names are pure redirects
+
+The `/api/` exceptions on the two old names are gone (zero calls in two days), and Cercle, Sky, MiGallery and the Canari secrets point at the new MiConnect name ([estate-migration](docs/wiki/infrastructure/estate-migration.md#the-old-name-of-miconnect-redirects-and-the-dsi-replaced-the-cas-callback-2026-10-06)).
+
+### Fixed - signing in through the School account on the old MiConnect name
+
+The DSI replaced the CAS callback with the new host, so `auth.canari-emse.fr` answered 401 on the School login; its pages now `301` to `miconnect.emse.fr` while the token/userinfo/jwks endpoints stay served, and the brand domain follows ([estate-migration](docs/wiki/infrastructure/estate-migration.md#the-old-name-of-miconnect-redirects-and-the-dsi-replaced-the-cas-callback-2026-10-06)).
+
+### Changed - every navigation goes through `resolve()`, and the lint rule that enforces it is on
+
+The ~100 `goto()` and `href` calls now carry the base path, so the app survives being served under a prefix; `svelte/no-navigation-without-resolve` is no longer disabled ([backlog](docs/wiki/backlog.md#p3---108-navigations-bypass-resolve-92-here-16-on-migallery-counted-2026-08-27-and-an-inherited-disable-is-the-only-reason-nobody-sees-them)).
+
+### Fixed - a `returnTo` carries no base path, and a bad `?redirect=` falls back instead of throwing
+
+Follow-up to #1473: login `returnTo` is base-less so `resolve()` adds the base once, and `safeInternalPath` validates query-supplied redirects at the source.
+
+### Changed - NestJS 12 in chat-delivery and social
+
+NestJS 12 for chat-delivery-service and social-service, as ONE coherent bump replacing seven one-package Dependabot PRs; `@nestjs/throttler` 6.7.1 already accepts 12 ([nestjs-framework](docs/wiki/services/nestjs-framework.md)).
+
+### The nginx access log no longer records the WebSocket token
+
+`?token=` values are redacted in the container's access log, auth unchanged; see [nginx](docs/wiki/infrastructure/nginx.md#the-access-log-never-records-a-token-2026-10-06). Gate: `access-log-redaction.test.mjs`.
+
+### Fixed - a second tap on the same conversation's notification, from another page, now opens it
+
+The landing remembered the target id it had routed for and never forgot it, so a repeat tap (same id) did nothing on Android and iOS; each tap is now its own landing. See [chat](docs/wiki/frontend/modules/chat.md#a-repeat-tap-on-the-same-conversation-is-a-new-landing-2026-10-06).
+
+### A push the app already read no longer leaves a nameless banner next to the real one (Android)
+
+When the app's own engine consumed a message before its push could be read, the shade kept a generic "Nouveau message" line beside the real one; the real banner now replaces it, in either arrival order. See [mobile](docs/wiki/frontend/mobile.md).
+
+### Added - Settings can switch notifications off by category, per account
+
+Eight switches (messages, community channels, posts, comments, mentions, reactions, events, forms), all on by default and stored on the account. The server decides before it sends, so a muted category is not pushed (a muted message arrives silent); this device applies the same set to the notifications it raises itself ([chat-delivery](docs/wiki/services/chat-delivery.md#notification-categories---one-switch-per-kind-decided-before-the-send)).
+
+### Fixed - a message notification shows one identity
+
+The app's bird no longer sits above the sender's face: a conversation notification now carries a conversation shortcut so the avatar is the header circle ([mobile](docs/wiki/frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)).
+
+### Fixed - the Lydia validation button, connect-status and the Stripe dashboard link all said "Association not found"
+
+core-service read an association through a route that became login-only on 2026-08-05; it reads a dedicated internal one now ([core-service](docs/wiki/services/core-service.md#payments-stripe--lydia)).
+
+### Added - the platform can declare payments disabled
+
+`platform_config.payment_provider` accepts `disabled`: checkout and onboarding are refused, no association is ready, payments already in flight still complete ([payments](docs/wiki/frontend/modules/payments.md#the-platform-can-declare-payments-disabled-2026-10-05)).
+
+### Fixed - the phone rows stop reading PASS-DIRTY on correct logs, and NOTIF-21 reads its own phone
+
+The rig now names the `[coversScreen]`, `[PICKER]`, boot and `doFetchProto` decision logs, parks on `/calendar` instead of the refused feed, and NOTIF-21 reads the handset off the phone it drives. The iOS notification-tap reading and the board are in [cross-client-ios](docs/wiki/cross-client-ios.md#the-notification-tap-deep-link-on-the-iphone-first-reading-2026-10-05).
+
+### Fixed - pinning in a salon is moderation, the author's own message included
+
+A plain member is no longer offered "Pin" and the server refuses them with `PIN_REQUIRES_MODERATION` (user, 2026-10-05; DMs and groups unchanged); a refused pin is reverted with a toast, and a demoted moderator loses the action live ([social-service](docs/wiki/services/social-service.md#who-may-pin-and-what-the-client-offers-2026-10-05)).
+
+### Fixed - agenda PDF: every event title is white with a dark outline and centred in its tile
+
+The title colour no longer flips black/white with the tile, and the first title of a cell no longer sits below the centre (day number now pinned top-left). See [calendar](docs/wiki/frontend/modules/calendar.md#pdf-export).
+
+### Fixed - a plain member's poll in a community salon is no longer auto-pinned
+
+Pinning needs a moderation grant for every message, and the server now applies it to a poll's creation pin too: a moderator's poll is still pinned, a member's is not ([social-service](docs/wiki/services/social-service.md)).
+
+### Fixed - a post draft no longer follows the device to the next account
+
+The composer draft was one per device, so a second account opening "Nouvelle publication" read the first one's text. It is now keyed by user id; the old unowned value is dropped. See [posts](docs/wiki/frontend/modules/posts.md).
+
+### Fixed - a post of several pictures is a grid of squares again, with a "+N" past four
+
+Cells no longer keep each picture's own shape, which left blank areas in the two-column grid; files are rows under it ([posts](docs/wiki/frontend/modules/posts.md#several-media-square-cells-and-a-n-past-four-2026-10-05)).
+
+### Fixed - posting or commenting with an image no longer fails as "session expired" after 15 minutes
+
+The post, edit and comment forms uploaded media with a copy of the access token taken when the page opened; each now reads a live one at upload time ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Fixed - the presence key no longer vanishes while its socket still looks connected
+
+The gateway's `user:online` key lived 20 s but a dead socket is only closed after ~75 s, so the admin presence screen showed "WS connected, Redis empty"; the TTL is now 90 s, one constant asserted above the detection window ([chat-gateway](docs/wiki/services/chat-gateway.md)).
+
+### Added - a person can ask the admins to correct their profile
+
+A button on the profile files a request, `/admin/profile-corrections` lists them, and the person is notified when it is applied or refused (WP4b, [profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Fixed - the profile header: the correction link is centred, settings is a top-right icon
+
+On "Mon profil" the "Demander une correction" link sat left of the chips' axis and the settings control floated under the name; it is now centred on a phone and the settings icon sits in the header's top-right corner ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - the profile page no longer breaks after it loads
+
+A sponsorship list repeating a name (or an Sky answer without its lists) threw in the profile route once the late sponsorship section arrived; rows are keyed by position and the answer is validated ([design-reference](docs/wiki/frontend/design-reference.md#42-the-profile-rendered-then-broke-a-late-section-threw-on-a-repeated-key-2026-10-06)).
+
+### Fixed - a cut reply quote ends with an ellipsis, and a mouse resting on a reaction shows who reacted
+
+The stored quote was cut at 100 RAW characters, where an `@[id]` mention weighs ~40 but draws short, so it escaped the display's ellipsis; the cut is now marked where it is made. A desktop mouse opens the "who reacted" list after a short rest (a touch keeps the hold) - [posts](docs/wiki/frontend/modules/posts.md#the-who-reacted-list-a-tap-reacts-a-hold-shows-who---discords-gesture-2026-10-01).
+
+### Fixed - a failed reaction names why, and phone toasts no longer cover the conversation
+
+A reaction sent before this device holds the salon's key now says so instead of "cela n'a pas abouti", and phone toasts sit at the top instead of over the last messages and the composer ([chat](docs/wiki/frontend/modules/chat.md#a-failed-reaction-said-cela-na-pas-abouti-and-named-nothing-and-its-toast-covered-the-bubble-2026-10-06)).
+
+### Fixed - a failed reaction no longer hides under the header, names a lost connection, and takes its pill back
+
+The phone toast sits below the conversation header, a transport failure on a send is a typed `DeliveryUnreachableError` (the network sentence, not "cela n'a pas abouti"), and a reaction that was never sent is unflipped locally. See [chat](docs/wiki/frontend/modules/chat.md#a-failed-reaction-said-cela-na-pas-abouti-and-named-nothing-and-its-toast-covered-the-bubble-2026-10-06).
+
+### The reel camera opens on the front lens on iPhone too
+
+The lens is now asked exactly instead of as a preference WKWebView ignored; an absent lens is a logged refusal, never a silent switch. See [reels](docs/wiki/frontend/modules/reels.md). Test: `cameraAccess.test.ts`.
+
+### Added - CanaReels editor: drawn strokes move like any overlay, three pen widths, an eraser and undo
+
+A stroke can be dragged, pinched, twisted and deleted, the pen has three widths, an eraser wipes the strokes it crosses, and undo steps back through every change ([reel-editor](docs/wiki/frontend/modules/reel-editor.md)).
+
+### Fixed - CanaReels: Back inside the editor no longer throws the take away, and losing one asks first
+
+Back with the editor open leaves the editor (asking when it holds edits), and discarding a finished capture is confirmed ([reel-editor](docs/wiki/frontend/modules/reel-editor.md)).
+
+### Changed - CanaReels editor: "Next" goes straight to the publish step
+
+The editor's top-right button exports the edits and opens the publish step, with no stop at the review; an untouched take is not re-encoded ([reel-editor](docs/wiki/frontend/modules/reel-editor.md)).
+
+### Fixed - the reel review no longer hides its controls, and removing the sound removes it from the file
+
+"Next" has its own bar instead of covering the seek bar, the sound button removes the audio track from the published video (it only muted the player before), and the editor places text and emoji that move, pinch, twist and drop on a trash zone: [reel-editor](docs/wiki/frontend/modules/reel-editor.md).
+
+### Added - CanaReels editor: the full emoji picker and recent emoji
+
+The emoji tray shows what you used lately and opens the chat's full picker (categories, search, skin tone) ([reel-editor](docs/wiki/frontend/modules/reel-editor.md)).
+
+### Added - CanaReels editor: a text style row (three typefaces, a colour pill)
+
+Text on a capture can take a serif or monospace face and sit on a coloured band, in the preview and in the export ([reel-editor](docs/wiki/frontend/modules/reel-editor.md)).
+
+### Fixed - the reel review's controls stay visible over the letterbox, and leaving the camera returns to the tab it was opened from
+
+See [reel-editor](docs/wiki/frontend/modules/reel-editor.md#the-review-controls-over-the-letterbox-and-leaving-the-camera-2026-10-06).
+
+### Changed - a refresh replay now says whether it was a lost response or a forked token
+
+The revocation line carries `presented=previous|older` and `rotatedAgo`, so the iPhone replays seen on 2026-10-06 can be told apart ([sessions](docs/wiki/sessions.md)).
+
+### Fixed - a reply names people by their `firstName`, and its action menu sits on the message
+
+The reply caption, the chat sender label and the read-by tooltip read the profile's first-name field instead of cutting the first word out of the full name; the hover toolbar anchors on the bubble, not on the quote above it.
+
+### Changed - the reply caption names only who answered
+
+"Nils a répondu" / "Vous avez répondu": the quoted bubble below already shows whose message it is, so the caption no longer repeats the target.
+
+### Fixed - a reply armed in one conversation no longer follows the member into the next
+
+The reply is now held per conversation id, so each composer shows only its own. See [chat](docs/wiki/frontend/modules/chat.md#a-reply-belongs-to-one-conversation-2026-10-06).
+
+### The reply icon is visible on your own messages too
+
+On your own messages the reply icon sat past the screen edge and only a sliver showed; it now sits behind the bubble and is uncovered as it slides: [design-reference](docs/wiki/frontend/design-reference.md).
+
+### Fixed - the resume reload no longer puts the receive ratchet back
+
+A frame read after the last checkpoint was invisible to the send-only guard, so a resume re-installed an older `mls.bin` and the spent generation decrypted twice. The live manager now says whether it is ahead of the file, under the lock the swap holds ([mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md)).
+
+### Fixed - the rig closes the add-members modal by its own control, cuts sockets by restarting the gateway, and can mint sweepable sandbox groups
+
+`closeOverlays` addresses the modal backdrop's close button, `addPeer` fails loudly when the picker offers nobody, `restartGateway()` replaces `adb reverse --remove` (which never cut an open socket) and `newgroup.mjs --sandbox` mints a shape `cleanup.mjs` may sweep ([harness README](tools/cross-client-harness/README.md)).
+
+### Changed - rolling back production is re-running an old release's deploy
+
+Production is deployed by the release's own `v<version>` image tag instead of `latest`, so a rerun puts THAT release back ([cicd](docs/wiki/cicd.md)).
+
+### Changed - a new private salon is pinned to one distribution-group join on the creating device
+
+The "salon read twice" sighting was the user's other device answering the same `channel.member.joined`, a first-publish race settled by design; a test now drives the three local moments together ([channel-encryption](docs/wiki/protocols/channel-encryption.md)).
+
+### Added - you can edit your own text messages in a community salon
+
+The "Modifier" entry was missing in salons only because it had never been built there; an edit is now a silent encrypted row (no push, no server change) that every member checks is from the message's author, so a moderator can delete but not rewrite. **The author is cryptographically proven for v2 Graine sessions only; an edit row from a v1 session is not author-proven, exactly like a delete today.** See [chat](docs/wiki/frontend/modules/chat.md#editing-your-own-message-in-a-salon-2026-10-05).
+
+### Fixed - a scheduled post is ordered and dated by when it went live
+
+It sat behind newer posts with the time it was written; the feed now uses one `publishedAt` (migration 077 backfills it) ([posts](docs/wiki/frontend/modules/posts.md#one-notion-of-when-it-became-visible-publishedat-2026-10-06)).
+
+### Fixed - scheduled posts read as pending, and the event picker lists the furthest future first
+
+Scheduled posts in the author's panel use the agenda's dimmed dashed style (one shared helper), and the post-to-event picker is sorted by descending start date ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Changed - the "seen by" heads name their readers
+
+The `+N` counter's tooltip lists who it folds, and a screen reader hears every reader's name rather than a count ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a picture you just sent no longer stays a blurred placeholder until a reload
+
+The sent message's re-render started a second download of the same media, whose URL the pool revoked and handed to the bubble anyway; a load already on the wire now stays joinable, and the loader returns the pool's URL ([media-service](docs/wiki/services/media-service.md#a-load-on-the-wire-stays-joinable-and-the-pools-url-is-the-one-handed-out-2026-10-05)).
+
+### Changed - calendar subscription links are now signed, and only offer your own campus and programmes
+
+A subscription link saved before this release stops working (403): subscribe again from the calendar, which only offers your own campus and programmes. Single-event links are unchanged ([profiles-and-access](docs/wiki/profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06), [legacy-compatibility](docs/wiki/legacy-compatibility.md#nothing-to-remove---an-unsigned-calendar-subscription-now-gets-a-403-2026-10-06)).
+
+### Added - spaces: the data model (nothing reads it yet)
+
+Tables for formation x campus spaces, the audience rules of associations and the visibility a post
+chooses for itself, seeded with today's world: ICM x Saint-Etienne, every association addressing it, the current BDE as
+its BDE ([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Changed - the feed, the agenda and post notifications follow each reader's spaces
+
+A reader now sees the posts whose association reaches one of their spaces (a cursus formation on their campus), their own associations' posts, and personal posts from people sharing a space; announcements and the signed-in agenda follow the same rule, and a post may carry its own audience inside its association's ([profiles-and-access](docs/wiki/profiles-and-access.md)). Release only after the profile backfill and the `/admin/spaces` grid.
+
+### Changed - an association is a BDE exactly when it is the BDE of a space
+
+The `isBDE` tick on `/admin/associations` and its column are gone (migration 072, which refuses to run while a flagged association governs no space); BDE-only grants now follow the BDE designated per space on `/admin/spaces` ([profiles-and-access](docs/wiki/profiles-and-access.md)). Per-space scoping of validation comes next.
+
+### Changed - a BDE validates and administers only the associations its spaces reach
+
+Validating an event (and who is told of a proposal) and the BDE's MANAGE_ASSO powers now belong to the BDE of the spaces the association reaches, not to every BDE; MODERATE stays global ([association-permissions](docs/wiki/association-permissions.md#wp6c-step-2-a-bde-governs-the-associations-its-spaces-reach-2026-10-04)).
+
+### Added - an admin grid for who each association reaches, and the BDE of each space
+
+All formation x campus spaces exist from the start; from `/admin/spaces` an admin ticks, per association, everyone, a whole campus or one formation, and stars its BDE (one BDE may govern several spaces) ([profiles-and-access](docs/wiki/profiles-and-access.md)). Nothing a reader sees changes yet.
+
+### Changed - a co-organiser is asked, and co-organises only once it accepts (D39)
+
+Naming a co-organiser on an event now sends it a proposal its publishers accept or refuse from the "Propositions" tab; until then it has no right on the event and its audience does not see it. An event reaches the union of its organiser's and its accepted co-organisers' audiences; existing co-organisers are kept as accepted ([profiles-and-access](docs/wiki/profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
+
+### Changed - the association directory follows the reader's spaces, and a new association reaches its creator's
+
+`/associations` and `/lists` list only what reaches the reader's spaces or what they belong to (a hidden page stays reachable by its link), pickers and admin pages ask `?scope=all`, and a new association or list gets its creator's spaces as its default audience ([profiles-and-access](docs/wiki/profiles-and-access.md#d36-and-d37-as-built-2026-10-04)).
+
+### Added - the institutions page
+
+Institutions have their own `/institutions` page, and a new institution reaches nobody but its members until an admin ticks the spaces grid ([profiles-and-access](docs/wiki/profiles-and-access.md#wp6e-institutions-as-built-2026-10-05)).
+
+### Added - institutions (WP6e)
+
+A global admin can now create an institution (the School, a ME, the Alumni association); its members are added by name and only they publish, republish and propose events in its name ([profiles-and-access](docs/wiki/profiles-and-access.md#wp6e-institutions-as-built-2026-10-05)).
+
+### Added - an association republishes another's post, or accepts it when proposed (D38)
+
+A post now reaches its association's audience plus every republishing association's. Republishing is immediate in your own association's name; sending a post to another association is a proposal that it accepts or refuses from a new "Republications" tab. Only first-time readers are notified, and the per-post space rules are removed ([profiles-and-access](docs/wiki/profiles-and-access.md#d38-republication-as-built-2026-10-04)).
+
+### Avatars that are not round are true squircles
+
+One `squircle` utility (continuous `corner-shape`, plain radius where unsupported) replaces `rounded-2xl` on every non-round avatar, and the conversation header no longer nests an avatar inside a mismatched wrapper or pill. See [design-reference](docs/wiki/frontend/design-reference.md#64-one-concrete-divergence-visible-without-any-tooling).
+
+### Fixed - a tab swipe no longer leaves the page shifted left
+
+A drag whose touched element was re-rendered away never saw its release, so the page stayed parked at the drag offset on every later screen; the release is now heard on the element the touch started on ([design-reference](docs/wiki/frontend/design-reference.md#the-page-stayed-shifted-left-after-a-sideways-drag-on-every-route-2026-10-06)).
+
+### Fixed - the tab title `(N)` and the red dot no longer outlive a read
+
+A salon read on another device, a conversation read in another tab, and the open conversation's own mark now all lower the unread count with the watermark, instead of leaving a count nothing cleared ([chat](docs/wiki/frontend/modules/chat.md#the-unread-count-follows-my-own-read-point-2026-10-05)).
+
+### An upload that meets an expired token renews it and retries instead of signing you out
+
+Every media upload route now refreshes the access token once and resends on a 401; only a 401 on the fresh token ends the session. See [sessions](docs/wiki/sessions.md#implementation-traps). Test: `media.uploadRefreshRetry.test.ts`.
+
+### Changed - the store notes for 1.1.0 are written
+
+The store notes for 1.1.0 are written: campus and formation spaces, the signed agenda subscription, the CanaReels editor, scheduled posts, one conversation order. See [mobile](docs/wiki/frontend/mobile.md).
+
+## [1.0.3] - 2026-10-05
+
+### Changed - the backlog after the user's answers of 2026-10-04
+
+Decided items closed (one holder, dead rows, the two photo bubbles), the done clicks removed, the tunnel token still on the command line recorded ([backlog](docs/wiki/backlog.md)).
+
+### Added - a blind salon banner is counted, on Android and iOS
+
+A shut phone that shows the generic salon banner reports it to `POST /api/mls/push/blind-banner`, which prints one `[PUSH_BLIND]` line naming the missing term ([channel-encryption](docs/wiki/protocols/channel-encryption.md#what-is-left)).
+
+### Added - camera photo capture and post-capture editor
+
+The camera can now capture photos and edit photos or videos with app-font text and freehand drawing before publishing.
+Photos become regular archive posts; videos keep the CanaReels contract. See [the camera module](docs/wiki/frontend/modules/reels.md).
+### Added - the nightly reads the standing code scanning alerts
+
+A standing CodeQL alert failed nothing, because the pull-request check refuses only new ones; the nightly `alerts` job now reads the code scanning list with the same reader as the Dependabot one, now `github-alerts-report.sh` ([cicd](docs/wiki/cicd.md#and-the-audit-is-not-the-whole-question-because-github-knows-things-it-does-not)).
+
+### Fixed - a staged add or remove publishes its join base with the commit
+
+The GroupInfo OpenMLS already builds for a staged commit now rides inside the submission, so the base
+for the new epoch can no longer be lost to a dropped follow-up. See
+[mls-protocol](docs/wiki/protocols/mls-protocol.md#the-base-travels-inside-every-commit-submission-comm-22).
+
+### Added - an hourly report of commit rate and commit-log holes
+
+The chat-delivery service now reports each hour how often groups were re-keyed (naming a device that re-keyed one eight times) and any epoch missing from a commit log ([chat-delivery](docs/wiki/services/chat-delivery.md#the-commit-log-is-observed-hourly-a-re-key-rate-and-any-hole-reportcommitloghealth-2026-10-04)).
+
+### The "a received DM is keyed by its peer" premise is refuted
+
+Every writer of the conversation map keys a row by its `id`, so the five consumers the backlog
+suspected read it correctly; the Welcome writer is now pinned by a test
+([chat](docs/wiki/frontend/modules/chat.md#one-key-per-conversation---the-a-dm-has-two-keys-premise-audited-and-refuted-2026-10-04)).
+
+### Changed - two delivery-service lines that fired on every poll and every send now report a rate
+
+`[DEVICE_MEMBERSHIPS]` is printed when a device's answer changes, `[PUSH_SEND] No push token` once per device then at its 10th, 100th... send, and both carry cut ids instead of full user and device ids ([chat-delivery](docs/wiki/services/chat-delivery.md)).
+
+### Fixed - a deploy tells an unreachable registry from a broken change
+
+The registry login and image pull are re-attempted three times, then fail with exit 75 under the title `Registry unreachable - not a broken change` ([dev-environment](docs/wiki/infrastructure/dev-environment.md#the-deploy-is-two-scripts-and-the-order-is-load-bearing)).
+
+### Added - a gate that a desktop build hands over no push token
+
+`useNotifications.singleBuilder.test.ts` now reads `commands/push.rs` and fails if `get_fcm_token` or `get_voip_token` grows a desktop branch, the second trigger behind a doubled notification ([mobile](docs/wiki/frontend/mobile.md#one-builder-two-triggers)).
+
+### Fixed - a lost conversation dismissal is now logged instead of swallowed
+
+`dismissGroup` and `undismissGroup` swallowed their own failures, so the logging `.catch` at every call site never fired; they now throw and every caller logs, and the latent discovery "gap" is closed as consistent by design ([open-questions](docs/wiki/open-questions.md#decision-owed---user_dismissed_group-grows-one-row-per-manual-delete-for-ever)).
+
+### Security - every salon message is sealed as Graine v2
+
+A new session is endorsed by this device's MLS credential before its seed is distributed, every v1
+session rotates at the next send, and each row carries the session's signature. The v1 writer is
+deleted. See [channel-encryption §21.6](docs/wiki/protocols/channel-encryption.md#216-the-writer-wp-g2-5).
+
+### Fixed - the one-shot history audit no longer re-lists distribution groups on every connection
+
+A distribution group can never be audited, so it can never be discharged; it no longer owes the audit, which ends the `auditing N group(s)` / `0/N asked` pair on every connection ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#and-the-fix-does-not-reach-backwards---hence-the-audit)).
+
+### Fixed - a missed edit is restored with its body when the author answers the history request
+
+A `history_bundle` used to set the "edited" flag over the pre-edit text; it now takes the edited body when the answering peer is the message's author, ordered like a live edit, and never from anyone else ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Docs - the ICM/ISMIN separation is the profile reform's spaces
+
+The 2026-09-05 direction is answered by D16-D23 and built by WP6, so its backlog entry is gone ([profiles-and-access](docs/wiki/profiles-and-access.md#2-the-model-the-user-decided)).
+
+### Changed - the X-Internal-Token HMAC is one check, not three copies
+
+`core-service`, `social-service` and `chat-delivery-service` call one `verifyInternalToken` (a declared byte-for-byte copy per service); each guard's own refusal policy is unchanged ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - an iPhone notification no longer shows a mention as a 64-character hex id
+
+The notification extension and the in-app push path render `@[id]` as `@vous` / `@quelqu'un`, as Android already did ([backlog](docs/wiki/backlog.md)).
+
+### Added - dev receives Lydia's homologation credentials
+
+Dev reads `DEV_LYDIA_PROVIDER_TOKEN` and `DEV_LYDIA_PROVIDER_PRIVATE_TOKEN` and pins `LYDIA_ENV=homologation`, so a Lydia onboarding can be tried there ([dev-environment](docs/wiki/infrastructure/dev-environment.md)).
+
+### Added - a platform admin can validate a club's Lydia onboarding by hand
+
+Nothing marks it complete automatically, so the Lydia card offers the button to global admins ([payments](docs/wiki/frontend/modules/payments.md#which-onboarding-flag-a-screen-reads-2026-10-03)).
+
+### Fixed - a club whose Lydia onboarding is complete no longer shows as incomplete
+
+The payment screens read the Stripe flag only; they now read the active provider's ([payments](docs/wiki/frontend/modules/payments.md#which-onboarding-flag-a-screen-reads-2026-10-03)).
+
+### Fixed - phone and short-window layout details, and no self-removal in a group
+
+A member can no longer remove themself from the group member list (leaving has its own button). Side-panel headers and two overlays clear the status bar, the Android navigation bar no longer paints a white scrim under a grey page, and a short desktop window is no longer read as an open keyboard (it hid the top bar and left a gap above the rail). Reasoning in [mobile](docs/wiki/frontend/mobile.md).
+
+### Fixed - an Android phone now flushes its MLS state when backgrounded and reconnects on return
+
+A backgrounded Android WebView never fires `visibilitychange`, so the persister, the socket reconnect and the login reset also listen to the native foreground edge; the coupled background/resume sequence is owed one device run ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - a key group known only by name never asks chat-delivery for its base
+
+A community key group whose community this session has not loaded used to fall through to chat-delivery and read its 403 as "not a member"; it now refuses as what it is ([channel-encryption](docs/wiki/protocols/channel-encryption.md)).
+
+### Fixed - every PIN form names its account to the password manager
+
+The unlock gate and the PIN change and recovery forms carry a hidden `autocomplete="username"` field, so Chrome stops flagging a password form with no username and a manager can file the PIN under the account ([PinAccountField](frontend/src/lib/components/auth/PinAccountField.svelte)).
+
+### A post you publish now appears in the feed you are looking at
+
+Publishing a personal post from the Associations tab left you on a list that did not hold it; the feed now switches to the one that does, without changing your remembered tab: `frontend/src/lib/posts/landingFeed.ts`.
+
+### Fixed - the posts search no longer reaches posts from before the viewer's arrival at the school
+
+`searchPosts` applies the same promo cutoff as the feed, the one exclusion it was missing ([posts](docs/wiki/frontend/modules/posts.md#the-search-stops-where-the-feed-stops-2026-10-04)).
+
+### Added - a global admin can edit a person's MiConnect profile from Canari, at the source (production only)
+
+`PUT /users/:id/profile` writes authentik through a least-privilege service account built by a blueprint, then Canari's row and an audit trail; dev refuses with a typed error because it shares production's MiConnect ([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Fixed - a push MLS cannot read at any later epoch no longer pays a catch-up and a worker
+
+A spent generation or a same-epoch refusal now comes back as `mls-refused-for-good`, so the Android service and the iOS extension show the generic banner without fetching commits or enqueuing `MlsBackgroundWorker` ([mobile](docs/wiki/frontend/mobile.md#background-mls-decrypt-ladder)).
+
+### Fixed - re-running a stable's release no longer fails at its first checkout
+
+The preflight checked out the stable's tag, which the bump moves; it now names the event's commit, as the `shipped` job already does ([cicd](docs/wiki/cicd.md#a-stable-ships-the-latest-pre-release-and-main-may-move-on-2026-10-02)).
+
+### The reply swipe shows when it will send, and the message glides back
+
+The reply icon grows and turns solid with one haptic tick once the drag crosses the threshold, and a released message slides back instead of jumping: [design-reference](docs/wiki/frontend/design-reference.md).
+
+### Added - the client answers its MLS epochs to the rig, and the rig sees a socket reopen
+
+`window.__canariMlsEpochs()` completes the epoch-fork reader, `report()` records socket handshakes beside closes, `wda-daemon.py` refuses a held port before its tunnel, and the run preflight prints which `canari-harness` it reads ([backlog](docs/wiki/backlog.md#the-harness-itself)).
+
+### Changed - the HEAL rungs count the server as an observer, and a full account is an INVALID everywhere a device is minted
+
+A dirty server window now demotes a HEAL PASS and enters `clean`; rows without `serverClean` are listed by `bun rows.mjs` as never having observed it, and every `becomeANewDevice` caller reads `refused` - rig only, see [cross-client harness](tools/cross-client-harness/README.md).
+
+### Changed - the rig unlocks a PIN through one implementation
+
+The two archived runners that still carried their own `pin.mjs` wrapper (`notif7.mjs`, `tab236.mjs`) now call `pinspawn.mjs`, like `phone.mjs` and the iPhone module ([rig README](tools/cross-client-harness/README.md)).
+
+### Fixed - no `window.fetch` warning on every navigation
+
+The root layout's silent refresh now runs on the `fetch` its `load` is handed, so the dev server stops warning on each navigation ([auth.ts](frontend/src/lib/stores/auth.ts)).
+
+### Added - "seen by" heads under the last message each member read, in groups and salons
+
+Each member's avatar now sits under the last message they read, whoever wrote it, with `+N` past three heads; a DM keeps its receipt under your own message ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Videos are written segmented, so they play while they download
+
+The writer flag is ON (user's go, `minClientVersion` 1.0.0): [media-service](docs/wiki/services/media-service.md#the-writer-flip---on-since-2026-10-05).
+
+### Changed - the session state and the backlog after 1.0.2
+
+The CanaReels chantier is closed to readings, Graine v2 R2 is released, and the "seen by" request is queued ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - the community and salon settings tabs are announced as a tab set
+
+Both strips carry `role="tablist"`, each tab `role="tab"` and `aria-selected`, so a screen reader names the open tab ([social-service](docs/wiki/services/social-service.md#roles-membership-and-channel-access)).
+
+### Fixed - a stable that reached production no longer ends the run red
+
+The final check checked out the release tag, which a stable moves; it checks out the commit preflight read.
+
+### Changed - a skipped KeyPackage now says why
+
+`add_members_bulk` returns a typed reason per refused KeyPackage (expired, bad signature, undecodable, ...) and the inviter logs one line per cause; the server-side partition is still owed ([chat-delivery](docs/wiki/services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart)).
+
+### Fixed - the harness reports an MLS frame queued for an offline device instead of leaving it unexplained
+
+`srvlog.mjs` gives the gateway's `message stays in DB queue` line its own `notable` rule (a non-empty `queuedId` only), with its cases in `srvclassify-selftest.mjs`; `[DEVICE_MEMBERSHIPS] stranded>0` stays unexplained on purpose ([harness README](tools/cross-client-harness/README.md)).
+
+### Fix - a device holding a group it was never welcomed into repairs itself without sending
+
+The groups list now carries this device's own seat, and the sync loop hands a stranded one to the existing roster repair. See [mls-recovery-ladder](docs/wiki/protocols/mls-recovery-ladder.md#a-silent-reader-is-handed-to-the-roster-repair-by-the-groups-list).
+
+### Scrolling a conversation no longer closes it after a back swipe on Android
+
+The edge swipe the system takes for itself left the app's own back gesture armed, so the next scroll read as a swipe back: [design-reference](docs/wiki/frontend/design-reference.md#41-the-system-back-gesture-takes-the-edge-touch-and-the-swipe-back-stayed-armed-mi-9t-2026-10-05).
+
+### Changed - a tampered or truncated MLS frame is pinned as an error, never a panic
+
+openmls 0.9.0 dropped the debug assert that made 0.8.1 panic on a corrupted PrivateMessage body; `tampered_private_message.rs` now pins the refusal and that the group reads the next honest frame ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
+### Fixed - the reel viewer and the media lightbox no longer cancel a move the engine is scrolling
+
+Both claim a drag through `claimTouchMove`, so the "Ignored attempt to cancel a touchmove event" line has no caller left ([reels](docs/wiki/frontend/modules/reels.md#read-end-to-end-on-both-phones-2026-10-02-main-at-4b62429e4-then-the-fixes-of-1354-and-1355)).
+
+### Removed - the `mls-wasm-stub` Vite plugin, which changed nothing in any build
+
+Both native bundles carry the WASM binary because the backup envelope uses it on every platform. The stub never removed it. See [mobile](docs/wiki/frontend/mobile.md#a-native-build-carries-the-wasm-binary-for-the-backup-envelope-2026-10-04).
+
+### Fixed - a device asking for a Welcome seconds after a group's creation is no longer kicked and re-added
+
+The post-Welcome cooldown now knows every Welcome this tab sent - creation fan-out, pending invitation and Graine admission included - so the in-flight Welcome and the repair no longer overlap ([chat](docs/wiki/frontend/modules/chat.md#the-post-welcome-cooldown-knows-every-welcome-this-tab-sent-not-only-its-own-2026-10-04)).
+
 ## [1.0.2] - 2026-10-02
 
 ### Fixed - social-service no longer exits at boot when a migration has not been applied yet
@@ -206,7 +853,7 @@ Toasts sat under the full-screen viewer's layer, so "CanaReel enregistre" (and a
 
 `SEGMENTED_MEDIA_WRITER_ENABLED` moves to `mediaSegmentedWriterFlag.ts` (still `false`); an
 end-to-end test replaces that one module and runs upload, ranged streaming, seek and whole-blob read
-([media-service](docs/wiki/services/media-service.md#the-writer-flip---what-this-release-does-not-do)).
+([media-service](docs/wiki/services/media-service.md#the-writer-flip---on-since-2026-10-05)).
 
 ### Fixed - dragging a text selection no longer slides the page to the next tab
 

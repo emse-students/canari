@@ -101,6 +101,17 @@ export class PostsController {
     return reelLimits();
   }
 
+  /**
+   * Whether the caller may use the feed at all - the SAME SQL as `FeedAudienceGuard`, so the
+   * client's redirect and the server's refusal cannot disagree (WP6b). Never refuses: an answer of
+   * `false` is what the client acts on. Declared before `:postId` like every literal segment here.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('audience')
+  async getFeedAudience(@Headers('x-user-id') xUserId: string) {
+    return { inAudience: await this.service.isInFeedAudience(xUserId) };
+  }
+
   /** The caller's own live reels, soonest expiry first, flagged when they are about to expire. */
   @UseGuards(NginxAuthGuard)
   @Get('my-reels')
@@ -219,7 +230,12 @@ export class PostsController {
   /** Association agenda entry linked to this post (same association), if configured. */
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId/calendar-link')
-  async getPostCalendarLink(@Param('postId', ParseUUIDPipe) postId: string) {
+  async getPostCalendarLink(
+    @Param('postId', ParseUUIDPipe) postId: string,
+    @Headers('x-user-id') xUserId: string
+  ) {
+    // The event of a post the reader may not see is that post's content: same 404 as the post.
+    await this.service.assertVisible(postId, xUserId);
     const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
     return { linkedEvent };
   }
@@ -281,15 +297,21 @@ export class PostsController {
     return this.service.deletePost(postId, xUserId, xGlobalAdmin === 'true');
   }
 
-  /** Records a vote for the calling user on the specified poll option. */
+  /**
+   * Records a vote for the calling user on the specified poll option. Like every interaction that
+   * ADDS something (a vote, a reaction, a comment, a like), it is refused with the read's own 404
+   * on a post the caller may not see (WP6b): an id is not a permission. Taking back one's own
+   * reaction or comment is not gated - it adds nothing.
+   */
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/polls/:pollId/vote')
-  votePoll(
+  async votePoll(
     @Headers('x-user-id') xUserId: string,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('pollId') pollId: string,
     @Body() body: VotePollDto
   ) {
+    await this.service.assertVisible(postId, xUserId);
     return this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
   }
 
@@ -302,6 +324,7 @@ export class PostsController {
     @Body() body: AddReactionDto
   ) {
     await this.assertNotMuted(xUserId);
+    await this.service.assertVisible(postId, xUserId);
     return this.interactions.addReaction(postId, xUserId, body.reactionType);
   }
 
@@ -324,17 +347,19 @@ export class PostsController {
     @Body() body: AddCommentDto
   ) {
     await this.assertNotMuted(xUserId);
+    await this.service.assertVisible(postId, xUserId);
     return this.interactions.addComment(postId, { ...body, userId: xUserId });
   }
 
   /** Toggles a like from the calling user on a specific comment. */
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/comments/:commentId/like')
-  likeComment(
+  async likeComment(
     @Headers('x-user-id') xUserId: string,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string
   ) {
+    await this.service.assertVisible(postId, xUserId);
     return this.interactions.likeComment(postId, commentId, xUserId);
   }
 

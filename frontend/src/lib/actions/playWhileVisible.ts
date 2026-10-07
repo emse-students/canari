@@ -91,12 +91,14 @@ export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisi
  * conversations - tapping it changed ALL the buttons on the page).
  *
  * - `app`: the feed's. Every video follows `videoSound`, and the viewer's own control changes it.
+ * - `silent`: a take whose sound the member REMOVED (the reel review). The element is muted whatever
+ *   the app's answer is and nothing is written back: what is heard is what will be published.
  * - `local`: a conversation's. A video there is its own thing and nobody asked for the feed's answer:
  *   it starts AUDIBLE (the reader pressed play or tapped it open) and its control mutes only this
  *   element. It neither reads `videoSound` - the feed autoplays muted and may have left it muted,
  *   which would open a conversation video silent - nor writes it.
  */
-export type VideoSoundScope = 'app' | 'local';
+export type VideoSoundScope = 'app' | 'local' | 'silent';
 
 /**
  * Makes a video with its own controls - the full-screen viewer's - follow the sound answer of its scope.
@@ -108,20 +110,29 @@ export type VideoSoundScope = 'app' | 'local';
  * with `playbackArbiter` and claims at once), and closing it resumes the video on screen behind it.
  */
 export function followVideoSound(video: HTMLVideoElement, scope: VideoSoundScope = 'app') {
-  Log.d('VIDEO', `viewer opens with ${scope === 'app' ? "the app's" : 'its own'} sound`);
+  Log.d('VIDEO', `viewer opens with ${scope === 'app' ? "the app's" : `its ${scope}`} sound`);
   openViewers += 1;
   const onVolumeChange = () => videoSound.setMuted(video.muted);
   const registration = arbitratePlayback(video);
-  if (scope === 'app') {
-    video.muted = videoSound.muted;
-    video.addEventListener('volumechange', onVolumeChange);
-  } else {
-    video.muted = false;
-  }
+  /** Puts the element on `next`'s answer; callable again when the scope changes under a live element. */
+  const apply = (next: VideoSoundScope) => {
+    video.removeEventListener('volumechange', onVolumeChange);
+    if (next === 'app') {
+      video.muted = videoSound.muted;
+      video.addEventListener('volumechange', onVolumeChange);
+    } else {
+      video.muted = next === 'silent';
+    }
+  };
+  apply(scope);
   // Taking over from whatever plays behind it at once, not on its `play`: an `autoplay` that the
   // browser delays would otherwise leave both audible for that delay.
   claimPlayback(video);
   return {
+    update(next: VideoSoundScope = 'app') {
+      Log.d('VIDEO', `viewer sound scope is now ${next}`);
+      apply(next);
+    },
     destroy() {
       openViewers -= 1;
       video.removeEventListener('volumechange', onVolumeChange);

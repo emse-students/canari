@@ -160,7 +160,7 @@ export interface SendChannelMessageDto {
   /** Graine v2 (channel-encryption section 21): the session key's signature. Absent from v1. */
   signature?: string;
   messageId?: string;
-  /** When set, the message is a poll: auto-pinned server-side and votable. */
+  /** When set, the message is a poll: auto-pinned server-side when its author may pin (moderation grant), and votable. */
   poll?: ChannelPollInput;
   /**
    * Cleartext list of mentioned user ids, attached so the server can route the `mentions`
@@ -492,6 +492,21 @@ export class ChannelService {
       method: 'PATCH',
       body: JSON.stringify({ orderedIds }),
     });
+    await this.handleError(res);
+  }
+
+  /**
+   * Persists the order of a community's salons for EVERY member (needs the channel-management
+   * permission). `orderedIds` is the caller's visible list in its new order.
+   */
+  async reorderChannels(workspaceId: string, orderedIds: string[]): Promise<void> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${workspaceId}/channels/reorder`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ orderedIds: orderedIds.map((id) => this.normalizeChannelId(id)) }),
+      }
+    );
     await this.handleError(res);
   }
 

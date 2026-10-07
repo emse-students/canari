@@ -165,7 +165,7 @@ of **three** outcomes. The distinction exists for one reason: **only an ANSWER m
 | outcome | when | response | cached |
 | --- | --- | --- | --- |
 | `image` | upstream 200 | the bytes, upstream `Content-Type` **and upstream `ETag`** | 1 h in process (then REVALIDATED, not re-fetched), 24 h in the browser |
-| `absent` | upstream **404** - this user has no photo | `404`, no body | 10 min in process, 10 min in the browser |
+| `absent` | upstream **404** - this user has no photo | `404`, no body | 10 min in process, 10 min in the browser (the web client itself remembers it for the session) |
 | `unavailable` | timeout, transport failure, upstream 5xx/429, our key refused, or no key configured | `502`, no body, `Cache-Control: no-store` | never, at any layer |
 
 - **The budget is 4 000 ms**, the number Le Cercle justified for the same endpoint. The four proxies
@@ -336,6 +336,13 @@ requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
 `lydiaOnboardingComplete` automatically) is deliberately unbuilt - no documented signature, and
 `vendor_token` is PUBLIC.
 
+**How core-service reads an association's payment account (2026-10-05).** `connect-status`, the
+dashboard link and the Lydia manual validation read social-service's INTERNAL route
+`GET /api/internal/associations/:id/payment-account` (X-Internal-Secret, the four Stripe/Lydia id and
+flag fields only). They used to call `GET /api/associations/:id`, which answers 401 without an
+`X-User-Id` since 2026-08-05, so each reported "Association not found" - invisible because
+`BadRequestException` is not logged and the client shows one generic message.
+
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/payments/provider` | none | Active provider (`stripe` or `lydia`), for the frontend to render the matching onboarding UI |
@@ -344,7 +351,7 @@ requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
 | POST | `/api/payments/connect-dashboard-link/:associationId` | JWT | Single-use Stripe Dashboard login link |
 | POST | `/api/payments/disconnect-connect-account/:associationId` | JWT | Unlink the association's Stripe Connect account (local unlink only - the Stripe account itself is untouched) |
 | POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
-| POST | `/api/payments/create-checkout-session` | JWT | Create Stripe Checkout session |
+| POST | `/api/payments/create-checkout-session` | InternalSecret | Create a checkout session (called by social-service, never by a browser) |
 | POST | `/api/payments/verify-session` | JWT | Verify completed checkout, mark form submission paid |
 | POST | `/api/payments/cancel-session` | JWT | Cancel unpaid checkout |
 | POST | `/api/payments/setup-payment-method` | JWT | Create setup session to save a card |
@@ -482,3 +489,30 @@ nulls the column. Only the client can encrypt, so the conversion cannot happen i
 | `STRIPE_SECRET_KEY` | no | Stripe secret key (payments) |
 | `STRIPE_WEBHOOK_SECRET` | no | Stripe webhook signing secret |
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
+
+##### An absence is remembered, and a group photo is stored (2026-10-05)
+
+A HAR of the web client (443 requests, 22 s) showed 110 `GET /api/users/:id/avatar` for 37 URLs: 80 were
+404s for 7 users, 11-12 times each. The server's `max-age=600` on an absence was not reused by the browser
+and `userAvatarCache.ts` forgot `none` with the mount.
+
+- **A has-avatar flag in `/api/users/batch` is REFUTED**: the photo lives in MiGallery, core holds no
+  column for it, so the flag would cost one upstream call per profile, which is the request it replaces.
+- **A 404 is kept per URL for the rest of the session, with NO timer** (user, 2026-10-06; the 10-minute
+  lifetime of 2026-10-05 was a clock deciding traffic, and prod 1.0.3 - which predates it - logged 5121
+  404s in 6587 avatar requests over 30 h) - cleared only when the signed-in reader changes. **Only a
+  404**: a 502 `unavailable` is not an answer. **What would make it wrong**: the user adds a photo, in
+  MiGallery, which no Canari screen does and nothing here is told; initials stay until the app reloads,
+  the accepted cost. Guarded by `userAvatarCache.test.ts` ("a known absence").
+- **Group photos came late for another reason**: `ConversationMeta` did not hold `imageMediaId`, so a
+  restored sidebar row had no photo id until the server's group list arrived after the connection (the
+  per-group `GET /api/mls/groups/:id` is NOT what feeds it). The id is now persisted (IndexedDB row, SQLite
+  `image_media_id`, schema v12) and discovery saves it when it changes. People's avatars need no id.
+  Guarded by `db/conversationImage.test.ts`. Communities come from the workspace list DTO, a network
+  call with no local copy: unchanged, and not measured in a browser.
+- **`groups/:id` and `user-members`**: `MlsDeliveryApi` joins simultaneous identical reads (entry lives
+  only as long as the request, no clock). `getGroupMeta` and `getGroupServerStatus` share one request.
+  **A `user-members` batch endpoint was NOT built**: its callers are membership guards and the stray
+  sweep, which walk one group at a time and need a fresh read; batching means restructuring them, and
+  the measured gain was 36-90 ms calls after the list had rendered. Guarded by
+  `mlsDeliveryApi.inFlight.test.ts`.

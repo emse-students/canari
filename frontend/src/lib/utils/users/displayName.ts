@@ -13,6 +13,9 @@ import { SYSTEM_SENDER_ID } from '$lib/utils/chat/messageUtils';
 const displayNameCache = new Map<string, string>();
 const inFlight = new Map<string, Promise<string | null>>();
 const failedAt = new Map<string, number>();
+
+/** The structured `firstName` column of each resolved profile, for the places that name a person already on screen. */
+const firstNameCache = new Map<string, string>();
 const FAILURE_BACKOFF_MS = 2 * 60 * 1000;
 
 /**
@@ -165,6 +168,15 @@ export function peekUserDisplayName(userId: string): string | null {
   return null;
 }
 
+/**
+ * The given name of a resolved profile, read from its `firstName` column - never cut out of the
+ * full name, which breaks on compound given names. `fallback` (the full name the caller holds) is
+ * what answers until the profile has been fetched, or when it carries no first name.
+ */
+export function getUserFirstNameSync(userId: string, fallback: string): string {
+  return firstNameCache.get(normalizeUserId(userId)) ?? fallback;
+}
+
 export function getUserDisplayNameSync(userId: string, fallback?: string): string {
   const normalized = normalizeUserId(userId);
   const cached = displayNameCache.get(normalized);
@@ -274,6 +286,8 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       // pins exactly that). The dead `failedAt.set` is gone because a resolved fetch is not a
       // failure, whatever the profile turned out to contain.
       displayNameCache.set(normalized, value);
+      const first = profile.firstName?.trim();
+      if (first) firstNameCache.set(normalized, first);
       failedAt.delete(normalized);
       return value;
     })

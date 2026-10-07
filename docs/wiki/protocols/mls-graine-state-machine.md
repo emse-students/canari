@@ -941,6 +941,8 @@ second time that has happened to this row - the zero-holder candidate of 2026-09
 something else. A count of holders cannot tell "a member who left" from "a member who never
 arrived", and both render as one holder.
 
+**Decided by the user, 2026-10-04: nothing is built for the one-holder conversation.** One conversation on the whole of production (measured 2026-09-22) does not pay for a mechanism, and a destructive control gated on a server count would be a fallback path. The hourly report keeps naming the conversations and repairs nothing; **reopen only if its count rises**. DE2 stays terminal by RFC 9420 construction.\n
+
 #### A SEAT WITH NO CLIENT BEHIND IT - THE FIRST REAL ONE, AND THE POPULATION IS TWO (2026-09-22)
 
 The placeholder-seat question had never had production evidence: the three identities previously

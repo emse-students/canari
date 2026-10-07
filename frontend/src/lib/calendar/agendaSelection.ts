@@ -1,0 +1,89 @@
+import {
+  CAMPUSES,
+  FORMATIONS,
+  campusLabel,
+  formationLabel,
+  type Campus,
+  type CursusEntry,
+  type Formation,
+} from '$lib/profile/miconnectProfile';
+import { m } from '$lib/paraglide/messages';
+import type { PickerOption } from '$lib/components/ui/picker';
+
+/**
+ * WHICH AGENDA A FEED OR AN EXPORT IS FOR (D40, docs/wiki/profiles-and-access.md): the public agenda
+ * is one feed per selection, and the server REFUSES a bare anonymous one. So every surface that
+ * builds a feed URL (the subscribe modal) or asks for a month to print (the PDF export) holds one of
+ * these. An empty side means "any".
+ */
+export interface AgendaSelection {
+  campus: Campus | '';
+  formation: Formation | '';
+}
+
+/** Nothing chosen: not a selection, and the server refuses it. */
+export const EMPTY_AGENDA_SELECTION: AgendaSelection = { campus: '', formation: '' };
+
+/** The reader's own facts the default is read from (a `UserProfile` carries both, WP3). */
+export interface AgendaReader {
+  campus?: Campus | null;
+  cursus?: CursusEntry[] | null;
+}
+
+/**
+ * The selection a reader starts from: THEIR campus and their FIRST cursus formation - the space
+ * they live in. Whatever is unknown stays empty, so a reader with no space starts with nothing and
+ * must choose; a default is never invented.
+ */
+export function defaultAgendaSelection(reader: AgendaReader | null | undefined): AgendaSelection {
+  const campus = CAMPUSES.find((c) => c === reader?.campus) ?? '';
+  const first = reader?.cursus?.find((entry) => FORMATIONS.some((f) => f === entry.formation));
+  const formation = FORMATIONS.find((f) => f === first?.formation) ?? '';
+  return { campus, formation };
+}
+
+/** Whether the selection names at least a campus or a formation - what the server asks for. */
+export function isAgendaSelected(selection: AgendaSelection): boolean {
+  return selection.campus !== '' || selection.formation !== '';
+}
+
+/**
+ * The campus choices - the reader's OWN campus and nothing else, with no "any campus" once they
+ * have one (user, 2026-10-07): an agenda is the one of a space, and an event across campuses reaches
+ * both through a co-organiser partnership (D39). A reader with no campus keeps the lone "any".
+ */
+export function campusSelectOptions(reader: AgendaReader | null | undefined): PickerOption[] {
+  const own = CAMPUSES.filter((c) => c === reader?.campus).map((c) => ({
+    value: c as string,
+    label: campusLabel(c),
+  }));
+  return own.length > 0 ? own : [{ value: '', label: m.calendar_selection_any_campus() }];
+}
+
+/** The formation choices - the formations of the reader's cursus; staff, tied to none, get "all". */
+export function formationSelectOptions(reader: AgendaReader | null | undefined): PickerOption[] {
+  const own = new Set(reader?.cursus?.map((entry) => entry.formation));
+  const mine = FORMATIONS.filter((f) => own.has(f)).map((f) => ({
+    value: f as string,
+    label: formationLabel(f),
+  }));
+  return mine.length > 0 ? mine : [{ value: '', label: m.calendar_selection_any_formation() }];
+}
+
+/**
+ * A reader with a campus and NO cursus entry - EMSE staff - is tied to no formation: they may
+ * follow their OWN campus whole ("all formations"), the one thing the server signs for them (D40,
+ * user 2026-10-07). A cursus with entries, even unknown ones, is a student and keeps own-spaces.
+ */
+export function isCampusWideReader(reader: AgendaReader | null | undefined): boolean {
+  return CAMPUSES.some((c) => c === reader?.campus) && (reader?.cursus?.length ?? 0) === 0;
+}
+
+/**
+ * Whether the reader has anything to subscribe to: an own space (a campus and a known formation),
+ * or, for staff, their campus whole. Neither campus nor cursus - or a campus-less student - is none.
+ */
+export function hasAgendaSpace(reader: AgendaReader | null | undefined): boolean {
+  const own = defaultAgendaSelection(reader);
+  return (own.campus !== '' && own.formation !== '') || isCampusWideReader(reader);
+}

@@ -54,7 +54,11 @@ export interface ChatSessionCallbacks {
     viewerCanWrite?: boolean;
   }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
-  onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
+  onWorkspaceUpdated?: (event: {
+    workspaceId: string;
+    imageMediaId?: string;
+    channelsReordered?: boolean;
+  }) => void;
   /**
    * This device's own role in a community changed, pushed by the server to the member it concerns.
    *
@@ -68,6 +72,11 @@ export interface ChatSessionCallbacks {
     canManage: boolean;
     /** Whether the role lets this member govern salons. Absent (an older server) = unchanged. */
     canManageChannels?: boolean;
+    /**
+     * Whether the role lets this member pin or delete OTHER members' messages. Absent (an older
+     * server) = unchanged.
+     */
+    canModerate?: boolean;
     permissions: string[];
   }) => void;
   onWorkspaceDeleted?: (event: { workspaceId: string; deletedBy?: string }) => void;

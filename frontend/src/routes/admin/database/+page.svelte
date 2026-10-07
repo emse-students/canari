@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -20,7 +21,7 @@
   let problem = $state<string | null>(null);
 
   onMount(() => {
-    if (!isGlobalAdmin()) void goto('/admin', { replaceState: true });
+    if (!isGlobalAdmin()) void goto(resolve('/admin'), { replaceState: true });
   });
 
   async function open() {

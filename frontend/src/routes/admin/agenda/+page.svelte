@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import {
@@ -8,6 +9,7 @@
     deleteAssociationCalendarEvent,
     associationLogoSrc,
     type AssociationCalendarFeedEvent,
+    type PendingCalendarEvent,
   } from '$lib/associations/api';
   import { Check, X, Trash2, ExternalLink } from '@lucide/svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
@@ -20,8 +22,7 @@
   import { associationAccentHex } from '$lib/associations/accent';
   import { formatEventDateTimeRange } from '$lib/calendar/feedEvents';
 
-  let events = $state<AssociationCalendarFeedEvent[]>([]);
-  let canValidate = $state(false);
+  let events = $state<PendingCalendarEvent[]>([]);
   let loading = $state(true);
   let error = $state('');
   let actingId = $state<string | null>(null);
@@ -45,11 +46,10 @@
     try {
       const res = await listPendingCalendarEvents();
       if (!res.canValidate) {
-        void goto('/dashboard', { replaceState: true });
+        void goto(resolve('/dashboard'), { replaceState: true });
         return;
       }
       events = res.events;
-      canValidate = res.canValidate;
     } catch (e) {
       Log.d('admin.agenda.load failed', e);
       error = m.common_generic_error_label();
@@ -199,7 +199,9 @@
             {/if}
           </div>
           <div class="flex shrink-0 flex-wrap gap-2">
-            {#if canValidate}
+            <!-- Per event, from the server: the BDE of THIS event association's space decides it
+                 (WP6c step 2), so the queue may hold rows this viewer sees but does not judge. -->
+            {#if ev.canValidate}
               <button
                 type="button"
                 onclick={() => validate(ev)}

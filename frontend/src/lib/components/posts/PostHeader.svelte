@@ -4,10 +4,11 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import AnonymousAvatar from '$lib/components/shared/AnonymousAvatar.svelte';
-  import { Clock, VenetianMask } from '@lucide/svelte';
+  import { Clock, Repeat2, VenetianMask } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
   import { postAuthorName } from '$lib/posts/postAuthorName';
+  import { republishedByLine } from '$lib/posts/republication';
 
   /** Props for the PostHeader component. */
   interface Props {
@@ -32,6 +33,9 @@
   function getPostAuthorName(): string {
     return postAuthorName(post);
   }
+
+  /** "Republie par X, Y +N" (D38): one card per post, however many associations carry it. */
+  const republished = $derived(republishedByLine(post.republishedBy));
 
   const associationHref = $derived(
     post.association ? `/associations/${encodeURIComponent(post.association.slug)}` : ''
@@ -95,7 +99,7 @@
     </div>
     <div class="text-text-muted text-2xs mt-0.5 flex items-center gap-1.5 font-medium opacity-80">
       <Clock size={12} strokeWidth={2.5} />
-      <span title={exactDate(post.createdAt)}>{timeAgo(post.createdAt)}</span>
+      <span title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
       {#if anonymousBadge}
         <span class="inline-flex items-center gap-1" title={m.post_anonymous_badge_hint()}>
           <VenetianMask size={12} strokeWidth={2.5} />
@@ -103,5 +107,20 @@
         </span>
       {/if}
     </div>
+    {#if republished}
+      <div class="text-text-muted text-2xs mt-0.5 flex min-w-0 items-center gap-1.5 font-medium">
+        <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" />
+        <span class="truncate">
+          <EmojiText
+            text={republished.extra > 0
+              ? m.post_republished_by_more({
+                  names: republished.names.join(', '),
+                  count: republished.extra,
+                })
+              : m.post_republished_by({ names: republished.names.join(', ') })}
+          />
+        </span>
+      </div>
+    {/if}
   </div>
 </div>

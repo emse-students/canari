@@ -279,9 +279,10 @@ jobs:
   # commit or version tag moved onto a newer push) - and no job anywhere has ever deleted one.
   # Every other of the 8 services accumulates the same way.
   #
-  # KEEP is a rollback margin, not a guess at what is deployed: both estates are always pinned to
-  # an explicit `TAG=<sha>` (docs/wiki/infrastructure/estate-migration.md), so whatever is
-  # currently running is always among the newest few pushes and survives by construction. 30 covers
+  # KEEP is a rollback margin, not a guess at what is deployed: production is deployed by its
+  # release's `v<version>` tag (`serve-prod.yml`), one push per service per release (pre-releases
+  # included), so what is running is always among the newest few pushes and survives by
+  # construction, and a rollback to a recent release still finds its images. 30 covers
   # months of release cadence at this project's rate without ever approaching a number that would
   # make "can I still reach last month's build" a real question.
   #

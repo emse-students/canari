@@ -175,6 +175,33 @@ describe('the GIF panel', () => {
     expect(panel()).toBeNull();
   });
 
+  it('becomes the whole screen above the keyboard once its search is focused, and stays so', () => {
+    mountComposer();
+    openGifPanel();
+    const content = () => panel()!.firstElementChild as HTMLElement;
+    expect(content().classList.contains('composer-gif-fullscreen')).toBe(false);
+
+    const search = document.querySelector<HTMLInputElement>('input[type="search"]')!;
+    search.dispatchEvent(new FocusEvent('focus'));
+    flushSync();
+    expect(content().classList.contains('composer-gif-fullscreen')).toBe(true);
+
+    // Tapping a result blurs the search first: the layer must not collapse under the finger.
+    search.dispatchEvent(new FocusEvent('blur'));
+    flushSync();
+    expect(content().classList.contains('composer-gif-fullscreen')).toBe(true);
+  });
+
+  it('closes the whole picker from the fullscreen layer', () => {
+    mountComposer();
+    openGifPanel();
+    document.querySelector('input[type="search"]')!.dispatchEvent(new FocusEvent('focus'));
+    flushSync();
+    panel()!.querySelector<HTMLButtonElement>('button[aria-label="Fermer"]')!.click();
+    flushSync();
+    expect(panel()).toBeNull();
+  });
+
   it('hands its room to the keyboard when the text field is tapped: still reserved, no longer live', () => {
     mountComposer();
     openGifPanel();

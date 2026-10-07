@@ -420,10 +420,13 @@ jobs:
       # `type=ref,event=branch` and `type=sha,prefix={{branch}}-` are gone with the push trigger:
       # there is no branch event any more, and both produced tags nothing ever pulled.
       #
-      # `latest` MOVES ONLY FOR A STABLE RELEASE, and `dev` only for a pre-release. Both compose
-      # files are deployed with an explicit `TAG=<sha>`, so neither moving tag decides what runs -
-      # but `latest` is what a human typing `docker pull` gets, and letting an alpha claim it would
-      # make that person's answer to "what is production running" quietly wrong. `enable=` takes a
+      # `v<version>` IS WHAT PRODUCTION DEPLOYS (`serve-prod.yml`), which makes a rerun of an old
+      # release a rollback; the dev estate still deploys its moving `dev`. EVERY service gets it on
+      # EVERY release - nothing is selectively rebuilt - and the GHCR prune keeps the newest 30.
+      #
+      # `latest` MOVES ONLY FOR A STABLE RELEASE, and `dev` only for a pre-release. Neither
+      # decides what production runs, but `latest` is what a human typing `docker pull` gets, and
+      # letting an alpha claim it would make that person's answer to "what is production running" quietly wrong. `enable=` takes a
       # literal true/false, which is why the release kind is threaded in rather than inferred from
       # the default branch (every release commit is on the default branch, alpha and stable alike,
       # so `{{is_default_branch}}` could not tell them apart).

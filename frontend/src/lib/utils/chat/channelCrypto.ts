@@ -3,7 +3,8 @@ import {
   type ChannelMessageRow,
   type ChannelPollInput,
 } from '$lib/services/ChannelService';
-import { encodeAppMessage, decodeAppMessage, mkPoll, mkReaction } from '$lib/proto/codec';
+import { encodeAppMessage, decodeAppMessage, mkEdit, mkPoll, mkReaction } from '$lib/proto/codec';
+import type { DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import {
@@ -43,7 +44,8 @@ export interface DecodedChannelMessage {
  */
 export type DecodedChannelRow =
   | { kind: 'message'; message: DecodedChannelMessage }
-  | { kind: 'reaction'; reaction: DecodedChannelReaction };
+  | { kind: 'reaction'; reaction: DecodedChannelReaction }
+  | { kind: 'edit'; edit: DecodedChannelEdit };
 
 /** A reaction frame read off a channel row: who, on what, which emoji, and when. */
 export interface DecodedChannelReaction {
@@ -221,6 +223,19 @@ export async function decodeChannelMessageRow(
         },
       };
     }
+    if (decoded?.edit) {
+      // Like a reaction, an edit changes a bubble instead of being one. The sender is the ROW's -
+      // what Graine v2 proves - and the caller checks it against the target's author.
+      return {
+        kind: 'edit',
+        edit: {
+          targetMessageId: String(decoded.edit.messageId ?? ''),
+          senderId: String(row.senderId || '').toLowerCase(),
+          newContent: String(decoded.edit.newContent ?? ''),
+          editedAt: Number(decoded.edit.editedAt ?? 0),
+        },
+      };
+    }
     if (decoded) {
       const envelope =
         appMsgToEnvelope(decoded, serverMs) ?? appMsgToChannelSystemEnvelope(decoded, serverMs);
@@ -340,9 +355,36 @@ export async function sendChannelReaction(
 }
 
 /**
+ * Sends the author's edit of one of their own salon messages, as an encrypted SILENT channel row.
+ *
+ * Same transport as a reaction: sealed under the sender's Graine session, stored as an opaque blob,
+ * and silent so an edit never rings a phone (no push for a correction). The server cannot tell it
+ * from any other row, so it cannot validate anything about it - the readers do, see
+ * `applyChannelEdit`. `editedAt` is the caller's, for the same reason `editMessage` takes it: the
+ * optimistic local apply and the frame must carry ONE instant.
+ */
+export async function sendChannelEdit(
+  channelId: string,
+  targetMessageId: string,
+  newContent: string,
+  editedAt: number
+): Promise<void> {
+  const protoBytes = encodeAppMessage({
+    ...mkEdit(targetMessageId, newContent, editedAt),
+    // Its OWN id, like a reaction: two rows answering to one address would make delete and pin
+    // ambiguous.
+    messageId: crypto.randomUUID(),
+    sentAt: editedAt,
+  });
+  await sendEncryptedChannelMessage(channelId, protoBytes, undefined, undefined, undefined, {
+    silent: true,
+  });
+}
+
+/**
  * Encrypts a poll definition into a PollMsg and sends it to a channel, attaching
  * the label-free descriptor (option ids + deadline) the server needs to tally.
- * The server auto-pins poll messages so they stay reachable in the pin list.
+ * The server auto-pins a moderator's poll messages (not a plain member's) so they stay reachable in the pin list.
  */
 export async function sendChannelPoll(
   channelId: string,

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -6,6 +7,7 @@
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import { currentUserId } from '$lib/stores/user';
   import SettingsPreferencesSection from '$lib/components/settings/SettingsPreferencesSection.svelte';
+  import SettingsNotificationsSection from '$lib/components/settings/SettingsNotificationsSection.svelte';
   import SettingsSecuritySection from '$lib/components/settings/SettingsSecuritySection.svelte';
   import SettingsBackupSection from '$lib/components/settings/SettingsBackupSection.svelte';
   import SettingsPaymentsSection from '$lib/components/settings/SettingsPaymentsSection.svelte';
@@ -32,7 +34,7 @@
   // themselves.
   onMount(() => {
     if (!currentUserId()) {
-      void goto('/login?returnTo=/settings', { replaceState: true });
+      void goto(resolve('/login?returnTo=/settings'), { replaceState: true });
     }
   });
 
@@ -58,6 +60,7 @@
 
   <div class="space-y-6 md:space-y-8">
     <SettingsPreferencesSection />
+    <SettingsNotificationsSection />
     <SettingsSecuritySection />
     <SettingsBackupSection />
     <SettingsPaymentsSection />

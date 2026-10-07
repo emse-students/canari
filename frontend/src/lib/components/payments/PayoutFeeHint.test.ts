@@ -68,3 +68,15 @@ it('defaults to stripe and logs rather than throwing when the provider call fail
   expect(target.textContent).toContain('9,60');
   expect(warn).toHaveBeenCalled();
 });
+
+it('renders no hint at all once the platform declares payments disabled', async () => {
+  fetchActivePaymentProvider.mockResolvedValue('disabled');
+  const target = mountHint();
+  flushSync();
+  expect(target.textContent).toContain('9,60'); // provisional Stripe figure while the call is pending
+  await flushProvider();
+  flushSync();
+
+  expect(target.textContent).not.toContain('9,60');
+  expect(target.querySelector('[role="note"]')).toBeNull();
+});

@@ -110,3 +110,25 @@ it('still treats a click inside the portalled menu as inside, not an outside cli
   // would never fire - whether or not the menu's `slide` transition has finished playing out.
   expect(onReport).toHaveBeenCalledTimes(1);
 });
+
+it('offers the republication entries only when the server granted them (D38)', () => {
+  const onUnrepublish = vi.fn();
+  const card = mountMenu({
+    canRepublish: true,
+    canProposeRepublication: false,
+    unrepublishAs: [{ id: 'asso-2', name: 'BDA' }],
+    onUnrepublish,
+  });
+  card.querySelector('button')!.click();
+  flushSync();
+
+  const items = Array.from(document.body.querySelectorAll('[role="menuitem"]'));
+  const labels = items.map((el) => el.textContent ?? '');
+  expect(labels.some((t) => t.includes('Republier'))).toBe(true);
+  expect(labels.some((t) => t.includes('Proposer à une association'))).toBe(false);
+
+  const withdraw = items.find((el) => el.textContent?.includes('BDA')) as HTMLElement;
+  withdraw.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+  flushSync();
+  expect(onUnrepublish).toHaveBeenCalledWith('asso-2');
+});

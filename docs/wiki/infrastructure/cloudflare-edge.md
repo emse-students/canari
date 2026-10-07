@@ -324,7 +324,7 @@ root and never needed it world-readable, so the permission bought nothing and co
 unit is `600 root:root` on both hosts that carry a token, and `systemctl cat` is refused to an
 unprivileged user on both - re-measured 2026-09-24.
 
-#### AND THE TOKEN IS STILL READABLE BY ANY LOCAL USER, ON BOTH HOSTS - 2026-09-24
+#### AND THE TOKEN WAS STILL READABLE BY ANY LOCAL USER, ON THREE HOSTS - FOUND 2026-09-24, CLOSED 2026-10-05
 
 `600` closed `systemctl cat`, which reads the FILE. **`systemctl show cloudflared -p ExecStart`
 reads systemd's own in-memory state over D-Bus, where the command line lives in full, and it answers
@@ -350,6 +350,25 @@ ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
 `systemctl show` prints `EnvironmentFile=` as a PATH and never its contents; the value reaches the
 process environment at exec time, and `/proc/<pid>/environ` is readable only by the process owner,
 which is root. `Environment=` in the unit would NOT do - that one `show` prints verbatim.
+
+**CLOSED 2026-10-05 on all THREE tunnel hosts** (`canari`, `miconnect` and `mitv` - the third was missing from
+this page), with the user present. Per host: the new secret, the new run token in `/etc/cloudflared/token`
+(`600 root:root` in a `700` directory), `EnvironmentFile=` in the unit, `--token` gone from `ExecStart`,
+`daemon-reload`, a DETACHED restart. Proved on each: `systemctl show cloudflared -p ExecStart` carries no
+`--token` for an unprivileged user, the process arguments carry none, the file is refused to that user,
+the journal holds four `Registered tunnel connection` lines, and the public name answers (`canari-emse.fr`,
+`dev.` and `rootz-emse.fr` all `200`). Each restart was about a minute.
+
+**How it was done, so it can be done again.** The `CF_TOKEN_TUNNEL` credential (not `CF_TOKEN_ADMIN`, which
+answers `401` on `/token`) reads AND rotates a tunnel, so the old "dashboard gesture only" note was wrong.
+**`canari` and `miconnect` were driven THROUGH `mitv` (`ssh -J mitv`), whose own tunnel is independent**, so
+restarting their connector did not cut the session; `mitv` itself went last and was re-entered through
+`canari`'s LAN. That route was exercised BEFORE the first PATCH, which is the only reason the order was
+safe. The root-side work reads the new token from stdin (`sudo -S` passes the rest of stdin to the
+command, measured with a dummy line first), so the value is never in an argument, a file in a user's
+home, or a transcript.
+
+**The historical text below is kept for the order of operations.** It named two hosts; there are three.
 
 **Both hosts owe this, and both owe a rotation after it**, in the order below - step 1 invalidates
 the old token instantly, so the tunnel is down between step 1 and the restart. That is a minute of

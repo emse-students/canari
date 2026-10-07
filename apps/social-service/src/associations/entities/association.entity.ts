@@ -5,7 +5,9 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   Index,
+  VirtualColumn,
 } from 'typeorm';
+import { isBdeAssociationSql } from '../../spaces/bde';
 
 /** TypeORM entity representing a student association with optional Stripe Connect integration. */
 @Entity('associations')
@@ -74,10 +76,11 @@ export class Association {
   paymentDelegationStatus: 'pending' | 'approved' | null;
 
   /**
-   * When true, members of this association may use BDE-only flags
-   * (VALIDATE_EVENTS, MANAGE_ASSO, MODERATE). Set only by global admins.
+   * True when this association is the BDE of at least one space, so its members may use the BDE-only
+   * flags (VALIDATE_EVENTS, MANAGE_ASSO, MODERATE). READ-ONLY and derived from `spaces`
+   * ("bdeAssociationId"): it is designated on the spaces page, never stored here (WP6c).
    */
-  @Column({ default: false })
+  @VirtualColumn({ query: (alias) => `SELECT ${isBdeAssociationSql(alias)}` })
   isBDE: boolean;
 
   /**
@@ -122,7 +125,7 @@ export class Association {
    * associations (members, events) minus the banking/shop/vault features.
    */
   @Column({ type: 'varchar', length: 20, default: 'association' })
-  type: 'association' | 'list';
+  type: 'association' | 'list' | 'institution';
 
   /** Lists only: the promotion year the list belongs to (e.g. 2027). Null for associations. */
   @Column({ type: 'int', nullable: true })

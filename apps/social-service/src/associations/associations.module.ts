@@ -15,6 +15,10 @@ import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { AssociationRoleHistory } from './entities/association-role-history.entity';
 import { PartnershipCard } from './entities/partnership-card.entity';
 import { PartnershipCode } from './entities/partnership-code.entity';
+import { Space } from '../spaces/space.entity';
+import { AssociationAudience } from '../spaces/association-audience.entity';
+import { SpacesController, AssociationAudiencesController } from '../spaces/spaces.controller';
+import { SpacesService } from '../spaces/spaces.service';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
@@ -60,6 +64,8 @@ import { PricingModule } from '../pricing/pricing.module';
       Post,
       Form,
       PostNotification,
+      Space,
+      AssociationAudience,
     ]),
     FollowsModule,
     UserTagModule,
@@ -67,6 +73,7 @@ import { PricingModule } from '../pricing/pricing.module';
     PricingModule,
   ],
   providers: [
+    SpacesService,
     AssociationsService,
     AssociationDocumentRetentionService,
     UserProfileService,
@@ -88,7 +95,13 @@ import { PricingModule } from '../pricing/pricing.module';
   ],
   // Category/poster controllers are listed FIRST so their literal `associations/categories`
   // and `associations/poster` routes register before the `associations/:id` matcher.
-  controllers: [AssociationCategoriesController, PosterController, AssociationsController],
+  controllers: [
+    AssociationCategoriesController,
+    SpacesController,
+    AssociationAudiencesController,
+    PosterController,
+    AssociationsController,
+  ],
   exports: [
     AssociationsService,
     ProductsService,

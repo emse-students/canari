@@ -35,7 +35,12 @@ describe('PostsService post management rights', () => {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn(() => Promise.resolve({ ...post } as Post)),
       remove: jest.fn(() => Promise.resolve(undefined)),
-      manager: { query: jest.fn(() => Promise.resolve([])) },
+      // The one-row visibility read (WP6b) says yes: these are about rights, not audiences.
+      manager: {
+        query: jest.fn((sql: string) =>
+          Promise.resolve(sql.includes('AS visible') ? [{ visible: true }] : [])
+        ),
+      },
     };
 
     const holds = (userId: string | undefined, associationId: string) =>

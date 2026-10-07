@@ -1,3 +1,4 @@
+import { GraineSealUnavailableError } from './sealUnavailable';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
@@ -21,7 +22,7 @@ import {
  */
 
 /** Thrown when something asks the Graine layer to work before a session has wired it. */
-export class GraineNotReadyError extends Error {
+export class GraineNotReadyError extends GraineSealUnavailableError {
   constructor(what: string) {
     super(`[GRAINE] ${what} - no session is wired`);
     this.name = 'GraineNotReadyError';
@@ -30,7 +31,13 @@ export class GraineNotReadyError extends Error {
 
 export interface GraineRuntime {
   storage: IStorage;
-  deviceKeyB64: string;
+  /**
+   * The key the store is sealed with NOW. A function, because this wiring outlives the key: an
+   * in-session PIN change re-seals every seed (`reencryptGraineSessions`) and moves the session's
+   * key, and a value captured at login kept sealing every later seed under the abandoned one -
+   * unreadable at the next launch, and a seed cannot be re-fetched. Read it at each store access.
+   */
+  deviceKey: () => string;
   /** This device's user id, lower-cased once here so no caller has to remember to. */
   userId: string;
   mlsService: IMlsService;

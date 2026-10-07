@@ -3,6 +3,7 @@ import {
   uninstallMlsStatePersisterLifecycle,
 } from './mlsStatePersisterLifecycle';
 import type { MlsStatePersister } from './mlsStatePersister';
+import { APP_FOREGROUND_EVENT } from '$lib/utils/appForeground';
 
 function makePersister(): MlsStatePersister {
   return {
@@ -42,8 +43,13 @@ describe('mlsStatePersisterLifecycle', () => {
     expect(window.addEventListener).toHaveBeenCalledWith('pagehide', expect.any(Function), {
       capture: true,
     });
+    expect(window.addEventListener).toHaveBeenCalledWith(
+      APP_FOREGROUND_EVENT,
+      expect.any(Function)
+    );
     expect(document.addEventListener).toHaveBeenCalledTimes(1);
-    expect(window.addEventListener).toHaveBeenCalledTimes(1);
+    // pagehide + the native foreground edge, each once despite the second install.
+    expect(window.addEventListener).toHaveBeenCalledTimes(2);
   });
 
   it('flushes encrypted state when the document becomes hidden', () => {
@@ -76,5 +82,26 @@ describe('mlsStatePersisterLifecycle', () => {
     expect(window.removeEventListener).toHaveBeenCalledWith('pagehide', expect.any(Function), {
       capture: true,
     });
+    expect(window.removeEventListener).toHaveBeenCalledWith(
+      APP_FOREGROUND_EVENT,
+      expect.any(Function)
+    );
+  });
+
+  // A backgrounded Android WebView stays `visible`, so the native edge is the only trigger there.
+  it('flushes encrypted state when the NATIVE app goes to the background, and not when it returns', () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const persister = makePersister();
+    installMlsStatePersisterLifecycle(persister);
+
+    window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: true } }));
+    expect(persister.flushEncrypted).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: false } }));
+    expect(persister.flushEncrypted).toHaveBeenCalledTimes(1);
+
+    uninstallMlsStatePersisterLifecycle();
+    window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: false } }));
+    expect(persister.flushEncrypted).toHaveBeenCalledTimes(1);
   });
 });

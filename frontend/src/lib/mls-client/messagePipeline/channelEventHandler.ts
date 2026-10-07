@@ -6,9 +6,10 @@ import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
+import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
-import { mergeReadWatermark } from '$lib/utils/chat/readState';
+import { mergeReadWatermark, withOwnReadAdvanced } from '$lib/utils/chat/readState';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 
@@ -19,6 +20,7 @@ import type { MessageHandlerDeps } from './deps';
 export interface ChannelEventContext extends Pick<
   MessageHandlerDeps,
   | 'conversations'
+  | 'userId'
   | 'addMessageToChat'
   | 'onChannelMemberJoined'
   | 'onChannelMemberKicked'
@@ -187,6 +189,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       // cached flag where the last listing put it, which is what "absent" means here.
       canManageChannels:
         typeof data.canManageChannels === 'boolean' ? data.canManageChannels : undefined,
+      // Same shape: absent leaves `viewerCanModerate` where the last listing put it.
+      canModerate: typeof data.canModerate === 'boolean' ? data.canModerate : undefined,
       permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
     });
     return;
@@ -225,6 +229,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onWorkspaceUpdated?.({
       workspaceId: String(data.workspaceId || ''),
       imageMediaId: data.imageMediaId,
+      channelsReordered: data.channelsReordered === true,
     });
     return;
   }
@@ -283,8 +288,17 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const convo = conversations.get(key);
     // Not held here: nothing draws it, and its next load reads every mark from the server.
     if (!convo) return;
-    const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
-    if (merged) conversations.set(key, { ...convo, readWatermarks: merged });
+    // MY OWN MARK FROM ANOTHER DEVICE ALSO CLEARS THE COUNT THIS DEVICE DRAWS. It used to merge the
+    // watermark and stop, so a salon read on the phone stayed unread here - tile, nav dot and tab
+    // title `(N)` - until it was opened on this device too.
+    const next =
+      userId.toLowerCase() === ctx.userId.toLowerCase()
+        ? withOwnReadAdvanced(convo, userId, Number(data.at))
+        : (() => {
+            const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
+            return merged ? { ...convo, readWatermarks: merged } : convo;
+          })();
+    if (next !== convo) conversations.set(key, next);
     return;
   }
 
@@ -328,6 +342,27 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
               Number(msg.reaction.at ?? 0),
               msg.reaction.removed === true
             );
+            return;
+          }
+          // An edit is a silent row as well, and changes a bubble instead of adding one. The
+          // sender is the row's - proven by Graine v2 - and `applyChannelEdit` compares it with
+          // the target's author. A bubble not loaded here is picked up by the next history load,
+          // which reads the same row.
+          if (msg?.edit) {
+            const current = conversations.get(channelId);
+            if (current) {
+              const { messages, applied } = applyChannelEdit(
+                current.messages,
+                {
+                  targetMessageId: String(msg.edit.messageId ?? ''),
+                  senderId: String(sender || '').toLowerCase(),
+                  newContent: String(msg.edit.newContent ?? ''),
+                  editedAt: Number(msg.edit.editedAt ?? 0),
+                },
+                log
+              );
+              if (applied) conversations.set(channelId, { ...current, messages });
+            }
             return;
           }
           if (msg) {

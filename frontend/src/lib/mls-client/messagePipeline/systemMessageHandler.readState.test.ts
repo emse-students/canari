@@ -24,7 +24,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     mlsService: { getDeviceId: () => 'device-me' },
     storage: null,
     userId: 'me',
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     conversations,
     messageReactions: new Map(),
     addMessageToChat: vi.fn(),
@@ -55,6 +55,16 @@ describe('handleSystemEvent - read_watermark', () => {
     expect((ctx.conversations.get('g1') as any).unreadCount).toBe(0);
     expect(watermarks(ctx)).toEqual({ me: 1000 });
     expect(ctx.saveConversation).toHaveBeenCalledWith('g1');
+  });
+
+  it('a read on another device keeps counted a message newer than what it read', async () => {
+    const ctx = makeCtx({ senderNorm: 'me', userId: 'me' });
+    const c = ctx.conversations.get('g1') as any;
+    c.messages.push({ id: 'm2', senderId: 'peer', timestamp: new Date(2000) });
+
+    await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
+
+    expect((ctx.conversations.get('g1') as any).unreadCount).toBe(1);
   });
 
   it("records a peer's read state without touching our own badge", async () => {

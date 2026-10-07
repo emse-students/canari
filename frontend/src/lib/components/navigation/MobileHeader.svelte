@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { Plus, Search } from '@lucide/svelte';
@@ -69,7 +70,7 @@
  border-b bg-(--surface-elevated) px-3 md:hidden"
 >
   <a
-    href="/posts"
+    href={resolve('/posts')}
     aria-label={m.nav_home_label()}
     class="tap-target @container flex min-w-0 flex-1 items-center"
   >
@@ -80,7 +81,7 @@
     {#if globalSession.isLoggedIn}
       {#if onPosts}
         <a
-          href="/posts?compose=1"
+          href={resolve('/posts?compose=1')}
           title={m.posts_publish_button()}
           aria-label={m.posts_publish_button()}
           class="ui-icon-button text-text-muted hover:text-text-main hover:bg-text-main/10 rounded-full"
@@ -88,7 +89,7 @@
           <Plus size={24} strokeWidth={2.5} />
         </a>
         <a
-          href="/posts?search=1"
+          href={resolve('/posts?search=1')}
           title={m.posts_search_placeholder()}
           aria-label={m.posts_search_placeholder()}
           class="ui-icon-button text-text-muted hover:text-text-main hover:bg-text-main/10 rounded-full"

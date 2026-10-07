@@ -56,3 +56,15 @@ describe('AndroidManifest camera capture visibility', () => {
     expect(paths).toMatch(/<external-files-path\b[^>]*path="Pictures\/"/);
   });
 });
+
+/**
+ * NO ANDROID HAPTIC FIRES WITHOUT `VIBRATE`. `navigator.vibrate` (MessageBubble, ReelCapture,
+ * useNotifications) reaches Chromium's VibrationManager, which refuses silently to the page with
+ * `cr_VibrationManager: Failed to use vibrate API, requires VIBRATE permission` in logcat -
+ * measured on the Mi 9T, build 5b56dcb74. The call returns without error, so nothing here sees it.
+ */
+describe('AndroidManifest haptics', () => {
+  it('declares the VIBRATE permission', () => {
+    expect(manifest).toMatch(/<uses-permission android:name="android\.permission\.VIBRATE"\s*\/>/);
+  });
+});

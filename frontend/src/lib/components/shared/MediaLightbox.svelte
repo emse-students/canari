@@ -708,6 +708,20 @@
     infoOpen = false;
     chromeHidden = false;
   });
+
+  /**
+   * The viewer can leave the page while it is still open - its parent unmounts it with a tap waiting
+   * out the double-tap window, or a zoom indicator still showing - and then the `open` effect above
+   * never runs. Its timers go with it here, so none fires on a component that no longer exists.
+   */
+  $effect(() => () => {
+    if (!tapTimer && !zoomTimeout) return;
+    Log.d('mediaLightbox.destroy', { tapPending: !!tapTimer, zoomPending: !!zoomTimeout });
+    if (tapTimer) clearTimeout(tapTimer);
+    if (zoomTimeout) clearTimeout(zoomTimeout);
+    tapTimer = null;
+    zoomTimeout = null;
+  });
 </script>
 
 <svelte:window onkeydown={open ? handleArrowKeys : undefined} />

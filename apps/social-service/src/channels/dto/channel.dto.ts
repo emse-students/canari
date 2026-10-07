@@ -4,6 +4,11 @@ export interface CreateWorkspaceDto {
   createdBy: string;
 }
 
+/** Reorders a community's salons for everyone: the actor's visible salons, in the new order. */
+export interface ReorderChannelsDto {
+  orderedIds: string[];
+}
+
 /** Reorders the calling user's communities: `orderedIds` in the desired top-to-bottom order. */
 export interface ReorderWorkspacesDto {
   orderedIds: string[];
@@ -211,7 +216,7 @@ export interface SendChannelMessageDto {
    * shipped client still sends it.
    */
   messageId?: string;
-  /** When present, this message is a poll: it is auto-pinned and accepts votes. */
+  /** When present, this message is a poll: it is auto-pinned when its author may pin, and accepts votes. */
   poll?: ChannelPollInputDto;
   /**
    * Cleartext list of mentioned user ids, attached by the sender so the server can route

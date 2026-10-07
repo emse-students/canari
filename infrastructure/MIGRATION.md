@@ -54,7 +54,7 @@ for **server deployment**:
 
 | Category | Secrets |
 |---|---|
-| Core | `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CHANNELS_ENCRYPTION_SECRET`, `CALL_ROOM_SECRET` |
+| Core | `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CHANNELS_ENCRYPTION_SECRET`, `CALL_ROOM_SECRET`, `AGENDA_SIGNING_KEY` (social-service; signs the calendar subscription URLs, 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, dev's is the GitHub secret `DEV_AGENDA_SIGNING_KEY`; **rotating it ends every saved subscription URL**, which is the revocation - [profiles-and-access D40](../docs/wiki/profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05)) |
 | Database | `POSTGRES_USER`, `POSTGRES_PASSWORD` |
 | Admin routes (not a secret) | `ADMINER_ENABLED=true` on core-service, production's compose only, opens the gated `/adminer/` route and needs `INTERNAL_SHARED_SECRET` of 32+ characters - [databases](../docs/wiki/infrastructure/databases.md#the-adminer-route---the-database-in-a-browser-for-global-admins-2026-10-02) |
 | Media storage (Garage, formerly MinIO) | `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN`, `GARAGE_ACCESS_KEY_ID` (>= 8 chars), `GARAGE_SECRET_ACCESS_KEY` (>= 16 chars) - Garage's own minimums, which is why this is a dedicated key rather than reusing `MINIO_ROOT_USER`/`PASSWORD` |

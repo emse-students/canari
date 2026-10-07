@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { appPathFromPathname, internalPath, safeInternalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import {
@@ -11,6 +13,7 @@
   import LoginForm from './LoginForm.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { PHONE_VIEWPORT_QUERY, isPhoneViewport, onViewportChange } from '$lib/utils/viewport';
+  import { onAppForegroundChange } from '$lib/utils/appForeground';
   import {
     getAppVersionCheck,
     isBelowMinClientVersion,
@@ -40,7 +43,7 @@
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
   function getSafeReturnTarget(): string {
-    const target = requestedReturnTo?.startsWith('/') ? requestedReturnTo : '/posts';
+    const target = safeInternalPath(requestedReturnTo, '/posts');
     // Prevent redirect loops back to the login page.
     if (target === '/login' || target.startsWith('/login?')) return '/posts';
     return target;
@@ -91,6 +94,11 @@
     };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
+    // A phone's WebView stays `visible` in the background, so coming back from the identity
+    // provider's browser is seen only through the native foreground edge.
+    const unsubscribeForeground = onAppForegroundChange((foreground) => {
+      if (foreground) onVisible();
+    });
 
     // 1. Safely extract the return URL from query params.
     try {
@@ -121,12 +129,12 @@
         try {
           await getToken();
           const target = getSafeReturnTarget();
-          const current = window.location.pathname + window.location.search;
+          const current = appPathFromPathname(window.location.pathname) + window.location.search;
 
           // Only redirect when not already on the target page, and never twice in a row to a
           // target that just bounced back here.
           if (target !== current && shouldAutoRedirectTo(target)) {
-            await goto(target, { replaceState: true });
+            await goto(resolve(internalPath(target)), { replaceState: true });
           }
         } catch {
           // Token expired or invalid: stay on login so the user can re-authenticate.
@@ -140,6 +148,7 @@
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
+      unsubscribeForeground();
     };
   });
 

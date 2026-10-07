@@ -98,7 +98,7 @@ export function devicesToAdmit(input: {
  * - the one ordering the epoch gate does not decide is a newcomer who reads the NEW base after this
  *   commit and joins on top of it. That base cannot exist before their `pending` seat does: the
  *   commit carries the devices it adds (`admits`, written in the SAME transaction as the epoch
- *   advance), and the base is minted only after it by `refreshGroupInfo`. From then until the
+ *   advance), and the base for that epoch is stored in that same transaction. From then until the
  *   lock is released below - after every Welcome - `ensureDistributionGroupFor` reads that seat
  *   with `addInFlight` (`readWelcomeOwedFromRow`) and waits for the Welcome instead of joining.
  *
@@ -120,7 +120,7 @@ export async function admitNewcomerToDistributionGroup(
     );
     return { kind: 'no-runtime' };
   }
-  const { mlsService, userId, deviceKeyB64 } = requireGraineRuntime(
+  const { mlsService, userId, deviceKey } = requireGraineRuntime(
     'admitNewcomerToDistributionGroup'
   );
 
@@ -237,7 +237,7 @@ export async function admitNewcomerToDistributionGroup(
 
     // THE EPOCH MOVED, SO THE DISK MOVES WITH IT, before anything else can fail: an Add merged only
     // in memory is one the next load walks back out of, leaving Welcomes for a tree nobody holds.
-    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKey(), log);
 
     const welcomed: string[] = [];
     if (!result.welcome) {

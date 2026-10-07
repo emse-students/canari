@@ -7,7 +7,7 @@ Rust Axum WebSocket server for real-time message transport. Runs on port **3000*
 The chat-gateway is the real-time transport layer. It:
 
 - Accepts WebSocket connections from clients and routes MLS frames to the correct recipient.
-- Manages online presence in Redis (`user:online:{userId}:{deviceId}`, 20-second TTL).
+- Manages online presence in Redis (`user:online:{userId}:{deviceId}`, 90-second TTL).
 - Relays welcome requests to online group members; queues them in Redis for offline targets.
 
 It does **not** perform encryption, store messages, or make business logic decisions - those belong to `chat-delivery-service`.
@@ -51,7 +51,7 @@ ever produced the topic, the shared constant spelled it `post_created` while the
 1. HTTP upgrade to WebSocket.
 2. JWT validation (cookie or query param `token=`) -> extract `userId:deviceId`.
 3. Register in in-memory `connected_users` map (mpsc sender).
-4. Set Redis presence key (TTL 20s).
+4. Set Redis presence key (TTL 90s).
 5. Drain `pending_welcomes:{userId}` (queued frames from offline period).
 6. Spawn read/write loops.
 

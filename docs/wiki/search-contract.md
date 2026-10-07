@@ -103,6 +103,15 @@ the other four without ceasing to be that. What it keeps is the promise - typos,
 - and the ladder above does not apply to it, because a trigram overlap threshold is not an edit
 count. If it ever has to be compared, the comparison is on the promise, not on the number.
 
+**Canari's user search projects `id` and `displayName` only**, and matches on `NAME_NORM_EXPR`
+(`unaccent(LOWER(displayName))`). So the two callers that seed the display-name cache from a search
+result (`useMentionAutocomplete.svelte.ts`, `MultiUserSelector.svelte`) seed the raw column rather
+than the shared precedence (`firstName lastName`, then `displayName` -
+[libs](libs.md#libscontracts)). Latent, and measured so: on production 2026-09-22 the two spellings
+were equal for all 436 accounts. Widening the projection means widening `NAME_NORM_EXPR`, the ranking
+and its indexes; the trigger for that is the first account whose Authentik `name` claim is not its
+two parts.
+
 **The convergence unit is this page, not a package.** Four independent implementations of the same
 contract already exist and a fifth appeared while the inventory was being written, by somebody who
 had not read any of it. A shared package would not have settled the ladder - each author would still

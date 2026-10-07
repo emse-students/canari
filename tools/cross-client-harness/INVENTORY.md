@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-79 scripts.
+80 scripts.
 
 | script | what it is |
 |---|---|
@@ -27,6 +27,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `apkbuild.mjs` | WHETHER THE APK ON THE PHONE IS ANY COMMIT AT ALL - the provenance a build stamp cannot carry. |
 | `arm.mjs` | The one module in this harness that WRITES to production, and the distinction it turns on. |
 | `atoms.mjs` | THE ATOMS - every gesture this rig can make, in one place, each with its contract. |
+| `buildstamp.mjs` | The identity a frontend build gives itself, read back. |
 | `bundle.mjs` | WHICH BUNDLE A WEB CLIENT IS RUNNING, and the repair when it is not the deployed one. |
 | `cdp.mjs` | Dependency-free Chrome DevTools Protocol driver for the cross-client test campaign |
 | `chat.mjs` | Chat primitives shared by every check in the campaign. |
@@ -117,7 +118,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-79 scripts.
+80 scripts.
 
 | script | what it is |
 |---|---|
@@ -154,6 +155,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/fwd.mjs` | FWD-1 / FWD-2 - the WP-FWD-1 reproduction attempt, channel -> DM. |
 | `archive/fwd345.mjs` | FWD-3, FWD-4, FWD-5 - the three forward shapes WP-FWD-1 has not been tried against. |
 | `archive/fwd5.mjs` | FWD-5, isolated and repeated - the shape that just lost a forward. |
+| `archive/graineauth.mjs` | GRAINE-AUTH-1..3 - a salon row the SERVER tampers with is REFUSED by the reader, with its line. |
 | `archive/grp.mjs` | GRP-1..10 - group membership: the roster, the TWO different departures, the invitation link, and |
 | `archive/heal-a1.mjs` | HEAL on the PHONE - the ANDROID half of WP-LOSS-1, which is what is still owed. |
 | `archive/heal-w2.mjs` | HEAL-W2 - the UNKNOWN-GROUP path on the browser. |
@@ -205,7 +207,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-40 scripts.
+41 scripts.
 
 | script | what it is |
 |---|---|
@@ -214,6 +216,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/classify-selftest.mjs` | THE CLASSIFIER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
 | `archive/consoleorigin-selftest.mjs` | Pins `consoleorigin.mjs` and its use in `report()`: a console line another origin emitted (the |
 | `archive/debris-selftest.mjs` | Asserts that the allowlist deciding what may be DESTROYED matches every name a runner mints, and |
+| `archive/deployed-wasm-selftest.mjs` | THE POST-DEPLOY WASM CHECK MUST REFUSE WHAT IT IS MEANT TO REFUSE, AND ONLY THAT. |
 | `archive/devices-selftest.mjs` | SELFTEST FOR THE DEVICE CENSUS - pins the classification against rows measured on production. |
 | `archive/epochfork-selftest.mjs` | Pins `epochfork.mjs`: the comparison that tells a healthy conversation from an epoch-forked one, |
 | `archive/estate-selftest.mjs` | WHICH ESTATE A CLIENT IS ON IS A GATE, AND A GATE THAT ONLY EVER ACCEPTS IS NOT ONE. |
@@ -303,4 +306,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-242 scripts in total.
+245 scripts in total.

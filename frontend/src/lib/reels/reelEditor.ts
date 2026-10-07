@@ -1,29 +1,17 @@
-/** A point in the source media's normalized coordinate space. */
-export interface ReelPoint {
-  x: number;
-  y: number;
-}
-
-/** A freehand stroke painted over a capture. */
-export interface ReelStroke {
-  color: string;
-  width: number;
-  points: ReelPoint[];
-}
-
-/** Text painted over a capture. Coordinates and size are normalized to the source frame. */
-export interface ReelText {
-  color: string;
-  size: number;
-  text: string;
-  x: number;
-  y: number;
-}
+import { emojiSvgSrc } from '$lib/utils/emojiSvg';
+import {
+  emojiSize,
+  fontStack,
+  overlayFontSize,
+  pillSize,
+  textPaint,
+  type ReelOverlay,
+} from './reelOverlays';
 
 /** All decorations the camera editor can apply to a capture. */
 export interface ReelEdits {
-  strokes: ReelStroke[];
-  texts: ReelText[];
+  /** Text, emoji and strokes, bottom to top, each placed by a centre, a scale and a rotation. */
+  overlays: ReelOverlay[];
 }
 
 /** The editor's output, with decorations baked into the media before upload. */
@@ -33,34 +21,85 @@ export interface EditedReelMedia {
   height: number;
 }
 
-function drawDecorations(
+/** The emoji pictures an export needs, keyed by overlay id, loaded before the first frame is drawn. */
+type OverlayImages = Map<string, CanvasImageSource>;
+
+/**
+ * Paints the strokes and the overlays into a frame of `width` x `height`. The overlays use the SAME
+ * size formulas as the editor's preview (`reelOverlays.ts`), so what was on the screen is what is
+ * published.
+ */
+export function drawDecorations(
   context: CanvasRenderingContext2D,
   edits: ReelEdits,
   width: number,
   height: number,
-  fontFamily: string
+  fontFamily: string,
+  images: OverlayImages
 ) {
-  for (const stroke of edits.strokes) {
-    if (stroke.points.length === 0) continue;
-    context.beginPath();
-    context.strokeStyle = stroke.color;
-    context.lineWidth = stroke.width * Math.min(width, height);
-    context.lineCap = 'round';
-    context.lineJoin = 'round';
-    context.moveTo(stroke.points[0].x * width, stroke.points[0].y * height);
-    for (const point of stroke.points.slice(1)) {
-      context.lineTo(point.x * width, point.y * height);
+  for (const overlay of edits.overlays) {
+    context.save();
+    context.translate(overlay.x * width, overlay.y * height);
+    context.rotate(overlay.rotation);
+    if (overlay.kind === 'stroke') {
+      // The points are in short-side units: the same factor sizes the line, as in the preview's SVG.
+      const unit = Math.min(width, height) * overlay.scale;
+      context.beginPath();
+      context.strokeStyle = overlay.color;
+      context.lineWidth = overlay.width * unit;
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+      overlay.points.forEach((point, index) => {
+        if (index === 0) context.moveTo(point.x * unit, point.y * unit);
+        else context.lineTo(point.x * unit, point.y * unit);
+      });
+      context.stroke();
+    } else if (overlay.kind === 'text') {
+      const fontSize = overlayFontSize(width, height, overlay.scale);
+      const paint = textPaint(overlay);
+      context.font = `700 ${fontSize}px ${fontStack(overlay.font, fontFamily)}`;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      if (paint.pill) {
+        const pill = pillSize(context.measureText(overlay.text).width, fontSize);
+        context.fillStyle = paint.pill;
+        context.beginPath();
+        context.roundRect(-pill.width / 2, -pill.height / 2, pill.width, pill.height, pill.radius);
+        context.fill();
+      } else {
+        context.shadowColor = 'rgba(0, 0, 0, 0.6)';
+        context.shadowBlur = 4;
+      }
+      context.fillStyle = paint.fill;
+      context.fillText(overlay.text, 0, 0);
+    } else {
+      const image = images.get(overlay.id);
+      const side = emojiSize(width, height, overlay.scale);
+      if (image) context.drawImage(image, -side / 2, -side / 2, side, side);
     }
-    context.stroke();
+    context.restore();
   }
+}
 
-  for (const text of edits.texts) {
-    context.fillStyle = text.color;
-    context.font = `700 ${text.size * Math.min(width, height)}px ${fontFamily}`;
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillText(text.text, text.x * width, text.y * height);
+/**
+ * Loads the picture of every emoji overlay. An emoji with no picture cannot be on the screen either
+ * (the editor draws the same Noto SVG), so a missing one is a defect to throw, not to skip.
+ */
+export async function loadOverlayImages(edits: ReelEdits): Promise<OverlayImages> {
+  const images: OverlayImages = new Map();
+  for (const overlay of edits.overlays) {
+    if (overlay.kind !== 'emoji') continue;
+    const src = emojiSvgSrc(overlay.emoji);
+    if (!src) throw new Error(`no picture for the emoji overlay ${overlay.id}`);
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error(`emoji picture ${src} could not be loaded`));
+      image.src = src;
+    });
+    images.set(overlay.id, image);
   }
+  return images;
 }
 
 function canvasBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> {
@@ -94,13 +133,14 @@ async function renderImage(
   fontFamily: string
 ): Promise<EditedReelMedia> {
   const image = await loadImage(source);
+  const images = await loadOverlayImages(edits);
   const canvas = document.createElement('canvas');
   canvas.width = image.naturalWidth;
   canvas.height = image.naturalHeight;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('canvas is unavailable');
   context.drawImage(image, 0, 0);
-  drawDecorations(context, edits, canvas.width, canvas.height, fontFamily);
+  drawDecorations(context, edits, canvas.width, canvas.height, fontFamily, images);
   return {
     blob: await canvasBlob(canvas, 'image/webp', 0.92),
     width: canvas.width,
@@ -127,6 +167,7 @@ async function renderVideo(
   fontFamily: string
 ): Promise<EditedReelMedia> {
   const video = await loadVideo(source);
+  const images = await loadOverlayImages(edits);
   const canvas = document.createElement('canvas');
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
@@ -164,7 +205,7 @@ async function renderVideo(
   const draw = () => {
     if (video.ended) return;
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    drawDecorations(context, edits, canvas.width, canvas.height, fontFamily);
+    drawDecorations(context, edits, canvas.width, canvas.height, fontFamily, images);
     requestAnimationFrame(draw);
   };
   video.onended = () => recorder.stop();

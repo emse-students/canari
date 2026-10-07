@@ -223,6 +223,17 @@ viewer (`GET /api/posts`, `/api/posts/search`, `/api/posts/:id` all do), or ever
 will be read-only. And a response that merges into a card - `onPostSaved` does exactly that - has to
 carry the three too, or saving an edit removes the control that started it.
 
+**What a "no bin on my own post" report has already been read against (user, 2026-09-17, a post
+published as an association, on prod).** `createPost` used to stamp its response with
+`isGlobalAdmin: false`, so a global admin posting as an association got its own post back
+`canManage: false` - fixed. But `CreatePostForm` discards that response and refetches the feed, so
+that defect was invisible to this client. Ruled out by reading: the feed passes the real admin flag
+and stamps every row through `shapeListRow`; `getById` passes its own; the feed cache is keyed per
+reader; `PostCard` reads `canManage` straight from the response; and `viewerIsPublisher` resolves an
+association post through `POST_AS_ASSO` for creation and management alike. What would settle the
+report is the post itself: whether its publisher held `POST_AS_ASSO` on that association, or reached
+the composer through the global-admin route alone.
+
 ## The search stops where the feed stops (2026-10-04)
 
 `/api/posts/search` is ONE server query - `ILIKE` over the body and the association name, pinned
@@ -393,10 +404,39 @@ Four changes from one reading of the feed on the phone, each measured at 436 px 
 blur, which takes the hue of the frame under it. It is now an amber glyph on a near-opaque
 `--color-cn-scrim` while muted and a solid `--cn-yellow` disc once the sound is on.
 
-The gallery lightbox holds `lightboxMedia`, which is the attachment list **compacted** to
-image/video. A grid position is therefore not a lightbox index: each cell resolves its own index
-via `indexOf`, and `-1` doubles as "not lightboxable". Passing the grid index would let one
-document renumber every image after it.
+### Several media: square cells, and a "+N" past four (2026-10-05)
+
+Decided by the user with a screenshot: a post of several pictures was a two-column grid whose
+cells kept each picture's OWN shape (#1378 had dropped the square cells), so a landscape photo
+beside a portrait one left a blank area under the shorter one. The gallery is now the
+Facebook / Instagram / Messenger shape, decided by one pure helper,
+`postGalleryLayout(count)` in `utils/posts/postGalleryLayout.ts`:
+
+| Pictures and videos | Layout |
+| --- | --- |
+| 1 | drawn at its own shape, exactly as a single-attachment post (`singleMedia` snippet) |
+| 2 | two squares side by side |
+| 3 | `feature`: a 3x2 grid, the first cell spanning 2x2 - one large square, two stacked squares |
+| 4 | a 2x2 |
+| more | the first four in the 2x2, the fourth under a `cn-scrim` veil saying `+N` (N = total - 4) |
+
+- **Three is the large-plus-two shape, not three in a row**: a row of three gives each picture a
+  third of a 390 px card, about 120 px, too small to read.
+- **Every cell carries `aspect-square`, the spanning one included.** Its height then comes from
+  its width and never from the picture, which would otherwise stretch the rows it spans. A square
+  also has a height known before any download, so the gallery reserves its exact box and nothing
+  under it moves when the pictures land - `mediaAspectStyle` is no longer asked for a cell.
+- **The cells are drawn FROM `lightboxMedia`**, the list compacted to image/video, so a cell's
+  position IS its viewer index and a document cannot renumber the pictures after it. The `+N` cell
+  opens the viewer at index 3, and the viewer moves through all of them.
+- **Files and audio are never cells**: they are rows under the grid, each drawn by the same
+  snippet as a single attachment, caption included.
+- **A video cell passes `letterbox`**, which for a clip means "fill the caller's box, cropped";
+  without it `PostMedia` draws its own 16:9 card inside the square.
+- The per-cell caption overlay is kept, and hidden under the `+N` veil.
+
+The chat has no equivalent grid (one attachment per message), and the composer's previews are
+already fixed `aspect-square` thumbnails in a scrolling row.
 
 ## PDF previews, and the in-app reader
 
@@ -984,7 +1024,7 @@ That collapses the seven stages to two without any client instrumentation at all
 | --- | --- |
 | `moderation` | `200` and **51 bytes**, which is exactly `{"isMuted":false,"mutedReason":null,"mutedAt":null}` - the muted shape carries a date and is longer |
 | `content` | unreachable: the Publier button is disabled on the identical predicate |
-| `mediaToken` | `authToken` is taken at mount, so the branch is skipped |
+| `mediaToken` | `getToken()` is read per upload (it was a mount-time copy until 2026-10-05, which expired after 15 min and showed as a session error), so the branch is skipped |
 | `mediaUpload` | no `/api/media` write from that device, and `compressImage` cannot throw - every failure it has is a typed passthrough, so an upload would have been attempted and logged |
 | `createPost` | never sent |
 
@@ -1014,6 +1054,8 @@ form on an account with none, refused every publish. `withoutAbandonedAttachment
 question or an option, a form with a choice - and `isPostComposerDraftWorthKeeping` is the ONE rule
 for the auto-save and the restore alike, so a draft that held only empty toggles is neither saved nor
 restored. Pinned by `postComposerDraft.test.ts`.
+
+**THE DRAFT IS OWNED BY THE ACCOUNT (2026-10-06, iPhone reading of `alpha.4`).** `canari_post_composer_draft` was ONE value per device and never cleared on sign-out, so account B opening "Nouvelle publication" landed on "Brouillon restaure" holding account A's text. It is now `canari_post_composer_draft:<userId>` (`postComposerDraftKey`): a switch hides the other account's draft rather than erasing it, and the author finds it again - no sign-out hook, no timer. The two old unkeyed keys (`canari_post_composer_draft`, `canari_post_draft`) have no provable author, so every draft access DROPS them and logs `[POST_COMPOSER] dropping unowned ...`; they are never adopted. With nobody signed in the draft is neither read nor written. Same class, enumerated and left alone on purpose: `canari_recent_emojis` and the skin tone (a device preference, no authored text), `canari.keyboardHeight.v1` (a measurement of the device), `canari_post_new_form_id` and `canari_pending_contact` (`sessionStorage`, one tab, consumed on the next page). Pinned by `postComposerDraft.test.ts`.
 
 ## The blocks preflight erases
 
@@ -1201,7 +1243,12 @@ ca cree des problemes"*.
 - **`actions/reactorsTrigger.ts` is the one gesture, for every pointer, a mouse included**: a tap
   toggles the reaction; a 450 ms hold (`LONG_PRESS_MS`, main button only for a mouse, cancelled past
   10 px of travel or when the pointer leaves) opens the list, and the click that ends the hold is
-  swallowed in capture, so a hold never reacts. Nothing opens on hover any more.
+  swallowed in capture, so a hold never reacts. **A mouse hovers again since 2026-10-05** (user, on
+  desktop): `HOVER_INTENT_MS` (400 ms) of resting opens the list, leaving or blurring closes it
+  (`close` in the action's params), keyboard `:focus-visible` rests the same way, and the badge
+  carries `aria-describedby` to the panel while it is open. What made the 2026-10-01 hover wrong - a
+  list opened on the way to every click - is what the delay and the press (which cancels the rest)
+  prevent; a touch never hovers and keeps the hold alone.
 - **`ReactorsPanel` lives until the reader's next action.** One effect listens, in capture, for
   `pointerdown`, `scroll`, `wheel`, `keydown` and `resize` on the window, and any of them closes it -
   a press anywhere, the badge and the list included. The press that opened it is already down when
@@ -1218,3 +1265,34 @@ ca cree des problemes"*.
 and every way out; in Chromium on a stand-in thread, light and dark: hovering opens nothing, a held
 mouse opens the list, the release leaves it open, the wheel and a click elsewhere close it. **Owed:**
 the hold under a finger on a phone.
+
+## Scheduled posts: where they show, and the event picker order (2026-10-06)
+
+A scheduled post is visible to its AUTHOR only, in `ScheduledPostsPanel` above the feed of `/posts`
+(`GET /api/posts/my-scheduled`); no feed shows it to anyone else until it is due
+(`landingFeed.ts`). Each row now reads as "not final" in the agenda's own vocabulary: dimmed
+(`opacity-50`) with a dashed ring from `pendingRingStyle()` (`calendar/feedEvents.ts`), the one
+spelling shared with the agenda lists for proposed events ([calendar](calendar.md)). The "published
+on <date>" line is the non-visual cue.
+
+The "link to an event" picker (`linkableEventPickerOptions`, `utils/time.ts`, used by the composer
+and the editor) lists the furthest future event first and the furthest past last; the server answers
+ascending, so the sort lives in that one function.
+
+## One notion of "when it became visible": `publishedAt` (2026-10-06)
+
+Cause of the report "scheduled at noon for 18:00, published at 18:00 but shown as 12:00, behind newer
+posts": nothing publishes a scheduled post (there is no flip job). Visibility is the predicate
+`scheduledAt IS NULL OR scheduledAt <= NOW()`, while every feed query ordered by, and every card
+displayed, `createdAt` - the moment the author pressed the button.
+
+`posts."publishedAt"` (migration 077, NOT NULL) is `scheduledAt` for a scheduled post and the
+creation time otherwise. `PostsService.createPost` and `updatePost` set it through
+`publicationTime()` (`posts/publication-time.ts`), the only writer: rescheduling moves it, publishing
+a pending post now sets it to now, un-scheduling an already-visible post keeps it. Feeds
+(offset pagination, so no cursor), search, the promo cutoff, the announce sweeper order, the share
+preview and republication cards read it; the client shows `post.publishedAt` (`PostHeader`,
+`PostContent`, the `isNew` badge). `createdAt` keeps its meaning. Backfill is
+`COALESCE(scheduledAt, createdAt)`, so an immediate post's order is unchanged. Reels cannot be
+scheduled and keep `createdAt`. Notifications carry their own `createdAt` (written at announce time,
+which is already publication time).

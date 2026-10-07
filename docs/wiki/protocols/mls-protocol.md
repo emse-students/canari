@@ -139,7 +139,7 @@ kick gets. The current device has no delete button at all.
 | POST | `/api/mls/commit` | Submit a commit: validate epoch + store in the commit-log + fan out (one atomic call) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits `baseEpoch >= N` to catch up a lagging device |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo (external-join base) - membership-gated, returns `{ groupInfo, baseEpoch }` or null |
-| POST | `/api/mls/group-info/:groupId` | Refresh the stored GroupInfo (after each commit) - membership-gated, monotonic write-if-newer |
+| POST | `/api/mls/group-info/:groupId` | Holder repair of a stale stored GroupInfo - membership-gated, monotonic write-if-newer. Commits do NOT use it: they carry their base in `POST /api/mls/commit` (see [below](#the-base-travels-inside-every-commit-submission-comm-22)) |
 
 ### Device sync / invitation
 
@@ -212,7 +212,7 @@ no catch-up, the existing worker-retry + fallback stands.
 3. Creator: `fetchUserDevices(peerId)` -> get peer's key packages
 4. Creator: `addMembersBulk(groupId, devices, excludeDeviceIds)` -> one staged transaction (C7-A): stage the Add, validate the epoch (`POST /api/mls/commit`), merge on accept and broadcast the commit / roll back on reject. Returns `{ welcome, ratchetTree, addedDeviceIds, skipped }` (`skipped` = `{ deviceId, reason }[]`, the reason a typed `SkippedKeyPackageReason` classified in Rust - see [chat-delivery](../services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart)) (the ratchet tree is exported post-merge).
 5. Creator: `sendWelcome(welcome, peerId, groupId, deviceId, ratchetTree)` -> POST `/api/mls/welcome`
-6. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)`
+6. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)` - **BEFORE step 5 on every add path**: the server names a joiner before its Welcome can arrive, so an inviter dying between the two leaves nothing half-registered; a user whose registration fails is sent no Welcome (`groupCreation.inviteOrder.test.ts`)
 
 Only the bulk commit must stay unique (staged under the add-lock). Everything around it is
 plain HTTP and runs in parallel (`groupCreation.ts` / `deliverWelcomes` in `groupActions.ts`):
@@ -475,6 +475,29 @@ for the member it was meant for (without which the classification could be right
 reason: a malformed frame would pass the first assertion too).
 
 `requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. **A 403 on the GroupInfo read is a membership ANSWER, not a failed attempt**: it arrives typed (`NotAGroupMemberError`) and retires the conversation instead of falling back, which is what makes this seam terminate on a proof rather than on its throttle — see [mls-recovery-ladder](mls-recovery-ladder.md). Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
+
+### The base travels inside every commit submission (COMM-22)
+
+Every commit this client makes - external join, staged add, staged remove - submits the GroupInfo
+for the epoch it CREATES in the `groupInfo` field of `POST /api/mls/commit`; `validateCommit`
+writes it with the epoch advance in ONE transaction, so there is no instant at which the group is at
+N+1 and the published base is still N, and no follow-up that a reload or a dropped request can lose.
+
+| Commit | Where the base comes from |
+| --- | --- |
+| External join | `export_group_info` on the joiner's instance, which is applied at once (at `base + 1`) |
+| Staged add / remove | the GroupInfo OpenMLS builds while building the commit: the commit builder makes one whenever the group has `use_ratchet_tree_extension(true)` (every group here) and `add_members` / `remove_members` return it as their third element. `mls-core` serialises it as an `MlsMessageOut` - the wire form `export_group_info` produces - through `add_members_bulk_with_base`, `remove_members_for_users` and `remove_members_for_devices`; `mls-wasm` returns it as the 5th slot of `add_members_bulk` and the 2nd of `remove_members*`; the Tauri commands likewise |
+
+**It describes N+1 while the device is still at N** (the commit is staged, not merged), so it is
+never published on its own: only the gate accepting the commit makes it true, and a rejected commit
+discards it with the staged commit. `mls-core` errors rather than hand back a commit without a base
+(`None` means a group lacking the ratchet-tree extension, a broken invariant that would strand every
+stateless joiner). The old fire-and-forget `refreshGroupInfo` after `runCommitTransaction` is
+deleted; `republishBaseIfStale` / `base_refresh_request` remain as the holder repair for a base
+behind for any other cause (a legacy client's commit, a failed server write). Tests:
+`mls-core/tests/external_join.rs` (a stateless device external-joins from the bundle's base at the
+new epoch) and `BaseMlsService.refusedCommit.test.ts` (the base rides the submission; nothing is
+minted afterwards).
 
 **Server-side membership on an external join.** `validateCommit` promotes the committing device's `DeviceGroupMembership` to `active` (and adds it to the `group:members:<groupId>` Redis set) when it has no active row yet. An external commit is the ONE join path with no Welcome, so nothing else creates that row - and recipient resolution filters on `status='active'`. Without the promotion the rejoined device is invisible to routing while believing it is a member: its own sends work, but it receives neither the history bundle the reconciliation asks for nor any later live message. Idempotent, and skipped for ordinary commits from existing members.
 

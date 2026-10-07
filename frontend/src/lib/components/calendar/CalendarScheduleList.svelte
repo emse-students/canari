@@ -37,6 +37,7 @@
     eventOwnersLabel,
     formatEventTimeRange,
     groupEventsByDayInRange,
+    pendingRingStyle,
     type EventDayGroup,
   } from '$lib/calendar/feedEvents';
   import {
@@ -264,7 +265,7 @@
                         <span
                           class="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full"
                           style={pending
-                            ? `border:1.5px dashed ${eventAccentColor(event)};`
+                            ? pendingRingStyle(eventAccentColor(event))
                             : `background:${eventAccentColor(event)};`}
                           aria-hidden="true"
                         ></span>

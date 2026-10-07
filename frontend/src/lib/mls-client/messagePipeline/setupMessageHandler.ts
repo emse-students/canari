@@ -153,6 +153,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   mlsService.onChannelEvent = (event) => {
     void handleChannelEvent(event, {
       conversations: deps.conversations,
+      userId: deps.userId,
       addMessageToChat: deps.addMessageToChat,
       onChannelMemberJoined: deps.onChannelMemberJoined,
       onChannelMemberKicked: deps.onChannelMemberKicked,
@@ -717,7 +718,7 @@ async function handleWelcome({
         log(
           `[WELCOME] NoMatchingKeyPackage pour ${rec.target.slice(0, 8)}… - republish + self-heal (externalJoin/welcome_request)`
         );
-        await mlsService.republishKeyMaterial(deps.deviceKeyB64).catch(() => {});
+        await mlsService.republishKeyMaterial(deps.deviceKey()).catch(() => {});
       } else {
         log(
           `[WELCOME] NoMatchingKeyPackage #${rec.failures} pour ${rec.target.slice(0, 8)}… - self-heal (externalJoin/welcome_request)`
@@ -840,7 +841,7 @@ async function handleKnownGroup({
     conversations,
     messageReactions,
     storage,
-    deviceKeyB64,
+    deviceKey,
     userId,
     addMessageToChat,
     onCallSignal,
@@ -1058,7 +1059,7 @@ async function handleKnownGroup({
               // delete/edit flags, so reacting to an edited message resurrected the original body
               // on the next reload.
               await storage
-                .updateMessage(next[idx].id, { reactions: updated }, deviceKeyB64)
+                .updateMessage(next[idx].id, { reactions: updated }, deviceKey())
                 .catch(() => {});
             }
           }
@@ -1384,7 +1385,7 @@ async function upsertConversation(
           // That is worse than silence: it answers, wrongly, the exact question a reader chasing a
           // conversation empty after a reload would come here to ask.
           const persisted = await deps.storage
-            .saveMessages(toSave, deps.deviceKeyB64)
+            .saveMessages(toSave, deps.deviceKey())
             .then(() => true)
             .catch((e: unknown) => {
               deps.log(

@@ -41,6 +41,8 @@
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
+  import { scrollMessageIntoList } from '$lib/utils/chat/scrollToMessage';
+  import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
 
   interface Props {
@@ -537,6 +539,12 @@
   });
 
   /** Resolves a short preview for a pinned message, or null when it isn't loaded in memory. */
+  /**
+   * Where the viewer stands for pinning here - the input of `mayPinMessage`, the one rule the bubble
+   * menus and the banner's unpin share with the handler that sends the request.
+   */
+  const pinStanding = $derived<PinStanding>({ inChannel: isChannel, canModerate });
+
   function pinnedPreview(messageId: string): string | null {
     const msg = chatView?.conversation.messages.find((x) => x.id === messageId);
     if (!msg) return null;
@@ -716,8 +724,8 @@
     }
 
     const targetElement = document.getElementById(`msg-${messageId}`);
-    if (targetElement) {
-      targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (targetElement && chatContainer) {
+      scrollMessageIntoList(chatContainer, targetElement);
       targetElement.classList.add('chat-message-jump-highlight');
       setTimeout(() => {
         targetElement.classList.remove('chat-message-jump-highlight');
@@ -819,8 +827,13 @@
 
   // An edit belongs to ONE conversation: the composer's text is cleared on a switch, and the draft
   // saved by the session belonged to the conversation that was left.
+  // The id goes through a $derived on purpose: an effect reading `conversation?.id` depends on the
+  // `conversation` OBJECT, which the parent replaces on every incoming message (same id, new
+  // object) - that re-ran the reset and dropped the banner. A derived is compared by value, so
+  // the effect below fires only when the id really changes.
+  const conversationId = $derived(conversation?.id ?? null);
   $effect(() => {
-    void conversation?.id;
+    void conversationId;
     untrack(() => editSession.reset());
   });
 
@@ -1014,14 +1027,22 @@
     const slot = chromeSlot;
     const panel = threadPanel;
     if (!slot || !panel) return;
-    const publish = () =>
-      panel.style.setProperty('--chat-header-height', `${slot.getBoundingClientRect().height}px`);
+    // `--chat-chrome-bottom` goes on the ROOT, because the toast layer is a sibling of the whole
+    // app and cannot inherit from this panel: it is the viewport Y where the chrome ends, so a
+    // phone toast sits below the header whatever its height (safe area included, no constant).
+    const root = document.documentElement;
+    const publish = () => {
+      const box = slot.getBoundingClientRect();
+      panel.style.setProperty('--chat-header-height', `${box.height}px`);
+      root.style.setProperty('--chat-chrome-bottom', `${box.bottom}px`);
+    };
     publish();
     const observer = new ResizeObserver(publish);
     observer.observe(slot);
     return () => {
       observer.disconnect();
       panel.style.removeProperty('--chat-header-height');
+      root.style.removeProperty('--chat-chrome-bottom');
     };
   });
 </script>
@@ -1214,7 +1235,7 @@
                   >
                     <EmojiText text={pinnedPreview(pid) ?? m.chat_pinned_message_default_label()} />
                   </button>
-                  {#if onTogglePin}
+                  {#if onTogglePin && mayPinMessage(pinStanding)}
                     <button
                       type="button"
                       onclick={() => onTogglePin?.(pid)}
@@ -1350,6 +1371,7 @@
             {canModerate}
             onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}
+            {pinStanding}
             {pinnedIds}
             {switchTime}
             {authToken}

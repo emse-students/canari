@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { getStorage, type ConversationMeta } from '$lib/db';
   import type { Conversation } from '$lib/types';
   import { getSavedUserId } from '$lib/stores/user';
   import {
+    conversationRecency,
     deriveConversationIdentity,
     resolveConversationListPresentation,
   } from '$lib/utils/chat/conversations';
@@ -79,7 +81,7 @@
         id: key,
         name: conv.name,
         lifecycle: conv.lifecycle,
-        updatedAt: Math.max(baseline?.meta.updatedAt ?? 0, conv.lastMessageAt ?? 0),
+        updatedAt: conversationRecency(conv) || (baseline?.meta.updatedAt ?? 0),
       },
       contactId: pres.contactId,
       displayName: pres.displayName,
@@ -167,7 +169,7 @@
 
   function navigateToConversation(metaId: string) {
     sessionStorage.setItem('canari_pending_contact', metaId);
-    void goto('/chat');
+    void goto(resolve('/chat'));
   }
 </script>
 
@@ -205,7 +207,7 @@
       >
     </div>
     <a
-      href="/chat"
+      href={resolve('/chat')}
       class="text-2xs flex items-center gap-0.5 rounded font-bold tracking-wider text-amber-600 uppercase transition-colors outline-none hover:text-amber-500 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-500 dark:hover:text-amber-400"
     >
       {m.post_conversations_see_all_label()}
@@ -232,7 +234,7 @@
           {m.post_conversations_empty_description()}
         </p>
         <a
-          href="/chat"
+          href={resolve('/chat')}
           class="inline-flex items-center justify-center rounded-xl bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-700 transition-all outline-none hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:text-amber-400"
         >
           {m.chat_new_discussion_label()}
@@ -262,7 +264,7 @@
   <!-- Footer -->
   <div class="bg-cn-surface shrink-0 border-t border-black/5 px-4 py-4 dark:border-white/10">
     <a
-      href="/chat"
+      href={resolve('/chat')}
       class="text-cn-ink flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 text-xs font-bold shadow-md shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:scale-[0.98]"
     >
       <MessageCircle size={18} strokeWidth={2.5} class="mt-0.5 ml-0.5" />

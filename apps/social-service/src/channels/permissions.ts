@@ -103,6 +103,29 @@ export function roleGrantsChannelManagement(permissions: readonly string[]): boo
 }
 
 /**
+ * Whether a role lets its holder moderate a salon's messages - pin or unpin ANY message (the
+ * author's own included: a pin shows on every screen), delete or close a poll on someone else's.
+ * THE ONLY definition: every one of those endpoints refuses without it, the workspace listing hands
+ * the same answer to the client as `viewerCanModerate`, and `workspace.role.changed` carries it as
+ * `canModerate`, so the menu offering the action and the endpoint refusing it cannot disagree.
+ *
+ * `channel.manage` and `workspace.manage` subsume `channel.moderate`.
+ */
+export function roleGrantsModeration(permissions: readonly string[]): boolean {
+  return (
+    permissions.includes(CHANNEL_PERMISSIONS.MANAGE_MESSAGES) ||
+    permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
+    permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
+  );
+}
+
+/**
+ * The refusal code of a pin or unpin by a member who may not moderate - whoever wrote the message.
+ * A CODE, so a client maps the refusal from what the server typed rather than from its prose.
+ */
+export const PIN_REQUIRES_MODERATION = 'PIN_REQUIRES_MODERATION';
+
+/**
  * What the viewer's ROLES grant them in a workspace, reduced to the two facts a write decision
  * needs. Both are already computed wherever a decision is made - this type is what stops them
  * being re-derived a third time.

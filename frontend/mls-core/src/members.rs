@@ -1,10 +1,37 @@
+use openmls::messages::group_info::GroupInfo;
 use openmls::prelude::*;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::state::MlsManager;
 use crate::{
-    AddMemberResult, AddMembersBulkResult, MlsError, SkippedKeyPackage, SkippedKeyPackageReason,
+    AddMemberResult, AddMembersBulkResult, AddMembersWithBaseResult, MlsError, SkippedKeyPackage,
+    SkippedKeyPackageReason, StagedRemovalResult,
 };
+
+/// The external-join base for the epoch a staged commit CREATES, in the `MlsMessageOut` wire form
+/// the delivery service stores - the same form `export_group_info` produces.
+///
+/// OpenMLS builds this GroupInfo while building the commit (ratchet tree and external public key
+/// included) whenever the group was configured with `use_ratchet_tree_extension(true)`, which every
+/// group this crate creates or joins is. It is the ONLY moment the post-commit base can be had:
+/// the commit is staged, so this device stays at the old epoch until the server accepts it, and
+/// `export_group_info` would describe the base the group is leaving.
+///
+/// `None` therefore means a group built without the extension - a broken invariant, not a state to
+/// degrade around: a commit submitted without its base strands every stateless joiner (COMM-22).
+fn successor_base(group_info: Option<GroupInfo>, group_id: &str) -> Result<Vec<u8>, MlsError> {
+    let group_info = group_info.ok_or_else(|| {
+        log::error!(
+            "[BASE] {group_id}: OpenMLS built no GroupInfo for the staged commit - the group lacks the ratchet-tree extension"
+        );
+        MlsError::OpenMls(format!(
+            "no GroupInfo for the staged commit on {group_id}: ratchet-tree extension not set"
+        ))
+    })?;
+    MlsMessageOut::from(group_info)
+        .tls_serialize_detached()
+        .map_err(|e| MlsError::OpenMls(e.to_string()))
+}
 
 /// The identity a credential carries, as the UTF-8 string it was built from.
 ///
@@ -89,7 +116,9 @@ impl MlsManager {
     }
 
     /// Remove all leaf nodes whose credential identity matches any of the provided user IDs.
-    /// Returns the serialized commit bytes that must be broadcast to all group members.
+    /// Returns `(commit, group_info)` (see [`StagedRemovalResult`]): the serialized commit that must
+    /// be broadcast to all group members, and the external-join base for the epoch it creates,
+    /// submitted with it.
     ///
     /// A LEAF IS A DEVICE, AND A USER IS ITS PREFIX. Identities are `userId:deviceId`, so an
     /// exact comparison against a bare user id matched nothing at all and this function could only
@@ -100,7 +129,7 @@ impl MlsManager {
         &mut self,
         group_id: &str,
         user_ids: &[&str],
-    ) -> Result<Vec<u8>, MlsError> {
+    ) -> Result<StagedRemovalResult, MlsError> {
         let group = self
             .groups
             .get_mut(group_id)
@@ -119,7 +148,7 @@ impl MlsManager {
             )));
         }
 
-        let (commit_msg_out, _welcome, _group_info) = group
+        let (commit_msg_out, _welcome, group_info) = group
             .remove_members(&self.provider, &self.keypair, &leaf_indices)
             .map_err(|e| MlsError::OpenMls(format!("RemoveMembers error: {:?}", e)))?;
 
@@ -127,19 +156,21 @@ impl MlsManager {
         // server-side THEN calls merge_pending_commit_for (accepted) or clear_pending_commit_for
         // (rejected) - never merge-before-validation again, hence no local fork on rejection.
         self.mark_state_dirty();
-        commit_msg_out
+        let commit = commit_msg_out
             .tls_serialize_detached()
-            .map_err(|e| MlsError::OpenMls(e.to_string()))
+            .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+        Ok((commit, successor_base(group_info, group_id)?))
     }
 
     /// Remove leaf nodes whose credential identity exactly matches any of the provided
     /// `userId:deviceId` strings. Use this to remove a specific device without
-    /// affecting other devices of the same user.
+    /// affecting other devices of the same user. Returns `(commit, group_info)`, as
+    /// [`Self::remove_members_for_users`] does.
     pub fn remove_members_for_devices(
         &mut self,
         group_id: &str,
         device_identities: &[&str],
-    ) -> Result<Vec<u8>, MlsError> {
+    ) -> Result<StagedRemovalResult, MlsError> {
         let group = self
             .groups
             .get_mut(group_id)
@@ -159,16 +190,17 @@ impl MlsManager {
             )));
         }
 
-        let (commit_msg_out, _welcome, _group_info) = group
+        let (commit_msg_out, _welcome, group_info) = group
             .remove_members(&self.provider, &self.keypair, &leaf_indices)
             .map_err(|e| MlsError::OpenMls(format!("RemoveMembers error: {:?}", e)))?;
 
         // C7-A : stage uniquement (cf. remove_members_for_users) - merge/clear par l'appelant
         // apres validation serveur.
         self.mark_state_dirty();
-        commit_msg_out
+        let commit = commit_msg_out
             .tls_serialize_detached()
-            .map_err(|e| MlsError::OpenMls(e.to_string()))
+            .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+        Ok((commit, successor_base(group_info, group_id)?))
     }
 
     /// Merges the group's pending (staged) commit: call AFTER the server accepted the commit
@@ -243,6 +275,18 @@ impl MlsManager {
         group_id: &str,
         key_packages_bytes: &[&[u8]],
     ) -> Result<AddMembersBulkResult, MlsError> {
+        self.add_members_bulk_with_base(group_id, key_packages_bytes)
+            .map(|(staged, _base)| staged)
+    }
+
+    /// [`Self::add_members_bulk`] plus the external-join base for the epoch the staged commit
+    /// CREATES (see [`AddMembersWithBaseResult`]). The caller that submits the commit to a server
+    /// carries the base with it, so the epoch advance and its base are stored together (COMM-22).
+    pub fn add_members_bulk_with_base(
+        &mut self,
+        group_id: &str,
+        key_packages_bytes: &[&[u8]],
+    ) -> Result<AddMembersWithBaseResult, MlsError> {
         let group = self
             .groups
             .get_mut(group_id)
@@ -333,7 +377,7 @@ impl MlsManager {
             )));
         }
 
-        let (commit_msg_out, welcome_msg_out, _group_info) = group
+        let (commit_msg_out, welcome_msg_out, group_info) = group
             .add_members(&self.provider, &self.keypair, &key_packages)
             .map_err(|e| MlsError::OpenMls(format!("AddMembers error: {:?}", e)))?;
 
@@ -349,7 +393,12 @@ impl MlsManager {
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(e.to_string()))?;
 
+        let base = successor_base(group_info, group_id)?;
+
         self.mark_state_dirty();
-        Ok((commit_bytes, Some(welcome_bytes), added_indices, skipped))
+        Ok((
+            (commit_bytes, Some(welcome_bytes), added_indices, skipped),
+            base,
+        ))
     }
 }

@@ -359,8 +359,7 @@ async function processBulkAddition(
       return;
     }
 
-    // Track delivery success per user. We only register server membership when a
-    // Welcome has been successfully accepted by delivery service for that device.
+    // Users registered server-side AND whose Welcome was accepted: only those are announced.
     const announcedUsers = new Set<string>();
 
     try {
@@ -378,29 +377,42 @@ async function processBulkAddition(
 
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 
-      // Deliver welcomes per-device in parallel; one failure never aborts the others.
+      // THE SERVER NAMES A JOINER BEFORE ITS WELCOME CAN ARRIVE. The commit is merged, so every
+      // added device is already in the ratchet tree whether or not its Welcome is ever delivered;
+      // registering only AFTER delivery left a window (an inviter dying between the two) in which a
+      // member held key material and the delivery service did not know it, and nothing repaired
+      // that. Registration is user-level (one upsert per user, not per device). A user whose
+      // registration fails gets no Welcome from here: a Welcome to an unregistered member is the
+      // broken state itself, and the joiner recovers through its own welcome_request.
       log(`[SYNC] bulk.addedDeviceIds: ${bulk.addedDeviceIds.join(', ')}`);
+      const addedUsers = new Set(
+        bulk.addedDeviceIds.map((did) => userMap.get(did)).filter((u): u is string => !!u)
+      );
+      const registeredUsers = new Set<string>();
+      await Promise.all(
+        [...addedUsers].map(async (tUser) => {
+          try {
+            await mlsService.registerMember(conversation.id, tUser);
+            registeredUsers.add(tUser);
+          } catch (err) {
+            log(`[WARN] registerMember failed for ${tUser}: ${String(err)} - Welcome withheld`);
+          }
+        })
+      );
+
+      // Deliver welcomes per-device in parallel; one failure never aborts the others.
       const deliveredUsers = await deliverWelcomes({
         mlsService,
         groupId: conversation.id,
         bulk,
-        ownerOf: (did) => userMap.get(did),
+        ownerOf: (did) => {
+          const owner = userMap.get(did);
+          return owner && registeredUsers.has(owner) ? owner : undefined;
+        },
         tag: '[SYNC]',
         log,
       });
-
-      // registerMember is a user-level upsert: once per delivered user (not per device),
-      // in parallel. Only users whose registration succeeded get announced below.
-      await Promise.all(
-        [...deliveredUsers].map(async (tUser) => {
-          try {
-            await mlsService.registerMember(conversation.id, tUser);
-            announcedUsers.add(tUser);
-          } catch (err) {
-            log(`[WARN] registerMember failed for ${tUser}: ${String(err)}`);
-          }
-        })
-      );
+      for (const u of deliveredUsers) announcedUsers.add(u);
 
       log(
         `[OK] Added: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} device(s)). (${announcedUsers.size} user(s) delivered)`
@@ -611,7 +623,7 @@ export async function startNewConversation(
           mlsService,
           storage: deps.storage,
           userId,
-          deviceKeyB64: deps.deviceKeyB64,
+          deviceKey: () => deps.deviceKeyB64,
           conversations,
           getSelectedContact: () => key,
           setSelectedContact: (id: string | null) => {

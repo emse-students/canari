@@ -24,7 +24,7 @@
  * the difference is what makes a codemod dangerous.
  *
  * WHAT THE EXCEPTIONS ARE FOR, and each is measured against a neighbour rather than against this
- * scale: a cross on a 64px thumbnail, a zoom control floating over the minesweeper board, the
+ * scale: a cross on a 64px thumbnail, the
  * camera badge on an avatar, the 48px community rail, a play button matched to the height of its
  * own bubble. Held BY FILE AND BY COUNT so the list cannot go stale in either direction - a new
  * unswept button in one of these files fails, and so does an entry whose buttons have gone.
@@ -45,6 +45,10 @@ const cssPath = join(src, 'app.css');
  * button is added or removed - which is exactly when someone should be asked to justify it again.
  */
 const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
+  'lib/components/reels/ReelEditor.svelte': {
+    count: 1,
+    why: 'the pill-background toggle of the text style bar, sized to sit in one row with the 36px font chips beside it',
+  },
   'lib/components/chat/CallOverlay.svelte': {
     count: 15,
     why: 'the primary controls of a full-screen call, not a row of secondary actions; and CALLS_ENABLED is false, so nothing here can be looked at while it changes',
@@ -56,6 +60,10 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
   'lib/components/posts/MediaThumbRemoveButton.svelte': {
     count: 1,
     why: 'a cross overlaying a 7rem composer thumbnail - a 44px box covered half the photo on the Mi 9T, so the hit area is widened by a ::before instead',
+  },
+  'routes/admin/spaces/+page.svelte': {
+    count: 1,
+    why: 'the BDE star pinned to the corner of a grid cell it designates, on a pointer-only admin grid; a 28px box would cover the cell it belongs to',
   },
   'lib/components/messages/MessageBubbleToolbar.svelte': {
     count: 1,
@@ -84,10 +92,6 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
   'lib/components/shared/InlineVideo.svelte': {
     count: 2,
     why: "the sound toggle overlaying a playing video - Instagram-sized so it does not cover the picture, the download moved into the viewer - and a conversation video's play button, the one big target on a paused first frame (VideoPlayer's disc, 3.5rem)",
-  },
-  'lib/components/settings/MinesweeperModal.svelte': {
-    count: 3,
-    why: 'zoom controls floating over the board',
   },
   'lib/components/shared/PermissionGrid.svelte': { count: 1, why: 'a cell of a grid' },
   'lib/components/reels/ReelCapture.svelte': {

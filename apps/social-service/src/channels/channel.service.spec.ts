@@ -14,6 +14,12 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
+import {
+  DEFAULT_ADMIN_PERMISSIONS,
+  DEFAULT_MEMBER_PERMISSIONS,
+  DEFAULT_MODERATOR_PERMISSIONS,
+  PIN_REQUIRES_MODERATION,
+} from './permissions';
 
 describe('ChannelService security hardening', () => {
   const previousSecret = process.env.INTERNAL_SECRET;
@@ -603,6 +609,97 @@ describe('ChannelService security hardening', () => {
     expect(msg.pinned).toBe(true);
   });
 
+  it('setMessagePinned types its refusal, and neither saves nor announces anything', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    // The seeded Membre role holds NOTHING - the rank a plain member actually has.
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['membre'] });
+    roleRepo.find.mockResolvedValue([{ id: 'membre', permissions: DEFAULT_MEMBER_PERMISSIONS }]);
+    messageRepo.findOne.mockResolvedValue({
+      id: 'm1',
+      channelId: 'ch1',
+      authorId: 'someone-else',
+      pinned: false,
+    });
+
+    const refusal = await service.setMessagePinned('ch1', 'm1', 'u1', true).catch((e) => e);
+
+    expect(refusal).toBeInstanceOf(ForbiddenException);
+    expect((refusal as ForbiddenException).getStatus()).toBe(403);
+    expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+      code: PIN_REQUIRES_MODERATION,
+    });
+    expect(messageRepo.save).not.toHaveBeenCalled();
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+  });
+
+  it("setMessagePinned refuses a plain member UNPINNING someone else's message too", async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const msg = { id: 'm1', channelId: 'ch1', authorId: 'someone-else', pinned: true };
+    messageRepo.findOne.mockResolvedValue(msg);
+
+    await expect(service.setMessagePinned('ch1', 'm1', 'u1', false)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(msg.pinned).toBe(true);
+  });
+
+  // A pin shows on every member's screen, so the author is NOT exempt (user, 2026-10-05).
+  it.each([true, false])(
+    'setMessagePinned refuses a plain member pinned=%s on their OWN message',
+    async (pinned) => {
+      const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      const msg = { id: 'm1', channelId: 'ch1', authorId: 'u1', pinned: !pinned };
+      messageRepo.findOne.mockResolvedValue(msg);
+
+      const refusal = await service.setMessagePinned('ch1', 'm1', 'u1', pinned).catch((e) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: PIN_REQUIRES_MODERATION,
+      });
+      expect(msg.pinned).toBe(!pinned);
+      expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+    }
+  );
+
+  it('setMessagePinned lets a moderator pin their own message', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ id: 'r1', permissions: DEFAULT_MODERATOR_PERMISSIONS }]);
+    const msg = { id: 'm1', channelId: 'ch1', authorId: 'u1', pinned: false };
+    messageRepo.findOne.mockResolvedValue(msg);
+
+    await service.setMessagePinned('ch1', 'm1', 'u1', true);
+
+    expect(msg.pinned).toBe(true);
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.pin',
+      { channelId: 'ch1', messageId: 'm1', pinned: true },
+      expect.any(Array)
+    );
+  });
+
+  it.each([
+    ['the seeded Moderateur', DEFAULT_MODERATOR_PERMISSIONS],
+    ['the seeded Administrateur', DEFAULT_ADMIN_PERMISSIONS],
+    ['a role holding only channel.manage', ['channel.manage']],
+  ])("setMessagePinned lets %s pin someone else's message", async (_label, permissions) => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ id: 'r1', permissions }]);
+    const msg = { id: 'm1', channelId: 'ch1', authorId: 'someone-else', pinned: false };
+    messageRepo.findOne.mockResolvedValue(msg);
+
+    await service.setMessagePinned('ch1', 'm1', 'u1', true);
+
+    expect(msg.pinned).toBe(true);
+  });
+
   // ── Silent rows (WP-40) ───────────────────────────────────────────────────
   // A reaction is an encrypted message now. The server holds no tally, and the only thing it
   // learns about such a row is that it must not ring a phone.
@@ -640,6 +737,44 @@ describe('ChannelService security hardening', () => {
     // A heart that rang every phone in the community is a community people mute.
     expect(notify).not.toHaveBeenCalled();
     notify.mockRestore();
+  });
+
+  // A pin shows on every member's screen, so a poll is auto-pinned only for an author who may pin
+  // (user, 2026-10-05). Matrix: plain member -> not pinned; moderator -> pinned.
+  it.each([
+    ['a plain member', ['membre'], DEFAULT_MEMBER_PERMISSIONS, false],
+    ['a moderator', ['mod'], ['channel.moderate'], true],
+  ])('sendMessage with a poll by %s: pinned=%s', async (_who, roleIds, permissions, pinned) => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
+    channelRepo.findOne.mockResolvedValue({
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: false,
+      writePolicy: 'everyone',
+    });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds });
+    roleRepo.find.mockResolvedValue([{ id: roleIds[0], permissions }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }]);
+    messageRepo.create.mockImplementation((v: any) => v);
+    messageRepo.save.mockImplementation(async (v: any) => ({
+      ...v,
+      id: 'm-new',
+      createdAt: new Date(),
+    }));
+    jest.spyOn(service as any, 'notifyChannelRecipients').mockResolvedValue(undefined);
+
+    await service.sendMessage('ch1', {
+      senderId: 'u1',
+      ciphertext: 'c',
+      nonce: 'n',
+      senderSessionId: 's-1',
+      messageIndex: 0,
+      poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null },
+    } as any);
+
+    const created = messageRepo.create.mock.calls[0][0] as any;
+    expect(created.pinned).toBe(pinned);
+    expect(created.metadata.poll).toBeDefined();
   });
 
   it('listMessages fills its page with bodies and adds the silent rows inside it', async () => {

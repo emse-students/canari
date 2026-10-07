@@ -27,6 +27,7 @@
  * reasons; read that docblock rather than a copy here.
  */
 import { APP_TAB, client, ensureChat, openChannel, send } from '../chat.mjs';
+import { evaluate } from '../cdp.mjs';
 import {
   createCommunity,
   deleteCommunity,
@@ -70,6 +71,7 @@ const w2 = await withDeadline(client(PORTS.W2, APP_TAB), 60_000, 'W2 attach');
 await withDeadline(ensureChat(w2), 60_000, 'W2 ensureChat');
 const oW2 = await watch(w2, 'notif21-w2');
 let killedAt = null;
+let handsetDeviceId = null;
 let lines = [];
 let community = null;
 
@@ -83,6 +85,20 @@ try {
     throw new Error(setupFailed);
   }
   stage(`pin gate -> ${phone.unlockPin(PORTS.A1)}`);
+  // THE HANDSET IS THIS PHONE'S OWN DEVICE, READ OFF IT, NEVER "the first `tauri-` device of the owner":
+  // since the iPhone enrolled (2026-10-01) the account holds several native devices, and the first
+  // one in the roster is whichever the server lists first - a push-dead iPhone read `pending` and
+  // failed the row for a join the phone had made (2026-10-05).
+  const a1 = await client(PORTS.A1, 'tauri.localhost', { focus: false });
+  handsetDeviceId = await evaluate(
+    a1,
+    `(function () { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k.indexOf('mls_device_id_') === 0) return localStorage.getItem(k); } return null; })()`
+  );
+  out.handsetDeviceId = handsetDeviceId ? handsetDeviceId.slice(-24) : null;
+  if (!handsetDeviceId || !handsetDeviceId.startsWith('tauri-')) {
+    setupFailed = 'the phone does not report a native device id';
+    throw new Error(setupFailed);
+  }
   const fcmLink = await requireFreshFcmLink(ROW, stage);
   out.fcmLinkMs = fcmLink?.tookMs ?? null;
   stage('killing A1 - nothing it does may be the door into the group');
@@ -128,7 +144,7 @@ try {
   while (Date.now() < deadline) {
     after = communityDistribution(workspaceId);
     handset = (after?.devices ?? []).find(
-      (d) => d.userId === ownerId && d.deviceId.startsWith('tauri-')
+      (d) => d.userId === ownerId && d.deviceId === handsetDeviceId
     );
     if (handset?.status === 'active') break;
     await sleep(1000);

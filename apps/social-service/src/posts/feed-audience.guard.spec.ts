@@ -1,9 +1,9 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { FeedAudienceGuard } from './feed-audience.guard';
-import { FEED_AUDIENCE_WHERE, IS_FEED_AUDIENCE_SQL } from './feed-audience';
+import { IN_FEED_AUDIENCE_SQL } from '../spaces/reader-spaces';
 
 /**
- * THE GATE THAT WAS MISSING, AND THE THREE SHAPES THE BACKLOG ASKED FOR: ICM, admin, neither.
+ * THE GATE THAT WAS MISSING: in the audience (WP6b: admin, a space, or a membership), or not.
  *
  * The fourth case is the one that made this a defect rather than an omission - a caller with no
  * identity at all, which reached the endpoint and got 200 with post bodies.
@@ -37,9 +37,9 @@ function guardOver(inAudience: boolean) {
 describe('FeedAudienceGuard', () => {
   it('lets a member of the audience through', async () => {
     const { guard } = guardOver(true);
-    await expect(guard.canActivate(contextWith({ 'x-user-id': 'icm-student' }))).resolves.toBe(
-      true
-    );
+    await expect(
+      guard.canActivate(contextWith({ 'x-user-id': 'reader-with-a-space' }))
+    ).resolves.toBe(true);
   });
 
   it('refuses somebody the predicate does not match', async () => {
@@ -62,7 +62,7 @@ describe('FeedAudienceGuard', () => {
     await guard.canActivate(contextWith({ 'x-user-id': 'me' }));
     expect(calls).toHaveLength(1);
     expect(calls[0].params).toEqual(['me']);
-    expect(calls[0].sql).toBe(IS_FEED_AUDIENCE_SQL);
+    expect(calls[0].sql).toBe(IN_FEED_AUDIENCE_SQL);
   });
 
   it('does NOT consult x-global-admin, because the predicate already covers admins', async () => {
@@ -93,22 +93,11 @@ describe('FeedAudienceGuard', () => {
   });
 });
 
-describe('IS_FEED_AUDIENCE_SQL', () => {
-  it('parenthesises the audience fragment, because AND binds tighter than OR', () => {
-    // Measured on the local copy of production with an id belonging to nobody: the unparenthesised
-    // form matched 4 rows - the school's four administrators - and the parenthesised form matched
-    // 0. Without these brackets the gate admits any anonymous caller for as long as one admin
-    // account exists, which is a hole in the shape of a fix.
-    expect(IS_FEED_AUDIENCE_SQL).toContain(`(${FEED_AUDIENCE_WHERE})`);
-  });
-
-  it('filters on the id it is given', () => {
-    expect(IS_FEED_AUDIENCE_SQL).toContain('id = $1');
-  });
-
-  it('states the rule once, by building on the shared fragment', () => {
-    // If somebody re-types the predicate here, this fails: the constant would no longer be a
-    // substring of a hand-written copy that drifted.
-    expect(IS_FEED_AUDIENCE_SQL).toContain(FEED_AUDIENCE_WHERE);
+describe('IN_FEED_AUDIENCE_SQL', () => {
+  it('filters on the id it is given, and ANDs it with the whole parenthesised audience', () => {
+    // Measured on the local copy of production with the old gate: an unparenthesised `OR` matched
+    // the school's four administrators for an id belonging to nobody. What it admits is proven
+    // against PostgreSQL in `reader-spaces.integration.spec.ts`; this pins the shape.
+    expect(IN_FEED_AUDIENCE_SQL).toMatch(/gate_user\.id = \$1 AND \(/);
   });
 });

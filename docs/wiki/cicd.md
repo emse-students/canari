@@ -144,7 +144,14 @@ committed binary went a crypto fix stale precisely because only some pipelines r
 against its own head, so two pull requests that each pass can still break `main` between them; the
 push run is the one that says whether the merged result is green. It also covers what a required
 check cannot - an admin bypassing the ruleset for an emergency hotfix still gets told, on `main`,
-what the bypass skipped. **Nothing here deploys**, so a red run on `main` is a statement about the
+what the bypass skipped. **THE `push` RUN ALSO BUILDS THE PRODUCTION FRONTEND, ONCE (2026-10-06)**:
+the suite lints, type-checks and tests but built nothing, so the build-id defects of #1476 and #1498
+(a bundle naming no commit, two ids in one output) showed only at a release tag. The
+`test-frontend` job runs `BUILD_WEB=1 bun run build` on `push` only - pull requests skip it for cost -
+then `.github/scripts/assert-frontend-build.mjs` checks the stamp names THIS commit and that the wasm
+and protobuf module are in; `assert-frontend-build.test.mjs` pins each refusal and that `ci.yml`
+calls it. The release does not reuse the artefact: each estate bakes its own `VITE_*` origins in
+(`build.yml`), which `main`'s build has none of. **Nothing here deploys**, so a red run on `main` is a statement about the
 repository and never about production, which is still serving the last release.
 
 ### Build and deploy an estate (`build.yml`, `serve-dev.yml`, `serve-prod.yml`)
@@ -168,11 +175,11 @@ which is how three chains came to each re-derive the same fact:
 | The release | What is deployed | Image tag it moves |
 | --- | --- | --- |
 | `v0.15.0-alpha.1` (pre-release) | `dev.canari-emse.fr`, plus the Play *internal* track and TestFlight | `:dev` |
-| `v0.15.0` (stable) | production | `:latest` |
+| `v0.15.0` (stable) | production, deployed BY `:v0.15.0` | `:latest` |
 
-1. `detect-changed-services` diffs against the previous release **of the same kind**
-2. Builds the frontend against that estate's `VITE_*` set, then only the changed images → GHCR
-3. Self-hosted runner: sync `.env`, `docker compose pull` + `up -d`
+1. `enumerate-services` names all eight services (no diff: every service is built every release)
+2. Builds the frontend against that estate's `VITE_*` set, then every image → GHCR, each tagged `v<version>`
+3. Self-hosted runner: sync `.env`, `docker compose pull` + `up -d` - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK
 4. Database migrations, then health checks
 5. MiConnect's blueprints: a pre-release DRY-RUNS them against the production MiConnect, and a
    stable APPLIES them before `prod-released` moves. The same runner lives on MiConnect's host, so
@@ -193,20 +200,16 @@ exactly one implementation of that sentence.
 
 `GITHUB_TOKEN` pushes from the version-bump workflow do **not** trigger `on: push`. CD is chained via `workflow_run` instead (no `branches:` filter — GitHub would silently drop release-triggered parents).
 
-#### The baseline is the previous release OF THE SAME KIND, and that is forced by the image tags
+#### There is no baseline: every service is built every release, and production deploys by `v<version>` (2026-10-06)
 
-Production deploys `:latest`, which only a stable release moves; dev deploys `:dev`, which only a
-pre-release moves. A service a release does not rebuild keeps whatever that estate's tag already
-points at - so the honest question is "what changed since the last release THAT ESTATE received".
-Taking the previous release of *either* kind for dev would skip rebuilding a service changed since
-the last alpha but not since the intervening stable, and dev would run a months-old image under a
-tag claiming otherwise. With no previous release of that kind, everything is built: over-building
-is slow, under-building ships an estate referencing an image that does not exist.
-
-**The order comes from the GitHub API, not from `git tag --sort=v:refname`**: git's version sort
-places `v1.0.0-alpha` AFTER `v1.0.0` unless `versionsort.suffix` is configured, which is the wrong
-way round for every pre-release. `gh api .../releases` returns them newest-first by creation, which
-is the order they deployed in.
+The change detector (a baseline = the previous release of the same kind, a diff, a path-to-service
+map) was deleted on 2026-09-03 because it saved nothing a release waits for and its failure mode was
+silent. Eight images, three tags each (`<sha>`, `v<version>`, and the estate's moving tag), every
+release. **That is what makes a rollback real**: production is deployed by `--tag v<version>`, which
+exists for every service, so re-running an old release's `Deploy to Production Server` puts THAT
+release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4 while passing twenty
+steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
+A rollback does not revert a migration the newer release applied: read it before rolling back across one.
 
 **`prod-deployed` is gone, and its replacement answers a different question.** That tag was the
 change detector's INPUT; the detector reads releases now, so the tag survives only as `prod-released`
@@ -487,6 +490,14 @@ the dev deploy writes: `identical` or dev `ahead` both mean the code went throug
 pre-release at that commit first. A detector was written first and deleted unshipped - the same
 measurement, as a refusal instead of a report.
 
+**"Served dev" MEANS "the dev estate was asked what wasm it serves" (2026-10-06).** `serve-dev.yml`
+runs `tools/cross-client-harness/deployed-wasm-check.mjs https://dev.canari-emse.fr` BEFORE its
+`Record the deployed commit` step, so a dev estate serving a wasm that can panic (the 2026-09-06
+class: every login refused as a wrong PIN, every status code 200) never moves the marker, and gate 4
+refuses the stable. It is not a login; the sign-in smoke test stays a user decision
+([backlog](backlog.md#the-delivery-chain-review---opened-by-the-2026-09-06-outage-agreed-with-the-user-the-same-night)).
+`release-chain.test.sh` pins the order; `archive/deployed-wasm-selftest.mjs` pins the three exit codes.
+
 **A PULL REQUEST THAT MERGES BETWEEN THE PRE-RELEASE AND THE STABLE COSTS ONE MORE PRE-RELEASE, AND
 WHICH GATE REFUSES DEPENDS ON WHICH COMMIT YOU TAG.** Measured 2026-09-17 during `v0.18.10`: the
 pre-release was cut at `14d77ab3`, the bump pushed `2e42ddac`, the dev deploy marked `dev-deployed`
@@ -510,6 +521,42 @@ arrive AFTER the tag exists.
 the primary path failed - so the fix belongs there. The emergency path is unchanged and is not in
 software: a human with admin rights acting by other means, written into `CHANGELOG.md` when taken.
 Gate 4 costs one extra pre-release in a real emergency, which deploys dev in minutes.
+
+**THE ADMIN BYPASS SHORTENS NOTHING, AND THAT IS THE DOCUMENTED PRICE (decided 2026-10-06, the
+cheaper of the two options the 2026-09-06 outage left).** `gh pr merge --admin` skips the ruleset's
+`CI passed` on the PULL REQUEST; gate 3 then refuses the release until `CI passed` has run on the
+merged commit - main's own CI, ~8 minutes after the merge, the same suite the bypass avoided. So the
+sequence in an emergency is: admin-merge, `gh run list --branch main` until CI is green, publish the
+pre-release (or `gh run rerun` a refused one - it needs no new tag, and rescues only this gate), then
+the stable. Gate 3's refusal says so in its own words (`release-preflight.sh`, pinned by
+`release-preflight.test.sh`). A short path that is actually short would need a gate that trusts
+something other than a green suite on the commit, and the project's rule is that a refusal names the
+test that would lift it, not a switch.
+
+#### Two incident-time items decided NOT to be built (2026-10-06)
+
+Both came out of the 2026-09-06 outage and both were re-read against `origin/main` before any code.
+
+**An auto-merge hold on files an in-flight fix touches.** The proposal keyed on an open `hotfix/*`
+pull request. No such population exists: the last 60 merged branches were `fix/` (25), `feat/`
+(16), `docs/` (9), `dependabot/` (8) and `test/` (2), so the hold would never fire; keying on `fix/`
+instead would make two overlapping fixes hold each other. And the harm it was written against - a
+green merge silently reverting a fix - needs the other pull request to have changed the SAME lines,
+which git refuses as a conflict (and a conflicting pull request does not merge); a change to other
+lines of that file keeps the fix. What is left is a SEMANTIC interaction between two correct changes,
+which is `CI passed`'s job. The real incident-class defect of that day - a session re-arming a
+deliberately disarmed merge - has its own rule in [durable-rules](durable-rules.md): a disarmed
+auto-merge is a decision until something proves it a fault.
+
+**Splitting `release.yml`'s `group: release` so the stores do not hold the lock.** The premise
+holds (an estate-only pre-release waited behind another's TestFlight upload) but the split cannot be
+made sound from here: job-level groups do not compose into a lock over a graph of jobs (a second run's
+`bump` would interleave with the first's `land` and `serve-*`), and a callee-level group on
+`android.yml` / `ios.yml` alone leaves the workflow-level lock in place. Nothing short of
+restructuring the whole run can be tested off GitHub, and the cost of getting it wrong is a refused
+or double-bumped release. **The supported gesture is the one the item itself named: `gh run cancel
+<run>` on the superseded pre-release once its estate jobs are green** - the estate work is already
+recorded (`dev-deployed`), only the store arms die, and the waiting run starts.
 
 #### The bump job
 
@@ -629,6 +676,8 @@ asserts the ordering directly (31 assertions).
 
 ### A stable ships the latest pre-release, and `main` may move on (2026-10-02)
 
+**A PRE-RELEASE tag is still refused when `main` moved past its sha between the head read and the tag, and a rerun re-reads the same tag and cannot rescue it; a stable is immune** (it ships the latest alpha, #1367).
+
 A stable used to be built on the commit its tag named and pushed to `main`, so it was REFUSED the
 moment anything merged after that commit - each merge during a release cost a new tag. Now (user:
 *"une release n'opere que sur le tag de la derniere pre-release"*):
@@ -709,15 +758,14 @@ ghcr.io/emse-students/canari/<service>:<tag>
 
 | Tag | Meaning | Moved by |
 |---|---|---|
-| `latest` | what production is deploying | a STABLE release |
+| `latest` | the newest stable's images (informational: production deploys by `v<version>`) | a STABLE release |
 | `dev` | what the dev estate is deploying | a PRE-RELEASE |
-| `<sha>` | the immutable one - this exact commit | every release that builds the image |
-| `v0.15.0-alpha.1` | the release that produced it | every release that builds the image |
+| `<sha>` | the immutable one - this exact commit | every release |
+| `v0.15.0` / `v0.15.0-alpha.1` | the release that produced it; **what production deploys** | every release |
 
 **The two moving tags never cross**, and that is what lets one registry feed two estates from two
-different commits. Neither decides what actually runs: both compose files are deployed with an
-explicit tag, and a service a release did not rebuild keeps whatever its estate's tag already points
-at - which is what a selective rebuild means.
+different commits. Production is deployed by the release's `v<version>`; dev by its moving `dev`
+(a rollback of dev is not a goal).
 
 ## Self-hosted runner
 

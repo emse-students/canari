@@ -166,3 +166,54 @@ fn a_joiner_exports_the_base_its_own_commit_created_before_merging() {
         .expect("some plaintext");
     assert_eq!(plaintext, b"hello dave");
 }
+
+/// COMM-22: a STAGED commit carries the external-join base for the epoch it CREATES, so a device
+/// can submit it with the commit instead of minting it in a follow-up that a reload can lose.
+/// The base describes epoch N+1 while the device is still at N, hence it is only joined from after
+/// the merge here - the server accepting the commit is what makes it true.
+#[test]
+fn staged_add_carries_a_base_for_the_epoch_it_creates() {
+    let (mut alice, _bob, gid) = group_with_alice_bob();
+    let carol = make_device("carol", "dev1");
+    let kp_carol = carol.generate_key_package().expect("kp carol");
+    let before = alice.get_epoch(gid).expect("epoch");
+
+    let ((_c, _w, _added, _skipped), base) = alice
+        .add_members_bulk_with_base(gid, &[&kp_carol])
+        .expect("stage add carol");
+    // Still at the OLD epoch while staged: only the bundle's base describes the new one.
+    assert_eq!(alice.get_epoch(gid).expect("epoch"), before);
+    alice.merge_pending_commit_for(gid).expect("merge");
+    assert_eq!(alice.get_epoch(gid).expect("epoch"), before + 1);
+
+    let mut dave = make_device("dave", "dev1");
+    let (joined, commit) = dave
+        .join_by_external_commit(&base)
+        .expect("a stateless joiner external-joins from the staged commit's own base");
+    assert_eq!(joined, gid);
+    assert_eq!(
+        dave.get_epoch(gid).expect("dave epoch"),
+        before + 2,
+        "the base describes epoch base+1, so the joiner lands at base+2"
+    );
+    alice
+        .process_incoming_message(gid, &commit)
+        .expect("alice applies the external commit built on that base");
+}
+
+#[test]
+fn staged_removal_carries_a_base_for_the_epoch_it_creates() {
+    let (mut alice, _bob, gid) = group_with_alice_bob();
+    let before = alice.get_epoch(gid).expect("epoch");
+
+    let (_commit, base) = alice
+        .remove_members_for_devices(gid, &["bob:dev1"])
+        .expect("stage remove bob");
+    alice.merge_pending_commit_for(gid).expect("merge");
+
+    let mut carol = make_device("carol", "dev1");
+    carol
+        .join_by_external_commit(&base)
+        .expect("external join from the removal's own base");
+    assert_eq!(carol.get_epoch(gid).expect("epoch"), before + 2);
+}

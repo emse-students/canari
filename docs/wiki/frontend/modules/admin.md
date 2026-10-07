@@ -20,6 +20,12 @@ and which items appear; every page repeats its own check, because a route is rea
 | BDE super-admin | `isAssociationSuperAdmin()` | `MANAGE_ASSO` in a BDE association |
 | Content moderator | `isContentModerator()` | `MODERATE` in a BDE association |
 
+These are "in the BDE of at least one space": they decide which ADMIN PAGES open. A control on ONE
+association or ONE event is scoped (WP6c step 2) and reads elsewhere: the per-association BDE
+powers from `getMyBdeReach()` (`GET /api/associations/me/bde-reach`), and each pending event's
+validate / reject buttons from its own server-computed `canValidate` on `/admin/agenda`
+([association-permissions](../../association-permissions.md#wp6c-step-2-a-bde-governs-the-associations-its-spaces-reach-2026-10-04)).
+
 The BDE-derived capabilities all come from **one** membership request, `ensureMyAssociations()`,
 which publishes their flags as a side effect. It is awaited rather than probed in the background
 wherever it decides a REDIRECT: a background probe bounces the very user it was meant to admit
@@ -35,7 +41,7 @@ agenda route, so the shell refuses that account as well. `access.test.ts` pins t
 | Route | Section | Who |
 | --- | --- | --- |
 | `/admin` | Home (cards) | Any BDE super-admin, content moderator, event validator, or platform admin |
-| `/admin/agenda` | Pending agenda events | BDE event validator (`VALIDATE_EVENTS`) or platform admin |
+| `/admin/agenda` | Pending agenda events | BDE event validator (`VALIDATE_EVENTS`) or platform admin; a BDE sees and decides the events of the associations its spaces reach (`canValidate` per row) |
 | `/admin/moderation` | Reports, hidden posts, mutes | Content moderator or platform admin |
 | `/admin/document-reviewers` | Public-document reviewer grants | BDE super-admin or platform admin |
 | `/admin/carte` | Carte de la Vie Asso | BDE super-admin or platform admin |

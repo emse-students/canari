@@ -148,6 +148,23 @@ describe('sendChannelReaction (WP-40)', () => {
   });
 });
 
+describe('sendChannelEdit', () => {
+  it('sends the edit as a SILENT channel message with its own row id and the author clock', async () => {
+    const { sendChannelEdit } = await import('$lib/utils/chat/channelCrypto');
+    await sendChannelEdit(CHANNEL, 'target-1', 'Salut \u{1F600}', 1_700_000_000_000);
+
+    const body = sendMessage.mock.calls[0][1];
+    // Silent: a correction must never ring a phone, and it carries no seed frame for nobody.
+    expect(body.silent).toBe(true);
+    expect(body.seedFrame).toBeUndefined();
+    const frame = decodeAppMessage(sealChannelMessage.mock.calls[0][1]);
+    expect(frame?.edit?.messageId).toBe('target-1');
+    expect(frame?.edit?.newContent).toBe('Salut \u{1F600}');
+    expect(Number(frame?.edit?.editedAt)).toBe(1_700_000_000_000);
+    expect(frame?.messageId).not.toBe('target-1');
+  });
+});
+
 describe('UnreadableRowTally', () => {
   it('says a page of unreadable rows once per class, not once per row', async () => {
     const { reportUnreadableChannelMessage, UnreadableRowTally } =

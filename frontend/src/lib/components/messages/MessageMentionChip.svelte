@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { goto } from '$app/navigation';
   import { peekUserDisplayName, resolveUserDisplayName } from '$lib/utils/users/displayName';
@@ -39,7 +40,7 @@
   function openProfile(e: MouseEvent) {
     e.stopPropagation();
     e.preventDefault();
-    void goto(`/profile/${userId}`);
+    void goto(resolve(`/profile/${userId}`));
   }
 </script>
 

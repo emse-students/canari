@@ -442,3 +442,12 @@ export class UpdatePostDto {
   @IsDateString()
   scheduledAt?: string | null;
 }
+
+/**
+ * The association a post is republished AS, or proposed TO (D38). One field for both routes: who
+ * acts and what it means is the route's, never a flag in the body.
+ */
+export class RepublicationTargetDto {
+  @IsUUID()
+  associationId: string;
+}

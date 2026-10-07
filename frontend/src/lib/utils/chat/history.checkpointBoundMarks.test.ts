@@ -62,7 +62,7 @@ const replayOnePage = async (result: { ok: boolean; plaintext?: null; error?: st
     id: GROUP,
     contactName: 'peer',
     userId: USER,
-    deviceKeyB64: 'device-key',
+    deviceKey: () => 'device-key',
     storage: null,
     getConversation: () => undefined,
     setConversation: () => undefined,

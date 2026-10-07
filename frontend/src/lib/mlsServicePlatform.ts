@@ -6,7 +6,7 @@ import { WebMlsService } from './services/WebMlsService';
  *
  * Which MLS implementation can run is decided by the BUILD, not by the page: a browser can never
  * run `TauriMlsService` (it needs the Rust side of the app) and a Tauri build can never run
- * `WebMlsService` (its WASM loader is stubbed out at build time). Until 2026-09-16 both were
+ * `WebMlsService` (MLS runs in Rust there). Until 2026-09-16 both were
  * statically imported and a runtime ternary picked one, so every web bundle carried an
  * implementation no browser could execute and every native build carried the other - parsed and
  * evaluated on every boot, for nothing.

@@ -22,6 +22,7 @@ import type { ExportLabels } from './export-labels';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
+import { withSubmissionReturnKey } from './return-url-key';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
@@ -48,6 +49,8 @@ import {
 } from '../pricing/validate';
 import { normaliseCondition, visibleItemIds } from './visibility';
 import { coreUrl } from '../internal/service-urls';
+import { internalCoreRequestConfig } from '../internal/core-request';
+import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -966,6 +969,12 @@ export class FormsService {
         // order_ref for Lydia's request/do callback (see webhook.controller.ts) - never sent for
         // Stripe, which would otherwise read it as its own idempotency key.
         const activeProvider = await this.associationsService.getActivePaymentProvider();
+        if (activeProvider === 'disabled') {
+          this.logger.warn(
+            `[Forms] Paid submission ${savedSubmission.id} refused: payments are disabled`
+          );
+          throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
+        }
         const idempotencyKey =
           activeProvider === 'lydia' ? `form:${savedSubmission.id}` : undefined;
 
@@ -976,7 +985,7 @@ export class FormsService {
             const customerResp = await axios.post<{ customerId: string | null }>(
               coreUrl('payments/internal/customer-id'),
               { userId: input.userId },
-              { maxRedirects: 0 }
+              internalCoreRequestConfig()
             );
             customerId = customerResp.data.customerId ?? undefined;
           } catch {
@@ -985,24 +994,37 @@ export class FormsService {
         }
 
         const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
-        const res = await axios.post(checkoutUrl, {
-          lineItems: singleLineItem,
-          successUrl: resolveStripeCallbackUrl(
-            input.successUrl,
-            `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
-            frontendUrl
-          ),
-          cancelUrl: resolveStripeCallbackUrl(
-            input.cancelUrl,
-            `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
-            frontendUrl
-          ),
-          metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
-          stripeConnectAccountId,
-          idempotencyKey,
-          // saveForFuture is incompatible with destination charges (Stripe Connect)
-          ...(customerId ? { customerId, saveForFuture: !stripeConnectAccountId } : {}),
-        });
+        const successUrl = resolveStripeCallbackUrl(
+          input.successUrl,
+          `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
+          frontendUrl
+        );
+        const cancelUrl = resolveStripeCallbackUrl(
+          input.cancelUrl,
+          `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
+          frontendUrl
+        );
+        const res = await axios.post(
+          checkoutUrl,
+          {
+            lineItems: singleLineItem,
+            successUrl:
+              activeProvider === 'lydia'
+                ? withSubmissionReturnKey(successUrl, savedSubmission.id)
+                : successUrl,
+            cancelUrl:
+              activeProvider === 'lydia'
+                ? withSubmissionReturnKey(cancelUrl, savedSubmission.id)
+                : cancelUrl,
+            metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
+            stripeConnectAccountId,
+            idempotencyKey,
+            payerEmail: input.payerEmail,
+            // saveForFuture is incompatible with destination charges (Stripe Connect)
+            ...(customerId ? { customerId, saveForFuture: !stripeConnectAccountId } : {}),
+          },
+          internalCoreRequestConfig()
+        );
 
         const data = res.data || {};
         const sessionUrl = data.url || data.checkoutUrl || null;

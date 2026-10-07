@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath, safeInternalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -60,11 +62,16 @@
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import { m } from '$lib/paraglide/messages';
+  import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
+  import {
+    activePaymentProvider,
+    loadActivePaymentProvider,
+  } from '$lib/associations/activePaymentProvider.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
 
   const formId = $derived(page.params.id);
-  const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
+  const redirectTo = $derived(safeInternalPath(page.url.searchParams.get('redirect'), '/posts'));
 
   let form = $state<Form | null>(null);
   const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);
@@ -97,6 +104,7 @@
   // Payment
   let paymentMethods = $state<PaymentMethod[]>([]);
   let showPaymentModal = $state(false);
+  let askingPayerEmail = $state(false);
   let pendingCheckoutUrl = $state('');
   let pendingSubmissionId = $state('');
   let linkedAgendaEvent = $state<AssociationCalendarEvent | null>(null);
@@ -194,6 +202,7 @@
   }
 
   onMount(async () => {
+    void loadActivePaymentProvider();
     const savedUser = currentUserId();
     if (savedUser) {
       userId = savedUser;
@@ -436,7 +445,7 @@
     return Math.max(0, total);
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(payerEmail?: string) {
     if (!form || submitting) return;
     if (isNotOpenYet && form.opensAt) {
       error = m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) });
@@ -453,13 +462,21 @@
       return;
     }
 
+    // Lydia's request/do needs the payer's address and Canari stores none, so the payer types it.
+    const total = calculateTotal();
+    const paysOnline = total > 0 && !(form.allowCashPayment && paymentMethodChoice === 'cash');
+    if (paysOnline && !payerEmail && activePaymentProvider.current === 'lydia') {
+      askingPayerEmail = true;
+      return;
+    }
+
     error = '';
     submitting = true;
     try {
       const { formCheckoutCallbacks } = await import('$lib/utils/stripeCallbacks');
-      const total = calculateTotal();
       const res = await submitFormService(form.id, {
         email: '',
+        ...(payerEmail ? { payerEmail } : {}),
         answers: visibleAnswers(visibleItems, selections),
         ...formCheckoutCallbacks(),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
@@ -477,7 +494,7 @@
       } else {
         submitted = true;
         successMessage = m.form_view_submission_success();
-        setTimeout(() => goto(redirectTo), 1500);
+        setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
       }
     } catch (e: any) {
       error = e.message || m.form_view_error_payment_failed();
@@ -492,7 +509,7 @@
       submitted = true;
       successMessage = m.form_view_payment_success();
       showPaymentModal = false;
-      setTimeout(() => goto(redirectTo), 1500);
+      setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
     }
     // If requiresAction, PaymentModal handles 3DS inline and calls onSuccess
     return result;
@@ -502,7 +519,7 @@
     submitted = true;
     successMessage = m.form_view_payment_success();
     showPaymentModal = false;
-    setTimeout(() => goto(redirectTo), 1500);
+    setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
   }
 
   async function handlePayWithNew() {
@@ -579,6 +596,16 @@
   });
 </script>
 
+{#if askingPayerEmail}
+  <PayerEmailPrompt
+    onSubmit={(email) => {
+      askingPayerEmail = false;
+      void handleSubmit(email);
+    }}
+    onClose={() => (askingPayerEmail = false)}
+  />
+{/if}
+
 {#if showPaymentModal && pendingSubmissionId}
   <PaymentModal
     {paymentMethods}
@@ -603,7 +630,7 @@
   <div class="mb-6 flex items-center justify-between">
     <button
       class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 text-sm font-semibold transition-colors"
-      onclick={() => goto(redirectTo)}
+      onclick={() => goto(resolve(internalPath(redirectTo)))}
     >
       <ArrowLeft size={15} />
       {m.common_back()}
@@ -643,8 +670,9 @@
   {:else if error && !form}
     <div class="border-cn-border space-y-3 rounded-3xl border bg-(--cn-surface) p-10 text-center">
       <p class="text-red-err font-semibold">{error}</p>
-      <button class="text-text-muted text-sm hover:underline" onclick={() => goto(redirectTo)}
-        >{m.common_back()}</button
+      <button
+        class="text-text-muted text-sm hover:underline"
+        onclick={() => goto(resolve(internalPath(redirectTo)))}>{m.common_back()}</button
       >
     </div>
   {:else if form}
@@ -676,9 +704,11 @@
     <!-- ── Linked agenda event ── -->
     {#if linkedAgendaEvent}
       <a
-        href={agendaAssociationSlug
-          ? `/associations/${encodeURIComponent(agendaAssociationSlug)}`
-          : '/associations'}
+        href={resolve(
+          agendaAssociationSlug
+            ? `/associations/${encodeURIComponent(agendaAssociationSlug)}`
+            : '/associations'
+        )}
         class="border-cn-yellow/35 bg-cn-yellow/10 hover:bg-cn-yellow/15 mb-4 flex items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
       >
         <div class="bg-cn-yellow/25 text-cn-dark shrink-0 rounded-xl p-2">
@@ -900,7 +930,7 @@
           !maySubmit ||
           priceUnavailable}
         loading={submitting}
-        onclick={handleSubmit}
+        onclick={() => void handleSubmit()}
       >
         {#if paymentPending}
           <Check size={16} class="mr-1.5" />{m.form_view_pending()}

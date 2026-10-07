@@ -3,6 +3,13 @@ import { SvelteMap } from 'svelte/reactivity';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
+import { GraineNotReadyError } from '$lib/utils/graine/runtime';
+import { GraineUnknownChannelError } from '$lib/utils/graine/channelSeal';
+import { showToast } from '$lib/stores/toast.svelte';
+import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
+import { setCurrentUserId } from '$lib/stores/userState.svelte';
+import { getChannelReactions } from '$lib/stores/reactionStore.svelte';
+import { activeReactions } from '$lib/utils/chat/messageReactions';
 
 // THE ERROR CLASSES COME FROM THE REAL MODULE, not from the mock. `isRetryableLoadError` decides
 // by `instanceof`, and a stand-in class would make every one of those tests pass against a type the
@@ -17,6 +24,9 @@ vi.mock('$lib/stores/auth', async (importOriginal) => ({
 vi.mock('$lib/paraglide/messages', () => ({
   m: {
     channel_action_community_load: vi.fn(() => 'Loading communities'),
+    channel_action_message_react: vi.fn(() => 'Reacting'),
+    channel_action_channels_reorder: vi.fn(() => 'Reordering channels'),
+    channel_action_error_unknown: vi.fn(({ action }: { action: string }) => `${action}: unknown`),
     channel_action_error_session: vi.fn(
       ({ action }: { action: string }) => `${action}: session expired`
     ),
@@ -30,6 +40,9 @@ vi.mock('$lib/paraglide/messages', () => ({
     channel_action_error_generic: vi.fn(
       ({ action, detail }: { action: string; detail: string }) => `${action}: ${detail}`
     ),
+    channel_action_error_not_ready: vi.fn(
+      ({ action }: { action: string }) => `${action}: not ready`
+    ),
     channel_action_error_conflict: vi.fn(({ action }: { action: string }) => `${action}: conflict`),
   },
 }));
@@ -41,11 +54,16 @@ vi.mock('$lib/stores/toast.svelte', () => ({
 vi.mock('$lib/utils/chat/channelCrypto', () => ({
   isChannelConversationId: (id: string) => id.startsWith('channel_'),
   sendEncryptedChannelMessage: vi.fn(),
+  sendChannelReaction: (...args: unknown[]) => sendChannelReaction(...args),
 }));
+const sendChannelReaction = vi.fn();
 
 const listUserWorkspaces = vi.fn();
 const listChannels = vi.fn();
 const createWorkspace = vi.fn();
+const createChannel = vi.fn();
+const renameChannel = vi.fn();
+const reorderChannels = vi.fn();
 
 // Same reason as the auth mock above: `ChannelApiError` must be the real class, because that is
 // what `ChannelService.handleError` throws and what the code under test tests for.
@@ -55,6 +73,9 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
     createWorkspace = createWorkspace;
+    createChannel = createChannel;
+    renameChannel = renameChannel;
+    reorderChannels = reorderChannels;
   },
 }));
 
@@ -483,6 +504,39 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
     expect(store.channelWorkspaces[0].viewerCanManageChannels).toBe(false);
   });
 
+  // The pin and delete affordances on OTHER members' messages follow this flag. A moderator demoted
+  // to Membre kept them until a reload when the event did not carry it (2026-10-05).
+  it('applies canModerate from the event, and leaves it alone when the event omits it', async () => {
+    listUserWorkspaces.mockResolvedValue([
+      { ...makeWorkspaceDto('ws1', 'One', 'one'), viewerCanModerate: true },
+    ]);
+    listChannels.mockResolvedValue([]);
+
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+    expect(store.channelWorkspaces[0].viewerCanModerate).toBe(true);
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Modérateur',
+      canManage: false,
+      permissions: ['channel.moderate'],
+    });
+    expect(store.channelWorkspaces[0].viewerCanModerate).toBe(true);
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Membre',
+      canManage: false,
+      canManageChannels: false,
+      canModerate: false,
+      permissions: [],
+    });
+    expect(store.channelWorkspaces[0].viewerCanModerate).toBe(false);
+  });
+
   // An event for a community this device does not hold must change nothing at all - not throw, and
   // not create a phantom entry in the sidebar.
   it('ignores a role change for a community it does not have', async () => {
@@ -717,5 +771,157 @@ describe('useChannelWorkspaces - a salon joined in-session enters the group its 
     ).rejects.toThrow('group-info refused');
 
     expect(workspaceForChannel('ch-public')).toBe('ws1');
+  });
+});
+
+describe('useChannelWorkspaces - salon names and order', () => {
+  const FREE_NAME = 'Général 🎉 Équipe';
+
+  async function loadedStore() {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'Promo', 'promo')]);
+    listChannels.mockResolvedValue([
+      makeChannelDto('c1', 'one'),
+      makeChannelDto('c2', 'two'),
+      makeChannelDto('c3', 'three'),
+    ]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    await api.loadChannelWorkspacesFromBackend(ctx);
+    return { api, ctx };
+  }
+
+  const names = (api: ReturnType<typeof useChannelWorkspaces>) =>
+    api.channelWorkspaces[0].channels.map((c) => c.name);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    reorderChannels.mockReset();
+  });
+
+  it('creates a salon with the name exactly as typed, case, accents and emoji included', async () => {
+    const { api, ctx } = await loadedStore();
+    createChannel.mockResolvedValue({ id: 'c4', name: FREE_NAME });
+
+    await api.createNewChannel('ws1', `  ${FREE_NAME}  `, ctx);
+
+    expect(createChannel).toHaveBeenCalledWith(expect.objectContaining({ name: FREE_NAME }));
+    expect(names(api)).toContain(FREE_NAME);
+  });
+
+  it('renames a salon with the name exactly as typed', async () => {
+    const { api, ctx } = await loadedStore();
+    renameChannel.mockResolvedValue({ success: true });
+
+    await api.renameCurrentChannel('channel_c1', FREE_NAME, ctx);
+
+    expect(renameChannel).toHaveBeenCalledWith('channel_c1', FREE_NAME);
+    expect(names(api)[0]).toBe(FREE_NAME);
+  });
+
+  it('applies a reorder at once and sends the new order to the server', async () => {
+    const { api, ctx } = await loadedStore();
+    reorderChannels.mockResolvedValue(undefined);
+    const channels = api.channelWorkspaces[0].channels;
+
+    await api.reorderChannels('promo', [channels[2], channels[0], channels[1]], ctx);
+
+    expect(names(api)).toEqual(['three', 'one', 'two']);
+    expect(reorderChannels).toHaveBeenCalledWith('ws1', ['channel_c3', 'channel_c1', 'channel_c2']);
+  });
+
+  it('rolls the order back, and says so, when the server refuses', async () => {
+    const { api, ctx } = await loadedStore();
+    reorderChannels.mockRejectedValue(new Error('nope'));
+    const channels = api.channelWorkspaces[0].channels;
+
+    await api.reorderChannels('promo', [channels[2], channels[1], channels[0]], ctx);
+
+    expect(names(api)).toEqual(['one', 'two', 'three']);
+    expect(ctx.log).toHaveBeenCalled();
+  });
+
+  it('names a seal that this device cannot make yet, by its TYPE, instead of the nameless arm', async () => {
+    const { api, ctx } = await loadedStore();
+    const channels = api.channelWorkspaces[0].channels;
+
+    for (const failure of [
+      new GraineNotReadyError('cannot seal'),
+      new GraineUnknownChannelError('c1c1c1c1c1'),
+    ]) {
+      vi.mocked(showToast).mockClear();
+      reorderChannels.mockRejectedValue(failure);
+      await api.reorderChannels('promo', [channels[2], channels[1], channels[0]], ctx);
+      expect(showToast).toHaveBeenCalledWith(expect.stringContaining('not ready'), 'error');
+    }
+  });
+
+  it('logs the cause of a failure it cannot name, which the sentence cannot carry', async () => {
+    const { api, ctx } = await loadedStore();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    reorderChannels.mockRejectedValue(new Error('nope'));
+
+    await api.reorderChannels('promo', [], ctx);
+
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('unclassified'), expect.any(Error));
+    spy.mockRestore();
+  });
+
+  it('follows another member rearranging, from its own filtered list', async () => {
+    const { api } = await loadedStore();
+    listChannels.mockResolvedValue([
+      makeChannelDto('c2', 'two'),
+      makeChannelDto('c3', 'three'),
+      makeChannelDto('c1', 'one'),
+    ]);
+
+    await api.refreshChannelOrder('ws1');
+
+    expect(names(api)).toEqual(['two', 'three', 'one']);
+  });
+});
+
+describe('useChannelWorkspaces - a reaction that could not be sent', () => {
+  const standingOn = (messageId: string) =>
+    activeReactions(getChannelReactions(messageId)).filter((r) => r.userId === 'u1');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setCurrentUserId('u1');
+  });
+
+  it('names a transport failure by its TYPE, with the network sentence, and takes the pill back', async () => {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    sendChannelReaction.mockRejectedValue(
+      new DeliveryUnreachableError('error sending request for url (https://x/api/mls/send)')
+    );
+
+    await api.toggleChannelReaction('channel_c1', 'm-rollback-1', '👍', ctx);
+
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('network error'), 'error');
+    expect(standingOn('m-rollback-1')).toHaveLength(0);
+  });
+
+  it('puts a removed reaction back when the removal was not sent', async () => {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    sendChannelReaction.mockResolvedValueOnce(undefined);
+    await api.toggleChannelReaction('channel_c1', 'm-rollback-2', '👍', ctx);
+    expect(standingOn('m-rollback-2')).toHaveLength(1);
+
+    sendChannelReaction.mockRejectedValue(new DeliveryUnreachableError('offline'));
+    await api.toggleChannelReaction('channel_c1', 'm-rollback-2', '👍', ctx);
+
+    expect(standingOn('m-rollback-2')).toHaveLength(1);
+  });
+
+  it('keeps the pill when the failure may have reached peers', async () => {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    sendChannelReaction.mockRejectedValue(new Error('Message send HTTP error: 500'));
+
+    await api.toggleChannelReaction('channel_c1', 'm-rollback-3', '👍', ctx);
+
+    expect(standingOn('m-rollback-3')).toHaveLength(1);
   });
 });

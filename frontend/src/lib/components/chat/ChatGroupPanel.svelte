@@ -26,6 +26,7 @@
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
+  import { joiningRows, membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
 
   /**
    * Props for the ChatGroupPanel component.
@@ -94,10 +95,12 @@
   // THE NAMES THE REMOVE CONTROL ANNOUNCES. Every other cell of a member row renders a resolved
   // name; the control announced the raw id, which is the one surface that exists to be read out.
   const memberNames = userDisplayNames(() => groupMembers);
+  // Read by family name (user, 2026-10-05), each row frozen in place once its profile settles.
+  const memberOrder = membersByFamilyName(() => groupMembers);
+  const orderedMembers = $derived(memberOrder.current);
 
-  const pendingDisplay = $derived(
-    pendingInvites.filter((id) => !groupMembers.some((mem) => mem.toLowerCase() === id))
-  );
+  // Decided by what the list RENDERS, never by what the roster holds: see `joiningRows`.
+  const pendingDisplay = $derived(joiningRows(pendingInvites, groupMembers, orderedMembers));
 
   // ── Group avatar upload ─────────────────────────────────────────────────────
   let imageUploading = $state(false);
@@ -228,7 +231,7 @@
         disabled={imageUploading}
         aria-label={m.chat_group_change_photo_label()}
         title={m.chat_group_change_photo_label()}
-        class="group/avatar relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden rounded-2xl shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
+        class="group/avatar squircle relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
       >
         <GroupAvatar {imageMediaId} name={effectiveDisplayName} variant="group" fill />
         <span
@@ -389,10 +392,16 @@
           class="bg-cn-surface overflow-hidden rounded-2xl border border-black/5 shadow-sm dark:border-white/10"
         >
           <ul class="flex max-h-[35dvh] flex-col overflow-y-auto">
-            {#each groupMembers as member, index (member)}
+            {#if groupMembers.length > 0 && orderedMembers.length === 0}
+              <!-- No member's name has settled yet: a list shown now would reorder itself. -->
+              <li class="text-text-muted px-4 py-3.5 text-center text-sm">
+                {m.chat_community_loading_members()}
+              </li>
+            {/if}
+            {#each orderedMembers as member, index (member)}
               <li
                 class="flex items-center justify-between gap-3 px-4 py-3.5 {index !==
-                  groupMembers.length - 1 || pendingDisplay.length > 0
+                  orderedMembers.length - 1 || pendingDisplay.length > 0
                   ? 'border-b border-black/5 dark:border-white/5'
                   : ''}"
               >
@@ -471,7 +480,8 @@
     <div
       class="keyboard-aware-panel-footer bg-cn-surface mt-auto flex flex-col gap-3 border-t border-black/5 px-(--side-panel-inset) py-5 @md:py-6 dark:border-white/10"
     >
-      {#if onGroupLeave && !confirmLeave && !confirmDelete}
+      <!-- A direct message has no group to leave: it is deleted, never left. -->
+      {#if isGroupConversation && onGroupLeave && !confirmLeave && !confirmDelete}
         <button
           onclick={() => {
             confirmLeave = true;

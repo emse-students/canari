@@ -6,6 +6,8 @@
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
 import { goto } from '$app/navigation';
+import { resolve } from '$app/paths';
+import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage } from '$lib/db';
 import { computePinVerifier } from '$lib/utils/chat/auth';
@@ -26,6 +28,7 @@ import { MLS_LOCAL_STATE_UNDECRYPTABLE, isKeystoreKeyUnavailable } from '$lib/ml
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
 import {
   flushPendingGroupExits,
@@ -152,7 +155,7 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
     mlsService: ctx.ensureMls(),
     storage: st,
     userId: ctx.getUserId(),
-    deviceKeyB64: ctx.getDeviceKey(),
+    deviceKey: () => ctx.getDeviceKey(),
     conversations: cb.conversations,
     getSelectedContact: cb.getSelectedContact,
     setSelectedContact: cb.setSelectedContact,
@@ -207,7 +210,7 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     mlsService: ctx.ensureMls(),
     storage: ctx.getStorage(),
     userId: ctx.getUserId(),
-    deviceKeyB64: ctx.getDeviceKey(),
+    deviceKey: () => ctx.getDeviceKey(),
     conversations: cb.conversations,
     log: cb.log,
     requestReAdd: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
@@ -548,7 +551,7 @@ export async function loginImpl(
       if (err instanceof SessionExpiredError) {
         ctx.setIsLoginInProgress(false);
         if (cb.onSessionExpired) cb.onSessionExpired();
-        else void goto('/login', { replaceState: true });
+        else void goto(resolve('/login'), { replaceState: true });
         return;
       }
       // Anything else is a transport failure (no network, backend restarting): the server was
@@ -924,6 +927,9 @@ export async function loginImpl(
     // (written by store_push_secret during startPushService) before the health check runs.
     // Skipped offline - registering a push token requires the server, and the resulting failure
     // would raise a spurious "push degraded" fatal error. promoteOfflineSession re-runs it.
+    // The account's notification switches, which this client's own local notifications consult.
+    // Skipped offline for the same reason; promoteOfflineSession loads them once it is online.
+    if (!offlineSession) void notificationPreferences.load();
     if (offlineSession) {
       cb.log('[PUSH] Registration deferred - offline session.');
     } else {
@@ -1002,7 +1008,7 @@ export async function loginImpl(
     // and invalid after logout, so they are installed here and cleared in `logout`.
     setGraineRuntime({
       storage: ctx.getStorage()!,
-      deviceKeyB64: ctx.getDeviceKey(),
+      deviceKey: () => ctx.getDeviceKey(),
       userId: ctx.getUserId(),
       mlsService,
     });
@@ -1018,7 +1024,7 @@ export async function loginImpl(
 
     const callSystemCtx = {
       userId: ctx.getUserId(),
-      deviceKeyB64: ctx.getDeviceKey(),
+      deviceKey: () => ctx.getDeviceKey(),
       storage: ctx.getStorage(),
       conversations: cb.conversations,
       addMessageToChat: cb.addMessageToChat,
@@ -1035,7 +1041,8 @@ export async function loginImpl(
       mlsService,
       storage: ctx.getStorage(),
       userId: ctx.getUserId(),
-      deviceKeyB64: ctx.getDeviceKey(),
+      // Read at each write: a PIN change moves the session's key while this handler lives on.
+      deviceKey: () => ctx.getDeviceKey(),
       historyBaseUrl: ctx.getHistoryBaseUrl(),
       conversations: cb.conversations,
       messageReactions: cb.messageReactions,
@@ -1605,12 +1612,14 @@ export async function loginImpl(
     if (_e instanceof SessionExpiredError) {
       clearUserLocally();
       if (cb.onSessionExpired) cb.onSessionExpired();
-      else void goto('/login', { replaceState: true });
+      else void goto(resolve('/login'), { replaceState: true });
     } else if (cb.onLoginFailed) {
       cb.onLoginFailed(shown, code);
     } else {
-      const cur = window.location.pathname + window.location.search + window.location.hash;
-      void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+      const loc = window.location;
+      void goto(resolve(internalPath(loginReturningTo(loc.pathname, loc.search, loc.hash))), {
+        replaceState: true,
+      });
     }
   } finally {
     ctx.setIsLoginInProgress(false);
@@ -2007,11 +2016,12 @@ export function tearDownLiveSession(
 export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
   tearDownLiveSession(ctx, cb, 'logout');
+  notificationPreferences.reset();
   ctx.setStorage(null);
   ctx.setAuthToken('');
   clearUserLocally();
   clearDeviceKeyAndWrapKey();
   clearAuth();
   cb.log('[LOGOUT] Local state cleared - redirecting to /login.');
-  void goto('/login', { replaceState: true });
+  void goto(resolve('/login'), { replaceState: true });
 }

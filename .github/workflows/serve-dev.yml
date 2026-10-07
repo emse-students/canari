@@ -150,6 +150,7 @@ jobs:
           DEV_CHANNELS_ENCRYPTION_SECRET: ${{ secrets.DEV_CHANNELS_ENCRYPTION_SECRET }}
           DEV_INTERNAL_SHARED_SECRET: ${{ secrets.DEV_INTERNAL_SHARED_SECRET }}
           DEV_CALL_ROOM_SECRET: ${{ secrets.DEV_CALL_ROOM_SECRET }}
+          DEV_AGENDA_SIGNING_KEY: ${{ secrets.DEV_AGENDA_SIGNING_KEY }}
           DEV_INTERNAL_SECRET: ${{ secrets.DEV_INTERNAL_SECRET }}
           DEV_EXTERNAL_API_KEY: ${{ secrets.DEV_EXTERNAL_API_KEY }}
           DEV_SKY_API_KEY: ${{ secrets.DEV_SKY_API_KEY }}
@@ -231,6 +232,33 @@ jobs:
         run: |
           set -euo pipefail
           bash infrastructure/authentik/apply-blueprints.sh dry-run
+
+      # THE ESTATE IS ASKED WHAT IT SERVES BEFORE IT IS ALLOWED TO COUNT AS DEV-DEPLOYED. On
+      # 2026-09-06 `v0.16.4` deployed green, both estates answered `HTTP 200` and every login was
+      # refused: a wasm that panics on `SystemTime::now()`. `deployed-wasm-check.mjs` names that
+      # wasm from the outside, with no credentials, in seconds - and until 2026-10-06 no workflow
+      # ran it, so it had stopped nothing (durable-rules, "a check that no workflow calls").
+      #
+      # IT RUNS BEFORE `dev-deployed` MOVES, and that placement is the whole gate: a stable is
+      # refused unless a pre-release served dev (`release-preflight.sh`, gate 4, reads that marker),
+      # so a refused wasm here leaves the marker where it was and the build cannot reach production.
+      # NOT A LOGIN, and not sold as one: a defect that needs a session is still invisible to it.
+      #
+      # BUN, NEVER NODE, at the version `.bun-version` pins; the runner is not assumed to carry it.
+      - name: Read the pinned bun version
+        id: bun
+        working-directory: ${{ env.DEV_DEPLOY_PATH }}
+        run: echo "version=$(cat .bun-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+
+      - name: Refuse a dev estate serving a wasm that can panic
+        working-directory: ${{ env.DEV_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          bun tools/cross-client-harness/deployed-wasm-check.mjs "https://${{ env.DEV_DOMAIN }}"
 
       # WHAT THE DEV ESTATE IS RUNNING, recorded where a human can read it. This is not the change
       # detector's input any more - that is the previous RELEASE now - so the tag exists only to

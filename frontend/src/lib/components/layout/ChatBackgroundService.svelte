@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   /**
    * Always-on layout component for the MLS session lifecycle.
    *
@@ -182,10 +183,12 @@
   });
 
   /**
-   * Notification target we have already routed to /chat for. Plain (non-reactive) so updating
-   * it never re-triggers the effect; it only dedupes the one-shot navigation per pending target.
+   * The LANDING (`notifNav.landing`, one per tap) we have already routed for. Plain (non-reactive)
+   * so updating it never re-triggers the effect; it only dedupes the one-shot navigation per
+   * landing. It is an identity, not the target id: a second tap on the SAME conversation, from
+   * another page, carries the same id and was answered `await-arrival` for ever.
    */
-  let lastNavigatedNotifTarget: string | null = null;
+  let lastRoutedLanding = -1;
 
   /**
    * Pending channel target we already refetched the sidebar for. A just-accepted invitation (card
@@ -209,6 +212,7 @@
    */
   $effect(() => {
     const id = notifNav.pending;
+    const landing = notifNav.landing;
     if (!id || !globalSession.isLoggedIn) return;
     // Route to the view that can show this target once per pending id. hooks.client.ts also routes,
     // but on a cold start that goto can fire before the SvelteKit router is ready and silently
@@ -222,12 +226,12 @@
     const targetRoute = chatDeepLinkRoute(id);
     const step = landingStep({
       arrived: $page.url.pathname === targetRoute,
-      routeAlreadyRequested: lastNavigatedNotifTarget === id,
+      routeAlreadyRequested: lastRoutedLanding === landing,
     });
-    if (step !== 'await-arrival') lastNavigatedNotifTarget = id;
+    if (step !== 'await-arrival') lastRoutedLanding = landing;
     if (step === 'route') {
       appendLog(`[notifNav] routing to ${targetRoute} for pending conversation ${id}`);
-      void goto(targetRoute);
+      void goto(resolve(targetRoute));
     }
     if (step !== 'select') return;
     // Already on screen: the landing is done and must stay idle until the target is lost. The
@@ -502,7 +506,7 @@
     _sessionExpiredHandled = true;
     appendLog('[AUTH] Session expired - logging out and redirecting to /login.');
     await clearAuth().catch(() => {});
-    void goto('/login', { replaceState: true });
+    void goto(resolve('/login'), { replaceState: true });
   }
 
   /**
@@ -531,7 +535,7 @@
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
     await clearAuth().catch((e) => appendLog(`[AUTH] Sign-out: clearAuth failed - ${e}`));
-    await goto('/login', { replaceState: true });
+    await goto(resolve('/login'), { replaceState: true });
     dismissAuthPrompts();
     pinError = '';
     _loginInProgress = false;
@@ -916,19 +920,32 @@
           globalChannels.selectedChannelConversationId = '';
         }
       },
-      onWorkspaceUpdated: (event: { workspaceId: string; imageMediaId?: string }) => {
+      onWorkspaceUpdated: (event: {
+        workspaceId: string;
+        imageMediaId?: string;
+        channelsReordered?: boolean;
+      }) => {
         globalChannels.handleWorkspaceUpdated(event);
+        if (event.channelsReordered) {
+          appendLog(`[CHANNEL_ORDER] community ${event.workspaceId.slice(0, 8)} rearranged`);
+          globalChannels.refreshChannelOrder(event.workspaceId).catch((error: unknown) => {
+            appendLog(
+              `[CHANNEL_ORDER] re-read of ${event.workspaceId.slice(0, 8)} failed: ${String(error)}`
+            );
+          });
+        }
       },
       onWorkspaceRoleChanged: (event: {
         workspaceId: string;
         roleName: string;
         canManage: boolean;
         canManageChannels?: boolean;
+        canModerate?: boolean;
         permissions: string[];
       }) => {
         globalChannels.handleWorkspaceRoleChanged(event);
         appendLog(
-          `[WORKSPACE] my role in ${event.workspaceId.slice(0, 8)} is now "${event.roleName}" (canManage=${event.canManage} canManageChannels=${event.canManageChannels ?? 'unchanged'})`
+          `[WORKSPACE] my role in ${event.workspaceId.slice(0, 8)} is now "${event.roleName}" (canManage=${event.canManage} canManageChannels=${event.canManageChannels ?? 'unchanged'} canModerate=${event.canModerate ?? 'unchanged'})`
         );
       },
       onWorkspaceDeleted: (event: { workspaceId: string }) => {
@@ -1152,6 +1169,10 @@
     if (globalSession.isTabLeader) return;
     const convo = globalConvs.conversations.get(event.conversationId);
     if (!convo) return;
+    // The leader counted this arrival against ITS selection. A follower tab that has the
+    // conversation open is reading it, so taking the leader's count verbatim put a badge on an open
+    // conversation that nothing cleared afterwards - the live path's `isConversationOpen` rule.
+    const isOpenHere = globalConvs.selectedContact === event.conversationId;
 
     if (event.type === 'message_added') {
       if (convo.messages.some((m) => m.id === event.message.id)) return;
@@ -1159,7 +1180,7 @@
         ...convo,
         messages: insertMessageOrdered(convo.messages, event.message),
         lastMessageAt: event.lastMessageAt,
-        unreadCount: event.unreadCount,
+        unreadCount: isOpenHere ? 0 : event.unreadCount,
       });
       return;
     }
@@ -1175,7 +1196,7 @@
       ...convo,
       messages: merged,
       lastMessageAt: event.lastMessageAt,
-      unreadCount: event.unreadCount,
+      unreadCount: isOpenHere ? 0 : event.unreadCount,
     });
   }
 

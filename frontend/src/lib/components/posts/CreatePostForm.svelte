@@ -6,7 +6,8 @@
   import { onMount } from 'svelte';
   import { MediaService, preparePostMedia } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
-  import { createPost, type CreatePostPayload } from '$lib/posts/api';
+  import { createPost, type CreatePostPayload, type PostFeed } from '$lib/posts/api';
+  import { landingFeedFor } from '$lib/posts/landingFeed';
   import { assertNotMuted } from '$lib/moderation/muteCheck';
   import { publishFailureMessage, type PublishStage } from '$lib/posts/publishFailure';
   import { hasContent, localPublishBlocker } from '$lib/posts/composerReadiness';
@@ -66,8 +67,15 @@
    * - Posting as an association (admin/owner role required)
    */
   interface Props {
-    /** Called after the post is successfully created so the parent can refresh its list. */
-    onPostCreated: () => void;
+    /**
+     * Called after the post is successfully created so the parent can refresh its list.
+     *
+     * `landing` is the feed the new post appears in: `associations` for a post made as an
+     * association, `all` for a personal one, `null` for a scheduled one, which no feed shows yet.
+     * THE PARENT MUST SHOW IT - a member publishing from the Associations tab used to be returned
+     * to a list without their post (reported 2026-10-05, a personal post on the Mi 9T).
+     */
+    onPostCreated: (landing: PostFeed | null) => void;
   }
 
   let { onPostCreated }: Props = $props();
@@ -136,7 +144,6 @@
   let errorMessage = $state('');
   /** A picked video being re-encoded on the device during publish (decision C3). */
   const videoPreparation = new VideoPreparationState();
-  let authToken = $state('');
   // --- Draft auto-save (full composer state; images are not persisted) ---
   let draftRestored = $state(false);
   let draftSaved = $state(false);
@@ -252,11 +259,6 @@
     }
 
     try {
-      authToken = await getToken();
-    } catch {
-      /* retried on upload */
-    }
-    try {
       availableForms = await getForms();
     } catch (e) {
       console.error('Failed to load forms', e);
@@ -364,15 +366,6 @@
 
       stage = 'moderation';
       await assertNotMuted();
-      stage = 'mediaToken';
-      if (selectedFiles.length > 0 && !authToken) {
-        try {
-          authToken = await getToken();
-        } catch {
-          throw new LocalizedError(m.post_create_image_token_error());
-        }
-      }
-
       // Compress images, re-encode videos on the device, upload the rest as-is; collect the refs.
       const media = [];
       const limits = selectedFiles.length > 0 ? await mediaService.uploadLimits() : null;
@@ -383,8 +376,16 @@
           videoPreparation.optionsFor(limits?.maxPlaintextBytes)
         );
         videoPreparation.finish();
+        stage = 'mediaToken';
+        // Read at upload time: a copy taken earlier is past its 15 min life by now.
+        let uploadToken: string;
+        try {
+          uploadToken = await getToken();
+        } catch {
+          throw new LocalizedError(m.post_create_image_token_error());
+        }
         stage = 'mediaUpload';
-        const ref = await mediaService.encryptAndUpload(file, authToken, dims, 'archive');
+        const ref = await mediaService.encryptAndUpload(file, uploadToken, dims, 'archive');
         const caption = mediaCaptions[i]?.trim();
         media.push({ ...ref, ...(caption ? { caption } : {}) });
       }
@@ -421,6 +422,11 @@
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
       stage = 'createPost';
+      // Read BEFORE the reset below: the form forgets who it posted as.
+      const landing = landingFeedFor({
+        asAssociation: !!selectedAssociationId,
+        scheduled: !!scheduledAt,
+      });
       await createPost(payload);
 
       // Reset all state after successful creation
@@ -443,7 +449,7 @@
       scheduledAt = '';
       selectedAssociationId = '';
       selectedLinkedCalendarEventId = '';
-      onPostCreated();
+      onPostCreated(landing);
     } catch (err) {
       if (isVideoPrepareError(err) && err.fault === 'aborted') {
         // The member pressed the cross on the progress line: the composer stays as it was.

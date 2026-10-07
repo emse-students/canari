@@ -10,7 +10,7 @@
  *
  * THE DISCRIMINATOR, and why the app is parked on the FEED first. If A1 were already sitting in the
  * DM, "the DM is on screen after the tap" would be true whether the deep link worked or did nothing
- * at all. So the app is moved to `/posts` before it is backgrounded or killed: after the tap the
+ * at all. So the app is moved to `/calendar` before it is backgrounded or killed: after the tap the
  * conversation must be on screen AND must contain this run's marker, which no default route can
  * produce.
  *
@@ -23,10 +23,8 @@ import { logcatReport, logcatSince, watch } from '../watch.mjs';
 import { exitOnRecorded, finishObserved, mark, record } from '../results.mjs';
 import { requireFreshFcmLink } from '../fcmlink.mjs';
 import * as phone from '../phone.mjs';
-import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { ACCOUNT_OF, PEER_NAME, PORTS, peerNameFor } from '../names.mjs';
-import { requireScript } from '../scriptpath.mjs';
+import { PEER_NAME, PORTS, peerNameFor } from '../names.mjs';
 
 // THE PHONE THIS RUNNER DRIVES, DECLARED. Every row below is written for A1 - `PORTS.A1`,
 // `peerNameFor('A1')` - and with a second phone on the bench `serial()` refuses to choose rather
@@ -36,7 +34,11 @@ import { requireScript } from '../scriptpath.mjs';
 phone.useDevice('A1');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
+// THE ROUTE A CLIENT IS PARKED ON, OFF /chat. It was `/posts` until 2026-10-05, when the feed audience
+// gate (spaces, WP6a) began REFUSING an account with no space and no association - which is every rig
+// account - and the app redirected /posts to /chat, so the park parked nothing. `/calendar` is open
+// to every member and is not a chat route.
+const PARK_ROUTE = '/calendar';
 const mode = String(process.argv[2] || 'bg');
 if (!['bg', 'killed'].includes(mode)) throw new Error(`usage: bun notif7.mjs bg|killed`);
 
@@ -87,21 +89,8 @@ function tapNotification(needle) {
   return tap;
 }
 
-function unlock(port = PORTS.A1) {
-  try {
-    return execFileSync(
-      process.execPath,
-      [requireScript('pin.mjs'), '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
-      { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
-    )
-      .trim()
-      .split('\n')
-      .pop();
-  } catch (e) {
-    if (e.status === 2) return 'no modal';
-    return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
-  }
-}
+/** The rig's one PIN unlock for the phone (`phone.unlockPin` -> `pinspawn.mjs`), named for this runner. */
+const unlock = (port = PORTS.A1) => phone.unlockPin(port);
 
 // Match on `full`, never on the parsed title/body: those come out of a regex over a truncated dump,
 // and matching the truncated form is what made LIFE-2 report "no notification" for one that was
@@ -136,7 +125,7 @@ stage('parking A1 on the FEED, so a default route cannot fake the verdict');
 // The reload is DECLARED (see `goto`): parking the phone off `/chat` is the precondition this check
 // is built on, and it happens before the notification window opens, so the PIN re-lock is handled by
 // the unlock above and no command is in flight to lose its `runCallback`.
-await goto(a1, '/posts', { relaunch: 'the phone must be parked off /chat before the window opens' });
+await goto(a1, PARK_ROUTE, { relaunch: 'the phone must be parked off /chat before the window opens' });
 await sleep(4_000);
 out.beforeUrl = await evaluate(a1, 'location.href');
 stage(`A1 before: ${out.beforeUrl}`);
@@ -182,7 +171,7 @@ const phoneWindowFrom = Date.now();
 // previous run's log, arriving BEFORE the message push it was meant to dismiss.
 stage('parking W1 off the conversation, so it cannot dismiss the notification by reading it');
 const w1 = await client(PORTS.W1, APP_TAB);
-await goto(w1, '/posts');
+await goto(w1, PARK_ROUTE);
 await sleep(3_000);
 out.w1Url = await evaluate(w1, 'location.href');
 if (/\/chat/.test(out.w1Url)) throw new Error(`W1 is still on the chat (${out.w1Url})`);

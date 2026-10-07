@@ -18,7 +18,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import MessageReactions from './MessageReactions.svelte';
-import { LONG_PRESS_MS } from '$lib/actions/reactorsTrigger';
+import { HOVER_INTENT_MS, LONG_PRESS_MS } from '$lib/actions/reactorsTrigger';
 
 /** A hold on a badge - the only gesture that opens the list (Discord's, 2026-10-01). */
 function hold(badge: HTMLElement) {
@@ -124,7 +124,7 @@ describe('MessageReactions - who reacted with what', () => {
     for (const b of badges) expect(b.getAttribute('title')).toBeNull();
   });
 
-  it('keeps the badge a toggle: a mouse resting on it opens nothing and reacts to nothing', () => {
+  it('keeps the badge a toggle: a mouse brushing past opens nothing and reacts to nothing', () => {
     const target = document.createElement('div');
     document.body.appendChild(target);
     const reacted: string[] = [];
@@ -149,5 +149,98 @@ describe('MessageReactions - who reacted with what', () => {
 
     badge.click();
     expect(reacted).toEqual(['👍']);
+  });
+});
+
+/** A pointer event of a given type on a badge. */
+function pointer(badge: HTMLElement, type: string, pointerType: 'mouse' | 'touch') {
+  badge.dispatchEvent(
+    Object.assign(
+      new Event(type, { bubbles: type !== 'pointerenter' && type !== 'pointerleave' }),
+      {
+        pointerType,
+        button: 0,
+        clientX: 0,
+        clientY: 0,
+      }
+    )
+  );
+}
+
+describe('MessageReactions - the list opens on a mouse REST, not on the way to a click', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('opens after HOVER_INTENT_MS of resting, names the panel, closes on leave', () => {
+    const { badges } = render();
+    vi.useFakeTimers();
+
+    pointer(badges[0], 'pointerenter', 'mouse');
+    vi.advanceTimersByTime(HOVER_INTENT_MS - 1);
+    flushSync();
+    expect(panel()).toBeNull();
+
+    vi.advanceTimersByTime(1);
+    flushSync();
+    expect(panel()).not.toBeNull();
+    expect(badges[0].getAttribute('aria-describedby')).toBe(panel()!.id);
+
+    pointer(badges[0], 'pointerleave', 'mouse');
+    flushSync();
+    expect(panel()).toBeNull();
+    expect(badges[0].getAttribute('aria-describedby')).toBeNull();
+  });
+
+  it('opens nothing when the mouse leaves before the delay', () => {
+    const { badges } = render();
+    vi.useFakeTimers();
+
+    pointer(badges[0], 'pointerenter', 'mouse');
+    vi.advanceTimersByTime(HOVER_INTENT_MS - 50);
+    pointer(badges[0], 'pointerleave', 'mouse');
+    vi.advanceTimersByTime(500);
+    flushSync();
+    expect(panel()).toBeNull();
+  });
+
+  it('a press before the delay reacts and never opens the list', () => {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const reacted: string[] = [];
+    const app = mount(MessageReactions, {
+      target,
+      props: {
+        groupedReactions: { '👍': ['u1'] },
+        currentUserId: 'me',
+        onReact: (emoji: string) => reacted.push(emoji),
+      },
+    });
+    mounted.push(() => unmount(app, { outro: false }));
+    flushSync();
+    const badge = target.querySelector('button')!;
+    vi.useFakeTimers();
+
+    pointer(badge, 'pointerenter', 'mouse');
+    pointer(badge, 'pointerdown', 'mouse');
+    pointer(badge, 'pointerup', 'mouse');
+    badge.click();
+    vi.advanceTimersByTime(HOVER_INTENT_MS + LONG_PRESS_MS);
+    flushSync();
+    expect(reacted).toEqual(['👍']);
+    expect(panel()).toBeNull();
+  });
+
+  it('a touch never hovers: its enter opens nothing, the long press still does', () => {
+    const { badges } = render();
+    vi.useFakeTimers();
+
+    pointer(badges[0], 'pointerenter', 'touch');
+    vi.advanceTimersByTime(HOVER_INTENT_MS + 100);
+    flushSync();
+    expect(panel()).toBeNull();
+
+    pointer(badges[0], 'pointerdown', 'touch');
+    vi.advanceTimersByTime(LONG_PRESS_MS + 50);
+    flushSync();
+    expect(panel()).not.toBeNull();
   });
 });

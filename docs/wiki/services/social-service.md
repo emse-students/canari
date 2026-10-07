@@ -177,7 +177,7 @@ added later without the pipe fails there.
 | GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
 | GET \| PATCH \| PUT | `/api/channels/roles/:roleId/permissions` | Read a role's base permissions; **PATCH** grants/revokes ONE key (`{key, granted}`) and is what every client sends; **PUT** replaces the whole list and is kept only for clients built before 2026-08-20 ([legacy](../legacy-compatibility.md)). MANAGE_WORKSPACE / MANAGE_ROLES |
 | DELETE | `/api/channels/:channelId/messages/:messageId` | Delete a channel message: own always, someone else's with `channel.moderate` |
-| POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message (own always, someone else's with `channel.moderate`) |
+| POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin or unpin a message: `channel.moderate` for EVERY message, own included (2026-10-05) |
 | POST | `/api/channels/:channelId/messages/:messageId/poll/vote` | Vote on a poll (empty = retract) |
 | PATCH | `/api/channels/:channelId/messages/:messageId/poll/close` | Close a poll now (author or moderator); forces the deadline + unpins. Answers the poll with `closed: true` - see "Channel polls" |
 | GET | `/api/channels/:channelId/notification-level` | Caller's push level for the channel |
@@ -247,15 +247,16 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   be declined while a load is already in flight, and would return exactly what the event already
   carries. Best-effort and logged - the role is written before the announcement is attempted, so a
   failed publish leaves the member where they were. **The invariant this rests on, written down because
-  nothing enforces it:** the client caches exactly two permission-derived values, `viewerCanManage` and
-  `viewerCanManageChannels`, and the event carries both as DECISIONS (`canManage`, `canManageChannels`;
-  an absent one means unchanged) - a third cached flag owes a third field here, never a derivation from
-  `permissions` on the client.
+  nothing enforces it:** the client caches exactly three permission-derived values, `viewerCanManage`,
+  `viewerCanManageChannels` and `viewerCanModerate`, and the event carries all three as DECISIONS
+  (`canManage`, `canManageChannels`, `canModerate`; an absent one means unchanged) - a fourth cached
+  flag owes a fourth field here, never a derivation from `permissions` on the client. The invariant
+  was already broken once: `viewerCanModerate` was cached and never announced until 2026-10-05.
 - **Editing what a role grants re-announces its HOLDERS' standing** (2026-09-29). `workspace.role.permissions`
   only redraws the grid, so granting `channel.manage` to Moderateur left every moderator without the
   salon controls until a full load, and revoking it left them offered controls that fail.
   `announceStandingToHolders` sends the same `workspace.role.changed` to the role's holders, split by
-  verdict (four publishes at most, never one per member).
+  verdict (eight publishes at most - three flags - never one per member).
 - **The salon settings panel offers only what the server would accept** (reported by the user
   2026-09-29): a plain member was shown visibility, write policy, allowlist, rename and delete, each
   refused with a 403 behind a confirmation. `ChannelSettingsPanel` reads `viewerCanManageChannels`;
@@ -273,16 +274,49 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
 
 #### Message moderation (`channel.moderate`)
 
-The role matrix advertises this permission as "pin or delete other members' messages", and that
-is exactly what it does. `memberCanModerateMessages` is the single check, shared by every entry
-point (`deleteChannelMessage`, `setMessagePinned`, `closePoll`); MANAGE_CHANNEL and
-MANAGE_WORKSPACE subsume it via `roleGrantsModeration`. In each case the **author** is allowed
-unconditionally and the permission only widens the action to *someone else's* message. Editing is
-never moderation - only the author can edit, in channels as in DMs.
+The role matrix advertises this permission as "pin or unpin any message, delete other members'
+ones", and that is exactly what it does. `memberCanModerateMessages` is the single check, shared by
+every entry point (`deleteChannelMessage`, `setMessagePinned`, `closePoll`); MANAGE_CHANNEL and
+MANAGE_WORKSPACE subsume it via `roleGrantsModeration`. For delete and poll close the **author** is
+allowed unconditionally and the permission only widens the action to *someone else's* message;
+**a pin has no author exemption** (see below). Editing is never moderation - only the author can
+edit, in channels as in DMs.
 
 The workspace listing carries `viewerCanModerate` alongside `viewerCanManage` so the client can
 decide whether to render the delete affordance on another member's bubble without probing the
-API for a 403. It is a UI hint: the server re-checks on every call.
+API for a 403. It is a UI hint: the server re-checks on every call. `roleGrantsModeration`
+(`permissions.ts`) is the one definition behind the check, the listing flag and the
+`canModerate` field of `workspace.role.changed`.
+
+##### Who may pin, and what the client offers (2026-10-05)
+
+Reported by the user on 2026-10-05: a plain member pinned a message. **The rule, decided by the
+user the same day:** in a salon, pinning or unpinning ANY message - the author's own included -
+needs `channel.moderate` (or `channel.manage` / `workspace.manage`), because a pin shows on every
+member's screen and an open pin list can be abused. Until then the author was exempt. A refusal is a
+403 carrying `code: PIN_REQUIRES_MODERATION`, logged `[PIN] refused ... own=`; an accepted pin is
+logged `[PIN]`. DMs and groups are untouched: a pin there is an MLS frame between equals that no
+server sees, and anybody may.
+
+**A poll is auto-pinned only when its author may pin (user, 2026-10-05).** `sendMessage` sets
+`pinned` from the same `memberCanModerateMessages` grant `setMessagePinned` reads, decided on the
+server and never from the client: a moderator's poll is pinned on creation, a plain member's is not
+(logged `[POLL] not auto-pinned`). Closing a poll (`closePoll`, author allowed) and its deadline
+still unpin it. Groups and DMs do not go through this service and are unchanged.
+
+**What was wrong on the client.** Every menu gated delete on `isOwn || canModerate` and pin on
+nothing, so a member was offered "Pin" on every message, saw it pinned optimistically, and had it
+reverted silently after the 403 (and a refused UNPIN tying in the same millisecond was never
+reverted). `mayPinMessage` (`frontend/src/lib/utils/chat/pinPermission.ts`) is now the one client
+rule - in a salon, `viewerCanModerate` alone - read by the bubble menus (through `ChatMessageGroups`), the pinned banner's unpin and
+`handleTogglePinMessage`; the revert is strictly later than the optimistic apply and a toast names
+the refusal. `workspace.role.changed` also carries `canModerate`, so a demoted moderator stops being
+offered pin and delete without a reload - it carried only the two other flags.
+
+**Not settled without production:** which path the report took (own message, poll, or a role that
+does grant moderation). The decisive reading is the pinned row - its `authorId` against the member,
+`metadata ? 'poll'`, and the member's `roleIds` and those roles' `permissions` - and, from this
+version on, the `[PIN]` log line.
 
 Deletion drops the row (the content is a ciphertext the server cannot read, so there is nothing
 worth tombstoning) and broadcasts `channel.message.deleted` (`{ channelId, messageId, deletedBy }`)
@@ -746,26 +780,33 @@ permission granted. Measured that day: an anonymous `GET /api/posts?limit=1` ret
 bodies. **A gate is only a gate if it can say no.**
 
 The guard asks the database and ignores `x-global-admin`, though that header is trustworthy.
-Admins are already inside the audience predicate, so reading the header would state half the rule a
-second time in a second place - the exact shape of the original defect - and `formation` is not in
-the JWT, so the query is needed regardless.
+Admins are already inside the audience predicate, so reading the header would state part of the rule
+a second time in a second place - the exact shape of the original defect - and campus and cursus are
+not in the JWT, so the query is needed regardless.
 
-| Caller | Answer |
-| --- | --- |
-| no identity | **401**, from `NginxAuthGuard`, before this guard runs |
-| `formation = 'ICM'` | 200 |
-| `admin = true` | 200 |
-| neither | **403** |
+**Since WP6b the gate and every read rest on spaces** ([profiles-and-access](../profiles-and-access.md), "WP6b as built"):
+the gate is `IN_FEED_AUDIENCE_SQL` and which posts each read returns is `postVisibleToViewerSql`,
+both in `spaces/reader-spaces.ts`, the only copy. `feed-audience.ts` ("ICM plus global admins") is
+deleted.
 
-403 rather than 404: the client already redirects a non-ICM user away from `/posts`, so a
-distinguishable refusal is what lets the two agree.
+| Caller | Gate | Posts returned |
+| --- | --- | --- |
+| no identity | **401**, from `NginxAuthGuard`, before this guard runs | - |
+| `admin = true` | 200 | every post |
+| at least one space (a cursus formation on their campus) | 200 | the posts whose rules reach one of their spaces, plus D21 below |
+| a member of at least one association, no space | 200 | that association's posts (D21), and their own |
+| none of these | **403** | - |
 
-**The predicate lives in `feed-audience.ts` and the parentheses in `IS_FEED_AUDIENCE_SQL` are
-load-bearing.** `AND` binds tighter than `OR`, so `WHERE id = $1 AND formation = 'ICM' OR admin =
-true` parses as `(id = $1 AND formation = 'ICM') OR (admin = true)` - true for every admin row
-whoever asked. Measured against the local copy of production with an id belonging to nobody: **4
-rows without the brackets, 0 with them**, the four being the school's four administrators. A
-fragment meant to be combined has to say so, which is why the combining lives beside it.
+403 rather than 404 for the GATE: the client asks `GET /api/posts/audience` (the same SQL) and
+redirects a reader outside it away from `/posts`, so a distinguishable refusal is what lets the two
+agree. ONE POST the reader may not see is a **404**, before the moderation check whose 403 would
+confirm the id.
+
+**Every fragment is parenthesised, and that is load-bearing.** `AND` binds tighter than `OR`; the
+old `WHERE id = $1 AND formation = 'ICM' OR admin = true` would have parsed as
+`(id = $1 AND formation = 'ICM') OR (admin = true)` - true for every admin row whoever asked
+(measured on the local copy of production: 4 rows without the brackets, 0 with them). Who each
+fragment admits is proven against PostgreSQL by `reader-spaces.integration.spec.ts`.
 
 **This closes the feed and not the class.** FIFTEEN edge locations carry the same `auth_request`
 (re-derived 2026-09-15; this line said sixteen), and `/api/presence` was the second confirmed hole
@@ -782,7 +823,7 @@ and reach whoever happened to open the feed. `PostAnnounceScheduler` closes that
 
 | | Association post | Personal post |
 | --- | --- | --- |
-| Recipients | everyone who can see the feed (`feed-audience.ts`) | rows in `user_follows` for the author |
+| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's followers (`user_follows`) who can see it |
 | Notification `type` | `association_post` | `followed_post` |
 | Push `actorName` | the ASSOCIATION's name | the author's display name |
 | Measured rate (17 weeks to 2026-09-10) | 0.53/week to 356 people | ~6.5/week to 2.84 people each |
@@ -804,18 +845,13 @@ means "not yet announced", so shipping the column empty makes the first tick rea
 archive as new. It stamped 120 rows on the local copy of production. A partial index on the null
 rows keeps the once-a-minute query off a growing table.
 
-**The audience query is not an access gate, and it stopped having to be on 2026-09-10.**
-`feed-audience.ts` states "ICM plus global admin" so the sweeper knows who to TELL; the same
-`FEED_AUDIENCE_WHERE` is what `FeedAudienceGuard` refuses a reader with, one section above. The
-rule is stated once per side rather than once per endpoint, which is why narrowing it is a single
-edit.
+**Who is told is who can see, since WP6b.** The recipients are `postVisibleToUserSql` - the
+predicate every read applies - asked of every user for THAT post, so a notification never points at
+a post its recipient would get a 404 for. A post's own rules (D33) narrow its announcement exactly
+as they narrow its readers.
 
-**`association_follows` IS DELIBERATELY NOT CONSULTED, and that is a consequence of the first rule
-rather than an oversight.** If every association post reaches the whole feed audience, following an
-association adds nothing to what you are told - the first recipient derivation already subsumes the
-half of the second that would have used it. That table becomes the opt-in the day the association
-rule is narrowed, which is the one change that would give this sweeper a THIRD derivation rather
-than a different one.
+**`association_follows` IS DELIBERATELY NOT CONSULTED.** Everyone an association reaches is told
+already, so following it adds nothing to what you are told.
 
 **No digest and no per-association mute, decided on the measured rate rather than on taste.** At
 0.53 association announcements a week, either control would be a setting nobody would ever find.
@@ -834,7 +870,7 @@ offers the buttons:
 | Caller | Scope |
 |---|---|
 | Global admin (`x-global-admin: true`) | any association's event |
-| BDE admin (`isUserBdeAdmin`: `VALIDATE_EVENTS` in an association flagged `isBDE`) | any association's event |
+| BDE validator (`mayValidateEvent`: `VALIDATE_EVENTS` in the BDE of a space the event's association reaches - WP6c step 2, [association-permissions](../association-permissions.md#wp6c-step-2-a-bde-governs-the-associations-its-spaces-reach-2026-10-04)) | the events of the associations its spaces reach |
 | Anyone else | needs `PROPOSE_EVENT` in the association that owns the event |
 
 `:id` is always the **owning** association - an event never changes owner, so there is no
@@ -843,7 +879,8 @@ offers the buttons:
 Two surfaces offer these actions and they gate differently on purpose. An association's own page
 (`AssociationCalendarSection`) gates on `PROPOSE_EVENT` *there*, so a BDE validator holding no
 membership in that club sees nothing. The global agenda (`/calendar`) gates per event on the full
-server rule, which is the only place that validator can act - deriving its gate from the other
+server rule (`GET /api/associations/me/bde-reach` names the associations it governs), which is the
+only place that validator can act - deriving its gate from the other
 surface instead of from the server would have kept the right unusable.
 
 ### Nothing is validated by the act of creating it

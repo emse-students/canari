@@ -22,8 +22,6 @@
  *   bun deployed-wasm-check.mjs https://dev.canari-emse.fr
  */
 
-import { SITE } from './names.mjs';
-
 /** The sentence every `std` unsupported-platform panic ends with. */
 const MARKER = 'not implemented on this platform';
 
@@ -34,7 +32,18 @@ const MAX_DEPTH = 3;
 // A rule anchored on a spelt origin does not FAIL when the estate moves - it ANSWERS, about a host
 // nobody is testing any more. An explicit argument still wins, because this tool is also how a
 // human asks one particular deployment whether the wasm it serves can panic.
-const base = (process.argv[2] ?? SITE).replace(/\/+$/, '');
+//
+// `names.mjs` IS LOADED ONLY WHEN NO ARGUMENT IS GIVEN, because it is git-ignored (it is the rig's
+// own, per-machine file): a static import made this script unrunnable on a fresh checkout, which is
+// where `serve-dev.yml` runs it. An explicit origin is the CI path and needs no rig at all.
+const base = (process.argv[2] ?? (await import('./names.mjs')).SITE).replace(/\/+$/, '');
+
+// THE LANDING PAGE IS FETCHED UNDER A QUERY NO ONE ELSE USES. nginx offers the SSR shell to the
+// edge cache for `s-maxage=60`, so right after a deploy a plain `/` can still be the PREVIOUS
+// build's shell, naming the previous build's wasm - which would pass a bad build, or refuse a good
+// one. A cache keys on the URL including its query, so a unique one reaches the origin. Chunks are
+// content-hashed and need no such care.
+const LANDING = `${base}/?deployed-wasm-check=${Date.now()}`;
 
 /** Fetches `url` as text, or `null` when it cannot be read - a chunk that 404s is not fatal. */
 async function text(url) {
@@ -53,7 +62,7 @@ async function text(url) {
  */
 async function findWasmPath() {
   const seen = new Set();
-  let frontier = [`${base}/`];
+  let frontier = [LANDING];
 
   for (let depth = 0; depth <= MAX_DEPTH; depth++) {
     const next = [];

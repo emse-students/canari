@@ -19,6 +19,10 @@ import type {
 const HOMOLOGATION_BASE_URL = 'https://homologation.lydia-app.com';
 const PRODUCTION_BASE_URL = 'https://lydia-app.com';
 
+/** Lydia's payable range per request, confirmed by Lydia 2026-10-04: 0,50 EUR to 1000 EUR. */
+export const LYDIA_MIN_AMOUNT_CENTS = 50;
+export const LYDIA_MAX_AMOUNT_CENTS = 100_000;
+
 /**
  * Fields no log line may ever carry in the clear - `api_token_id` is the Business's own
  * private_token (see `createOnboarding`'s docblock on why it is never persisted either).
@@ -50,8 +54,8 @@ function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
  *   signature and `vendor_token` is PUBLIC, so building it as-is would be forgeable.
  * - Saved payment method methods: retired per the WP-LYDIA-1 decision (see plan) - every purchase
  *   becomes its own `request/do` with payer interaction, there is no server-side vaulted instrument.
- * - `createCheckoutSession` still requires `payerRecipient`, which no caller in social-service
- *   resolves yet (2026-08-19) - a Lydia checkout throws until that's wired.
+ * - `createCheckoutSession` requires `payerRecipient`: the payment controller builds it from the
+ *   `payerEmail` its caller sends, and a request without one is refused rather than sent.
  */
 export class LydiaPaymentProvider implements PaymentProvider {
   readonly id = 'lydia' as const;
@@ -146,6 +150,12 @@ export class LydiaPaymentProvider implements PaymentProvider {
       (sum, item) => sum + item.unitAmountCents * item.quantity,
       0
     );
+    if (totalCents < LYDIA_MIN_AMOUNT_CENTS || totalCents > LYDIA_MAX_AMOUNT_CENTS) {
+      this.logger.warn(`Lydia checkout refused: ${totalCents} cents is outside the payable range`);
+      throw new BadRequestException(
+        `Lydia accepts payments from 0.50 to 1000.00 EUR (got ${(totalCents / 100).toFixed(2)})`
+      );
+    }
     const currency = params.lineItems[0]?.currency?.toUpperCase() ?? 'EUR';
     const description = params.lineItems.map((i) => i.productName).join(', ');
 

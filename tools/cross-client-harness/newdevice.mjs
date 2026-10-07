@@ -280,7 +280,9 @@ export async function becomeANewDevice({ report = stage } = {}) {
   const loginOk = run("login.mjs", ["--device", device]) === 0;
   const landedAt = await evaluate(cx, "location.href").catch(() => "(unreadable)");
   const landedOnTheApp =
-    landedAt.includes(APP_TAB) && !landedAt.includes("auth.canari-emse.fr");
+    landedAt.includes(APP_TAB) &&
+    !landedAt.includes("auth.canari-emse.fr") &&
+    !landedAt.includes("miconnect.emse.fr");
   const challenge = landedOnTheApp
     ? null
     : await evaluate(cx, `document.body.innerText.replace(/\\s+/g, ' ').slice(0, 300)`).catch(

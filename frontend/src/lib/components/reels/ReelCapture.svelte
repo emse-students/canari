@@ -13,7 +13,7 @@
    * stands down meanwhile (`isSwipeNavActive` reads the overlay depth).
    */
   import { onDestroy, onMount } from 'svelte';
-  import { Camera, Images, RefreshCcw } from '@lucide/svelte';
+  import { Images, RefreshCcw } from '@lucide/svelte';
   import CameraScreen from './CameraScreen.svelte';
   import ReelShutter from './ReelShutter.svelte';
   import ReelReview from './ReelReview.svelte';
@@ -24,11 +24,14 @@
     classifyLimitsFault,
     formatTakeTime,
     ringFraction,
+    SHUTTER_HOLD_THRESHOLD_MS,
     type CaptureEvent,
     type CaptureState,
     type LimitsFault,
   } from '$lib/reels/reelCapture';
   import { ReelRecorder, ReelRecorderError } from '$lib/reels/reelRecorder';
+  import type { CameraCapture, FramedStream } from '$lib/reels/framedCapture';
+  import { settings } from '$lib/stores/settingsStore.svelte';
   import { readVideoDurationMs } from '$lib/reels/videoDuration';
   import { getReelLimits, type ReelLimits } from '$lib/posts/api';
   import type { PublishReelDeps } from '$lib/reels/publishReel';
@@ -36,6 +39,7 @@
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import { closeHistoryOverlayFromUi, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import ReelEditor from './ReelEditor.svelte';
 
@@ -56,12 +60,20 @@
   let publishOpen = $state(false);
 
   let recorder: ReelRecorder | null = null;
+  /** The preview's crop being drawn for the take in progress (framedCapture.ts). */
+  let framed: FramedStream | null = null;
+  /** Armed by a press; its firing makes the press a video (reelCapture.ts). */
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let limitTimer: ReturnType<typeof setTimeout> | null = null;
   let frame: number | null = null;
   /** The history entry a take holds; its close discards whatever the take has become. */
   let takeEntry: (() => void) | null = null;
+  /** What the camera screen can capture, bound from it. */
+  let camera = $state<CameraCapture>();
   let picker = $state<HTMLInputElement | null>(null);
   let editorOpen = $state(false);
+  /** The open editor's handle: the system Back asks it to leave (it may have edits to protect). */
+  let editor = $state<ReelEditor>();
 
   const ios = isIosTauriRuntime();
 
@@ -78,6 +90,18 @@
 
   onMount(() => void loadLimits());
 
+  /** A short buzz where the member's finger meets a decision, when they have vibrations on. */
+  function buzz(ms: number) {
+    if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      navigator.vibrate(ms);
+    }
+  }
+
+  function clearHoldTimer() {
+    if (holdTimer) clearTimeout(holdTimer);
+    holdTimer = null;
+  }
+
   /** Feeds one event to the reducer and carries out what the transition owes. */
   function send(event: CaptureEvent) {
     const before = capture;
@@ -85,9 +109,17 @@
     if (after === before) return;
     console.debug(`[reel-capture] ${before.kind} -> ${after.kind} on ${event.type}`);
     capture = after;
-    if (before.kind === 'ready' && after.kind === 'recording') beginTake();
+    if (before.kind === 'pressing') clearHoldTimer();
+    if (after.kind === 'pressing') {
+      // The press becomes a video only by STAYING down; the timer only reports that it did.
+      holdTimer = setTimeout(() => send({ type: 'hold' }), SHUTTER_HOLD_THRESHOLD_MS);
+    }
+    if (before.kind === 'pressing' && after.kind === 'recording') beginTake();
+    if (before.kind === 'pressing' && after.kind === 'photo') void takePhoto();
     if (before.kind === 'recording' && after.kind === 'finishing') void endTake();
-    if (before.kind === 'ready' && after.kind === 'review') holdTakeEntry();
+    if ((before.kind === 'ready' || before.kind === 'photo') && after.kind === 'review') {
+      holdTakeEntry();
+    }
     if (after.kind === 'ready') {
       publishOpen = false;
       releaseTakeEntry();
@@ -97,19 +129,74 @@
   function holdTakeEntry() {
     if (takeEntry) return;
     takeEntry = () => {
-      // Back (or the X) while a take exists: a recording is thrown away, a review discarded.
+      // Back (or the X) while a take exists. The entry is spent by now, so what keeps the take
+      // asks for it again.
       takeEntry = null;
-      console.debug('[reel-capture] the take was dismissed');
-      abandonRecording();
-      publishOpen = false;
-      if (capture.kind !== 'ready') capture = { kind: 'ready' };
+      if (editorOpen) {
+        // Back leaves the EDITOR (asking when it holds edits), never the whole take.
+        console.debug('[reel-capture] Back with the editor open: the editor decides');
+        holdTakeEntry();
+        void editor?.requestLeave();
+        return;
+      }
+      if (capture.kind === 'review') {
+        void discardTakeAfterAsking();
+        return;
+      }
+      dismissTake();
     };
     pushHistoryOverlay(takeEntry);
+  }
+
+  /** A recording is thrown away, a review discarded: the take is over. */
+  function dismissTake() {
+    console.debug('[reel-capture] the take was dismissed');
+    abandonRecording();
+    publishOpen = false;
+    if (capture.kind !== 'ready') capture = { kind: 'ready' };
+  }
+
+  /**
+   * A finished take cannot be re-shot, so losing it is asked about (the X and Back share this).
+   * Keeping it re-arms the Back entry that asking spent.
+   */
+  async function discardTakeAfterAsking() {
+    if (await confirmDiscardTake()) dismissTake();
+    else if (capture.kind === 'review') holdTakeEntry();
+  }
+
+  async function confirmDiscardTake(): Promise<boolean> {
+    const discard = await showConfirm(m.reels_discard_take_confirm(), {
+      danger: true,
+      confirmLabel: m.reels_discard_take_button(),
+      cancelLabel: m.reels_discard_take_keep(),
+    });
+    console.debug(`[reel-capture] discarding the review: ${discard ? 'confirmed' : 'kept'}`);
+    return discard;
+  }
+
+  /** The review's X: the same question as Back, then the ordinary discard. */
+  async function discardFromReview() {
+    if (await confirmDiscardTake()) send({ type: 'discard' });
   }
 
   function releaseTakeEntry() {
     const entry = takeEntry;
     if (entry) closeHistoryOverlayFromUi(entry);
+  }
+
+  /** A tap: the preview's crop of the current frame, kept as a photo. */
+  async function takePhoto() {
+    buzz(10);
+    try {
+      const blob = await camera?.photo();
+      if (!blob) throw new Error('the camera gave no photo');
+      send({ type: 'picked', clip: { blob, source: 'camera' } });
+    } catch (err) {
+      console.error('[reel-capture] the photo could not be kept', err);
+      showToast(m.reels_capture_photo_error(), 'error');
+      send({ type: 'failed' });
+    }
   }
 
   function beginTake() {
@@ -119,16 +206,25 @@
       send({ type: 'failed' });
       return;
     }
+    framed = camera?.startFramedStream() ?? null;
+    if (!framed) {
+      showToast(m.reels_capture_record_error(), 'error');
+      send({ type: 'failed' });
+      return;
+    }
     try {
-      recorder = ReelRecorder.start(stream, ios);
+      recorder = ReelRecorder.start(framed.stream, ios, framed.bitrate);
     } catch (err) {
       const fault = err instanceof ReelRecorderError ? err.fault : 'start';
       console.error(`[reel-capture] the take could not start (${fault})`, err);
       showToast(m.reels_capture_record_error(), 'error');
       recorder = null;
+      framed.stop();
+      framed = null;
       send({ type: 'failed' });
       return;
     }
+    buzz(15);
     holdTakeEntry();
     elapsedMs = 0;
     // THE CAP IS THE PRODUCT'S RULE (C4), so it is a deadline by definition: the ring is full when
@@ -165,13 +261,22 @@
       console.error(`[reel-capture] the take could not be kept (${fault})`, err);
       showToast(m.reels_capture_record_error(), 'error');
       send({ type: 'failed' });
+    } finally {
+      // Only now: the drawing feeds the recorder until its last chunk has arrived.
+      stopFraming();
     }
+  }
+
+  function stopFraming() {
+    framed?.stop();
+    framed = null;
   }
 
   function abandonRecording() {
     stopClock();
     recorder?.abort();
     recorder = null;
+    stopFraming();
   }
 
   /** A video from the gallery, refused at once when it is over the cap. */
@@ -203,6 +308,7 @@
   }
 
   onDestroy(() => {
+    clearHoldTimer();
     abandonRecording();
     const entry = takeEntry;
     takeEntry = null;
@@ -216,11 +322,12 @@
 <div class="relative h-full w-full">
   <CameraScreen
     {session}
+    bind:capture={camera}
     lensLocked={recording}
     paused={capture.kind === 'review'}
     {onBeforeRelease}
   >
-    {#snippet controls(capturePhoto)}
+    {#snippet controls()}
       <div class="grid grid-cols-3 items-end px-6">
         <div class="flex justify-start pb-6">
           {#if !recording}
@@ -245,26 +352,17 @@
           {/if}
         </div>
         <div class="flex flex-col items-center gap-3">
-          <button
-            type="button"
-            class="flex h-9 items-center gap-2 rounded-full border border-white/70 bg-black/35 px-3 text-xs font-semibold outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
-            disabled={recording}
-            data-swipe-nav-ignore
-            onclick={async () => {
-              const blob = await capturePhoto();
-              if (blob) send({ type: 'picked', clip: { blob, source: 'camera' } });
-            }}
-          >
-            <Camera size={16} strokeWidth={2.25} />
-            {m.reels_capture_photo()}
-          </button>
           <ReelShutter
             {recording}
             {fraction}
             timeLabel={formatTakeTime(elapsedMs)}
-            disabled={!limits || capture.kind === 'finishing'}
+            disabled={!limits ||
+              !camera?.ready ||
+              capture.kind === 'finishing' ||
+              capture.kind === 'photo'}
             onpress={(at) => send({ type: 'press', at })}
             onrelease={(at) => send({ type: 'release', at })}
+            oncancel={() => send({ type: 'cancel' })}
           />
         </div>
         <div></div>
@@ -293,8 +391,13 @@
     {:else}
       <ReelReview
         {clip}
-        ondiscard={() => send({ type: 'discard' })}
+        ondiscard={() => void discardFromReview()}
         onedit={() => (editorOpen = true)}
+        onsoundchange={(soundRemoved) => {
+          if (capture.kind === 'review') {
+            capture = { kind: 'review', clip: { ...capture.clip, soundRemoved } };
+          }
+        }}
         onnext={() => (publishOpen = true)}
       />
     {/if}
@@ -302,12 +405,15 @@
 
   {#if editorOpen && capture.kind === 'review'}
     <ReelEditor
+      bind:this={editor}
       clip={capture.clip}
       oncancel={() => (editorOpen = false)}
-      onapply={(blob) => {
+      onnext={(blob) => {
         if (capture.kind !== 'review') return;
-        capture = { kind: 'review', clip: { ...capture.clip, blob } };
+        // The edited media replaces the take (null: untouched), and the publish step opens at once.
+        if (blob) capture = { kind: 'review', clip: { ...capture.clip, blob } };
         editorOpen = false;
+        publishOpen = true;
       }}
     />
   {/if}

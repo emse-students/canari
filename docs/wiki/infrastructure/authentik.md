@@ -261,6 +261,8 @@ and prod builds share the identifier and differ only by `client_id` and API URL.
 identifier also means the two apps cannot coexist on one phone, so reusing the scheme creates no OS
 routing ambiguity.
 
+**SUPERSEDED IN INTENT 2026-09-15**: the user decided a second package id `fr.emse.canari.dev` beside `fr.emse.canari` ([backlog](../backlog.md), [mobile](../frontend/mobile.md)); the shared-identifier statement above is the CURRENT state, not the target. When that lands, `fr.emse.canari.dev://callback` must be re-added on `Canari Dev` (the entry deleted on 2026-09-07 was dead only because no build declared it).
+
 **Why none of this weakens the separation `infrastructure/.env` exists to enforce.** The danger that
 split is aimed at is a page served from one estate obtaining tokens for another. Every provider here
 is **confidential**: an authorization code handed to the custom scheme is worthless without the

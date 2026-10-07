@@ -223,10 +223,26 @@ Every such seam therefore passes **two** guards, and neither substitutes for the
 - **Epoch-monotonic** (`swapClientMonotonic` on web, `MlsManager::reload_is_monotonic` in mls-core):
   refuses a candidate that would move a live group to a LOWER epoch. This answers "is this snapshot
   from an older epoch" **and nothing else**.
-- **Not-overtaken** (`installUnlessOvertaken` on web, the unpersisted-send watermark in
-  `TauriMlsService.reloadStateFromDisk`): refuses a candidate derived before a send this device has
-  already made. A generation that moved INSIDE one epoch is invisible to the epoch guard, which is
-  why the epoch half alone let this defect run.
+- **Not-overtaken** (`installUnlessOvertaken` on web; on native `MlsManager::has_unsaved_ratchet_advance`,
+  read inside `reload_into` under the manager lock): refuses a candidate derived before a send,
+  burn or DECRYPTED FRAME this device has already made. A generation that moved INSIDE one epoch is
+  invisible to the epoch guard, which is why the epoch half alone let this defect run.
+
+**Native: the flag lives in the manager and covers receives (2026-10-06, RESUME-B-1).** The guard
+that stood in `TauriMlsService` counted SENDS in the WebView, so a received frame the checkpoint did
+not yet hold was invisible to it - and a frame landing between its check and the swap was
+overwritten. Measured on the Mi 9T 2026-09-08 09:53: generations 45 and 46, already read, were
+derived again 112 ms after `mls.bin reloaded on resume` and accepted; the reload was the only event
+between the two pairs and no epoch moved. `recharger_mls_au_resume` now answers a typed
+`ReloadOutcome` (`reloaded` / `nothing-on-disk` / `epoch-regression` / `live-ahead`); on
+`live-ahead` the WebView persists the live state, which is what makes the next resume safe. The flag
+is set by `send_message`, `skip_send_generations` and a decrypted application frame, cleared by
+serialisation, and is NOT set by a load (a fresh manager is "dirty" for the snapshot cache but holds
+exactly the file). Pinned by `mls-core/tests/unsaved_ratchet_advance.rs` (including the rewind
+itself, reproduced without a phone) and `storage.rs::a_reload_is_refused_while_the_live_manager_holds_an_unsaved_receive`.
+It clears at serialisation, not at the write: a failed write is reported by the command and leaves the
+file behind with the flag down. A manager that is ahead on a background engine's advance too is
+resolved in favour of the live one (the persist overwrites it) - the merge nobody has written.
 
 The counter is `BaseMlsService.liveMutations`, read at the snapshot and again at the install: a COUNT
 rather than a flag, because the question compares two instants rather than asking "recently?".
@@ -477,3 +493,44 @@ ordering is the guarantee.
 - [`mls-recovery-ladder.md`](mls-recovery-ladder.md) — Recovery steps after desync is detected
 - [`mls-protocol.md`](mls-protocol.md) — MLS protocol overview, invariants, data model
 - [`services/chat-delivery.md`](../services/chat-delivery.md) — Backend commit validation and epoch management
+
+## The resume reload re-installed a receive ratchet behind the live one - the 2026-09-08 captures (Mi 9T)
+
+Moved here from the backlog when the defect was fixed (#1527, [above](#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)). Two defects, one capture.
+
+**The symptom**, read off W1 and W2 as `severe` during NOTIF-1b:
+
+```
+[MLS] LOST frame for 2bd5add9... from f7a9bb80...: generation consumed but this frame
+      was never processed - the sender's ratchet rewound (SecretReuseError, frame 5p:1rurzth)
+MLS decryption failed at exactly its own epoch, so no redelivery can help:
+      group=2bd5add9... msg_epoch=139 group_epoch=139 err=SecretReuseError
+```
+
+`f7a9bb80...` is the PHONE, and the frame was its read receipt for the warm-up message. Same epoch on
+both sides, so this is not an epoch gap: a generation the peers had already consumed was re-issued.
+Both peers then paid a full history reconciliation to discover they already agreed.
+
+**Four decryptions of the same two frames, one epoch, one sender leaf:**
+
+| # | time | driver | generations | result |
+| --- | --- | --- | --- | --- |
+| 1 | 09:33:24.66 | FCM JNI push (`load_or_create`, then `decryptProto`) | 43 | OK, `writeFcmCache` |
+| 2 | 09:33:30.564 | `recevoir_messages_batch group=2bd5add9... count=2` | 43, 44 | OK |
+| 3 | 09:33:30.647 | `recevoir_messages_batch group=2bd5add9... count=2` **again, 83 ms later** | 43, 44 | **`SecretReuseError`** |
+| 4 | 09:33:36.098 | `[PENDING] Fetched 2 pending` -> `[QUEUE] Drain` | 43, 44 | **OK AGAIN** |
+
+Rows 2-3 are defect A (the archive-replay barrier read `isIdle` as "the group is quiet"; it now awaits `waitForCatchUpIdle()`, #435, `v0.16.6`). Row 4 is defect B: the same generations decrypting a third time can only mean the secret tree went backwards, and the only event between rows 3 and 4 is `[MLS][Tauri] mls.bin reloaded on resume (C2)`. The epoch never moved, so the epoch comparison could not see it.
+
+**B isolated to the millisecond on a build without A (2026-09-08 09:53):**
+
+```
+09:53:03.355  gen 45
+09:53:11.397  gen 45      09:53:11.438  gen 46
+09:53:16.801  [MLS][Tauri] mls.bin reloaded on resume (C2) - group cache refreshed
+09:53:16.913  gen 45      09:53:16.973  gen 46      <- both derived again, both succeed
+```
+
+**The key-package accusation fired in the same run** (09:51:43, `error` level, 13 ms before the reload installed): `[RESUME] reload DROPS KEY MATERIAL - live keystore holds 2625 key package(s), the mls.bin being loaded holds 2624`. Two ledgers, one mechanism: the reload puts back both the receive ratchet and the keystore, and that instrument counts only the second; it needs a mint between the last checkpoint and the resume, and a checkpoint cost 8.8-23 s on that device.
+
+**What it did not cost the user:** the FCM cache pre-injected the message, the row landed, NOTIF-7 was `PASS`. The send-side rewind of 2026-09-06 (the phone's read receipt at epoch 139) is a different defect sharing only the error string.

@@ -90,6 +90,8 @@ import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
+import { categoryOfConversation } from '$lib/notifications/categories';
+import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
 
 /** Runtime dependencies injected into all messaging operations. */
@@ -149,7 +151,12 @@ function mediaKindFromEnvelope(type: string): number {
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
-  let replyingTo = $state<ChatMessage | null>(null);
+  /**
+   * The reply armed in each conversation, keyed by conversation id. A reply belongs to ONE
+   * conversation: the composer shows (and a send consumes) only the entry of the conversation
+   * that is open, so opening another one never carries the quote along.
+   */
+  const replyByConversation = new SvelteMap<string, ChatMessage>();
   let pendingMediaFiles = $state<import('$lib/media').PendingMediaFile[]>([]);
   /** A picked video being re-encoded on the device before it joins the queue (decision C3). */
   const videoPreparation = new VideoPreparationState();
@@ -392,7 +399,9 @@ export function useMessaging() {
     isSystem: boolean,
     isOwn: boolean,
     /** The SENDER's instant in ms - what lets the native builder recognise one message. */
-    sentAt: number
+    sentAt: number,
+    /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
+    covers: number
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
@@ -408,6 +417,17 @@ export function useMessaging() {
     ) {
       console.log(
         `[NOTIF] Inbound in ${conversationKey} at ${sentAt} is already read here - nothing raised.`
+      );
+      return;
+    }
+
+    // THE ACCOUNT'S OWN SWITCH for this kind of notification. The server already refuses to PUSH a muted
+    // category; this is the half it cannot reach - a frame received over the socket raises its
+    // notification here, with no push involved, and it must obey the same set.
+    const category = categoryOfConversation(conversationKey);
+    if (!notificationPreferences.isEnabled(category)) {
+      console.log(
+        `[NOTIF] Inbound in ${conversationKey} - category "${category}" is switched off for this account; nothing raised.`
       );
       return;
     }
@@ -487,6 +507,7 @@ export function useMessaging() {
       body: notificationBody,
       mentionsMe,
       sentAt,
+      covers,
     });
   }
 
@@ -752,7 +773,8 @@ export function useMessaging() {
       content,
       isSystem,
       isOwn,
-      resolvedTimestamp.getTime()
+      resolvedTimestamp.getTime(),
+      1
     );
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
@@ -989,7 +1011,9 @@ export function useMessaging() {
         lastInbound.content,
         false,
         false,
-        lastInbound.timestamp.getTime()
+        lastInbound.timestamp.getTime(),
+        // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
+        brandNew.filter((msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId)).length
       );
     }
 
@@ -1087,8 +1111,8 @@ export function useMessaging() {
       }
     }
 
-    const currentReplyingTo = replyingTo;
-    replyingTo = null;
+    const currentReplyingTo = replyByConversation.get(ctx.selectedContact) ?? null;
+    replyByConversation.delete(ctx.selectedContact);
     ctx.setSendError('');
     const channelSvc = isChannel ? new ChannelService() : null;
 
@@ -1114,11 +1138,12 @@ export function useMessaging() {
           if (isChannel && channelSvc) {
             // Channels are server-authoritative + always available: encrypt + upload + send inline.
             isUploadingMedia = true;
-            let { authToken } = ctx;
-            if (!authToken) {
-              authToken = await getToken();
-              ctx.setAuthToken(authToken);
-            }
+            // `ctx.authToken` is a COPY taken at sign-in: it is empty or EXPIRED far more often than it
+            // is live, and a 15-minute-old copy sent the upload out as `401 JWT expired` ("your session
+            // expired") on a tab that was perfectly signed in. `getToken` is the one place that knows
+            // the real expiry and renews it, exactly as the DM outbox path already does.
+            const authToken = await getToken();
+            ctx.setAuthToken(authToken);
             const mediaRef = await mediaService.encryptAndUpload(
               entry.file,
               authToken,
@@ -1631,13 +1656,25 @@ export function useMessaging() {
   // ── Reply ─────────────────────────────────────────────────────────────────
 
   /** Sets the message the user is replying to, which will be embedded as a quote preview in the next send. */
-  function handleReply(message: ChatMessage) {
-    replyingTo = message;
+  function handleReply(conversationKey: string, message: ChatMessage) {
+    if (!conversationKey) {
+      console.log('[REPLY] handleReply ignored: no conversation is open');
+      return;
+    }
+    console.log(`[REPLY] armed in "${conversationKey}" on message ${message.id}`);
+    replyByConversation.set(conversationKey, message);
   }
 
-  /** Clears the pending reply state (user dismissed the reply banner). */
-  function cancelReply() {
-    replyingTo = null;
+  /** The reply armed in `conversationKey`, or null: what that conversation's composer shows. */
+  function replyFor(conversationKey: string | null | undefined): ChatMessage | null {
+    return conversationKey ? (replyByConversation.get(conversationKey) ?? null) : null;
+  }
+
+  /** Clears the pending reply of ONE conversation (user dismissed its reply banner). */
+  function cancelReply(conversationKey: string) {
+    if (!conversationKey) return;
+    console.log(`[REPLY] cancelled in "${conversationKey}"`);
+    replyByConversation.delete(conversationKey);
   }
 
   /**
@@ -1766,10 +1803,8 @@ export function useMessaging() {
     /** Reactive map of emoji reactions keyed by message ID. */
     messageReactions,
 
-    /** Message the user is currently replying to (null when no reply is pending). */
-    get replyingTo() {
-      return replyingTo;
-    },
+    /** The message the user is replying to IN a given conversation (null when none is pending there). */
+    replyFor,
     /** Files staged for sending in the next handleSendChat call. */
     get pendingMediaFiles() {
       return pendingMediaFiles;

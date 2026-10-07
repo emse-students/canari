@@ -9,6 +9,7 @@
 
 import { version } from '$app/environment';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
+import { appRouteForDeepLink } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { createStaleBuildRecovery } from '$lib/utils/staleBuild';
@@ -60,8 +61,8 @@ export function init(): void {}
 // start-up. Nothing about the binary depends on the PIN. `wasmPrefetch` carries the measurement,
 // the four-step chain it shortens, and why it is guarded rather than unconditional.
 //
-// Tauri is excluded because there is no download there: `frontendDist` embeds the bundle, and the
-// `mls-wasm-stub` plugin replaces the loader outright in those builds, so calling it would throw.
+// Tauri is excluded because there is no download there: `frontendDist` embeds the bundle, and MLS
+// runs in Rust, so nothing would ever await the module this warms.
 if (!isTauriRuntime()) {
   prefetchMlsWasmAtBoot();
 }
@@ -203,29 +204,21 @@ if (isTauriRuntime()) {
               continue;
             }
 
-            // Post deep link: fr.emse.canari://post/{postId}
-            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'post') {
-              const postId = u.pathname.replace(/^\//, '');
-              if (postId) {
-                import('$app/navigation')
-                  .then(({ goto }) => goto(`/posts/${postId}`))
-                  .catch(() => {
-                    window.location.href = `/posts/${postId}`;
-                  });
-              }
-              continue;
-            }
-
-            // Form deep link: fr.emse.canari://form/{formId}
-            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'form') {
-              const formId = u.pathname.replace(/^\//, '');
-              if (formId) {
-                import('$app/navigation')
-                  .then(({ goto }) => goto(`/forms/${formId}`))
-                  .catch(() => {
-                    window.location.href = `/forms/${formId}`;
-                  });
-              }
+            // Page deep links a notification tap lands on: post/{id}, form/{id}, posts, calendar,
+            // admin-agenda. The table is `appRouteForDeepLink`; a host it does not own falls through
+            // to the handlers below.
+            const pageRoute = appRouteForDeepLink(u);
+            if (pageRoute) {
+              Promise.all([
+                import('$app/navigation'),
+                import('$lib/stores/globalChatSingleton.svelte'),
+              ])
+                .then(([{ goto }, { appendLog }]) => {
+                  // The same line the chat branch prints: the first absent one names the broken hop.
+                  appendLog(`[notifNav] deep link received: ${url} -> ${pageRoute}`);
+                  return goto(pageRoute);
+                })
+                .catch((err) => console.error('[hooks] Navigation to', pageRoute, 'failed', err));
               continue;
             }
 
@@ -233,6 +226,7 @@ if (isTauriRuntime()) {
             if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'stripe') {
               const path = u.pathname.replace(/\/$/, '') || '/';
               const sessionId = u.searchParams.get('session_id');
+              const submissionId = u.searchParams.get('submission_id');
               const registered = u.searchParams.get('registered');
               const postId = u.searchParams.get('post_id');
               const paymentSetup = u.searchParams.get('payment_setup');
@@ -253,6 +247,8 @@ if (isTauriRuntime()) {
                   navigate(
                     `/shop?purchase_success=${encodeURIComponent(purchaseSuccess)}&productId=${encodeURIComponent(productId)}`
                   );
+                } else if (submissionId) {
+                  navigate(`/forms/success?submission_id=${encodeURIComponent(submissionId)}`);
                 } else if (sessionId) {
                   navigate(`/forms/success?session_id=${encodeURIComponent(sessionId)}`);
                 } else if (paymentSetup) {
@@ -267,6 +263,8 @@ if (isTauriRuntime()) {
               } else if (path === '/cancel') {
                 if (u.searchParams.get('purchase_cancel')) {
                   navigate('/shop?purchase_cancel=1');
+                } else if (submissionId) {
+                  navigate(`/forms/cancel?submission_id=${encodeURIComponent(submissionId)}`);
                 } else if (sessionId) {
                   navigate(`/forms/cancel?session_id=${encodeURIComponent(sessionId)}`);
                 } else if (paymentSetup) {

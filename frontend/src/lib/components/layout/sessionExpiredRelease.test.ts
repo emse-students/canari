@@ -67,7 +67,7 @@ describe('a session loss releases every waiting caller, not only the first', () 
     // refresh cookie server-side, and a second `goto` mid-navigation is a wasted round trip.
     expect(after).toMatch(/_sessionExpiredHandled = true;/);
     expect(after).toMatch(/await clearAuth\(\)/);
-    expect(after).toMatch(/goto\('\/login'/);
+    expect(after).toMatch(/goto\(resolve\('\/login'\)/);
     expect(handlerBody.slice(0, guard)).not.toMatch(/clearAuth/);
   });
 

@@ -37,6 +37,24 @@ real one.
 bundle's platform and the runtime disagree - the one case a build-time choice can still get wrong
 is a Tauri shell pointed at a dev server started outside the Tauri CLI.
 
+### A native build carries the WASM binary, for the backup envelope (2026-10-04)
+
+A `mls-wasm-stub` Vite plugin was meant to replace `mlsWasmLoader` in native builds and keep the
+binary out. It was deleted on 2026-10-04 because it did nothing. The iOS bundle built with and
+without it had the same 365 JavaScript files with the same sizes, the real loader in both. The
+backlog had called widening it to Android "the whole WASM payload on Android". That prize did not
+exist:
+
+- once `platformMlsService()` has picked the native implementation, the only importer of the loader
+  left in a native graph is `wasmPrefetch.ts`, whose call `hooks.client.ts` skips under Tauri. The
+  loader chunk is 1 309 B, shipped and never called;
+- what keeps `mls_wasm_bg.wasm` (2 084 950 B) in BOTH native bundles is `backup.ts`, which imports
+  the bindings directly for the backup envelope (`encrypt_with_key` / `decrypt_with_key`). That code
+  runs on every platform, so the binary is used there.
+
+Taking the 2 MB out of a native build would mean a Tauri command for the backup envelope that writes
+the same bytes, since a `.canari` file moves between web and native devices.
+
 ## Native MLS
 
 `TauriMlsService` calls Rust functions via `invoke()` instead of WASM:
@@ -447,6 +465,47 @@ The negative control is the point: "the app stayed put" is also what a build wit
 dead would produce, and the third row proves the claim is the thing holding the line. The target is
 an all-zero UUID matching no post - `/posts/<unknown>` stays on its route and renders "Publication
 introuvable", so the assertion is about ROUTING and touches nobody's data.
+
+#### What each notification names as its tap target, and who routes it (2026-10-05)
+
+**Reported by the user: on an iPhone a tap on a push opens the app and nothing else.** The tap handler
+(`canari_push.mm`, `didReceiveNotificationResponse`) opens `userInfo["deepLink"]` and NOTHING ELSE - it
+derives no target from `postId`, `formId` or `groupId`. Android's `showSimpleNotification` is handed a
+link BUILT natively from `postId` / `formId`, so the two platforms agreed on chat and disagreed on every
+social push. Built from the code:
+
+| Push type | Payload names | Link on the wire | iOS tap | Android tap |
+|---|---|---|---|---|
+| MLS message (DM, group) | `groupId` | NSE writes `chat/<groupId>` | routes | routes |
+| `channel` (salon) | `channelId` | NSE writes `chat/channel_<id>` | routes | routes |
+| reaction (`social` + `reaction`) | `groupId` | server `chat/<groupId>` | routes | routes |
+| comment, reply, mention, reaction on a post | `postId` | **was none; now server `post/<id>`** | **was dead** | routes |
+| `association_post`, `followed_post` | `postId` | **now `post/<id>`** | **was dead** | routes |
+| `form_reminder` | `formId` | **now `form/<id>`** | **was dead** | routes |
+| `event_proposed` | `associationId`, `action` | **now `admin-agenda`** | **was dead** | landed on `posts`, ignored |
+| `event_validated/rejected/updated/deleted/pending` | `associationId`, `action` | **now `calendar`** | **was dead** | landed on `posts`, ignored |
+
+The NSE keeps the payload's own keys (it mutates a copy of `userInfo`), so a link the server writes
+reaches the tap unchanged. **One implementation now writes the social links:** `socialDeepLink`
+(`apps/social-service/src/push/push-target.ts`, applied in `PushService.notifyContent`), mirroring
+`notificationHref` of the in-app bell; both platforms already prefer an explicit `deepLink`. The
+frontend resolves the page hosts (`post`, `form`, `posts`, `calendar`, `admin-agenda`) in
+`$lib/mobile/deepLinkRoutes.ts` - before this, `hooks.client.ts` had no `posts`, `calendar` or
+`admin-agenda` host and logged "not our deep link, ignoring" for the event pushes on BOTH platforms.
+A tap now logs `[CanariPush] notification tap type=... deepLink=...` on iOS, and an absent link
+says `ABSENT`. Tests: `push-target.spec.ts` (the server contract), `deepLinkRoutes.test.ts` (the
+route table, compared against `notificationHref`).
+
+**Not measured on the iPhone yet** - see the verification note appended below when it is.
+
+**What was observed on the iPhone (2026-10-05, build 1.0.3 against the local stack).** A real push could
+not be sent: Firebase refuses the bench build's sandbox token (`Invalid APNs credential`, the APNs key
+owed in Firebase's development slot, see [cross-client-ios](../cross-client-ios.md)). The links were
+therefore opened with the same URL a tap hands to `openURL`, from a killed app and a backgrounded one:
+`post/<id>` opens the post (after the PIN on a cold start), `form/<id>` opens the form, and `calendar`
+and `posts` were IGNORED on 1.0.3 - the hosts the event pushes land on, which the route table of this
+change adds. Routing below the tap is proven; that the server now writes the link is proven by tests, and
+a real push, tapped killed and backgrounded, is still owed until the APNs key is in.
 
 #### A backgrounded tap reached BOTH paths, and the live one now writes the claim (2026-10-01)
 
@@ -1089,6 +1148,16 @@ reloading MLS state and interrupting an in-flight send for a movement of the wri
 Negative control, run 2026-08-17: under a forced `user_rotation 1`, Settings reported `cur=2400x1080`
 while Canari stayed `cur=1080x2400`.
 
+#### VIBRATE is a manifest permission, and `navigator.vibrate` fails silently without it (2026-10-06)
+
+`navigator.vibrate` (MessageBubble, ReelCapture, `useNotifications`) goes through Chromium's
+VibrationManager, which needs `android.permission.VIBRATE`; without it the call returns normally and
+logcat holds the only trace, `cr_VibrationManager: Failed to use vibrate API, requires VIBRATE
+permission` (Mi 9T, build `5b56dcb74`). The permission is in the tracked `gen/android` manifest (the
+source of truth, since `gen/android` is committed) and `androidCaptureManifest.test.ts` pins it. It is
+a normal-level permission: no runtime prompt. **Play's Data safety / permissions declaration may
+deserve a look** at the next submission; owed ONE on-device re-read that a long-press now buzzes.
+
 #### Asking for the permission: the rationale is acknowledged, never timed
 
 **Android's own permission dialog takes every touch until it is answered**, which is correct for a
@@ -1152,6 +1221,26 @@ second arrival is an UPDATE of the first.
 that raises a banner (a service worker handling `push` would be a second builder), and reads
 `commands/push.rs` to assert that `get_fcm_token` and `get_voip_token` answer `None` off a phone (a
 desktop branch there would be a second trigger).
+
+**A salon's two triggers title it two ways, and whichever posts LAST wins (NOTIF-14, `0.18.20`,
+2026-09-23).** Since 2026-09-22 both carry the same stored `channel_messages.createdAt`, so the
+builder recognises one message and the doubled line is gone (`ChannelNotificationDedupTest`); a post
+that SUPERSEDES a line (the redraw a late seed triggers) is exempt from the already-announced set. But the PUSH models a salon as a 1:1 conversation authored by the
+PLACE (`<Communaute> - #<salon>` as sender, empty `groupName`, because its cleartext payload names no
+human), while the SOCKET models a group conversation authored by the human sender. Eleven sends: the
+push fired eleven times and the socket twice; when both fired, the push's re-post won with
+`group=false`, dropped the conversation title, and Android titled the shade from a message author -
+the human name the socket had written (one caught run also showed `messages=6` falling to `5`,
+unexplained). The socket's conversation title is the salon's name since `notificationGroupName`
+returns `name` before `contactName` for a channel - `contactName` is the conversation KEY
+(`channel_<hex>`, read by `conversations.get` and four identity matches), not a label.
+
+Agreement has two shapes and they cost different things: the socket titles a salon exactly as the
+push does (needs the community name plumbed from `useChannelWorkspaces` to `notifyInbound`, and drops
+the sender's name from the Android banner), or the push gains a sender name (cleartext to FCM, which
+today sees an id). The salon socket post may also be redundant - the "a backgrounded app ACKs the
+frame so no push is sent" reasoning is about DMs - but eleven samples on one device are not enough to
+delete a path on. Either way the fix is NOT to undo the dedup: the two triggers must agree, and a re-post must not drop a conversation title the notification already has.
 
 That needed a call in the direction this app had never made, **Rust into Kotlin**, and the obstacle
 is documented where it bites: a thread attached from native code has no Java frames on its stack, so
@@ -1477,6 +1566,24 @@ sentence about its actor, and a salon's "sender" IS its title, so naming either 
 title twice. Stacking, reply, "Marquer comme lu" and the supersede are untouched -
 `repostReplyPending` copies the title and the group flag from what is in the shade.
 
+**One identity, not a bird above a face (user, 2026-10-05).** The group shape above left the header
+circle as the app's bird and put the sender's face beside the line: two round pictures stacked. A
+group-shaped post (a group, or a DM naming each author; never a reaction or a salon) now publishes
+a long-lived conversation shortcut (`publishConversationShortcut`, id `chat_<groupId>`) and sets
+`setShortcutId`, so the platform draws the avatar as the conversation circle with the app's small icon
+as its corner badge; the plain `setLargeIcon` stays only for the shortcut-less shapes. **COMPILED
+NOTHING AND SEEN NOWHERE**: the Gradle project needs the Tauri-generated settings, and no Canari
+notification could be raised on the Mi 9T without a push - owed a look on that phone.
+
+**The group key is still ONE constant**, `setGroup(GROUP_KEY_MESSAGES)` at three call sites of `CanariFirebaseMessagingService.kt` with one summary, where Messenger keys per THREAD (`GROUP:<threadId>`) - open, P3 ([backlog](../backlog.md)); measure on the Mi 9T after any change, since nothing in CI sees which section of the shade a notification lands in.
+
+**What the shade's two actions cover (audited 2026-10-05).** Reply and "Marquer comme lu" exist on
+Android and iOS for a one-to-one and a group (the MLS outbox and `read_watermark`, one function each,
+app killed included). **A community salon (`channel_<id>`) carries NEITHER action on either platform,
+by design** (server-authoritative send, not the MLS outbox) - acknowledging or answering a salon from
+the shade is a feature, not a repair ([backlog](../backlog.md)). The web has no service worker, so no
+web push actions exist.
+
 **Reaction notifications are at parity across the two platforms, and this is the list - do not
 re-derive it.** Both take the MESSAGE path rather than the social one, both use the stable
 per-conversation id and thread so a reaction replaces itself instead of stacking, both suppress
@@ -1490,7 +1597,7 @@ recipient is its author and already holds it.
 
 Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:
 
-1. Try a direct decrypt (`tryDecrypt` / `decryptProto`). **A refusal at an epoch this device already holds stops here** (reason `mls-refused-for-good`, Kotlin `PushDecrypt.RefusedForGood`, since 2026-10-04): `background.rs` `refused_by_mls` splits MLS refusals by `DecryptErrorKind`, and a spent generation, a same-epoch refusal, a past epoch, our own frame or an eviction cannot be read by any later epoch. So no catch-up and no worker - each used to cost `fetchCommitsFromBackend` and an enqueue per message to learn `no commit to catch up`. A visible push still gets the generic banner. (The in-app iOS path, `canari_push.mm`, does not read the reason yet.)
+1. Try a direct decrypt (`tryDecrypt` / `decryptProto`). **A refusal at an epoch this device already holds stops here** (reason `mls-refused-for-good`, Kotlin `PushDecrypt.RefusedForGood`, since 2026-10-04): `background.rs` `refused_by_mls` splits MLS refusals by `DecryptErrorKind`, and a spent generation, a same-epoch refusal, a past epoch, our own frame or an eviction cannot be read by any later epoch. So no catch-up and no worker - each used to cost `fetchCommitsFromBackend` and an enqueue per message to learn `no commit to catch up`. A visible push still gets the generic banner, **and since NOTIF-10 (b) that banner is paired with the real one** (`push/GenericBannerLedger.kt`, tested by `GenericBannerLedgerTest`): the refusal means another engine (the WebView, alive but backgrounded) holds the message and posts the real line through `notifyMessageFromWebSocket`. Generic first: its MessagingStyle instant is remembered and the real post REPLACES it (`supersedes`, the channel path's mechanism). Real first (the order measured on the Mi 9T, 2026-10-06, 56 ms apart): a credit, kept only while a push for that group is in flight, makes the refused push post nothing. No clock; a real post with no push behind it leaves no credit. **ONE REAL POST CAN STAND FOR N MESSAGES** (2026-10-06, Mi 9T: a 600 s radio cut ended in ONE banner, `messages=5`, against three refused pushes - the first was covered, the second left a generic line, the third was suppressed): a catch-up flush raises a single banner for the last of N, so `covers` (N, 1 for a live frame) crosses the bridge (`useMessaging` flush -> `nativeNotification.ts` -> `notifier_message_natif` -> `notifyMessageFromWebSocket`) and `realPosted(groupId, covers)` answers up to N pushes: it replaces up to N generic lines (`supersedes` plus `alsoSupersedes`) and credits the rest, still capped by the pushes in flight. (The in-app iOS path, `canari_push.mm`, does not read the reason yet.)
 2. If that fails, ask where the group stands: `groupLocality` / `GroupLocality` returns `LOCAL`, `ABSENT` or `UNKNOWN`.
 3. `UNKNOWN` — the state could not be reached at all (lock not acquired, `mls.bin` unreadable, device key missing, JNI absent). **Neither recovery runs**, because neither is an answer to it. The push falls through to the fallback below.
 4. `LOCAL` (epoch ≥ 0) — run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately.

@@ -194,3 +194,46 @@ describe('purgeRetiredAvatarCache', () => {
     expect(debug).toHaveBeenCalled();
   });
 });
+
+describe('a known absence', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('is asked ONCE across remounts, and never again on a clock - only the session ending clears it', async () => {
+    // HAR 2026-10-05: 7 users without a photo were asked 11-12 times each in 22 s.
+    vi.useFakeTimers();
+    const url = nextUrl();
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    for (let i = 0; i < 12; i++) {
+      expect(await resolveUserAvatarDisplayUrl(url, 'u')).toEqual({ kind: 'none' });
+      releaseUserAvatarDisplayUrl(url);
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // No timer expires an absence: a day later it is still believed.
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+    await resolveUserAvatarDisplayUrl(url, 'u');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('is never remembered for an outage - a 502 says nothing about whether there is a photo', async () => {
+    const url = nextUrl();
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 502 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    await resolveUserAvatarDisplayUrl(url, 'u');
+    await resolveUserAvatarDisplayUrl(url, 'u');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('is forgotten when the signed-in reader changes', async () => {
+    const { forgetReaderCaches } = await import('./sharedCache');
+    const url = nextUrl();
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    await resolveUserAvatarDisplayUrl(url, 'u');
+    forgetReaderCaches();
+    await resolveUserAvatarDisplayUrl(url, 'u');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+});

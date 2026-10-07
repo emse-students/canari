@@ -26,6 +26,7 @@ import { getLocale } from '$lib/i18n';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
+import { onAppForegroundChange } from '$lib/utils/appForeground';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -52,6 +53,9 @@ interface NativeDatedKeyPackage {
   notAfterSecs: number;
 }
 
+/** What `recharger_mls_au_resume` did - mirrors `ReloadOutcome` in `src-tauri/src/commands/storage.rs`. */
+type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live-ahead';
+
 /**
  * MLS service implementation for Tauri (mobile/desktop).
  * Delegates all cryptographic operations to the native Rust side via `invoke()`.
@@ -72,14 +76,6 @@ export class TauriMlsService extends BaseMlsService {
   // Device key kept in memory after init() to re-encrypt the MLS state after each
   // message without asking the user for the PIN again.
   private _deviceKeyB64 = '';
-  /**
-   * Value of {@link liveMutations} at the last write to `mls.bin`.
-   *
-   * The difference with the live counter is the number of send-ratchet advances the file does NOT
-   * contain - the one thing that makes a resume reload destructive. A watermark rather than a flag
-   * because the question is "how far behind is the file", asked between two instants.
-   */
-  private _mutationsAtLastPersist = 0;
 
   constructor() {
     super('tauri', fetch);
@@ -206,6 +202,15 @@ export class TauriMlsService extends BaseMlsService {
       };
       document.addEventListener('visibilitychange', this._visibilityHandler);
       window.addEventListener('online', this._onlineHandler);
+      // THE EDGE THE VISIBILITY API NEVER FIRES ON A PHONE. A backgrounded Android WebView stays
+      // `visible` (measured, see `appForeground.ts`), so the handler above cannot see the user
+      // coming back; the activity's own foreground event can. Same decision, honest trigger.
+      this._foregroundUnsubscribe = onAppForegroundChange((foreground) => {
+        if (foreground && !this.ws) {
+          console.log('[WS] app back in the foreground with no socket - reconnecting');
+          this.disconnectCallback?.();
+        }
+      });
     }
 
     // On Tauri mobile the cookie is not sent cross-origin, so we pass the
@@ -706,14 +711,8 @@ export class TauriMlsService extends BaseMlsService {
    */
   async persistState(deviceKeyB64: string): Promise<number> {
     await this.awaitRustMutations();
-    // Read the counter BEFORE the invoke, so a send that lands DURING it stays counted as
-    // unpersisted. Erring that way costs a refused reload; erring the other way costs a rewound
-    // ratchet, which is the whole defect this watermark exists to prevent.
-    const mutationsAtSnapshot = this.liveMutations;
     // ONE invoke for encrypt + write: the JS side never sees the blob, which is the point.
-    const written = await invoke<number>('sauvegarder_mls_et_persister', { deviceKeyB64 });
-    this._mutationsAtLastPersist = mutationsAtSnapshot;
-    return written;
+    return invoke<number>('sauvegarder_mls_et_persister', { deviceKeyB64 });
   }
 
   /**
@@ -727,43 +726,44 @@ export class TauriMlsService extends BaseMlsService {
    * A missing device key means there is nothing to decrypt with -- skip rather than throw, since
    * this runs on every resume and a failure here must not break the resume sequence.
    *
-   * THE EPOCH GUARD IN RUST IS NOT ENOUGH, AND THIS IS THE NATIVE HALF OF `installUnlessOvertaken`.
-   * `reload_is_monotonic` refuses a candidate that would move a live group to a LOWER epoch, which
-   * is evidence for "is this snapshot from an older epoch" and for nothing else. What a send moves
-   * is a GENERATION INSIDE one epoch, which is invisible to it: the reload is accepted, the live
-   * ratchet goes back to where `mls.bin` left it, the next frame re-issues a spent generation and
-   * the peer refuses it as `SecretReuseError` - reported, correctly, as "the sender's ratchet
-   * rewound". Web has had this guard at every off-thread swap since the same defect was measured
-   * there; the doc on `swapClientMonotonic` says to keep the two in sync, and until now only the
-   * epoch half was.
+   * THE REFUSAL IS DECIDED IN RUST, UNDER THE MANAGER LOCK, AND THIS METHOD ONLY ACTS ON IT.
+   * `reload_is_monotonic` grades group EPOCHS, and what a send or a decrypted frame moves is a
+   * GENERATION inside one epoch: a snapshot a few messages old is accepted, the live ratchet goes
+   * back, a frame already read decrypts a second time (measured on the Mi 9T 2026-09-08, gen 45/46
+   * re-derived 112 ms after a reload) and the next send re-issues a spent generation. The guard
+   * that stood here counted SENDS in the WebView, so a RECEIVE moved nothing it could see, and
+   * even a send landing between its check and the native swap was overwritten. The live manager
+   * itself knows whether it is ahead of the file (`MlsManager::has_unsaved_ratchet_advance`), and
+   * asking it inside the lock the swap holds leaves no interleaving to reconcile afterwards.
+   *
+   * `live-ahead` OBLIGES US to persist the live state: that is what makes the NEXT resume safe and
+   * the only ordering under which a background engine starting later reads a state that is not
+   * already behind. Web keeps its own counter (`installUnlessOvertaken`) because its swap runs
+   * off-thread; the two stay separate for that reason, not for lack of a shared one.
    */
   override async reloadStateFromDisk(): Promise<void> {
     if (!this._deviceKeyB64) {
       console.warn('[MLS][Tauri] reloadStateFromDisk skipped - no device key in session.');
       return;
     }
-    const unpersisted = this.liveMutations - this._mutationsAtLastPersist;
-    if (unpersisted > 0) {
-      // Do not reload, and do not leave the divergence on disk either: persisting the live state
-      // is what makes the NEXT resume safe, and it is the only ordering under which a background
-      // engine starting later reads a state that is not already behind.
-      console.warn(
-        `[MLS][Tauri] Resume reload SKIPPED: ${unpersisted} send(s) have not reached mls.bin - reloading would rewind this device's own send ratchet. Persisting the live state instead.`
-      );
-      await this.persistState(this._deviceKeyB64).catch((e) => {
-        console.error('[MLS][Tauri] Persist of the live state after a skipped reload failed:', e);
-      });
-      return;
-    }
     try {
-      const reloaded = await invoke<boolean>('recharger_mls_au_resume', {
+      const outcome = await invoke<ReloadOutcome>('recharger_mls_au_resume', {
         userId: this.userId,
         deviceId: this.deviceId,
         deviceKeyB64: this._deviceKeyB64,
       });
-      if (reloaded) {
+      if (outcome === 'reloaded') {
         this._knownGroups = new Set(await invoke<string[]>('lister_groupes'));
         console.log('[MLS][Tauri] mls.bin reloaded on resume (C2) - group cache refreshed.');
+      } else if (outcome === 'live-ahead') {
+        console.warn(
+          '[MLS][Tauri] Resume reload SKIPPED: the live manager holds a send or a decrypted frame that mls.bin does not - reloading would put the ratchet back. Persisting the live state instead.'
+        );
+        await this.persistState(this._deviceKeyB64).catch((e) => {
+          console.error('[MLS][Tauri] Persist of the live state after a skipped reload failed:', e);
+        });
+      } else {
+        console.log(`[MLS][Tauri] Resume reload not applied (${outcome}) - live state kept.`);
       }
     } catch (e) {
       // Non-fatal: the warm state stays in place. Losing the reload risks clobbering a background
@@ -963,7 +963,8 @@ export class TauriMlsService extends BaseMlsService {
   /**
    * Tauri-native `invoke` wrapper - stages an Add commit WITHOUT merging via `ajouter_membres_bulk`
    * (all key packages in one OpenMLS commit, one shared Welcome). Returns
-   * (commit, welcome?, addedIndices, skipped). `addedIndices` are positions in `keyPackages`
+   * (commit, welcome?, addedIndices, skipped, groupInfo) - the last being the base for the epoch
+   * the commit creates. `addedIndices` are positions in `keyPackages`
    * actually included - entries skipped (invalid, or already a member) are omitted rather than
    * collapsing to a bare count. `skipped` is `{ index, reason }` per INVALID/undeserializable
    * KeyPackage, the reason typed in Rust (not the already-member dedup), surfaced so the loss is not silent. [[C5]]
@@ -974,38 +975,45 @@ export class TauriMlsService extends BaseMlsService {
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
+    groupInfo: Uint8Array;
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }> {
     const keyPackagesBytes = keyPackages.map((kp) => Array.from(kp));
-    const result = await invoke<[number[], number[] | null, number[], SkippedKeyPackage[]]>(
-      'ajouter_membres_bulk',
-      { groupId, keyPackagesBytes }
-    );
+    const result = await invoke<
+      [number[], number[] | null, number[], SkippedKeyPackage[], number[]]
+    >('ajouter_membres_bulk', { groupId, keyPackagesBytes });
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
       addedIndices: result[2],
       skipped: result[3] ?? [],
+      groupInfo: Uint8Array.from(result[4]),
     };
   }
 
   /** Tauri-native `invoke` wrapper - stages a Remove commit for all devices of the given users (no merge). */
-  protected async stageRemoveMembers(groupId: string, userIds: string[]): Promise<Uint8Array> {
-    const commitBytes = await invoke<number[]>('retirer_membres', { groupId, userIds });
-    return new Uint8Array(commitBytes);
+  protected async stageRemoveMembers(
+    groupId: string,
+    userIds: string[]
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
+    const [commit, groupInfo] = await invoke<[number[], number[]]>('retirer_membres', {
+      groupId,
+      userIds,
+    });
+    return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
   }
 
   /** Tauri-native `invoke` wrapper - stages a Remove commit for specific device identities (no merge). */
   protected async stageRemoveMembersByDevice(
     groupId: string,
     deviceIdentities: string[]
-  ): Promise<Uint8Array> {
-    const commitBytes = await invoke<number[]>('retirer_membres_par_appareil', {
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
+    const [commit, groupInfo] = await invoke<[number[], number[]]>('retirer_membres_par_appareil', {
       groupId,
       deviceIdentities,
     });
-    return new Uint8Array(commitBytes);
+    return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
   }
 
   /** Tauri-native `invoke` wrapper - merges the pending staged commit (server accepted) and refreshes the epoch cache. */

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
+  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -21,8 +23,19 @@
     type AssociationCalendarFeedEvent,
     type Association,
     ensureAssociationSuperAdmin,
+    getMyBdeReach,
+    listEventCoOrganisers,
   } from '$lib/associations/api';
-  import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
+  import { isGlobalAdmin, isAssociationSuperAdmin, fetchMyProfile } from '$lib/stores/user';
+  import AgendaSelectionFields from '$lib/components/calendar/AgendaSelectionFields.svelte';
+  import {
+    defaultAgendaSelection,
+    EMPTY_AGENDA_SELECTION,
+    isAgendaSelected,
+    type AgendaReader,
+    type AgendaSelection,
+  } from '$lib/calendar/agendaSelection';
+  import { createFeedSigner } from '$lib/calendar/signedFeedUrl.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
@@ -37,6 +50,7 @@
   import {
     blankEventFormValues,
     eventFormValuesFrom,
+    loadCoOrganiserFields,
     toCreatePayload,
     toUpdatePayload,
     type EventFormValues,
@@ -88,15 +102,17 @@
   }
 
   function applyFilterToUrl() {
-    const path = page.url.pathname;
     if (filterAssociationId.trim()) {
-      void goto(`${path}?association=${encodeURIComponent(filterAssociationId.trim())}`, {
-        replaceState: true,
-        keepFocus: true,
-        noScroll: true,
-      });
+      void goto(
+        resolve(`/calendar?association=${encodeURIComponent(filterAssociationId.trim())}`),
+        {
+          replaceState: true,
+          keepFocus: true,
+          noScroll: true,
+        }
+      );
     } else {
-      void goto(path, { replaceState: true, keepFocus: true, noScroll: true });
+      void goto(resolve('/calendar'), { replaceState: true, keepFocus: true, noScroll: true });
     }
   }
 
@@ -135,25 +151,29 @@
     } else {
       // The two probes read the same endpoint and no longer chain: `ensureAssociationSuperAdmin`
       // derives its flag from the very list beside it, which `listMyAssociations` holds for both.
-      const [superAdmin, mine] = await Promise.all([
+      const [superAdmin, mine, reach] = await Promise.all([
         canExportPdf ? Promise.resolve(true) : ensureAssociationSuperAdmin().catch(() => false),
         listMyAssociations().catch(() => null),
+        getMyBdeReach(),
       ]);
       canExportPdf = superAdmin;
       if (mine === null) {
         canModerateAgenda = false;
         canDepositEvent = false;
         proposeAssocIds = new Set();
+        validatedAssocIds = new Set();
       } else {
-        // A BDE validator (VALIDATE_EVENTS in a BDE association) may deposit on behalf of
-        // any association; we keep their BDE association as the authorisation :id.
+        // A BDE validator may deposit on behalf of the associations ITS SPACES reach - the
+        // server's own list (WP6c step 2), never "every association because I am a BDE". The
+        // deposit is routed through their BDE association, kept as the authorisation :id.
+        validatedAssocIds = new Set(reach.validateEvents);
         const authority = findBdeAssociationWithFlag(
           mine,
           AssociationPermissionFlag.VALIDATE_EVENTS
         );
-        canModerateAgenda = !!authority;
+        canModerateAgenda = validatedAssocIds.size > 0;
         depositAuthorityAssoId = authority?.id ?? '';
-        canDepositEvent = !!authority;
+        canDepositEvent = !!authority && validatedAssocIds.size > 0;
         proposeAssocIds = new Set(
           mine
             .filter((a) =>
@@ -203,14 +223,49 @@
 
   let showSubscribeModal = $state(false);
 
+  /**
+   * THE PUBLIC FEED IS ONE PER SELECTION (D40) and the server refuses a bare one. It starts from the
+   * reader's own campus and formation; a reader with no space starts with nothing and must choose.
+   * One association's feed needs none: the association IS the selection.
+   */
+  let feedSelection = $state<AgendaSelection>(EMPTY_AGENDA_SELECTION);
+  /** Whose own campus and formations the selector offers (and nothing else, user 2026-10-06). */
+  let feedReader = $state<AgendaReader | null>(null);
+  onMount(() => {
+    fetchMyProfile()
+      .then((profile) => {
+        feedReader = profile;
+        feedSelection = defaultAgendaSelection(profile);
+      })
+      .catch((err) =>
+        Log.d('calendar.feedSelection: profile unavailable, choice stays required', err)
+      );
+  });
+
+  /**
+   * The server signs the selection - only the reader's own spaces, or one association - and the link
+   * carries that signature (2026-10-06). Asked while the modal is open, for nothing else.
+   */
+  const feedSigner = createFeedSigner(() => {
+    if (!showSubscribeModal) return null;
+    if (filterAssociationId) return { associationId: filterAssociationId };
+    if (!isAgendaSelected(feedSelection)) return null;
+    return { campus: feedSelection.campus, formation: feedSelection.formation };
+  });
+
   /** https:// URL to the aggregated .ics feed; `CalendarSubscribeModal` derives webcal/Google variants. */
   const calendarIcsUrl = $derived.by(() => {
     if (typeof window === 'undefined') return '';
+    if (!filterAssociationId && !isAgendaSelected(feedSelection)) return '';
+    if (!feedSigner.sig) return '';
     const { from, to } = icsSubscriptionRangeISO();
     return aggregatedCalendarFeedIcsAbsoluteUrl({
       from,
       to,
       associationId: filterAssociationId || undefined,
+      campus: filterAssociationId ? undefined : feedSelection.campus || undefined,
+      formation: filterAssociationId ? undefined : feedSelection.formation || undefined,
+      sig: feedSigner.sig,
     });
   });
 
@@ -226,15 +281,23 @@
 
   // ── Editing from the global agenda ────────────────────────────────────────
   // Mirrors the server rule on PATCH/DELETE `/associations/:id/events/:eventId`: a global admin
-  // or a BDE VALIDATE_EVENTS holder may touch any association's event, anyone else needs
-  // PROPOSE_EVENT in the association that owns it. Without this the buttons only existed on the
-  // owning association's page, so touching an event meant first finding who filed it.
+  // may touch any association's event, a BDE VALIDATE_EVENTS holder the events of the associations
+  // its spaces reach (WP6c step 2), anyone else needs PROPOSE_EVENT in the association that owns
+  // it. Without this the buttons only existed on the owning association's page, so touching an
+  // event meant first finding who filed it.
 
   /** Associations where the user holds PROPOSE_EVENT (empty for a global admin - they bypass it). */
   let proposeAssocIds = $state<Set<string>>(new Set());
+  /** Associations whose events the user validates as a BDE - the server's `me/bde-reach`. */
+  let validatedAssocIds = $state<Set<string>>(new Set());
+
+  /** May the viewer validate - and so edit, deposit on, declare a break for - `associationId`? */
+  function mayValidateFor(associationId: string): boolean {
+    return isGlobalAdmin() || validatedAssocIds.has(associationId);
+  }
 
   function canEditEvent(ev: AssociationCalendarFeedEvent): boolean {
-    return canDepositEvent || proposeAssocIds.has(ev.associationId);
+    return mayValidateFor(ev.associationId) || proposeAssocIds.has(ev.associationId);
   }
 
   const canEditDetailEvent = $derived(
@@ -243,7 +306,7 @@
 
   function handleDetailEdit(ev: AssociationCalendarFeedEvent) {
     agenda.detailModalOpen = false;
-    openEditEvent(ev);
+    void openEditEvent(ev);
   }
 
   async function handleDetailDelete(id: string) {
@@ -268,13 +331,17 @@
   }
 
   // ── Event deposit (global admins + BDE validators) ────────────────────────
-  // What these users can do is deposit an event on ANY association's calendar - not publish one.
+  // What these users can do is deposit an event on ANOTHER association's calendar (a BDE: the ones
+  // its spaces reach) - not publish one.
   // Since 2026-09-14 no creation path validates, theirs included, so a deposit lands in the same
   // pending queue every proposal does and the badge above counts it. A global admin and a PROPOSE_EVENT
   // holder both post directly on the target association, because that is where their right lives; a
   // BDE validator posts via their BDE association and redirects with `targetAssocId`.
 
-  /** Whether the current user may deposit an event on any association's calendar. */
+  /**
+   * Whether the current user may deposit an event on ANOTHER association's calendar: a global admin
+   * (any), or a BDE validator (the associations of `validatedAssocIds`).
+   */
   let canDepositEvent = $state(false);
   /** BDE association id (with VALIDATE_EVENTS) used as the URL :id for non-global-admins. */
   let depositAuthorityAssoId = $state('');
@@ -282,7 +349,7 @@
   /**
    * WHO MAY REACH THIS FORM AT ALL, which is a WIDER question than `canDepositEvent`.
    *
-   * `canDepositEvent` means "may deposit on ANY association" - a global admin, or a BDE holder of
+   * `canDepositEvent` means "may deposit on ANOTHER association" - a global admin, or a BDE holder of
    * VALIDATE_EVENTS. Gating the button on it sent everyone else to their association's page to do
    * a thing the server would have accepted here: `POST :id/events` asks for PROPOSE_EVENT on `:id`
    * and nothing more, and the association section has always posted exactly that request. So the
@@ -294,11 +361,15 @@
    * The associations the picker may offer - everyone's, or only the user's own.
    *
    * A proposer may create FOR their own associations and no others, so the list is narrowed here
-   * rather than left whole and refused by the server. Deposit authority sees all of them, which is
-   * what that grant is.
+   * rather than left whole and refused by the server. A global admin sees all of them and a BDE
+   * validator those its spaces reach, which is what that grant is.
    */
   const depositableAssociations = $derived(
-    canDepositEvent ? associations : associations.filter((a) => proposeAssocIds.has(a.id))
+    isGlobalAdmin()
+      ? associations
+      : associations.filter(
+          (a) => proposeAssocIds.has(a.id) || (canDepositEvent && validatedAssocIds.has(a.id))
+        )
   );
 
   let depositModalOpen = $state(false);
@@ -316,9 +387,9 @@
   /**
    * WHAT THIS SURFACE MAY DECIDE - and it was granting itself the least of the three.
    *
-   * `canSetKind` follows `canDepositEvent`, which is exactly `mayValidate` on the server
-   * (`assertMayDecideKind`): a global admin or a BDE `VALIDATE_EVENTS` holder. Anyone else reaching
-   * this form is a proposer EDITING their own association's event, and the server would refuse the
+   * `canSetKind` follows `mayValidateFor(target)`, which is exactly `mayValidate` on the server
+   * (`assertMayDecideKind`): a global admin, or VALIDATE_EVENTS in the BDE governing the TARGET
+   * association (WP6c step 2). Anyone else reaching this form for that target would be refused the
    * field - so it is not offered, rather than offered and refused.
    *
    * `canLinkForm` needs the forms of the TARGET association, and `GET :id/link-candidates` wants
@@ -327,7 +398,7 @@
    */
   const capabilities = $derived({
     canTargetAnotherAssociation: depositableAssociations.length > 1,
-    canSetKind: canDepositEvent,
+    canSetKind: mayValidateFor(depositValues.targetAssociationId),
     canLinkForm: mayLinkFormOn(depositValues.targetAssociationId),
   });
 
@@ -391,12 +462,18 @@
     depositModalOpen = true;
   }
 
-  function openEditEvent(ev: AssociationCalendarFeedEvent) {
+  async function openEditEvent(ev: AssociationCalendarFeedEvent) {
     editingEventId = ev.id;
     editingOwnerName = ev.associationName;
     depositValues = eventFormValuesFrom(ev);
     poster.set(ev.imageUrl ?? null);
     depositModalOpen = true;
+    // D39: the co-organisers' states arrive after the form opens; the list stays unsent until they
+    // do. Through the owning association - the route `submitEvent` saves through.
+    const fields = await loadCoOrganiserFields(depositValues, () =>
+      listEventCoOrganisers(ev.associationId, ev.id)
+    );
+    if (editingEventId === ev.id) depositValues = { ...depositValues, ...fields };
   }
 
   /**
@@ -473,7 +550,7 @@
   <div class="space-y-6">
     {#if canModerateAgenda}
       <a
-        href="/admin/agenda"
+        href={resolve('/admin/agenda')}
         class="border-amber-warn/30 bg-amber-warn/10 hover:border-amber-warn/40 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-colors"
       >
         <span
@@ -541,7 +618,7 @@
     {#snippet exportActions()}
       {#if canExportPdf}
         <a
-          href={exportHref}
+          href={resolve(internalPath(exportHref))}
           class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-sm font-bold transition-colors"
         >
           <FileDown size={18} />
@@ -687,8 +764,19 @@
       open={showSubscribeModal}
       onClose={() => (showSubscribeModal = false)}
       icsUrl={calendarIcsUrl}
+      signing={feedSigner.status}
       intro={m.calendar_subscribe_intro()}
-    />
+    >
+      {#snippet selector()}
+        {#if !filterAssociationId}
+          <AgendaSelectionFields
+            selection={feedSelection}
+            reader={feedReader}
+            onChange={(next) => (feedSelection = next)}
+          />
+        {/if}
+      {/snippet}
+    </CalendarSubscribeModal>
   </div>
 </PageContainer>
 
