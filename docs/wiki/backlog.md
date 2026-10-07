@@ -2968,3 +2968,13 @@ Decisions:
 5. A global admin grants it (it crosses spaces); a BDE would grant only inside its own space. The grant ADDS to what the population gives and never removes.
 6. This closes the staff-feed question: staff without a cursus see nothing more by default, the named ones do.
 7. **No end date, ever** - only grant and revoke. **The list of named readers is internal**: only global admins see it; students are not told. **A journal** keeps who granted what to whom and when (`granted_by`, date), visible to global admins.The user's example formation "ISTP" is FSSS (answered 2026-10-07): no new formation. Done when a named reader sees exactly the association, list and institution posts of their ticked cells and no student's personal post, and a reader with no grant sees what they saw before.
+
+---
+
+## Answers of 2026-10-07 that fix the order of work
+
+- **Named readers (the nominative read grants above) only READ and react**: publishing goes through an institution (D31), a separate gesture; they get NO notifications for their perimeter.
+- **1.1.2 carries nothing more** than what is already in it (deploy order, the author of an association post notified, edit caret and banner, own-space agenda, the Lydia fixes, the three-section Spaces page, institutions UI). **Stripe is removed in a dedicated batch AFTER 1.1.2.**
+- **`minClientVersion` rises after 1.1.2, once both stores serve at least 1.0.3** - the user's gesture; G3 of Graine v2 waits for it.
+- **The Lydia payment is tested end to end on dev by Master alone**, on a test account.
+- **The staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton) get `posts=["ME"]` in Authentik BY THE USER, from a table Master hands over.
