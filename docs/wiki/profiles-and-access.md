@@ -1078,7 +1078,7 @@ Migration `075_institution_type.sql` (replay-safe) adds `CHK_associations_type` 
 An institution is an `associations` row of that type, so it reuses every mechanism rather than adding a second one:
 
 - **Created by a global admin only** (D20, D24): `POST /api/associations` with `type: 'institution'` is a 403 for a BDE
-  member holding MANAGE_ASSO, before any write. Since 2026-10-07 the UI is `/institutions/new` (button "Créer une institution" on `/institutions`, global admin only; the checkbox of `/associations/new` is gone), see [associations](docs/wiki/frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07).
+  member holding MANAGE_ASSO, before any write. Since 2026-10-07 the UI is `/institutions/new` (button "Créer une institution" on `/institutions`, global admin only; the checkbox of `/associations/new` is gone), see [associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07).
 - **Members are added nominatively** by the existing member admin; **publishing in its name needs membership of it**
   with `POST_AS_ASSO`, exactly as for an association (being personnel gives no right, D34-D36). Events are proposed with
   `PROPOSE_EVENT` the same way; the post composer and the event picker are type-agnostic.

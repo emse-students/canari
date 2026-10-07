@@ -29,7 +29,7 @@ half, the shipped half is a pointer, never a retelling.
 
 ## Institutions: what the creation UI does not do yet (2026-10-07)
 
-[associations](docs/wiki/frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07)
+[associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07)
 carries what shipped (create with a type, an audience choice, members tab with a publisher default). Left, in
 order: (1) the members are added AFTER creation on the generic edit page (its title says "Gestion de
 l'institution" since #1569); (2) the reach of an existing institution is edited
