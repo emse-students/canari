@@ -33,7 +33,7 @@ Encrypted community spaces with role-based access control.
 Dynamic form builder with payments.
 
 - Custom field types with pricing modifiers
-- Stripe Checkout, saved card, or cash payment
+- Online payment (Lydia) or cash
 - Excel export of submissions
 - Scheduled reminders via cron
 - Can grant membership tags on completion
@@ -46,12 +46,12 @@ Club management platform.
 - Member roster with roles and permissions
 - Calendar events
 - Document storage
-- Boutique products (Stripe Connect)
+- Boutique products (Lydia)
 - Cotisations (membership dues) via time-bounded tags
 
 ### Payment delegation
 
-An association without its own Stripe Connect account can delegate payments to a parent association. All online payments (shop, forms, paid posts) route to the parent's Stripe account while the child retains its own identity.
+An association without its own payment account can delegate payments to a parent association. All online payments (shop, forms, paid posts) route to the parent's payment account while the child retains its own identity.
 
 ## Databases
 

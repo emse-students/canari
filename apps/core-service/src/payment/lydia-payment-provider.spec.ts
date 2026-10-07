@@ -241,12 +241,6 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
 });
 
 describe('LydiaPaymentProvider retired/unimplemented methods', () => {
-  it('throws a clear error for saved-payment-method calls', async () => {
-    const provider = makeProvider();
-    await expect(provider.listPaymentMethods()).rejects.toThrow(/retired/);
-    await expect(provider.getOrCreateCustomer()).rejects.toThrow(/no Customer object/);
-  });
-
   it('throws a clear error for live status calls', async () => {
     const provider = makeProvider();
     await expect(provider.getConnectAccountStatus('vendor-token')).rejects.toThrow(

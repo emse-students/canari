@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { PurchaseRecord } from './entities/purchase-record.entity';
+import { PurchaseRecord, type PurchasePaymentMethod } from './entities/purchase-record.entity';
 
 export interface CreatePurchaseData {
   userId: string;
@@ -9,7 +9,7 @@ export interface CreatePurchaseData {
   formId?: string | null;
   productId?: string | null;
   amountCents: number;
-  paymentMethod: 'stripe' | 'cash';
+  paymentMethod: PurchasePaymentMethod;
   status: 'paid' | 'pending_cash' | 'cancelled' | 'expired';
   stripePaymentIntentId?: string | null;
   associationId: string;

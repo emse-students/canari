@@ -200,12 +200,6 @@ expect_allowed libcrux-kem "0.0.9"
 expect_allowed adminer "5.0.0"
 expect_allowed svelte "6.0.0"
 expect_allowed node "26-alpine"
-# `stripe` LEFT THE TABLE ON 2026-09-15, when the test its refusal named was written:
-# `apps/core-service/src/payment/stripe-surface.ts` pins every webhook event and every field
-# this service reads against the SDK types, which are cut against one API version, and the
-# spec beside it drives a signed fixture of each event through the production path.
-expect_allowed stripe "22.6.2"
-expect_allowed stripe "23.0.0"
 
 # The caller strips the quotes Dependabot puts around a scoped name before consulting the table; if
 # that ever regresses, `"@nestjs/common"` must not silently become an unmatched name. This asserts

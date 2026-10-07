@@ -20,9 +20,9 @@
 
   interface Props {
     asso: Association;
-    /** True once Stripe Connect can collect online payments. */
+    /** True once the payment account can collect online payments. */
     onlinePaymentsReady: boolean;
-    /** Whether the caller can configure Stripe Connect (tweaks the warning copy). */
+    /** Whether the caller can configure the payment account (tweaks the warning copy). */
     canManageStripeConnect: boolean;
     /** Switches the parent to the Paiements tab. */
     onGoToPayments: () => void;

@@ -10,7 +10,7 @@
  *
  * A config that LOOKS like an access check and is not will mislead every reader, and it did: on
  * 2026-09-10 an audit of the fourteen unaudited locations found four unauthenticated payment routes
- * reaching a LIVE Stripe account and one form read open to anybody. Each was a route whose siblings
+ * reaching a LIVE payment account and one form read open to anybody. Each was a route whose siblings
  * in the very same file were guarded - an omission, invisible in a diff, that no test named.
  *
  * So this gate asserts the one thing that keeps the edge honest: **every route behind an
@@ -90,12 +90,8 @@ const PUBLIC_BY_INTENT = [
     why: 'the public-asset prefix - association logos and event images, served to an <img> on pages a signed-out visitor sees; every other media route needs the JWT',
   },
   {
-    route: 'POST /payments/webhook',
-    why: 'Stripe calls it, so it can carry no session - it is authorized by the stripe-signature HMAC and refuses an unsigned body with 503 in production',
-  },
-  {
     route: 'GET /payments/provider',
-    why: "global platform config ('stripe' | 'lydia'), never user-specific; social-service's resolvePaymentTarget (every checkout/purchase/delegation path) calls it directly over the Docker network, which never goes through nginx and so can never carry an x-user-id - a guard here 401ed all of them (2026-09-14)",
+    why: "global platform config ('lydia' | 'disabled'), never user-specific; social-service's resolvePaymentTarget (every checkout/purchase/delegation path) calls it directly over the Docker network, which never goes through nginx and so can never carry an x-user-id - a guard here 401ed all of them (2026-09-14)",
   },
   {
     route: 'GET /media/limits',

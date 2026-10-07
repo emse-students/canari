@@ -56,17 +56,13 @@ else touches the zone. Done when a 1.2 MB and a 20 MB upload reach `media-servic
 read the zone: both answer `Authentication error` on every rules phase and on page rules, so the
 cause is still unread. The dashboard (Security > Events, filter on status 413) names the rule.
 
-### P3 - Stripe leaves the product: remove it, or archive it as documentation (user, 2026-10-07)
+### P3 - Stripe's leftover names: columns, permission flag, routes, deep-link host
 
-*"Stripe va disparaitre"* - the payments run on Lydia. Remove the Stripe code paths and secrets
-(`apps/core-service`), or keep only an archived note of what they did; the dependency PR for Stripe 23
-(#1495) is ignored meanwhile. Done when no Stripe package, secret or route remains, or the archive says so.
-
-Already removed from the UI (forms PR, 2026-10-07): the form builder's selectable card with Stripe
-wallet/Visa/Mastercard/Amex copy and its "Active" badge, `cardPaymentCopy`, the `form_card_*`
-Paraglide keys; the builder now shows one "Paiement Canari" line and the member form says
-"Paiement Canari" instead of "Carte / wallet". Still to do: the saved-card flow
-(`supportsSavedCards`), the `stripe` wire value of `paymentMethod`, and everything backend.
+Stripe itself is gone ([stripe-archive](stripe-archive.md)). What remains is names kept for rollback
+and old clients: the three `stripe*` columns, `MANAGE_STRIPE_CONNECT`, the `stripe-account` social
+routes, the `stripe` deep-link host, `paymentMethod 'stripe'`. Done when a drop/rename migration
+has shipped after `minClientVersion` passed the removal release. Also open: an association whose
+delegation was onboarded on Stripe only is not payment-ready until it onboards on Lydia.
 
 ### Open question - may EMSE/ME staff (no cursus) read the association posts of their campus?
 

@@ -277,8 +277,6 @@ services:
       DB_USERNAME: admin
       DB_PASSWORD: password
       DB_DATABASE: auth_db
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # Lydia (WP-LYDIA-1) - which provider is actually live is an admin-editable platform_config
       # setting, not env-driven; these are only the credentials, read by whichever provider is active.
       LYDIA_ENV: ${LYDIA_ENV:-homologation}
@@ -349,9 +347,6 @@ services:
       # no local stack: every measurement taken on it inherits the difference.
       REDIS_URL: redis://redis:6379
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:8081/posts?registration=success}
-      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:8081/posts?registration=cancel}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
       USER_SERVICE_URL: http://core-service:3012
       PAYMENT_SERVICE_URL: http://core-service:3012

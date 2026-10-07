@@ -209,7 +209,6 @@ const NOTABLE_CASES = [
   `${NEST}[NestApplication] Nest application successfully started +1ms`,
   // THE REST OF THAT BOOT - core-service saying what it came up WITH. Notable for the restart line's
   // reason and dirty until 2026-08-24, when the v0.14.4 deploy landed seconds before DEL-2's window.
-  `${NEST}[StripePaymentProvider] Stripe configured: yes`,
   `${NEST}[LydiaPaymentProvider] Lydia configured: no (https://homologation.lydia-app.com)`,
   `${NEST}[UsersService] unaccent + pg_trgm extensions ready`,
   // THE OTHER HALF of the `No message queued` warning: recipients existed and every one was offline,
@@ -283,7 +282,6 @@ for (const l of NOTABLE_CASES) {
 // values would delete the only evidence either event will ever produce. Asserted in both directions
 // because the comment on the rule claims it, and a claim in a comment is not a property of the code.
 for (const [what, line] of [
-  ['a payment provider that lost its configuration', `${NEST}[StripePaymentProvider] Stripe configured: no`],
   ['the Lydia flip this repo is waiting for', `${NEST}[LydiaPaymentProvider] Lydia configured: yes (https://lydia-app.com)`],
   ['the same flip still on homologation', `${NEST}[LydiaPaymentProvider] Lydia configured: yes (https://homologation.lydia-app.com)`],
 ]) {

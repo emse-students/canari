@@ -19,7 +19,7 @@ const DEFAULT_ROW: PlatformConfig = {
   maintenanceEnabled: false,
   maintenanceMessage: null,
   minClientVersion: '0.0.0',
-  paymentProvider: 'stripe',
+  paymentProvider: 'disabled',
 };
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */

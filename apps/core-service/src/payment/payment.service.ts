@@ -1,13 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type Stripe from 'stripe';
-import { StripePaymentProvider } from './stripe-payment-provider';
 import { LydiaPaymentProvider } from './lydia-payment-provider';
 import { DisabledPaymentProvider } from './disabled-payment-provider';
 import { PlatformService } from '../platform/platform.service';
 
 import type {
   BusinessLegalProfile,
-  ChargeResult,
   CheckoutLineItem,
   CheckoutSessionInfo,
   CheckoutSessionResult,
@@ -15,34 +12,31 @@ import type {
   ConnectBalanceSummary,
   PaymentProvider,
   PaymentProviderId,
+  WireLineItem,
   PayerRecipient,
-  SavedPaymentMethod,
 } from './payment-provider.interface';
 
-export type { ChargeResult, CheckoutSessionInfo, ConnectBalanceSummary };
+export type { CheckoutSessionInfo, ConnectBalanceSummary };
 
 /**
- * Orchestrates payment operations against the active PaymentProvider (Stripe today; Lydia is being
- * added alongside it, see docs/wiki - WP-LYDIA-1). Selection is an admin-editable platform_config
+ * Orchestrates payment operations against the active PaymentProvider (Lydia, or `disabled`; Stripe
+ * left the product, see docs/wiki/stripe-archive.md). Selection is an admin-editable platform_config
  * field (`paymentProvider`, PATCH /api/users/admin/platform), not an env var - PlatformService reads
  * straight from Postgres on every call with no caching (same pattern as maintenanceEnabled /
  * minClientVersion), so flipping the switch in the admin UI takes effect immediately, no restart.
- * Both provider instances are built once at startup from their env-held secrets (STRIPE_SECRET_KEY,
- * LYDIA_PROVIDER_TOKEN/_PRIVATE_TOKEN) - only the choice of WHICH one is live moves to the DB.
+ * The Lydia provider is built once at startup from its env-held secrets
+ * (LYDIA_PROVIDER_TOKEN/_PRIVATE_TOKEN) - only the choice of WHETHER it is live moves to the DB.
  *
- * Line items and session shapes are translated here from the legacy Stripe-flavored wire contract
- * (still used by payment.controller.ts and social-service) into the provider-agnostic types in
- * payment-provider.interface.ts - callers of this service are unaffected by which provider is active.
+ * Line items are translated here from the `price_data` wire contract (still used by
+ * payment.controller.ts and social-service) into the types in payment-provider.interface.ts.
  */
 @Injectable()
 export class PaymentService {
-  private readonly stripeProvider: PaymentProvider;
   private readonly lydiaProvider: LydiaPaymentProvider;
   private readonly disabledProvider = new DisabledPaymentProvider();
   private readonly logger = new Logger(PaymentService.name);
 
   constructor(private readonly platformService: PlatformService) {
-    this.stripeProvider = new StripePaymentProvider(process.env.STRIPE_SECRET_KEY);
     this.lydiaProvider = new LydiaPaymentProvider({
       LYDIA_ENV: process.env.LYDIA_ENV,
       LYDIA_PROVIDER_TOKEN: process.env.LYDIA_PROVIDER_TOKEN,
@@ -54,7 +48,7 @@ export class PaymentService {
   private async getProvider(): Promise<PaymentProvider> {
     const { paymentProvider } = await this.platformService.getConfig();
     if (paymentProvider === 'disabled') return this.disabledProvider;
-    return paymentProvider === 'lydia' ? this.lydiaProvider : this.stripeProvider;
+    return this.lydiaProvider;
   }
 
   /** Returns true when the active provider has valid credentials configured. */
@@ -71,7 +65,7 @@ export class PaymentService {
    * Verifies a `confirm_url`/`cancel_url`/`expire_url` callback signature from Lydia's
    * `request/do` (webhook.controller.ts). Independent of which provider is currently ACTIVE - a
    * Lydia payment in flight must still be verifiable against the Lydia provider's own private
-   * token even if the admin flips the switch back to Stripe before it resolves.
+   * token even if the admin disables payments before it resolves.
    */
   verifyLydiaRequestCallback(fields: Record<string, string>, signature: string): boolean {
     return this.lydiaProvider.verifyRequestCallback(fields, signature);
@@ -83,7 +77,7 @@ export class PaymentService {
     refreshUrl: string;
     returnUrl: string;
     existingAccountId?: string;
-    /** Required by Lydia's business/create, ignored by Stripe. */
+    /** Required by Lydia's business/create. */
     legalProfile?: BusinessLegalProfile;
   }): Promise<{ url: string; accountId: string }> {
     return (await this.getProvider()).createOnboarding(params);
@@ -91,14 +85,12 @@ export class PaymentService {
 
   /** Creates a one-off checkout session with optional Connect destination. */
   async createCheckoutSession(params: {
-    lineItems: Stripe.Checkout.SessionCreateParams.LineItem[];
+    lineItems: WireLineItem[];
     successUrl: string;
     cancelUrl: string;
     metadata?: Record<string, string>;
     stripeConnectAccountId?: string;
-    customerId?: string;
-    saveForFuture?: boolean;
-    /** Payer identity, required by Lydia's request/do, ignored by Stripe. Not yet wired up from any caller. */
+    /** Payer identity, required by Lydia's request/do. */
     payerRecipient?: PayerRecipient;
     /** Stable key for idempotency; derived from submission ID or a client-supplied UUID. */
     idempotencyKey?: string;
@@ -110,8 +102,6 @@ export class PaymentService {
       metadata: params.metadata,
       payerRecipient: params.payerRecipient,
       connectAccountId: params.stripeConnectAccountId,
-      customerId: params.customerId,
-      saveForFuture: params.saveForFuture,
       idempotencyKey: params.idempotencyKey,
     });
   }
@@ -136,65 +126,14 @@ export class PaymentService {
     return (await this.getProvider()).createConnectDashboardLink(accountId);
   }
 
-  // ── Customer & Payment Methods ────────────────────────────────────────────
-
-  /** Returns the existing customer ID or creates a new customer and returns its ID. */
-  async getOrCreateCustomer(
-    existingCustomerId: string | null | undefined,
-    meta: { userId: string; displayName?: string | null }
-  ): Promise<string> {
-    return (await this.getProvider()).getOrCreateCustomer(existingCustomerId, meta);
-  }
-
-  /** Creates a setup session so a customer can save a card for future use. */
-  async createSetupCheckoutSession(params: {
-    customerId: string;
-    successUrl: string;
-    cancelUrl: string;
-  }): Promise<{ url: string; sessionId: string }> {
-    return (await this.getProvider()).createSetupCheckoutSession(params);
-  }
-
-  /** Lists all saved card payment methods attached to the given customer. */
-  async listPaymentMethods(customerId: string): Promise<SavedPaymentMethod[]> {
-    return (await this.getProvider()).listPaymentMethods(customerId);
-  }
-
-  /** Detaches a payment method so it can no longer be charged. */
-  async detachPaymentMethod(paymentMethodId: string): Promise<void> {
-    return (await this.getProvider()).detachPaymentMethod(paymentMethodId);
-  }
-
-  /** Charges a saved payment method off-session and returns the payment result or required-action details. */
-  async chargeWithSavedMethod(params: {
-    customerId: string;
-    paymentMethodId: string;
-    amountCents: number;
-    currency: string;
-    metadata?: Record<string, string>;
-    stripeConnectAccountId?: string;
-    /** Stable key for idempotency - prevents double-charge on network retry. */
-    idempotencyKey?: string;
-  }): Promise<ChargeResult> {
-    return (await this.getProvider()).chargeWithSavedMethod({
-      customerId: params.customerId,
-      paymentMethodId: params.paymentMethodId,
-      amountCents: params.amountCents,
-      currency: params.currency,
-      metadata: params.metadata,
-      connectAccountId: params.stripeConnectAccountId,
-      idempotencyKey: params.idempotencyKey,
-    });
-  }
-
   /** Retrieves a checkout session by ID. */
   async retrieveSession(sessionId: string): Promise<CheckoutSessionInfo> {
     return (await this.getProvider()).retrieveSession(sessionId);
   }
 }
 
-/** Adapts the legacy Stripe-shaped wire line item into the provider-agnostic CheckoutLineItem. */
-function toGenericLineItem(item: Stripe.Checkout.SessionCreateParams.LineItem): CheckoutLineItem {
+/** Adapts the `price_data`-shaped wire line item into the provider-agnostic CheckoutLineItem. */
+function toGenericLineItem(item: WireLineItem): CheckoutLineItem {
   const priceData = item.price_data;
   if (!priceData || typeof priceData.unit_amount !== 'number' || !priceData.product_data?.name) {
     throw new Error('Line item must specify price_data.{currency,unit_amount,product_data.name}');

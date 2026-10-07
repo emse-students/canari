@@ -167,8 +167,8 @@ describe('the layer ladder', () => {
 
   it('sees the keyboard-aware overlays it is about to judge', () => {
     // The check below asserts an absence over this list, so an empty list would pass for ever.
-    // `Modal` and `EventFormModal` are two of them on the day this was written.
-    expect(keyboardAwareOverlays().length).toBeGreaterThanOrEqual(4);
+    // `Modal` and `EventFormModal` are two of them on the day this was written (a third, `PaymentModal`, went with the saved cards).
+    expect(keyboardAwareOverlays().length).toBeGreaterThanOrEqual(3);
   });
 
   it('portals every keyboard-aware overlay and puts it on a NAMED rung', () => {

@@ -1,5 +1,8 @@
 # Plan : Migration Stripe -> Lydia (WP-LYDIA-1)
 
+> **ARCHIVED 2026-10-08.** Stripe is removed from the product; this plan is kept as history.
+> What Stripe did and what was kept is in [docs/wiki/stripe-archive.md](../docs/wiki/stripe-archive.md).
+
 **Date** : 2026-08-12
 **Contexte** : L'association reçoit de Lydia les capacités C2B (paiement à distance, `request/do`),
 C2B Marketplace (sous-marchands "Business" + `business/create` + `business/add-cashier` + permissions

@@ -277,7 +277,6 @@ jobs:
           DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
           DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
           DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
-          STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUB_KEY }}
           ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
@@ -333,11 +332,6 @@ jobs:
             # to whoever is looking at it - rather than putting a banner on production.
             echo "VITE_DEPLOY_ENVIRONMENT=development" >> .env
 
-            # NO VITE_STRIPE_PUBLISHABLE_KEY on dev. It has no payment credentials at all (decided
-            # with the user), and a publishable key whose secret half is absent produces a checkout
-            # that opens and then fails - worse than a button that is not there.
-          elif [ -n "$STRIPE_PUBLISHABLE_KEY" ]; then
-            echo "VITE_STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}" >> .env
           fi
 
           if [ -n "$ANDROID_APP_LINK_SHA256" ]; then

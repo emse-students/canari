@@ -5,7 +5,7 @@ import { fetchActivePaymentProvider, type PaymentProviderId } from '$lib/associa
  * can take money. It is server configuration, so it is fetched once per page load.
  *
  * `current` stays `null` until known and when the fetch fails - which reads as "not ready" and says
- * so at error level, rather than guessing Stripe and showing a Lydia association as incomplete.
+ * so at error level, rather than guessing a provider and showing the wrong onboarding state.
  * `failed` tells the two `null`s apart: a screen that must NAME the provider (a provider-specific
  * onboarding card) shows a loading state while `current` is null and `failed` is false, and a
  * visible error once `failed` is true - it never renders a default.

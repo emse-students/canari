@@ -57,7 +57,7 @@
     <h2>2. Données collectées</h2>
     <p>Canari collecte uniquement les données nécessaires au fonctionnement du service :</p>
     <dl class="legal-terms">
-      {#each [['Identité', "Prénom, nom, adresse e-mail et photo de profil transmis par le portail d'authentification OIDC de l'École des Mines (Authentik). Canari ne traite ni ne stocke jamais votre mot de passe."], ['Messages privés', "Vos messages sont chiffrés de bout en bout via le protocole MLS (RFC 9420) avant d'être envoyés. Le serveur ne stocke que des blobs chiffrés et est techniquement incapable de lire le contenu de vos conversations."], ['Publications et commentaires', 'Posts, réactions et commentaires créés volontairement sur la plateforme. Ces contenus sont visibles par les membres de la communauté EMSE.'], ['Jeton de notification push', "Jeton FCM (Firebase Cloud Messaging) de votre appareil, utilisé pour l'envoi de notifications. Stocké côté serveur et supprimé à la déconnexion ou à la suppression du compte."], ['Données de paiement', 'Pour les paiements (formulaires, événements), Canari fait appel à Stripe. Canari ne stocke aucune donnée bancaire - numéro de carte, IBAN ou CVV. Ces données sont traitées directement par Stripe (voir section 3).'], ['Logs techniques', 'Adresse IP et horodatage des requêtes HTTP, conservés temporairement à des fins de sécurité et de débogage.']] as [titre, desc], i (i)}
+      {#each [['Identité', "Prénom, nom, adresse e-mail et photo de profil transmis par le portail d'authentification OIDC de l'École des Mines (Authentik). Canari ne traite ni ne stocke jamais votre mot de passe."], ['Messages privés', "Vos messages sont chiffrés de bout en bout via le protocole MLS (RFC 9420) avant d'être envoyés. Le serveur ne stocke que des blobs chiffrés et est techniquement incapable de lire le contenu de vos conversations."], ['Publications et commentaires', 'Posts, réactions et commentaires créés volontairement sur la plateforme. Ces contenus sont visibles par les membres de la communauté EMSE.'], ['Jeton de notification push', "Jeton FCM (Firebase Cloud Messaging) de votre appareil, utilisé pour l'envoi de notifications. Stocké côté serveur et supprimé à la déconnexion ou à la suppression du compte."], ['Données de paiement', 'Pour les paiements (formulaires, événements), Canari fait appel à Lydia. Canari ne stocke aucune donnée bancaire - numéro de carte, IBAN ou CVV. Ces données sont traitées directement par Lydia (voir section 3).'], ['Logs techniques', 'Adresse IP et horodatage des requêtes HTTP, conservés temporairement à des fins de sécurité et de débogage.']] as [titre, desc], i (i)}
         <div>
           <dt>{titre}</dt>
           <dd>{desc}</dd>
@@ -91,16 +91,14 @@
         </p>
       </li>
       <li>
-        <p class="legal-block-title">Stripe - Traitement des paiements</p>
+        <p class="legal-block-title">Lydia - Traitement des paiements</p>
         <p>
-          Stripe, Inc. (South San Francisco, CA, USA) traite les paiements effectués via les
-          formulaires et événements payants. Lorsque vous effectuez un paiement, vos données
-          financières sont transmises directement à Stripe ; Canari ne reçoit et ne stocke jamais
-          vos coordonnées bancaires. Stripe est certifié PCI DSS niveau 1. Politique de
-          confidentialité Stripe :
-          <a href="https://stripe.com/fr/privacy" target="_blank" rel="noopener"
-            >stripe.com/fr/privacy</a
-          >.
+          Lydia, prestataire de paiement français présenté dans l'application sous le nom « Paiement
+          Canari », traite les paiements effectués via les formulaires et la boutique des
+          associations. Lorsque vous effectuez un paiement, vos données financières sont transmises
+          directement à Lydia ; Canari ne reçoit et ne stocke jamais vos coordonnées bancaires.
+          L'adresse e-mail que vous saisissez pour recevoir la demande de paiement est transmise à
+          Lydia et n'est pas conservée par Canari.
         </p>
       </li>
     </ul>
@@ -120,7 +118,7 @@
       <li>Acheminer vos messages chiffrés vers leurs destinataires</li>
       <li>Afficher votre profil aux autres membres de la plateforme</li>
       <li>Vous envoyer des notifications push liées à votre activité sur Canari</li>
-      <li>Traiter les paiements que vous initiez (via Stripe)</li>
+      <li>Traiter les paiements que vous initiez (via Lydia)</li>
       <li>Assurer la sécurité, la stabilité et le débogage du service</li>
     </ul>
     <p>
@@ -133,7 +131,7 @@
   <section id="retention">
     <h2>5. Durée de conservation</h2>
     <dl class="legal-terms">
-      {#each [['Données de profil', "Conservées pendant toute la durée d'activité de votre compte. Supprimées dans les 30 jours suivant une demande de suppression de compte."], ['Messages privés (blobs chiffrés)', "Conservés jusqu'à suppression par l'utilisateur ou suppression du compte. Les messages supprimés sont effacés définitivement des serveurs."], ['Publications et commentaires', "Conservés jusqu'à suppression manuelle ou suppression du compte."], ['Jeton FCM', 'Supprimé immédiatement à la déconnexion ou à la révocation du compte.'], ['Logs techniques (IP, horodatage)', 'Conservés au maximum 90 jours à des fins de sécurité, puis supprimés automatiquement.'], ['Données de paiement (Stripe)', 'Conservées par Stripe selon leur propre politique (généralement 7 ans pour la conformité fiscale). Canari conserve uniquement un identifiant de transaction Stripe à des fins comptables.']] as [titre, desc], i (i)}
+      {#each [['Données de profil', "Conservées pendant toute la durée d'activité de votre compte. Supprimées dans les 30 jours suivant une demande de suppression de compte."], ['Messages privés (blobs chiffrés)', "Conservés jusqu'à suppression par l'utilisateur ou suppression du compte. Les messages supprimés sont effacés définitivement des serveurs."], ['Publications et commentaires', "Conservés jusqu'à suppression manuelle ou suppression du compte."], ['Jeton FCM', 'Supprimé immédiatement à la déconnexion ou à la révocation du compte.'], ['Logs techniques (IP, horodatage)', 'Conservés au maximum 90 jours à des fins de sécurité, puis supprimés automatiquement.'], ['Données de paiement (Lydia)', 'Conservées par Lydia selon sa propre politique. Canari conserve uniquement un identifiant de transaction à des fins comptables.']] as [titre, desc], i (i)}
         <div>
           <dt>{titre}</dt>
           <dd>{desc}</dd>
@@ -171,16 +169,6 @@
             Le jeton FCM est transmis aux serveurs de Google LLC aux États-Unis. Ce transfert est
             encadré par les clauses contractuelles types (CCT) adoptées par la Commission européenne
             conformément à l'article 46 du RGPD.
-          </p>
-        </dd>
-      </div>
-      <div>
-        <dt>Stripe - États-Unis</dt>
-        <dd>
-          <p>
-            Les données de paiement sont traitées par Stripe Inc. aux États-Unis. Ce transfert est
-            également encadré par les CCT. Stripe est en outre certifié PCI DSS et adhère au cadre
-            EU-US Data Privacy Framework.
           </p>
         </dd>
       </div>

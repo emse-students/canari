@@ -7,7 +7,7 @@
 # prod") with one correction the user did not have to make, because the difference is not a
 # preference:
 #
-#   * A THIRD-PARTY credential is kept as production's. Stripe, Lydia, FCM, APNs, Cloudflare TURN,
+#   * A THIRD-PARTY credential is kept as production's. Lydia, FCM, APNs, Cloudflare TURN,
 #     MiGallery, Safe Browsing, the inter-app API keys: none of them has a local equivalent, and
 #     substituting one would only produce failures that mean nothing.
 #   * A DATA-AT-REST key is kept as production's, because it is the only way the data can be read.
@@ -80,25 +80,18 @@ AUTHENTIK_BASE_URL CALL_E2E_ENCRYPTION CERCLE_API_KEY CHANNELS_ENCRYPTION_SECRET
 CLOUDFLARE_CALLS_API_TOKEN CLOUDFLARE_TURN_KEY_ID CLOUDFLARE_TURN_TTL_SECONDS EXTERNAL_API_KEY
 FIREBASE_SERVICE_ACCOUNT_JSON GOOGLE_SAFE_BROWSING_API_KEY LYDIA_ENV LYDIA_PROVIDER_PRIVATE_TOKEN
 LYDIA_PROVIDER_TOKEN MEDIA_MAX_SIZE_MB MIGALLERY_API_KEY MIGALLERY_API_URL SERVICE_ACCOUNT_USER_ID
-SKY_API_KEY SKY_API_URL STRIPE_WEBHOOK_SECRET TURN_CREDENTIAL TURN_URL
+SKY_API_KEY SKY_API_URL TURN_CREDENTIAL TURN_URL
 TURN_USERNAME"
 
 # WRITTEN EMPTY, and this list exists because "no local equivalent" is not the only question.
 #
 # The rest of KEEP is production's because substituting a value would only produce failures that
-# mean nothing. STRIPE_SECRET_KEY is different in one respect that decides it: it SPENDS, and it
-# spends irreversibly. On 2026-09-10 an audit found four payment routes with no authorization at
-# all, and the probes that proved it were answered BY STRIPE - on this key, from a laptop. The
-# routes are guarded now; the key being here is what made a local mistake reach a real account, and
-# that half is closed by not holding it.
-#
-# The cost is stated rather than hidden: `isConfigured()` is false locally, so the payment routes
-# answer "Stripe not configured" instead of exercising a provider. Putting an `sk_test_` key here
-# by hand is what makes them testable, and it is the tool for it - never the live key.
-# MICONNECT_EDITOR_TOKEN is the same kind of key: it WRITES to the production MiConnect, and the local
-# stack signs in through that very instance, so a token here would let a local mistake edit a real
-# person. Local gets the typed "not configured" refusal instead.
-BLANK="MICONNECT_EDITOR_TOKEN STRIPE_SECRET_KEY"
+# mean nothing. MICONNECT_EDITOR_TOKEN is different in one respect that decides it: it WRITES to the
+# production MiConnect, and the local stack signs in through that very instance, so a token here would
+# let a local mistake edit a real person. Local gets the typed "not configured" refusal instead.
+# (STRIPE_SECRET_KEY was the other member of this list until Stripe left the product,
+# docs/wiki/stripe-archive.md.)
+BLANK="MICONNECT_EDITOR_TOKEN"
 
 # Regenerated per local stack: these mint or verify credentials.
 REGENERATE="AGENDA_SIGNING_KEY CALL_ROOM_SECRET INTERNAL_SECRET INTERNAL_SHARED_SECRET JWT_SECRET"
@@ -164,12 +157,9 @@ NEW_SECRETS=""
 # local behaviour is production's behaviour. Three things follow, and they are consequences rather
 # than warnings:
 #
-#   * A LOCAL ACTION CAN REACH A REAL THIRD PARTY. `dump-prod-to-local.sh` removes every Stripe and
-#     Lydia identifier from the copied database, so nothing real is ADDRESSABLE by accident - but
-#     the keys themselves are live.
-#   * STRIPE'S SPENDING KEY IS THE ONE EXCEPTION, and it is EMPTY here (user, 2026-09-10). It spends
-#     irreversibly, and an audit that day was answered by Stripe itself on this key, from a laptop.
-#     Put an `sk_test_` key here by hand to exercise payments; that is the tool for it.
+#   * A LOCAL ACTION CAN REACH A REAL THIRD PARTY. `dump-prod-to-local.sh` removes every Lydia
+#     identifier (and the historic Stripe customer ids) from the copied database, so nothing real is
+#     ADDRESSABLE by accident - but the keys themselves are live.
 #   * PUSH IS PRODUCTION'S SENDER. Same reasoning: the dump truncates `push_token`, so there is no
 #     real device to send to. Do not restore that table from anywhere.
 #
@@ -185,8 +175,8 @@ HEADER
   done
 
   printf '\n# ── Deliberately EMPTY here, live in production ───────────────────────────────\n'
-  printf '# A key that SPENDS is not carried onto a development machine. Put an sk_test_ key here\n'
-  printf '# by hand to exercise payments; until then they answer "Stripe not configured".\n'
+  printf '# A key that WRITES to production is not carried onto a development machine.\n'
+  printf '# by hand to exercise the feature; until then it answers "not configured".\n'
   for name in $(printf '%s\n' "$BLANK" | tr ' ' '\n' | grep -v '^$' | sort); do
     printf '%s=\n' "$name"
   done
@@ -235,7 +225,7 @@ ALLOW_ORIGIN=*
 
 # IT IS 8081, THE NGINX ENTRY - AND THAT IS A STATEMENT ABOUT THE SERVICES, NOT ABOUT THE FRONTEND.
 #
-# The SERVICES read this to build the links a HUMAN follows: the Stripe return, the Lydia callback,
+# The SERVICES read this to build the links a HUMAN follows: the checkout return, the Lydia callback,
 # a form link, a product link, the aggregated calendar feed. They run in the local stack whichever
 # frontend is in use, so their one value has to name a frontend that is ALWAYS there - and 8081 is.
 # 1420, the Vite dev server, answers only while somebody has `bun run dev` open, and the phone

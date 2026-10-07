@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { onlinePaymentCopy, supportsSavedCards } from './paymentProviderCopy';
+import { onlinePaymentCopy } from './paymentProviderCopy';
 import { m } from '$lib/paraglide/messages';
 
 describe('onlinePaymentCopy', () => {
@@ -10,8 +10,8 @@ describe('onlinePaymentCopy', () => {
     expect(copy.description).toBe(m.form_online_payment_desc());
   });
 
-  it('says online payment is unavailable for a leftover stripe or a disabled provider', () => {
-    for (const provider of ['stripe', 'disabled'] as const) {
+  it('says online payment is unavailable for a disabled provider', () => {
+    for (const provider of ['disabled'] as const) {
       const copy = onlinePaymentCopy(provider);
       expect(copy.state).toBe('unavailable');
       expect(copy.label).toBe(m.form_online_payment_unavailable_label());
@@ -27,20 +27,11 @@ describe('onlinePaymentCopy', () => {
   });
 
   it('never speaks wallets or card networks in any state', () => {
-    for (const provider of ['lydia', 'stripe', 'disabled', null] as const) {
+    for (const provider of ['lydia', 'disabled', null] as const) {
       const copy = onlinePaymentCopy(provider);
       expect(`${copy.label} ${copy.description ?? ''}`).not.toMatch(
         /stripe|visa|mastercard|amex|wallet|apple pay|google pay/i
       );
     }
-  });
-});
-
-describe('supportsSavedCards', () => {
-  it('is true for Stripe alone', () => {
-    expect(supportsSavedCards('stripe')).toBe(true);
-    expect(supportsSavedCards('lydia')).toBe(false);
-    expect(supportsSavedCards('disabled')).toBe(false);
-    expect(supportsSavedCards(null)).toBe(false);
   });
 });

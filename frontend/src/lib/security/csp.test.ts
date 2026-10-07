@@ -46,7 +46,7 @@ describe('the served Content-Security-Policy', () => {
     //
     // ONE DECLARED EXCEPTION, and it is a narrowing, never a copy: `/adminer/` (the database admin
     // UI, 2026-10-02) states its OWN policy, because the site-wide one allows `img-src https:` and
-    // `connect-src` to Stripe and Klipy - a console that shows production data must not have an
+    // `connect-src` to Klipy - a console that shows production data must not have an
     // image beacon to send it out through if Adminer ever has an XSS. The next test holds it narrower.
     const declared = policyDeclarations();
     expect(declared).toHaveLength(2);
@@ -79,6 +79,11 @@ describe('the served Content-Security-Policy', () => {
     // upload. Rendering the grid is `img-src`; reading bytes into memory is `connect-src`, and
     // only the second one is what attaching a GIF to a comment needs.
     expect(connect).toContain('https://static.klipy.com');
+  });
+
+  it('names no payment processor host: checkout is a navigation to the provider, never an embed', () => {
+    // Stripe left the product (docs/wiki/stripe-archive.md); its hosts must not linger in the policy.
+    expect(policyDeclarations()[0]).not.toMatch(/stripe/i);
   });
 
   it('never widens connect-src to a bare scheme', () => {

@@ -11,7 +11,7 @@ The core-service is the authentication and user management hub. It:
 - Implements OIDC login via Authentik (code exchange, JWT issuance, refresh rotation).
 - Validates JWT tokens for Nginx `auth_request` (`GET /api/auth/verify`).
 - Manages user profiles, search, and directory.
-- Handles Stripe payments (Stripe Connect onboarding for associations, checkout sessions, saved cards, webhooks).
+- Handles online payments through Lydia ("Paiement Canari"): onboarding, checkout, callback. Stripe left on 2026-10-07 ([stripe-archive](../stripe-archive.md)).
 - Exposes platform configuration (maintenance mode, minimum client version).
 
 ## Auth model
@@ -341,9 +341,8 @@ Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`
 
 ### Payments (Stripe + Lydia)
 
-Stripe and Lydia now each own their own pair of columns on `associations`
-(`stripeAccountId`/`stripeOnboardingComplete` vs `lydiaAccountId`/`lydiaOnboardingComplete`,
-migration 037) - onboarding with one provider never overwrites or clears the other's link.
+Only the Lydia pair of columns on `associations` (`lydiaAccountId`/`lydiaOnboardingComplete`,
+migration 037) is read; the `stripe*` pair is kept at rest for rollback ([stripe-archive](../stripe-archive.md)).
 `/api/payments/onboarding` writes to whichever pair matches the platform's currently active
 provider (`PaymentService.getActiveProviderId()`), read at persist time right after the same call
 created the account, so the two always agree on which provider actually issued the id.
@@ -356,18 +355,18 @@ can never carry an `X-User-Id` - `NginxAuthGuard` was mistakenly added to this r
 and 401'd every one of those calls in production (2026-09-14) until it was removed; the route needs
 none, per the table below, because the value is global config with no per-user meaning. A
 Lydia `request/do` payment is also confirmed server-side: `POST /api/payments/lydia-request-callback`
-verifies the signed `confirm_url`/`cancel_url`/`expire_url` callback and fans out to the same
-fulfillment Stripe's webhook uses, via an `order_ref` Canari encodes itself
+verifies the signed `confirm_url`/`cancel_url`/`expire_url` callback and fans out to the
+fulfillment, via an `order_ref` Canari encodes itself
 (`lydia-order-ref.ts`). **Still blocking an actual switch to Lydia** (tracked in
 [backlog](../backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1), harmless today
-since `payment_provider` defaults to `stripe`): nothing resolves the `payerRecipient` `request/do`
+since `payment_provider` defaults to `disabled`): nothing resolves the `payerRecipient` `request/do`
 requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
 `lydiaOnboardingComplete` automatically) is deliberately unbuilt - no documented signature, and
 `vendor_token` is PUBLIC.
 
-**How core-service reads an association's payment account (2026-10-05).** `connect-status`, the
-dashboard link and the Lydia manual validation read social-service's INTERNAL route
-`GET /api/internal/associations/:id/payment-account` (X-Internal-Secret, the four Stripe/Lydia id and
+**How core-service reads an association's payment account (2026-10-05).** the Lydia manual
+validation reads social-service's INTERNAL route
+`GET /api/internal/associations/:id/payment-account` (X-Internal-Secret, the payment id and
 flag fields only). They used to call `GET /api/associations/:id`, which answers 401 without an
 `X-User-Id` since 2026-08-05, so each reported "Association not found" - invisible because
 `BadRequestException` is not logged and the client shows one generic message.
@@ -391,22 +390,12 @@ has no foreign key; the orphan rendered as "Personnel"). Submissions stay, as wi
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/payments/provider` | none | Active provider (`stripe` or `lydia`), for the frontend to render the matching onboarding UI |
+| GET | `/api/payments/provider` | none | Active provider (`lydia` or `disabled`), for the frontend to render the matching onboarding UI |
 | POST | `/api/payments/onboarding` | JWT | Start/resume Connect-style onboarding for an association, with the active provider |
-| GET | `/api/payments/connect-status/:associationId` | JWT | Live Stripe Connect status, syncs DB on success (Stripe-only - Lydia has no live-status poll) |
-| POST | `/api/payments/connect-dashboard-link/:associationId` | JWT | Single-use Stripe Dashboard login link |
-| POST | `/api/payments/disconnect-connect-account/:associationId` | JWT | Unlink the association's Stripe Connect account (local unlink only - the Stripe account itself is untouched) |
 | POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
 | POST | `/api/payments/create-checkout-session` | InternalSecret | Create a checkout session (called by social-service, never by a browser) |
 | POST | `/api/payments/verify-session` | JWT | Verify completed checkout, mark form submission paid |
 | POST | `/api/payments/cancel-session` | JWT | Cancel unpaid checkout |
-| POST | `/api/payments/setup-payment-method` | JWT | Create setup session to save a card |
-| GET | `/api/payments/payment-methods` | JWT | List saved cards |
-| DELETE | `/api/payments/payment-methods/:id` | JWT | Detach payment method |
-| POST | `/api/payments/charge-saved-method` | JWT | Charge saved card for form submission |
-| POST | `/api/payments/charge-product-saved-method` | JWT | Charge saved card for boutique product |
-| POST | `/api/payments/internal/customer-id` | InternalSecret | Get/create Stripe customer (called by social-service) |
-| POST | `/api/payments/webhook` | Stripe signature | Stripe webhook handler (`checkout.session.*`, `payment_intent.*`, `account.updated`) |
 | POST | `/api/payments/lydia-request-callback?outcome=confirm\|cancel\|expire` | Lydia signature (`sig`) | `request/do` payment confirmation - the authoritative fulfillment path for Lydia, since the buyer returning to the success redirect is not guaranteed |
 
 ### Health
@@ -421,7 +410,7 @@ PostgreSQL (`auth_db`). Main tables:
 
 | Table | Key columns |
 |---|---|
-| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin`, `notesCiphertext`, `notesKey`, `notes` (legacy) |
+| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `admin`, `notesCiphertext`, `notesKey`, `notes` (legacy) |
 | `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp`, `deviceId` |
 | `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion` |
 | `platform_announcements` | `title_fr/en`, `body_fr/en`, `min_client_version`, `max_client_version`, `active`, `created_by` |
@@ -532,8 +521,6 @@ nulls the column. Only the client can encrypt, so the conversion cannot happen i
 | `AUTHENTIK_CLIENT_SECRET` | yes | OIDC client secret |
 | `AUTHENTIK_ISSUER` | yes | Authentik issuer URL |
 | `FRONTEND_URL` | yes | OIDC redirect URI base |
-| `STRIPE_SECRET_KEY` | no | Stripe secret key (payments) |
-| `STRIPE_WEBHOOK_SECRET` | no | Stripe webhook signing secret |
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
 
 ##### An absence is remembered, and a group photo is stored (2026-10-05)

@@ -1,18 +1,5 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Post,
-  Query,
-  Req,
-  Res,
-  Logger,
-} from '@nestjs/common';
-import type { Request, Response } from 'express';
-import Stripe from 'stripe';
-import { ConfigService } from '@nestjs/config';
+import { BadRequestException, Body, Controller, Post, Query, Logger } from '@nestjs/common';
 import axios from 'axios';
-import { UsersService } from '../users/users.service';
 import { PaymentService } from './payment.service';
 import { parseLydiaOrderRef } from './lydia-order-ref';
 import {
@@ -20,36 +7,24 @@ import {
   internalSubmissionUrl,
   productPurchaseCompletedUrl,
 } from './social-internal-client';
-import { socialUrl } from '../internal/service-urls';
-import { STRIPE_API_VERSION } from './stripe-api-version';
 import { describeHttpError } from '../common/http-error-log';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SUBMISSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 
-/** Validates submissionId from Stripe metadata before embedding in a URL path. */
+/** Validates a submissionId before embedding in a URL path. */
 function assertValidSubmissionId(submissionId: string): void {
   if (!SUBMISSION_ID_RE.test(submissionId)) {
-    throw new Error(`Invalid submissionId in webhook metadata: ${submissionId}`);
+    throw new Error(`Invalid submissionId: ${submissionId}`);
   }
 }
 
 @Controller('payments')
 export class PaymentWebhookController {
   private readonly logger = new Logger(PaymentWebhookController.name);
-  private readonly stripe: Stripe;
 
-  constructor(
-    private readonly config: ConfigService,
-    private readonly usersService: UsersService,
-    private readonly paymentService: PaymentService
-  ) {
-    const key = this.config.get<string>('STRIPE_SECRET_KEY');
-    this.stripe = key
-      ? new Stripe(key, { apiVersion: STRIPE_API_VERSION })
-      : (null as unknown as Stripe);
-  }
+  constructor(private readonly paymentService: PaymentService) {}
 
   /** Marks a form submission as paid via the internal social-service route. */
   private async markSubmissionPaidInternal(
@@ -69,8 +44,8 @@ export class PaymentWebhookController {
   }
 
   /**
-   * Fulfills a boutique product purchase via the internal social-service route - shared by the
-   * Stripe `checkout.session.completed` branch and the Lydia `request/do` confirm callback below.
+   * Fulfills a boutique product purchase via the internal social-service route, from the Lydia
+   * `request/do` confirm callback below.
    */
   private async notifyProductPurchaseCompleted(
     productId: string,
@@ -107,215 +82,16 @@ export class PaymentWebhookController {
     );
   }
 
-  /** Reads submissionId from Stripe object metadata when present and valid. */
-  private submissionIdFromMetadata(metadata: Stripe.Metadata | null | undefined): string | null {
-    const submissionId = metadata?.submissionId;
-    if (!submissionId || !SUBMISSION_ID_RE.test(submissionId)) {
-      if (submissionId) {
-        this.logger.error(`Invalid submissionId in webhook metadata: ${submissionId}`);
-      }
-      return null;
-    }
-    return submissionId;
-  }
-
-  @Post('webhook')
-  async handle(@Req() req: Request, @Res() res: Response) {
-    const webhookSecret = this.config.get<string>('STRIPE_WEBHOOK_SECRET');
-    let event: Stripe.Event;
-
-    try {
-      if (webhookSecret) {
-        const sig = req.headers['stripe-signature'] as string;
-        const raw = req.body as Buffer;
-        // ASYNC, and not as a precaution. The runtime is `bun dist/main.js`, and bun matches the
-        // `worker` export condition, which stripe-node maps to its web build - so the crypto
-        // provider is `SubtleCryptoProvider`, whose `constructEvent` throws BY DESIGN ("cannot be
-        // used in a synchronous context") because WebCrypto has no synchronous digest. Every
-        // webhook this container ever received was rejected on that throw: 24 deliveries, 0
-        // accepted, over its whole life. `constructEventAsync` is the same verification on either
-        // provider, so this is one path rather than a branch on which build got resolved.
-        event = await this.stripe.webhooks.constructEventAsync(raw, sig, webhookSecret);
-      } else if (process.env.NODE_ENV === 'production') {
-        this.logger.error(
-          'STRIPE_WEBHOOK_SECRET is required in production - refusing unsigned webhook'
-        );
-        return res.status(503).send('Stripe webhook signing secret not configured');
-      } else {
-        // A REQUEST BODY TAKEN AS A STRIPE EVENT, WHICH IS AN UNAUTHENTICATED CALLER DESCRIBING
-        // WHAT HAPPENED. It exists so webhook handling can be exercised on a workstation with no
-        // Stripe CLI, and the branch above makes it impossible anywhere NODE_ENV says production -
-        // an assertion `compose-wiring.test.sh` holds over every deployed compose file, so the
-        // guarantee is a gate rather than a habit. It is logged at a level that ACCUSES because
-        // that is the whole of what separates "a developer is testing" from "this estate is
-        // accepting forged payments": if this line appears anywhere it was not typed by hand, the
-        // estate is misconfigured.
-        this.logger.warn(
-          'STRIPE_WEBHOOK_SECRET is unset and NODE_ENV is not production - accepting an UNSIGNED ' +
-            'webhook body as a Stripe event. This must never appear outside a local workstation.'
-        );
-        event = req.body as Stripe.Event;
-      }
-    } catch (err: unknown) {
-      const error = err as Error;
-      this.logger.error('Webhook signature verification failed', error?.message || error);
-      return res.status(400).send(`Webhook Error: ${error?.message || error}`);
-    }
-
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-      const submissionId = session.metadata?.submissionId;
-      const productId = session.metadata?.productId;
-      const userId = session.metadata?.userId;
-
-      // Save the Stripe customer ID back to the user if they just paid for the first time
-      if (userId && session.customer && typeof session.customer === 'string') {
-        const customerId = session.customer;
-        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) {
-          this.logger.error(`Invalid userId in webhook metadata: ${userId}`);
-        } else {
-          try {
-            const user = await this.usersService.findOne(userId).catch(() => null);
-            if (user && !user.stripeCustomerId) {
-              await this.usersService.update(userId, {
-                stripeCustomerId: customerId,
-              });
-              this.logger.log(`Saved stripeCustomerId ${customerId} for user ${userId}`);
-            }
-          } catch (err: unknown) {
-            const error = err as Error;
-            this.logger.error('Failed to save stripeCustomerId to user', error?.message);
-          }
-        }
-      }
-
-      if (submissionId) {
-        if (!SUBMISSION_ID_RE.test(submissionId)) {
-          this.logger.error(`Invalid submissionId in webhook metadata: ${submissionId}`);
-          return res.status(400).send('Invalid submissionId');
-        }
-        try {
-          await this.markSubmissionPaidInternal(submissionId, session.id);
-          this.logger.log(`Marked submission ${submissionId} as paid via form-service`);
-        } catch (err: unknown) {
-          const error = err as Error & { response?: { data?: unknown } };
-          this.logger.error(
-            'Failed to notify form-service about payment',
-            describeHttpError(error)
-          );
-          return res.status(500).send('Failed to notify form-service');
-        }
-      } else if (productId && userId) {
-        // Boutique product purchase - notify social-service
-        if (!UUID_RE.test(productId)) {
-          this.logger.error(`Invalid productId in webhook metadata: ${productId}`);
-          return res.status(400).send('Invalid productId');
-        }
-        try {
-          await this.notifyProductPurchaseCompleted(
-            productId,
-            userId,
-            session.amount_total ?? 0,
-            typeof session.payment_intent === 'string' ? session.payment_intent : ''
-          );
-        } catch (err: unknown) {
-          const error = err as Error & { response?: { data?: unknown } };
-          this.logger.error(
-            'Failed to notify social-service about product purchase',
-            describeHttpError(error)
-          );
-          return res.status(500).send('Failed to notify social-service');
-        }
-      } else {
-        this.logger.warn('checkout.session.completed without submissionId or productId metadata');
-      }
-    }
-
-    if (
-      event.type === 'checkout.session.expired' ||
-      event.type === 'checkout.session.async_payment_failed'
-    ) {
-      const session = event.data.object;
-      const submissionId = this.submissionIdFromMetadata(session.metadata);
-      if (submissionId) {
-        try {
-          await this.cancelPendingSubmissionInternal(submissionId);
-          this.logger.log(`Cancelled pending submission ${submissionId} after ${event.type}`);
-        } catch (err: unknown) {
-          const error = err as Error & { response?: { data?: unknown } };
-          this.logger.error(
-            `Failed to cancel submission after ${event.type}`,
-            describeHttpError(error)
-          );
-          return res.status(500).send('Failed to cancel pending submission');
-        }
-      }
-    }
-
-    if (event.type === 'payment_intent.payment_failed') {
-      const paymentIntent = event.data.object;
-      const submissionId = this.submissionIdFromMetadata(paymentIntent.metadata);
-      if (submissionId) {
-        try {
-          await this.cancelPendingSubmissionInternal(submissionId);
-          this.logger.log(
-            `Cancelled pending submission ${submissionId} after payment_intent.payment_failed`
-          );
-        } catch (err: unknown) {
-          const error = err as Error & { response?: { data?: unknown } };
-          this.logger.error(
-            'Failed to cancel submission after payment_intent.payment_failed',
-            describeHttpError(error)
-          );
-          return res.status(500).send('Failed to cancel pending submission');
-        }
-      }
-    }
-
-    if (event.type === 'account.updated') {
-      const account = event.data.object;
-      const associationId = account.metadata?.associationId;
-      if (associationId && account.charges_enabled) {
-        // Prevent SSRF: associationId originates from Stripe account metadata which was
-        // set by the client at onboarding time - validate before embedding in URL.
-        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(associationId)) {
-          this.logger.error(`Invalid associationId in webhook metadata: ${associationId}`);
-        } else {
-          try {
-            await axios.post(
-              socialUrl(`associations/${encodeURIComponent(associationId)}/stripe-complete`),
-              undefined,
-              {
-                ...internalSocialRequestConfig(),
-                timeout: 15_000,
-                validateStatus: (s) => s >= 200 && s < 300,
-              }
-            );
-            this.logger.log(`Marked association ${associationId} stripe onboarding complete`);
-          } catch (err: unknown) {
-            const error = err as Error & { response?: { data?: unknown } };
-            this.logger.error(
-              'Failed to notify social-service about stripe onboarding',
-              describeHttpError(error)
-            );
-          }
-        }
-      }
-    }
-
-    return res.json({ received: true });
-  }
-
   /**
    * Receives a `confirm_url`/`cancel_url`/`expire_url` callback from Lydia's `request/do`
    * (registered per-request by `LydiaPaymentProvider.createCheckoutSession`, via the `outcome`
    * query param WE set - Lydia just POSTs to whichever URL it was given). This is the
-   * AUTHORITATIVE confirmation path for a Lydia payment: unlike Stripe's hosted Checkout, the
+   * AUTHORITATIVE confirmation path for a Lydia payment: the
    * buyer returning to `browser_success_url` is not guaranteed (Lydia is app-driven), so
    * fulfillment cannot depend on it alone.
    *
-   * No guard: the signature check below plays the same role NginxAuthGuard/Stripe's webhook
-   * secret play elsewhere in this controller.
+   * No guard: the signature check below stands in for the NginxAuthGuard this route cannot
+   * carry (Lydia, not a signed-in user, is the caller).
    */
   @Post('lydia-request-callback')
   async handleLydiaRequestCallback(

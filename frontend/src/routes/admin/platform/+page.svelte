@@ -13,7 +13,7 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
 
-  type PaymentProviderChoice = 'stripe' | 'lydia' | 'disabled';
+  type PaymentProviderChoice = 'lydia' | 'disabled';
 
   type PlatformConfig = {
     maintenanceEnabled: boolean;
@@ -30,10 +30,9 @@
   let maintenanceEnabled = $state(false);
   let maintenanceMessage = $state('');
   let minClientVersion = $state('0.0.0');
-  let paymentProvider = $state<PaymentProviderChoice>('stripe');
-  /** Two product names, which read the same in every locale, and the localized "off" switch. */
+  let paymentProvider = $state<PaymentProviderChoice>('disabled');
+  /** A product name, which reads the same in every locale, and the localized "off" switch. */
   const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
-    { value: 'stripe', label: 'Stripe' },
     { value: 'lydia', label: 'Lydia' },
     { value: 'disabled', label: m.admin_platform_payment_provider_disabled() },
   ]);
@@ -307,7 +306,7 @@
           label={m.admin_platform_payment_provider_label()}
           triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
           onValueChange={(v) => {
-            if (v === 'stripe' || v === 'lydia' || v === 'disabled') paymentProvider = v;
+            if (v === 'lydia' || v === 'disabled') paymentProvider = v;
           }}
         />
         <p class="text-text-muted text-xs">

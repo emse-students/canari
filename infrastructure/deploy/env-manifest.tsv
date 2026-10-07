@@ -85,8 +85,6 @@ APNS_VOIP_KEY_P8	warn	warn	secret:APNS_VOIP_KEY_P8	iOS CallKit VoIP pushes are d
 APNS_VOIP_KEY_ID	silent	silent	secret:APNS_VOIP_KEY_ID	the APNs key cannot be identified
 APNS_VOIP_TEAM_ID	silent	silent	secret:APNS_VOIP_TEAM_ID	the APNs key cannot be attributed to a team
 SERVICE_ACCOUNT_USER_ID	silent	silent	secret:SERVICE_ACCOUNT_USER_ID	the default from .env.example applies, which is the intended value
-STRIPE_SECRET_KEY	warn	skip	secret:STRIPE_SECRET_KEY	payments are unavailable
-STRIPE_WEBHOOK_SECRET	warn	skip	secret:STRIPE_WEBHOOK_SECRET	Stripe webhooks are rejected
 LYDIA_PROVIDER_TOKEN	warn	warn	secret:LYDIA_PROVIDER_TOKEN	Lydia payments are unavailable if selected as the active provider
 LYDIA_PROVIDER_PRIVATE_TOKEN	warn	warn	secret:LYDIA_PROVIDER_PRIVATE_TOKEN	Lydia payments are unavailable if selected as the active provider
 DEPLOY_BUILD	skip	computed	computed	the /api/version build field is null, so two dev deployments of one release are indistinguishable

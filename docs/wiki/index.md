@@ -64,7 +64,7 @@
 - [Posts module](frontend/modules/posts.md) — Feed, polls, reactions, comments
 - [CanaReels (client)](frontend/modules/reels.md) — The camera tab, the capture screen, publishing a reel, the vertical viewer, save to gallery
 - [CanaReels editor](frontend/modules/reel-editor.md) — The post-capture review, editor (text and emoji overlays, one gesture helper), remove-the-sound, and the work-package split
-- [Payments module](frontend/modules/payments.md) — Stripe Connect, products, shop
+- [Payments module](frontend/modules/payments.md) — Lydia, products, shop; [Stripe archive](stripe-archive.md) — what Stripe did and why it left
 - [Minesweeper](frontend/modules/minesweeper.md) — No-guess generation, seed + first click, ranked replay, generation cost
 - [Admin module](frontend/modules/admin.md) — Dashboard, moderation, platform config
 

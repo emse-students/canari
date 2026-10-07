@@ -8,13 +8,11 @@ import type { Association } from './entities/association.entity';
  * bare prototype instance rather than the 40-dependency constructor.
  */
 describe('AssociationsService.assertPaymentsReady when the platform disables payments', () => {
-  const makeService = (provider: 'stripe' | 'disabled') => {
+  const makeService = (provider: 'lydia' | 'disabled') => {
     const asso = {
       id: 'club',
-      stripeAccountId: 'acct_club',
-      stripeOnboardingComplete: true,
-      lydiaAccountId: null,
-      lydiaOnboardingComplete: false,
+      lydiaAccountId: 'vendor_club',
+      lydiaOnboardingComplete: true,
       paymentParentAssociationId: null,
       paymentDelegationStatus: null,
     } as unknown as Association;
@@ -26,7 +24,7 @@ describe('AssociationsService.assertPaymentsReady when the platform disables pay
     return service;
   };
 
-  it('refuses with the disabled message even though the club has a ready Stripe account', async () => {
+  it('refuses with the disabled message even though the club has a ready Lydia account', async () => {
     const service = makeService('disabled');
     const err = await service.assertPaymentsReady('club').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(BadRequestException);
@@ -34,7 +32,7 @@ describe('AssociationsService.assertPaymentsReady when the platform disables pay
     await expect(service.getPaymentAccountId('club')).resolves.toBeNull();
   });
 
-  it('still accepts a ready Stripe account when Stripe is active', async () => {
-    await expect(makeService('stripe').assertPaymentsReady('club')).resolves.toBeUndefined();
+  it('still accepts a ready Lydia account when Lydia is active', async () => {
+    await expect(makeService('lydia').assertPaymentsReady('club')).resolves.toBeUndefined();
   });
 });

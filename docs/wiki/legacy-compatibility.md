@@ -59,6 +59,17 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## The diary
 
+### No date yet - a `paymentMethod` of `stripe`, from a client older than the Stripe removal
+
+**Site:** `@IsIn(['online', 'stripe', 'cash'])` in `apps/social-service/src/forms/dto/form.dto.ts`, and
+`PurchasePaymentMethod` in `users/entities/purchase-record.entity.ts`.
+**Shim:** the form submission still ACCEPTS `stripe` and means `online`; purchase rows written
+before 2026-10-08 hold `stripe` and are read as `online`. Nothing writes `stripe` any more
+([stripe-archive](stripe-archive.md)).
+**Removal condition:** the input goes when `minClientVersion` is at or above the first release
+carrying the removal, both stores serving it. The stored value is data at rest and goes only with a
+data migration of `purchase_records`.
+
 ### No date yet - MiConnect's `formation` and `promo` claims, derived from the profile
 
 **Site:** the scope mappings `miconnect-claim-formation` and `miconnect-claim-promo` in
