@@ -123,6 +123,22 @@ describe('MediaService.downloadRange', () => {
     });
   });
 
+  it('classifies a whole download: tombstone is purged, no object and no entry is not_found', async () => {
+    // The two answers the client tells apart (410 -> expired, 404 -> not-found, both permanent and
+    // never retried). A tombstone trimmed after its own window leaves nothing to tell a purge from
+    // an id that never existed, so that case is a 404 by construction, not by a lost file.
+    const { service } = serviceWith({
+      [UUID_PURGED]: {
+        createdAt: OLD,
+        lastAccessAt: OLD,
+        purgedAt: OLD,
+        purgeReason: 'retention_expired',
+      },
+    });
+    expect(await service.download(UUID_PURGED)).toEqual({ status: 'purged' });
+    expect(await service.download(UUID_MISSING)).toEqual({ status: 'not_found' });
+  });
+
   it('moves the access clock on the opening part only, not on every segment', async () => {
     const { service, persisted, items } = serviceWith({
       [UUID_A]: { createdAt: OLD, lastAccessAt: OLD },
