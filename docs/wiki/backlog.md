@@ -2936,3 +2936,19 @@ not to be built, with the reasons on [cicd](cicd.md#two-incident-time-items-deci
   grows with every page), and the avatars carry no `loading="lazy"` on purpose (a cached blob sets
   `imageLoaded` eagerly; a lazy one would show an empty disc mid-fling). Measure before changing
   either.
+
+---
+
+## Audiences of associations, lists and institutions - decided by the user 2026-10-07, ready to build
+
+Seven decisions, in the user's answers of 2026-10-07 (the last one asked for Master's opinion and was accepted as recommended):
+
+1. **The manager chooses among THREE presets**, never the raw grid: my campus; my campus plus the formations I name; everyone. `everyone` is offered to institutions only. The global admin keeps the full grid in Espaces & audiences.
+2. **Default at creation**: the association's campus, every formation, applied automatically and editable. A list gets the same default.
+3. **An association present on two campuses is TWO associations**, partners on a shared event (D39, migration 074); there is no multi-campus audience on one entity.
+4. **A change of audience applies to everything, past posts included**: visibility follows the current rule, nothing is frozen on the post.
+5. **A manager with no campus completes their profile first**: the presets are computed from a campus.
+6. **Only institutions, created by a global admin, may target everyone.** The server REFUSES an `everyone` rule on any other type - the UI hiding it is not the rule.
+7. **The star (space BDE) may set the audience of the associations of ITS campus, and only that**: the super-role "manage associations" includes the audience, bounded to the BDE's own campus; never another campus, never an institution.
+
+Work packages: (a) server: default rule at creation, refusal of `everyone` outside institutions, the BDE's campus bound on writes, with tests; (b) client: the three presets on the association page for a manager and a BDE, the profile prompt for a campus-less manager; (c) wiki: [profiles-and-access](profiles-and-access.md) D-section. Done when a manager of a fresh association sees it reach its campus with no setup, can narrow or widen it to the presets, and a hand-written `everyone` is refused by the server for a non-institution.
