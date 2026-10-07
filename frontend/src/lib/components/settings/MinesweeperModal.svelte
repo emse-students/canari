@@ -1041,12 +1041,12 @@
           type="button"
           onclick={onClose}
           aria-label={m.minesweeper_close()}
-          class="bg-cn-surface/90 border-cn-border text-text-main pointer-events-auto flex size-11 shrink-0 items-center justify-center rounded-full border shadow-sm backdrop-blur-sm"
+          class="ui-icon-button bg-cn-surface/90 border-cn-border text-text-main pointer-events-auto rounded-full border shadow-sm backdrop-blur-sm"
         >
           <X size={18} />
         </button>
         <div
-          class="bg-cn-surface/90 border-cn-border text-text-main pointer-events-auto flex h-11 items-center gap-3 rounded-full border pr-1 pl-3.5 text-sm font-bold shadow-sm backdrop-blur-sm"
+          class="bg-cn-surface/90 border-cn-border text-text-main pointer-events-auto flex h-11 items-center gap-3 rounded-full border pl-3.5 text-sm font-bold shadow-sm backdrop-blur-sm md:h-[2.375rem]"
         >
           <span class="flex items-center gap-1.5 leading-none">
             <Bomb size={16} class="text-cn-dark" />
@@ -1066,7 +1066,7 @@
             onclick={newGame}
             aria-label={m.minesweeper_new_game()}
             title={m.minesweeper_new_game()}
-            class="text-cn-dark hover:bg-cn-yellow/20 flex size-9 items-center justify-center rounded-full transition-colors"
+            class="ui-icon-button text-cn-dark hover:bg-cn-yellow/20 rounded-full transition-colors"
           >
             <RotateCcw size={16} strokeWidth={2.5} />
           </button>
@@ -1077,7 +1077,7 @@
         onclick={openLeaderboard}
         aria-label={m.minesweeper_leaderboard()}
         title={m.minesweeper_leaderboard()}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover pointer-events-auto flex size-11 shrink-0 items-center justify-center rounded-full shadow-sm transition-colors"
+        class="ui-icon-button bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover pointer-events-auto rounded-full shadow-sm transition-colors"
       >
         <Trophy size={20} strokeWidth={2.5} />
       </button>
@@ -1139,7 +1139,7 @@
             type="button"
             onclick={() => (showLeaderboard = false)}
             aria-label={m.minesweeper_leaderboard_back()}
-            class="text-text-main hover:bg-cn-bg flex size-11 items-center justify-center rounded-full transition-colors"
+            class="ui-icon-button text-text-main hover:bg-cn-bg rounded-full transition-colors"
           >
             <ArrowLeft size={20} />
           </button>
