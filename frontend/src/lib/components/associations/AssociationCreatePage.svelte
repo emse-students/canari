@@ -25,7 +25,13 @@
     type Campus,
     type Formation,
   } from '$lib/profile/miconnectProfile';
-  import { isGlobalAdmin } from '$lib/stores/user';
+  import { fetchMyProfile, isGlobalAdmin } from '$lib/stores/user';
+  import ProfileCampusPrompt from '$lib/components/profile/ProfileCampusPrompt.svelte';
+  import {
+    AUDIENCE_REFUSAL,
+    audienceRefusalCode,
+    audienceRefusalText,
+  } from '$lib/associations/audienceRefusal';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
   import { slugify } from '$lib/utils/textFold';
@@ -51,6 +57,12 @@
   let reachFormation = $state<Formation | ''>('');
   let submitting = $state(false);
   let error = $state('');
+  /**
+   * The creator's profile has no campus (decision 5 of the audiences chantier): an association or a
+   * list takes its creator's campus as its default audience, so the profile prompt replaces the form
+   * rather than letting the server's refusal be the first the creator hears of it.
+   */
+  let campusMissing = $state(false);
 
   /** Everything that differs between the three kinds, resolved at render (Paraglide). */
   const copy = $derived(
@@ -125,6 +137,15 @@
       void goto(resolve('/institutions'), { replaceState: true });
       return;
     }
+    if (kind !== 'institution') {
+      try {
+        const me = await fetchMyProfile();
+        campusMissing = !CAMPUSES.some((c) => c === me.campus);
+      } catch (err) {
+        // Unknown is not "missing": the server's typed refusal still answers on submit.
+        Log.d('create.profile failed', err);
+      }
+    }
     if (kind === 'list') {
       try {
         parents = await listAssociations('association');
@@ -167,7 +188,12 @@
       await goto(resolve(`${kind === 'list' ? '/lists' : '/associations'}/${created.slug}`));
     } catch (err) {
       Log.d(`create.submit failed (${kind})`, err);
-      error = copy.failure;
+      const refusal = audienceRefusalCode(err);
+      if (refusal === AUDIENCE_REFUSAL.CREATOR_CAMPUS_REQUIRED) {
+        campusMissing = true;
+      } else {
+        error = refusal ? audienceRefusalText(refusal) : copy.failure;
+      }
     } finally {
       submitting = false;
     }
@@ -196,129 +222,140 @@
 <PageContainer>
   <PageHeader title={copy.heading} backHref={copy.backHref} backLabel={copy.back} />
 
-  <form
-    class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6"
-    onsubmit={(e) => {
-      e.preventDefault();
-      handleSubmit();
-    }}
-  >
-    <Input
-      label={copy.nameLabel}
-      bind:value={name}
-      oninput={onNameInput}
-      placeholder={copy.namePlaceholder}
-      required
-    />
+  {#if campusMissing}
+    <ProfileCampusPrompt />
+  {:else}
+    <form
+      class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6"
+      onsubmit={(e) => {
+        e.preventDefault();
+        handleSubmit();
+      }}
+    >
+      <Input
+        label={copy.nameLabel}
+        bind:value={name}
+        oninput={onNameInput}
+        placeholder={copy.namePlaceholder}
+        required
+      />
 
-    <Input label="Slug (URL)" bind:value={slug} placeholder={copy.slugPlaceholder} required />
-    <p class="text-text-muted -mt-3 text-xs">
-      {m.assoc_new_slug_hint()}
-    </p>
+      <Input label="Slug (URL)" bind:value={slug} placeholder={copy.slugPlaceholder} required />
+      <p class="text-text-muted -mt-3 text-xs">
+        {m.assoc_new_slug_hint()}
+      </p>
 
-    {#if kind === 'list'}
-      <Input label={m.list_new_promo_label()} type="number" bind:value={promo} placeholder="2027" />
-
-      <div>
-        <label for="create-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold"
-          >{m.list_new_parent_label()}</label
-        >
-        <Picker
-          id="create-parent"
-          value={parentAssociationId}
-          options={parentOptions}
-          label={m.list_new_parent_label()}
-          variant="field"
-          density="default"
-          onValueChange={(v) => (parentAssociationId = v)}
+      {#if kind === 'list'}
+        <Input
+          label={m.list_new_promo_label()}
+          type="number"
+          bind:value={promo}
+          placeholder="2027"
         />
-      </div>
-    {/if}
 
-    <Textarea
-      label={m.assoc_new_desc_label()}
-      bind:value={description}
-      placeholder={copy.descPlaceholder}
-      rows={3}
-    />
-
-    <Input
-      label={m.assoc_new_email_label()}
-      type="email"
-      bind:value={contactEmail}
-      placeholder={copy.emailPlaceholder}
-    />
-
-    {#if kind === 'institution'}
-      <div class="space-y-3">
         <div>
-          <label for="create-reach" class="text-text-main mb-2 ml-1 block text-sm font-bold"
-            >{m.inst_new_reach_label()}</label
+          <label for="create-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold"
+            >{m.list_new_parent_label()}</label
           >
           <Picker
-            id="create-reach"
-            value={reach}
-            options={reachOptions}
-            label={m.inst_new_reach_label()}
+            id="create-parent"
+            value={parentAssociationId}
+            options={parentOptions}
+            label={m.list_new_parent_label()}
             variant="field"
             density="default"
-            onValueChange={(v) => (reach = v as ReachChoice)}
+            onValueChange={(v) => (parentAssociationId = v)}
           />
-          <p class="text-text-muted mt-2 ml-1 text-xs">{m.inst_new_reach_hint()}</p>
         </div>
-        {#if reach === 'campus' || reach === 'cell'}
-          <div class="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label
-                for="create-reach-campus"
-                class="text-text-main mb-2 ml-1 block text-sm font-bold"
-                >{m.inst_new_reach_campus_label()}</label
-              >
-              <Picker
-                id="create-reach-campus"
-                value={reachCampus}
-                options={campusOptions}
-                label={m.inst_new_reach_campus_label()}
-                variant="field"
-                density="default"
-                onValueChange={(v) => (reachCampus = v as Campus)}
-              />
-            </div>
-            {#if reach === 'cell'}
+      {/if}
+
+      <Textarea
+        label={m.assoc_new_desc_label()}
+        bind:value={description}
+        placeholder={copy.descPlaceholder}
+        rows={3}
+      />
+
+      <Input
+        label={m.assoc_new_email_label()}
+        type="email"
+        bind:value={contactEmail}
+        placeholder={copy.emailPlaceholder}
+      />
+
+      {#if kind === 'institution'}
+        <div class="space-y-3">
+          <div>
+            <label for="create-reach" class="text-text-main mb-2 ml-1 block text-sm font-bold"
+              >{m.inst_new_reach_label()}</label
+            >
+            <Picker
+              id="create-reach"
+              value={reach}
+              options={reachOptions}
+              label={m.inst_new_reach_label()}
+              variant="field"
+              density="default"
+              onValueChange={(v) => (reach = v as ReachChoice)}
+            />
+            <p class="text-text-muted mt-2 ml-1 text-xs">{m.inst_new_reach_hint()}</p>
+          </div>
+          {#if reach === 'campus' || reach === 'cell'}
+            <div class="grid gap-3 sm:grid-cols-2">
               <div>
                 <label
-                  for="create-reach-formation"
+                  for="create-reach-campus"
                   class="text-text-main mb-2 ml-1 block text-sm font-bold"
-                  >{m.inst_new_reach_formation_label()}</label
+                  >{m.inst_new_reach_campus_label()}</label
                 >
                 <Picker
-                  id="create-reach-formation"
-                  value={reachFormation}
-                  options={formationOptions}
-                  label={m.inst_new_reach_formation_label()}
+                  id="create-reach-campus"
+                  value={reachCampus}
+                  options={campusOptions}
+                  label={m.inst_new_reach_campus_label()}
                   variant="field"
                   density="default"
-                  onValueChange={(v) => (reachFormation = v as Formation)}
+                  onValueChange={(v) => (reachCampus = v as Campus)}
                 />
               </div>
-            {/if}
-          </div>
-        {/if}
-      </div>
-    {/if}
+              {#if reach === 'cell'}
+                <div>
+                  <label
+                    for="create-reach-formation"
+                    class="text-text-main mb-2 ml-1 block text-sm font-bold"
+                    >{m.inst_new_reach_formation_label()}</label
+                  >
+                  <Picker
+                    id="create-reach-formation"
+                    value={reachFormation}
+                    options={formationOptions}
+                    label={m.inst_new_reach_formation_label()}
+                    variant="field"
+                    density="default"
+                    onValueChange={(v) => (reachFormation = v as Formation)}
+                  />
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
 
-    {#if error}
-      <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">
-        {error}
-      </div>
-    {/if}
+      {#if error}
+        <div
+          class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm"
+        >
+          {error}
+        </div>
+      {/if}
 
-    <button
-      type="submit"
-      disabled={submitting || !name.trim() || !slug.trim() || reachIncomplete}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {submitting ? m.common_creating_label() : copy.submit}
-    </button>
-  </form>
+      <button
+        type="submit"
+        disabled={submitting || !name.trim() || !slug.trim() || reachIncomplete}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {submitting ? m.common_creating_label() : copy.submit}
+      </button>
+    </form>
+  {/if}
 </PageContainer>

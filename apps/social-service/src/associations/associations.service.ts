@@ -83,7 +83,8 @@ import {
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import { defaultCampusRules } from '../spaces/audience-policy';
+import { assertCreatorCampusGoverned, defaultCampusRules } from '../spaces/audience-policy';
+import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import type { CoOrganiserPort } from './co-organisers.port';
 import { UserTagService } from '../users/user-tag.service';
@@ -304,9 +305,11 @@ export class AssociationsService {
    * the grid at `/admin/spaces` reads it back as a ticked campus. A creator with no campus is
    * REFUSED with the typed `AUDIENCE_CREATOR_CAMPUS_REQUIRED` (decision 5) and nothing is written -
    * the campus is never guessed. An institution keeps its own rule: no default, the creating global
-   * admin ticks its audience afterwards.
+   * admin ticks its audience afterwards. A NON-admin creator (a BDE star) is further refused
+   * `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` when that default campus is not one its BDE governs: it could
+   * not edit what it made (decision 7).
    */
-  async create(dto: CreateAssociationDto, userId: string) {
+  async create(dto: CreateAssociationDto, userId: string, isGlobalAdmin: boolean) {
     if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(dto.slug)) {
       throw new BadRequestException(
         'Slug must start with a letter or digit and contain only lowercase letters, digits, and hyphens (2-50 chars)'
@@ -340,6 +343,15 @@ export class AssociationsService {
       }[];
       // Thrown inside the transaction: the row saved above is rolled back with it.
       const rules = defaultCampusRules(profile?.campus ?? null);
+      if (!isGlobalAdmin) {
+        const governed = (
+          (await manager.query(BDE_GOVERNED_CAMPUSES_SQL, [
+            userId,
+            AssociationPermissionFlag.MANAGE_ASSO,
+          ])) as { campus: string }[]
+        ).map((r) => r.campus);
+        assertCreatorCampusGoverned(governed, rules);
+      }
       this.logger.log(
         `[spaces] ${saved.id} reaches its creator's campus: ${rules[0].campus} (every formation)`
       );

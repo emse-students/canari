@@ -100,3 +100,21 @@ export function assertBdeMayWriteAudience(
     });
   }
 }
+
+/**
+ * A NON-ADMIN creator's default campus must be one their BDE star governs (WP-B, closing the open
+ * point of WP-A): otherwise the creator would make an association it could not then edit (decision
+ * 7). `governed` are the campuses of the spaces whose BDE the creator holds MANAGE_ASSO in. A global
+ * admin never reaches this check.
+ */
+export function assertCreatorCampusGoverned(
+  governed: readonly string[],
+  rules: readonly RuleLike[]
+): void {
+  if (!rules.every((r) => r.campus !== null && governed.includes(r.campus))) {
+    throw new ForbiddenException({
+      code: AUDIENCE_ERROR.OUTSIDE_BDE_CAMPUS,
+      message: 'A BDE creates the associations and lists of its own campus only.',
+    });
+  }
+}

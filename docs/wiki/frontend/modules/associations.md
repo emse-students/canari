@@ -75,6 +75,10 @@ Now:
 - Test: `associationsHeader.test.ts` (wiring), `audienceRules.test.ts` (`reachChoiceToRules`). Read on the
   local estate at 390 and 1280 (no horizontal scroll, nav wraps cleanly).
 
+## The audience tab and the campus prompt (WP-B, 2026-10-08)
+
+The edit page has an **Audience** tab (`EditAudienceTab.svelte`) for a global admin and a BDE star of the association: two presets (my campus; my campus and chosen formations), a third (everyone) for an institution only, the grid link for admins. The creation page shows `ProfileCampusPrompt` instead of the form when the creator's profile has no campus, and maps the five typed server refusals through `audienceRefusal.ts`. Mechanism, limits (a star cannot read the current audience) and tests: [profiles-and-access](../../profiles-and-access.md#audiences-client-presets-as-built-wp-b-2026-10-08).
+
 ## Promo lists, and the second theme
 
 A list is NOT its own entity: it is a row in `associations` discriminated by `type = 'list'`, so the

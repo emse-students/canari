@@ -2905,7 +2905,7 @@ Seven decisions, in the user's answers of 2026-10-07 (the last one asked for Mas
 6. **Only institutions, created by a global admin, may target everyone.** The server REFUSES an `everyone` rule on any other type - the UI hiding it is not the rule.
 7. **The star (space BDE) may set the audience of the associations of ITS campus, and only that**: the super-role "manage associations" includes the audience, bounded to the BDE's own campus; never another campus, never an institution.
 
-**WP-A (server) BUILT 2026-10-08**, as built in [profiles-and-access](profiles-and-access.md#audiences-policy-as-built-wp-a-2026-10-08); WP-B and the wiki D-section remain.
+**WP-A (server) BUILT 2026-10-08**, as built in [profiles-and-access](profiles-and-access.md#audiences-policy-as-built-wp-a-2026-10-08); **WP-B (client + creation bound) BUILT 2026-10-08**, as built in [profiles-and-access](profiles-and-access.md#audiences-client-presets-as-built-wp-b-2026-10-08); owed: one look at the Audience tab and the prompt on a signed-in estate (not rendered by the agent), and the user's call on letting a BDE star READ `GET /api/associations/:id/audiences`.
 
 Work packages: (a) server: default rule at creation, refusal of `everyone` outside institutions, the BDE's campus bound on writes, with tests; (b) client: the three presets on the association page for a manager and a BDE, the profile prompt for a campus-less manager; (c) wiki: [profiles-and-access](profiles-and-access.md) D-section. Done when a manager of a fresh association sees it reach its campus with no setup, can narrow or widen it to the presets, and a hand-written `everyone` is refused by the server for a non-institution.
 

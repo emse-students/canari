@@ -41,10 +41,12 @@
     Share2,
     Handshake,
     Inbox,
+    Globe,
   } from '@lucide/svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
   import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
+  import EditAudienceTab from '$lib/components/associations/edit/EditAudienceTab.svelte';
   import EditDangerTab from '$lib/components/associations/edit/EditDangerTab.svelte';
   import EditBoutiqueTab from '$lib/components/associations/edit/EditBoutiqueTab.svelte';
   import EditAchatsTab from '$lib/components/associations/edit/EditAchatsTab.svelte';
@@ -118,6 +120,7 @@
     | 'formulaires'
     | 'partnerships'
     | 'republications'
+    | 'audience'
     | 'danger';
 
   const EDIT_SECTIONS: EditSection[] = [
@@ -131,6 +134,7 @@
     'formulaires',
     'partnerships',
     'republications',
+    'audience',
     'danger',
   ];
 
@@ -220,6 +224,14 @@
    * `isSuperAdminUser` already reads.
    */
   let canDeleteAssociation = $derived(isGlobalAdminUser || isSuperAdminUser);
+  /**
+   * The audience tab (WP-B): the server admits a global admin, or a BDE star writing an association
+   * or a list of its own campus; an institution's audience is a global admin's alone
+   * (`AUDIENCE_INSTITUTION_ADMIN_ONLY`). A member of the association is never enough.
+   */
+  let canEditAudience = $derived(
+    isGlobalAdminUser || (isSuperAdminUser && asso?.type !== 'institution')
+  );
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -576,6 +588,19 @@
               {m.asso_edit_tab_proposals()}
             </button>
           {/if}
+          {#if canEditAudience}
+            <button
+              type="button"
+              onclick={() => (editSection = 'audience')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'audience'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <Globe size={17} />
+              {m.asso_edit_tab_audience()}
+            </button>
+          {/if}
           {#if canArchiveAssociation}
             <button
               type="button"
@@ -864,6 +889,10 @@
 
       {#if editSection === 'republications' && canHandleProposals && asso}
         <EditProposalsTab {asso} />
+      {/if}
+
+      {#if editSection === 'audience' && canEditAudience}
+        <EditAudienceTab {asso} isGlobalAdmin={isGlobalAdminUser} />
       {/if}
 
       {#if editSection === 'danger' && canArchiveAssociation}
