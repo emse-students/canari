@@ -6,7 +6,11 @@ import { RedisService } from '../common/redis/redis.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
 import { AssociationAudience } from './association-audience.entity';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
-import { assertAudienceAllowedForType, assertBdeMayWriteAudience } from './audience-policy';
+import {
+  assertAudienceAllowedForType,
+  assertBdeMayReadAudience,
+  assertBdeMayWriteAudience,
+} from './audience-policy';
 import { BDE_GOVERNED_CAMPUSES_SQL } from './bde';
 import type { AudienceRuleDto } from './dto/space.dto';
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
@@ -181,6 +185,23 @@ export class SpacesService {
       }
     });
     await this.invalidateFeedCache();
+  }
+
+  /**
+   * The audience rules of an association, for a global admin or - bounded to the campuses it
+   * governs, never an institution - a BDE star (user, 2026-10-08).
+   */
+  async getAudiencesFor(
+    associationId: string,
+    actor: { userId: string; isGlobalAdmin: boolean }
+  ): Promise<AudienceRule[]> {
+    const association = await this.requireAssociation(associationId);
+    const current = await this.getAudiences(associationId);
+    if (!actor.isGlobalAdmin) {
+      const governed = await this.bdeGovernedCampuses(actor.userId);
+      assertBdeMayReadAudience(association.type, governed, current);
+    }
+    return current;
   }
 
   /** The audience rules of an association. */
