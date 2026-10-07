@@ -792,6 +792,19 @@ mod tests {
         assert_eq!(end_of(WsError::AlreadyClosed), SocketEnd::Fault);
     }
 
+    /// `end_of` boxes THIS crate's `tungstenite` type, so it passes whatever axum resolves - it
+    /// was green while production read every goodbye as unreadable (2026-10-07: #944 split the
+    /// direct dependency from axum's). The only thing that sees the split is the lockfile.
+    #[test]
+    fn one_tokio_tungstenite_in_the_lock() {
+        let lock = include_str!("../Cargo.lock");
+        let n = lock.matches("name = \"tokio-tungstenite\"").count();
+        assert_eq!(
+            n, 1,
+            "Cargo.lock holds {n} tokio-tungstenite versions: the direct dependency no longer              unifies with axum's and classify_socket_error cannot read a socket error"
+        );
+    }
+
     #[test]
     fn an_error_that_is_not_a_tungstenite_error_accuses_rather_than_guesses() {
         // The shape a future axum bump would produce if it stopped unifying with this crate's

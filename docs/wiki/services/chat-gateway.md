@@ -111,7 +111,7 @@ in `handlers.rs` returns one of three outcomes:
   appearing it will be the only ERROR line on the box, which is the point.
 - **`Unreadable`** - the error under axum's is not a `tungstenite::Error` at all. This can only
   happen if a future `axum` bump stops unifying with this crate's direct `tokio-tungstenite`
-  dependency (both resolve to `0.29` today, one entry each in `Cargo.lock`), at which point every
+  dependency (both resolve to `0.29` today, one entry each in `Cargo.lock`, asserted by a test), at which point every
   goodbye silently becomes a fault again. It is therefore **a signal, never a path**: logged at
   ERROR, naming that cause in the line itself.
 
@@ -121,6 +121,19 @@ All four cases are pinned in `handlers.rs`'s test module, the `Fault` ones as co
 [testing-methodology](../testing-methodology.md) states after a no-op shipped with a CHANGELOG entry
 promising a reduction that never happened): `WebSocket Error from ...` should fall from 32 per week
 to 0 on production, with the same traffic reappearing as the new `info!` line.
+
+### `Unreadable` fired in production, 2026-10-07 - the dependency had split
+
+**MEASURED**: after `v1.1.2` the container log (started 2026-10-07 23:16, the whole window it
+holds, ~1 h) held ONE `COULD NOT BE CLASSIFIED` line, from a `tauri-` device 1 s after connecting,
+carrying `WebSocket protocol error: Connection reset without closing handshake` - an ordinary
+goodbye, so the classifier was blind, not the client at fault. Cause: #944 bumped the direct
+`tokio-tungstenite` to 0.30 while axum 0.8 resolves 0.29, so `Cargo.lock` held two and the
+downcast never matched. The signal worked as designed; the guard against its cause did not exist.
+**Fix at the source**: the direct dependency is back on 0.29, Dependabot ignores the crate (it
+moves with axum, by hand), and `one_tokio_tungstenite_in_the_lock` fails the build on a split -
+the existing unit tests could not, since they box this crate's own type. Expected afterwards: 0
+`COULD NOT BE CLASSIFIED`, and the goodbye at `info!`.
 
 ### The after-count, 2026-09-22 - and the window the prediction could not have
 

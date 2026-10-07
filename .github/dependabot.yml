@@ -180,6 +180,12 @@ updates:
       - "dependencies"
       - "rust"
     open-pull-requests-limit: 10
+    # tokio-tungstenite is a DIRECT dependency of chat-gateway only so the error under axum's can
+    # be downcast; it MUST stay on the version axum itself resolves, or the classifier reads
+    # nothing. #944 bumped it alone to 0.30 while axum stayed on 0.29 and every client goodbye
+    # became an ERROR line again (prod, 2026-10-07). It moves with axum, by hand.
+    ignore:
+      - dependency-name: "tokio-tungstenite"
     # ORDER MATTERS: first matching group wins, so the specific ones come before the catch-alls.
     groups:
       # The same rule as `nestjs` above, on the crates where getting it wrong is an ENCRYPTION
