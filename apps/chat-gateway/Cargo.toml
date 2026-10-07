@@ -6,10 +6,11 @@ edition = "2024"
 [dependencies]
 axum = { version = "0.8.8", features = ["ws", "macros"] }
 # DIRECT ONLY SO THE ERROR UNDER AXUM'S CAN BE READ AS A TYPE, and the version must keep
-# unifying with axum's own (both resolve to 0.29 today, one entry each in Cargo.lock). If a
-# future axum bump splits them, the downcast in `classify_socket_error` stops matching and
-# says so itself at ERROR - see `SocketEnd::Unreadable`.
-tokio-tungstenite = "0.30"
+# unifying with axum's own (both resolve to 0.29 today, one entry each in Cargo.lock). A split
+# makes the downcast in `classify_socket_error` read nothing (it happened 2026-10-07, #944) -
+# `one_tokio_tungstenite_in_the_lock` in handlers.rs fails the build on it, and Dependabot
+# ignores this crate: it moves with axum, by hand.
+tokio-tungstenite = "0.29"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
