@@ -204,3 +204,17 @@ new row, and `kindWording.test.ts` fails if an institution sentence says associa
 The document title cannot come from the path (`/associations/<slug>/edit` does not say the type), so
 the page hands it to `SeoHead` through `lib/seo/pageTitle.svelte.ts`, which stays the only writer of
 `<title>`. Lists already redirected to `/lists`.
+
+### The tab title on a DIRECT load, and three sentences that still said "association" (2026-10-07, dev read)
+
+Direct load of an institution's edit page read "Associations" in `document.title` and `og:title`:
+`SeoHead` merges the server-injected head LAST, and the server resolved the path to the generic
+`/associations` title, so it beat the page's own `pageTitle` hand-off (in-app navigation was right,
+nothing was injected). `serverSeo.ts` now has an enricher for `/associations/<slug>/edit`
+(`ASSOCIATION_EDIT_PATH`, exported from `resolve.ts`): it reads `type` from the public association
+projection and returns `wordingFor(type).editTitle()` - the SAME row the page reads, so the two
+cannot disagree. The edit path is `noindex` in `resolveSeoForPath` (it was crawlable under the
+generic title). An unknown slug keeps the path's association wording; no kind is ever guessed.
+`kindWording.ts` also carries `manageButton`, `descriptionPlaceholder` and `boutiqueSubtitle` now
+(the public-page button, the Profil placeholder, the Boutique intro). Tests: `serverSeo.test.ts`,
+`kindWording.test.ts`.

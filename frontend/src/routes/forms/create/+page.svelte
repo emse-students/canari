@@ -14,10 +14,12 @@
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
   import {
     canAssociationReceiveFormPayments,
+    getAssociation,
     listMyAssociations,
     type Association,
     type MembershipTier,
   } from '$lib/associations/api';
+  import { withRequestedAssociation } from '$lib/associations/requestedAssociation';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
   import FormPaymentSection from '$lib/components/forms/FormPaymentSection.svelte';
@@ -121,7 +123,11 @@
       opensAt = draft.scheduledAt;
     }
     try {
-      associations = await listMyAssociations();
+      associations = await withRequestedAssociation(
+        await listMyAssociations(),
+        associationId,
+        getAssociation
+      );
     } catch {
       // Ignore - the user may belong to none, which simply means personal forms only.
     }

@@ -1,7 +1,11 @@
 import { m } from '$lib/paraglide/messages';
+import { wordingFor } from '$lib/associations/kindWording';
 import { APP_PLACES } from '$lib/navigation/places';
 import { SITE } from '$lib/seo/site';
 import type { SeoMeta } from '$lib/seo/types';
+
+/** `/associations/<slug>/edit` - the edit page shared by associations, lists and institutions. */
+export const ASSOCIATION_EDIT_PATH = /^\/associations\/([^/]+)\/edit$/;
 
 /**
  * Every page this app does not offer to a search engine, by path prefix.
@@ -198,6 +202,13 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
     // `/associations/new` never reaches here: `PAGE_TITLES` above is consulted first and owns it.
     // It used to be excluded by a `!== 'new'` on this line, which was a second statement that the
     // creation page is not a slug.
+    // The edit page is an app page, and its KIND-specific name (association, list, institution) is
+    // data the path does not carry: the page hands it over (`pageTitle`) and the server resolves
+    // it (`associationEditSeo`), both from `wordingFor(...).editTitle()`. The association wording
+    // is only the answer for a path nobody has resolved yet.
+    if (ASSOCIATION_EDIT_PATH.test(path)) {
+      return appPageSeo(path, wordingFor('association').editTitle());
+    }
     const slugMatch = path.match(/^\/associations\/([^/]+)$/);
     if (slugMatch) {
       const slug = decodeURIComponent(slugMatch[1]);

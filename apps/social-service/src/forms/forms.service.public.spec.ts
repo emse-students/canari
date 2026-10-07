@@ -67,6 +67,20 @@ describe('FormsService - public forms', () => {
     return { service, manager, saved, formRepo, submissionRepo, pricingFacts };
   }
 
+  describe('get', () => {
+    it('answers 404 for a form that does not exist, never an empty 200', async () => {
+      const { service } = makeService({ form: null });
+      await expect(service.get('gone')).rejects.toThrow(NotFoundException);
+    });
+
+    it('returns the form with its submission count', async () => {
+      const { service } = makeService();
+      const form = await service.get('f1');
+      expect(form.id).toBe('f1');
+      expect(form.submissionCount).toBe(0);
+    });
+  });
+
   describe('getPublic', () => {
     it('serves the questions and nothing about who made the form', async () => {
       const { service } = makeService();

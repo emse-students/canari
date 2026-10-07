@@ -16,7 +16,8 @@ import {
 } from '$lib/seo/jsonLd';
 import { m } from '$lib/paraglide/messages';
 import { CAMPUSES } from '$lib/profile/miconnectProfile';
-import { mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
+import { wordingFor, type AssociationKind } from '$lib/associations/kindWording';
+import { ASSOCIATION_EDIT_PATH, mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
 import { isStaticPageRoute, normalizePath } from '$lib/seo/staticRoutes';
 import { SITE, siteOrigin } from '$lib/seo/site';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
@@ -263,6 +264,28 @@ async function associationSeo(slug: string, path: string): Promise<Partial<SeoMe
   };
 }
 
+/**
+ * The edit page's title, by the KIND of what it edits.
+ *
+ * The injected head wins over the page's own `pageTitle` hand-off (see `SeoHead`), so on a direct
+ * load the generic title the path implies used to beat "Gestion de l'institution". The kind is
+ * data only the service has, and the sentence comes from the same `wordingFor` row the page reads,
+ * so the two can no longer disagree. An unknown slug keeps the path's own title.
+ */
+async function associationEditSeo(slug: string): Promise<Partial<SeoMeta> | null> {
+  const asso = await fetchJson<{ type?: AssociationKind }>(
+    `${SOCIAL_URL()}/api/public/associations/slug/${encodeURIComponent(slug)}`
+  );
+  if (!asso?.type || !(asso.type in KIND_TYPES)) return null;
+  return { title: wordingFor(asso.type).editTitle() };
+}
+
+const KIND_TYPES: Record<AssociationKind, true> = {
+  association: true,
+  list: true,
+  institution: true,
+};
+
 interface ProfilePayload {
   displayName?: string | null;
   promo?: number | null;
@@ -352,6 +375,7 @@ const ENRICHERS: [RegExp, (id: string, path: string) => Promise<Partial<SeoMeta>
   [/^\/posts\/([^/]+)\/?$/, postSeo],
   [/^\/forms\/([^/]+)\/?$/, formSeo],
   [/^\/associations\/([^/]+)\/?$/, associationSeo],
+  [ASSOCIATION_EDIT_PATH, associationEditSeo],
   [/^\/profile\/([^/]+)\/?$/, profileSeo],
   [/^\/c\/join\/([^/]+)\/?$/, communityInviteSeo],
   [/^\/g\/join\/([^/]+)\/?$/, groupInviteSeo],

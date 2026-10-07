@@ -31,6 +31,7 @@
   import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { associationAccent } from '$lib/associations/accent';
   import { m } from '$lib/paraglide/messages';
+  import { wordingFor } from '$lib/associations/kindWording';
 
   interface Props {
     asso: Association;
@@ -285,7 +286,7 @@
         {m.asso_boutique_title()}
       </h2>
       <p class="text-text-muted mt-1 text-sm">
-        {m.asso_boutique_subtitle()}
+        {wordingFor(asso.type).boutiqueSubtitle()}
       </p>
     </div>
     <button
