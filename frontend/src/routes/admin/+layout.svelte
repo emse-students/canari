@@ -107,11 +107,6 @@
     const communityItems: NavItem[] = [];
     if (isGlobalAdminUser) {
       communityItems.push({
-        href: '/admin/associations',
-        label: m.admin_associations_label(),
-        icon: Building2,
-      });
-      communityItems.push({
         href: '/admin/spaces',
         label: m.admin_spaces_label(),
         icon: Layers,

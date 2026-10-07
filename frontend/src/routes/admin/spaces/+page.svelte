@@ -27,7 +27,8 @@
     type Coverage,
   } from '$lib/associations/audienceRules';
   import { CAMPUSES, FORMATIONS, campusLabel, formationLabel } from '$lib/profile/miconnectProfile';
-  import { Check, Layers, Minus, Star } from '@lucide/svelte';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import { Check, ChevronDown, Layers, Minus, Star } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   let loading = $state(true);
@@ -39,9 +40,24 @@
   /** The cell being persisted, so a second click cannot race the first. */
   let busy = $state<string | null>(null);
 
-  const sortedAssociations = $derived(
-    [...associations].sort((a, b) => a.name.localeCompare(b.name))
-  );
+  /** One collapsible grid per kind of entity, each sorted by name; `type` is the API discriminator. */
+  const sections = $derived.by(() => {
+    const sorted = [...associations].sort((a, b) => a.name.localeCompare(b.name));
+    const of = (type: Association['type']) => sorted.filter((a) => a.type === type);
+    return [
+      {
+        type: 'association',
+        title: m.admin_spaces_section_associations(),
+        rows: of('association'),
+      },
+      { type: 'list', title: m.admin_spaces_section_lists(), rows: of('list') },
+      {
+        type: 'institution',
+        title: m.admin_spaces_section_institutions(),
+        rows: of('institution'),
+      },
+    ];
+  });
 
   /** The pairs an association reaches, read back from its stored rules. */
   function reachOf(association: Association): Set<Cell> {
@@ -175,131 +191,163 @@
 
     <p class="text-text-muted text-xs">{m.admin_spaces_legend()}</p>
 
-    <div class="border-cn-border overflow-x-auto rounded-2xl border bg-(--cn-surface)">
-      <table class="w-full border-collapse text-sm">
-        <thead>
-          <tr class="border-cn-border border-b">
-            <th rowspan="2" class="text-text-muted px-4 py-3 text-left text-xs font-semibold">
-              {m.admin_spaces_col_assoc()}
-            </th>
-            <th rowspan="2" class="text-text-muted px-2 py-3 text-center text-xs font-semibold">
-              {m.admin_spaces_col_all()}
-            </th>
-            {#each CAMPUSES as campus (campus)}
-              <th
-                colspan={FORMATIONS.length + 1}
-                class="text-text-main border-cn-border border-l px-2 pt-3 pb-1 text-center text-xs font-bold"
-              >
-                {campusLabel(campus)}
+    {#snippet grid(title: string, rows: Association[])}
+      <div class="border-cn-border overflow-x-auto rounded-2xl border bg-(--cn-surface)">
+        <table class="w-full border-collapse text-sm">
+          <thead>
+            <tr class="border-cn-border border-b">
+              <th rowspan="2" class="text-text-muted px-4 py-3 text-left text-xs font-semibold">
+                {title}
               </th>
-            {/each}
-          </tr>
-          <tr class="border-cn-border border-b">
-            {#each CAMPUSES as campus (campus)}
-              <th
-                class="text-text-muted border-cn-border border-l px-1.5 pb-3 text-center text-xs font-semibold"
-              >
-                {m.admin_spaces_col_campus()}
+              <th rowspan="2" class="text-text-muted px-2 py-3 text-center text-xs font-semibold">
+                {m.admin_spaces_col_all()}
               </th>
-              {#each FORMATIONS as formation (formation)}
-                <th class="text-text-muted px-1.5 pb-3 text-center text-xs font-semibold">
-                  {formationLabel(formation)}
+              {#each CAMPUSES as campus (campus)}
+                <th
+                  colspan={FORMATIONS.length + 1}
+                  class="text-text-main border-cn-border border-l px-2 pt-3 pb-1 text-center text-xs font-bold"
+                >
+                  {campusLabel(campus)}
                 </th>
               {/each}
-            {/each}
-          </tr>
-        </thead>
-        <tbody class="divide-cn-border/70 divide-y">
-          {#each sortedAssociations as association (association.id)}
-            {@const reached = reachOf(association)}
-            {@const everyone = coverage(ALL_CELLS, reached)}
-            <tr>
-              <th class="text-text-main min-w-40 px-4 py-2 text-left text-sm font-medium">
-                {association.name}
-              </th>
-              <td class="px-1.5 py-2 text-center">
-                <button
-                  type="button"
-                  disabled={busy === `${association.id}:all`}
-                  aria-pressed={everyone === 'all'}
-                  aria-label={m.admin_spaces_everyone_aria({ association: association.name })}
-                  onclick={() => toggleReachGroup(association, ALL_CELLS, `${association.id}:all`)}
-                  class="{cellButton} {boxClass(everyone)}"
-                >
-                  {#if everyone === 'some'}<Minus size={14} />{:else}<Check size={14} />{/if}
-                </button>
-              </td>
+            </tr>
+            <tr class="border-cn-border border-b">
               {#each CAMPUSES as campus (campus)}
-                {@const group = campusCells(campus)}
-                {@const state = coverage(group, reached)}
-                <td class="border-cn-border border-l px-1.5 py-2 text-center">
-                  <button
-                    type="button"
-                    disabled={busy === `${association.id}:${campus}`}
-                    aria-pressed={state === 'all'}
-                    aria-label={m.admin_spaces_campus_aria({
-                      association: association.name,
-                      campus: campusLabel(campus),
-                    })}
-                    onclick={() =>
-                      toggleReachGroup(association, group, `${association.id}:${campus}`)}
-                    class="{cellButton} {boxClass(state)}"
-                  >
-                    {#if state === 'some'}<Minus size={14} />{:else}<Check size={14} />{/if}
-                  </button>
-                </td>
+                <th
+                  class="text-text-muted border-cn-border border-l px-1.5 pb-3 text-center text-xs font-semibold"
+                >
+                  {m.admin_spaces_col_campus()}
+                </th>
                 {#each FORMATIONS as formation (formation)}
-                  {@const cell = cellOf(formation, campus)}
-                  {@const space = spaceOf(cell)}
-                  {@const cellKey = `${association.id}:${cell}`}
-                  {@const label = `${formationLabel(formation)} · ${campusLabel(campus)}`}
-                  {@const isBde = space?.bde?.id === association.id}
-                  <td class="px-1.5 py-2 text-center">
-                    <div class="group relative inline-flex">
-                      <!-- A BDE reaches the pair it governs: the box stays ticked until the star goes. -->
-                      <button
-                        type="button"
-                        disabled={busy === cellKey}
-                        aria-pressed={reached.has(cell)}
-                        aria-disabled={isBde}
-                        aria-label={m.admin_spaces_reach_aria({
-                          association: association.name,
-                          space: label,
-                        })}
-                        onclick={() => {
-                          if (!isBde) void toggleReachGroup(association, [cell], cellKey);
-                        }}
-                        class="{cellButton} {isBde ? 'cursor-default' : ''} {boxClass(
-                          reached.has(cell) ? 'all' : 'none'
-                        )}"
-                      >
-                        <Check size={14} />
-                      </button>
-                      {#if association.type === 'association' && space}
-                        <button
-                          type="button"
-                          disabled={busy === cellKey}
-                          aria-pressed={isBde}
-                          aria-label={m.admin_spaces_bde_aria({
-                            association: association.name,
-                            space: label,
-                          })}
-                          onclick={() => toggleBde(space, association)}
-                          class="absolute -top-1.5 -right-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border transition-opacity disabled:opacity-50 {isBde
-                            ? 'border-cn-yellow bg-cn-yellow text-cn-ink'
-                            : 'border-cn-border text-text-muted bg-(--cn-surface) opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}"
-                        >
-                          <Star size={10} />
-                        </button>
-                      {/if}
-                    </div>
-                  </td>
+                  <th class="text-text-muted px-1.5 pb-3 text-center text-xs font-semibold">
+                    {formationLabel(formation)}
+                  </th>
                 {/each}
               {/each}
             </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody class="divide-cn-border/70 divide-y">
+            {#each rows as association (association.id)}
+              {@const reached = reachOf(association)}
+              {@const everyone = coverage(ALL_CELLS, reached)}
+              <tr>
+                <th class="text-text-main min-w-48 px-4 py-2 text-left text-sm font-medium">
+                  <span class="flex items-center gap-2.5">
+                    <AssociationAvatar
+                      name={association.name}
+                      logoUrl={association.logoUrl}
+                      size="sm"
+                    />
+                    <span>{association.name}</span>
+                  </span>
+                </th>
+                <td class="px-1.5 py-2 text-center">
+                  <button
+                    type="button"
+                    disabled={busy === `${association.id}:all`}
+                    aria-pressed={everyone === 'all'}
+                    aria-label={m.admin_spaces_everyone_aria({ association: association.name })}
+                    onclick={() =>
+                      toggleReachGroup(association, ALL_CELLS, `${association.id}:all`)}
+                    class="{cellButton} {boxClass(everyone)}"
+                  >
+                    {#if everyone === 'some'}<Minus size={14} />{:else}<Check size={14} />{/if}
+                  </button>
+                </td>
+                {#each CAMPUSES as campus (campus)}
+                  {@const group = campusCells(campus)}
+                  {@const state = coverage(group, reached)}
+                  <td class="border-cn-border border-l px-1.5 py-2 text-center">
+                    <button
+                      type="button"
+                      disabled={busy === `${association.id}:${campus}`}
+                      aria-pressed={state === 'all'}
+                      aria-label={m.admin_spaces_campus_aria({
+                        association: association.name,
+                        campus: campusLabel(campus),
+                      })}
+                      onclick={() =>
+                        toggleReachGroup(association, group, `${association.id}:${campus}`)}
+                      class="{cellButton} {boxClass(state)}"
+                    >
+                      {#if state === 'some'}<Minus size={14} />{:else}<Check size={14} />{/if}
+                    </button>
+                  </td>
+                  {#each FORMATIONS as formation (formation)}
+                    {@const cell = cellOf(formation, campus)}
+                    {@const space = spaceOf(cell)}
+                    {@const cellKey = `${association.id}:${cell}`}
+                    {@const label = `${formationLabel(formation)} · ${campusLabel(campus)}`}
+                    {@const isBde = space?.bde?.id === association.id}
+                    <td class="px-1.5 py-2 text-center">
+                      <div class="group relative inline-flex">
+                        <!-- A BDE reaches the pair it governs: the box stays ticked until the star goes. -->
+                        <button
+                          type="button"
+                          disabled={busy === cellKey}
+                          aria-pressed={reached.has(cell)}
+                          aria-disabled={isBde}
+                          aria-label={m.admin_spaces_reach_aria({
+                            association: association.name,
+                            space: label,
+                          })}
+                          onclick={() => {
+                            if (!isBde) void toggleReachGroup(association, [cell], cellKey);
+                          }}
+                          class="{cellButton} {isBde ? 'cursor-default' : ''} {boxClass(
+                            reached.has(cell) ? 'all' : 'none'
+                          )}"
+                        >
+                          <Check size={14} />
+                        </button>
+                        {#if association.type === 'association' && space}
+                          <button
+                            type="button"
+                            disabled={busy === cellKey}
+                            aria-pressed={isBde}
+                            aria-label={m.admin_spaces_bde_aria({
+                              association: association.name,
+                              space: label,
+                            })}
+                            onclick={() => toggleBde(space, association)}
+                            class="absolute -top-1.5 -right-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border transition-opacity disabled:opacity-50 {isBde
+                              ? 'border-cn-yellow bg-cn-yellow text-cn-ink'
+                              : 'border-cn-border text-text-muted bg-(--cn-surface) opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}"
+                          >
+                            <Star size={10} />
+                          </button>
+                        {/if}
+                      </div>
+                    </td>
+                  {/each}
+                {/each}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/snippet}
+
+    {#each sections as section (section.type)}
+      <details open class="group/section space-y-3" data-section={section.type}>
+        <summary
+          class="text-text-main flex cursor-pointer list-none items-center gap-2 text-base font-bold select-none"
+        >
+          <ChevronDown
+            size={18}
+            class="text-text-muted transition-transform group-not-open/section:-rotate-90"
+          />
+          {section.title}
+          <span class="bg-cn-yellow/20 text-cn-dark rounded-full px-2 py-0.5 text-xs font-semibold">
+            {section.rows.length}
+          </span>
+        </summary>
+        {#if section.rows.length === 0}
+          <p class="text-text-muted text-sm">{m.admin_spaces_section_empty()}</p>
+        {:else}
+          {@render grid(section.title, section.rows)}
+        {/if}
+      </details>
+    {/each}
   {/if}
 </div>
