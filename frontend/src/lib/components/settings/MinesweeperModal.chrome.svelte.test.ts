@@ -8,13 +8,15 @@ import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vites
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
+const startChallenge = vi.hoisted(() => vi.fn());
+
 vi.mock('$lib/minesweeper/api', () => ({
   fetchMinesweeperLeaderboard: vi.fn().mockResolvedValue([]),
   fetchMinesweeperBans: vi.fn().mockResolvedValue([]),
   removeMinesweeperScore: vi.fn(),
   banMinesweeperUser: vi.fn(),
   unbanMinesweeperUser: vi.fn(),
-  startMinesweeperChallenge: vi.fn(),
+  startMinesweeperChallenge: startChallenge,
   submitMinesweeperChallenge: vi.fn(),
   formatDurationMs: (ms: number) => `${ms}ms`,
   MinesweeperBannedError: class extends Error {},
@@ -31,6 +33,7 @@ const onClose = vi.fn();
 beforeEach(() => {
   localStorage.clear();
   onClose.mockReset();
+  startChallenge.mockReset().mockRejectedValue(new Error('no server in this test'));
   vi.spyOn(console, 'debug').mockImplementation(() => {});
 });
 afterEach(() => {
@@ -88,5 +91,29 @@ describe('MinesweeperModal - full-screen chrome', () => {
     await open();
     byLabel('Fermer')!.click();
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('plays unranked on request: remembered, and the first dig asks for no challenge', async () => {
+    await open();
+    const toggle = byText('Classé')!;
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    toggle.click();
+    flushSync();
+    expect(localStorage.getItem('canari.minesweeper.unranked')).toBe('1');
+    expect(byText('Libre')!.getAttribute('aria-pressed')).toBe('true');
+    document.querySelector<HTMLButtonElement>('[data-cell="0"]')!.click();
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      flushSync();
+    }
+    expect(startChallenge).not.toHaveBeenCalled();
+    // A started game keeps its mode.
+    expect(byText('Libre')!.disabled).toBe(true);
+  });
+
+  it('asks for a challenge when ranked, which is the default', async () => {
+    await open();
+    document.querySelector<HTMLButtonElement>('[data-cell="0"]')!.click();
+    await vi.waitFor(() => expect(startChallenge).toHaveBeenCalledOnce());
   });
 });

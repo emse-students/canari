@@ -2357,6 +2357,7 @@
   "minesweeper_mode_dig": "Dig",
   "minesweeper_mode_flag": "Flag",
   "minesweeper_mode_hint": "What a short press does; a long press does the other",
+  "minesweeper_unranked_hint": "Play without being ranked. Choose it before the first dig: a started game keeps its mode.",
   "minesweeper_time": "{time}",
   "minesweeper_leaderboard": "Leaderboard",
   "minesweeper_ranked": "Ranked",

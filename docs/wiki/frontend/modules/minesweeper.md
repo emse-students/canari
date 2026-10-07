@@ -23,6 +23,7 @@ over the board:
 | --- | --- | --- |
 | Close, mines left, timer, restart | top left | the close is the only way out on iOS, which has no back gesture |
 | Leaderboard | top right | opens a SHEET over the board; the game keeps running under it |
+| Ranked / unranked | bottom, beside the mode | **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked`; locked once the first cell is dug, since a game's ranking is decided when its board is generated |
 | Mode (dig / flag) | bottom centre, thumb reach | what a SHORT press does; a long press does the other. Same stored setting as the old "flags first" |
 
 **No zoom buttons.** Pinch, wheel (proportional to the delta, so a trackpad pinch is smooth), and a

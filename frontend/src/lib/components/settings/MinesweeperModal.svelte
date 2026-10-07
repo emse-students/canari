@@ -106,19 +106,32 @@
   let pressRing = $state<{ x: number; y: number } | null>(null);
 
   const FLAG_PRIMARY_STORAGE_KEY = 'canari.minesweeper.flagPrimary';
-  /** Control-inversion setting: when true, short press/left click flags (dig on revealed cells) and long press/right click digs. */
-  let flagPrimary = $state(loadFlagPrimary());
+  const UNRANKED_STORAGE_KEY = 'canari.minesweeper.unranked';
 
-  function loadFlagPrimary(): boolean {
+  function loadFlag(key: string): boolean {
     if (typeof localStorage === 'undefined') return false;
-    return localStorage.getItem(FLAG_PRIMARY_STORAGE_KEY) === '1';
+    return localStorage.getItem(key) === '1';
   }
+
+  function saveFlag(key: string, value: boolean) {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(key, value ? '1' : '0');
+  }
+
+  /** Control-inversion setting: when true, short press/left click flags (dig on revealed cells) and long press/right click digs. */
+  let flagPrimary = $state(loadFlag(FLAG_PRIMARY_STORAGE_KEY));
+  /** Play-unranked setting: when true, the first dig asks the server for NO challenge, so nothing is submitted. */
+  let unranked = $state(loadFlag(UNRANKED_STORAGE_KEY));
 
   function toggleFlagPrimary() {
     flagPrimary = !flagPrimary;
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(FLAG_PRIMARY_STORAGE_KEY, flagPrimary ? '1' : '0');
-    }
+    saveFlag(FLAG_PRIMARY_STORAGE_KEY, flagPrimary);
+  }
+
+  /** Only offered before the first dig: a game's ranking is decided when its board is generated. */
+  function toggleUnranked() {
+    if (board.minesPlaced) return;
+    unranked = !unranked;
+    saveFlag(UNRANKED_STORAGE_KEY, unranked);
   }
 
   /** Recorded player actions for the current game; replayed server-side for ranked anti-cheat. */
@@ -389,6 +402,14 @@
    * dig and starts the local timer. Once mines are placed, this just digs directly.
    * Preserves the current pan/zoom (player may have framed a corner before the first dig).
    */
+  /** An unseeded, unranked board: no challenge, nothing to submit. */
+  function startCasualBoard() {
+    board = createBoard(DEFAULT_CONFIG, null);
+    challengeId = null;
+    rankedMode = false;
+    challengeRoundTripMs = undefined;
+  }
+
   async function digWithSeedIfNeeded(x: number, y: number) {
     if (board.minesPlaced) {
       dig(x, y);
@@ -398,29 +419,31 @@
     firstClickBusy = true;
     pendingCell = y * board.width + x;
     try {
-      console.debug('[minesweeper] first dig, attempting ranked challenge start');
-      try {
-        const t0 = performance.now();
-        const challenge = await startMinesweeperChallenge();
-        challengeRoundTripMs = Math.round(performance.now() - t0);
-        board = createBoard(DEFAULT_CONFIG, challenge.seed);
-        challengeId = challenge.challengeId;
-        rankedMode = true;
-        console.debug('[minesweeper] ranked challenge started', {
-          challengeId: challenge.challengeId,
-          challengeRoundTripMs,
-        });
-      } catch (err) {
-        console.debug('[minesweeper] ranked start failed, falling back to casual', err);
-        // A banned player is TOLD, not dropped into an unranked game without a word.
-        if (err instanceof MinesweeperBannedError) {
-          submitError = true;
-          submitMessage = m.minesweeper_banned();
+      console.debug('[minesweeper] first dig', { unranked });
+      if (unranked) {
+        // The player chose not to be ranked: no challenge is requested, so there is nothing to refuse.
+        startCasualBoard();
+      } else {
+        try {
+          const t0 = performance.now();
+          const challenge = await startMinesweeperChallenge();
+          challengeRoundTripMs = Math.round(performance.now() - t0);
+          board = createBoard(DEFAULT_CONFIG, challenge.seed);
+          challengeId = challenge.challengeId;
+          rankedMode = true;
+          console.debug('[minesweeper] ranked challenge started', {
+            challengeId: challenge.challengeId,
+            challengeRoundTripMs,
+          });
+        } catch (err) {
+          console.debug('[minesweeper] ranked start failed, falling back to casual', err);
+          // A banned player is TOLD, not dropped into an unranked game without a word.
+          if (err instanceof MinesweeperBannedError) {
+            submitError = true;
+            submitMessage = m.minesweeper_banned();
+          }
+          startCasualBoard();
         }
-        board = createBoard(DEFAULT_CONFIG, null);
-        challengeId = null;
-        rankedMode = false;
-        challengeRoundTripMs = undefined;
       }
       // Generation is synchronous and blocks the main thread; paint the pressed cell first
       // so the tap is acknowledged even when the challenge answered within the same frame.
@@ -1071,7 +1094,7 @@
     {/if}
 
     <!-- Mode button, within thumb reach: what a short press does (a long press does the other). -->
-    <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center p-3">
+    <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center gap-2 p-3">
       <button
         type="button"
         onclick={toggleFlagPrimary}
@@ -1088,6 +1111,19 @@
           <Pickaxe size={18} strokeWidth={2.5} />
           {m.minesweeper_mode_dig()}
         {/if}
+      </button>
+      <button
+        type="button"
+        onclick={toggleUnranked}
+        disabled={board.minesPlaced}
+        aria-pressed={unranked}
+        title={m.minesweeper_unranked_hint()}
+        class="pointer-events-auto flex h-12 items-center gap-2 rounded-full border px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked
+          ? 'bg-cn-yellow text-cn-ink border-transparent'
+          : 'bg-cn-surface/90 border-cn-border text-text-main'}"
+      >
+        <Trophy size={18} strokeWidth={2.5} class={unranked ? 'opacity-40' : ''} />
+        {unranked ? m.minesweeper_casual() : m.minesweeper_ranked()}
       </button>
     </div>
 

@@ -2382,6 +2382,7 @@
   "minesweeper_mode_dig": "Miner",
   "minesweeper_mode_flag": "Drapeau",
   "minesweeper_mode_hint": "Ce que fait un appui court ; l'appui long fait l'autre action",
+  "minesweeper_unranked_hint": "Joue sans classement. À choisir avant la première case : une partie commencée garde son mode.",
   "minesweeper_time": "{time}",
   "minesweeper_leaderboard": "Classement",
   "minesweeper_ranked": "Classé",
