@@ -14,6 +14,110 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-07
+
+### Changed - the admin "Espaces & audiences" page shows logos and splits into associations, lists and institutions
+
+The "Associations & BDE" admin page is gone (the BDE is the star on the Spaces grid), and an institution's edit page now says "Gestion de l'institution" ([admin](docs/wiki/frontend/modules/admin.md)).
+
+### Changed - the agenda subscription offers a reader only their own space
+
+No more "all campuses": a student follows one campus and one formation of theirs, staff their own campus whole. An event across campuses reaches both through a co-organiser partnership ([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Changed - backlog: the user's answers that fix the order of work
+
+Docs only ([backlog](docs/wiki/backlog.md)).
+
+### Changed - the app's URL scheme is derived from its identifier, spelled once
+
+Every deep link, the OIDC return URI and the Play URL now come from `MOBILE_APP_PACKAGE`, and a test fails on any other literal. This is the first step towards a side-by-side dev build ([dev-environment](docs/wiki/infrastructure/dev-environment.md#9-a-pre-release-cannot-measure-production-state---the-second-package-id-decided-2026-09-15)).
+
+### Changed - backlog: the audience rules decided for associations, lists and institutions
+
+Docs only ([backlog](docs/wiki/backlog.md)).
+
+### Added - the server owns the audience of associations and lists
+
+A new association or list reaches its creator's campus by default, the server refuses an "everyone" audience on anything but an institution, and a BDE may set the audience of its own campus only. See [profiles-and-access](docs/wiki/profiles-and-access.md#audiences-policy-as-built-wp-a-2026-10-08).
+
+### Fixed - the Rust audit no longer fails on libcrux-kem's two hybrid-KEM advisories
+
+They are not reachable under Canari's X25519 cipher suite and the fix is blocked upstream until `openmls_libcrux_crypto` takes `hpke-rs-libcrux` 0.8; recorded with their lift condition in the two `audit.toml` files ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
+### Changed - backlog: Stripe removal, the staff feed question and what the 413 measurement showed
+
+Docs only ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - a paid form or product could not start a payment
+
+social-service reaches core-service past nginx, and core still asked for nginx's `X-User-Id`: every checkout answered 400 `Missing X-User-Id header`. Both routes now check the internal secret and the caller sends it ([core-service](docs/wiki/services/core-service.md)).
+
+### Fixed - a comment under an association post notifies the member who published it
+
+It notified nobody, while a reaction on the same post did notify its author ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - a deploy migrates the database before the services restart
+
+Production logged `relation "spaces" does not exist` for a second during the 1.1.0 deploy: services started on the old schema. Only postgres comes up first now, then the migrations, then the rest ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - editing a message puts the caret at the end, and an incoming message no longer closes the edit
+
+The edit reset keyed on the conversation object instead of its id, so every arrival dropped the banner ([chat](docs/wiki/frontend/modules/chat.md#editing-a-message-happens-in-the-composer-not-in-the-bubble-2026-10-02)).
+
+### Fixed - the payments tab waits for its provider, and an institution is called an institution
+
+A deep link to the payments tab no longer draws the Stripe card on a Lydia platform (no provider default; loading and error states), and the institution edit page, title, danger tab, Lydia card and delete redirect all say institution ([payments](docs/wiki/frontend/modules/payments.md#a-provider-specific-card-waits-for-the-provider-2026-10-07), [associations](docs/wiki/frontend/modules/associations.md#an-institution-is-not-called-an-association-2026-10-07)).
+
+### Changed - forms: one "Paiement Canari" line replaces the Stripe card block
+
+The form builder shows Lydia as "Paiement Canari" plus the cash toggle, with no Stripe or wallet wording ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Fixed - institution tab title on a direct load, Lydia copy on forms, deleted form, admin form creation
+
+An institution's edit page keeps its title on a direct load, its public pages stop saying "asso", a Lydia estate no longer shows Stripe wallet or saved-card copy, a deleted form answers 404 with a localized page, a global admin who is not a member can create a form for the association in the URL, and a paid form's refusal reads like the shop's. See [associations](docs/wiki/frontend/modules/associations.md) and [forms](docs/wiki/frontend/modules/forms.md).
+
+### Added - an admin can create an institution from the UI, and the three directories share one header
+
+`/institutions` gets its "Créer une institution" button (global admin, with an audience choice and a publisher default for members) and the three directories share one header and one creation flow, see [associations](docs/wiki/frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07).
+
+### Fixed - no log line carries a secret any more, a Lydia refusal answers the same on every checkout, deleting an association deletes its forms
+
+social-service logged whole axios errors (the `x-internal-secret` header included) and core-service logged a new Lydia business's `api_token`; both now go through one renderer. The shop checkout answered 500 on a Lydia refusal where the paid form answered 400: both now answer 400 with Lydia's message, and the shop shows it. A deleted institution no longer leaves a "Personnel" form behind ([core-service](docs/wiki/services/core-service.md#how-a-failed-call-is-logged-and-how-a-provider-refusal-is-answered)).
+
+### Added - dev receives Lydia's homologation credentials
+
+Dev reads `DEV_LYDIA_PROVIDER_TOKEN` and `DEV_LYDIA_PROVIDER_PRIVATE_TOKEN` and pins `LYDIA_ENV=homologation`, so a Lydia onboarding can be tried there ([dev-environment](docs/wiki/infrastructure/dev-environment.md)).
+
+### Changed - Minesweeper fills the screen, with smoother controls
+
+The board takes the whole screen with only a floating leaderboard button; it is fitted larger, flicks and double-taps zoom, a long press shows a ring and vibrates, an unranked mode can be chosen before the first dig, and a pinch no longer swallows the next tap ([minesweeper](docs/wiki/frontend/modules/minesweeper.md#the-screen-is-the-board-2026-10-07)).
+
+### Changed - backlog: the nominative read access to the student feed, decided
+
+Docs only ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - the Lydia e-mail prompt opened under the form's "Pay" bar
+
+The prompt and the saved-card payment dialog were drawn inside the scrolling page, so the sticky
+total bar covered the e-mail field and the dialog scrolled away with the form; both now cover the
+window ([payments](docs/wiki/frontend/modules/payments.md#the-payer-types-an-e-mail-and-lydia-bounds-the-amount-2026-10-05)).
+
+### Fixed - the front-lens photo matches the preview, and the shutter ring empties after a cancelled take
+
+The saved photo and take were un-mirrored while the preview is mirrored, so the review looked inverted; they are now drawn as previewed. The ring is derived from the capture state, so no exit path leaves it full ([reels](docs/wiki/frontend/modules/reels.md#one-shutter-and-a-capture-that-is-the-preview-2026-10-05)).
+
+### Fixed - a CanaReels photo took 4 s to reach its review on Android
+
+`canvas.toBlob` waits a flat ~4 s on the Android WebView; the photo (and the editor export, image upload compression and square cropper) now encode through `toDataURL`, 69 ms measured on the Mi 9T. See [reels](docs/wiki/frontend/modules/reels.md).
+
+### Fixed - the Buy button on the shop page was invisible
+
+It used `bg-cn-accent`, a colour token that does not exist, so white text sat on the card: the product showed no way to pay. It now wears the yellow the association page already used.
+
+### Changed - release notes for 1.1.2
+
+The text the stores and the GitHub release show for 1.1.2 ([store notes](store/whats-new.txt)).
+
 ## [1.1.1] - 2026-10-07
 
 ### Fixed - EMSE staff can subscribe to the agenda of their own campus

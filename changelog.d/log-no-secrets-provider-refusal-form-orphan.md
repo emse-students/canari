@@ -1,3 +1,0 @@
-### Fixed - no log line carries a secret any more, a Lydia refusal answers the same on every checkout, deleting an association deletes its forms
-
-social-service logged whole axios errors (the `x-internal-secret` header included) and core-service logged a new Lydia business's `api_token`; both now go through one renderer. The shop checkout answered 500 on a Lydia refusal where the paid form answered 400: both now answer 400 with Lydia's message, and the shop shows it. A deleted institution no longer leaves a "Personnel" form behind ([core-service](docs/wiki/services/core-service.md#how-a-failed-call-is-logged-and-how-a-provider-refusal-is-answered)).
