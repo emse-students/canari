@@ -4,6 +4,7 @@ import {
   campusCells,
   cellOf,
   coverage,
+  reachChoiceToRules,
   reachedCells,
   toggleGroup,
   toRules,
@@ -60,5 +61,24 @@ describe('audience rules as pairs', () => {
     const some = new Set([cellOf('ICM', 'gardanne')]);
     expect(coverage(campus, some)).toBe('some');
     expect(coverage(campus, toggleGroup(some, campus))).toBe('all');
+  });
+});
+
+describe('reachChoiceToRules', () => {
+  it('maps each choice to its rule set', () => {
+    expect(reachChoiceToRules('none', '', '')).toEqual([]);
+    expect(reachChoiceToRules('school', '', '')).toEqual([{ formation: null, campus: null }]);
+    expect(reachChoiceToRules('campus', 'saint-etienne', '')).toEqual([
+      { formation: null, campus: 'saint-etienne' },
+    ]);
+    expect(reachChoiceToRules('cell', 'gardanne', 'ICM')).toEqual([
+      { formation: 'ICM', campus: 'gardanne' },
+    ]);
+  });
+
+  it('never widens a half-filled choice', () => {
+    expect(reachChoiceToRules('campus', '', '')).toEqual([]);
+    expect(reachChoiceToRules('cell', 'gardanne', '')).toEqual([]);
+    expect(reachChoiceToRules('cell', '', 'ICM')).toEqual([]);
   });
 });

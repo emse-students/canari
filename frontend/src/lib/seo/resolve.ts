@@ -127,6 +127,7 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/forms/create': () => m.form_create_heading(),
   '/forms/success': () => m.form_success_title(),
   '/institutions': () => m.inst_heading(),
+  '/institutions/new': () => m.inst_new_create_btn(),
   '/lists': () => m.list_heading(),
   '/lists/new': () => m.list_new_create_btn(),
   '/profile': () => m.seo_profile_title(),
