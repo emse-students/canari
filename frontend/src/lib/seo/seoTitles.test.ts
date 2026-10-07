@@ -59,7 +59,7 @@ describe('every static route resolves a title of its own', () => {
   });
 
   it('an admin page is told apart from the public page of the same name', () => {
-    expect(resolveSeoForPath('/admin/associations').title).not.toBe(
+    expect(resolveSeoForPath('/admin/spaces').title).not.toBe(
       resolveSeoForPath('/associations').title
     );
   });

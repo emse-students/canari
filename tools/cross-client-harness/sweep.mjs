@@ -82,7 +82,6 @@ const ROUTES = [
   '/legal/child-safety',
   '/admin',
   '/admin/agenda',
-  '/admin/associations',
   '/admin/carte',
   '/admin/cercle',
   '/admin/document-reviewers',

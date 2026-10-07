@@ -51,6 +51,25 @@ object larger than that is refused on the two names that cross the zone; the use
 request-body limit or a transform) and has NOT been read: Master owns that investigation, nobody
 else touches the zone. Done when a 1.2 MB and a 20 MB upload reach `media-service` on both names.
 
+**Measured further, 2026-10-07:** the limit is EXACTLY 1 MiB (1 048 576 bytes pass, 1 100 000 get the
+`413`), the zone is on the Free plan, and neither the old token nor the `D:\Bureau\jeton.txt` one can
+read the zone: both answer `Authentication error` on every rules phase and on page rules, so the
+cause is still unread. The dashboard (Security > Events, filter on status 413) names the rule.
+
+### P3 - Stripe leaves the product: remove it, or archive it as documentation (user, 2026-10-07)
+
+*"Stripe va disparaitre"* - the payments run on Lydia. Remove the Stripe code paths and secrets
+(`apps/core-service`), or keep only an archived note of what they did; the dependency PR for Stripe 23
+(#1495) is ignored meanwhile. Done when no Stripe package, secret or route remains, or the archive says so.
+
+### Open question - may EMSE/ME staff (no cursus) read the association posts of their campus?
+
+User, 2026-10-07: staff have no cursus by definition, and see no association post today; the agenda
+already lets them follow their whole campus. Showing them every association post of the campus may be
+SENSITIVE and the user has not decided. Candidates: personal posts of other staff plus institution
+posts of their campus only (the minimal reading), or the whole campus feed as for the agenda.
+Nothing to build until answered.
+
 ### P2 - the outbox retries a `413` for ever, as if it were transient
 
 `[OUTBOX] <id> transient failure (attempt 806): MediaUploadError: media upload failed (413 )`, once a
@@ -676,71 +695,9 @@ keeps the session alive across navigation, and it buys nothing on the route the 
 on.
 
 ---
-### P3 - THE PRE-RELEASE CHANNEL IS THE ENVIRONMENT SELECTOR, SO THE BUILD CARRYING A FIX CANNOT MEASURE IT (found 2026-09-15)
+### P3 - a second package id, so a pre-release can be measured against production (decided 2026-09-15)
 
-An APK embeds its frontend and its backend URL, so freezing the environment into the artifact is
-correct and normal. What is not free is the COUPLING: `-alpha.N` means the Play `internal` track AND
-`dev.canari-emse.fr`, one decision doing two jobs. It cost a measurement outright on 2026-09-15.
-
-`v0.18.3-alpha.1` was cut to measure the cold-start fix on the Pixel 6a, which is the only device
-holding an `mls.bin` of production size (8 131 838 bytes - the whole reason the block was 2 731 ms).
-The alpha installed over the production app, keeping its data, and then **could not be measured at
-all**: `coldstart.mjs` reported `START=true PROMPT=false`. The instrument brackets `am start` against
-`BiometricService/handleAuthenticate`, and **that prompt only exists for a session already
-established** - on dev this account has none, so the app stops at the login screen and the bracket
-has no second end. The build carrying the fix is structurally unable to reproduce the condition the
-fix was written for.
-
-Three costs, two of them paid that day:
-
-- **A pre-release cannot be tested or measured against production data**, which is where every
-  device-verification row that depends on real state lives.
-- **Installing an alpha takes the tester's production app away** for the duration - there is one
-  package id, so the two cannot coexist.
-- **The artefact that ships to production is not the artefact that was tested.** Gate 4 reads "dev
-  has already served it", and what it actually asserts is that the same COMMIT served dev, never the
-  same BINARY: the stable is built again with a different backend URL frozen in.
-
-**DECIDED BY THE USER, 2026-09-15: a second package id**, `fr.emse.canari.dev` beside
-`fr.emse.canari`, installable side by side - the classic answer, and the one that would have let the
-2026-09-15 measurement run on the production app without touching it. *"Ca a l'air bien, mais je ne
-sais pas du tout comment mettre en place. Ajoute au backlog, on fera ca a l'occasion."* The runtime
-switch was considered and is NOT the shape: it is a foot-gun in a production build unless gated to a
-debug artefact, which reintroduces the two artefacts it was meant to avoid.
-
-**What it takes, measured against the tree rather than guessed.** The id is not one field: 38 sites
-across 16 files name `fr.emse.canari`, and the reason is that **the package id is ALSO the custom URL
-scheme** - `fr.emse.canari://callback` is the OIDC redirect and `fr.emse.canari://chat/{groupId}` the
-deep link (`hooks.client.ts`). So the work is, in order:
-
-1. **Derive the scheme from the identifier instead of spelling it.** One exported constant, read by
-   `hooks.client.ts`, `stores/auth.ts`, `utils/openExternal.ts`, `utils/stripeCallbacks.ts`,
-   `utils/appVersion.ts`, `mobile/appSiteAssociation.ts` and `src-tauri/src/mobile/navigation.rs`.
-   Six of the sixteen files are their own TESTS, which is what makes this safe to do first and worth
-   doing whatever is decided afterwards - it is the change that turns the id into a parameter.
-2. **A config overlay for the dev artefact.** `tauri.conf.json` carries `identifier` and
-   `bundle.android.versionCode`; Tauri merges a second config file, so the dev build is the same
-   sources with `identifier` and `productName` overridden (the launcher must show which is which).
-3. **A second FCM app entry**, keyed by package name in
-   `frontend/src-tauri/gen/android/app/google-services.json` - a Firebase console action, and the
-   file then carries both. Without it the dev build has no push at all.
-4. **A second Play listing** for `fr.emse.canari.dev`, and `android.yml` picks the artefact by
-   `release_kind()` rather than picking the TRACK. The keystore can be reused; nothing forces a
-   second signing identity.
-5. **The OIDC client must accept the new redirect URI** - `fr.emse.canari.dev://callback` added on
-   miconnect, or the dev build cannot log in at all. This is the step that silently blocks everything
-   after it, so do it before building anything.
-6. **`assetlinks.json` on the dev host** if App Links are wanted there; without it the dev build
-   keeps the custom scheme and loses https deep links only.
-
-The iOS half is the same shape (bundle identifier + a second App Store record) and is NOT required
-for the Android measurement that motivated this.
-
-Until then, the standing consequence is worth stating plainly, because it will waste a session
-again: **anything that must be measured against PRODUCTION state can only be measured on a STABLE**,
-and the versionCode band is what brings a tester back (rank 99 for a stable, so `0.18.3` = 1800399
-outranks `0.18.3-alpha.1` = 1800301 and Play restores it as an ordinary update, data intact). Opting
-out of the tester programme instead forces an uninstall, which wipes the very state being measured.
+To do, in this order: the user adds `fr.emse.canari.dev://callback` to the Canari OIDC client and a second FCM app and Play listing for `fr.emse.canari.dev`; then an agent adds the Tauri config overlay and the `android.yml` artefact choice. The frontend already spells the id once (2026-10-04). Steps and reasons: [dev-environment §9](infrastructure/dev-environment.md#9-a-pre-release-cannot-measure-production-state---the-second-package-id-decided-2026-09-15).
 
 ---
 
@@ -2927,3 +2884,45 @@ not to be built, with the reasons on [cicd](cicd.md#two-incident-time-items-deci
   grows with every page), and the avatars carry no `loading="lazy"` on purpose (a cached blob sets
   `imageLoaded` eagerly; a lazy one would show an empty disc mid-fling). Measure before changing
   either.
+
+---
+
+## Audiences of associations, lists and institutions - decided by the user 2026-10-07, ready to build
+
+Seven decisions, in the user's answers of 2026-10-07 (the last one asked for Master's opinion and was accepted as recommended):
+
+1. **The manager chooses among THREE presets**, never the raw grid: my campus; my campus plus the formations I name; everyone. `everyone` is offered to institutions only. The global admin keeps the full grid in Espaces & audiences.
+2. **Default at creation**: the association's campus, every formation, applied automatically and editable. A list gets the same default.
+3. **An association present on two campuses is TWO associations**, partners on a shared event (D39, migration 074); there is no multi-campus audience on one entity.
+4. **A change of audience applies to everything, past posts included**: visibility follows the current rule, nothing is frozen on the post.
+5. **A manager with no campus completes their profile first**: the presets are computed from a campus.
+6. **Only institutions, created by a global admin, may target everyone.** The server REFUSES an `everyone` rule on any other type - the UI hiding it is not the rule.
+7. **The star (space BDE) may set the audience of the associations of ITS campus, and only that**: the super-role "manage associations" includes the audience, bounded to the BDE's own campus; never another campus, never an institution.
+
+Work packages: (a) server: default rule at creation, refusal of `everyone` outside institutions, the BDE's campus bound on writes, with tests; (b) client: the three presets on the association page for a manager and a BDE, the profile prompt for a campus-less manager; (c) wiki: [profiles-and-access](profiles-and-access.md) D-section. Done when a manager of a fresh association sees it reach its campus with no setup, can narrow or widen it to the presets, and a hand-written `everyone` is refused by the server for a non-institution.
+
+---
+
+## Nominative read access to the student feed - decided by the user 2026-10-07, built WITH the audiences chantier (1.2)
+
+This is WP7 of [profiles-and-access](profiles-and-access.md) (D24: grants only ADD, a global admin grants across spaces), given its first capability. Cases named by the user: Celine Haton (director of the ME), Aurelie Boyer (ME communication) and Julie Blanc (School, student liaison) reading the posts of associations, **but not the personal posts of students**; and a director of formations reading the associations of Saint-Etienne and Gardanne, formations ICM and another.
+
+Decisions:
+
+1. **A grid of checkboxes per person**, shaped like `/admin/spaces`: one cell per campus x formation (and "whole campus"), so one grant can cover several campuses and formations. It replaces the document-reviewers page, whose rows migrate into it.
+2. **Covers**: the posts of associations, lists AND institutions of the ticked spaces - an institution of ANOTHER campus too, which its own audience (whole campus) never shows a reader of this one - with their comments and reactions, and the events and agenda of those associations.
+3. **Never** the personal posts of students: the capability reads posts published AS an entity, nothing else.
+4. **Readers may react and comment**, like any reader of the feed.
+5. A global admin grants it (it crosses spaces); a BDE would grant only inside its own space. The grant ADDS to what the population gives and never removes.
+6. This closes the staff-feed question: staff without a cursus see nothing more by default, the named ones do.
+7. **No end date, ever** - only grant and revoke. **The list of named readers is internal**: only global admins see it; students are not told. **A journal** keeps who granted what to whom and when (`granted_by`, date), visible to global admins.The user's example formation "ISTP" is FSSS (answered 2026-10-07): no new formation. Done when a named reader sees exactly the association, list and institution posts of their ticked cells and no student's personal post, and a reader with no grant sees what they saw before.
+
+---
+
+## Answers of 2026-10-07 that fix the order of work
+
+- **Named readers (the nominative read grants above) only READ and react**: publishing goes through an institution (D31), a separate gesture; they get NO notifications for their perimeter.
+- **1.1.2 carries nothing more** than what is already in it (deploy order, the author of an association post notified, edit caret and banner, own-space agenda, the Lydia fixes, the three-section Spaces page, institutions UI). **Stripe is removed in a dedicated batch AFTER 1.1.2.**
+- **`minClientVersion` rises after 1.1.2, once both stores serve at least 1.0.3** - the user's gesture; G3 of Graine v2 waits for it.
+- **The Lydia payment is tested end to end on dev by Master alone**, on a test account.
+- **The staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton) get `posts=["ME"]` in Authentik BY THE USER, from a table Master hands over.
