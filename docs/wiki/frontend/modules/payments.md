@@ -282,6 +282,16 @@ address travels as `payerEmail` (social-service -> `POST /api/payments/create-ch
 core-service turns it into the provider's `payerRecipient`, and nothing keeps it. A malformed one is
 refused before any provider call. The recipient is NOT an invoice address: Canari issues no invoices.
 
+**The prompt and `PaymentModal` are portalled to `body` and sit on `--z-modal` (2026-10-07).** Both
+were written in place at a raw `z-50`. The form page renders them inside `.page-scroll-wrap`, whose
+`will-change: transform` makes it the containing block and a stacking context
+([the layer ladder](../../../../frontend/src/app.css)): the "fixed" overlay was laid out against the
+wrapper, so it started under the banner and scrolled away with the form (measured on dev's CSS at
+390 px: overlay top `84`, then `-316` after a 400 px scroll), and the form's sticky submit bar, also
+`z-50` and written later in the tree, painted over the hint, the field and its own "save a card"
+link. `layerLadder.test.ts` now treats `data-keyboard-aware-overlay` as what it is - a window-covering
+layer - and fails one that is not portalled or carries no named rung.
+
 Lydia confirmed on 2026-10-04 that a request must be between **0,50 EUR and 1000 EUR**;
 `LydiaPaymentProvider.createCheckoutSession` refuses anything outside it with a message instead of
 letting Lydia answer. In homologation the payer page offers a card form and, at its end, buttons to

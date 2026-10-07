@@ -149,6 +149,46 @@ describe('the layer ladder', () => {
     ).toEqual([]);
   });
 
+  /** Every opening tag carrying `data-keyboard-aware-overlay`, whitespace collapsed. */
+  function keyboardAwareOverlays(): { file: string; tag: string; portalled: boolean }[] {
+    const out: { file: string; tag: string; portalled: boolean }[] = [];
+    for (const file of svelteFiles(join(src, 'lib')).concat(svelteFiles(join(src, 'routes')))) {
+      const flat = withoutComments(readFileSync(file, 'utf8')).replace(/\s+/g, ' ');
+      for (const match of flat.matchAll(/<div\b[^<]*?\bdata-keyboard-aware-overlay\b[^<]*?>/g)) {
+        out.push({
+          file: relative(src, file),
+          tag: match[0],
+          portalled: /\buse:portal\b/.test(flat),
+        });
+      }
+    }
+    return out;
+  }
+
+  it('sees the keyboard-aware overlays it is about to judge', () => {
+    // The check below asserts an absence over this list, so an empty list would pass for ever.
+    // `Modal` and `EventFormModal` are two of them on the day this was written.
+    expect(keyboardAwareOverlays().length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('portals every keyboard-aware overlay and puts it on a NAMED rung', () => {
+    // `[data-keyboard-aware-overlay]` IS `position: fixed` over the whole window - `app.css` gives
+    // it that box - but it spells none of it in a class, so the `fixed inset-0` branch above never
+    // saw it. Two such overlays sat at a raw `z-50` without a portal: written inside
+    // `.page-scroll-wrap` (a containing block and stacking context, `will-change: transform`), the
+    // Lydia e-mail prompt scrolled with the form and the form's own sticky `z-50` submit bar, written
+    // later, painted over its hint and its field (dev, 2026-10-07). Both halves are needed: the
+    // portal takes it out of the page's context, the rung places it against everything else there.
+    const offenders = keyboardAwareOverlays()
+      .filter(({ tag, portalled }) => !portalled || !/\bz-\(--z-[a-z-]+\)/.test(tag))
+      .map(({ file, tag }) => `${file}: ${tag}`);
+
+    expect(
+      offenders,
+      'A keyboard-aware overlay covers the window: portal it (`use:portal`) and give it a rung by name, z-(--z-<rung>).'
+    ).toEqual([]);
+  });
+
   it('never lets an element ANIMATE the rung it stands on', () => {
     // A RUNG COMPARED AGAINST AN INTERPOLATED VALUE IS NOT THE RUNG IT DECLARES, and the three
     // assertions above cannot see it: they read the ladder, which stays perfectly ordered while the
