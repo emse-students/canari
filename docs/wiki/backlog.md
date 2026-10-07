@@ -76,14 +76,14 @@ SENSITIVE and the user has not decided. Candidates: personal posts of other staf
 posts of their campus only (the minimal reading), or the whole campus feed as for the agenda.
 Nothing to build until answered.
 
-### P2 - the outbox retries a `413` for ever, as if it were transient
+### P1 follow-up - the client ships single bodies far above 1 MiB
 
-`[OUTBOX] <id> transient failure (attempt 806): MediaUploadError: media upload failed (413 )`, once a
-minute, indefinitely. A `413` is an ANSWER about the object, not a transport failure
-([durable-rules](durable-rules.md)): it can never succeed on retry, so it must end the entry with a
-typed refusal the member can read (`MediaUploadError` already carries the status), and a refusal
-that no retry can change must never be classified at the call site by its message. Done when an
-oversized entry leaves the queue after one attempt with a visible reason, and a test pins that.
+The outbox half is DONE (a 413 ends the entry, [chat](frontend/modules/chat.md#a-413-ends-the-entry-2026-10-08)).
+What remains is upstream of it: `MediaService.encryptAndUpload` sends the whole ciphertext as ONE
+`POST /api/media/upload` and only switches to chunks above `CHUNK_SIZE = 50 MB` (`media.ts`), so on
+the Cloudflare names every media over 1 MiB now fails permanently with a visible notice instead of
+retrying. Either the edge limit is lifted (the P1 above) or the chunk size drops below 1 MiB; not
+redesigned here. Delete this entry once one of the two ships.
 
 ---
 

@@ -16,6 +16,8 @@ import {
 import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { m } from '$lib/paraglide/messages';
+import { refusalStatus } from '$lib/utils/apiRefusal';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import { recordEviction } from '$lib/utils/chat/eviction';
@@ -444,7 +446,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function failPermanently(
     entry: OutboxEntry,
     terminalId: string,
-    cause: 'group-deleted' | 'evicted' | 'evicted-late'
+    cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large'
   ): Promise<FlushOutcome> {
     // THE KIND IS THE SEVERITY, and this line used to omit the one thing that decides it. A
     // `control` entry dying with its group is a read receipt or a reaction that lost a race to a
@@ -458,7 +460,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     );
     patchStatus(entry.id, 'error');
     if (entry.kind !== 'control') {
-      if (cause === 'group-deleted') {
+      if (cause === 'too-large') {
+        // THE ONE PERMANENT FAILURE THAT IS ABOUT THE OBJECT, NOT THE GROUP: nothing about the
+        // conversation changed, so no banner and no eviction - only a line in the thread that tells
+        // the author which message will never go and what to do about it. Best-effort, and logged.
+        await deps
+          .addMessageToChat?.('system', m.outbox_upload_too_large(), entry.conversationId, {
+            isSystem: true,
+          })
+          .catch((e: unknown) =>
+            log(`[OUTBOX] ${entry.id.slice(0, 8)}… too-large notice not posted: ${String(e)}`)
+          );
+      } else if (cause === 'group-deleted') {
         deps.markDeletedRemotely?.(terminalId);
       } else {
         // `evicted` was read from `isGroupActive` before the wire was touched; `evicted-late` from
@@ -711,6 +724,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED: ${terminalId.slice(0, 8)}… was deleted while this frame was in flight, after the pre-flight check read it as alive`
         );
         return failPermanently(entry, terminalId, 'group-deleted');
+      }
+      // A 413 IS AN ANSWER ABOUT THE BODY, read from the TYPE the throw carried (`MediaUploadError`
+      // is an `ApiRefusalError`) and never from its message. The edge (Cloudflare Free) refuses any
+      // request body above exactly 1 MiB; no retry shrinks the file, so the ladder would re-post the
+      // same upload once a minute for ever (attempt 806, 2026-10-07). It accuses: the refusal is the
+      // visible end of an upload path that shipped a body the edge cannot carry.
+      if (refusalStatus(e) === 413) {
+        const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with 413 (request body too large) - ${detail} in ${terminalId.slice(0, 8)}…: no retry can succeed, giving up`;
+        console.error(line);
+        log(line);
+        return failPermanently(entry, terminalId, 'too-large');
       }
       if (kind === 'evicted') {
         log(
