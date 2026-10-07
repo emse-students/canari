@@ -27,6 +27,31 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Found on 2026-10-07 in the user's dev console log (Master takes the Cloudflare half)
+
+### P1 - an upload over about 1 MB is refused by Cloudflare itself, on `dev.canari-emse.fr` and `canari-emse.fr`
+
+Measured 2026-10-07 with an unauthenticated `POST /api/media/upload`: a 1.2 MB body answers `413`
+with `Server: cloudflare` on both names, a 600 KB body reaches the app (`401`), and
+`canari.emse.fr` - which does not go through Cloudflare - answers `401` from nginx for the same 1.2
+MB. Nothing of ours is the limit: the frontend nginx allows 100 MB, the host's `nginx.conf` 2 GB,
+`media-service` 50 MB. Encrypted media is cut into segments of 1 MiB plus overhead, so every media
+object larger than that is refused on the two names that cross the zone; the user's log shows two
+1.1 MB videos failing 800+ times. **The cause is presumably a rule on the zone** (WAF custom rule,
+request-body limit or a transform) and has NOT been read: Master owns that investigation, nobody
+else touches the zone. Done when a 1.2 MB and a 20 MB upload reach `media-service` on both names.
+
+### P2 - the outbox retries a `413` for ever, as if it were transient
+
+`[OUTBOX] <id> transient failure (attempt 806): MediaUploadError: media upload failed (413 )`, once a
+minute, indefinitely. A `413` is an ANSWER about the object, not a transport failure
+([durable-rules](durable-rules.md)): it can never succeed on retry, so it must end the entry with a
+typed refusal the member can read (`MediaUploadError` already carries the status), and a refusal
+that no retry can change must never be classified at the call site by its message. Done when an
+oversized entry leaves the queue after one attempt with a visible reason, and a test pins that.
+
+---
+
 ## Owed a VERIFICATION, and nothing else
 
 Each of these is fixed in the tree; what is left is the measurement that would prove it. **Nothing
