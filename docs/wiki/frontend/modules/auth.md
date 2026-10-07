@@ -774,6 +774,25 @@ the change drops was only ever shown in a modal the app abandoned two seconds la
 user could read is lost. Pinned in `offlineUnlock.test.ts` by two guards on the handler's own text:
 the handover comes after the wipe, and it is not the retry seam.
 
+### A restore that comes back partial says so (2026-10-08)
+
+A device that signs back in after a revocation, a wipe or a lost MLS store restores its conversation
+ROWS from the local store and its MLS GROUPS from the persisted state, and the two can disagree: a
+row restored as `active` promises that this device can read and write it. A user once reconnected
+and got some conversations back and not others, with nothing saying which - the restore looked
+complete, so nobody knew to act.
+
+`measureRestoreShortfall` (`utils/chat/restoreShortfall.ts`) compares them at the source and returns a
+typed `RestoreShortfall` (`expected`, `restored`, `missingIds`) or `null`. Only `active` non-channel
+rows are OWED a group: `pending` rows already say they wait for a Welcome, so a backup restored on
+another device reports nothing, and a row demoted by an earlier startup is not re-reported for ever.
+`startSession` takes the measure BEFORE its lifecycle reconciliation demotes the rows (afterwards the
+evidence is gone), logs `[ERROR] Partial restore: n/m ...` and `console.error`, and raises
+`restore_shortfall` on the existing `mlsFatalError` banner (`MlsFatalErrorBanner`, Paraglide
+`mls_error_restore_shortfall_text`, dismissible). No retry or repair was added: the demotion to
+`pending` and the re-add that follow are the existing recovery, and this is only its report.
+
+
 ### The same erasure when the USER asks, and the three things the button never did
 
 **REMOVED 2026-09-25, by the user's decision: a developer tool had no place under the sign-in

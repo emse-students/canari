@@ -2799,6 +2799,7 @@
   "mls_error_oom_text": "Insufficient memory - reload the app to receive new messages.",
   "mls_error_private_mode_text": "Private browsing mode - messages will not be saved after closing.",
   "mls_error_keystore_lost_text": "Push notifications degraded - log in again to reactivate them.",
+  "mls_error_restore_shortfall_text": "Some conversations could not be restored on this device and are waiting to be re-synced.",
   "mls_error_reload_action": "Reload",
   "mls_error_dismiss_action": "Got it",
   "media_lightbox_default_aria": "Media preview",
