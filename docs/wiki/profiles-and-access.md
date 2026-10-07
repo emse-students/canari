@@ -1068,6 +1068,7 @@ one that remained: ANY campus or formation could be named in a URL by anyone.
 - **Proof:** controller and signature specs (other campus, tampered, unsigned, `eventId` unsigned,
   another selection's signature, rotated key, unset key, internal caller), and a run against the local
   estate's real PostgreSQL.
+- **Staff reading, as verified (2026-10-07, local estate rebuilt at `62a02ba0d`, real PostgreSQL and a real session):** a sandbox reader with campus `saint-etienne` and `cursus = []` was signed `campus=saint-etienne` with no formation (201); `campus=gardanne` and `campus=saint-etienne&formation=ICM` were each a 403 `AGENDA_SELECTION_FORBIDDEN`. The signed `feed.ics` answered 200 `text/calendar` and the unsigned one 403 `AGENDA_SIGNATURE_REQUIRED`. The feed held the events of several formations of the campus (organisers whose audiences were ICM and ISMIN of that campus). The subscribe modal offered Campus "Saint-Etienne" and "Toutes les formations", carried `campus=saint-etienne&sig=` in its link and did not show the complete-your-profile text. The sandbox user's cursus was restored afterwards. Not read: a gardanne-only event staying out of the feed (no such organiser existed locally).
 
 ### WP6e institutions as built (2026-10-05)
 
