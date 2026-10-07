@@ -550,6 +550,43 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     }
   });
 
+  it('a change of audience applies to a POST ALREADY PUBLISHED: visibility follows the current rule (decision 4)', async () => {
+    const post = '00000000-0000-4000-8000-0000000000b1';
+    await client.query(
+      `INSERT INTO posts (id, "authorId", "associationId") VALUES ($1, 'staff', $2)`,
+      [post, A1]
+    );
+    const seenBy = async () => {
+      const seen: string[] = [];
+      for (const id of ['icmSe', 'isminGa']) {
+        const { rows } = await client.query(
+          `SELECT ${postVisibleToViewerSql('p', '$1')} AS v FROM posts p WHERE p.id = $2`,
+          [id, post]
+        );
+        if (rows[0].v === true) seen.push(id);
+      }
+      return seen;
+    };
+    try {
+      // A1 addresses ICM x saint-etienne: only the ICM student of Saint-Etienne reads it.
+      expect(await seenBy()).toEqual(['icmSe']);
+      // The audience moves to Gardanne: the SAME stored post now reaches the other reader instead.
+      await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A1]);
+      await client.query(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, 'gardanne')`,
+        [A1]
+      );
+      expect(await seenBy()).toEqual(['isminGa']);
+    } finally {
+      await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A1]);
+      await client.query(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', 'saint-etienne')`,
+        [A1]
+      );
+      await client.query(`DELETE FROM posts WHERE id = $1`, [post]);
+    }
+  });
+
   it('a cursus that is not an array matches nothing instead of failing every reader', async () => {
     await client.query(`UPDATE users SET cursus = '{"formation": "ICM"}' WHERE id = 'outsider'`);
     const { rows } = await client.query(IN_FEED_AUDIENCE_SQL, ['outsider']);

@@ -83,7 +83,7 @@ import {
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import { smallestRules } from '../spaces/spaces.service';
+import { defaultCampusRules } from '../spaces/audience-policy';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import type { CoOrganiserPort } from './co-organisers.port';
 import { UserTagService } from '../users/user-tag.service';
@@ -298,11 +298,13 @@ export class AssociationsService {
    * Creates a new association (or list). Throws if the slug is already taken or has an invalid
    * format.
    *
-   * IT REACHES ITS CREATOR'S SPACES BY DEFAULT (D36, user 2026-10-04): in the SAME transaction as
-   * the row, the creator's spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`) are written as
-   * the smallest equivalent rule set - so it is never visible for a moment with no rule, and the
-   * grid at `/admin/spaces` reads it back as ticked boxes a global admin then edits. A creator with
-   * no space (no campus or no cursus) gives it no rule: it reaches its members only.
+   * IT REACHES ITS CREATOR'S CAMPUS BY DEFAULT (audiences chantier, user 2026-10-07; it replaced
+   * D36's "the creator's spaces"): in the SAME transaction as the row, ONE rule `(every formation,
+   * the creator's profile campus)` is written, so it is never visible for a moment with no rule and
+   * the grid at `/admin/spaces` reads it back as a ticked campus. A creator with no campus is
+   * REFUSED with the typed `AUDIENCE_CREATOR_CAMPUS_REQUIRED` (decision 5) and nothing is written -
+   * the campus is never guessed. An institution keeps its own rule: no default, the creating global
+   * admin ticks its audience afterwards.
    */
   async create(dto: CreateAssociationDto, userId: string) {
     if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(dto.slug)) {
@@ -333,18 +335,13 @@ export class AssociationsService {
         );
         return saved;
       }
-      const creatorSpaces = (await manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
-      const rules = smallestRules(creatorSpaces);
-      if (rules.length === 0) {
-        this.logger.log(
-          `[spaces] ${saved.id} created by ${userId.slice(0, 8)}, who has no space: no default rule`
-        );
-        return saved;
-      }
+      const [profile] = (await manager.query(READER_PROFILE_SQL, [userId])) as {
+        campus: string | null;
+      }[];
+      // Thrown inside the transaction: the row saved above is rolled back with it.
+      const rules = defaultCampusRules(profile?.campus ?? null);
       this.logger.log(
-        `[spaces] ${saved.id} reaches its creator's spaces: ${rules
-          .map((r) => `${r.formation ?? '*'} x ${r.campus ?? '*'}`)
-          .join(', ')}`
+        `[spaces] ${saved.id} reaches its creator's campus: ${rules[0].campus} (every formation)`
       );
       await manager.insert(
         AssociationAudience,

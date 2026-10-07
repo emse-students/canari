@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { DataSource, Repository } from 'typeorm';
 import type { Association } from '../associations/entities/association.entity';
 import { AssociationAudience } from './association-audience.entity';
@@ -6,6 +6,8 @@ import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import { SpacesService, normaliseRules, ruleReachesSpace, smallestRules } from './spaces.service';
 
 const space = { formation: 'ICM', campus: 'saint-etienne' } as const;
+const ADMIN = { userId: 'admin-1', isGlobalAdmin: true };
+const STAR = { userId: 'star-1', isGlobalAdmin: false };
 
 describe('ruleReachesSpace', () => {
   it('matches a pair exactly', () => {
@@ -83,6 +85,8 @@ describe('SpacesService', () => {
     rules?: Partial<AssociationAudience>[];
     /** The spaces the association governs, as the transaction reads them. */
     governed?: Partial<Space>[];
+    /** The campuses whose BDE the caller holds MANAGE_ASSO in (the BDE star's borders). */
+    bdeCampuses?: string[];
   }) {
     const update = jest.fn().mockResolvedValue(undefined);
     const save = jest.fn().mockImplementation(async (s: Partial<Space>) => s);
@@ -113,6 +117,7 @@ describe('SpacesService', () => {
     };
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: (m: unknown) => unknown) => cb(manager)),
+      query: jest.fn().mockResolvedValue((opts.bdeCampuses ?? []).map((campus) => ({ campus }))),
     } as unknown as DataSource;
     const redis = { deleteByPattern: jest.fn().mockResolvedValue(3) };
     return {
@@ -205,7 +210,11 @@ describe('SpacesService', () => {
 
   it('replaces the rules in one transaction, de-duplicated', async () => {
     const { service, manager } = make({ association: { id: 'a' } });
-    await service.setAudiences('a', [{ campus: 'saint-etienne' }, { campus: 'saint-etienne' }]);
+    await service.setAudiences(
+      'a',
+      [{ campus: 'saint-etienne' }, { campus: 'saint-etienne' }],
+      ADMIN
+    );
     expect(manager.delete).toHaveBeenCalled();
     expect(manager.insert).toHaveBeenCalledWith(expect.anything(), [
       { associationId: 'a', formation: null, campus: 'saint-etienne' },
@@ -214,7 +223,7 @@ describe('SpacesService', () => {
 
   it('accepts an empty set: the association then reaches nobody', async () => {
     const { service, manager } = make({ association: { id: 'a' } });
-    await expect(service.setAudiences('a', [])).resolves.toEqual([]);
+    await expect(service.setAudiences('a', [], ADMIN)).resolves.toEqual([]);
     expect(manager.delete).toHaveBeenCalled();
     expect(manager.insert).not.toHaveBeenCalled();
   });
@@ -224,7 +233,7 @@ describe('SpacesService', () => {
       association: { id: 'a' },
       governed: [{ id: 's', formation: 'ICM', campus: 'gardanne' }],
     });
-    const saved = await service.setAudiences('a', [{ campus: 'saint-etienne' }]);
+    const saved = await service.setAudiences('a', [{ campus: 'saint-etienne' }], ADMIN);
     expect(saved).toEqual([
       { formation: null, campus: 'saint-etienne' },
       { formation: 'ICM', campus: 'gardanne' },
@@ -236,7 +245,7 @@ describe('SpacesService', () => {
     // The list cache is keyed per reader and the rules decide which posts each reader gets, so a
     // rule change - by the grid or by designating a BDE - is a change to every reader's pages.
     const rules = make({ association: { id: 'a' } });
-    await rules.service.setAudiences('a', [{ campus: 'gardanne' }]);
+    await rules.service.setAudiences('a', [{ campus: 'gardanne' }], ADMIN);
     expect(rules.redis.deleteByPattern).toHaveBeenCalledWith('posts:list:v2:*');
 
     const bde = make({
@@ -249,7 +258,112 @@ describe('SpacesService', () => {
 
   it('does not drop the cache for a write it refused', async () => {
     const refused = make({});
-    await expect(refused.service.setAudiences('a', [])).rejects.toBeInstanceOf(NotFoundException);
+    await expect(refused.service.setAudiences('a', [], ADMIN)).rejects.toBeInstanceOf(
+      NotFoundException
+    );
     expect(refused.redis.deleteByPattern).not.toHaveBeenCalled();
+  });
+
+  describe('the audience policy on every write (WP-A, user 2026-10-07)', () => {
+    const code = async (p: Promise<unknown>) => {
+      try {
+        await p;
+      } catch (e) {
+        return (e as { getResponse: () => { code: string } }).getResponse().code;
+      }
+      return null;
+    };
+
+    it('refuses an everyone rule on an association or a list, even from a global admin', async () => {
+      for (const type of ['association', 'list']) {
+        const { service, manager } = make({ association: { id: 'a', type: type as never } });
+        expect(await code(service.setAudiences('a', [{ campus: null }], ADMIN))).toBe(
+          'AUDIENCE_EVERYONE_INSTITUTION_ONLY'
+        );
+        // a formation across campuses is the same multi-campus audience
+        expect(await code(service.setAudiences('a', [{ formation: 'ICM' }], ADMIN))).toBe(
+          'AUDIENCE_EVERYONE_INSTITUTION_ONLY'
+        );
+        expect(manager.insert).not.toHaveBeenCalled();
+      }
+    });
+
+    it('lets an institution address everyone', async () => {
+      const { service } = make({ association: { id: 'i', type: 'institution' } });
+      await expect(service.setAudiences('i', [{ campus: null }], ADMIN)).resolves.toEqual([
+        { formation: null, campus: null },
+      ]);
+    });
+
+    it('lets a BDE star write the audience of an entity of its own campus', async () => {
+      const { service, manager } = make({
+        association: { id: 'a', type: 'association' },
+        rules: [{ associationId: 'a', formation: null, campus: 'gardanne' }],
+        bdeCampuses: ['gardanne'],
+      });
+      await service.setAudiences('a', [{ formation: 'ICM', campus: 'gardanne' }], STAR);
+      expect(manager.insert).toHaveBeenCalledWith(AssociationAudience, [
+        { associationId: 'a', formation: 'ICM', campus: 'gardanne' },
+      ]);
+    });
+
+    it('refuses a BDE star on another campus, an everyone rule, an institution and an unruled entity', async () => {
+      const own: Partial<AssociationAudience>[] = [
+        { associationId: 'a', formation: null, campus: 'gardanne' },
+      ];
+      const other = make({
+        association: { id: 'a', type: 'association' },
+        rules: [{ associationId: 'a', formation: null, campus: 'saint-etienne' }],
+        bdeCampuses: ['gardanne'],
+      });
+      expect(await code(other.service.setAudiences('a', [{ campus: 'gardanne' }], STAR))).toBe(
+        'AUDIENCE_OUTSIDE_BDE_CAMPUS'
+      );
+      const beyond = make({
+        association: { id: 'a', type: 'association' },
+        rules: own,
+        bdeCampuses: ['gardanne'],
+      });
+      expect(
+        await code(beyond.service.setAudiences('a', [{ campus: 'saint-etienne' }], STAR))
+      ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+      expect(await code(beyond.service.setAudiences('a', [{ campus: null }], STAR))).toBe(
+        'AUDIENCE_EVERYONE_INSTITUTION_ONLY'
+      );
+      const inst = make({
+        association: { id: 'i', type: 'institution' },
+        rules: own,
+        bdeCampuses: ['gardanne'],
+      });
+      expect(await code(inst.service.setAudiences('i', [{ campus: 'gardanne' }], STAR))).toBe(
+        'AUDIENCE_INSTITUTION_ADMIN_ONLY'
+      );
+      const unruled = make({
+        association: { id: 'a', type: 'association' },
+        rules: [],
+        bdeCampuses: ['gardanne'],
+      });
+      expect(await code(unruled.service.setAudiences('a', [{ campus: 'gardanne' }], STAR))).toBe(
+        'AUDIENCE_OUTSIDE_BDE_CAMPUS'
+      );
+      for (const r of [other, beyond, inst, unruled]) {
+        expect(r.manager.insert).not.toHaveBeenCalled();
+        expect(r.redis.deleteByPattern).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses a caller who is neither a global admin nor a BDE star', async () => {
+      const { service } = make({
+        association: { id: 'a', type: 'association' },
+        rules: [{ associationId: 'a', formation: null, campus: 'gardanne' }],
+        bdeCampuses: [],
+      });
+      await expect(
+        service.setAudiences('a', [{ campus: 'gardanne' }], STAR)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(await code(service.setAudiences('a', [{ campus: 'gardanne' }], STAR))).toBe(
+        'AUDIENCE_ADMIN_OR_BDE_REQUIRED'
+      );
+    });
   });
 });

@@ -774,7 +774,7 @@ box no longer defines anything.
 
 ### D36 and D37 as built (2026-10-04)
 
-**D36 - a new association reaches its creator's spaces** (a list too; **an institution does NOT**, user
+**D36 - a new association reaches its creator's spaces** (SUPERSEDED 2026-10-08: it now reaches its creator's CAMPUS, see [audiences policy](#audiences-policy-as-built-wp-a-2026-10-08); a list too; **an institution does NOT**, user
 2026-10-05 - it starts with no rule, see WP6e below). `AssociationsService.create` (the one path
 for an association AND a list, `POST /api/associations`) writes, in the SAME transaction as the row,
 the creator's spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`) as the smallest equivalent
@@ -1098,6 +1098,27 @@ An institution is an `associations` row of that type, so it reuses every mechani
   with spaces writes no rule).
 - **D31 closes as "membership only"** (user, 2026-10-05): a person with no space publishes through the institutions they
   are a MEMBER of, with `POST_AS_ASSO`. Nothing to build; no way to pick an institution one does not belong to.
+
+### Audiences policy as built (WP-A, 2026-10-08)
+
+Server half of the seven decisions of [backlog](backlog.md#audiences-of-associations-lists-and-institutions---decided-by-the-user-2026-10-07-ready-to-build); the client presets (WP-B) come after. One module, `spaces/audience-policy.ts`, holds the rules and the typed codes (classified at the throw: a client reads `code`, never the message).
+
+- **Default at creation replaces D36's "creator's spaces"**: `AssociationsService.create` writes, in the transaction of the row, ONE rule `(formation NULL, campus = the creator's profile campus)` for an association AND a list. A creator with no valid campus is refused `400 AUDIENCE_CREATOR_CAMPUS_REQUIRED` and the row rolls back (decision 5, never guessed). An institution still gets NO rule: the creating global admin ticks its audience afterwards (`PUT /api/associations/:id/audiences`).
+- **`everyone` refused outside institutions** (decision 6): `setAudiences`, the one write path of the audience (the admin grid and the BDE both call it), refuses any rule with `campus` NULL - a formation across campuses included, which is the multi-campus audience decision 3 rules out - with `400 AUDIENCE_EVERYONE_INSTITUTION_ONLY`, for a global admin too. Creation writes only a campus rule, and `PATCH` cannot change an entity's type, so nothing else writes a rule. Existing everyone rules stay until someone edits that entity.
+- **The BDE star** (decision 7): `PUT /api/associations/:id/audiences` is open to a global admin OR the holder of MANAGE_ASSO in a BDE (`BDE_GOVERNED_CAMPUSES_SQL`: the campuses of the spaces that BDE governs). A star is refused `403` when it is not a star (`AUDIENCE_ADMIN_OR_BDE_REQUIRED`), when the target is an institution (`AUDIENCE_INSTITUTION_ADMIN_ONLY`), or when EITHER what the entity addresses now OR what is submitted leaves its campuses, or the entity has no rule at all (`AUDIENCE_OUTSIDE_BDE_CAMPUS`). `PUT /api/associations/spaces/:id/bde` (the BDE flag) stays global-admin only. `GET .../audiences` stays global-admin only until WP-B needs more.
+- **A change applies to everything, past posts included** (decision 4): visibility is computed from the CURRENT rules at read time and nothing is stored on a post (D38). Proof: `reader-spaces.integration.spec.ts` moves an association's audience under a stored post and the post follows (skipped without `SOCIAL_IT_DATABASE_URL`).
+- **No back-fill migration.** `users` belongs to core-service, so a social migration reading `users.campus` would fail on a fresh database, and an entity D36 left rule-less (creator with no space) was left so on purpose. Measure first, read-only (never run by an agent against production), then decide with the user:
+
+```sql
+SELECT a.type, count(*) AS no_rule, count(u.campus) AS creator_has_campus
+FROM associations a
+LEFT JOIN users u ON u.id = a."createdBy"
+WHERE a.type IN ('association', 'list')
+  AND NOT EXISTS (SELECT 1 FROM association_audiences r WHERE r."associationId" = a.id)
+GROUP BY a.type;
+```
+
+Open: a BDE star CREATING an association gets its profile campus as default even when that is not a campus it governs (it could then not edit it); bind creation by a non-admin to the governed campuses if that case exists.
 
 ### FEED_GATE - a 403 is a verdict, not a failure (2026-10-06)
 

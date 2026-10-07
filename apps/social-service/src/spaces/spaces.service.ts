@@ -5,6 +5,9 @@ import { Association } from '../associations/entities/association.entity';
 import { RedisService } from '../common/redis/redis.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
 import { AssociationAudience } from './association-audience.entity';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
+import { assertAudienceAllowedForType, assertBdeMayWriteAudience } from './audience-policy';
+import { BDE_GOVERNED_CAMPUSES_SQL } from './bde';
 import type { AudienceRuleDto } from './dto/space.dto';
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
@@ -191,11 +194,28 @@ export class SpacesService {
    * Replaces the audience rules of an association, atomically. An empty set is allowed: the
    * association then reaches nobody. The one thing that cannot be taken away is a pair it governs
    * as BDE - those are added back, so "a BDE reaches its space" holds whatever is submitted.
+   *
+   * THE POLICY RUNS HERE, ON EVERY WRITE (WP-A, user 2026-10-07): an `everyone` rule is refused on
+   * anything but an institution (decision 6), and a caller who is not a global admin must be a BDE
+   * star writing inside its own campus (decision 7). Visibility is computed from the CURRENT rules at
+   * read time, so a change applies to past posts too and nothing is frozen on a post (decision 4).
    */
-  async setAudiences(associationId: string, submitted: AudienceRuleDto[]): Promise<AudienceRule[]> {
-    await this.requireAssociation(associationId);
+  async setAudiences(
+    associationId: string,
+    submitted: AudienceRuleDto[],
+    actor: { userId: string; isGlobalAdmin: boolean }
+  ): Promise<AudienceRule[]> {
+    const association = await this.requireAssociation(associationId);
     const rules = normaliseRules(submitted);
-    this.logger.log(`[spaces] audiences of ${associationId}: ${rules.length} rule(s)`);
+    assertAudienceAllowedForType(association.type, rules);
+    if (!actor.isGlobalAdmin) {
+      const governed = await this.bdeGovernedCampuses(actor.userId);
+      const current = await this.getAudiences(associationId);
+      assertBdeMayWriteAudience(association.type, governed, current, rules);
+    }
+    this.logger.log(
+      `[spaces] audiences of ${associationId} by ${actor.userId.slice(0, 8)}${actor.isGlobalAdmin ? ' (admin)' : ' (BDE)'}: ${rules.length} rule(s)`
+    );
     const stored = await this.dataSource.transaction(async (manager) => {
       const governed = await manager.find(Space, { where: { bdeAssociationId: associationId } });
       for (const space of governed) {
@@ -216,8 +236,18 @@ export class SpacesService {
     return stored;
   }
 
-  private async requireAssociation(id: string): Promise<void> {
-    const found = await this.associations.exists({ where: { id } });
+  /** The campuses whose BDE `userId` holds MANAGE_ASSO in: the borders of a BDE star's powers. */
+  private async bdeGovernedCampuses(userId: string): Promise<string[]> {
+    const rows: { campus: string }[] = await this.dataSource.query(BDE_GOVERNED_CAMPUSES_SQL, [
+      userId,
+      AssociationPermissionFlag.MANAGE_ASSO,
+    ]);
+    return rows.map((r) => r.campus);
+  }
+
+  private async requireAssociation(id: string): Promise<Association> {
+    const found = await this.associations.findOne({ where: { id } });
     if (!found) throw new NotFoundException('Association not found');
+    return found;
   }
 }
