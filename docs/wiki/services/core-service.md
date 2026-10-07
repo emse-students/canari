@@ -351,7 +351,7 @@ flag fields only). They used to call `GET /api/associations/:id`, which answers 
 | POST | `/api/payments/connect-dashboard-link/:associationId` | JWT | Single-use Stripe Dashboard login link |
 | POST | `/api/payments/disconnect-connect-account/:associationId` | JWT | Unlink the association's Stripe Connect account (local unlink only - the Stripe account itself is untouched) |
 | POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
-| POST | `/api/payments/create-checkout-session` | JWT | Create Stripe Checkout session |
+| POST | `/api/payments/create-checkout-session` | InternalSecret | Create a checkout session (called by social-service, never by a browser) |
 | POST | `/api/payments/verify-session` | JWT | Verify completed checkout, mark form submission paid |
 | POST | `/api/payments/cancel-session` | JWT | Cancel unpaid checkout |
 | POST | `/api/payments/setup-payment-method` | JWT | Create setup session to save a card |

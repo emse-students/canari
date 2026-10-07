@@ -19,6 +19,7 @@ import { PaymentService } from './payment.service';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { assertInternalSecret } from '../internal/internal-secret.util';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { ChargeResult } from './payment.service';
 import Stripe from 'stripe';
@@ -472,8 +473,13 @@ export class PaymentController {
     return { url };
   }
 
-  /** Creates a Stripe Checkout session for the given line items and returns the session URL. */
-  @UseGuards(NginxAuthGuard)
+  /**
+   * Creates a checkout session for the given line items and returns its URL.
+   *
+   * SERVER-TO-SERVER ONLY: social-service calls it (paid form, product) straight at this service, past
+   * nginx, so there is no `X-User-Id` for `NginxAuthGuard` to read - it answered 401 `Missing X-User-Id
+   * header` to every call, on dev 2026-10-07. The shared internal secret is what that caller carries.
+   */
   @Post('create-checkout-session')
   @HttpCode(200)
   async createCheckout(
@@ -490,8 +496,10 @@ export class PaymentController {
       idempotencyKey?: string;
       /** The payer's address, which Lydia's request/do needs as its recipient. Never stored. */
       payerEmail?: string;
-    }
+    },
+    @Headers('x-internal-secret') secret?: string
   ) {
+    assertInternalSecret(secret);
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
       throw new BadRequestException('Invalid payload');
     }
@@ -700,14 +708,15 @@ export class PaymentController {
   /**
    * Returns the Stripe customer ID for a user, creating one if necessary.
    * Called by social-service when creating a checkout session for a paid form.
-   * Protected by NginxAuthGuard so it rejects direct requests bypassing nginx.
+   * Guarded by the internal secret: the caller is social-service, with no nginx in between.
    */
-  @UseGuards(NginxAuthGuard)
   @Post('internal/customer-id')
   @HttpCode(200)
   async getOrCreateCustomerForUser(
-    @Body() body: { userId: string }
+    @Body() body: { userId: string },
+    @Headers('x-internal-secret') secret?: string
   ): Promise<{ customerId: string | null }> {
+    assertInternalSecret(secret);
     if (!(await this.paymentService.isConfigured())) {
       return { customerId: null };
     }

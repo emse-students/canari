@@ -24,14 +24,45 @@ describe('SESSION_ID_RE', () => {
 });
 
 describe('PaymentController.createCheckout', () => {
+  const SECRET = 'internal-secret-for-test';
+  beforeAll(() => {
+    process.env.INTERNAL_SECRET = SECRET;
+  });
+
+  /** The controller as social-service reaches it: every call carries the internal secret. */
   function makeController(createCheckoutSession: jest.Mock) {
     const paymentService = {
       isConfigured: jest.fn().mockResolvedValue(true),
       createCheckoutSession,
     } as unknown as PaymentService;
     const usersService = {} as UsersService;
-    return new PaymentController(paymentService, usersService);
+    const controller = new PaymentController(paymentService, usersService);
+    const createCheckout = controller.createCheckout.bind(controller);
+    return Object.assign(controller, {
+      createCheckout: (body: Parameters<typeof createCheckout>[0]) => createCheckout(body, SECRET),
+    });
   }
+
+  it.each([[undefined], ['wrong-secret']])(
+    'refuses a caller whose internal secret is %s, before any provider call',
+    async (secret) => {
+      const createCheckoutSession = jest.fn();
+      const controller = new PaymentController(
+        {
+          isConfigured: jest.fn().mockResolvedValue(true),
+          createCheckoutSession,
+        } as unknown as PaymentService,
+        {} as UsersService
+      );
+      await expect(
+        controller.createCheckout({ lineItems: [], successUrl: 's', cancelUrl: 'c' }, secret)
+      ).rejects.toThrow();
+      await expect(
+        controller.getOrCreateCustomerForUser({ userId: 'u' }, secret)
+      ).rejects.toThrow();
+      expect(createCheckoutSession).not.toHaveBeenCalled();
+    }
+  );
 
   it('forwards idempotencyKey to PaymentService.createCheckoutSession', async () => {
     const createCheckoutSession = jest
@@ -132,6 +163,8 @@ describe('PaymentController.createCheckout', () => {
  * asserted here rather than assumed from a decorator being visible in a diff.
  */
 describe('PaymentController - every money route is guarded', () => {
+  // `createCheckout` and `getOrCreateCustomerForUser` are not here on purpose: social-service calls
+  // them past nginx, so they check the internal secret instead (tested above).
   const GUARD_METADATA = '__guards__';
 
   /** The guards Nest will run for `handler`, read from the metadata Nest itself reads. */
@@ -141,7 +174,7 @@ describe('PaymentController - every money route is guarded', () => {
     return (Reflect.getMetadata(GUARD_METADATA, fn as object) as unknown[]) ?? [];
   }
 
-  it.each([['createOnboarding'], ['createCheckout'], ['verifySession'], ['cancelSession']])(
+  it.each([['createOnboarding'], ['verifySession'], ['cancelSession']])(
     '%s runs NginxAuthGuard',
     (handler) => {
       expect(guardsOn(handler)).toContain(NginxAuthGuard);
