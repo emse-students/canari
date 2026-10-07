@@ -97,9 +97,7 @@ async function openLeaderboard() {
   mounted.push(() => unmount(app, { outro: false }));
   flushSync();
   await tick();
-  const opener = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
-    (b) => b.textContent?.trim() === 'Classement'
-  );
+  const opener = document.querySelector<HTMLButtonElement>('button[aria-label="Classement"]');
   opener!.click();
   for (let i = 0; i < 5; i++) {
     await Promise.resolve();

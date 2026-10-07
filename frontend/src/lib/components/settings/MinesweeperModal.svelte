@@ -1048,11 +1048,11 @@
         <div
           class="bg-cn-surface/90 border-cn-border text-text-main pointer-events-auto flex h-11 items-center gap-3 rounded-full border pr-1 pl-3.5 text-sm font-bold shadow-sm backdrop-blur-sm"
         >
-          <span class="flex items-center gap-1.5">
+          <span class="flex items-center gap-1.5 leading-none">
             <Bomb size={16} class="text-cn-dark" />
             {remainingMines(board)}
           </span>
-          <span class="text-text-muted flex items-center gap-1 font-mono tabular-nums">
+          <span class="text-text-muted flex items-center gap-1 font-mono leading-none tabular-nums">
             <Timer size={15} />
             {m.minesweeper_time({ time: formatDurationMs(elapsedMs) })}
           </span>
@@ -1075,10 +1075,11 @@
       <button
         type="button"
         onclick={openLeaderboard}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover pointer-events-auto flex h-11 shrink-0 items-center gap-1.5 rounded-full px-4 text-sm font-bold shadow-sm transition-colors"
+        aria-label={m.minesweeper_leaderboard()}
+        title={m.minesweeper_leaderboard()}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover pointer-events-auto flex size-11 shrink-0 items-center justify-center rounded-full shadow-sm transition-colors"
       >
-        <Trophy size={16} strokeWidth={2.5} />
-        {m.minesweeper_leaderboard()}
+        <Trophy size={20} strokeWidth={2.5} />
       </button>
     </div>
 

@@ -62,12 +62,12 @@ describe('MinesweeperModal - full-screen chrome', () => {
     expect(document.querySelector('[role="tablist"]')).toBeNull();
     expect(document.querySelector('h2')).toBeNull();
     expect(document.querySelectorAll('[data-cell]')).toHaveLength(18 * 32);
-    expect(byText('Classement')).toBeDefined();
+    expect(byLabel('Classement')).toBeDefined();
   });
 
   it('opens the leaderboard as a sheet over the game and goes back to it', async () => {
     await open();
-    byText('Classement')!.click();
+    byLabel('Classement')!.click();
     flushSync();
     expect(document.querySelector('h2')?.textContent).toContain('Classement');
     expect(document.querySelectorAll('[data-cell]')).toHaveLength(18 * 32);
