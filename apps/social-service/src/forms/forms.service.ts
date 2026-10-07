@@ -49,6 +49,7 @@ import {
 } from '../pricing/validate';
 import { normaliseCondition, visibleItemIds } from './visibility';
 import { coreUrl } from '../internal/service-urls';
+import { internalCoreRequestConfig } from '../internal/core-request';
 import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
@@ -984,7 +985,7 @@ export class FormsService {
             const customerResp = await axios.post<{ customerId: string | null }>(
               coreUrl('payments/internal/customer-id'),
               { userId: input.userId },
-              { maxRedirects: 0 }
+              internalCoreRequestConfig()
             );
             customerId = customerResp.data.customerId ?? undefined;
           } catch {
@@ -1003,23 +1004,27 @@ export class FormsService {
           `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
           frontendUrl
         );
-        const res = await axios.post(checkoutUrl, {
-          lineItems: singleLineItem,
-          successUrl:
-            activeProvider === 'lydia'
-              ? withSubmissionReturnKey(successUrl, savedSubmission.id)
-              : successUrl,
-          cancelUrl:
-            activeProvider === 'lydia'
-              ? withSubmissionReturnKey(cancelUrl, savedSubmission.id)
-              : cancelUrl,
-          metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
-          stripeConnectAccountId,
-          idempotencyKey,
-          payerEmail: input.payerEmail,
-          // saveForFuture is incompatible with destination charges (Stripe Connect)
-          ...(customerId ? { customerId, saveForFuture: !stripeConnectAccountId } : {}),
-        });
+        const res = await axios.post(
+          checkoutUrl,
+          {
+            lineItems: singleLineItem,
+            successUrl:
+              activeProvider === 'lydia'
+                ? withSubmissionReturnKey(successUrl, savedSubmission.id)
+                : successUrl,
+            cancelUrl:
+              activeProvider === 'lydia'
+                ? withSubmissionReturnKey(cancelUrl, savedSubmission.id)
+                : cancelUrl,
+            metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
+            stripeConnectAccountId,
+            idempotencyKey,
+            payerEmail: input.payerEmail,
+            // saveForFuture is incompatible with destination charges (Stripe Connect)
+            ...(customerId ? { customerId, saveForFuture: !stripeConnectAccountId } : {}),
+          },
+          internalCoreRequestConfig()
+        );
 
         const data = res.data || {};
         const sessionUrl = data.url || data.checkoutUrl || null;

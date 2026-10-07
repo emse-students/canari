@@ -8,7 +8,42 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Engine (generation, solver, play, replay) | `frontend/src/lib/minesweeper/game.ts` |
 | Server copy of the engine | `apps/social-service/src/minesweeper/engine/game.ts` |
 | Screen | `frontend/src/lib/components/settings/MinesweeperModal.svelte` |
+| View geometry (fit, bounds, zoom, flick) | `frontend/src/lib/minesweeper/view.ts` |
+| Vibration patterns | `frontend/src/lib/minesweeper/haptics.ts` |
 | Challenge issue, replay, scores | `apps/social-service/src/minesweeper/minesweeper.service.ts` |
+
+## The screen is the board (2026-10-07)
+
+*"affichage plein ecran, avec juste un bouton classement qui flotte en haut a droite"* and *"amelioration de
+la fluidite et de la facilite de controle"* (user). The modal has no title bar and no tabs: on a phone it
+fills the screen (`phoneFullScreen`), on a desktop it stays a 96vw/96dvh dialog. Everything else floats
+over the board:
+
+| Control | Where | Notes |
+| --- | --- | --- |
+| Close, mines left, timer, restart | top left | the close is the only way out on iOS, which has no back gesture |
+| Leaderboard | top right, trophy icon only | opens a SHEET over the board; the game keeps running under it |
+| Ranked / unranked | bottom, beside the mode | **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked`; locked once the first cell is dug, since a game's ranking is decided when its board is generated |
+| Mode (dig / flag) | bottom centre, thumb reach | what a SHORT press does; a long press does the other. Same stored setting as the old "flags first" |
+
+**No zoom buttons.** Pinch, wheel (proportional to the delta, so a trackpad pinch is smooth), and a
+double-tap. The double-tap zooms in on the tapped point and out to the fit; it only counts when the first
+tap DUG - a second tap on a cell the first tap flagged is a real second action (an unflag), never a zoom.
+
+**Controls.** The board is FITTED as large as the padded screen allows (it used to stop at 1x), refits on
+rotation or resize until the player has moved it, and can never be dragged or zoomed out of reach
+(`clampView`). A drag works with a plain mouse press too, a flick glides and stops against an edge, the
+long press is 350 ms (was 450) with a progress ring drawn above the finger, and the phone vibrates on a
+long press, a win and a loss. Cell handlers are delegated from the grid (one set, not five per cell).
+
+**Fixed on the way:** a pinch left `justPanned` set, so the NEXT tap was swallowed; and the browser's
+touch `contextmenu` reset the long-press flag, letting the trailing click run the primary action on the
+cell just flagged.
+
+Nothing here touches the engine or the move log, so the server replay and the generation fingerprint are
+unaffected. **Verified:** the geometry (`view.test.ts`), the chrome and the moderation sheet in jsdom.
+**NOT verified: how it feels** - no gate here sees a gesture; owed ONE look on the Mi 9T and the iPhone
+(fit, flick, double-tap, the ring, the vibration).
 
 ## Moderation: remove a score, ban a player (2026-10-02)
 
@@ -32,8 +67,8 @@ before the ban** (403); the client types that as `MinesweeperBannedError` at the
 *"vous etes banni du classement"* instead of dropping them into an unranked game without a word - they
 may still play casually. A moderator cannot ban themselves.
 
-The leaderboard now carries each row's `scoreId`, which is what "remove" names. In the modal's
-leaderboard tab an admin gets a remove and a ban button per row, **each behind a confirmation**
+The leaderboard now carries each row's `scoreId`, which is what "remove" names. In the
+leaderboard sheet an admin gets a remove and a ban button per row, **each behind a confirmation**
 (`showConfirm`), and a "Joueurs bannis" list with an unban button; a failed action is said on the tab.
 
 **Verified:** 14 service specs (a ban refuses the challenge and the submit, deletes nothing, is

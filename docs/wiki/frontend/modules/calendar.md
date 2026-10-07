@@ -537,6 +537,21 @@ as a static TTF for jsPDF (`@expo-google-fonts/*`, in `$lib/pdf/appFonts.ts`). `
 names every face it draws with in its `fonts:` wait list; a face missing there is rasterised in
 whatever the browser had ready.
 
+### THE OUTLINE HAS ROOM AND THE SLOTS SUM TO THE CELL (2026-10-07)
+
+Two defects reproduced by rendering October with two half-day events on the 13th (before/after in
+`F:/Programmation/canari-export-preview/export-bugs-*.png`, outside the repo).
+
+- **The outline was cut left and right.** A title is `overflow:hidden` for its line clamp, which clips
+  at the padding box, while `paint-order:stroke fill` paints the stroke's outer half beyond the glyph.
+  `outlineRoomCss(fontSize)` pads the title by `ceil(strokeWidth / 2)` and cancels it with the same
+  negative margin, so the wrapping width is unchanged. The room is derived from `outlineWidth`, the
+  same number `textOutlineCss` strokes with.
+- **A grey sliver under the cell.** `floor(CELL_H / nSlots)` per slot left up to `nSlots - 1` px of the
+  cell unpainted. `slotHeights(cellH, n)` returns integers that sum exactly to the cell (the remainder
+  goes to the last slots) and every row, blank halves and the "+N" row included, takes the next one.
+- **Resolution.** `rasterScale` went from 2 to 3 (3240 px wide instead of 2160 for the A4 page).
+
 ### THE PDF AND ITS PREVIEW DIVERGED THREE WAYS (2026-09-27)
 
 Reported on prod for October 2026 and reproduced offline by rendering the preview and the exported

@@ -315,6 +315,11 @@ deleted); it now only ANNOUNCES the edit.
   from one edit to another keeps the FIRST draft. `confirm` saves only a text that is non-empty and
   changed (`onEdit`, the unchanged `handleEditMessage` path and its ordering rules below). `reset`
   runs when the conversation changes: the text went with it, the draft belonged to the one left.
+  **It must run on a change of conversation ID, never of the conversation OBJECT** (2026-10-07): the parent
+  replaces that object on every incoming message, and an effect reading `conversation?.id` depends on the object, so
+  each arrival dropped the banner. `ChatArea` reads the id through a `$derived`, compared by value.
+  **Entering an edit focuses the field with the caret at the END** (`ChatComposer`, after a `tick()` so the input has
+  rendered the loaded text); `ChatComposer.edit.svelte.test.ts` covers the caret.
 - **`ChatComposer` takes `editingText`, `onCancelEdit`, `onConfirmEdit`.** While `editingText` is set:
   a banner (the reply strip's skin) names the message, Send becomes a Save check that stays disabled
   until the text is non-empty and different, **Escape or the banner's X cancels**, and the "+", the

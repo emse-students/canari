@@ -14,6 +14,24 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-07
+
+### Fixed - EMSE staff can subscribe to the agenda of their own campus
+
+A reader with a campus and no formation (staff) could not subscribe and was told to complete their profile; they may now follow every formation of their own campus, students keep their own spaces ([profiles-and-access](docs/wiki/profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
+
+### Fixed - the agenda PDF no longer clips the title outline or leaves a grey sliver under a day
+
+The outline of a clamped title was cut at its left and right edges and a cell lost up to a pixel at its bottom; the sheet is also rasterised at 3x instead of 2x ([calendar](docs/wiki/frontend/modules/calendar.md#the-outline-has-room-and-the-slots-sum-to-the-cell-2026-10-07)).
+
+### Changed - the staff agenda subscription is read on a real runtime
+
+Signing, the signed and unsigned feed and the subscribe modal were read on the rebuilt local estate for a campus-only reader ([profiles-and-access](docs/wiki/profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
+
+### Changed - the store notes for 1.1.1 are written
+
+The 1.1.1 notes tell staff they can subscribe to their whole campus agenda, see [profiles-and-access](docs/wiki/profiles-and-access.md).
+
 ## [1.1.0] - 2026-10-06
 
 ### Fixed - a 503 or an offline agenda link no longer reads as a campus refusal, and a short signing key fails the deploy

@@ -47,10 +47,11 @@ describe('agenda signature', () => {
       { campus: 'gardanne', formation: 'ICM' },
       { campus: 'gardanne', formation: 'ISMIN' },
     ] as const;
-    it('allows the reader own campus, own formations and own pairs', () => {
-      expect(selectionWithinSpaces({ campus: 'gardanne', formation: null }, spaces)).toBe(true);
-      expect(selectionWithinSpaces({ campus: null, formation: 'ISMIN' }, spaces)).toBe(true);
+    it('allows exactly the reader own pairs, never a campus or a formation alone', () => {
       expect(selectionWithinSpaces({ campus: 'gardanne', formation: 'ICM' }, spaces)).toBe(true);
+      expect(selectionWithinSpaces({ campus: 'gardanne', formation: 'ISMIN' }, spaces)).toBe(true);
+      expect(selectionWithinSpaces({ campus: 'gardanne', formation: null }, spaces)).toBe(false);
+      expect(selectionWithinSpaces({ campus: null, formation: 'ISMIN' }, spaces)).toBe(false);
     });
     it('refuses another campus, another formation, and a pair that is not one of their spaces', () => {
       expect(selectionWithinSpaces({ campus: 'saint-etienne', formation: null }, spaces)).toBe(
@@ -111,19 +112,19 @@ describe('AssociationsService.signAgendaFeedSelection', () => {
     return svc;
   }
 
-  it('signs the reader own campus and refuses another with a typed 403', async () => {
+  it('signs the reader own space and refuses another with a typed 403', async () => {
     const svc = makeService([{ campus: 'gardanne', formation: 'ICM' }]);
     const ok = await svc.signAgendaFeedSelection(
       'user-1',
-      { campus: 'gardanne', formation: null },
+      { campus: 'gardanne', formation: 'ICM' },
       null
     );
     expect(() =>
-      assertAgendaSignature({ campus: 'gardanne', formation: null, associationId: null }, ok.sig)
+      assertAgendaSignature({ campus: 'gardanne', formation: 'ICM', associationId: null }, ok.sig)
     ).not.toThrow();
     const refused = svc.signAgendaFeedSelection(
       'user-1',
-      { campus: 'saint-etienne', formation: null },
+      { campus: 'saint-etienne', formation: 'ICM' },
       null
     );
     await expect(refused).rejects.toBeInstanceOf(ForbiddenException);
