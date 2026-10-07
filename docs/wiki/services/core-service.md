@@ -164,7 +164,7 @@ of **three** outcomes. The distinction exists for one reason: **only an ANSWER m
 
 | outcome | when | response | cached |
 | --- | --- | --- | --- |
-| `image` | upstream 200 | the bytes, upstream `Content-Type` **and upstream `ETag`** | 1 h in process (then REVALIDATED, not re-fetched), 24 h in the browser |
+| `image` | upstream 200 | the bytes, upstream `Content-Type` **and upstream `ETag`** | 1 h in process (then REVALIDATED, not re-fetched); `Cache-Control: public, no-cache` + ETag, `304` on a matching `If-None-Match` (2026-10-08) |
 | `absent` | upstream **404** - this user has no photo | `404`, no body | 10 min in process, 10 min in the browser (the web client itself remembers it for the session) |
 | `unavailable` | timeout, transport failure, upstream 5xx/429, our key refused, or no key configured | `502`, no body, `Cache-Control: no-store` | never, at any layer |
 
@@ -262,11 +262,40 @@ What shipped, and what deliberately did not:
   a validator for content it did not author claims something it cannot support, and MiGallery's
   token stays meaningful if these bytes are ever re-encoded in transit. **It is not the fix for
   staleness and must not be filed as one.**
-- **The 24 h was NOT shortened, and that is the point.** The saving is upstream: a lapsed hour costs
-  a conditional request instead of a full download, per replica, per face. The ~25 h a user sees is
-  decided by `max-age` alone and is untouched. The shape that does - `no-cache`
-  plus the real ETag, or a busted URL - is an open decision in [backlog](../backlog.md), and a
-  smaller number chosen as a compromise would be the same defect at a different rate.
+- **The 24 h was NOT shortened on 2026-09-16, and that was the point**: the saving was upstream, and
+  a smaller `max-age` chosen as a compromise would be the same defect at a different rate. The
+  response shape followed on 2026-10-08, below.
+
+##### `no-cache` + the upstream ETag, and the busted URL it did not need (2026-10-08)
+
+**The decision, taken because it needs nothing from MiGallery**: the controller answers
+`Cache-Control: public, no-cache` with MiGallery's asset-keyed ETag, and a matching `If-None-Match`
+(weak comparison, lists and `*` included - `etagMatches`) is a bodyless `304` that repeats the
+validator and the `Cache-Control`. `no-cache` means "store it, ask before every reuse", so a changed
+photo shows on the next render at the browser and at the edge, not up to 24 h later. The 304 is
+decided in the controller rather than left to Express so it is explicit; a response with no upstream
+ETag keeps Express's own weak one. Pinned by `users.avatar-log.spec.ts`, which reads the headers the
+response is given (no `max-age`, the ETag, the 304 and its `[AVATAR] outcome=not-modified` line).
+
+Cost, accepted: one conditional request per face per render goes back on the wire. It is answered
+from `AvatarService`'s in-process entry (itself revalidated upstream hourly), so it costs a
+round trip and no MiGallery traffic, and HTTP/3 multiplexing measured 17-37 ms each. Layers:
+
+| layer | now |
+| --- | --- |
+| browser HTTP cache | stores, revalidates each use (`fetch` in `userAvatarCache.ts` sets no cache mode and keeps no lifetime of its own; no service worker exists) |
+| nginx (`infrastructure/local/Dockerfile.frontend`) | no avatar rule; passes the headers |
+| Cloudflare | edge TTL follows the origin's `Cache-Control` ("use cache-control if present"); **OWED: one `curl -sI` pair on the next deploy** to confirm a changed photo answers `REVALIDATED`/`EXPIRED` and not a `HIT` with a growing `Age`, since the avatar Cache Rule cannot be read by our tokens |
+| Android/iOS notification disk copies | unchanged: their own 24 h age check, no conditional request |
+| `chat-delivery` `/api/mls/push/avatar/:id` | unchanged: `max-age=3600`, native readers only |
+
+**The alternative, still available**: a busted URL (`/api/users/<id>/avatar?v=<version>` answered
+`immutable`) would drop even the conditional request, but its version must reach the client WITHOUT
+fetching the avatar first. MiGallery exposes `photos_asset_id` only in `/api/users/[userId]/photo-access`
+(one call per person, own scope), so there is no batch carrier; and self-priming `/api/users/batch`
+from core's cache is REFUTED because that cache is per replica - one photo would come back busted
+from one replica and unbusted from another and the client would thrash between two entries. Revisit
+only if MiGallery adds a cheap batch carrier.
 
 Guarded by `avatar.service.spec.ts` (6 cases, including the `validateStatus` predicate read back and
 exercised directly, since axios is mocked and never applies it) and `avatar.cache.spec.ts` - five

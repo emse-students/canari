@@ -600,71 +600,14 @@ write no marks. **Do not "fix" it by lowering the avatars' fetch priority**: a h
 per-engine, and would make the measurement unreproducible.
 
 ---
-### P2 - A CHANGED PROFILE PHOTO IS STILL INVISIBLE FOR UP TO 24 h, AND ONLY `max-age` DECIDES THAT - THE SHAPE THAT MOVES IT IS THE OPEN DECISION (measured on production 2026-09-16, asked by the USER)
+### P2 - A CHANGED PROFILE PHOTO: `no-cache` + ETag SHIPPED (2026-10-08), ONE EDGE READING OWED
 
-**There is no invalidation of any kind on an avatar, at any layer.** Canari does not own the photo -
-it proxies MiGallery - so the only question is how fast a change there reaches a face here, and the
-answer today is "when four independent timers happen to have run out".
-
-| Layer | How long it holds | What invalidates it |
-| --- | --- | --- |
-| MiGallery (`gallery.mitv.fr`) | - | source of truth, changes at once |
-| `AvatarService`'s in-process LRU (`IMAGE_TTL_MS`) | 1 h | nothing; TTL only, and **one copy per replica** |
-| Cloudflare (the Cache Rule, deployed 2026-09-16) | 24 h | nothing |
-| the browser's own HTTP cache | 24 h | nothing |
-
-Measured live, `GET /api/users/<id>/avatar`:
-
-```
-Cache-Control: public, max-age=86400
-etag: W/"3020-Bw+qPypeSB5uzDJv2iONFgFB+94"
-Age: 855      cf-cache-status: HIT
-```
-
-**THE ETAG IN THAT RESPONSE IS NOT MiGALLERY'S, IT IS EXPRESS'S.** Nest lets Express compute a weak
-ETag over whatever bytes go out; it can only ever produce a 304 AFTER the 24 h has elapsed, so it
-says nothing about staleness.
-
-**AND MiGALLERY HAD ALREADY SOLVED THIS.** `src/routes/api/users/[username]/avatar/+server.ts` in
-the MiGallery repo keys an ETag on the ASSET ID - the thing that changes when the user changes their
-photo - and answers accordingly:
-
-```ts
-const etag = `"${assetId}"`;
-'Cache-Control': busted ? 'public, max-age=15552000, immutable' : 'no-cache'
-```
-
-It says *revalidate every time, and here is the version*. `AvatarService` now revalidates its 1 h entry with `If-None-Match` and the controller forwards MiGallery's ETag (landed 2026-09-16, [core-service](services/core-service.md#the-avatar-proxy)), but the controller still answers `Cache-Control: public, max-age=86400` (`users.controller.ts`) over an upstream `no-cache`, and `fetchUserAvatar` never passes `?v=`: a response the upstream marked as needing revalidation is republished by us as fresh for a day.
-
-**THE RULE THIS BREAKS IS ALREADY WRITTEN IN THIS REPOSITORY**, in `userAvatarCache.ts`, by the pass
-that deleted a Cache Storage bucket for the same reason: *a key naming a CONTENT may be cached for
-ever; a key naming an IDENTITY may not.* `/api/users/<id>/avatar` names a person.
-
-**THE FIX IS ENTIRELY INSIDE CANARI - MiGallery needs no change**, and what is left is the decision: stop claiming 24 h. **THIS IS THE WHOLE OF WHAT A USER SEES - the revalidation already landed did not shorten it by a second.** Two shapes, and they are not equivalent:
-   - **`no-cache` + the real ETag**: correct, deterministic, and puts one conditional request per
-     face per render back on the wire - the amplification this endpoint was fixed of, and the reason
-     the edge rule exists.
-   - **a busted URL**: the client asks `/api/users/<id>/avatar?v=<version>` and Canari may then
-     answer `immutable`. A photo change changes the version, changes the URL, and all four layers
-     invalidate at once with no revalidation traffic at all. **Its blocking condition is that the
-     version must reach the client without fetching the avatar first** - today core-service learns
-     the asset id only by downloading the image, which is circular. `/api/users/batch` is the
-     natural carrier and MiGallery would have to expose the id cheaply, which is the one part that
-     crosses a repository boundary. **MiGallery was read on 2026-09-16 and exposes
-     `photos_asset_id` in exactly one place - `/api/users/[userId]/photo-access`, one call per
-     person behind its own scope.** There is no batch carrier today, so the blocking condition
-     stands.
-
-     **AND THE OBVIOUS WAY ROUND IT IS REFUTED, NOT UNEXPLORED.** Core-service now holds the asset
-     id after the first fetch, so `/api/users/batch` could carry it when the cache has it and omit
-     it otherwise - self-priming rather than circular. It must not be built: that cache is **per
-     replica**, so the same face would come back busted from one replica and unbusted from another,
-     and the client would keep two cache entries for one photo and thrash between them. A version
-     must come from somewhere shared and authoritative; an in-process LRU is not that.
-
-**Do not ship part 3 without deciding which shape**, and do not lower the TTL as a compromise: a
-smaller number is the same defect at a different rate, and it would still be a claim nobody can
-honour.
+The proxy no longer claims 24 h; the shape, the layers table and the busted-URL alternative are in
+[core-service](services/core-service.md#no-cache--the-upstream-etag-and-the-busted-url-it-did-not-need-2026-10-08).
+**Owed, then delete this entry**: after the deploy, `curl -sI` a face twice through `canari.emse.fr`
+and confirm Cloudflare revalidates (`cf-cache-status` not a `HIT` with a growing `Age`), then change a
+photo in MiGallery and watch it appear. If the avatar Cache Rule overrides the origin, the fix is
+that rule, not a number here.
 ### P3 - THE TWO OPENING LINES BELONG TO THE DOCUMENT THAT IS LEAVING, AND THE GUARD WAS WATCHING AN EVENT THAT ARRIVES TOO LATE (production, 2026-09-16)
 
 #754 shipped: `WebMlsService` listens for `beforeunload` as well as `pagehide`; the mechanism and the Chrome ordering are in [auth](frontend/modules/auth.md#and-what-is-not-a-reconnect-the-page-leaving). **Owed: ONE Firefox reload of a build carrying it** - are the two outgoing-page lines (`+15269ms` stamp, the previous build's `app.*.js`) gone? If they are still there, Firefox closes the socket before dispatching any event: then no DOM event can discriminate, and the lines are to be EXPLAINED where they are read, never suppressed.
