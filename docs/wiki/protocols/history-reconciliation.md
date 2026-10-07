@@ -1642,6 +1642,47 @@ could not be printed in the field at all. Every real occurrence read `CONCURRENT
 nesting the guard exists for, which would have read as "nothing to fix". A distinction carried in a
 string is a distinction nobody makes.
 
+### The seen-ciphertext ledger has two namespaces and two bounds (2026-10-08)
+
+`history_seen_cipher:<user>:<group>` is ONE array holding two kinds of entry that answer different
+questions: a **fingerprint** (`frameFingerprint`, `<len36>:<hash36>`: *"I consumed this ratchet
+generation"*) and a **row key** (a Redis stream id `<ms>-<seq>`: *"I walked this row"*). Losing a
+fingerprint is what a false `unreadable for good` accusation is made of; losing a row key costs a
+re-check against the fingerprints.
+
+**What was measured (TAB-3b, 2026-09-08, `seenset.mjs`, W1 bench profile).** The busiest conversation
+held 2 762 row keys and 2 073 fingerprints, under the old SHARED cap of 5 000 that kept the last
+5 000 of the mixture - so row keys pushed fingerprints out first. Across the profile: 169 ledgers,
+247 kB, mean 1.5 kB each, and nothing bounded their number.
+
+**What bounds it now** (`frontend/src/lib/utils/chat/seenLedgerBounds.ts`, called by
+`saveSeenCipherHashes`):
+
+| Bound | Value | Why this number |
+| --- | --- | --- |
+| Fingerprints per ledger | 5 000 | busiest measured 2 073, 2.4x headroom |
+| Row keys per ledger | 5 000 | busiest measured 2 762, 1.8x headroom |
+| Ledgers per user | 256 | 169 measured, 1.5x headroom |
+
+Each namespace keeps its LAST N in insertion order, so the oldest of the overflowing namespace goes
+first and the other is untouched. The caps were not lowered below the old ceiling per namespace on
+purpose: shrinking one evicts a mark, and a mark's loss is the accusation. Worst case per ledger is
+about 5 000 x (14 + 18) characters (~160 kB); 256 full ledgers would be far past a 5-10 MB origin
+quota, but the measured mean is 1.5 kB and a write that does not fit is still caught and logged, so
+the number protects against unbounded growth, not against a profile that fills every ledger.
+
+**The ledger cap is write order, not a clock.** A per-user index `history_seen_cipher_index:<user>`
+lists groups oldest write first; a write moves its group to the end, and past 256 the front entries
+are deleted (storage key, in-memory cache, pending flush) with one `[HISTORY]` warning. The group
+being written is never evicted. A profile with no index adopts its existing ledger keys once, in
+storage order, so the first eviction after the upgrade is arbitrary among them; an evicted group
+re-walks its archive once. Fingerprint versus row key is told by shape (a stream id has a dash and no
+colon); the id-less fallback row key (`<ts>:<content>`) is longer and non-base-36, so it counts as a
+row key. Pinned by `seenLedgerBounds.test.ts`.
+
+**Not done, deliberately:** the mark/advance atomicity and the 61 s catch-up are separate open items
+in [backlog](../backlog.md).
+
 ---
 
 ## Open questions
