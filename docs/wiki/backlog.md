@@ -901,26 +901,6 @@ this scope does NOT incur and the evidence for that, and the two defects the rep
 
 ## iOS, platform and runtime - the residue that fits no other section
 
-### P3 - a media object that is gone reads as a hard error unless one JSON file survived, and that file is known to be losable (found 2026-09-05)
-
-`MediaService.download` answers `purged` - which the controller turns into a 410 and the client into
-a calm *"media expired"* label - only when `media_metadata.json` still holds an entry with
-`purgedAt` and `purgeReason === 'retention_expired'`. If the object is gone and that entry is not,
-the answer is a 404, and `PostMedia` renders the red failure and writes `console.error`. The two are
-the same event to the user.
-
-**The metadata file is known to be losable, in this very service**: `downloadPublic` carries an
-explicit *"metadata lost after a container restart"* fallback that backfills an entry from storage.
-`download` has no equivalent, so the private path depends on a file the public path is written not
-to trust.
-
-**What is NOT known** is how often a 404 on this endpoint means "purged" rather than "never existed
-here" - that is a measurement on production's media service, not a reading. **A predicate that named
-the last incident is not the predicate that names the next one**, and this one has not been measured
-on the population it would run on. Cheap and worth doing before deciding anything: count 404s and
-410s on `/api/media/:id` over a week.
-
-
 ### P2 - iOS carries none of the window-layout work Android already has (user, 2026-08-28)
 
 **Named by the user from real use on an iPhone**, and one of the three is already fixed. The Android

@@ -162,6 +162,28 @@ The index is a **JSON file** (`media_meta/media_metadata.json`), not a database 
 object's clock **and losing its class** - which is why the backfills below run at every boot rather
 than once. Since the allowlist, a lost class means "kept", never "swept".
 
+### A purged object reads as 410, an absent one as 404 - and both were already typed (measured 2026-10-08)
+
+Closed from the backlog entry of 2026-09-05, whose two premises were both stale:
+
+- **"`downloadPublic` backfills from storage, `download` does not"**: that fallback was DELETED (it
+  published any blob it was asked for). `downloadPublic` answers `not_found` for a missing entry
+  too. There is no storage-side answer to copy: when the object is gone, storage holds nothing that
+  says it was purged. The ONLY record is the tombstone, kept `META_TOMBSTONE_MAX_AGE_MS` = 90 days
+  after the purge; past that, a purged id and an id that never existed are the same fact, and the
+  404 is by construction.
+- **"the client renders a red failure"**: `fetchMediaObject` and the segmented reader throw
+  `MediaPurgedError` (410) and `MediaNotFoundError` (404) at the response, `mediaFailureCause` reads
+  them by type, and both are permanent (`isRetryableMediaFailure`): a `warn`, no retry button, no
+  loop. 410 shows the surface's "expired" label, 404 the shared `media_error_not_found`.
+  `media.service.range.spec.ts` pins the server's two answers.
+
+**Measured on production, read-only**: `/api/media/:id` (GET, not `/public/`) over the host nginx
+`canari-prod` access logs, 2026-09-24 17:20 to 2026-10-08 01:21 (about 13 days; the rotated set
+starts at the migration cutover): **612 requests - 611 `200`, 1 `410`, 0 `404`**. The one 410 is on 2026-09-25 (one object, not
+attributed). So a 404 on this endpoint is not a population today; if
+the count ever moves, the tombstone window above is the first lever, not a storage lookup.
+
 ### The sweep is an allowlist: an association's document was swept (2026-10-01)
 
 **The report.** On `canari.emse.fr`, downloading a document from the `les-rootz` vault answered
