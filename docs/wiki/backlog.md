@@ -789,8 +789,6 @@ Both halves are fixed since `v0.18.18`; nothing has run them on a genuine first 
    of 2026-09-05), and once with A1 COLD, which collects the message from history.
 3. **NOTIF-17b re-run on the `admits` route** (a device added while offline is a recipient of the
    next message).
-4. **Unexamined: a first-contact Welcome exceeds the FCM data budget** - `[PUSH_SEND][welcome-send-4964245c]
-   proto not inlined: 4608B over a 3716B budget`, so it travels without its payload inlined.
 
 ### P3 - three tap/reply rows owed against Android's single notification builder
 
