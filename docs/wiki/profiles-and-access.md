@@ -596,7 +596,7 @@ has no star.
 definition: an association is a BDE exactly when it is the BDE of at least one space. The three BDE
 queries (`isUserBdeAdmin`, `callerHasAnyBdeFlag`, the proposal notification) use it; the entity's `isBDE`
 is a read-only `VirtualColumn` derived from it, so every API and the frontend keep reading the same
-field; the toggle on `/admin/associations` is now a read-only badge. Migration `072_drop_is_bde.sql`
+field; the toggle that sat on the former `/admin/associations` page was a read-only badge, and that page was deleted 2026-10-07 (the star on `/admin/spaces` designates). Migration `072_drop_is_bde.sql`
 drops the column and REFUSES while a flagged association governs no space (071 seeds a BDE only when
 exactly one was flagged), so no one silently loses VALIDATE_EVENTS / MANAGE_ASSO / MODERATE. Tried on a
 throwaway Postgres: drop, replay, refusal; the virtual column read against real rows.
@@ -789,7 +789,7 @@ the grid. The creator is the caller, who need not become a member.
 | `scope` | Lists | Read by |
 | --- | --- | --- |
 | `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role) - `associationVisibleToViewerSql`, the agenda's predicate; a global admin is an ordinary reader | `/associations`, `/lists` (`listAssociationDirectory`) |
-| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/associations`, `/admin/spaces`, `/admin/cercle`, `/admin/carte` |
+| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/spaces`, `/admin/cercle`, `/admin/carte` |
 
 **`scope=all` is open to any signed-in caller, NOT admin-only, and that is deliberate**: half the
 pickers belong to non-admins (a co-organiser from the other campus, a past role in an association one

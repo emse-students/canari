@@ -104,7 +104,6 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/account/purchases': () => m.purchases_heading(),
   '/admin': () => m.admin_title(),
   '/admin/agenda': () => adminTitle(m.admin_pending_agenda_label()),
-  '/admin/associations': () => adminTitle(m.admin_associations_label()),
   '/admin/carte': () => adminTitle(m.carte_card_label()),
   '/admin/cercle': () => adminTitle(m.admin_cercle_label()),
   '/admin/document-reviewers': () => adminTitle(m.docreview_nav_label()),

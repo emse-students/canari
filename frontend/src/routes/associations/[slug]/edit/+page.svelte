@@ -400,7 +400,9 @@
 
 <PageContainer width="tool">
   <PageHeader
-    title={m.asso_edit_page_title()}
+    title={asso?.type === 'institution'
+      ? m.asso_edit_page_title_institution()
+      : m.asso_edit_page_title()}
     subtitle={asso ? `@${asso.slug}` : undefined}
     backHref="/associations/{encodeURIComponent(slug)}"
     backLabel={m.asso_edit_page_back()}
