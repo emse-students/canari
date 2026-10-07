@@ -431,16 +431,23 @@ export class TauriMlsService extends BaseMlsService {
     this.wsUnlisten?.();
     this.wsUnlisten = null;
     this.ws = null;
-    void ws
-      .send(JSON.stringify({ type: 'disconnect' }))
-      .catch(() => {
-        // Best-effort - the gateway forgets a silent socket on its own presence TTL.
-      })
-      .finally(() => {
+    // THE SEND IS THE PROBE. A socket the OS closed under a backgrounding app delivers no `Close`
+    // (the listener of a live one would have nulled `this.ws`), but its `send` REJECTS - and the
+    // plugin has already dropped such a connection, so `disconnect()` on it can only answer
+    // "Trying to work with closed connection" (Mi 9T, 2026-10-06, on every background). The
+    // rejection is the fact, known here: release only a socket whose send was accepted.
+    void ws.send(JSON.stringify({ type: 'disconnect' })).then(
+      () => {
         ws.disconnect().catch((e: unknown) => {
           console.warn(`[WS] pauseSocket: native disconnect failed: ${String(e)}`);
         });
-      });
+      },
+      (e: unknown) => {
+        console.log(
+          `[WS] pauseSocket: socket already closed natively (${String(e)}) - nothing to release.`
+        );
+      }
+    );
     console.log('[WS] Paused - disconnect sent, socket released until the next foreground.');
   }
 
