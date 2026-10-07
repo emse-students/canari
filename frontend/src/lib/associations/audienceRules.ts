@@ -83,3 +83,24 @@ export function toggleGroup(reached: Set<Cell>, group: readonly Cell[]): Set<Cel
   }
   return next;
 }
+
+/** What a creation form offers for an audience, from nothing to one campus x formation pair. */
+export type ReachChoice = 'none' | 'school' | 'campus' | 'cell';
+
+/**
+ * The rules a creation form's audience choice stands for. `none` is the empty set (the server
+ * writes no rule for a new institution, so it is visible to its members only), `school` is the
+ * `(null, null)` rule, `campus` a campus rule and `cell` a single formation x campus pair. A choice
+ * that still lacks its campus or formation yields NO rule rather than a wider one: a half-filled
+ * form must never widen a reach.
+ */
+export function reachChoiceToRules(
+  choice: ReachChoice,
+  campus: Campus | '',
+  formation: Formation | ''
+): AudienceRule[] {
+  if (choice === 'school') return [{ formation: null, campus: null }];
+  if (choice === 'campus' && campus) return [{ formation: null, campus }];
+  if (choice === 'cell' && campus && formation) return [{ formation, campus }];
+  return [];
+}

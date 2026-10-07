@@ -2,4 +2,4 @@
   import AssociationCreatePage from '$lib/components/associations/AssociationCreatePage.svelte';
 </script>
 
-<AssociationCreatePage kind="association" />
+<AssociationCreatePage kind="institution" />

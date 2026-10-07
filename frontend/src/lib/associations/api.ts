@@ -48,6 +48,14 @@ export const ALL_CORE_FLAGS =
 export const ASSOCIATION_ADMIN_PRESET =
   ALL_CORE_FLAGS | AssociationPermissionFlag.MANAGE_STRIPE_CONNECT;
 
+/**
+ * A member who speaks for the association without administering it: publishes in its name and
+ * proposes its events. What an institution's members need (D20, WP6e), since being personnel gives
+ * no right to publish through one.
+ */
+export const PUBLISHER_PRESET =
+  AssociationPermissionFlag.POST_AS_ASSO | AssociationPermissionFlag.PROPOSE_EVENT;
+
 /** Returns true if `permissions` includes `flag`. */
 export function hasPermissionFlag(permissions: number, flag: AssociationPermissionFlag): boolean {
   return (permissions & flag) !== 0;

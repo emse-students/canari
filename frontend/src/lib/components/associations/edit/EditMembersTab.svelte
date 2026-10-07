@@ -6,6 +6,7 @@
     updateMemberRole,
     reorderMembers,
     ASSOCIATION_ADMIN_PRESET,
+    PUBLISHER_PRESET,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
@@ -31,10 +32,17 @@
 
   let newMemberUserId = $state('');
   let newMemberRole = $state('Membre');
-  /** 0 = simple member; ASSOCIATION_ADMIN_PRESET = full association admin. */
-  let newMemberPermissions = $state(0);
+  /**
+   * What a new member is given. An institution's members are added to PUBLISH in its name (being
+   * personnel gives no such right, D34-D36), so that is its default; elsewhere 0 is a simple member.
+   * ASSOCIATION_ADMIN_PRESET is a full association admin.
+   */
+  const defaultPermissions = () => (asso.type === 'institution' ? PUBLISHER_PRESET : 0);
+  // svelte-ignore state_referenced_locally
+  let newMemberPermissions = $state(defaultPermissions());
   const permissionOptions: PickerOption[] = [
     { value: '0', label: m.asso_members_role_member() },
+    { value: String(PUBLISHER_PRESET), label: m.asso_members_role_publisher() },
     { value: String(ASSOCIATION_ADMIN_PRESET), label: m.asso_members_role_admin() },
   ];
   let addingMember = $state(false);
@@ -66,7 +74,7 @@
       });
       newMemberUserId = '';
       newMemberRole = 'Membre';
-      newMemberPermissions = 0;
+      newMemberPermissions = defaultPermissions();
     } catch (err) {
       memberError = m.common_save_error();
     } finally {

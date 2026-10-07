@@ -39,11 +39,41 @@
 | Route | Description |
 |---|---|
 | `/associations` | Public association directory |
+| `/lists`, `/institutions` | The list and institution directories (same API, narrowed by type) |
+| `/associations/new`, `/lists/new`, `/institutions/new` | ONE creation flow, three types (`/institutions/new`: global admin only) |
 | `/associations/[id]` | Association detail page |
 | `/associations/[id]/edit` | Admin edit (profile, members, forms, payments, boutique, cotisations) |
 | `/dashboard` | Association admin dashboard |
 | `/lists/[slug]` | Member list public page |
 | `/lists/[slug]/edit` | Edit member list |
+
+## One header and one creation flow for the three directories (2026-10-07)
+
+Audited on 2026-10-07 after a screenshot of `/associations`: four buttons of two kinds (three links to
+directories, one creation) drawn alike, and **`/institutions` had NO creation button**. What existed
+before: creation was a checkbox on `/associations/new` visible to a global admin; the reach was only
+editable on the `/admin/spaces` grid (`PUT /api/associations/:id/audiences`, global admin); members were
+added on the generic members tab as `Membre` (0) or `Admin`, so a new institution member could not
+publish in its name until a flag was ticked by hand.
+
+Now:
+
+- `AssociationsHeader.svelte` is the heading of the three directories. NAVIGATION is a row of outlined
+  pills under the title (Associations, Listes, Institutions, Agenda global) with the current directory
+  filled and `aria-current="page"`; the single PRIMARY action, yellow, sits on the title line and names what
+  THAT directory creates (`Créer l'association`, `Créer une liste`, `Créer une institution`). The lists and
+  institutions pages lost their "back to Associations" link: the nav carries it.
+- `AssociationCreatePage.svelte` is the one creation flow, `kind = association | list | institution`; the
+  three `/new` routes are three lines. A list adds campaign and parent fields; an institution adds an
+  **audience choice**: none (default, D36 - visible to its members only), the whole School, one campus, or one
+  campus x formation (`reachChoiceToRules` in `audienceRules.ts`; a half-filled choice yields no rule and the
+  submit is disabled, never a wider reach). The rule is written right after the creation with the grid's own
+  `setAssociationAudiences`, and the creator lands on the members tab of the new institution. A non-admin
+  opening `/institutions/new` is sent back to `/institutions`.
+- The members tab offers a third access level, `Publie en son nom` (`PUBLISHER_PRESET` =
+  `POST_AS_ASSO | PROPOSE_EVENT`), which is the DEFAULT when the association is an institution.
+- Test: `associationsHeader.test.ts` (wiring), `audienceRules.test.ts` (`reachChoiceToRules`). Read on the
+  local estate at 390 and 1280 (no horizontal scroll, nav wraps cleanly).
 
 ## Promo lists, and the second theme
 
