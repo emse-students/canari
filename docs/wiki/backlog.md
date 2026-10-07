@@ -2967,5 +2967,4 @@ Decisions:
 4. **Readers may react and comment**, like any reader of the feed.
 5. A global admin grants it (it crosses spaces); a BDE would grant only inside its own space. The grant ADDS to what the population gives and never removes.
 6. This closes the staff-feed question: staff without a cursus see nothing more by default, the named ones do.
-
-Check before building: "ISTP" in the user's example is not a formation here (ICM, ISMIN, FSSS, PDIS, Autre) - ask which one was meant, or whether a formation is to be added. Done when a named reader sees exactly the association, list and institution posts of their ticked cells and no student's personal post, and a reader with no grant sees what they saw before.
+7. **No end date, ever** - only grant and revoke. **The list of named readers is internal**: only global admins see it; students are not told. **A journal** keeps who granted what to whom and when (`granted_by`, date), visible to global admins.The user's example formation "ISTP" is FSSS (answered 2026-10-07): no new formation. Done when a named reader sees exactly the association, list and institution posts of their ticked cells and no student's personal post, and a reader with no grant sees what they saw before.
