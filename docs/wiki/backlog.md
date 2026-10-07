@@ -2952,3 +2952,20 @@ Seven decisions, in the user's answers of 2026-10-07 (the last one asked for Mas
 7. **The star (space BDE) may set the audience of the associations of ITS campus, and only that**: the super-role "manage associations" includes the audience, bounded to the BDE's own campus; never another campus, never an institution.
 
 Work packages: (a) server: default rule at creation, refusal of `everyone` outside institutions, the BDE's campus bound on writes, with tests; (b) client: the three presets on the association page for a manager and a BDE, the profile prompt for a campus-less manager; (c) wiki: [profiles-and-access](profiles-and-access.md) D-section. Done when a manager of a fresh association sees it reach its campus with no setup, can narrow or widen it to the presets, and a hand-written `everyone` is refused by the server for a non-institution.
+
+---
+
+## Nominative read access to the student feed - decided by the user 2026-10-07, built WITH the audiences chantier (1.2)
+
+This is WP7 of [profiles-and-access](profiles-and-access.md) (D24: grants only ADD, a global admin grants across spaces), given its first capability. Cases named by the user: Celine Haton (director of the ME), Aurelie Boyer (ME communication) and Julie Blanc (School, student liaison) reading the posts of associations, **but not the personal posts of students**; and a director of formations reading the associations of Saint-Etienne and Gardanne, formations ICM and another.
+
+Decisions:
+
+1. **A grid of checkboxes per person**, shaped like `/admin/spaces`: one cell per campus x formation (and "whole campus"), so one grant can cover several campuses and formations. It replaces the document-reviewers page, whose rows migrate into it.
+2. **Covers**: the posts of associations, lists AND institutions of the ticked spaces - an institution of ANOTHER campus too, which its own audience (whole campus) never shows a reader of this one - with their comments and reactions, and the events and agenda of those associations.
+3. **Never** the personal posts of students: the capability reads posts published AS an entity, nothing else.
+4. **Readers may react and comment**, like any reader of the feed.
+5. A global admin grants it (it crosses spaces); a BDE would grant only inside its own space. The grant ADDS to what the population gives and never removes.
+6. This closes the staff-feed question: staff without a cursus see nothing more by default, the named ones do.
+
+Check before building: "ISTP" in the user's example is not a formation here (ICM, ISMIN, FSSS, PDIS, Autre) - ask which one was meant, or whether a formation is to be added. Done when a named reader sees exactly the association, list and institution posts of their ticked cells and no student's personal post, and a reader with no grant sees what they saw before.
