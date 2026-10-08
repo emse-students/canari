@@ -1530,6 +1530,8 @@ and none with a face. Three defects, three fixes:
   half - ledger, sentence shape, faces, encoding - is `push/PostReactionGroup.kt`, compiled by the
   JVM test project (`PostReactionGroupTest`).
 
+An un-react does not shrink an already-shown group: removing a reaction sends no push, so "A, B et 4 autres" stays until the notification is swiped or opened.
+
 **iOS** gets the cheap half only: `buildInternalApnsRequest` files a `social_reaction` under the
 thread `post_reaction_<postId>`, so the notification centre stacks the reactions to one post, and
 `attachSocialIcon` already draws the one actor's face from `iconUserId`. What it does not get is ONE
