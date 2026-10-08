@@ -187,6 +187,10 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **Reply and mark-as-read from a salon notification** - absent on Android AND iOS by design; a salon send is server-authoritative, so it needs its own native send path. iOS actions never run in this repo's gates: owed a hand on an iPhone for a DM and a group.
 
+## Asked by the USER on 2026-10-09 - CanaReels in a conversation, a design study, not built
+
+**An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
+
 ## Open defects, in severity order
 
 ### P1 - a member who joins a community in-session sees ONE salon, and every message in the others is dropped until a reload (measured 2026-10-08)
