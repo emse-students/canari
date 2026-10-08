@@ -201,6 +201,15 @@
     }))
   );
 
+  /**
+   * Whether the requested section may be DRAWN: a typed `/shop` on an association with nothing to
+   * sell is refused here, in the same render that knows the content, so the empty card never
+   * flashes before the effect below sends the reader to the hub.
+   */
+  const sectionRefused = $derived(
+    activeSection !== null && !loading && !!asso && !mayOpenPublicSection(activeSection, content)
+  );
+
   // A segment is user input: once the page is loaded, a section that does not exist for it (a shop
   // with nothing to sell) is replaced by the hub rather than drawn empty.
   $effect(() => {
@@ -443,7 +452,9 @@
         {error}
       </div>
     {/if}
-    {#if activeSection === null}
+    {#if sectionRefused}
+      <!-- Nothing is drawn: the effect above is already sending the reader back to the hub. -->
+    {:else if activeSection === null}
       <SectionHub rows={hubRows} label={m.asso_sections_nav_label()} />
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_about()}</h2>
@@ -477,7 +488,7 @@
     {:else if activeSection === 'calendar'}
       <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
         <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h2>
+          <h1 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h1>
           <a
             href="/calendar?association={encodeURIComponent(asso.id)}"
             class="text-cn-dark text-xs font-semibold hover:underline"
@@ -495,9 +506,9 @@
     {:else if activeSection === 'members'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
-          <h2 class="text-text-main text-lg font-bold tracking-tight">
+          <h1 class="text-text-main text-lg font-bold tracking-tight">
             {m.common_members_label()}
-          </h2>
+          </h1>
           {#if members.length > 0}
             <button
               type="button"
@@ -528,10 +539,10 @@
     {:else if activeSection === 'shop'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
-          <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+          <h1 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
             <ShoppingBag size={20} />
             {m.asso_tab_shop()}
-          </h2>
+          </h1>
           <a href={resolve('/shop')} class="text-cn-dark text-xs font-semibold hover:underline">
             {m.asso_view_all_shop()}
           </a>
@@ -612,10 +623,10 @@
       </div>
     {:else if activeSection === 'partnerships'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
-        <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+        <h1 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
           <Handshake size={20} />
           {m.asso_tab_partnerships()}
-        </h2>
+        </h1>
         <PartnershipCardList cards={partnerships} accentColor={cardAccentColor} />
       </div>
     {/if}

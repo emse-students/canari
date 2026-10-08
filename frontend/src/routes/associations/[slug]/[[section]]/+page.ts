@@ -21,8 +21,11 @@ export const load: PageLoad = ({ params, url }) => {
     description: slug
       ? `Association ${slug} sur Canari : actualités, agenda et vie associative EMSE.`
       : 'Association sur Canari.',
-    path: `/associations/${params.slug}`,
-    // A section is not the entity's page: never offered to a search engine.
+    // A section is not the entity's page: never offered to a search engine, and its canonical is
+    // its own address - the one the server answer carries (`resolveSeoForPath`).
+    path: params.section
+      ? `/associations/${params.slug}/${params.section}`
+      : `/associations/${params.slug}`,
     ...(params.section ? { noindex: true } : {}),
   };
   return { seo };
