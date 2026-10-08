@@ -47,6 +47,7 @@
 - [Design reference](frontend/design-reference.md) - Messenger and Facebook MEASURED, Canari's 36 font sizes measured beside them, and the scale that replaces them
 - [SEO and link previews](frontend/seo.md) — why a login-gated SPA needs server-rendered heads, the sitemap and robots routes, and what each decision follows from
 - [Local-first UI](frontend/local-first-ui.md) - the rule that no interaction servable from local state may await the network, what a shaped link measured on the phone, and the ledger of what is fixed
+- [Offline and weak network](frontend/offline-and-weak-network.md) - what each send and load path does offline and on Slow 3G / 2G, measured on the sandbox pair, the root causes with file:line, and the ordered work packages (salon outbox, deadlines, boot chain)
 - [Emoji: Noto pictures, replacing the bundled font](frontend/emoji.md) - the SVG set and the svgo plugins measured to damage it, the presentation rule, the gate, and the font until it is deleted
 - [MediaFrame](frontend/media-frame.md) - the box a picture, a GIF or a video holds before it arrives: what Discord, WhatsApp, Telegram and Slack carry (sourced), what Canari shifted, and the primitive every renderer uses
 - [Video preparation](frontend/video-preparation.md) - every video re-encoded ON the phone to one fragmented MP4 (H.264 + AAC, 720p, ~2.5 Mb/s): the `prepareVideoForUpload` seam, its faults, and the device readings

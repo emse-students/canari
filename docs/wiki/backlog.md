@@ -191,6 +191,10 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
 
+## P1 - Offline and weak network: salon sends are lost offline, the cold start is 103 s on Slow 3G (user, 2026-10-09; measured, not built)
+
+DMs and groups already have an optimistic row and a durable outbox; **salon writes have neither** (offline send: text lost) and **nothing has a deadline**. Cold start on Slow 3G: first paint 23 s, list usable 103 s (JS 57 s, then the 2 MB WASM 45 s, then the list); warm 2.1 s. Fourteen ordered work packages, each with its test, and the measured table: [offline-and-weak-network](frontend/offline-and-weak-network.md). Start with WP-OFF-1 (keep the salon draft on failure), WP-W1/W2 (compression, WASM preload), WP-W3. Owed: peer-side delivery, Android and iOS runs (the page lists them).
+
 ## Open defects, in severity order
 
 ### P1 - a member who joins a community in-session sees ONE salon, and every message in the others is dropped until a reload (measured 2026-10-08)
