@@ -609,6 +609,7 @@ then writes the badge from what remains — computed from the array already in h
 | GET | `/api/associations/:id` | Get association detail |
 | POST | `/api/associations` | Create association (global admin or BDE `MANAGE_ASSO` flag) |
 | PATCH | `/api/associations/:id` | Update association (admin with `MANAGE_MEMBERS`) |
+| GET/PUT/DELETE | `/api/associations/:id/push-mute` | The caller's push mute of one association; `GET /api/associations/me/push-mutes` lists them |
 | POST | `/api/associations/:id/members` | Add member to association |
 | POST | `/api/associations/:id/events` | Create calendar event |
 | PATCH | `/api/associations/:id/events/:eventId` | Update calendar event |
@@ -866,14 +867,50 @@ as they narrow its readers.
 **`association_follows` IS DELIBERATELY NOT CONSULTED.** Everyone an association reaches is told
 already, so following it adds nothing to what you are told.
 
-**No digest and no per-association mute, decided on the measured rate rather than on taste.** At
-0.53 association announcements a week, either control would be a setting nobody would ever find.
-Both can be added later without touching the sweeper: the two recipient derivations are private
-methods, and the rate is what would justify one. **Re-measure before believing this** - the
-predicate that named the last population is not the one that names the next.
+**No digest. A per-association MUTE exists since 2026-10-08** - see the next section, which is
+where "Suivre" is defined.
 
 Pinned by `post-announce.scheduler.spec.ts`, whose first assertion is the stamp/send ORDER rather
 than the recipients.
+
+### Follow, mute and read grants: three different facts (decided by the user, 2026-10-08)
+
+| | What it is | Does it decide who is PUSHED? |
+| --- | --- | --- |
+| **Follow** (`association_follows`, button "Suivre") | a reading preference: it feeds the "followed" view of the feed | **No.** Every association post is pushed to everyone who can SEE it; the follow table is not consulted for announcing (STATUS QUO, chosen on purpose) |
+| **Mute** (`association_push_mutes`, migration 080) | "stop pushing me THIS association", and only that | **Yes - it removes the recipient from the PUSH**, never from the feed or the bell |
+| **Nominative read grant** (`read_grants`) | access to read | **No.** A read grant is access, not subscription: its holders are not announced to |
+
+**Where a mute is applied: ONE place, server-side.** `PostNotificationsService.createNotifications`
+asks `AssociationPushMutesService.mutedAmong(associationId, recipients)` just before the push loop
+and drops the muted. The in-app `post_notifications` row is still written (the bell is the record, a
+push is the interruption), and the announce SQL is untouched. Nothing is filtered by the client, and
+no cache or feed key is involved.
+
+**If the mute lookup fails the push FAILS CLOSED and LOUD**: `[NOTIFY] mute lookup failed` at error level, the error rethrown to the caller's own warning, the in-app rows kept. Pushing everyone would override a stated choice. The announce stamp is a CONDITIONAL update (`feedNotifiedAt IS NULL`), so two overlapping instances cannot both announce a post. Account deletion purges the account's mutes (`internal.controller.ts`).
+
+**Per type, and the list is an ALLOWLIST** (`MUTABLE_PUSH_TYPES`; a new type is never muted by
+accident):
+
+| Type | Recipient is | Muted by a mute? |
+| --- | --- | --- |
+| `association_post` | a reader | yes |
+| `association_repost` | a reader the republication newly reached (the mute is the REPUBLISHING association's) | yes |
+| `repost_proposed`, `coorganise_proposed` | managers who must accept | **no** - operational |
+| `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | **no** - operational |
+| `followed_post`, `mention`, `reply`, `reaction`, `comment` | addressed to you by a person | **no** - not an association's push |
+
+**Routes** (own rows only: the caller's id is the `x-user-id` header, never a body field):
+`GET|PUT|DELETE /api/associations/:id/push-mute` (status, mute, unmute - idempotent) and
+`GET /api/associations/me/push-mutes` (the settings list). UI: a "Couper les notifications" button
+beside "Suivre" on the association page, and a "muted associations" list with an unmute button in
+the notification settings (`SettingsMutedAssociations.svelte`). The account-wide `posts` switch
+still applies first, in chat-delivery.
+
+**Measured on the local estate (2026-10-08, sandbox accounts, a build of this branch beside the
+old container).** Association post, recipients: follower, muted follower, non-follower member. The
+new build logged `push withheld from 1 muted of 3` and pushed the other two; the pre-mute container
+pushed all three (`[INTERNAL_PUSH]` in chat-delivery), which is the baseline.
 
 ### Who may touch a calendar event
 

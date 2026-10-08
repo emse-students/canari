@@ -502,12 +502,8 @@ browser salon notification clicked through `/chat`. Open:
 1. **P3 - a comment, reply or mention opens the post, not the comment.** No `commentId` travels in the payload or the URL.
 2. **P3 - the Android manifest and `tauri.conf.json` declare five hosts; the page hosts a push writes (`posts`,
    `calendar`, `admin-agenda`, `proposals`) rely on the explicit intent of the notification.** Read it once on the Mi 9T.
-3. **Question for the user - following an ASSOCIATION changes nothing about notifications.** Everyone its post reaches is
-   told, followed or not, and only the whole `posts` category can be muted. Do you want a follow to MEAN something
-   (a per-association mute, or announcing only followed associations)? A follower of a person is told only when they
-   share a space with them.
-4. **Question for the user - nominative read-grant holders are never announced a post they can read** (the announce SQL
-   passes no `readGrants`; the feed shows it). Intended?
+
+The two questions of the audit are answered (2026-10-08): a follow keeps its meaning, a per-association mute exists, read-grant holders stay unannounced - [social-service](services/social-service.md#follow-mute-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08).
 
 ## CI and the chain that runs unattended
 

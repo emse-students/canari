@@ -289,6 +289,10 @@ export class InternalController {
     // deleted account is removed here - an id re-issued later must not inherit it. The journal is
     // history and stays, with the account anonymised on both of its sides.
     await this.postRepo.manager.query(`DELETE FROM read_grants WHERE user_id = $1`, [userId]);
+    // Push mutes are the account's own preference and carry no foreign key to it: purge them.
+    await this.postRepo.manager.query(`DELETE FROM association_push_mutes WHERE "userId" = $1`, [
+      userId,
+    ]);
     await this.postRepo.manager.query(
       `UPDATE read_grant_journal SET user_id = '[deleted]' WHERE user_id = $1`,
       [userId]

@@ -10,6 +10,9 @@
     followAssociation,
     unfollowAssociation,
     getAssociationFollowStatus,
+    getAssociationPushMuteStatus,
+    muteAssociationPush,
+    unmuteAssociationPush,
     hasPermissionFlag,
     getMyBdeReach,
     type BdeReach,
@@ -35,6 +38,8 @@
   import {
     Bell,
     BellOff,
+    Volume2,
+    VolumeX,
     Settings,
     CalendarDays,
     Users,
@@ -127,6 +132,9 @@
 
   let following = $state(false);
   let followLoading = $state(false);
+  /** The viewer's push mute of THIS association: its pushes only, never the feed or the follow. */
+  let pushMuted = $state(false);
+  let muteLoading = $state(false);
   /**
    * The open section is a ROUTE segment (`/associations/<slug>/<section>`), never local state: Back
    * goes up one level, a reload keeps the place and a link can be shared. `null` is the hub. A post's
@@ -251,15 +259,23 @@
       // behind a label.
       const uid = currentUserId();
       let followStatus: { following: boolean };
-      [members, products, partnerships, followStatus] = await Promise.all([
+      let muteStatus: { muted: boolean };
+      [members, products, partnerships, followStatus, muteStatus] = await Promise.all([
         listMembers(asso.id),
         listAssociationProducts(asso.id).catch(() => []),
         listAssociationPartnerships(asso.id).catch(() => []),
         uid
           ? getAssociationFollowStatus(asso.id).catch(() => ({ following: false }))
           : Promise.resolve({ following: false }),
+        uid
+          ? getAssociationPushMuteStatus(asso.id).catch((err) => {
+              Log.d('AssociationDetailView: push-mute status unreadable', err);
+              return { muted: false };
+            })
+          : Promise.resolve({ muted: false }),
       ]);
       following = followStatus.following;
+      pushMuted = muteStatus.muted;
       const names: Record<string, string> = {};
       for (const m of members) {
         names[m.userId] = rosterDisplayName(m);
@@ -307,6 +323,24 @@
       error = m.common_generic_error_label();
     } finally {
       followLoading = false;
+    }
+  }
+
+  async function togglePushMute() {
+    if (!asso || !userId) return;
+    // Optimistic like the follow button above: back on a refused write.
+    const wasMuted = pushMuted;
+    pushMuted = !wasMuted;
+    muteLoading = true;
+    try {
+      if (wasMuted) await unmuteAssociationPush(asso.id);
+      else await muteAssociationPush(asso.id);
+    } catch (err) {
+      Log.d('AssociationDetailView.togglePushMute failed', err);
+      pushMuted = wasMuted;
+      error = m.common_generic_error_label();
+    } finally {
+      muteLoading = false;
     }
   }
 </script>
@@ -430,6 +464,22 @@
                 {:else}
                   <Bell size={16} />
                   {m.asso_follow_button()}
+                {/if}
+              </button>
+              <button
+                type="button"
+                onclick={() => togglePushMute()}
+                disabled={muteLoading}
+                aria-pressed={pushMuted}
+                data-testid="asso-push-mute"
+                class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
+              >
+                {#if pushMuted}
+                  <Volume2 size={16} />
+                  {m.asso_push_unmute_button()}
+                {:else}
+                  <VolumeX size={16} />
+                  {m.asso_push_mute_button()}
                 {/if}
               </button>
             {/if}

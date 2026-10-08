@@ -37,7 +37,8 @@ describe('AssociationsController cotisation config gating (D5)', () => {
       partnershipsService as PartnershipsService,
       followsService as FollowsService,
       userTagService as UserTagService,
-      userProfileService as UserProfileService
+      userProfileService as UserProfileService,
+      {} as never
     );
 
     return { controller, service, productsService };
@@ -126,7 +127,8 @@ describe('AssociationsController secret stripping', () => {
       {} as PartnershipsService,
       {} as FollowsService,
       {} as UserTagService,
-      {} as UserProfileService
+      {} as UserProfileService,
+      {} as never
     );
   }
 
@@ -159,7 +161,8 @@ describe('AssociationsController directory scope (D37)', () => {
       {} as PartnershipsService,
       {} as FollowsService,
       {} as UserTagService,
-      {} as UserProfileService
+      {} as UserProfileService,
+      {} as never
     );
     return { controller, service };
   }
@@ -242,7 +245,8 @@ describe('AssociationsController delete tier', () => {
       {} as PartnershipsService,
       {} as FollowsService,
       {} as UserTagService,
-      {} as UserProfileService
+      {} as UserProfileService,
+      {} as never
     );
     return { controller, service };
   }
@@ -318,7 +322,8 @@ describe('AssociationsController calendar event writes', () => {
       {} as PartnershipsService,
       {} as FollowsService,
       {} as UserTagService,
-      {} as UserProfileService
+      {} as UserProfileService,
+      {} as never
     );
     return { controller, service };
   }
@@ -410,7 +415,8 @@ describe('AssociationsController event verdicts and deposits (WP6c step 2)', () 
       {} as PartnershipsService,
       {} as FollowsService,
       {} as UserTagService,
-      {} as UserProfileService
+      {} as UserProfileService,
+      {} as never
     );
     return { controller, service };
   }
@@ -511,7 +517,8 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       {} as PartnershipsService,
       {} as FollowsService,
       {} as UserTagService,
-      {} as UserProfileService
+      {} as UserProfileService,
+      {} as never
     );
   }
   const res = { setHeader: jest.fn() } as never;
@@ -694,7 +701,8 @@ describe('AssociationsController POST calendar/feed-signature (2026-10-06)', () 
       {} as PartnershipsService,
       {} as FollowsService,
       {} as UserTagService,
-      {} as UserProfileService
+      {} as UserProfileService,
+      {} as never
     );
     await expect(
       controller.signCalendarFeedSelection('u1', { campus: 'gardanne', formation: 'ICM' })

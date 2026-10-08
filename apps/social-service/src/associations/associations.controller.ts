@@ -8,6 +8,7 @@ import {
   Headers,
   Logger,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Put,
@@ -34,6 +35,7 @@ import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
 import { assertInternalSecret } from '../internal/internal-secret.util';
 import { FollowsService } from '../follows/follows.service';
+import { AssociationPushMutesService } from '../follows/association-push-mutes.service';
 import {
   AddMemberDto,
   CreateAssociationDto,
@@ -86,7 +88,8 @@ export class AssociationsController {
     private readonly partnershipsService: PartnershipsService,
     private readonly followsService: FollowsService,
     private readonly userTagService: UserTagService,
-    private readonly userProfileService: UserProfileService
+    private readonly userProfileService: UserProfileService,
+    private readonly pushMutes: AssociationPushMutesService
   ) {}
 
   // ── Document reviewers & cross-association review ────────────────────────────
@@ -222,6 +225,13 @@ export class AssociationsController {
   @Get('me/following')
   myFollowedAssociations(@Headers('x-user-id') userId: string) {
     return this.followsService.listFollowedAssociations(userId);
+  }
+
+  /** The associations the calling user muted (push only) - the notification settings list. */
+  @UseGuards(NginxAuthGuard)
+  @Get('me/push-mutes')
+  myPushMutes(@Headers('x-user-id') userId: string) {
+    return this.pushMutes.listMuted(userId);
   }
 
   /** Public - current association memberships for a user profile. */
@@ -503,6 +513,36 @@ export class AssociationsController {
   @Get(':id/link-candidates')
   linkCandidates(@Param('id') id: string) {
     return this.service.getCalendarLinkCandidates(id);
+  }
+
+  /** Whether the calling user muted this association's push notifications. */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/push-mute')
+  async pushMuteStatus(
+    @Headers('x-user-id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string
+  ) {
+    return { muted: await this.pushMutes.isMuted(userId, id) };
+  }
+
+  /** Silences this association's PUSH for the caller only; the feed is untouched. Idempotent. */
+  @UseGuards(NginxAuthGuard)
+  @Put(':id/push-mute')
+  muteAssociationPush(
+    @Headers('x-user-id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string
+  ) {
+    return this.pushMutes.mute(userId, id);
+  }
+
+  /** Lifts the caller's mute of this association. Idempotent. */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/push-mute')
+  unmuteAssociationPush(
+    @Headers('x-user-id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string
+  ) {
+    return this.pushMutes.unmute(userId, id);
   }
 
   /** Returns a single association by its ID. Logged-in callers only - see the note on `list`. */
