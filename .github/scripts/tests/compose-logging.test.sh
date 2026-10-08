@@ -65,7 +65,7 @@ done
 # ── 2. archive_logs, against a docker stub ──────────────────────────────────
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-# shellcheck source=../../../infrastructure/lib/archive-logs.sh
+# shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/archive-logs.sh
 . "$REPO/infrastructure/lib/archive-logs.sh"
 
 # The stub: `ps` lists $STUB_IDS, `inspect` names a container after its id, `logs` prints a line,
@@ -86,7 +86,7 @@ if [ ! -d "$ROOT/proj" ]; then ok "a first deploy (no container) creates nothing
 
 export STUB_IDS="aaa bbb ccc" STUB_BAD="bbb"
 archive_logs "$TMP/docker" proj "$ROOT" 3 >/dev/null 2>&1
-d="$(ls -1 "$ROOT/proj" | head -1)"
+d="$(find "$ROOT/proj" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -1)"
 if [ -f "$ROOT/proj/$d/aaa.log.gz" ] && [ -f "$ROOT/proj/$d/ccc.log.gz" ]; then
   ok "one gzip file per readable container"
 else
@@ -100,7 +100,7 @@ for i in 1 2 3 4 5; do
   mkdir -p "$ROOT/proj/2020010${i}T000000Z"
 done
 archive_logs "$TMP/docker" proj "$ROOT" 3 >/dev/null 2>&1
-n="$(ls -1 "$ROOT/proj" | wc -l | tr -d ' ')"
+n="$(find "$ROOT/proj" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 if [ "$n" = "3" ]; then ok "only the newest 3 deploys survive"; else fail "retention left $n directories"; fi
 if [ -d "$ROOT/proj/$d" ]; then ok "the newest archive is the one kept"; else fail "retention dropped the newest archive"; fi
 

@@ -60,7 +60,7 @@ archive_logs() {
   printf 'archive-logs: %s container logs kept in %s (%s unreadable)\n' "$kept" "$dir" "$failed"
 
   # Retention: the newest KEEP directories. Stamps sort lexically = chronologically.
-  for old in $(ls -1 "$root/$project" | sort -r | tail -n +$((keep + 1))); do
+  for old in $(find "$root/$project" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r | tail -n +$((keep + 1))); do
     rm -rf "${root:?}/$project/${old:?}"
     printf 'archive-logs: dropped the oldest archive %s\n' "$old"
   done
