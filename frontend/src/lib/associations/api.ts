@@ -1348,6 +1348,48 @@ export async function removeDocumentReviewer(userId: string): Promise<{ ok: bool
   );
 }
 
+// ── Nominative read grants (WP7, global admins only) ───────────────────────────
+
+/** One cell granted to a named account; a null formation is the whole campus. */
+export interface ReadGrant {
+  userId: string;
+  campus: string;
+  formation: string | null;
+  grantedBy: string;
+  createdAt: string;
+}
+
+/** One line of the journal of grants and revocations. */
+export interface ReadGrantJournalEntry {
+  userId: string;
+  campus: string;
+  formation: string | null;
+  action: 'grant' | 'revoke';
+  actor: string;
+  at: string;
+}
+
+/** Current read grants and the recent journal. Global admins only. */
+export async function listReadGrants(): Promise<{
+  grants: ReadGrant[];
+  journal: ReadGrantJournalEntry[];
+}> {
+  return request('/api/associations/read-grants');
+}
+
+/** Grants or revokes one (account x campus x formation) cell. Idempotent; global admins only. */
+export async function setReadGrant(
+  userId: string,
+  campus: string,
+  formation: string | null,
+  granted: boolean
+): Promise<void> {
+  await request('/api/associations/read-grants', {
+    method: 'PUT',
+    body: JSON.stringify({ userId, campus, formation, granted }),
+  });
+}
+
 // ── Cotisation tags ─────────────────────────────────────────────────────────
 
 /** A membership/cotisation tag granted to a user by an association. */

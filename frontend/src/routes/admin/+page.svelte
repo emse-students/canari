@@ -192,10 +192,10 @@
     if (isGlobalAdminUser || isSuperAdminUser) {
       list.push(
         {
-          href: '/admin/document-reviewers',
+          href: '/admin/read-access',
           kind: 'doc-reviewers',
-          label: m.docreview_card_label(),
-          description: m.docreview_card_desc(),
+          label: m.readaccess_card_label(),
+          description: m.readaccess_card_desc(),
         },
         {
           href: '/admin/carte',

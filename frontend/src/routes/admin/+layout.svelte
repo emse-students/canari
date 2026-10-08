@@ -116,8 +116,8 @@
     if (isGlobalAdminUser || isSuperAdminUser) {
       communityItems.push(
         {
-          href: '/admin/document-reviewers',
-          label: m.docreview_nav_label(),
+          href: '/admin/read-access',
+          label: m.readaccess_nav_label(),
           icon: FileCheckCorner,
         },
         { href: '/admin/carte', label: m.carte_card_label(), icon: Map }

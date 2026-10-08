@@ -2809,6 +2809,8 @@ Decisions:
 6. This closes the staff-feed question: staff without a cursus see nothing more by default, the named ones do.
 7. **No end date, ever** - only grant and revoke. **The list of named readers is internal**: only global admins see it; students are not told. **A journal** keeps who granted what to whom and when (`granted_by`, date), visible to global admins.The user's example formation "ISTP" is FSSS (answered 2026-10-07): no new formation. Done when a named reader sees exactly the association, list and institution posts of their ticked cells and no student's personal post, and a reader with no grant sees what they saw before.
 
+**BUILT 2026-10-08 (WP-C)**, as built in [profiles-and-access](profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08). Left: one signed-in look at `/admin/read-access`; the user's call on the directory (a named reader's directory is NOT widened, only posts, comments, reactions and events are); moving the document-reviewer rows into the grants table was NOT done (a separate capability, kept on the same page).
+
 ---
 
 ## Answers of 2026-10-07 that fix the order of work
