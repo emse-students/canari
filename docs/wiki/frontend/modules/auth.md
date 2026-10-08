@@ -1155,3 +1155,21 @@ of that test did not have, and why the symptom survived it.**
 to `onLoginFailed(message, code)`. **Branch on the code, never on the message**: the message is
 localized, so a regex over it silently stops matching in another locale - that is exactly how the
 cross-device recovery link once became unreachable in French.
+
+### Two iPhone 12 findings of 2026-10-07: a name saved for the previous account, and a reset button under the footer
+
+**The composer avatar read "Avatar de <previous user>" after a switch.** `saveUserLocally` only wrote
+`canari_user_display_name` when the caller carried a `displayName`, and the token refresh and the
+session restore carry none. After gamma then delta the key still held gamma's name, and
+`getUserDisplayNameSync` caches the saved name AGAINST THE CURRENT ID, so delta's avatar was labelled
+gamma. The key is now dropped when the stored id differs from the incoming one, beside the other
+account-scoped verdicts (`user.saveUserLocally.test.ts`). The avatar and `PostIdentityPicker` were
+never at fault: the id they passed was right, the saved name was not.
+
+**"Reinitialiser mon PIN" sat under the unlock footer.** The forgot box opens below the fold of the
+form's scroll region, and the footer lives OUTSIDE that region (it must not scroll), so on 390x844
+the button was only reachable by a drag started on the keypad, and a tap at its position hit
+"Deverrouiller". Opening the box now scrolls it to the end of the region (`scrollIntoView`).
+Measured in headless Chrome at 390x844 with `--safe-area-inset-top/bottom` 47/34 px: the button ends
+at y=645, the footer starts at 706, and `elementFromPoint` on its centre is the button. No real
+iPhone read of the fix: only WebKit's own scrolling settles that.

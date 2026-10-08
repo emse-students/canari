@@ -60,12 +60,19 @@ export function getSavedDisplayName(): string | null {
  * re-render immediately.
  */
 export function saveUserLocally(user: { id: string; displayName?: string; admin?: boolean }): void {
+  const accountChanged = localStorage.getItem(USER_STORAGE_KEY) !== user.id;
+  // THE SAVED NAME BELONGS TO ONE ACCOUNT, LIKE THE VERDICTS BELOW. Two callers (the token refresh
+  // and the session restore) carry no `displayName`, so after a switch the previous account's name
+  // stayed in storage, and `getUserDisplayNameSync` then cached it AGAINST THE NEW ID: the composer's
+  // avatar read "Avatar de <previous user>" while the picker beside it said the right name
+  // (iPhone, 2026-10-07). Dropped at the switch, so no reader can mistake it for the new owner's.
+  if (accountChanged) localStorage.removeItem(USER_DISPLAY_NAME_KEY);
   if (user.displayName) localStorage.setItem(USER_DISPLAY_NAME_KEY, user.displayName);
   localStorage.setItem(USER_GLOBAL_ADMIN_KEY, user.admin ? 'true' : 'false');
   // A REMEMBERED VERDICT BELONGS TO ONE ACCOUNT. Anything derived from the previous session's
   // `/api/users/me` is about somebody else the moment the id changes, so it is forgotten HERE
   // rather than left to expire - the whole point of persisting it is that it outlives a reload.
-  if (localStorage.getItem(USER_STORAGE_KEY) !== user.id) {
+  if (accountChanged) {
     setFeedAudience(null);
     forgetReaderCaches();
   }

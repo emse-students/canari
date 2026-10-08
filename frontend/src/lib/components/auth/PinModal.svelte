@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import PinAccountField from './PinAccountField.svelte';
   import {
@@ -97,6 +97,22 @@
   const FORM_ID = 'encryption-pin-form';
 
   let showForgotPin = $state(false);
+  /** The "forgot PIN" box, kept so opening it can bring its reset button above the fixed footer. */
+  let forgotBox = $state<HTMLElement | null>(null);
+
+  /**
+   * OPENING THE BOX SCROLLS IT INTO VIEW, because it opens BELOW the fold of the form's scroll
+   * region and the unlock footer is outside that region (iPhone 12, 2026-10-07: "Reinitialiser mon
+   * PIN" sat under the footer until a drag started on the keypad, and a tap on its coordinates hit
+   * "Deverrouiller"). The footer must not scroll, so the box goes to the button, not the reverse.
+   */
+  $effect(() => {
+    if (!showForgotPin) return;
+    void tick().then(() => {
+      console.debug('[PIN] forgot box opened, scrolling its reset button into view');
+      forgotBox?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    });
+  });
   // The "stay signed in" explanation is one tap away instead of four lines under the checkbox.
   let showStayInfo = $state(false);
 
@@ -387,7 +403,10 @@
       {/if}
 
       {#if !isFirstSetup && showForgotPin}
-        <div class="w-full space-y-3 rounded-2xl border border-red-500/20 bg-red-500/5 px-4 py-3">
+        <div
+          bind:this={forgotBox}
+          class="w-full scroll-mb-2 space-y-3 rounded-2xl border border-red-500/20 bg-red-500/5 px-4 py-3"
+        >
           <div class="flex items-start gap-2">
             <TriangleAlert size={16} class="mt-0.5 shrink-0 text-red-500" />
             <p class="text-text-muted text-xs leading-relaxed">
