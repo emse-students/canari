@@ -532,7 +532,16 @@ printed in full (the rollback):**
   info). **Applied the same day**: the file copied to `/srv/miconnect/` (the previous one kept as
 `compose.yml.bak-2026-09-29`), `docker compose up -d`, both containers read back `info`, the
 `/authorize` probe answered `302` to `miconnect-auth` and no warning or error followed.
-- **About 1 CAS return in 6 fails**: [backlog](../backlog.md#p2---about-one-cas-return-in-six-reaches-miconnect-with-no-code-and-no-state-and-the-sign-in-fails-measured-2026-09-29).
+- **About 1 CAS return in 6 fails (measured 2026-09-29, OPEN, a request is with the DSI)**: `docker
+  logs miconnect-server-1` since its 2026-09-24 restart held **72 `State check failed`**
+  (`authentik.sources.oauth.views.callback`, preceded by "No state parameter returned by the
+  source") against ~420 responses on `/source/oauth/callback/cas-emse/`, between 3 and 21 a day. Every
+  failing request reads the BARE callback URL (no `code`, no `state`, no query string), while a
+  working one carries `?code=...&state=...`: not a stale or mismatched state, the CAS sends the
+  browser to the callback without answering the authorization request. The same user agent fails
+  three times in a row (a Linux desktop and an Android phone on 2026-09-29), so people retry and stay
+  out. The deny text of the unreferenced `miconnect-auth-fallback` flow describes exactly this, so
+  somebody met it before and it was never measured. Open: [backlog](../backlog.md#p2---about-one-cas-return-in-six-reaches-miconnect-with-no-code-and-no-state-and-the-sign-in-fails-measured-2026-09-29).
 - The CAS source sends no PKCE although the CAS advertises `S256`; application launch URLs still name
   `mitv.fr` and `canari-emse.fr` hosts; names mix French and English (`Personnel de l'école`,
   `School Worker`, `Provider for Sky`); the Cercle's tokens live 30 s / 2 min where every other
