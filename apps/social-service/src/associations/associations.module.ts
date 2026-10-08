@@ -19,6 +19,8 @@ import { Space } from '../spaces/space.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { SpacesController, AssociationAudiencesController } from '../spaces/spaces.controller';
 import { SpacesService } from '../spaces/spaces.service';
+import { ReadGrantsController } from '../read-grants/read-grants.controller';
+import { ReadGrantsService } from '../read-grants/read-grants.service';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
@@ -74,6 +76,7 @@ import { PricingModule } from '../pricing/pricing.module';
   ],
   providers: [
     SpacesService,
+    ReadGrantsService,
     AssociationsService,
     AssociationDocumentRetentionService,
     UserProfileService,
@@ -98,6 +101,7 @@ import { PricingModule } from '../pricing/pricing.module';
   controllers: [
     AssociationCategoriesController,
     SpacesController,
+    ReadGrantsController,
     AssociationAudiencesController,
     PosterController,
     AssociationsController,

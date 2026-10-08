@@ -110,7 +110,7 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/admin/agenda': () => adminTitle(m.admin_pending_agenda_label()),
   '/admin/carte': () => adminTitle(m.carte_card_label()),
   '/admin/cercle': () => adminTitle(m.admin_cercle_label()),
-  '/admin/document-reviewers': () => adminTitle(m.docreview_nav_label()),
+  '/admin/read-access': () => adminTitle(m.readaccess_nav_label()),
   '/admin/legacy-cotisations': () => adminTitle(m.admin_legacy_title()),
   '/admin/moderation': () => adminTitle(m.moderation_title()),
   '/admin/profile-corrections': () => adminTitle(m.profile_corrections_nav_label()),

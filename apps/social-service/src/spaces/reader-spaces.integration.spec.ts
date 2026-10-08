@@ -53,6 +53,11 @@ const MIGRATION_074 = readFileSync(
   join(__dirname, '..', 'migrations', '074_coorganise.sql'),
   'utf8'
 );
+// Nominative read grants (WP7): the feed gate and the read predicates read `read_grants`.
+const MIGRATION_078 = readFileSync(
+  join(__dirname, '..', 'migrations', '078_read_grants.sql'),
+  'utf8'
+);
 
 /** The cast. Ids are readable on purpose: a failure names a person, not a uuid. */
 const USERS = {
@@ -193,6 +198,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     await client.query(MIGRATION_072);
     await client.query(MIGRATION_073);
     await client.query(MIGRATION_074);
+    await client.query(MIGRATION_078);
     // A3 is created after 071, so it has no rule: it reaches its members and nobody else.
     await client.query(`INSERT INTO associations (id, name) VALUES ($1, 'A3')`, [A3]);
     // Then the grid: A2 addresses the whole Gardanne campus instead.
