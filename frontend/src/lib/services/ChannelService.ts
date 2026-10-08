@@ -830,16 +830,27 @@ export class ChannelService {
    *
    * @returns the stored instant, or `null` when the server already held as much.
    */
-  async advanceReadMark(channelId: string, at: number): Promise<number | null> {
+  async advanceReadMark(channelId: string, at: number, serverAt?: number): Promise<number | null> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/read-mark`, {
       method: 'POST',
-      body: JSON.stringify({ at }),
+      body: JSON.stringify({ at, ...(serverAt ? { serverAt } : {}) }),
     });
     await this.handleError(res);
     const body = (await res.json()) as { at: number | null };
     Log.d('CHANNEL_READ', `mark ${cid.slice(0, 8)} asked=${at} stored=${body.at}`);
     return body.at;
+  }
+
+  /**
+   * How many unread messages each of the caller's salons holds, counted by the server against the
+   * caller's read marks - the durable answer a reload or an offline stretch cannot erase. Raw off the
+   * wire; `parseSalonUnreadAnswer` decides whether it is a shape worth applying.
+   */
+  async listUnreadCounts(): Promise<unknown> {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/unread-counts`);
+    await this.handleError(res);
+    return res.json();
   }
 
   /** Every current reader's read mark on `channelId`, `{ [userId]: epochMs }`, raw off the wire. */

@@ -74,6 +74,7 @@ import {
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { mergeReadWatermarks, parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
+import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -227,6 +228,17 @@ export function useConversations() {
   async function noteLiveStreamTransition(connected: boolean, ctx: ConversationContext) {
     invalidateChannelHistoryCache();
     if (!connected) return;
+    // WHAT ARRIVED WHILE THE SOCKET WAS DOWN reached no salon row and so raised no badge. The server
+    // counted it against the reader's marks; ask before anything else, for every salon.
+    const { channelService } = await import('$lib/services/ChannelService');
+    await reconcileSalonUnreadFromServer({
+      conversations,
+      selectedId: selectedContact,
+      userId: ctx.userId,
+      fetchCounts: () => channelService.listUnreadCounts(),
+      log: ctx.log,
+      reason: 'live stream back',
+    });
     const open = selectedContact;
     if (!open || !isChannelConversationId(open)) return;
     ctx.log(`[CHANNEL] live stream back - reloading open salon ${open.slice(8, 16)}`);
@@ -536,6 +548,7 @@ export function useConversations() {
             senderId: decoded.message.senderId,
             content: decoded.message.content,
             timestamp: decoded.message.timestamp,
+            serverTimestamp: decoded.message.serverTimestamp,
             isOwn: decoded.message.isOwn,
             isSystem: decoded.message.isSystem,
           });
@@ -872,6 +885,7 @@ export function useConversations() {
     dismissDrawerHistoryIfAny();
     dismissSidePanelIfAny();
     selectedContact = name;
+    noteSalonOpened(name);
     sendError = '';
     const convo = conversations.get(name);
     if (convo) {
@@ -890,6 +904,7 @@ export function useConversations() {
     dismissDrawerHistoryIfAny();
     dismissSidePanelIfAny();
     selectedContact = name;
+    noteSalonOpened(name);
     sendError = '';
     const convo = conversations.get(name);
     if (convo) {
