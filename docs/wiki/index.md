@@ -67,6 +67,7 @@
 - [CanaReels editor](frontend/modules/reel-editor.md) — The post-capture review, editor (text and emoji overlays, one gesture helper), remove-the-sound, and the work-package split
 - [Payments module](frontend/modules/payments.md) — Lydia, products, shop; [Stripe archive](stripe-archive.md) — what Stripe did and why it left
 - [Minesweeper](frontend/modules/minesweeper.md) — No-guess generation, seed + first click, ranked replay, generation cost
+- [School mail, IMAP on the device](frontend/modules/mail-imap.md) — Study only: feasibility, security design, work packages, risks for a native-only school-mail tab
 - [Admin module](frontend/modules/admin.md) — Dashboard, moderation, platform config
 
 ### Infrastructure
