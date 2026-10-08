@@ -1,5 +1,6 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import Modal from '../shared/Modal.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -69,14 +70,6 @@
     !!currentUserId && contactId.trim().toLowerCase() === currentUserId.toLowerCase()
   );
 
-  // Class utilities to keep the HTML template clean
-  const baseTabClass =
-    'flex-1 px-3 py-2 text-sm font-semibold rounded-xl transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-400';
-  const activeTabClass =
-    'bg-cn-surface dark:bg-black/40 text-text-main border border-white/60 dark:border-white/10 shadow-sm';
-  const inactiveTabClass =
-    'text-text-muted hover:text-text-main hover:bg-white/35 dark:hover:bg-black/30 border border-transparent';
-
   /**
    * The list is shown only while the field is EMPTY, because `UserAutocomplete` opens its own
    * dropdown from the first keystroke and two lists competing for the same space is worse than the
@@ -114,31 +107,17 @@
   bodyClass="flex min-h-0 flex-col overflow-hidden"
 >
   <!-- Système d'onglets accessible -->
-  <div
-    role="tablist"
-    class="bg-cn-surface mb-4 flex shrink-0 gap-2 rounded-2xl border border-white/50 p-1 dark:border-white/10"
-  >
-    <button
-      id="tab-contact"
-      role="tab"
-      aria-selected={activeTab === 'contact'}
-      aria-controls="tabpanel-contact"
-      class="{baseTabClass} {activeTab === 'contact' ? activeTabClass : inactiveTabClass}"
-      onclick={() => onTabChange('contact')}
-    >
-      {m.chat_modal_contact_tab()}
-    </button>
-    <button
-      id="tab-group"
-      role="tab"
-      aria-selected={activeTab === 'group'}
-      aria-controls="tabpanel-group"
-      class="{baseTabClass} {activeTab === 'group' ? activeTabClass : inactiveTabClass}"
-      onclick={() => onTabChange('group')}
-    >
-      {m.chat_modal_group_tab()}
-    </button>
-  </div>
+  <SegmentedControl
+    class="mb-4 shrink-0"
+    idPrefix=""
+    items={[
+      { key: 'contact', label: m.chat_modal_contact_tab() },
+      { key: 'group', label: m.chat_modal_group_tab() },
+    ]}
+    value={activeTab}
+    onSelect={onTabChange}
+    label={m.chat_new_discussion_title()}
+  />
 
   <!-- Contenu des onglets -->
   {#if activeTab === 'contact'}
