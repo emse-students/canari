@@ -3032,3 +3032,7 @@ is the one section that arrives LATE, hence "shows, loading, breaks". It threw i
 and REFUSES a non-object (the page logs it and shows no section). The three swallowed extras loaders now
 log. Pinned by `ProfileParrainageSection.svelte.test.ts` (fails with `each_key_duplicate` before) and
 `profile/api.test.ts`. No data repair is needed: the rows are Sky's and render as they are.
+
+## A click belongs to the element its press began on (2026-10-08)
+
+Reported on the Pixel 6a: tapping the `bureau` salon landed on a member's profile, and the salon opened with the read receipts of a bubble already showing. A press that changes the layout (opening a salon) can have its click dispatched at the NEW layout, so it hits whatever is now under the finger. `installPressedClickGuard` (`frontend/src/lib/utils/pressedClickGuard.ts`, installed in the root layout) refuses, in the capture phase, a click whose `pointerdown` began on an unrelated element; same element, ancestor/descendant, a label and its control, and `detail === 0` clicks (keyboard, `.click()`) pass. No timer: the press is state. The refusal logs `pressedClickGuard: click refused`. The exact browser mechanism was not isolated; the Pixel reading after the next pre-release is what confirms it. The read-receipt popover also wraps now (`max-w` of 20rem or the screen, names break) instead of one `whitespace-nowrap` line.

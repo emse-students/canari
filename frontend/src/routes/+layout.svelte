@@ -61,6 +61,7 @@
     type SwipeNavGestureState,
   } from '$lib/utils/swipeNavigation';
   import { onTouchGestureEnd } from '$lib/utils/touchGestureEnd';
+  import { installPressedClickGuard } from '$lib/utils/pressedClickGuard';
   import { claimTouchMove } from '$lib/utils/touchClaim';
   import { hasActiveTextSelection, onTextSelectionActive } from '$lib/utils/textSelection';
   import { onViewportChange, SWIPE_NAV_QUERY } from '$lib/utils/viewport';
@@ -128,6 +129,8 @@
   });
 
   onMount(() => {
+    // A click goes to the component the press began on, never to what a layout change put under it.
+    const disposePressedClickGuard = installPressedClickGuard();
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
@@ -163,6 +166,7 @@
     });
 
     return () => {
+      disposePressedClickGuard();
       teardownHistory();
       teardownKeyboard();
       window.removeEventListener('focus', onVersionCheckTrigger);
