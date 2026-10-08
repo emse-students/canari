@@ -28,7 +28,7 @@
         "@tauri-apps/plugin-os": "^2.3.2",
         "@tauri-apps/plugin-sql": "^2.4.1",
         "@tauri-apps/plugin-store": "^2.5.0",
-        "@tauri-apps/plugin-websocket": "^2.4.3",
+        "@tauri-apps/plugin-websocket": "^2.5.0",
         "@zumer/snapdom": "^3.2.0",
         "highlight.js": "^11.12.0",
         "jspdf": "^4.2.1",
@@ -558,7 +558,7 @@
 
     "@tauri-apps/plugin-store": ["@tauri-apps/plugin-store@2.5.0", "", { "dependencies": { "@tauri-apps/api": "^2.12.0" } }, "sha512-+ykjiQwMJCSk/U2enHA8peKBWgDKgrP7JfZnGwQpqzwA0nVtKTc0LCyxWr2whOrcQoQqtUdr9NVdDZpfKpT1Xw=="],
 
-    "@tauri-apps/plugin-websocket": ["@tauri-apps/plugin-websocket@2.4.3", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-c85ykljg6AzY6Zw4KpYsEBaLirjPIs6m8xxC6hZcdwAchckaBU368US+oSsa5B43PjSLukjwD5vOOqzYYnswWA=="],
+    "@tauri-apps/plugin-websocket": ["@tauri-apps/plugin-websocket@2.5.0", "", { "dependencies": { "@tauri-apps/api": "^2.12.0" } }, "sha512-uy6skY9NgCNwRoFd2kueTR3Ygw+2sW0V5gfY3IHxwpTVbtRpH+0A1B94VBWBQ97Y3E4eo6C1zVVfXj1NAuR1Qg=="],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg=="],
 
