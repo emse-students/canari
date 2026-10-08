@@ -44,7 +44,11 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
   ] as const)('%s answers 404 and writes nothing', async (name, call) => {
     const { controller, assertVisible, interactions } = make();
     await expect(call(controller)).rejects.toBeInstanceOf(NotFoundException);
-    expect(assertVisible).toHaveBeenCalledWith(POST, 'reader');
+    expect(assertVisible).toHaveBeenCalledWith(
+      POST,
+      'reader',
+      name === 'votePoll' ? 'VOTE' : 'READ_OR_REACT'
+    );
     expect(interactions[name]).not.toHaveBeenCalled();
   });
 

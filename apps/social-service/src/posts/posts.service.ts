@@ -41,7 +41,11 @@ import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
-import { postVisibleToViewerSql, readInFeedAudience } from '../spaces/reader-spaces';
+import {
+  postVisibleToViewerSql,
+  readInFeedAudience,
+  type PostAccessIntent,
+} from '../spaces/reader-spaces';
 import {
   REPUBLISHING_ASSOCIATION_TYPES,
   dropRepublicationsOf,
@@ -576,10 +580,18 @@ export class PostsService {
    * asked of one row. 404 and not 403: for that reader the post does not exist, and saying
    * "forbidden" would confirm the id. An absent viewer, or an absent post, sees nothing. A global
    * admin may open any post BY ITS ID (a report or moderation link) but is not shown it by browsing.
+   *
+   * THE INTENT IS EXPLICIT because a nominative read grant (WP7) opens a post to READ, REACT and
+   * COMMENT only: `'READ_OR_REACT'` counts the grant, `'VOTE'` does not (a vote was never granted,
+   * user 2026-10-07: read + react/comment). A caller must say which one it is.
    */
-  async assertVisible(postId: string, viewerId: string | undefined): Promise<void> {
+  async assertVisible(
+    postId: string,
+    viewerId: string | undefined,
+    intent: PostAccessIntent
+  ): Promise<void> {
     const rows: { visible: boolean }[] = await this.postRepo.manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
+      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: intent === 'READ_OR_REACT' })} AS visible FROM posts WHERE posts.id = $1`,
       [postId, viewerId ?? null]
     );
     if (rows[0]?.visible !== true) {
@@ -1279,7 +1291,7 @@ export class PostsService {
     }
     // A POST THIS READER MAY NOT SEE (WP6b) IS ONE THAT DOES NOT EXIST for them: 404, and BEFORE the
     // moderation check, whose 403 would otherwise confirm the id to someone outside its audience.
-    await this.assertVisible(id, opts?.viewerId);
+    await this.assertVisible(id, opts?.viewerId, 'READ_OR_REACT');
     if (post.hiddenByModeration && !opts?.allowHidden) {
       throw new ForbiddenException('Post not available');
     }

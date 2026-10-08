@@ -1445,6 +1445,7 @@
   "readaccess_journal_grant": "{actor} granted {campus} / {scope} to {name}",
   "readaccess_journal_revoke": "{actor} revoked {campus} / {scope} from {name}",
   "readaccess_save_error": "Could not save this change.",
+  "readaccess_refresh_error": "The change was saved, but the grid could not be refreshed. Reload the page to see it.",
   "docreview_title": "Document reviewers",
   "docreview_subtitle": "Grant users (school / Maison des eleves staff) access to the page listing every association's public documents.",
   "docreview_add_placeholder": "Search for a user to authorize…",

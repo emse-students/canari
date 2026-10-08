@@ -1477,6 +1477,7 @@
   "readaccess_journal_grant": "{actor} a accordé {campus} / {scope} à {name}",
   "readaccess_journal_revoke": "{actor} a retiré {campus} / {scope} à {name}",
   "readaccess_save_error": "Impossible d'enregistrer ce changement.",
+  "readaccess_refresh_error": "Le changement est enregistré, mais la grille n'a pas pu être actualisée. Rechargez la page pour le voir.",
   "docreview_title": "Relecteurs de documents",
   "docreview_subtitle": "Accordez à des utilisateurs (personnel école / Maison des élèves) l'accès à la page de consultation des documents publics de toutes les associations.",
   "docreview_add_placeholder": "Rechercher un utilisateur à autoriser…",

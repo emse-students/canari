@@ -129,6 +129,13 @@ export interface ReadOpts {
 }
 
 /**
+ * What a caller is about to do with a post it has opened. A nominative read grant covers
+ * `'READ_OR_REACT'` (read, react, comment, like a comment) and NOT `'VOTE'`: a poll vote, like a
+ * republication, is never opened by a grant (user, 2026-10-07).
+ */
+export type PostAccessIntent = 'READ_OR_REACT' | 'VOTE';
+
+/**
  * Association `association` is visible to user row `user`: a member (D21), or its rules reach one of
  * the user's spaces, or - with `readGrants` - a nominative read grant reaches it. The agenda's
  * predicate. A global admin is a reader like any other here (user, 2026-10-04): browsing is not a
@@ -242,9 +249,11 @@ export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users 
 export function postVisibleToViewerSql(
   post: string,
   viewer: string,
-  opts: { adminSeesAll?: boolean } = {}
+  opts: { adminSeesAll?: boolean; readGrants?: boolean } = {}
 ): string {
-  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${postVisibleToUserSql(post, 'vis_viewer', { ...opts, readGrants: true })})`;
+  // Grants count by default (every READ path); a WRITE that a grant never opened - a vote, a
+  // republication - passes `readGrants: false`, explicitly.
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${postVisibleToUserSql(post, 'vis_viewer', { ...opts, readGrants: opts.readGrants ?? true })})`;
 }
 
 /** Association `association` is visible to the viewer whose id is the placeholder `viewer`. */
