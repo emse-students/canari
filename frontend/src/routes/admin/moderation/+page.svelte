@@ -382,7 +382,7 @@
     role="tab"
     aria-selected={tab === 'reports'}
     onclick={() => switchTab('reports')}
-    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-center text-sm font-medium transition-colors sm:flex-row sm:gap-2 {tab ===
+    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-2 sm:px-1 sm:text-sm {tab ===
     'reports'
       ? 'bg-cn-surface text-text-main shadow-sm'
       : 'text-text-muted hover:text-text-main'}"
@@ -399,7 +399,7 @@
     role="tab"
     aria-selected={tab === 'hidden'}
     onclick={() => switchTab('hidden')}
-    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-center text-sm font-medium transition-colors sm:flex-row sm:gap-2 {tab ===
+    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-2 sm:px-1 sm:text-sm {tab ===
     'hidden'
       ? 'bg-cn-surface text-text-main shadow-sm'
       : 'text-text-muted hover:text-text-main'}"
@@ -416,7 +416,7 @@
     role="tab"
     aria-selected={tab === 'muted'}
     onclick={() => switchTab('muted')}
-    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-center text-sm font-medium transition-colors sm:flex-row sm:gap-2 {tab ===
+    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-2 sm:px-1 sm:text-sm {tab ===
     'muted'
       ? 'bg-cn-surface text-text-main shadow-sm'
       : 'text-text-muted hover:text-text-main'}"

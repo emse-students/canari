@@ -19,6 +19,9 @@
   let { children } = $props();
 
   let ready = $state(false);
+  // Whether the reader holds ANY tier; without one nothing renders and the dashboard redirect is
+  // the only navigation, so the hub redirect below cannot race it and win.
+  let mayOpenConsole = $state(false);
   let isGlobalAdminUser = $state(false);
   let isSuperAdminUser = $state(false);
   let isModeratorUser = $state(false);
@@ -45,6 +48,7 @@
       isModeratorUser = isContentModerator();
       isEventValidatorUser = isEventValidator();
     }
+    mayOpenConsole = mayOpen;
     ready = true;
     if (!mayOpen) {
       void goto(resolve('/dashboard'), { replaceState: true });
@@ -60,12 +64,12 @@
   // THE LAYOUT IS THE AUTHORITY on which page renders: a typed URL for a page this tier cannot
   // open is sent to the hub, whatever the page itself checks. The hub lists only what `tiers` may
   // open, so a refused path is exactly one the reader was never shown.
-  const allowed = $derived(ready && mayOpenAdminPath(path, tiers));
+  const allowed = $derived(ready && mayOpenConsole && mayOpenAdminPath(path, tiers));
   const isHub = $derived(path === '/admin' || path === '/admin/');
   const trail = $derived(isHub ? undefined : adminTrail(path, scope.title()));
 
   $effect(() => {
-    if (!ready || allowed) return;
+    if (!ready || !mayOpenConsole || allowed) return;
     console.warn('[ADMIN] path not open to this tier, redirecting to the hub:', path);
     void goto(resolve('/admin'), { replaceState: true });
   });
