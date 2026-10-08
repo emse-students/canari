@@ -183,7 +183,7 @@ listés dans la carte d'impact ci-dessus ; ils sont déjà inventoriés, pas bes
   une vraie lacune trouvée pendant ce câblage : **`payerRecipient` n'est jamais fourni** par
   `products.service.ts`/`forms.service.ts` - `request/do` le rend obligatoire, donc un paiement Lydia
   échoue systématiquement tant que rien ne résout l'email/tél du payeur (voir
-  [backlog](../docs/wiki/backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1)).
+  [backlog](../docs/wiki/backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)).
 - **Une véritable lacune reste, non résolue par choix** : aucune lecture "statut en direct" côté
   Lydia (`getAccountStatus`/`getConnectAccountStatus`/`getConnectBalance`/`createConnectDashboardLink`)
   : Lydia pousse UNE fois l'évènement `BUSINESS_VALIDATED` par webhook, il n'existe pas d'appel
@@ -249,7 +249,7 @@ ci-dessus. **2026-09-18 : cinq des huit points ci-dessous sont désormais répon
 
 - **Credentials homologation** : le `provider_token` et son `private_token` sont arrivés et vivent
   dans les secrets GitHub (`LYDIA_PROVIDER_TOKEN`, `LYDIA_PROVIDER_PRIVATE_TOKEN`) - voir
-  [backlog](../docs/wiki/backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1). Un
+  [backlog](../docs/wiki/backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end). Un
   `vendor_token` de test reste à produire, mais n'est plus une question à Lydia : il se crée via
   `business/create` en homologation, comme n'importe quel Business.
 - **Modèle de frais** : **10 centimes + 1% par paiement**, confirmé - à coder comme la nouvelle

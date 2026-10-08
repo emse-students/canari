@@ -1536,3 +1536,19 @@ half is a P1 in [backlog](backlog.md): a 400 that means "delete a device" reache
 console line saying "deferred to next connection".**
 
 **Restorable since 2026-08-28**: `setTopology` was a sixth copy of "bring a client up" and could not restore a session, so those four verdicts measured the rig; it now uses `bringToReady`, checks its ACTOR before minting the victim, and `state.mjs` reads `/login` as `signedOut`. Story in `CHANGELOG.md`, rule in [durable-rules](durable-rules.md).
+
+## The second campaign, for everything that is not chat - asked 2026-08-16
+
+**It is a second campaign, not more sections on this one** - the user's framing, and it settles a structural question. The expected size is dozens of checks per surface, where the current board already carries 18 sections in one file whose entire job is to be a LIVE summary someone can read. So: its own dashboard, its own manifest, its own phase files - and `checks.mjs`'s phase list is the seam to look at first, since a second campaign must be runnable without re-running this one.
+
+The 18 sections were written around one class of failure: a message crossing between two transports and two platforms, and the silent loss that class produces. That leaves whole surfaces with **no check at all** - posts, forms, communities as a management surface, profiles, media browsing, calendar, payments - and a surface with no check is not a surface that works, it is one nobody has asked about.
+
+The named starting point is the **`social` notification family**: a post, a comment, a reaction on a post, a form alert. It does **not** share the chat path - no MLS, no per-device fan-out, no outbox - so none of the verdicts already taken transfer to it, and its delivery is server-decided, which is a different failure mode (an audience computed wrong notifies the wrong people, and nothing on the client can detect that).
+
+Three things must be settled BEFORE writing checks:
+
+- **The venue.** Every existing check sends into the two-test-account DM or `Canari Test Venue` precisely because production is shared. A post or a form alert has an AUDIENCE, so the same discipline needs an answer that does not exist yet: what does a test post look like that no real member is notified by? Until that is answered, no social check may run on prod.
+- **The observer.** `srvlog.mjs` partitions its window by subject and classifies every line. The services behind posts and forms are not in that window today, and an unclassified window is not an observation.
+- **What a verdict rests on.** A chat check reads the peer's DOM. A notification with an audience is only correct if the people who should NOT get it did not - an assertion about absence, over a population, needing its window sized from a measured latency rather than guessed ([testing-methodology](testing-methodology.md), rule 13).
+
+The twelve emoji rows belong to this campaign: [emoji](frontend/emoji.md#what-a-future-campaign-owes---the-twelve-rows-moved-from-the-backlog-2026-10-08).
