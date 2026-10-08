@@ -20,6 +20,7 @@
 - [The one-time key-package pool, measured](protocols/key-package-pool.md) - every count, every population, and every rule refuted against the pool nothing reclaims
 - [MLS protocol](protocols/mls-protocol.md) — RFC 9420 integration, epochs, forward secrecy, device sync
 - [History reconciliation](protocols/history-reconciliation.md) — how a device works out it is missing messages and gets them: the replacement for the non-terminating `history_request` machinery, and the decisions taken
+- [MLS defects the campaign measured](protocols/campaign-measured-defects.md) — The reasoning, numbers, recurrences and refuted readings behind the open MLS healing and delivery entries of the backlog
 - [MLS desync prevention](protocols/mls-desync-prevention.md) — Server + client tactics to avoid state drift
 - [MLS recovery ladder](protocols/mls-recovery-ladder.md) — Step-by-step recovery (commit replay → external join → welcome_request)
 - [MLS + Graine state machine](protocols/mls-graine-state-machine.md) — **Every path, drawn from the code.** Mermaid diagrams with `file:line` on every transition, the duplicate-path table, the dead ends, and the P1/P2/P3 triage
@@ -105,6 +106,7 @@
 - [Testing methodology](testing-methodology.md) — How a result earns belief: the harness faults distilled into rules, plus the environment traps that read as application bugs
 - [Mechanism audit](mechanism-audit.md) - What every part of the app is covered by, measured across the board, the unit tests and the hand pass - and the five things nothing watches
 - [Cross-client testing](cross-client-testing.md) — The campaign board, state only: every check, its verdict, and the commit it ran on
+- [Cross-client rig findings](cross-client-harness-findings.md) — Open findings about the instrument itself: debris sweep, the starting-point contract, duplicated helpers, the PIN-verifier strand, the two `canari-harness` directories
 - [Cross-client campaign](cross-client-campaign.md) — The campaign's design: the ladder, what it is allowed to contain, the standing rules, the preflight, and what does NOT exist
 - [The LITHIUM board, archived](cross-client-testing-archive.md) — every verdict taken between 2026-08-14 and 2026-08-30, against production, on a rig whose ledger was lost: where to look first when a re-run disagrees, and worth nothing as a gate
 - [The campaign on the iPhone](cross-client-ios.md) — Every board row classified for the iPhone 12 (runs with the adapter / needs a named observable / not an iOS row), the `phone-ios.mjs` adapter and what is still owed

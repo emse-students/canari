@@ -1685,6 +1685,37 @@ in [backlog](../backlog.md).
 
 ---
 
+## A cold start re-accuses frames it already read: the mark must be one write with the advance (TAB-3b, measured 2026-09-08)
+
+Shipped and in `CHANGELOG.md`: the two silent decrypt paths that spent a generation without recording it
+(`noteFrameConsumed`, asserted by `historyFrameConsumptionSeam.test.ts`), the checkpoint-bound replay marks
+(`commitPendingHistoryMarks`) and the ack barrier (`announceAck` / `ackInFlight`). Run-by-run evidence is on
+the TAB-3b row of [cross-client-testing](../cross-client-testing.md).
+
+**What is left, measured 2026-09-08 with the cap and hydration both exonerated (`seenset.mjs`).** Each
+TAB-3b cold start still prints `[History] frame never read here and unreadable for good (secret-reuse)` for
+frames the device already decrypted, re-accuses every earlier one (three generations more per start, so the
+cost is QUADRATIC in cold starts) and fires a full `[HISTORY_RECONCILE]`. The accused fingerprints are
+ABSENT from every ledger on the client while the frame no longer decrypts (`SecretReuseError` at its own
+epoch): **the advance IS durable and the mark is NOT.**
+
+**The fix is atomicity, not ordering, and no smaller fix should be attempted.** Writing the mark eagerly is
+right for a ROW key ("I walked this row" has no ratchet to run ahead of) and the OPPOSITE defect for a
+FINGERPRINT: one written before its advance is durable tells the next replay to SKIP a frame nobody read - a
+silent real loss, strictly worse than a false accusation. The mark and the advance are one fact and must be
+one write: the mark belongs INSIDE the checkpoint, or "have I already consumed this ciphertext" should be
+answered FROM the MLS state rather than from a parallel ledger that can disagree with it.
+
+**Still unmeasured**: which path spends the generations - live delivery, the queue drain, or the archive
+replay's own successful pages. A console tailer cannot answer it (the row destroys the CDP target it would
+attach to); it needs a purpose-built reproduction that brings W1 down between a known send and a known
+decrypt.
+
+**The catch-up is a TIMER, worth a row of its own.** Five cold starts took 61 863 to 62 019 ms to show a
+message sent while the browser was down (a 156 ms spread): something waits about sixty seconds before an
+offline device is given a message the server already holds. `PHASE_STUCK_MS` is 60 s but only REPORTS, so
+it is not that. On a phone this is a minute of an empty conversation.
+
 ## Open questions
 
 **None are open.** Two were closed on 2026-08-12 and moved into [Decisions](#decisions-taken) - what

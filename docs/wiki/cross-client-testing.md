@@ -171,7 +171,7 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | SEARCH-1 | A term in a recent message is found and highlighted; prev/next walk the hits | `W1 W2` | `PASS` 2026-09-15 08:12 on fb3fddd2, clean |
-| SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `PASS-DIRTY` 2026-09-15 08:12 on fb3fddd2 - the three absent-mention 404s, [deliberately not allowlisted](backlog.md#p3---a-mention-of-a-deleted-account-writes-a-browser-level-console-error-no-client-code-can-suppress-and-the-row-that-meets-it-cannot-declare-it-expected-measured-2026-09-08) |
+| SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `PASS-DIRTY` 2026-09-15 08:12 on fb3fddd2 - the three absent-mention 404s, [deliberately not allowlisted](backlog.md#mentions) |
 | SEARCH-3 | Deleted messages excluded; edited messages match their NEW text | `W1 W2` | `PASS` 2026-09-15 08:12 on fb3fddd2, clean - `tombstoneApplied`, and the FIRST run through the overflow menu |
 | SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it | `W1 W2` | `PASS-DIRTY` 2026-09-15 08:12 on fb3fddd2 - same three 404s as SEARCH-2 |
 | SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | `PASS` 2026-09-15 08:12 on fb3fddd2, clean - `noAccentFound=true`, twice |
