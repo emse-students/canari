@@ -20,6 +20,16 @@ Two things only, both regenerable from a registry or from source:
   - dangling IMAGES (`docker image prune`, never `-a`) - an untagged layer set no container runs;
   - the BUILD CACHE (`docker builder prune`) - cache by definition.
 
+A THIRD, OPT-IN KIND (`--remove-releases`): unused release images. Since 2026-10-06 production
+deploys `v<version>`, so the image a deploy replaces KEEPS its tag, is not dangling, and no plain
+prune reclaims it (eight images per stable). The allowlist is the NAME, not a flag: only
+`ghcr.io/emse-students/canari/<repository>:v<semver>` is ever a candidate; `dev`, `latest`, an
+untagged layer set and every other project's images are not matched at all. Of those, per
+repository the newest `--keep` (default 3) are kept as the rollback margin, and NEVER removed
+whatever their rank: an image any container references (running OR stopped, by image id), an image a
+compose file given with `--compose` names literally. Without `--remove-releases` the plan is only
+recorded in the ledger line; with `--dry-run` it is printed and nothing is removed.
+
 **It never deletes a volume, and never removes a container.** A dangling volume may be the orphan of
 a removed container or may be data whose container is simply not running, and `docker volume prune`
 cannot tell those apart - neither can a name. An exited container is often the only surviving record
@@ -46,6 +56,8 @@ contents of a mount, never an environment value.
 
 Usage:   ./prune.py            (reclaims, appends one ledger line, prints nothing on success)
          ./prune.py --dry-run  (censuses and prints the line, deletes nothing)
+         ./prune.py --remove-releases [--keep N] [--compose FILE ...]
+                               (also removes the unused release images the plan lists)
 Install: see README.md
 """
 
@@ -92,6 +104,14 @@ PROJECT_LABEL = "com.docker.compose.project"
 # project long after the services that mounted them were deleted from `docker-compose.prod.yml`.
 VOLUME_LABEL = "com.docker.compose.volume"
 
+# The ONLY images the release removal may ever touch: this registry prefix plus a `v<semver>` tag.
+# A pattern match rather than a "not dev" test, so a new kind of tag is out of scope until somebody
+# writes it in here.
+RELEASE_PREFIX = "ghcr.io/emse-students/canari/"
+RELEASE_TAG_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?")
+# Newest releases kept per repository, the rollback margin.
+DEFAULT_KEEP = 3
+
 # A Go template indexing a label map that has no such key prints this, not an empty string.
 _NO_VALUE = "<no value>"
 
@@ -129,6 +149,105 @@ def reclaim(kind: str, dry_run: bool) -> dict:
         # docker's output shape, and silence about it would make every later ledger line unreadable.
         return {"kind": kind, "bytes": None, "raw": output.strip()[-200:]}
     return {"kind": kind, "bytes": parse_size(match.group(1)), "human": match.group(1).strip()}
+
+
+def release_sort_key(tag: str) -> tuple:
+    """Semver order for a `v...` tag: a pre-release sorts BELOW the stable of its version.
+
+    Pre-release identifiers compare numerically when numeric, as text otherwise, per semver.
+    """
+    match = RELEASE_TAG_RE.fullmatch(tag)
+    if match is None:
+        raise ValueError(f"not a release tag: {tag!r}")
+    major, minor, patch = (int(match.group(i)) for i in (1, 2, 3))
+    pre = match.group(4)
+    if pre is None:
+        return (major, minor, patch, 1, ())
+    parts = tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split("."))
+    return (major, minor, patch, 0, parts)
+
+
+def plan_release_removal(
+    images: list[dict], referenced_ids: set[str], compose_refs: set[str], keep: int
+) -> dict:
+    """Decide, per image, what a release removal would do. PURE: it touches no docker.
+
+    `images` rows are `{"id", "repository", "tag"}`. Only `RELEASE_PREFIX` repositories with a
+    `RELEASE_TAG_RE` tag are candidates; everything else is not even listed. Returns
+    `{"keep": [...], "remove": [...]}`, each kept entry `{"ref", "id", "reason"}`.
+    A protected image id protects EVERY tag on it, since removing one tag of a shared id would
+    not free the layers and removing the last would pull the image from under the container.
+    """
+    if keep < 1:
+        raise ValueError("keep must be at least 1: removing every release leaves no rollback")
+    protected_ids = set(referenced_ids)
+    by_repo: dict[str, list[dict]] = {}
+    for row in images:
+        repo, tag = row["repository"], row["tag"]
+        if not repo.startswith(RELEASE_PREFIX) or RELEASE_TAG_RE.fullmatch(tag) is None:
+            continue
+        by_repo.setdefault(repo, []).append(row)
+    kept, removed = [], []
+    for repo in sorted(by_repo):
+        ranked = sorted(by_repo[repo], key=lambda r: release_sort_key(r["tag"]), reverse=True)
+        for rank, row in enumerate(ranked):
+            ref = f"{row['repository']}:{row['tag']}"
+            if rank < keep:
+                reason = f"newest {keep}"
+            elif row["id"] in protected_ids:
+                reason = "referenced by a container"
+            elif ref in compose_refs:
+                reason = "named by a compose file"
+            else:
+                removed.append({"ref": ref, "id": row["id"]})
+                continue
+            kept.append({"ref": ref, "id": row["id"], "reason": reason})
+    return {"keep": kept, "remove": removed}
+
+
+def compose_image_refs(paths: list[str]) -> set[str]:
+    """Every literal `RELEASE_PREFIX...:tag` a compose file names. An unreadable file RAISES:
+    a guard that silently sees less protects less."""
+    pattern = re.compile(re.escape(RELEASE_PREFIX) + r"[A-Za-z0-9_./-]+:[A-Za-z0-9_.-]+")
+    refs: set[str] = set()
+    for path in paths:
+        with open(path, encoding="utf-8") as handle:
+            refs.update(pattern.findall(handle.read()))
+    return refs
+
+
+def local_images() -> list[dict]:
+    """Every tagged local image as `{"id", "repository", "tag"}` (untagged rows are skipped)."""
+    template = _TAB.join(["{{.ID}}", "{{.Repository}}", "{{.Tag}}"])
+    rows = []
+    for line in docker("image", "ls", "--no-trunc", "--format", template).splitlines():
+        fields = line.split(_TAB)
+        if len(fields) == 3 and fields[1] != "<none>" and fields[2] != "<none>":
+            rows.append({"id": fields[0], "repository": fields[1], "tag": fields[2]})
+    return rows
+
+
+def referenced_image_ids() -> set[str]:
+    """Image ids used by ANY container, running or stopped - a stopped one is a restart waiting."""
+    ids = [line.strip() for line in docker("ps", "-a", "-q").splitlines() if line.strip()]
+    return {row[0].strip() for row in inspect(["container"], ids, "{{.Image}}") if row[0].strip()}
+
+
+def remove_releases(plan: dict, apply: bool) -> list[dict]:
+    """Remove the planned refs by NAME, never by id and never with `-f`: docker itself then
+    refuses an image a container still uses, a second guard behind the plan's own."""
+    results = []
+    for entry in plan["remove"]:
+        if not apply:
+            results.append({"ref": entry["ref"], "skipped": "not applied"})
+            continue
+        try:
+            docker("image", "rm", entry["ref"])
+            results.append({"ref": entry["ref"], "removed": True})
+        except RuntimeError as error:
+            # One refusal must not hide the rest of the batch, and must be visible in the ledger.
+            results.append({"ref": entry["ref"], "removed": False, "error": str(error)[-200:]})
+    return results
 
 
 def volume_sizes() -> dict[str, int | None]:
@@ -247,6 +366,15 @@ def append(line: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Reclaim dangling images and build cache.")
     parser.add_argument("--dry-run", action="store_true", help="census and print, delete nothing")
+    parser.add_argument(
+        "--remove-releases",
+        action="store_true",
+        help="also remove unused v* release images beyond the newest --keep per repository",
+    )
+    parser.add_argument("--keep", type=int, default=DEFAULT_KEEP, help="releases kept per repository")
+    parser.add_argument(
+        "--compose", nargs="*", default=[], help="compose files whose literal image refs are kept"
+    )
     args = parser.parse_args()
 
     try:
@@ -254,6 +382,10 @@ def main() -> int:
         reclaimed = [reclaim("image", args.dry_run), reclaim("builder", args.dry_run)]
         after = disk()
         live = live_projects()
+        release_plan = plan_release_removal(
+            local_images(), referenced_image_ids(), compose_image_refs(args.compose), args.keep
+        )
+        release_removal = remove_releases(release_plan, args.remove_releases and not args.dry_run)
         line = {
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "host": socket.gethostname(),
@@ -261,6 +393,7 @@ def main() -> int:
             "disk_before": before,
             "disk_after": after,
             "reclaimed": reclaimed,
+            "release_images": {"plan": release_plan, "removal": release_removal},
             "dangling_volumes": dangling_volumes(volume_sizes(), live),
             "exited_containers": exited_containers(),
         }

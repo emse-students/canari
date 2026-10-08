@@ -2640,9 +2640,9 @@ needed. Re-read the disk on the Portail-etu host before sizing a sink: the 2026-
 
 ---
 
-### P3 - docker-prune is not shown running on the Portail-etu host
+### P3 - docker-prune is built for the Portail-etu host but not installed there
 
-`infrastructure/docker-prune/` (`prune.py`, README) reclaims dangling images and build cache and only REPORTS volumes; the 2026-08-27 measurement concerned `canari` and `mitv`, which no longer run production. **Open:** install it on the Portail-etu host with a project filter ([estate-migration](infrastructure/estate-migration.md): no `docker system prune` without one) after one read-only `docker system df`, and update the README's "Installing it". **SINCE 2026-10-06 PRODUCTION DEPLOYS `v<version>`**, so a replaced image keeps its tag, is NOT dangling, and neither a plain prune nor `prune.py`'s dangling-only allowlist reclaims it (eight images per stable): add an allowlisted removal of `ghcr.io/emse-students/canari/*:v*` images that no container runs and that are not among the newest N releases (the rollback margin). Dev still pulls its moving `dev`. **Dangling VOLUMES are never pruned by a flag**: enumerate by name against an allowlist ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
+The allowlisted release-image removal is in `prune.py` with tests ([README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet), [estate-migration](infrastructure/estate-migration.md)); the host was `/` 88 % used on 2026-10-08. **Open:** the user or Master runs the one-off command from that README, then a cron entry. **Dangling VOLUMES are never pruned by a flag**: enumerate by name against an allowlist ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 
