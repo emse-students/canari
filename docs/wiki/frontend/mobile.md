@@ -566,9 +566,13 @@ queue one, and `/associations/<slug>/edit/republications` is still a section key
 notifications link to it"); the legacy `?section=` form is redirected by `edit/[[section]]/+page.ts`. `/admin/agenda`
 exists. Nobody may reach a section they lack the right for: that is decided after the roster loads (`mayOpenEditSection`).
 
-**Hosts the Android manifest does not declare.** `AndroidManifest.xml` and `tauri.conf.json` list `callback`, `stripe`, `chat`,
-`post`, `form` only. `posts`, `calendar`, `admin-agenda` and the new `proposals` are opened by an EXPLICIT intent from the
-notification's own `PendingIntent`, which needs no filter - plausible, never read on Android hardware (phase 2).
+**Hosts the deep-link plugin must declare (measured 2026-10-08, Mi 9T).** The notification's `PendingIntent` is an explicit
+`VIEW fr.emse.canari://<host>/...`, but `tauri-plugin-deep-link` forwards `onNewIntent` and `load` URLs ONLY when
+`isDeepLink` matches a `plugins.deep-link.mobile` entry of `tauri.conf.json`. `posts`, `calendar`, `admin-agenda` and
+`proposals` were not declared, so a calendar, agenda-validation or proposal tap opened the app and did NOTHING (the
+JS `onOpenUrl` never fired). They are declared since, and `deepLinkHostsDeclared.test.ts` pins every host the server
+builds. Read on hardware after the fix, backgrounded and killed: the calendar event, the admin agenda and the proposal
+queue open.
 
 **Following: what "Suivre" does and does not change.** Two tables, `association_follows` and `user_follows`
 (`FollowsService`). Following feeds the `followed` tab of the feed and nothing else for an ASSOCIATION: its post is
