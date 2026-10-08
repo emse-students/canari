@@ -921,3 +921,7 @@ WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominativ
 
 - **`minClientVersion` rises after 1.1.2, once both stores serve at least 1.0.3** - the user's gesture; G3 of Graine v2 waits for it.
 - **Staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton) get `posts=["ME"]` in Authentik BY THE USER, from a table Master hands over.
+
+### P2 - Sections are navigated in depth, not shown as tabs (user, 2026-10-08)
+
+Two menu patterns, both bad on a phone: a scrolling row hides tabs, a wrapped grid takes half the screen. Replace them with a hub, route-segment sections, a breadcrumb and a rail on wide screens. Design, order, traps and the two open choices: [section-navigation](frontend/section-navigation.md). Start with the permission gap on the edit page, then the edit page itself.
