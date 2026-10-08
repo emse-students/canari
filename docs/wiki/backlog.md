@@ -1797,11 +1797,10 @@ answering `/api/mls/devices/:userId/:deviceId/revoked` to an unauthenticated cal
 oracle; the alternative is a local expiry, the exact clock this project refuses to make load-bearing.
 **That question is the whole of what stays open here.**
 
-### P1 - a REVOKED device's partial restore reports no shortfall, and the cause the user hit is not established
+### P1 - the cause of a REVOKED device's partial restore is not established
 
-The wipe and tombstone halves are fixed ([auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it), `canRepresentThePeer` in `v0.18.18`); HEAL-REVOKE-1, -2 and -3 are `PASS` on [the board](cross-client-testing.md). Two items remain:
+The wipe and tombstone halves are fixed ([auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it), `canRepresentThePeer` in `v0.18.18`); HEAL-REVOKE-1, -2 and -3 are `PASS` on [the board](cross-client-testing.md). The shortfall report is built ([auth](frontend/modules/auth.md#a-restore-that-comes-back-partial-says-so-2026-10-08)); one item remains:
 
-- **A partial restore is worse than no restore.** The restore must know its expected count and report a shortfall (not checked in code on 2026-10-01).
 - **Which cause the user hit** (a session-only row removal, `revokeRowSessions` failing, or the watchdog rebuilding the store) is only separable from the user's own history. Not worth code without a measurement.
 
 ## Mentions

@@ -55,6 +55,7 @@ import { sendHistoryStateKey } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { canSendInGroup } from '$lib/utils/chat/groupUsability';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
 import { setGraineRuntime } from '$lib/utils/graine/runtime';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
 import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
@@ -1255,6 +1256,21 @@ export async function loginImpl(
 
     try {
       const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
+      // THE RESTORE'S OWN VERDICT, taken BEFORE the demotion below rewrites the rows: afterwards the
+      // evidence is gone and a partial restore looks complete. Reported through the existing
+      // fatal-error banner, and accused at `error` because a row on screen that cannot work is the
+      // visible end of an MLS state that did not come back with it.
+      const shortfall = measureRestoreShortfall(cb.conversations.values(), localMlsGroups);
+      if (shortfall) {
+        ctx.setMlsFatalError('restore_shortfall');
+        const ids = shortfall.missingIds.map((id) => id.slice(0, 8)).join(', ');
+        cb.log(
+          `[ERROR] Partial restore: ${shortfall.restored}/${shortfall.expected} conversation(s) hold their MLS group - missing ${ids}`
+        );
+        console.error(
+          `[INIT] Partial restore: ${shortfall.restored}/${shortfall.expected} conversation(s) hold their MLS group (missing ${ids})`
+        );
+      }
       const missingKeys: string[] = [];
       // Conversations stuck in 'pending' while their local MLS state exists:
       // the "Sync" badge would remain forever (DF5). Reconciliation demoted absent

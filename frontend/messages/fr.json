@@ -2787,6 +2787,7 @@
   "mls_error_oom_text": "Mémoire insuffisante - rechargez l'application pour recevoir de nouveaux messages.",
   "mls_error_private_mode_text": "Mode navigation privée - les messages ne seront pas conservés après fermeture.",
   "mls_error_keystore_lost_text": "Notifications push dégradées - reconnectez-vous pour les réactiver.",
+  "mls_error_restore_shortfall_text": "Certaines conversations n'ont pas pu être restaurées sur cet appareil et attendent d'être resynchronisées.",
   "mls_error_reload_action": "Recharger",
   "mls_error_dismiss_action": "Compris",
   "media_lightbox_default_aria": "Aperçu média",
