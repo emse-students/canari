@@ -2608,35 +2608,14 @@ Sky took `sky.emse.fr` on 2026-09-28; the old name is a pure `301` and the relay
 - **MiGallery's offsite still lands on the old Canari VM, and it is its ONLY offsite.** `mitv` root's `backup-offsite.sh` (~2 GB/night) pushes the Immich dump to `canari:~/migallery-offsite`. It needs a destination off `mitv` (the School host, on the private path) before the old VM can be wound down - the user's decision, then a MiGallery PR.
 - **The user's gestures**: a real Sky sign-in with `/admin/legacy` showing the June data, and deleting the stopped `sky-sky-1` container with `/home/mitv/Sky/database`.
 
-### P2 - A DEFECT REPORTED AFTER A DEPLOY HAS NO EVIDENCE, BECAUSE A DEPLOY DESTROYS IT (measured on production 2026-09-21)
+### P2 - A DEPLOY NO LONGER ERASES THE LOGS, BUT NO ARCHIVE HAS BEEN SEEN YET (merged 2026-10-08)
 
-**FOUND WHILE DIAGNOSING A REPORT, WHICH IS THE ONLY WAY THIS ONE EVER GETS FOUND.** A member could
-not publish a post from their phone; the investigation read `infrastructure-frontend-1` and
-`infrastructure-social-service-1` for the hour, found no `POST /api/posts` and no error, and
-concluded the request had never left the device. **That conclusion was one step further than the
-evidence went**, and the reason is this entry: both containers report `StartedAt` of
-`2026-09-20T21:46:52Z`, so nothing before that moment existed to be read. The hour that was read was
-the hour the REPORT arrived in, not the hour the attempt was made in.
-
-**THE MECHANISM, SHOWN GONE RATHER THAN ASSERTED** (read on the old origin 2026-09-21; the compose files still carry no `logging:` stanza). `docker inspect -f '{{.HostConfig.LogConfig.Type}}'`
-returns `json-file` with an empty config on every service; `/etc/docker/daemon.json` sets `dns` and
-nothing else; and no container on the box runs loki, promtail, fluentd, vector or filebeat. So a
-container's own stdout is the whole record, it has no `max-size` and no `max-file`, and a deploy
-RECREATES the container rather than restarting it - which deletes the log file with the container it
-belonged to. Every deploy is therefore a full erasure of production's only observability.
-
-**WHY THIS IS P2 AND NOT P3.** The window it destroys is exactly the window that matters. Reports
-arrive from students hours to days after the fact, and deploys are frequent because the release
-cycle is designed to be; the two together mean the default outcome for a user-reported defect is
-that its evidence is already gone. This one cost a wrong conclusion that was written into a wiki
-page before it was caught - *a claim that something is stale must name the mechanism that would
-honour it and show that mechanism gone*, and here the mechanism was believed to exist.
-
-**WHAT WOULD SETTLE IT.** Any sink that outlives a container recreation. The cheapest is a logging
-driver with rotation writing outside the container's lifetime; the honest one is a collector, since
-the box already hosts the dev estate beside prod and a per-container file answers no
-cross-service question. **Not decided here** - the shape is the open question, not whether it is
-needed. Re-read the disk on the Portail-etu host before sizing a sink: the 2026-09-21 reading (`/` 43 % used) was the old origin's.
+Rotation (`x-logging`, 3 x 10 MB) and a per-deploy log archive are in the compose files and
+`deploy-environment.sh` ([logging](infrastructure/logging.md), which carries the 2026-09-21 incident
+and the measurements). **Owed, after the next deploy of each estate:** read
+`~/deploy-log-archive/<project>/` on the host and confirm one `.log.gz` per container, and
+`docker inspect` a recreated container for `max-size`. **Not covered:** Authentik's stack (hand-run,
+`infrastructure/authentik/compose.yml`) is bounded only when next recreated and is not archived.
 
 ---
 

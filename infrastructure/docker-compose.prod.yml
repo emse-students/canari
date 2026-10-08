@@ -7,12 +7,27 @@
 # each carrying its own identity, cannot be merged into one estate by a caller who forgets `-p`.
 name: canari-prod
 
+# Every service carries this block (asserted by compose-logging.test.sh under the CI scripts tests).
+# Without it json-file keeps a container log with NO ceiling for as long as the container lives. The
+# ceiling is 3 x 10 MB per container: measured on the shared host 2026-10-08, the largest log was
+# 46 MB (garage) and the median 0.1 MB, against a disk 88 % used with 5.5 GB free, so the worst case
+# of one estate (13 containers) is ~0.4 GB. Rotation bounds the DISK; it does not keep a log past
+# its container, which `up -d` recreates - that is infrastructure/lib/archive-logs.sh, called by the
+# deploy. See docs/wiki/infrastructure/logging.md.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+
 services:
 
   # ─────────────────────────────────────────────────────
   # Infrastructure (dépendances partagées)
   # ─────────────────────────────────────────────────────
   redis:
+    logging: *logging
     # PINNED BY DIGEST TO WHAT PRODUCTION IS PROVEN TO RUN, not to whatever the tag resolved to
     # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
     # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
@@ -66,6 +81,7 @@ services:
       start_period: 40s
 
   postgres:
+    logging: *logging
     # Same rule. The tag pinned the MAJOR only, so every patch arrived unannounced.
     #
     # THE MAJOR HERE IS NOT A FREE CHOICE, AND MOVING IT IS NOT A DEPENDENCY BUMP. Dependabot
@@ -103,6 +119,7 @@ services:
       - postgres_data_18:/var/lib/postgresql
 
   adminer:
+    logging: *logging
     # REACHED TWO WAYS: loopback on the host (an ssh tunnel), and /adminer/ through the frontend nginx for
     # GLOBAL ADMINS (core-service signs a short cookie; docs/wiki/infrastructure/databases.md). It publishes
     # nothing else.
@@ -124,6 +141,7 @@ services:
 
   # Chat Gateway (Rust / Axum) - port 3000
   chat-gateway:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:-latest}
     restart: always
     build:
@@ -154,6 +172,7 @@ services:
         condition: service_healthy
 
   call-service:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/call-service:${TAG:-latest}
     restart: always
     build:
@@ -185,6 +204,7 @@ services:
 
   # Chat Delivery Service (NestJS) - New port 3010
   chat-delivery-service:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-latest}
     restart: always
     build:
@@ -246,6 +266,7 @@ services:
   # was repointed here. See docs/wiki/infrastructure/docker.md.
   # ─────────────────────────────────────────────────────
   garage:
+    logging: *logging
     image: dxflrs/garage:v2.4.1
     restart: always
     command: ["/garage", "server", "--single-node", "--default-bucket"]
@@ -279,6 +300,7 @@ services:
   # Stores only opaque encrypted blobs; never sees decryption keys.
   # ─────────────────────────────────────────────────────
   media-service:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:-latest}
     restart: always
     build:
@@ -328,6 +350,7 @@ services:
   # Handles Auth, Users, Payment
   # ─────────────────────────────────────────────────────
   core-service:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:-latest}
     restart: always
     build:
@@ -396,6 +419,7 @@ services:
   # Handles Channels, Posts, Forms
   # ─────────────────────────────────────────────────────
   social-service:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:-latest}
     restart: always
     build:
@@ -451,6 +475,7 @@ services:
   # services directly on this network, never back through nginx, with INTERNAL_SECRET.
   # Not published: nginx is still the only container binding a host port.
   frontend-ssr:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${TAG:-latest}
     restart: always
     environment:
@@ -473,6 +498,7 @@ services:
         condition: service_started
 
   frontend:
+    logging: *logging
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${TAG:-latest}
     restart: always
     environment:
