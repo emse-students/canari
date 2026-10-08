@@ -788,7 +788,7 @@ it was Chrome with a device-metrics override and three of three iOS defects were
 CLAUDE.md queue item 16 carries it.
 
 - **Suspended, not filed**: the "Nouvelle discussion" dialog showed no result list on A1 against `dev`, where the harness directory does not exist. One re-run against the LOCAL estate settles it ([detail](cross-client-harness-findings.md#the-2026-09-14-hardware-session-one-suspended-measurement)).
-- **P2 - the wry bump that removes the abort** (found 2026-09-14 on A1): closed in this app by `webview_may_load`; the re-check is the move to tauri 2.12, which needs `wry ^0.57` AND `tao ^0.37`, so the vendored `tao 0.35` fork must be rebased by hand, then a deep link and `sweep.mjs --route /posts` on A1. A native work package owed hardware, not an unattended bump ([detail](cross-client-harness-findings.md#the-wry-bump-that-removes-the-abort-a1-2026-09-14)).
+- **Done 2026-10-08 - the wry bump** (tauri 2.12.1, wry 0.57.0, tao 0.37.1; the vendored `tao` fork DELETED, upstream already carries its guard): one re-check left, none owed ([detail](cross-client-harness-findings.md#the-wry-bump-that-removes-the-abort-a1-2026-09-14)).
 
 ## Composer and reactions
 

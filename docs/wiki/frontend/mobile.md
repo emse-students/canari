@@ -321,8 +321,13 @@ to one, since a Tauri download goes through the native save dialog and an object
 `<img>` reaches `shouldInterceptRequest`, never `shouldOverrideUrlLoading`.
 
 **Two things this does NOT claim.** It is not the upstream fix - a boundary that cannot unwind owes
-a `Result`, and `wry` 0.56.1 (tauri-apps/wry#1772) provides one, but every stable
-`tauri-runtime-wry` pins `wry ^0.55` and only `tauri-runtime-wry 3.0.0-alpha.0` asks for `^0.56`.
+a `Result`, and `wry` 0.56.1 (tauri-apps/wry#1772, in the 0.57.0 changelog: *"Don't panic in the IPC
+handler when the webview's current document URL is not a valid `http::Uri`"*) provides one. The app
+has built against it since tauri 2.12.1 / `wry 0.57.0` (2026-10-08, with `tao 0.37.1`, whose own
+`handle_intent` carries the `getType()` null guard this repo used to vendor as `patches/tao`), so the
+predicate is now defence in depth for the same input rather than the only thing standing in front of
+the abort; it is kept because it also keeps `currentUrl` from ever holding a value the IPC would then
+have to drop.
 And it is not airtight: `tauri-runtime-wry` parses the string into a `url::Url` before calling the
 handler and **allows the navigation outright when that parse fails** (`unwrap_or(true)`, its
 lib.rs:4898). `url::Url` accepts far more than `http::Uri` does - every case in the module's tests

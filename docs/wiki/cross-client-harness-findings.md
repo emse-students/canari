@@ -172,13 +172,14 @@ The defect is closed in this app: a URL `http::Uri` cannot parse used to SIGABRT
 wry's Android JNI frame; since 2026-09-15 `mobile::navigation::webview_may_load` (wired to `on_navigation`)
 refuses it before the WebView starts
 ([mobile](frontend/mobile.md#the-app-owns-which-urls-its-own-webview-may-load)). wry 0.56.1
-(`5ce72b0`, tauri-apps/wry#1772) replaces the `unwrap()` with a logging `match`. Re-checked 2026-10-04:
-stable `tauri-runtime-wry 2.12.0` (2026-09-26) and `2.12.1` (2026-09-30) require `wry ^0.57.0` but also
-`tao ^0.37.0`, and the app builds against the VENDORED `tao` fork in `frontend/src-tauri/patches/tao`
-(`0.35.0`, the Android `intent.getType()` null guard, `[patch.crates-io]`). So tauri 2.12 means rebasing
-that fork onto `tao 0.37` by hand (Dependabot cannot, see `.github/dependabot.yml`), then a deep link
-(`fr.emse.canari://callback`) and `sweep.mjs --route /posts` on A1 - the fork guards a crash a compile
-cannot see. **Do not change the instrument**: `sweep.mjs` found a line that aborts the process on bad
+(`5ce72b0`, tauri-apps/wry#1772) replaces the `unwrap()` with a logging `match`. DONE 2026-10-08: tauri `2.12.1` / `wry 0.57.0` / `tao 0.37.1` with `plugin-store` 2.5.0, `plugin-opener` 2.7.0,
+`plugin-http` 2.8.1, `plugin-fs` 2.6.0 (Dependabot #1491, #1596, #1597). wry 0.57.0's changelog lists #1772. The
+vendored `tao` fork was DELETED, not rebased: `tao 0.37.1`'s `handle_intent` already filters a null `getType()`
+(`.filter(|jstr| !jstr.is_null())`), the fork's one hunk. Measured on the Mi 9T with a debug APK: cold and warm
+`fr.emse.canari://callback` deep link, a real Custom Tab sign-in, background/resume and `sweep.mjs --route /posts`
+(0 overflowing) with no `NullPtr`, `NullPointerException`, `SIGABRT` or `panicked` in logcat; plugin-store wrote
+`oidc-state.json` and `auth-native.json` and the callback read the state back. NOT exercised: `plugin-opener`, and an
+unparsable-URL navigation against wry 0.57 (the app's predicate refuses it first). **Do not change the instrument**: `sweep.mjs` found a line that aborts the process on bad
 input, and changing how it navigates would hide it. Run `MSYS_NO_PATHCONV=1 bun sweep.mjs --route /posts`;
 Git Bash rewrites a leading-slash argument into a Windows path, which is how the killer URL was produced.
 
