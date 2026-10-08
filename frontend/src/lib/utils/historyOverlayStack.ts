@@ -43,8 +43,19 @@ import { isOverlayLayout } from './viewport';
 const STATE_KEY = 'canariOverlay';
 const isBrowser = typeof window !== 'undefined';
 
+/**
+ * Why a close handler runs. `back` is the member's gesture (Back, X, backdrop): an overlay holding
+ * something precious may ask about it. `navigation` is the app leaving the screen (`beforeNavigate`
+ * drains the stack): the member is already elsewhere, so a handler must tidy up and NEVER ask - a
+ * question there lands over the destination page.
+ */
+export type OverlayCloseReason = 'back' | 'navigation';
+
+/** A close handler; the reason is optional so the many that ignore it stay `() => void`. */
+export type OverlayClose = (reason?: OverlayCloseReason) => void;
+
 type StackEntry = {
-  close: () => void;
+  close: OverlayClose;
 };
 
 const stack: StackEntry[] = [];
@@ -102,7 +113,7 @@ export function initHistoryOverlayStack(): () => void {
     }
 
     const entry = stack.pop();
-    entry?.close();
+    entry?.close('back');
   };
 
   window.addEventListener('popstate', onPopState);
@@ -115,7 +126,7 @@ export function initHistoryOverlayStack(): () => void {
 }
 
 /** Push a history entry; Android/iOS back will invoke `close`. */
-export function pushHistoryOverlay(close: () => void): void {
+export function pushHistoryOverlay(close: OverlayClose): void {
   if (!isBrowser) return;
   stack.push({ close });
   history.pushState({ [STATE_KEY]: stack.length }, '');
@@ -180,7 +191,7 @@ export function abandonHistoryOverlay(close: () => void): void {
  */
 export function drainHistoryOverlayStack(): void {
   while (stack.length > 0) {
-    stack.pop()?.close();
+    stack.pop()?.close('navigation');
   }
   // Do not reset skipPops: any pending absorptions from abandonHistoryOverlay
   // must still fire.

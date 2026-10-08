@@ -37,7 +37,11 @@
   import type { PublishReelDeps } from '$lib/reels/publishReel';
   import { refusalStatus } from '$lib/utils/apiRefusal';
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
-  import { closeHistoryOverlayFromUi, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
+  import {
+    closeHistoryOverlayFromUi,
+    pushHistoryOverlay,
+    type OverlayClose,
+  } from '$lib/utils/historyOverlayStack';
   import { showToast } from '$lib/stores/toast.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -67,7 +71,7 @@
   let limitTimer: ReturnType<typeof setTimeout> | null = null;
   let frame: number | null = null;
   /** The history entry a take holds; its close discards whatever the take has become. */
-  let takeEntry: (() => void) | null = null;
+  let takeEntry: OverlayClose | null = null;
   /** What the camera screen can capture, bound from it. */
   let camera = $state<CameraCapture>();
   let picker = $state<HTMLInputElement | null>(null);
@@ -129,10 +133,20 @@
 
   function holdTakeEntry() {
     if (takeEntry) return;
-    takeEntry = () => {
+    takeEntry = (reason) => {
       // Back (or the X) while a take exists. The entry is spent by now, so what keeps the take
       // asks for it again.
       takeEntry = null;
+      if (reason === 'navigation') {
+        // The app is LEAVING this screen (a published reel lands on the feed, a tab was tapped):
+        // asking now would put the question over the destination page. The take dies with the screen.
+        console.debug(
+          '[reel-capture] the screen is being left: the take is dropped, nothing asked'
+        );
+        editorOpen = false;
+        dismissTake();
+        return;
+      }
       if (editorOpen) {
         // Back leaves the EDITOR (asking when it holds edits), never the whole take.
         console.debug('[reel-capture] Back with the editor open: the editor decides');

@@ -453,3 +453,10 @@ non-passive `touchmove` that prevents a single-finger move now claims it through
 the same phone the same day), the pull-to-refresh since #1350, and the reel viewer and the media
 lightbox since 2026-10-04, which stand their drag down instead of half-claiming it
 (`ReelViewer.svelte.test.ts` dispatches an uncancelable move and asserts it is never prevented).
+
+## A take is never asked about once the screen is left (2026-10-09)
+
+Mi 9T: "Discard this capture?" reappeared over the posts feed after publishing or cancelling. Root cause: the take holds a history entry whose handler, on a review, asks the discard question (Back semantics). A publish ends with `goto('/posts')`; the root layout's `beforeNavigate` calls `drainHistoryOverlayStack()`, which ran that handler, so the question was shown after the route had changed. Every drain of any route change did the same while a review existed.
+
+Fix at the source: `historyOverlayStack` passes a reason to close handlers (`'back'` from popstate, `'navigation'` from the drain). The take's handler asks only for `'back'`; for `'navigation'` it clears the editor and publish step, aborts a recording and drops the take, with no question and no re-armed entry. Tests: `ReelCapture.svelte.test.ts` (review, publish step, editor, recording, discard) and `historyOverlayStack.test.ts`. Other handlers ignore the reason and are unchanged.
+

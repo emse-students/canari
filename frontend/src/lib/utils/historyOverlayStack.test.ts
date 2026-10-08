@@ -1,4 +1,5 @@
 import {
+  drainHistoryOverlayStack,
   pushHistoryOverlay,
   closeHistoryOverlayFromUi,
   clearHistoryOverlayStack,
@@ -41,7 +42,7 @@ describe('historyOverlayStack', () => {
       (c) => c[0] === 'popstate'
     )?.[1] as ((e: PopStateEvent) => void) | undefined;
     handler?.({ state: null } as PopStateEvent);
-    expect(close).toHaveBeenCalled();
+    expect(close).toHaveBeenCalledWith('back');
     expect(historyOverlayStackDepth()).toBe(0);
   });
 
@@ -50,5 +51,13 @@ describe('historyOverlayStack', () => {
     pushHistoryOverlay(close);
     closeHistoryOverlayFromUi(close);
     expect(history.back).toHaveBeenCalled();
+  });
+
+  it('a drain tells each handler the app is navigating, so none may ask', () => {
+    const reasons: (string | undefined)[] = [];
+    pushHistoryOverlay((reason) => reasons.push(reason));
+    drainHistoryOverlayStack();
+    expect(reasons).toEqual(['navigation']);
+    expect(historyOverlayStackDepth()).toBe(0);
   });
 });
