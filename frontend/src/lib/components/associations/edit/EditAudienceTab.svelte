@@ -7,8 +7,9 @@
    *
    * A reader with no campus anywhere (neither on the entity nor on their profile) cannot be offered
    * presets, which are computed from a campus: they get the profile prompt (decision 5). A global
-   * admin reads the rules in force; a BDE star cannot (the read route is global-admin only), so the
-   * editor opens with no preset ticked for them and says so.
+   * admin reads the rules in force, and so does a BDE star for an entity of its own campus (user,
+   * 2026-10-08); only when the read is refused does the editor open with no preset ticked and warn
+   * that saving replaces what is in force.
    */
   import { onMount } from 'svelte';
   import { resolve } from '$app/paths';
@@ -18,7 +19,7 @@
   import CheckboxGroup from '$lib/components/ui/CheckboxGroup.svelte';
   import ProfileCampusPrompt from '$lib/components/profile/ProfileCampusPrompt.svelte';
   import {
-    listAllAudiences,
+    getAssociationAudiences,
     setAssociationAudiences,
     type Association,
     type AudienceRule,
@@ -45,7 +46,7 @@
 
   interface Props {
     asso: Association;
-    /** A global admin reads the rules in force and may pick any campus; a BDE star does neither. */
+    /** A global admin may pick any campus; a BDE star's campus is fixed by its profile or the rules. */
     isGlobalAdmin: boolean;
   }
 
@@ -54,7 +55,7 @@
   let loading = $state(true);
   let saving = $state(false);
   let profileCampus = $state<Campus | ''>('');
-  /** `null` while unknown (a star), `[]` for an entity with no rule. */
+  /** `null` when the read was refused, `[]` for an entity with no rule. */
   let currentRules = $state<AudienceRule[] | null>(null);
   let preset = $state<AudiencePreset | null>(null);
   let campus = $state<Campus | ''>('');
@@ -94,14 +95,11 @@
     } catch (err) {
       Log.d('audience.profile failed', err);
     }
-    if (isGlobalAdmin) {
-      try {
-        currentRules = (await listAllAudiences())
-          .filter((r) => r.associationId === asso.id)
-          .map((r) => ({ formation: r.formation, campus: r.campus }));
-      } catch (err) {
-        Log.d('audience.rules failed', err);
-      }
+    try {
+      currentRules = await getAssociationAudiences(asso.id);
+    } catch (err) {
+      // A star on an entity outside its campus is refused: the editor then opens blank, and says so.
+      Log.d('audience.rules failed', err);
     }
     const read = currentRules ? readPreset(currentRules) : null;
     campus = (read && read.campus) || profileCampus;
@@ -202,7 +200,7 @@
 
     {#if customInForce}
       <p class="text-text-muted text-xs" role="status">{m.audience_current_custom()}</p>
-    {:else if currentRules === null && !isGlobalAdmin}
+    {:else if currentRules === null}
       <p class="text-text-muted text-xs" role="status">{m.audience_current_unknown()}</p>
     {/if}
 

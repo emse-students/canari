@@ -352,6 +352,43 @@ describe('SpacesService', () => {
       }
     });
 
+    describe('reading the rules (user, 2026-10-08: the star reads its own campus only)', () => {
+      const read = (o: Opts, actor = STAR) => make(o).service.getAudiencesFor('a', actor);
+      type Opts = Parameters<typeof make>[0];
+      const gardanne: Partial<AssociationAudience>[] = [
+        { associationId: 'a', formation: null, campus: 'gardanne' },
+      ];
+
+      it('returns the rules to a BDE star for an entity of its own campus, and to an admin', async () => {
+        const o: Opts = {
+          association: { id: 'a', type: 'association' },
+          rules: gardanne,
+          bdeCampuses: ['gardanne'],
+        };
+        await expect(read(o)).resolves.toEqual([{ formation: null, campus: 'gardanne' }]);
+        await expect(read({ ...o, bdeCampuses: [] }, ADMIN)).resolves.toHaveLength(1);
+      });
+
+      it('refuses another campus, an institution and a caller who is not a star', async () => {
+        const base: Opts = { association: { id: 'a', type: 'association' }, rules: gardanne };
+        expect(await code(read({ ...base, bdeCampuses: ['saint-etienne'] }))).toBe(
+          'AUDIENCE_OUTSIDE_BDE_CAMPUS'
+        );
+        expect(
+          await code(
+            read({
+              ...base,
+              association: { id: 'a', type: 'institution' },
+              bdeCampuses: ['gardanne'],
+            })
+          )
+        ).toBe('AUDIENCE_INSTITUTION_ADMIN_ONLY');
+        expect(await code(read({ ...base, bdeCampuses: [] }))).toBe(
+          'AUDIENCE_ADMIN_OR_BDE_REQUIRED'
+        );
+      });
+    });
+
     it('refuses a caller who is neither a global admin nor a BDE star', async () => {
       const { service } = make({
         association: { id: 'a', type: 'association' },

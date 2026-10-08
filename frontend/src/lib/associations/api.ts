@@ -2675,6 +2675,16 @@ export function listAllAudiences(): Promise<AssociationRuleRow[]> {
   return request<AssociationRuleRow[]>('/api/associations/spaces/audiences');
 }
 
+/**
+ * The audience rules of ONE association: a global admin's, or a BDE star's for an entity whose
+ * rules lie within the campuses it governs (the server refuses the rest with a typed code).
+ */
+export function getAssociationAudiences(associationId: string): Promise<AudienceRule[]> {
+  return request<AudienceRule[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/audiences`
+  );
+}
+
 /** Designates, or clears with `null`, the BDE of a space (D22). */
 export function setSpaceBde(spaceId: string, associationId: string | null): Promise<void> {
   return request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}/bde`, {

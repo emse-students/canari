@@ -80,6 +80,20 @@ export function assertBdeMayWriteAudience(
   current: readonly RuleLike[],
   submitted: readonly RuleLike[]
 ): void {
+  assertBdeMayReadAudience(type, governed, current);
+  if (!submitted.every((r) => ruleInsideCampuses(r, governed))) throw outsideBdeCampus();
+}
+
+/**
+ * The BDE star's READ bound (user, 2026-10-08: "campus de l'etoile seulement"): it may read the
+ * rules of an entity whose CURRENT rules all lie within the campuses it governs - the same bound
+ * and codes as the write path, so the editor can preselect what is in force.
+ */
+export function assertBdeMayReadAudience(
+  type: string,
+  governed: readonly string[],
+  current: readonly RuleLike[]
+): void {
   if (type === 'institution') {
     throw new ForbiddenException({
       code: AUDIENCE_ERROR.INSTITUTION_ADMIN_ONLY,
@@ -92,13 +106,20 @@ export function assertBdeMayWriteAudience(
       message: 'Global admin or MANAGE_ASSO in a BDE required.',
     });
   }
-  const inside = (r: RuleLike) => r.campus !== null && governed.includes(r.campus);
-  if (current.length === 0 || !current.every(inside) || !submitted.every(inside)) {
-    throw new ForbiddenException({
-      code: AUDIENCE_ERROR.OUTSIDE_BDE_CAMPUS,
-      message: 'A BDE sets the audience of the associations and lists of its own campus only.',
-    });
+  if (current.length === 0 || !current.every((r) => ruleInsideCampuses(r, governed))) {
+    throw outsideBdeCampus();
   }
+}
+
+function ruleInsideCampuses(r: RuleLike, governed: readonly string[]): boolean {
+  return r.campus !== null && governed.includes(r.campus);
+}
+
+function outsideBdeCampus(): ForbiddenException {
+  return new ForbiddenException({
+    code: AUDIENCE_ERROR.OUTSIDE_BDE_CAMPUS,
+    message: 'A BDE sets the audience of the associations and lists of its own campus only.',
+  });
 }
 
 /**
