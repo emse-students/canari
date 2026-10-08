@@ -3040,3 +3040,7 @@ Reported on the Pixel 6a: tapping the `bureau` salon landed on a member's profil
 ## "Voir plus" is measured, never counted (2026-10-08)
 
 A comment offered "Voir plus" past 280 characters but clamps at five LINES, so a ~300-character comment (four lines on a wide column) opened nothing. `reportLineClamp` (`actions/reportLineClamp.ts`) reports `scrollHeight > clientHeight` while the clamp is active and freezes its verdict once expanded. Same rule as `reportClipped` (a character count is an estimate of a width the browser knows). `PostContent` still measures inline with its own effect; fold it into the action when next touched.
+
+## A native `title` never duplicates a panel the app already draws (2026-10-08)
+
+The reaction pill carried `title=<every reactor's name>` beside `ReactorsPanel`, so hovering showed the browser's tooltip over the app's list (user report, desktop). Rule: where the app has its own display for a fact, the element carries NO `title` for it. A `title` stays only as the sole label of an icon-only control with no tooltip of its own.
