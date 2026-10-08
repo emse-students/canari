@@ -1437,6 +1437,10 @@ group summary, avatar/initials fallback, and sender-name subtitles inside group 
     `@"canari_messages"` when empty), mirroring the NSE. Social/form notifications keep their own
     threads (`canari_social`/`canari_forms`).
 
+**Reactions to a post** (2026-10-08): both platforms group them per POST. Android keeps one
+notification per post updated in place; iOS files them under the APNs thread `post_reaction_<postId>`
+(`buildInternalApnsRequest`). Detail and what iOS still lacks: [mobile](../frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none).
+
 **Group summary**
 
 - **Android** — `refreshBadgeSummary` builds a group-summary notification (`.setGroupSummary(true)`)

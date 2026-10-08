@@ -8,6 +8,7 @@ import {
   mentionContent,
   replyContent,
   reactionContent,
+  reactionTypeToEmoji,
   commentContent,
   eventProposedContent,
   eventValidatedContent,
@@ -74,7 +75,7 @@ export class PostNotificationsService {
       case 'reply':
         return replyContent(actorName, text, icon);
       case 'reaction':
-        return reactionContent(actorName, text, icon);
+        return reactionContent(actorName, reactionTypeToEmoji(text), icon);
       case 'comment':
         return commentContent(actorName, text, icon);
       // The two publication notices. `actorName` is the ASSOCIATION for the first and the author

@@ -17,6 +17,7 @@ import { PostMediaRetentionService, commentMediaIds } from './post-media-retenti
 import { isExpiredReel } from './reel.constants';
 import {
   reactionContent,
+  reactionTypeToEmoji,
   commentContent,
   replyContent,
   mentionContent,
@@ -81,10 +82,19 @@ export class PostInteractionsService {
             text: reactionType,
             skipPush: true,
           });
-          await this.push.notifyContent(post.authorId, reactionContent(actorName, reactionType), {
-            type: 'social',
-            postId,
-          });
+          // THE ACTOR'S FACE, AND THE EMOJI RATHER THAN THE STORED LABEL: this push carried
+          // neither (user, 2026-10-08 - six faceless "a réagi Marteau" for one post).
+          await this.push.notifyContent(
+            post.authorId,
+            reactionContent(actorName, reactionTypeToEmoji(reactionType), {
+              kind: 'user',
+              userId,
+            }),
+            {
+              type: 'social',
+              postId,
+            }
+          );
         } catch (e) {
           this.logger.warn(
             `[NOTIFY] reaction notification failed for post.authorId=${post.authorId}`,

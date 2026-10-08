@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   mentionContent,
   replyContent,
   commentContent,
   reactionContent,
+  reactionTypeToEmoji,
   formOpeningSoonContent,
   formOpenContent,
   eventProposedContent,
@@ -89,6 +92,26 @@ describe('push content', () => {
       expect(content.legacyTitle.length).toBeGreaterThan(0);
       expect(content.legacyBody.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('reactionTypeToEmoji', () => {
+  it('turns every stored label into its emoji, so no push says "a réagi Marteau"', () => {
+    expect(reactionTypeToEmoji('Marteau')).toBe('🔨');
+    expect(reactionTypeToEmoji("J'aime")).toBe('❤️');
+    expect(reactionTypeToEmoji('Énervé')).toBe('😠');
+  });
+
+  it('keeps the list in step with the picker the app draws', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../../../frontend/src/lib/posts/reactions.ts'),
+      'utf8'
+    );
+    const pairs = [...source.matchAll(/\{ type: ("[^"]+"|'[^']+'), emoji: '([^']+)' \}/g)].map(
+      (m) => [m[1].slice(1, -1), m[2]]
+    );
+    expect(pairs.length).toBe(8);
+    for (const [type, emoji] of pairs) expect(reactionTypeToEmoji(type)).toBe(emoji);
   });
 });
 
@@ -261,11 +284,6 @@ describe('PushService.notifyContent', () => {
  * one fact: derive it, or let a test compare them.
  */
 describe('the legacy sentence and the Android resource say the same thing', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { readFileSync } = require('node:fs') as typeof import('node:fs');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { resolve } = require('node:path') as typeof import('node:path');
-
   const STRINGS_FR = resolve(
     __dirname,
     '../../../../frontend/src-tauri/gen/android/app/src/main/res/values/strings.xml'

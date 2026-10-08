@@ -389,13 +389,18 @@ export function buildInternalApnsRequest(
   // The extension rewrites this thread itself when it runs, so this line is what applies when it
   // does NOT - iOS may skip it under memory pressure, and a reaction filed under `canari_social`
   // there is the stray notification this whole change removes.
+  //
+  // A reaction to a POST stacks under that post (`post_reaction_<id>`), the iOS half of the one
+  // notification Android keeps per post. The NSE does not rewrite it, so this line is what applies.
   const threadId = data.channelId
     ? `channel_${data.channelId}`
     : data.reaction === 'true' && data.groupId
       ? data.groupId
-      : data.type === 'form_reminder'
-        ? 'canari_forms'
-        : 'canari_social';
+      : data.contentKey === 'social_reaction' && data.postId
+        ? `post_reaction_${data.postId}`
+        : data.type === 'form_reminder'
+          ? 'canari_forms'
+          : 'canari_social';
 
   return {
     payload: {

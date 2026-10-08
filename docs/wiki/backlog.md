@@ -335,6 +335,11 @@ log line and that page have never been read against a real claim.
 
 The conversation shortcut shipped (#1448; [mobile](frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)). **What remains:** `setGroup(GROUP_KEY_MESSAGES)` is still ONE constant at three call sites of `CanariFirebaseMessagingService.kt` with one summary, while Messenger keys per THREAD, so four messages across two conversations stack as one here and two there. A placement difference only; measure on the Mi 9T after any change, since nothing in CI sees which section of the shade a notification lands in.
 
+### P3 - iOS stacks the reactions to a post but does not merge them into one banner (2026-10-08)
+
+Android shows ONE notification per post, "A, B et N autres", with up to three faces
+([mobile](frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)). iOS only files them under the thread `post_reaction_<postId>`. The merge would be the NSE reading `getDeliveredNotifications` for that thread, rewriting the text and drawing a collage - native code to be run on an iPhone, not compiled. Owed: one look at the stack on the iPhone, then the decision.
+
 ### P3 - a revocation round trip sits in front of the fingerprint prompt, and moving it is REVERTED, not to be re-opened (measured on the Pixel 6a, 2026-09-15)
 
 Three of the four causes of a slow launch-to-prompt are fixed; **the fourth, `isDeviceRevoked` in front
