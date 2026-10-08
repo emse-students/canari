@@ -2642,7 +2642,7 @@ needed. Re-read the disk on the Portail-etu host before sizing a sink: the 2026-
 
 ### P3 - docker-prune is built for the Portail-etu host but not installed there
 
-The allowlisted release-image removal is in `prune.py` with tests ([README](../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet), [estate-migration](infrastructure/estate-migration.md)); the host was `/` 88 % used on 2026-10-08. **Open:** the user or Master runs the one-off command from that README, then a cron entry. **Dangling VOLUMES are never pruned by a flag**: enumerate by name against an allowlist ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
+The allowlisted release-image removal is in `prune.py` with tests ([README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet), [estate-migration](infrastructure/estate-migration.md)); the host was `/` 88 % used on 2026-10-08. **Open:** the user or Master runs the one-off command from that README, then a cron entry. **Dangling VOLUMES are never pruned by a flag**: enumerate by name against an allowlist ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 
