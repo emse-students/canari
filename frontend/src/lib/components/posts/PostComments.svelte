@@ -26,6 +26,8 @@
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { SvelteSet } from 'svelte/reactivity';
+  import { reportLineClamp } from '$lib/actions/reportLineClamp';
   import { showToast } from '$lib/stores/toast.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
@@ -222,8 +224,14 @@
   let editInputEl = $state<HTMLInputElement | null>(null);
   let sortMode = $state<SortMode>('recent');
 
-  const COMMENT_TRUNCATE_THRESHOLD = 280;
   let expandedComments = $state(new Set<string>());
+  /** Comments whose text is really cut by the five-line clamp (measured, see `reportLineClamp`). */
+  const clippedComments = new SvelteSet<string>();
+
+  function setCommentClipped(id: string, clipped: boolean) {
+    if (clipped) clippedComments.add(id);
+    else clippedComments.delete(id);
+  }
 
   /** Toggles the "voir plus / voir moins" expanded state for a comment. */
   function toggleCommentExpanded(id: string) {
@@ -407,13 +415,16 @@
             {/if}
           {/if}
           {#if comment.text}
-            {@const isLong = comment.text.length > COMMENT_TRUNCATE_THRESHOLD}
             {@const isExpanded = expandedComments.has(comment.id)}
             <div
-              class="post-markdown text-text-main text-sm leading-snug wrap-break-word [&_p]:m-0 [&_p]:inline {isLong &&
-              !isExpanded
-                ? 'line-clamp-5'
-                : ''}"
+              use:reportLineClamp={{
+                active: !isExpanded,
+                text: comment.text,
+                onMeasure: (clipped) => setCommentClipped(comment.id, clipped),
+              }}
+              class="post-markdown text-text-main text-sm leading-snug wrap-break-word [&_p]:m-0 [&_p]:inline {isExpanded
+                ? ''
+                : 'line-clamp-5'}"
             >
               <SvelteMarkdown
                 source={preprocessPostMarkdown(comment.text)}
@@ -421,7 +432,7 @@
                 options={{ gfm: true, breaks: true }}
               />
             </div>
-            {#if isLong}
+            {#if clippedComments.has(comment.id) || isExpanded}
               <button
                 type="button"
                 onclick={() => toggleCommentExpanded(comment.id)}
