@@ -215,9 +215,9 @@ The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu 
 
 ## Open defects, in severity order
 
-### P1 - a member who joins a community in-session sees ONE salon, and every message in the others is dropped until a reload (measured 2026-10-08)
+### P1 - owed: ONE live reading of the in-session join fix (2026-10-08)
 
-Measured on the local estate with the ten-community rig ([chat](frontend/modules/chat.md#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08)): the reader accepts an invitation link, lands in the community's first salon - and its sidebar lists ONLY that salon (`UNR-11`: `général`; the owner sees three). The other salons have no conversation row, so `channel.message.created` for them takes the `Message received for an unknown channel` branch and nothing is counted or shown; a reload lists them all. Not fixed here: the landing (`openInvitedChannel` -> `notifNav`) loads one channel, and the right fix is for the join to run the full `loadChannelWorkspacesFromBackend` (or `registerJoinedChannel` for every salon the member may read), which touches the Graine entry path (`enterPrivateSalonGroup` per private salon) and wants its own measurement. Owed a second look on a phone: does the same hold after a join through the deep link on iOS/Android?
+The fix is built ([chat](frontend/modules/chat.md#a-community-joined-in-session-is-listed-whole-2026-10-08)): a community new to the device is hydrated by the full listing. Owed: `bun unread-communities.mjs run join` on W1/W2 (written, not run), and one look at a join through the deep link on iOS/Android, private salon the joiner may read included.
 
 ### P2 - the unread counts of salons ride a date, not a baseline (2026-10-08)
 

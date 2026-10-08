@@ -776,6 +776,80 @@ describe('useChannelWorkspaces - a salon joined in-session enters the group its 
   });
 });
 
+/**
+ * A COMMUNITY JOINED IN-SESSION LISTS EVERY SALON THE MEMBER MAY READ (measured 2026-10-08, UNR-11).
+ *
+ * Accepting an invitation link makes the server publish ONE `channel.member.joined`, for one
+ * representative public salon. Handled alone it left the sidebar with that salon and every message
+ * in the others "received for an unknown channel" until a reload.
+ */
+describe('useChannelWorkspaces - hydrateJoinedCommunity', () => {
+  const event = { workspaceId: 'ws-new', workspaceSlug: 'unr-11', workspaceName: 'UNR-11' };
+
+  beforeEach(() => {
+    listUserWorkspaces.mockReset();
+    listChannels.mockReset();
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws-new', 'UNR-11', 'unr-11')]);
+    listChannels.mockResolvedValue([
+      makeChannelDto('c1', 'general'),
+      makeChannelDto('c2', 'salon-a'),
+      makeChannelDto('c3', 'salon-b'),
+    ]);
+  });
+
+  it('knows a community by its first sight only', () => {
+    const api = useChannelWorkspaces();
+    expect(api.isCommunityUnknownToEvent(event)).toBe(true);
+    api.ensureWorkspaceForChannelEvent(event);
+    expect(api.isCommunityUnknownToEvent(event)).toBe(false);
+  });
+
+  it('gives the community every salon, with a conversation row each, in ONE listing', async () => {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    api.ensureWorkspaceForChannelEvent(event);
+    api.addChannelToWorkspace('unr-11', { id: 'channel_c1', name: 'general' });
+
+    await api.hydrateJoinedCommunity(ctx);
+
+    const ws = api.channelWorkspaces.find((w) => w.id === 'unr-11');
+    expect(ws?.channels.map((c) => c.id)).toEqual(['channel_c1', 'channel_c2', 'channel_c3']);
+    expect([...ctx.conversations.keys()].sort()).toEqual([
+      'channel_c1',
+      'channel_c2',
+      'channel_c3',
+    ]);
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+  });
+
+  it('owes the join one more listing when one was already in flight', async () => {
+    let releaseFirst: (value: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces.mockReset();
+    listUserWorkspaces.mockImplementationOnce(
+      () =>
+        new Promise<WorkspaceDto[]>((resolve) => {
+          releaseFirst = resolve;
+        })
+    );
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws-new', 'UNR-11', 'unr-11')]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    const startup = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    await api.hydrateJoinedCommunity(ctx);
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+
+    // The startup answer predates the join: it knows no community, and the owed listing does.
+    releaseFirst([]);
+    await startup;
+    await vi.waitFor(() =>
+      expect(api.channelWorkspaces.find((w) => w.id === 'unr-11')?.channels).toHaveLength(3)
+    );
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('useChannelWorkspaces - salon names and order', () => {
   const FREE_NAME = 'Général 🎉 Équipe';
 
