@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+
 /**
  * WHAT a server-composed push says, never the sentence that says it.
  *
@@ -264,6 +266,46 @@ export function commentContent(actorName: string, preview: string, icon?: PushIc
     legacyTitle: `${actorName} a commenté`,
     legacyBody: preview || 'Nouveau commentaire',
   };
+}
+
+/**
+ * The emoji of each post reaction TYPE, which is what `Post.reactions` stores: the French LABEL
+ * ("Marteau"), not the emoji. Twin of `REACTIONS` in `frontend/src/lib/posts/reactions.ts`, the
+ * list the picker draws from.
+ *
+ * It exists because the push said `a réagi Marteau à votre publication` (user, 2026-10-08): both
+ * callers handed the stored label to {@link reactionContent}, whose `arg` is documented as the
+ * emoji. The conversion belongs HERE, once, on the server that holds the label - the phone cannot
+ * know the picker's list, and a client composing a sentence from a label would need a second copy.
+ */
+const REACTION_EMOJI: Readonly<Record<string, string>> = {
+  "J'aime": '❤️',
+  "J'adore": '😍',
+  Rire: '😂',
+  Triste: '😢',
+  Joyeux: '😊',
+  Énervé: '😠',
+  Canari: '🐤',
+  Marteau: '🔨',
+};
+
+const reactionLogger = new Logger('PushContent');
+
+/**
+ * The emoji a stored reaction type stands for.
+ *
+ * An unknown type answers with the stored label itself, and says so at `warn`: it means the two
+ * lists have drifted and a reaction was added on one side only. The label is what the person
+ * picked, so the sentence stays true; inventing a heart would state a reaction nobody gave.
+ */
+export function reactionTypeToEmoji(reactionType: string): string {
+  const emoji = REACTION_EMOJI[reactionType];
+  if (emoji) return emoji;
+  reactionLogger.warn(
+    `[NOTIFY] unknown reaction type "${reactionType}" - sent as its label. ` +
+      'REACTION_EMOJI and frontend REACTIONS have drifted.'
+  );
+  return reactionType;
 }
 
 /**

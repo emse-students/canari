@@ -328,6 +328,26 @@ describe('buildInternalApnsRequest', () => {
     const form = buildInternalApnsRequest('Sondage', '', { type: 'form_reminder' });
     expect((form.payload.aps as Record<string, unknown>)['thread-id']).toBe('canari_forms');
   });
+
+  it('stacks the reactions to one post under that post, and other posts apart', () => {
+    const react = (postId: string) =>
+      buildInternalApnsRequest('Nouvelle réaction', '', {
+        type: 'social',
+        contentKey: 'social_reaction',
+        postId,
+      });
+    const thread = (r: ReturnType<typeof react>) =>
+      (r.payload.aps as Record<string, unknown>)['thread-id'];
+    expect(thread(react('p1'))).toBe('post_reaction_p1');
+    expect(thread(react('p2'))).toBe('post_reaction_p2');
+    // A comment on the same post is a different notification and keeps the coarse thread.
+    const comment = buildInternalApnsRequest('x', 'y', {
+      type: 'social',
+      contentKey: 'social_comment',
+      postId: 'p1',
+    });
+    expect(thread(comment)).toBe('canari_social');
+  });
 });
 
 describe('the fallback body, the one sentence this server still composes', () => {

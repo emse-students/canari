@@ -1513,6 +1513,37 @@ Two decisions inside it are easy to get wrong:
   explicitly, and on iOS that is why the name is a PARAMETER of the shared notification function:
   only the call site knows what the letter should stand for.
 
+**REACTIONS TO ONE POST ARE ONE NOTIFICATION WITH THE FACES OF WHO REACTED (user, 2026-10-08).** A
+Pixel 6a showed six separate `Nouvelle reaction - X a reagi Marteau a votre publication`, each alone
+and none with a face. Three defects, three fixes:
+
+- **No face**: `addReaction` built its push with no `icon`, while the other path (`createNotification`)
+  did. It now names `{ kind: 'user', userId }`, so `iconUserId` rides like any social push.
+- **`Marteau` instead of the emoji**: `Post.reactions` stores the picker's French LABEL and both
+  callers handed it to `reactionContent`, whose `arg` is the emoji. `reactionTypeToEmoji`
+  (`push-content.ts`) converts once on the server; a spec reads the frontend's `REACTIONS` and
+  fails if the two lists drift, and an unknown type logs at `warn` and is drawn as the heart the app
+  draws.
+- **Six notifications**: `showPostReactionNotification` (Kotlin) keys ONE notification on the post
+  (`postReactionNotifKey`, stable id like `reactionNotifKey` does for a conversation). The actors
+  accumulate in SharedPreferences (`canari_post_reactions`, bounded to 50 posts and 50 actors) and
+  the sentence is `A a reagi 🔨 ...` / `A et B ...` / `A, B et C ...` / `A, B et N autres ...`
+  (newest first, `N >= 2`). **The group ends on the SHADE, not on a clock**: a reaction joins the
+  ledger only when that notification is still posted, so a swipe or a tap starts a fresh group.
+  The large icon is the actor's face for one person and a collage of up to three faces for several,
+  through the same `fetchAvatar` and the same initials disc (logged) as every other path. The pure
+  half - ledger, sentence shape, faces, encoding - is `push/PostReactionGroup.kt`, compiled by the
+  JVM test project (`PostReactionGroupTest`).
+
+An un-react does not shrink an already-shown group: removing a reaction sends no push, so "A, B et 4 autres" stays until the notification is swiped or opened.
+
+**iOS** gets the cheap half only: `buildInternalApnsRequest` files a `social_reaction` under the
+thread `post_reaction_<postId>`, so the notification centre stacks the reactions to one post, and
+`attachSocialIcon` already draws the one actor's face from `iconUserId`. What it does not get is ONE
+banner updated in place with "A, B et N autres": that needs the NSE to read the delivered
+notifications of the thread and rewrite its text and a face collage, which is new native code that
+nothing here can run without an iPhone ([backlog](../backlog.md)).
+
 **"NO PICTURE" IS REMEMBERED ON ANDROID, AND NOTHING ELSE THAT IS NOT A PICTURE IS (2026-10-01).**
 `cachedRemoteIcon` used to write its file only on a `200`, so a person with no photo - every bench
 account, and many real ones - cost a request on EVERY notification, in the FCM process, before the

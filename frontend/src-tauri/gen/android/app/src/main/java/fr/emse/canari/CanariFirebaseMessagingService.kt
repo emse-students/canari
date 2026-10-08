@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
+import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.SeedFrameLadder
 import com.google.firebase.messaging.FirebaseMessagingService
@@ -614,6 +615,45 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * stacking, which is what the message path does too.
          */
         internal fun reactionNotifKey(groupId: String): String = "reaction:$groupId"
+
+        /**
+         * The [getStableNotifId] key for the ONE notification all reactions to a POST share. A
+         * namespace of its own so a post id can never collide with a conversation's.
+         */
+        internal fun postReactionNotifKey(postId: String): String = "postreaction:$postId"
+
+        private const val POST_REACTION_PREFS = "canari_post_reactions"
+        private const val POST_REACTION_KEY = "ledgers"
+        private const val MAX_POST_REACTION_LEDGERS = 50
+        private val POST_REACTION_LOCK = Any()
+
+        /**
+         * Draws up to three already-circular faces into ONE icon: two side by side, three in a
+         * triangle, the newest (first) on top. Each is scaled to 62 % of the edge, so the overlap
+         * is small and every face stays recognisable at notification size.
+         */
+        private fun composeFaceCollage(faces: List<Bitmap>): Bitmap {
+            val edge = faces.maxOf { maxOf(it.width, it.height) }
+            val output = Bitmap.createBitmap(edge, edge, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(output)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            val d = (edge * 0.62f).toInt()
+            val near = 0
+            val far = edge - d
+            val mid = (edge - d) / 2
+            // Top-left corner of each face, newest first; drawn in reverse so the newest is on top.
+            val corners = if (faces.size == 2) {
+                listOf(far to mid, near to mid)
+            } else {
+                listOf(mid to near, near to far, far to far)
+            }
+            for (i in faces.indices.reversed()) {
+                val (x, y) = corners[i]
+                canvas.drawBitmap(faces[i], null, Rect(x, y, x + d, y + d), paint)
+                faces[i].recycle()
+            }
+            return output
+        }
 
         /**
          * The messages this device has ALREADY ALERTED FOR, newest last, bounded.
@@ -2416,6 +2456,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 else                                   -> "fr.emse.canari://posts"
             }
             val channel = if (msgType == "form_reminder") CHANNEL_FORMS else CHANNEL_SOCIAL
+            // REACTIONS TO ONE POST ARE ONE NOTIFICATION, UPDATED IN PLACE (user, 2026-10-08: six
+            // faceless "a reagi" stacked in the shade for a single post). Keyed on the post, so it
+            // needs the post id; a reaction push without one is logged and drawn ungrouped.
+            if (msgType == "social" && data["contentKey"] == "social_reaction") {
+                if (postId.isNotEmpty()) {
+                    runWithWakeLock("fcm_post_reaction") {
+                        showPostReactionNotification(data, postId, deepLink, channel)
+                    }
+                    return
+                }
+                Log.w(TAG, "social_reaction push without postId - nothing to group it under, drawn alone")
+            }
             Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel title=$title deepLink=$deepLink")
             // A THREAD, because this branch now fetches a picture. Everything above is a map lookup
             // and stays here; [socialLargeIcon] may touch the disk cache, the Keystore and the
@@ -4049,10 +4101,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deepLink: String,
         channel: String,
         largeIcon: Bitmap? = null,
+        /** A stable id makes this notification UPDATE in place; null is a fresh one each time. */
+        stableId: Int? = null,
     ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannels(manager)
-        val notifId     = notificationIdCounter.incrementAndGet()
+        val notifId     = stableId ?: notificationIdCounter.incrementAndGet()
         val tapIntent   = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             setData(android.net.Uri.parse(deepLink))
@@ -4074,6 +4128,103 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .build()
         Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null}")
         manager.notify(notifId, notification)
+    }
+
+    // --- Reactions to a POST, one notification each ------------------------------
+
+    /**
+     * Draws the reactions to ONE post as ONE notification that every new reaction updates.
+     *
+     * Reported by the user on 2026-10-08, from a Pixel 6a: six notifications "Nouvelle reaction -
+     * X a reagi Marteau a votre publication" for a single post, each alone and each without a
+     * face. The server now names the actor's picture and sends the emoji; this keys the
+     * notification on the POST (the way [reactionNotifKey] keys a conversation's), so the next
+     * reaction replaces the last, accumulating who reacted.
+     *
+     * **THE LEDGER IS DURABLE STATE AND THE SHADE DECIDES WHEN IT ENDS - NO CLOCK.** Actors are kept
+     * in SharedPreferences per post. A reaction joins the existing group only when that
+     * notification is still posted; once it was swiped or opened, the next reaction starts a new
+     * one ("A a reagi", not "A, B et 4 autres" about reactions the user has already seen).
+     * [PostReactionGroup] holds the pure half (ledger, sentence shape, faces) and is unit-tested.
+     *
+     * The picture is the actor's for one person and a small collage of up to three faces for
+     * several; a face that cannot be had is the initials disc the message path draws, logged.
+     */
+    private fun showPostReactionNotification(
+        data: Map<String, String>,
+        postId: String,
+        deepLink: String,
+        channel: String,
+    ) {
+        // THE LOCK COVERS THE POST AS WELL AS THE LEDGER. Each push runs on a thread of its own, and
+        // the join-or-restart decision reads "is the notification still shown": with the lock
+        // released before `notify`, a burst (six reactions at once - the very case this exists for)
+        // found the shade still empty, restarted the ledger each time and kept only the last
+        // reactor. Held across the face fetch, the second push waits and then finds the first one
+        // posted; faces are cached for 24 h, so the wait is one fetch per new face.
+        synchronized(POST_REACTION_LOCK) {
+            showPostReactionNotificationLocked(data, postId, deepLink, channel)
+        }
+    }
+
+    private fun showPostReactionNotificationLocked(
+        data: Map<String, String>,
+        postId: String,
+        deepLink: String,
+        channel: String,
+    ) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notifId = getStableNotifId(this, postReactionNotifKey(postId))
+        val newcomer = PostReactionGroup.Actor(data["iconUserId"].orEmpty(), data["actorName"].orEmpty())
+        val emoji = data["contentArg"].orEmpty()
+
+        val actors = synchronized(POST_REACTION_LOCK) {
+            val prefs = getSharedPreferences(POST_REACTION_PREFS, Context.MODE_PRIVATE)
+            val ledger = JSONObject(prefs.getString(POST_REACTION_KEY, "{}") ?: "{}")
+            val stillShown = manager.activeNotifications.any { it.id == notifId }
+            val previous = if (stillShown) PostReactionGroup.decode(ledger.optString(postId)) else emptyList()
+            if (!stillShown && ledger.has(postId)) {
+                Log.d(TAG, "post reaction: post=${postId.take(8)} notification no longer shown -> a new group")
+            }
+            val updated = PostReactionGroup.add(previous, newcomer)
+            // Re-inserted last, so the oldest posts are the ones the bound drops.
+            ledger.remove(postId)
+            ledger.put(postId, PostReactionGroup.encode(updated))
+            while (ledger.length() > MAX_POST_REACTION_LEDGERS) {
+                ledger.remove(ledger.keys().next())
+            }
+            prefs.edit().putString(POST_REACTION_KEY, ledger.toString()).commit()
+            updated
+        }
+
+        val res = appLocaleContext(this).resources
+        val body = when (val shape = PostReactionGroup.shape(actors)) {
+            is PostReactionGroup.Shape.One ->
+                res.getString(R.string.notif_social_reaction_body, shape.a.name, emoji)
+            is PostReactionGroup.Shape.Two ->
+                res.getString(R.string.notif_social_reaction_body_two, shape.a.name, shape.b.name)
+            is PostReactionGroup.Shape.Three ->
+                res.getString(R.string.notif_social_reaction_body_three, shape.a.name, shape.b.name, shape.c.name)
+            is PostReactionGroup.Shape.Many ->
+                res.getString(R.string.notif_social_reaction_body_many, shape.a.name, shape.b.name, shape.others)
+            null -> {
+                Log.e(TAG, "post reaction: empty ledger after adding ${newcomer.name} - nothing to say")
+                return
+            }
+        }
+
+        val faces = PostReactionGroup.faces(actors).map { actor ->
+            val photo = if (actor.id.isNotEmpty()) fetchAvatar(actor.id) else null
+            if (photo == null) {
+                Log.d(TAG, "post reaction: no picture for ${actor.identity.take(8)} -> initials")
+            }
+            photo ?: generateInitialsBitmap(actor.name)
+        }
+        val icon = if (faces.size == 1) faces[0] else composeFaceCollage(faces)
+        Log.d(TAG, "post reaction: post=${postId.take(8)} actors=${actors.size} faces=${faces.size}")
+        showSimpleNotification(
+            res.getString(R.string.notif_social_reaction_title), body, deepLink, channel, icon, notifId,
+        )
     }
 
     // --- Reaction push -----------------------------------------------------------
