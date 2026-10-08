@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-80 scripts.
+81 scripts.
 
 | script | what it is |
 |---|---|
@@ -96,6 +96,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `subject.mjs` | THE PURE HALF OF "WHO IS THIS CLIENT" - a token's subject, and what a disagreement means. |
 | `sweep.mjs` | THE GRAPHICAL PASS, ON A CLIENT THAT IS ACTUALLY RENDERING - every route, one instrument. |
 | `unlock.mjs` | Unlocks every client that needs it, resolving WHICH ACCOUNT owns each port by itself. |
+| `unread-communities.mjs` | THE TEN-COMMUNITY UNREAD SCENARIO - what a reader's badges, read marks and receipts do while the |
 | `venue.mjs` | Builds the campaign's SHARED venue if it is not there, and states what it found if it is. |
 | `verdicts.mjs` | THE VERDICT VOCABULARY, IN ONE PLACE, BECAUSE TWO COPIES DRIFTED TWICE. |
 | `watch.mjs` | Continuous observation of a client while a check runs: console, page errors, HTTP, WebSocket. |
@@ -306,4 +307,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-245 scripts in total.
+246 scripts in total.
