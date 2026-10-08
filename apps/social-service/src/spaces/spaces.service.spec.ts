@@ -353,13 +353,15 @@ describe('SpacesService', () => {
     });
 
     describe('reading the rules (user, 2026-10-08: the star reads its own campus only)', () => {
-      const read = (o: Parameters<typeof make>[0], actor = STAR) =>
-        make(o).service.getAudiencesFor('a', actor);
-      const gardanne = [{ associationId: 'a', formation: null, campus: 'gardanne' }];
+      const read = (o: Opts, actor = STAR) => make(o).service.getAudiencesFor('a', actor);
+      type Opts = Parameters<typeof make>[0];
+      const gardanne: Partial<AssociationAudience>[] = [
+        { associationId: 'a', formation: null, campus: 'gardanne' },
+      ];
 
       it('returns the rules to a BDE star for an entity of its own campus, and to an admin', async () => {
-        const o = {
-          association: { id: 'a', type: 'association' as const },
+        const o: Opts = {
+          association: { id: 'a', type: 'association' },
           rules: gardanne,
           bdeCampuses: ['gardanne'],
         };
@@ -368,7 +370,7 @@ describe('SpacesService', () => {
       });
 
       it('refuses another campus, an institution and a caller who is not a star', async () => {
-        const base = { association: { id: 'a', type: 'association' as const }, rules: gardanne };
+        const base: Opts = { association: { id: 'a', type: 'association' }, rules: gardanne };
         expect(await code(read({ ...base, bdeCampuses: ['saint-etienne'] }))).toBe(
           'AUDIENCE_OUTSIDE_BDE_CAMPUS'
         );
