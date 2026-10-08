@@ -3063,7 +3063,7 @@
   "file_size_megabytes": "{value} Mo",
   "file_size_gigabytes": "{value} Go",
   "open_in_app_banner_title": "Ouvrez Canari dans l'application",
-  "open_in_app_banner_text": "Le navigateur intégré de Messenger, Facebook ou Instagram limite Canari : la connexion et les notifications y sont peu fiables. L'application s'ouvre en un geste.",
+  "open_in_app_banner_text": "Canari fonctionne mieux dans l'application. Ouvrez-la en un geste.",
   "open_in_app_banner_install": "Pas encore l'application ? La télécharger",
   "open_in_app_banner_open": "Ouvrir dans l'application",
   "open_in_app_banner_dismiss": "Continuer dans ce navigateur",

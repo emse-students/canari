@@ -3063,7 +3063,7 @@
   "file_size_megabytes": "{value} MB",
   "file_size_gigabytes": "{value} GB",
   "open_in_app_banner_title": "Open Canari in the app",
-  "open_in_app_banner_text": "The browser built into Messenger, Facebook or Instagram limits Canari: sign-in and notifications are unreliable there. The app opens in one tap.",
+  "open_in_app_banner_text": "Canari works best in the app. Open it in one tap.",
   "open_in_app_banner_install": "Don't have the app yet? Get it",
   "open_in_app_banner_open": "Open in the app",
   "open_in_app_banner_dismiss": "Stay in this browser",
