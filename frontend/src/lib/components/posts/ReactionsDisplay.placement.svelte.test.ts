@@ -103,11 +103,12 @@ describe('ReactionsDisplay - the "who reacted" panel', () => {
     expect(target.contains(p!)).toBe(false);
   });
 
-  it('names the reactors on hover instead of naming the reaction type', async () => {
+  it('draws the reactors once: the panel, never a native tooltip over it', async () => {
     const { badge } = await render();
 
-    expect(badge.getAttribute('title')).toBe('Camille, u2');
-    expect(badge.getAttribute('title')).not.toBe('like');
+    // The browser's own tooltip listed the same names on top of the panel (report of 2026-10-08).
+    expect(badge.getAttribute('title')).toBeNull();
+    expect(hold(badge)).not.toBeNull();
   });
 
   /**
