@@ -484,6 +484,28 @@ lets a second row exist for a key the moment the first is claimed - which is exa
 case it has to catch. The three tallies span the whole table and never the filtered page; the tab's
 own `total` is what pagination walks.
 
+### What the load did, projected on production (shipped 2026-09-11, `v0.17.1`)
+
+**1429 rows are staged on dev and on production** - 269 BDE, 1160 Cercle, applied through
+`--emit-sql` and `psql`, `INSERT 0 0` on a re-run. Projected against production's 396 accounts by
+computing each user's key with `normalizeMatchKey` itself, rather than an approximation of it in SQL:
+
+| | staged | has an account today | will be GRANTED | will close `already-held` |
+| --- | --- | --- | --- | --- |
+| BDE | 269 | 152 | 27 | 125 |
+| Le Cercle | 1160 | 156 | 33 | 123 |
+
+Zero keys are held by two accounts on either estate, so the collisions tab starts empty and any row
+appearing in it later is a real homonym. The remaining ~1120 rows belong to people with no account,
+which is the whole reason this is a staging table and not a one-shot grant.
+
+**`already-held` is the DOMINANT case, not the rare one** - 248 of the 308 rows that have an account.
+Each is somebody who already paid through Canari and whose row closes without granting, because the
+sibling-tier revoke inside `grantCotisant` would otherwise take away the tier they paid for. The guard
+is therefore load-bearing on first contact with real data. The next sign-in should move
+`/admin/legacy-cotisations` off zero in the claimed tab; until it does, an empty screen and a broken
+claim look identical.
+
 ## Cotisation-dependent pricing on forms
 
 A cotisation tier is one dimension a form's price grid may be divided on, alongside promo, formation

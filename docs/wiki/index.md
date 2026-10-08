@@ -103,6 +103,7 @@
 - [Development workflow](development.md) — Local setup, Makefile, Docker Compose, pre-commit hooks
 - [CI/CD pipeline](cicd.md) — GitHub Actions: CI on a pull request and again at merge, deployment at the BUMP and never at a push, which estate a release reaches, mobile builds, the self-hosted runner
 - [Device verification runbook](device-verification.md) — The ordered Android + iOS pass: what compiling never proves, and the log line that is the verdict for each check
+- [Device readings, 2026-10](device-readings-2026-10.md) — the Mi 9T and iPhone 12 alpha passes of 2026-10-05 to 10-07: what passed, with the evidence, and the bench traps met
 - [Testing methodology](testing-methodology.md) — How a result earns belief: the harness faults distilled into rules, plus the environment traps that read as application bugs
 - [Mechanism audit](mechanism-audit.md) - What every part of the app is covered by, measured across the board, the unit tests and the hand pass - and the five things nothing watches
 - [Cross-client testing](cross-client-testing.md) — The campaign board, state only: every check, its verdict, and the commit it ran on

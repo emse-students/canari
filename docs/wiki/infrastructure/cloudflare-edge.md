@@ -476,6 +476,29 @@ What is still open - and the two instruments left running to settle it - is in
 
 **The egress half.** `UpstreamUnreachableError` and `OUTBOUND_BUDGET_MS` are shipped; whether such stalls are CORRELATED across boxes is read from [`infrastructure/egress-probe/`](../../../infrastructure/egress-probe/README.md), armed in the `canari` crontab - which since the 2026-09-24 cutover is the old VM, running no container. The two netwatch witnesses stopped themselves on 2026-09-12 and nothing records that their ledgers were read. The open measurement (whether the Portail-etu host sees the same 22h-23h drop) is in [backlog](../backlog.md#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11).
 
+## A request body over 1 MiB is refused with a 413 on the legacy names (measured 2026-10-07, re-read 2026-10-08)
+
+Found in the user's dev console log: two 1.1 MB videos failing 800+ times. An unauthenticated
+`POST /api/media/upload` with a 1.2 MB body answers `413` with `Server: cloudflare` on
+`canari-emse.fr` (legacy) and `dev.canari-emse.fr`; a 600 KB body reaches the app (`401`).
+
+- **The limit is exactly 1 MiB**: 1 048 576 bytes pass, 1 100 000 get the `413`, zone-wide (not a path
+  rule). The zone is on the Free plan.
+- **`canari.emse.fr` (the current name) is NOT limited**: it does not cross this zone and answers
+  `401` from nginx for the same 1.2 MB body.
+- **Nothing of ours is the limit**: the frontend nginx allows 100 MB, the host's `nginx.conf` 2 GB,
+  `media-service` 50 MB. Encrypted media is cut into segments of 1 MiB plus overhead, so on the two
+  legacy-zone names every media object above one segment is refused.
+- **The rule is UNREAD**: neither the user token nor the account token can read the zone's rulesets
+  or page rules (`Authentication error` on every phase), so the cause is presumed (a custom rule, a
+  body limit or a transform), not seen. The dashboard (Security > Events, filter on status 413) names
+  it; a token with zone-rules read would let an agent read it.
+- **The client no longer retries a 413** (#1583,
+  [chat](../frontend/modules/chat.md#a-413-ends-the-entry-2026-10-08)): the entry ends with a visible
+  notice. The client still sends a media as ONE `POST /api/media/upload` and only chunks above
+  `CHUNK_SIZE = 50 MB` (`media.ts`), so on the legacy names a media over 1 MiB fails permanently
+  until either the edge limit is lifted or the chunk size drops under 1 MiB.
+
 ## Working against the API
 
 The account id and token are **not in this repository and must never be** - it is public. They live

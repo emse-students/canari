@@ -32,8 +32,29 @@ Conversation state lives in a `SvelteMap<string, Conversation>` local to the com
 **The user's rule:** *"only static ui element, that are apart from content, should be liquid glass"*,
 and for the conversation: *"replace the bar on top of messages with just a back and menu button
 that then grows ... to show the other options ... and do the same for the composer"* - then, the
-same day, *"only apply it on phone finally, the design is good on web"*. Decisions L1-L4 are in the
-[backlog](../../backlog.md#the-liquid-glass-conversation-chrome---decided-2026-09-30-wp-g1-then-wp-g2).
+same day, *"only apply it on phone finally, the design is good on web"*.
+
+**Decisions (user, 2026-09-30).**
+
+- **L1 - the header is three pieces of glass:** back on the left, the contact's avatar and name in a
+  CENTRE PILL (tap: the conversation's settings/info panel), and a menu on the right that GROWS into
+  the actions the header carried - Members (community channels), Media, Search, Settings, and the
+  call buttons once `CALLS_ENABLED` returns. The lock and the channel label go with the actions.
+- **L2 - the composer's actions become ONE "+" that grows** into Photos and videos, All files, GIF
+  and Poll (channels). The chevron fold (`controlsCollapsed`) goes. The text field, the microphone
+  and Send stay where they are - and stay WEB on iOS too, the plugin has no native text field.
+- **L3 - overruled the same day: the PHONE APPS only.** iOS and Android wear it (native Liquid Glass
+  on iOS, CSS glass on Android); the website keeps its classic header and composer at every width,
+  a phone's browser included. One predicate decides it, `usesGlassChrome`.
+- **L4 (assumed, not asked) - phone width only.** The desktop header has no back button and room for
+  its icons; it and the desktop composer are unchanged.
+
+Both halves merged 2026-09-30 and shipped in `v0.18.32`: WP-G1 (#1251, below) and WP-G2 (#1254, the
+iOS native glass drawn at the web pieces' rects,
+[mobile](../mobile.md#the-conversations-native-glass-chrome)). The iPhone reading of 2026-10-05
+(bench build of `77f5e3cc4`): the native glass tab bar refracts the content under it, and in a
+conversation back, title and menu are native glass.
+
 This is WP-G1: the PHONE APPS (iOS and Android) at the narrow chat layout, in CSS glass; WP-G2 makes
 the same pieces native Liquid Glass on iOS. **The website keeps its classic header and composer at
 every width**, a phone's browser included. ONE predicate decides it, `usesGlassChrome`
@@ -437,6 +458,31 @@ ORIGIN parent - where it was written before the move - never wherever it happens
 mounted. Rendering `<ComposerEmojiPicker>` far from the button (e.g. beside `GifPickerModal`) gives
 it an origin outside the anchor, and every click on the panel's own contents - its search box, a
 category tab, an emoji - then reads as "outside" and closes it a frame before the pick can register.
+
+### Every keyboard rise moves the composer for a moment, on both phones (measured 2026-10-02, OPEN)
+
+Found while reading the GIF panel (#1345). The composer's top was recorded on every animation frame
+via CDP, with the keyboard opened by tapping the text field. **Both happen on a plain keyboard open
+with no panel involved**, so neither comes from the panel's hand-off, though both show through it. The
+cause is a different stale number on each phone.
+
+- **Mi 9T (Android WebView).** The top sits at 877 px, then for 60-100 ms at **174 px**, then at
+  532 px. During that window `visualViewport.height` reads **230** while `innerHeight` is already
+  **588**. 945 - 2 x 357 = 231: the keyboard's height is taken off TWICE for one report, once by the
+  resize and once by the visual viewport. `keyboardViewport` follows the visual viewport, so the
+  composer jumps 358 px up and comes back. Measured twice (with and without the GIF panel), the same
+  numbers. The remembered keyboard height is not polluted: the last write wins, and it is 357.
+- **iPhone 12 (iOS 27.0.1).** The top sits at 766 pt, then for ~400 ms at **465 pt**, then at
+  487 pt. `visualViewport.height` is 543 from the first frame, but `--safe-area-inset-bottom` stays at
+  **34px** for ~400 ms before it falls to 0. `.keyboard-open .chat-composer-footer` pads
+  `max(0.75rem, var(--safe-area-inset-bottom))`, so the composer stands 22 pt (34 - 12) too high
+  until the inset catches up.
+
+Not fixed. The Android one wants the WebView's double report recognised for what it is (a viewport
+that shrank inside a layout viewport that already shrank). The iOS one wants the footer not to pad a
+safe area the keyboard already covers - which runs against the comment on that rule ("the reserved
+space must not visibly shrink just because the keyboard opened"), to be read before changing it.
+Readings: [#1345](https://github.com/emse-students/canari/pull/1345#issuecomment-5943602239).
 
 ## Message pipeline
 

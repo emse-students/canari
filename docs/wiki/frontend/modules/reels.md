@@ -1,10 +1,72 @@
 # CanaReels - the client half (R3: decisions C4, C5, C6, C7)
 
 The camera tab, the capture screen, publishing, the full-screen viewer and save-to-gallery. The
-decisions are the user's ([backlog](../../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken));
+decisions are the user's ([below](#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29));
 the server contract is [reels (server)](../../services/reels.md); the one format a video is brought
 to before upload is the on-device preparation (`lib/video/prepareVideoForUpload.ts`). This page owns
 what the PHONE does.
+
+## The chantier: the comparison, the ten decisions, the build order (user, 2026-09-29)
+
+Asked on 2026-09-29, after the user looked at the publish screen on the Mi 9T: *"Regarde a quoi
+ressemble ce qui s'affiche quand on veut publier un post [...] Note les differences avec la facon de
+faire de Canari, peu ergonomique [...] On peut aussi regarder la facon de faire d'instagram [...] Les
+gens attendent les "CanaReels" avec impatience"*, then live streaming *"dans le futur"*. The composer
+comparison R1 was built from is on
+[posts](posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29).
+
+**What the video path was, read from the code that day.**
+
+- Video was already accepted in a post, capped at 50 MB of ciphertext on both estates
+  ([media-service](../../services/media-service.md)).
+- It was drawn in a 16:9 box at most `max-w-md` wide (`PostMedia.svelte`): a vertical phone video was
+  small and letterboxed.
+- A media file was ONE AES-GCM operation under ONE IV (`mediaCrypto.ts`) and the download fetched the
+  whole blob and decrypted it once, so **nothing played before the last byte arrived** - the upload was
+  chunked for TRANSPORT only. R2 changed that (segmented encryption).
+- A post's CEK travels in the post row: post media is sealed against the STORAGE, not against the
+  Canari server - consistent with a post every member can read, and what makes a public live keyable.
+- Live has its bricks and none has run: the SFU is `call-service` (webrtc-rs, one-to-many), frames
+  are E2E-encrypted with MLS keys through `RTCRtpScriptTransform`, TURN is up in prod - and
+  `CALLS_ENABLED = false` ([calls](calls.md)).
+
+**Decided by the user, 2026-09-29.**
+
+| # | Decision |
+| --- | --- |
+| C1 | **Markdown STAYS** in posts; its layout is ours to make clean (formatting on demand, not two rows of buttons above an empty field). |
+| C2 | **Any member may publish a CanaReel**, as for a post; the existing reports cover moderation. |
+| C3 | **The PHONE compresses, the server only stores** - *"il faut que la charge serveur soit minimale, sinon on va vite avoir des problemes de stockage et de memoire"*. No server transcoding, no server thumbnails. Target 720p at ~2.5 Mb/s: ~28 MB for 90 s, under the 50 MB cap. |
+| C4 | **A CanaReel lasts 90 seconds at most.** |
+| C5 | **The camera is a TAB, left of the feed** (user's proposal): a swipe right from the feed opens it through the tab swipe that exists since #1223 - no competing gesture. |
+| C6 | **A CanaReel is kept ONE MONTH, then deleted - post, comments and reactions with it**; nothing dead stays on screen. The member can **save a reel to the phone's gallery** first, for memories. |
+| C7 | **A reel is read in the feed, and touching it opens a full-screen vertical viewer** that swipes to the next one. No dedicated Reels tab. |
+| C8 | **Stories: not now.** With one-month reels the two formats overlap. |
+| C9 | **Live, when it comes, is for the WHOLE network**, keyed like a post (its key in the row, as a post CEK is), after calls are revived and the box's egress is MEASURED (~1.5 Mb/s x viewers). |
+| C10 | **Delivered in stages**, each its own release (below). |
+
+Also decided later: no expiry notification for reel authors (user, 2026-10-02); the "deleted in N
+days" chip was removed (user, 2026-10-02), a reel shows its age.
+
+**The order, and where each stage stands.**
+
+1. **R1 - the composer: SHIPPED in `v0.18.32`** (#1226, #1227, #1229, then the in-app pickers and
+   Instagram-style feed video).
+2. **R2 - playable while downloading: SHIPPED.** Segmented media encryption (~1 MB segments, each its
+   own tag, a nonce per segment bound to its index and to the last one), a reader that decrypts as it
+   plays and seeks by segment, ranged reads on the media service; old single-block blobs stay
+   readable. The segmented writer has been ON since 2026-10-05
+   ([media-service](../../services/media-service.md#the-writer-flip---on-since-2026-10-05)); on-device
+   compression (C3) is the `prepareVideoForUpload` seam ([video-preparation](../video-preparation.md)),
+   composer wiring #1327.
+3. **R3 - CanaReels: SHIPPED in `v1.0.0`-`v1.0.2`.** The camera tab, 90 s capture, publish in the same
+   flow, the full-screen viewer, a `reel` retention class of 30 days that takes the post with it,
+   save-to-gallery. The capture screen is the app's own (full-screen preview, hold the shutter to
+   record, front/back switch, flash, a ring timer that stops at 90 s). The recorder writes WebM on
+   Android and MP4 on iOS and R2's compression brings both to one format. The server half is
+   [reels (server)](../../services/reels.md). The editor, called "catastrophic" by the user on
+   2026-10-05, is [reel-editor](reel-editor.md).
+4. **R4 - live** (C9), behind the calls revival: not started.
 
 ## The first camera open, read on both phones (2026-10-01, before anything was built on it)
 
