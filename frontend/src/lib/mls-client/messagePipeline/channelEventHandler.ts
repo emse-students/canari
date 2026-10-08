@@ -409,6 +409,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       addMessageToChat(isSystemNotice ? 'system' : sender, content, convoKey, {
         messageId: renderedId,
         timestamp: channelServerMs !== undefined ? new Date(channelServerMs) : undefined,
+        // The row's own clock, kept beside the displayed one so the read receipt and the unread
+        // reconcile can compare with the server's rows (see `reconcileSalonUnread`).
+        serverTimestamp: channelServerMs,
         skipDbSave: true,
         ...(isSystemNotice ? { isSystem: true } : {}),
       }).catch((e) => console.error(e));

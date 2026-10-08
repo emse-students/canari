@@ -29,6 +29,12 @@ export interface DecodedChannelMessage {
   senderId: string;
   content: string;
   timestamp: Date;
+  /**
+   * The row's own `createdAt` (Unix ms) - the SERVER's clock, which `timestamp` is not when the
+   * author's `sentAt` travelled in the payload. The read receipt names it so the server can compare
+   * a mark with the rows on one clock.
+   */
+  serverTimestamp?: number;
   isOwn: boolean;
   /** True for a membership notice: rendered centred and neutral, attributed to nobody. */
   isSystem: boolean;
@@ -269,6 +275,7 @@ export async function decodeChannelMessageRow(
       content,
       timestamp:
         timestamp ?? (serverMs !== undefined ? new SvelteDate(serverMs) : new SvelteDate()),
+      ...(serverMs !== undefined ? { serverTimestamp: serverMs } : {}),
       isOwn: !isSystem && senderId === userIdLower,
       isSystem,
     },

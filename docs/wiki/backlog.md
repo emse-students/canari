@@ -189,6 +189,14 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 ## Open defects, in severity order
 
+### P1 - a member who joins a community in-session sees ONE salon, and every message in the others is dropped until a reload (measured 2026-10-08)
+
+Measured on the local estate with the ten-community rig ([chat](frontend/modules/chat.md#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08)): the reader accepts an invitation link, lands in the community's first salon - and its sidebar lists ONLY that salon (`UNR-11`: `général`; the owner sees three). The other salons have no conversation row, so `channel.message.created` for them takes the `Message received for an unknown channel` branch and nothing is counted or shown; a reload lists them all. Not fixed here: the landing (`openInvitedChannel` -> `notifNav`) loads one channel, and the right fix is for the join to run the full `loadChannelWorkspacesFromBackend` (or `registerJoinedChannel` for every salon the member may read), which touches the Graine entry path (`enterPrivateSalonGroup` per private salon) and wants its own measurement. Owed a second look on a phone: does the same hold after a join through the deep link on iOS/Android?
+
+### P2 - the unread counts of salons ride a date, not a baseline (2026-10-08)
+
+`UNREAD_TRACKED_SINCE_MS` (`channel.service.ts`) floors the server's count for a salon the member has no read mark in, so history from before marks existed (2026-09-29) is not called unread. Messages posted between that date and the deploy of `unread-counts` count for a never-opened salon, which is true. Open: a membership notice that is not `silent` counts as unread until the salon is opened (the client cannot be asked, the row is encrypted); mute levels are ignored, as the badges already did; and the in-session mark of a phone with the app asleep still depends on the 2 s receipt debounce.
+
 ### P2 - about one CAS return in six reaches MiConnect with no code and no state, and the sign-in fails (measured 2026-09-29)
 
 The measurement is on

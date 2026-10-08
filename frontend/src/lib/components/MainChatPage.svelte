@@ -537,6 +537,8 @@
 
   // ─── Read watermark (debounced 2 s) ───────────────────────────────────────
   let pendingReadWatermark = 0;
+  /** The newest `createdAt` among what the pending salon receipt covers - the server's own clock. */
+  let pendingReadServerAt = 0;
   let readReceiptTimer: ReturnType<typeof setTimeout> | null = null;
 
   $effect(() => {
@@ -589,17 +591,24 @@
     const channelReceipt = isSelectedChannel;
 
     pendingReadWatermark = Math.max(pendingReadWatermark, target);
+    for (const msg of convo.messages) {
+      if (!msg.isSystem && msg.serverTimestamp !== undefined) {
+        pendingReadServerAt = Math.max(pendingReadServerAt, msg.serverTimestamp);
+      }
+    }
 
     if (!readReceiptTimer) {
       readReceiptTimer = setTimeout(() => {
         untrack(() => {
           const toSend = pendingReadWatermark;
+          const toSendServerAt = pendingReadServerAt;
           pendingReadWatermark = 0;
+          pendingReadServerAt = 0;
           readReceiptTimer = null;
           if (toSend <= 0) return;
           if (channelReceipt) {
             channelService
-              .advanceReadMark(currentContact, toSend)
+              .advanceReadMark(currentContact, toSend, toSendServerAt || undefined)
               .catch((e) =>
                 console.warn(
                   `[READ] salon mark ${toSend} for ${currentContact} was not sent - its senders keep` +
@@ -659,6 +668,7 @@
           readReceiptTimer = null;
         }
         pendingReadWatermark = 0;
+        pendingReadServerAt = 0;
       }
     };
   });
@@ -750,6 +760,7 @@
         readReceiptTimer = null;
       }
       pendingReadWatermark = 0;
+      pendingReadServerAt = 0;
       convs.selectedContact = null;
       channels.selectedChannelConversationId = '';
       convs.closeSidePanel();

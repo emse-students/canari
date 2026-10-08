@@ -563,6 +563,19 @@ channel id, migration 066), one instant per reader, only ever raised.
 The client merges both into the conversation's `readWatermarks`, so "Lu par", the avatars and `+N`
 render through exactly the group code. No read tone for a salon.
 
+**Unread counts (2026-10-08).** `GET /api/channels/unread-counts` answers `{ asOf, counts: { [channelId]: n } }`
+(zero absent): per salon the caller may read (`canAccessChannel`, so a private salon the caller is not in is
+never counted), the rows that are not `silent` (reactions, edits and control frames are), not the caller's,
+and with `createdAt` after `GREATEST(the caller's mark, the caller's membership, UNREAD_TRACKED_SINCE_MS)`.
+`UNREAD_TRACKED_SINCE_MS` is a date, not a migration: seeding marks from the newest message was refused
+because a mark is also the "Lu par" receipt other people see. `read-mark` accepts an optional `serverAt`
+(the row's own `createdAt`) and stores the later of it and `at`, still bounded by the newest message - the
+author's `sentAt` is earlier than `createdAt`, which left the newest message "unread" for ever. A
+membership notice that is not silent is counted until the salon is opened. The count is one LATERAL
+per salon bounded by `createdAt >= since`, riding `IDX_channel_messages_channel_created` (migration 079):
+300 ms on 1.5M rows / 300 salons with the old `channelId` index, 6 ms with it (EXPLAIN, `jit=off`). Why the client needs it:
+[chat](../frontend/modules/chat.md#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08).
+
 **The cancel keys on the notification's THREAD, not on an identifier we chose.** A conversation's
 notification has two possible posters and they do not agree on an identifier: the in-app path
 (`CanariShowLocalNotification`) uses `canari-<stableId>`, while the NSE — the only path that runs

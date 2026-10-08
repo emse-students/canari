@@ -127,6 +127,58 @@ ignore it too, so the dot agrees with what it summarises. Filtering it would nee
 a preference, decided with the user, not guessed. Read-receipt settings do not enter: the count is
 local and receipts are only what OTHERS see. `Sidebar.communityUnreadDot.svelte.test.ts`.
 
+### Unread counts of salons: the server counts, this device only merges (2026-10-08)
+
+**Reported by the user** (*"messages marked read though I never opened the community's salon"*), and
+**measured before anything was fixed**, with `tools/cross-client-harness/unread-communities.mjs` on the
+local estate: ten communities, 2-5 salons each (public, private and not joined), a reader (W2) and an
+owner (W1) posting 2 messages into every salon. Every step is read on three ends - the screen, the
+server's `channel_members."readMarks"` and nginx's access log of the read endpoints.
+
+| Step | Screen | Server mark of the reader | Read endpoints POSTed by the reader |
+|---|---|---|---|
+| 38 salons posted into while the reader sat on `/chat` | tab title `(20)`: **only the 10 `general` salons counted**, the other 28 raised nothing | 0 everywhere | none |
+| reader walks all ten communities, opens no salon | `general` badge 2 each; salon-a/b/c rows absent from the sidebar (see below) | unchanged | none |
+| **reader reloads** | **every badge gone, every rail dot gone** | unchanged (every salon still newer than the mark) | none |
+| reader opens ONE salon | that salon only | that salon only, nothing else | exactly one `read-mark` |
+| reader walks the communities again | nothing else changes | unchanged | none |
+
+**The reading that was believed is therefore refuted for marking and confirmed for disappearing.** Nothing
+in the app marks a salon read that was not opened: the server mark moves only on the receipt effect of
+the SELECTED salon (`MainChatPage`, behind the focus and visibility guard), `onSelectCommunity` clears the
+selection, and no effect, history load, reconnect or visibility change selects or marks anything. What the
+user saw is the other half: **a salon's `unreadCount` was a tally of what arrived while this device was
+listening** - salon messages are never stored here and the count was never persisted - so a reload, a
+cold start, a phone asleep or a socket that was down left every badge at zero while the server's mark
+said the salon was unread. The user reads that as "marked read".
+
+**What changed.** `GET /api/channels/unread-counts` counts per salon the messages that are not silent,
+not the caller's own and newer than the caller's mark (no mark: newer than the membership and than
+`UNREAD_TRACKED_SINCE_MS`, so history from before marks existed is not called unread). The client asks
+after every community load and every return of the socket, and `reconcileSalonUnread` sets each salon's
+count to the server's count PLUS the messages that landed live after the server counted
+(`ChatMessage.serverTimestamp > asOf`: both sides the row's `createdAt`, no device clock). A salon
+opened while the answer was in flight is skipped (a counter, not a timer). The receipt now names the
+row's own `createdAt` (`serverAt`): the author's `sentAt` is always earlier, so the newest message stayed
+"newer than the mark" for ever - measured, 49 ms on one machine - and would have been counted unread
+right after it was read.
+
+**Refuted, not to be re-opened** (each read in the code AND measured):
+- *`onSelectChannelConversation` marks on load/visibility.* It runs on a click only; `claimChannelReadSignal`
+  only suppresses repeats.
+- *`selectedChannelConversationId` survives a community switch.* `onSelectCommunity` clears it and
+  `selectedContact`; on the phone layout Back clears `selectedContact` (the sidebar highlight alone may
+  outlive it, and marks nothing - the receipt effect keys on `selectedContact`).
+- *Opening a community opens its first salon.* Only creating a community (`ensureWorkspaceByName`) and
+  accepting an invitation (`openInvitedChannel`) select a salon, both user gestures.
+- *`channel.read` of the own mark empties other devices wrongly.* It does so only for a mark the user
+  made on another device.
+- *The server marks anything.* `readMarks` is written in one place, `advanceChannelReadMark`, on request.
+
+**Found on the way, owed** ([backlog](../../backlog.md)): a member who joins a community in-session by
+invitation link sees only the landing salon in the sidebar, and every message in its other salons is
+dropped (no conversation row) until a reload.
+
 ### Every member list reads by family name, and a row never moves because its name arrived (2026-10-05)
 
 Asked by the user: the community admin panel listed its members by user id, the group panel and a

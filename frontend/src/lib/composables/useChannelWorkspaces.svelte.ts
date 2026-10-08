@@ -1,5 +1,6 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { slugify } from '$lib/utils/textFold';
+import { reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
 import { ChannelApiError, ChannelService } from '$lib/services/ChannelService';
 import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
@@ -758,6 +759,18 @@ export function useChannelWorkspaces() {
           await executeWorkspaceLoadAttempt(ctx);
           workspacesLoadError = null;
           ctx.log(`[WORKSPACE-LOAD] communities/channels loaded (attempt ${attempt + 1})`);
+          // THE SALONS EXIST NOW, and what is unread in them is the server's to say: the live tally
+          // this device keeps is empty after any reload. See `salonUnread.ts`.
+          // NOT awaited: this runs under `isLoadingWorkspaces`, and a slow answer must not make
+          // every other load refuse.
+          void reconcileSalonUnreadFromServer({
+            conversations: ctx.conversations,
+            selectedId: ctx.getSelectedConversationId?.() ?? null,
+            userId: currentUserId() ?? '',
+            fetchCounts: () => service.listUnreadCounts(),
+            log: ctx.log,
+            reason: 'communities loaded',
+          });
           return true;
         } catch (error) {
           ctx.log(

@@ -157,6 +157,12 @@ export function sortChannels<T extends Pick<Channel, 'id' | 'sortOrder' | 'creat
   );
 }
 
+/**
+ * The instant unread counting starts for a salon the member has no mark in. See
+ * {@link ChannelService.listUnreadCounts}. A date, not a flag: it never needs to move again.
+ */
+export const UNREAD_TRACKED_SINCE_MS = Date.UTC(2026, 9, 8);
+
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
@@ -3465,11 +3471,23 @@ export class ChannelService {
   async advanceChannelReadMark(
     channelId: string,
     userId: string,
-    at: number
+    at: number,
+    serverAt?: number
   ): Promise<{ at: number } | null> {
     if (!Number.isSafeInteger(at) || at <= 0) {
       throw new BadRequestException('at must be a positive integer (epoch ms)');
     }
+    // THE READER'S INSTANT AND THE SERVER'S ARE TWO CLOCKS. `at` is the AUTHOR's `sentAt` of the
+    // newest message read, which is always earlier than the row's `createdAt` (the request travelled)
+    // and by more when the author's clock lags. A mark below the newest `createdAt` leaves that
+    // message "newer than the mark" for the server for good, which `listUnreadCounts` would count as
+    // unread right after the reader had read it. The client therefore adds the row's own `createdAt`
+    // when it knows it, and the mark takes the later of the two. It can only RAISE the mark, and the
+    // bound below still caps it at the salon's newest message.
+    const wanted =
+      Number.isSafeInteger(serverAt) && (serverAt as number) > 0
+        ? Math.max(at, serverAt as number)
+        : at;
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
     const member = await this.memberRepo.findOne({
@@ -3487,10 +3505,10 @@ export class ChannelService {
       this.logger.debug(`[CHANNEL_READ] nothing to read channel=${channelId}`);
       return null;
     }
-    const bounded = Math.min(at, newest.createdAt.getTime());
-    if (bounded < at) {
+    const bounded = Math.min(wanted, newest.createdAt.getTime());
+    if (bounded < wanted) {
       this.logger.warn(
-        `[CHANNEL_READ] mark past the newest message bounded channel=${channelId} user=${userId.slice(0, 8)} asked=${at} kept=${bounded}`
+        `[CHANNEL_READ] mark past the newest message bounded channel=${channelId} user=${userId.slice(0, 8)} asked=${wanted} kept=${bounded}`
       );
     }
 
@@ -3544,6 +3562,87 @@ export class ChannelService {
       marks[m.userId.toLowerCase()] = at;
     }
     return marks;
+  }
+
+  /**
+   * How many messages each of the caller's salons holds that the caller has not read - the durable
+   * answer the client's live counter cannot give.
+   *
+   * THE CLIENT'S COUNT IS A TALLY OF WHAT ARRIVED WHILE IT WAS LISTENING. A salon's messages are
+   * never stored on the device and the count is never persisted, so a reload, a cold start, a phone
+   * that was asleep or a socket that was down all left every badge at zero while the server's read
+   * mark said otherwise - measured 2026-10-08 with ten communities (docs/wiki/frontend/modules/chat.md,
+   * "Unread counts of salons"). The server holds both halves of the question: the reader's mark per
+   * salon (`readMarks`) and the rows.
+   *
+   * A message counts when it is not silent (reactions, edits and control frames are silent), was not
+   * written by the caller, and is newer than the caller's mark - or, with no mark, newer than the
+   * caller's membership of the community, so a newcomer is not handed the history as unread. Only
+   * salons the caller may read are counted: the same `canAccessChannel` every other read goes through.
+   *
+   * NOTHING BEFORE {@link UNREAD_TRACKED_SINCE_MS} IS COUNTED. A mark exists only for a salon the
+   * member opened since 2026-09-29, so without a floor the first answer would call a salon's whole
+   * history unread for every member and every salon read before marks existed. Seeding marks to fix
+   * that was refused: a mark is also the "Lu par" receipt other people see, and a baseline would
+   * claim the member had read what they had not.
+   *
+   * @returns `asOf`, the server clock the counts were taken at, and `counts` keyed by channel id,
+   *          absent when the count is zero.
+   */
+  async listUnreadCounts(
+    userId: string
+  ): Promise<{ asOf: number; counts: Record<string, number> }> {
+    const members = await this.memberRepo.find({ where: { userId } });
+    if (members.length === 0) return { asOf: Date.now(), counts: {} };
+    const memberOf = new Map(members.map((m) => [m.workspaceId, m]));
+    const channels = await this.channelRepo.find({
+      where: { workspaceId: In([...memberOf.keys()]) },
+    });
+    const readable = channels
+      .filter((c) => {
+        const member = memberOf.get(c.workspaceId);
+        return !!member && this.canAccessChannel(c, member, userId);
+      })
+      .map((c) => c.id);
+    if (readable.length === 0) return { asOf: Date.now(), counts: {} };
+
+    // asOf is taken HERE, right before the count, not at the top of the method: the client adds
+    // every live message newer than it, so each millisecond between the two is a window in which a
+    // message is counted by both sides.
+    const asOf = Date.now();
+    const rows: { channelId: string; n: string }[] = await this.messageRepo.query(
+      `SELECT ch.id AS "channelId", u.n AS n
+         FROM channel_members cm
+         JOIN channels ch ON ch."workspaceId" = cm."workspaceId" AND ch.id = ANY($2::uuid[])
+        -- The instant after which a message counts, per salon: the later of the member's mark, the
+        -- member's arrival and the tracking floor.
+        CROSS JOIN LATERAL (
+          SELECT GREATEST(
+                   COALESCE((cm."readMarks" ->> ch.id::text)::bigint, 0),
+                   floor(extract(epoch from cm."createdAt") * 1000)::bigint,
+                   $3::bigint
+                 ) AS since
+        ) b
+        CROSS JOIN LATERAL (
+          SELECT COUNT(*) AS n
+            FROM channel_messages m
+           WHERE m."channelId" = ch.id
+             AND m.silent = false
+             AND m."authorId" <> $1
+             -- Sargable pre-filter on migration 079's index: without it every row of the salon was
+             -- read to be thrown away (300 ms on 1.5M rows, 6 ms with it). A superset of the exact
+             -- test below, so it never contradicts it.
+             AND m."createdAt" >= (to_timestamp(b.since / 1000.0) AT TIME ZONE 'UTC')
+             -- Whole milliseconds on both sides: a mark is a JS instant (truncated), createdAt keeps
+             -- microseconds, and comparing them raw counted the very message just read.
+             AND floor(extract(epoch from m."createdAt") * 1000) > b.since
+        ) u
+        WHERE cm."userId" = $1 AND u.n > 0`,
+      [userId, readable, UNREAD_TRACKED_SINCE_MS]
+    );
+    const counts: Record<string, number> = {};
+    for (const r of rows) counts[r.channelId] = Number(r.n);
+    return { asOf, counts };
   }
 
   /**
