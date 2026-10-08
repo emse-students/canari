@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
@@ -229,7 +230,7 @@
               <button
                 onclick={dismiss}
                 class="ui-icon-button hover:bg-cn-bg text-text-muted hover:text-cn-dark rounded-lg transition-colors"
-                aria-label="Fermer"
+                aria-label={m.common_close_label()}
               >
                 <X size={16} />
               </button>

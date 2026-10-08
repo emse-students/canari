@@ -3,6 +3,7 @@
   import type { Snippet } from 'svelte';
   import { MessageCircle, FaceSlightlySmiling } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { reactionTypeToLabel } from '$lib/posts/reactions';
 
   /** Props for the PostActions bar (reaction picker + comment button + the reaction tally). */
   interface Props {
@@ -132,8 +133,8 @@
           reaction.type
             ? 'bg-cn-yellow/20 ring-cn-yellow ring-2'
             : ''}"
-          title={reaction.type}
-          aria-label={reaction.type}
+          title={reactionTypeToLabel(reaction.type)}
+          aria-label={reactionTypeToLabel(reaction.type)}
           aria-pressed={userReaction === reaction.type}
         >
           <!-- The name is on the button, so the glyph itself is decoration and must not be read twice. -->

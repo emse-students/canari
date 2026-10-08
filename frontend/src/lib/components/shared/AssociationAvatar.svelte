@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages';
   import { getInitials } from '$lib/utils/avatar';
   import { associationLogoSrc } from '$lib/associations/api';
   import {
@@ -87,7 +88,7 @@
   <div
     class="{shapeClasses} shrink-0 shadow-sm select-none {sizeClasses} bg-cn-ink text-cn-yellow flex items-center justify-center font-bold"
     title={name}
-    aria-label={`Logo de ${name}`}
+    aria-label={m.association_logo_aria_label({ name })}
   >
     <span class="text-zoom-exempt">{initials}</span>
   </div>

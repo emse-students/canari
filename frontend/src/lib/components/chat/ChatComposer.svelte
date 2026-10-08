@@ -1234,7 +1234,7 @@
           <button
             type="button"
             onclick={() => onCreatePoll()}
-            title={m.chat_create_poll_title()}
+            title={m.chat_create_poll_label()}
             aria-label={m.chat_create_poll_label()}
             class="ui-icon-button chat-composer-icon-button"
           >
@@ -1249,7 +1249,7 @@
           <button
             type="button"
             onclick={openGif}
-            title={m.chat_send_gif_title()}
+            title={m.chat_send_gif_label()}
             aria-label={m.chat_send_gif_label()}
             class="ui-icon-button chat-composer-icon-button text-2xs font-bold tracking-tight"
           >
@@ -1325,7 +1325,7 @@
             <button
               type="button"
               onclick={() => (showEmojiPicker = !showEmojiPicker)}
-              title={m.chat_emoji_picker_title()}
+              title={m.chat_emoji_picker_label()}
               aria-label={m.chat_emoji_picker_label()}
               class="ui-icon-button chat-composer-icon-button chat-composer-emoji-button"
             >

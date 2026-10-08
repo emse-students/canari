@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages';
   import { generateAvatarPlaceholder, getInitials } from '$lib/utils/avatar';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
@@ -111,7 +112,7 @@
   <div
     class="{shapeClasses} shrink-0 shadow-sm select-none {sizeClasses} bg-cn-ink text-cn-yellow flex items-center justify-center overflow-hidden font-bold"
     title={displayLabel}
-    aria-label={`Avatar de ${displayLabel}`}
+    aria-label={m.avatar_aria_label({ name: displayLabel })}
   >
     <span class="text-zoom-exempt">{initials}</span>
   </div>
@@ -119,7 +120,7 @@
   <div
     class="{shapeClasses} shrink-0 shadow-sm {sizeClasses} relative overflow-hidden"
     title={displayLabel}
-    aria-label={`Avatar de ${displayLabel}`}
+    aria-label={m.avatar_aria_label({ name: displayLabel })}
   >
     {#if !imageLoaded}
       <!-- Placeholder a initiales affiche immediatement (displayLabel est resolu de facon

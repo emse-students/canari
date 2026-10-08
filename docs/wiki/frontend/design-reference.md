@@ -3044,3 +3044,25 @@ A comment offered "Voir plus" past 280 characters but clamps at five LINES, so a
 ## A native `title` never duplicates a panel the app already draws (2026-10-08)
 
 The reaction pill carried `title=<every reactor's name>` beside `ReactorsPanel`, so hovering showed the browser's tooltip over the app's list (user report, desktop). Rule: where the app has its own display for a fact, the element carries NO `title` for it. A `title` stays only as the sole label of an icon-only control with no tooltip of its own.
+
+## Tooltips: one convention, audited 2026-10-08
+
+Audit of every `title` in `frontend/src` (about 440 hits, 270 of them `title={m.x()}` on an element).
+Four systems exist: the native `title`, the poll voters' bubble (`PostPolls`, `role="tooltip"`), the
+click-opened `MessageInfoTooltip`, and the panels (`ReactorsPanel`, `SeenByHeads`'s sr-only list).
+
+**The rule: a native `title` is the label of a control that has no visible text, and nothing else.**
+
+- **Where the app draws its own display of a fact (panel, popover, visible label), the element carries
+  NO `title` for it.** It would be the same list twice, and on a phone (no hover) it is the only one
+  that exists. The reaction pill did this (reactors in a `title` over `ReactorsPanel`); the dashboard
+  `reviewer_docs` card printed its label under an identical `title`.
+- **An icon-only control has `title` AND `aria-label`, both from Paraglide, both the same string when
+  the text is the same.** Where they differ on purpose (short hint vs a longer accessible name,
+  "Rechercher" / "Rechercher dans la conversation") two keys are fine; two keys with identical text
+  are not (four were merged).
+- **Never a raw literal, never a stored key or an id.** A reaction type is the wire value
+  (`Marteau`): its name is `reactionTypeToLabel()`. `Avatar`, `AssociationAvatar`, `Modal` and the
+  admin project rename carried French literals; they are messages now.
+- **A `title` carrying data a phone cannot hover (exact dates, full device id, long names) is
+  harmless but is never the only place the fact exists** if the fact matters.

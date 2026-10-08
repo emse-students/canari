@@ -612,7 +612,7 @@
             type="button"
             class="group text-text-main hover:text-cn-yellow flex items-center gap-2 text-lg font-bold transition-colors"
             onclick={startRenamingName}
-            title="Renommer le projet"
+            title={m.admin_carte_rename_project_title()}
           >
             {project.name}
             <Pencil size={14} class="opacity-0 transition-opacity group-hover:opacity-60" />

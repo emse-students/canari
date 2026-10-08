@@ -722,7 +722,7 @@
             type="button"
             onclick={() => (showGifPicker = true)}
             disabled={uploadingMedia}
-            title={m.chat_send_gif_title()}
+            title={m.chat_send_gif_label()}
             aria-label={m.chat_send_gif_label()}
             class="text-text-muted text-2xs mr-0.5 shrink-0 px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
           >
