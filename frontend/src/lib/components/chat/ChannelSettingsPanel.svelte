@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { Log } from '$lib/utils/Log';
   import {
     Settings,
@@ -411,45 +412,17 @@
 <div class="flex h-full min-h-0 flex-col">
   <!-- Tab strip: a real tab set, so a screen reader announces it as one (seen on the Mi 9T). -->
   <div
-    role="tablist"
-    aria-label={m.chat_channel_settings_title()}
-    class="bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
+    class="bg-cn-surface shrink-0 border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
   >
-    <h3
-      class="text-text-muted text-2xs mb-3 hidden items-center gap-2 px-2 font-bold tracking-widest uppercase"
-    >
-      <span class="text-lg leading-none text-amber-500">{m.chat_channel_prefix()}</span>
-      <span class="truncate">{selectedChannel ? selectedChannel.name : m.chat_channel_label()}</span
-      >
-    </h3>
-
-    <button
-      type="button"
-      role="tab"
-      aria-selected={activeTab === 'general'}
-      onclick={() => (activeTab = 'general')}
-      class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
-      'general'
-        ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
-        : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
-    >
-      <Settings size={18} strokeWidth={2.5} />
-      {m.chat_channel_overview_tab()}
-    </button>
-
-    <button
-      type="button"
-      role="tab"
-      aria-selected={activeTab === 'access'}
-      onclick={() => (activeTab = 'access')}
-      class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
-      'access'
-        ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
-        : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
-    >
-      <Lock size={18} strokeWidth={2.5} />
-      {m.chat_channel_access_tab()}
-    </button>
+    <SegmentedControl
+      items={[
+        { key: 'general', label: m.chat_channel_overview_tab(), icon: Settings },
+        { key: 'access', label: m.chat_channel_access_tab(), icon: Lock },
+      ]}
+      value={activeTab}
+      onSelect={(key) => (activeTab = key)}
+      label={m.chat_channel_settings_title()}
+    />
   </div>
 
   <!-- Contenu Principal -->

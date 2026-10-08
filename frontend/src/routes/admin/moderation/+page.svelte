@@ -42,6 +42,7 @@
   import { parseTab, tabUrl } from '$lib/admin/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
@@ -373,63 +374,36 @@
 </PageHeader>
 
 <!-- Tabs -->
-<div
-  class="mb-6 grid grid-cols-3 gap-1 rounded-xl bg-black/5 p-1"
-  role="tablist"
-  aria-label={m.moderation_title()}
->
-  <button
-    role="tab"
-    aria-selected={tab === 'reports'}
-    onclick={() => switchTab('reports')}
-    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-2 sm:px-1 sm:text-sm {tab ===
-    'reports'
-      ? 'bg-cn-surface text-text-main shadow-sm'
-      : 'text-text-muted hover:text-text-main'}"
-  >
-    <Flag size={16} />
-    {m.moderation_reports_tab()}
-    {#if pendingReports.length > 0}
-      <span class="text-2xs ml-1 rounded-full bg-red-500 px-1.5 py-0.5 font-bold text-white">
-        {pendingReports.length}
-      </span>
-    {/if}
-  </button>
-  <button
-    role="tab"
-    aria-selected={tab === 'hidden'}
-    onclick={() => switchTab('hidden')}
-    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-2 sm:px-1 sm:text-sm {tab ===
-    'hidden'
-      ? 'bg-cn-surface text-text-main shadow-sm'
-      : 'text-text-muted hover:text-text-main'}"
-  >
-    <EyeOff size={16} />
-    {m.moderation_hidden_tab()}
-    {#if hiddenPosts.length > 0}
-      <span class="text-2xs ml-1 rounded-full bg-orange-500 px-1.5 py-0.5 font-bold text-white">
-        {hiddenPosts.length}
-      </span>
-    {/if}
-  </button>
-  <button
-    role="tab"
-    aria-selected={tab === 'muted'}
-    onclick={() => switchTab('muted')}
-    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-2 sm:px-1 sm:text-sm {tab ===
-    'muted'
-      ? 'bg-cn-surface text-text-main shadow-sm'
-      : 'text-text-muted hover:text-text-main'}"
-  >
-    <UserX size={16} />
-    {m.moderation_muted_tab()}
-    {#if mutedUsers.length > 0}
-      <span class="text-2xs ml-1 rounded-full bg-gray-500 px-1.5 py-0.5 font-bold text-white">
-        {mutedUsers.length}
-      </span>
-    {/if}
-  </button>
-</div>
+<SegmentedControl
+  class="mb-6"
+  items={[
+    {
+      key: 'reports',
+      label: m.moderation_reports_tab(),
+      icon: Flag,
+      badge: pendingReports.length,
+      badgeClass: 'bg-red-500 text-white',
+    },
+    {
+      key: 'hidden',
+      label: m.moderation_hidden_tab(),
+      icon: EyeOff,
+      badge: hiddenPosts.length,
+      badgeClass: 'bg-orange-500 text-white',
+    },
+    {
+      key: 'muted',
+      label: m.moderation_muted_tab(),
+      icon: UserX,
+      badge: mutedUsers.length,
+      badgeClass: 'bg-gray-500 text-white',
+    },
+  ]}
+  value={tab}
+  onSelect={switchTab}
+  label={m.moderation_title()}
+  tone="yellow"
+/>
 
 {#if error}
   <div class="bg-red-err/10 text-red-err border-red-err/30 mb-6 rounded-xl border p-4 text-sm">

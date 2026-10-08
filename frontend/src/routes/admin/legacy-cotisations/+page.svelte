@@ -12,6 +12,7 @@
     type LegacyCotisationAdminItem,
     type LegacyCotisationStatus,
   } from '$lib/associations/api';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { RefreshCw, Search, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -149,25 +150,13 @@
     </div>
   {/if}
 
-  <div
-    class="border-cn-border grid grid-cols-4 gap-0.5 rounded-xl border bg-(--cn-surface) p-0.5 sm:gap-1 sm:p-1"
-    role="tablist"
-    aria-label={m.admin_legacy_title()}
-  >
-    {#each tabs as t (t.key)}
-      <button
-        role="tab"
-        aria-selected={tab === t.key}
-        onclick={() => switchTab(t.key)}
-        class="max-[360px]:text-2xs flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-2 sm:px-1 sm:text-sm {tab ===
-        t.key
-          ? 'bg-cn-yellow text-cn-ink shadow-sm'
-          : 'text-text-muted hover:text-text-main'}"
-      >
-        {t.label()}
-      </button>
-    {/each}
-  </div>
+  <SegmentedControl
+    items={tabs.map((t) => ({ key: t.key, label: t.label() }))}
+    value={tab}
+    onSelect={switchTab}
+    label={m.admin_legacy_title()}
+    tone="yellow"
+  />
 
   <div class="relative">
     <span class="text-text-muted pointer-events-none absolute top-1/2 left-3 -translate-y-1/2">
