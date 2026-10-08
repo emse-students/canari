@@ -222,6 +222,18 @@ call sites, and only on the FIRST failure: the suppression window answered `null
 event had two renderings chosen by how recently it had happened. **Rendering a placeholder is the
 CALLER's decision**; the resolver's job ends at the fact.
 
+### The first name has its own cache, and every door that knows it must fill it (2026-10-09)
+
+`getUserFirstNameSync` (read-receipt popover, chat labels) reads `firstNameCache` ONLY, never a cut of
+the full name (compound given names). A name enters the display-name cache by several doors and only
+the profile fetch used to fill the first name too - and `resolveUserDisplayName` answers from the name
+cache, so a person seeded by name was NEVER given one ("Lu par Jolan BOUDIN"). Now: `seedUserDisplayName`
+takes an optional `firstName`; a name seeded bare costs exactly ONE profile fetch (`profileAsked`,
+single in-flight, the usual backoff), which never overrides the seeded name on failure or 404; a person
+with no `firstName` keeps the full name. `firstNameCache` is a `SvelteMap`, so a `$derived` redraws when
+the profile lands. The current user's first name comes from that same one fetch (the saved login
+carries only `displayName`).
+
 ### Svelte trims whitespace at a block boundary
 
 `{label}{#if x}<span>...</span>{/if}` renders `labelSuffix` with no space: the compiler treats the

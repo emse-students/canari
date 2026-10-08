@@ -463,7 +463,7 @@ describe('formatProfileDisplayName (indirect)', () => {
     const mod = await import('./displayName');
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    mod.seedUserDisplayName('usr_cached', 'Deja Connu');
+    mod.seedUserDisplayName('usr_cached', 'Deja Connu', 'Deja');
     await mod.resolveUserDisplayName('usr_cached');
     expect(mod.displayNameLookupStats().attempted).toBe(0);
 
@@ -529,5 +529,66 @@ describe('formatProfileDisplayName (indirect)', () => {
     const mod = await import('./displayName');
     const result = await mod.resolveUserDisplayName('usr_3');
     expect(result).toBe('Marie');
+  });
+});
+
+// ===========================================================================
+// the first name: every door that knows it, and the one fetch for the doors that do not
+// ===========================================================================
+describe('getUserFirstNameSync', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.mocked(userStore.fetchUserProfile).mockReset();
+  });
+
+  it('is filled by a seed that carries the structured firstName, with no fetch', async () => {
+    const mod = await import('./displayName');
+    mod.seedUserDisplayName('usr_a', 'Jean-Pierre Dupont', 'Jean-Pierre');
+    expect(await mod.resolveUserDisplayName('usr_a')).toBe('Jean-Pierre Dupont');
+    expect(mod.getUserFirstNameSync('usr_a', 'Jean-Pierre Dupont')).toBe('Jean-Pierre');
+    expect(userStore.fetchUserProfile).not.toHaveBeenCalled();
+  });
+
+  it('fetches the profile ONCE for a name seeded bare, so the first name arrives', async () => {
+    const mod = await import('./displayName');
+    vi.mocked(userStore.fetchUserProfile).mockResolvedValue({
+      id: 'usr_b',
+      displayName: null,
+      firstName: 'Jolan',
+      lastName: 'BOUDIN',
+    } as never);
+    mod.seedUserDisplayName('usr_b', 'Jolan BOUDIN');
+    expect(mod.getUserFirstNameSync('usr_b', 'Jolan BOUDIN')).toBe('Jolan BOUDIN');
+
+    await Promise.all([mod.resolveUserDisplayName('usr_b'), mod.resolveUserDisplayName('usr_b')]);
+    await mod.resolveUserDisplayName('usr_b');
+
+    expect(mod.getUserFirstNameSync('usr_b', 'Jolan BOUDIN')).toBe('Jolan');
+    expect(userStore.fetchUserProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the full name, never a split guess, for a person with no firstName - asked once', async () => {
+    const mod = await import('./displayName');
+    vi.mocked(userStore.fetchUserProfile).mockResolvedValue({
+      id: 'usr_d',
+      displayName: 'Mono',
+      firstName: null,
+      lastName: null,
+    } as never);
+    mod.seedUserDisplayName('usr_d', 'Marie Curie');
+    await mod.resolveUserDisplayName('usr_d');
+    await mod.resolveUserDisplayName('usr_d');
+    expect(mod.getUserFirstNameSync('usr_d', 'Marie Curie')).toBe('Marie Curie');
+    expect(userStore.fetchUserProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a seeded name when the first-name fetch fails or answers 404', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const mod = await import('./displayName');
+    vi.mocked(userStore.fetchUserProfile).mockRejectedValueOnce(new Error('network down'));
+    mod.seedUserDisplayName('usr_e', 'Eve Martin');
+    expect(await mod.resolveUserDisplayName('usr_e')).toBe('Eve Martin');
+    expect(mod.getUserDisplayNameSync('usr_e')).toBe('Eve Martin');
   });
 });

@@ -6,6 +6,7 @@ import {
 } from '$lib/stores/user';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { m } from '$lib/paraglide/messages';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 // The sentinel is imported rather than restated: that a notice carries this sender id, and that no
 // display name resolves for it, are one fact. This file held a private second copy of it.
 import { SYSTEM_SENDER_ID } from '$lib/utils/chat/messageUtils';
@@ -15,7 +16,15 @@ const inFlight = new Map<string, Promise<string | null>>();
 const failedAt = new Map<string, number>();
 
 /** The structured `firstName` column of each resolved profile, for the places that name a person already on screen. */
-const firstNameCache = new Map<string, string>();
+// REACTIVE, because a first name arrives AFTER the full name was already drawn: a `$derived` reading
+// `getUserFirstNameSync` must recompute when the profile lands, and a plain Map notifies nobody.
+const firstNameCache = new SvelteMap<string, string>();
+/**
+ * Ids whose profile was fetched at least once (answer or 404), so a name that was SEEDED without a
+ * first name costs exactly one fetch to learn it - and a person with no `firstName` column costs one,
+ * not one per call.
+ */
+const profileAsked = new SvelteSet<string>();
 const FAILURE_BACKOFF_MS = 2 * 60 * 1000;
 
 /**
@@ -137,10 +146,18 @@ export function formatProfileDisplayName(profile: {
 /**
  * Seeds the display-name cache with an already-known name (e.g. from a search result),
  * so subsequent sync reads show the name instantly instead of the raw user ID.
+ *
+ * A caller holding the STRUCTURED `firstName` passes it too: the name and the first name are two
+ * columns of one row, and seeding only the first used to leave {@link getUserFirstNameSync} on the
+ * full name for good, because {@link resolveUserDisplayName} answers from the name cache. A caller
+ * with only a bare display name omits it - the resolver then fetches the profile once.
  */
-export function seedUserDisplayName(userId: string, name: string): void {
+export function seedUserDisplayName(userId: string, name: string, firstName?: string | null): void {
+  const normalized = normalizeUserId(userId);
   const trimmed = name.trim();
-  if (trimmed) displayNameCache.set(normalizeUserId(userId), trimmed);
+  if (trimmed) displayNameCache.set(normalized, trimmed);
+  const first = firstName?.trim();
+  if (first) firstNameCache.set(normalized, first);
 }
 
 /**
@@ -263,11 +280,15 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
   if (!normalized) return null;
 
   const cached = displayNameCache.get(normalized);
-  if (cached) return cached;
-  if (shouldSkipRetry(normalized)) return null;
+  // A name seeded without its first name is not "resolved" for the one reader that needs the first
+  // name: fetch the profile ONCE for it. The name stays the answer if that fetch cannot improve it.
+  const needsFirstName =
+    !!cached && !firstNameCache.has(normalized) && !profileAsked.has(normalized);
+  if (cached && !needsFirstName) return cached;
+  if (shouldSkipRetry(normalized)) return cached ?? null;
 
   if (inFlight.has(normalized)) {
-    return inFlight.get(normalized)!;
+    return inFlight.get(normalized)!.then((v) => v ?? cached ?? null);
   }
 
   // Counted HERE rather than at the top of the function: everything above this line returned
@@ -277,6 +298,7 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
   const promise = fetchUserProfile(normalized)
     .then((profile) => {
       const value = formatProfileDisplayName(profile);
+      profileAsked.add(normalized);
       // WHAT THIS CONDITION MEANT AND WHAT IT DOES ARE NOT THE SAME. It asks "is the result
       // different from the raw user id", which was written against this function's doc comment
       // ("firstName+lastName > displayName > id") - and the function returns the LABEL, never the
@@ -313,6 +335,9 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       // Measured on the local estate 2026-09-04: one channel message mentioning an absent account
       // re-fetched its profile once per chip mount, in every check that opened that conversation.
       if (isAbsentUserError(e)) {
+        profileAsked.add(normalized);
+        // A seeded name outranks the label: the 404 here was only a first-name lookup.
+        if (cached) return cached;
         const label = m.user_unknown_label();
         console.log(
           `[DISPLAYNAME] no such user - the server answered 404, so this id renders as ` +
@@ -344,6 +369,7 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
         { userId: normalized, error: e }
       );
       failedAt.set(normalized, Date.now());
+      if (cached) return cached;
       // NULL, NOT THE LABEL - "I could not find out" is what happened, and it is already what this
       // function returns for every other unresolved case (the system sender, the backoff window).
       // Returning the label instead made a failure indistinguishable from an answer, and all
