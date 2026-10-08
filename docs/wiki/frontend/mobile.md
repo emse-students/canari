@@ -2652,6 +2652,20 @@ false there, and it is the only way to compile Swift, ObjC or Kotlin off macOS.
 
 See [`cicd.md`](../cicd.md) for the full pipeline.
 
+## Notification quick actions exist only while the app is dead (measured on the Mi 9T, 2026-09-06)
+
+Two posters write Canari's Android notifications and only one is the app's own. `CanariFirebaseMessagingService.showNotification` posts when a push arrives (app killed or its ACK late): `MessagingStyle`, stacked, self `Person`, `buildReplyAction` + `buildMarkReadAction` always on any non-`channel_` conversation. `useNotifications.svelte.ts` -> `sendNotification` posts when the JS layer has the frame (app ALIVE, foreground or background): whatever `tauri-plugin-notification` builds, **no actions**. The notification record read off the device for a message received while backgrounded carries no `actions` at all, so the gesture `device-verification.md` step 4 asks for cannot be made in the state check K is about; the 2026-08-30 PASS was taken on a KILLED app. This is not the missing-body defect (fixed 2026-09-06 with a `largeBody` on every `sendNotification`): there the plugin dropped text, here the app never asks for actions on this path. Check K records `SKIPPED` rather than `FAIL` when no reply is made. **The decision owed** is whether the JS path posts through the Kotlin service (removes a poster, stacks by conversation, refreshes the badge; needs a Tauri command into `showNotification` and an answer for desktop, where neither the service nor FCM exists) or grows its own actions.
+
+## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, scheduled after the campaign)
+
+**Play's requirement:** an app with sign-in must support Zero-Tap Sign-In restoration on a new Android device (mobile and tablet; enforcement from **April 2027**). The exemptions (Block Store integration by 30 September 2026 - that date has PASSED - enterprise or permanently-private apps, regulatory) do not describe a student messaging app. The mechanism is the Restore Credentials API (`androidx.credentials`, Android 9+, our minSdk is 28; GMS core 24220000+): a system-managed WebAuthn credential tied to the package, created silently after sign-in, backed up with the device. It works regardless of `android:allowBackup`, so it does not reopen the device-transfer exclusion of 2026-08-26.
+
+**The cost is a server we do not have:** `core-service` has no WebAuthn registration or assertion endpoint, and a restore key needs both plus a store keeping restore keys distinguishable from passkeys; a successful assertion must mint the usual pair of an opaque refresh row and a 1 h access token ([sessions](../sessions.md)).
+
+**The principle is decided, not to be re-opened** (the user accepted it 2026-08-26): zero-tap signs the new device in with no second factor, Google says the API "does not handle multi-factor authentication", and Canari has 2FA. Accepted because a restored session authenticates, it does not decrypt: Keystore material is non-exportable, the MLS device key does not travel, and the new device still enrols as a new MLS client ([backup](backup.md)).
+
+**Three traps for the build:** (1) the logout half is a requirement - Play requires deleting the restore key on sign-out, so a Tauri command down to `ClearCredentialStateRequest(TYPE_CLEAR_RESTORE_CREDENTIAL)`, run on the paths that log out WITHOUT a gesture too (401/403, revoked session); (2) the library was `1.7.0-alpha03` - check for a stable line before starting; (3) `E2eeUnavailableException` is expected (no screen lock or no Google backup), handled by retrying with `isCloudBackupEnabled = false`, a second path that is logged at a level that accuses with its rate measured.
+
 ## See also
 
 - [`frontend/architecture.md`](../architecture.md) — SvelteKit architecture, stores, routing

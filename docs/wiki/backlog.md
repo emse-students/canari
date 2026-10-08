@@ -138,6 +138,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **create the new Cloudflare tunnel on the `rootz-emse.fr` zone.** No agent can: measured 2026-09-02, the project's token answers 200 with an EMPTY list on `cfd_tunnel` and 403 on Access groups, so tunnels are out of its scope entirely - and an empty success is worse than a refusal, because a caller that trusts the shape concludes there are none. (verify: phase 1 completed for all three estates on 2026-09-24 without it, estate-migration section 10 - whether this tunnel is still wanted at all) | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
 | **the spaces release order (WP6b), three gestures in THIS order**: (1) go for the WP3 profile backfill on production once 6a/6d's release ran migration 071 (`backfill-canari-profiles.sh apply`); (2) set every association's real reach and the BDEs at `/admin/spaces` - the seed gave all of them (ICM, saint-etienne) only; (3) only then cut the release carrying 6b. Out of order, ISMIN/Gardanne/FSSS/Autre readers see no existing association post, and anyone not backfilled loses the feed | 1 go, 1 grid, 1 release | [profiles-and-access](profiles-and-access.md), "WP6b as built" |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala`, a repository that now answers `404`; the repository that looks like its successor does not contain that commit. Nothing runs from it and nothing points at it, so this is not a technical question but somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
+| **create an Authentik test user `canari-test-epsilon` (campus gardanne), or allow a scoped permission rule for it** - the read-grants dev checks need a second campus and Authentik is one instance for dev and prod, so no agent may touch it. No stable ships the read grants before they run | 1 account | [Audiences](#audiences-of-associations-lists-and-institutions---built-on-dev-in-v120-alpha1) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
 
@@ -2138,653 +2139,130 @@ a Windows path, which is how the killer URL was produced in the first place.
 
 ### Emoji pictures - the campaign rows, which need real devices
 
-The pictures replaced the font on 2026-09-25 and the mechanism is the whole of
-[emoji.md](frontend/emoji.md), the only copy. What remains is below - rows for the **second
-campaign**, asked for by the user on 2026-08-23 and rewritten for pictures. Every one names the
-evidence it rests on, because "the emoji looked fine" is not an observation.
-
-#### What a future campaign owes
-
-1. **Pictures, not glyphs**, per platform, on W1, W2 and A1 - and the iPhone, where the font never
-   drew: every emoji of a message is an `img.emoji` with `naturalWidth > 0`, read from the DOM.
-2. **The same codepoint is the same picture on every device.** One message carrying a v1 emoji, a
-   country flag, a ZWJ family, a skin-toned person, an Emoji 16 and an Emoji 17 addition, and one sent
-   WITHOUT U+FE0F (`📽`); compare the rendered bubble across the clients.
-3. **A flag and a ZWJ sequence are ONE picture**, not two letters or five people.
-4. **The whole set is reachable in the picker**: scroll to the last row of the last category, on a
-   short viewport, with the recents row both empty and full.
-5. **The panel is entirely inside the viewport** at each anchor: first message, last message, a row at
-   the top edge, one at the bottom, on the own side and the peer side.
-6. **French search finds things with a typo** ("ceour") **and English search works with the network
-   off** once the dataset is cached.
-7. **Pick, send, peer**: the codepoint the peer receives equals the one picked, and it is still a
-   CODEPOINT on the wire - copy the text out and assert on it. **WebKit's copy is the unmeasured one**
-   (Chromium carries the `alt`, measured).
-8. **A reaction** carrying a flag and a ZWJ sequence survives the round trip, including the
-   distinct-reaction limit path.
-9. **The notification shade is drawn by the OS**, so an emoji in a notification body is the SYSTEM
-   glyph. Assert what it does; do not assert that it matches.
-10. **Exported artefacts**: an emoji in a poster, a calendar and a trombinoscope PDF is a picture in
-    the raster (measured in Chromium through snapdom; owed on the phones that export).
-11. **Cold start, offline, on A1**: open the picker with no network and confirm the set is complete AND
-    that no request left the device.
-12. **The composer on the iPhone**: its emoji keyboard, a paste, and an IME commit each turn into a
-    picture with the caret after it, and Backspace removes the emoji whole (measured in Chromium only).
-
-What the pictures do NOT change - the shade, the share sheet, form fields and every other native
-surface, drawn by the platform - is stated once, on
-[emoji](frontend/emoji.md#what-the-pictures-do-not-change).
+The pictures replaced the font on 2026-09-25 ([emoji](frontend/emoji.md)). **Open:** the twelve rows of the second campaign, all needing real devices (the iPhone, where the font never drew, first) - they live in [emoji](frontend/emoji.md#what-a-future-campaign-owes---the-twelve-rows-moved-from-the-backlog-2026-10-08).
 
 ## Storage and retention
 
-The server side has a page already - [storage-forecast](infrastructure/storage-forecast.md) - and it
-is where any server storage measurement belongs.
-
 ### P1 - the resume reload and the receive ratchet: fixed, owed one device reading; a SEND-side rewind is still unexplained (measured on the Mi 9T 2026-09-08)
 
-The 2026-09-08 captures, the four-row decryption table and the mechanism are on [mls-desync-prevention](protocols/mls-desync-prevention.md#the-resume-reload-re-installed-a-receive-ratchet-behind-the-live-one---the-2026-09-08-captures-mi-9t). **Two defects, both shipped:** A (the duplicate batch, #435, `v0.16.6`) and B (the resume reload rewinding the receive ratchet; #1527 - the native reload refuses `live-ahead`, receives included). **What is owed:**
+Defects A (#435, `v0.16.6`) and B (#1527, the native reload refuses `live-ahead`) are shipped; mechanism in [mls-desync-prevention](protocols/mls-desync-prevention.md#the-resume-reload-re-installed-a-receive-ratchet-behind-the-live-one---the-2026-09-08-captures-mi-9t). **Owed on the Mi 9T:** (1) resume right after a received frame with no checkpoint between and read `[MLS][Tauri] Resume reload SKIPPED`; (2) re-measure the `E/` pair (a duplicate `recevoir_messages_batch` 83 ms apart) on a rebuilt APK (`adb logcat -v time` during NOTIF-7); (3) reproduce the 2026-09-06 SEND-side rewind from the phone. **Do not await the outbound checkpoint** ([why](protocols/mls-desync-prevention.md#the-checkpoint-window-and-the-per-document-snapshot-counter-moved-from-the-backlog-2026-10-08)).
 
-1. **Defect B on the phone**: resume the Mi 9T right after a received frame with no checkpoint between, and read `[MLS][Tauri] Resume reload SKIPPED` instead of a second decrypt of the same generation.
-2. **Defect A's field re-measurement** on a rebuilt APK: the `E/` pair (a duplicate `recevoir_messages_batch` 83 ms apart) must be gone (`adb logcat -v time` during NOTIF-7).
-3. **The 2026-09-06 SEND-side rewind**, measured from the PHONE (W1 and W2 saw its read receipt at epoch 139): unexplained, needs a reproduction on the Mi 9T.
+### P2 - the notification QUICK ACTIONS exist only while the app is DEAD, so check K's backgrounded case is not performable (measured 2026-09-06)
 
-**The checkpoint window**: the outbound checkpoint in `emitFrame` deliberately does not await, sized for 1.5 s in August, and costs 17-20 s on a 19.5 MB `mls.bin`, so any death of the process in that window restores a state behind frames that left. **Do NOT "fix" it by awaiting the checkpoint** (refuted in August at 1.7 s per send, seventeen now): the invariant is that a state restored behind a frame that left is RECOGNISED and repaired, which is a counter and a burn.
-
-### P2 - the notification QUICK ACTIONS exist only while the app is DEAD, which is why check K's backgrounded case has never been performable (measured on the Mi 9T, 2026-09-06)
-
-Two posters write Canari's Android notifications and only one of them is the app's own.
-
-| | posts when | style | quick actions |
-|---|---|---|---|
-| `CanariFirebaseMessagingService.showNotification` | a push arrives - i.e. the app is killed or its ACK was late | `MessagingStyle`, stacked, self `Person` | `buildReplyAction` + `buildMarkReadAction`, always, on any non-`channel_` conversation |
-| `useNotifications.svelte.ts` -> `sendNotification` | the JS layer has the frame - i.e. the app is ALIVE, foreground or background | whatever `tauri-plugin-notification` builds | **none** |
-
-The notification record read off the device for a real message received while backgrounded carries
-no `actions` at all, and the shade drew no `Repondre`. So the gesture `device-verification.md` step
-4 asks for **cannot be made** in the state check K is written about, which is a better explanation of
-why that re-measurement has sat unmade since 2026-08-30 than "nobody got round to it": the 2026-08-30
-PASS was taken on a KILLED app, where FCM posts and the actions exist.
-
-**This is not the same defect as the missing body** (fixed 2026-09-06 by giving every `sendNotification`
-a `largeBody`; see `CHANGELOG.md`). That one was the plugin dropping text it had been handed; this is
-the app never asking for the actions on this path at all. WP-XP-1 shipped them believing they were on
-every message notification.
-
-**What is owed before anything is written**: decide whether the JS path should post through the
-Kotlin service - which already builds the right thing, stacks by conversation, and refreshes the
-badge - or grow its own actions. The first removes a poster rather than teaching a second one the
-same lesson, and is the shape the rest of this codebase has converged on everywhere else; it needs a
-Tauri command bridging into `showNotification` and an answer to what happens on desktop, where
-neither the service nor FCM exists. **Check K stays unmeasurable in the backgrounded case until this
-is decided**, and `archive/k.mjs` records `SKIPPED` rather than `FAIL` when no reply is made, so a
-run cannot be mistaken for a product verdict.
+The JS-side `sendNotification` path posts no reply/mark-read actions; only the Kotlin FCM service does. **Owed: a decision** - post through the Kotlin service or grow actions on the JS path ([mobile](frontend/mobile.md#notification-quick-actions-exist-only-while-the-app-is-dead-measured-on-the-mi-9t-2026-09-06)). Check K records `SKIPPED` until then.
 
 ### P1 - THE MINTING LOOP HAS NEVER BEEN OBSERVED ON THE HANDSET, AND A BLOB'S SIZE CANNOT SETTLE IT
 
-Every count this repository has carried for the one-time pool - 3053, 3051, 2782, ten thousand - was
-INFERRED from a blob's weight plus an assumption about what else was in it. The full record, the
-production populations, and the rules and candidate causes REFUTED on the way are on
-[key-package-pool](protocols/key-package-pool.md), the only copy. **Do not re-derive any of it**; in
-particular all three reclaims are refuted against this pool (`0 expired, 0 undecodable` on every
-census), and the 2026-09-06 prune bounds the ceiling rather than touching the loop that fills it.
-
-**WHAT IS OWED, IN ORDER.**
-
-1. **ONE OBSERVATION OF THE RELOAD PATH ON A REAL HANDSET, READ OVER CDP AND NOT LOGCAT.** The
-   instrument ships and ACCUSES rather than refuses: `reconcilePublishedKeyPackages` refuses to purge
-   a package this process minted (`publishedThisSession` holds the fingerprints), counts the refusal
-   and raises it at `console.error`. The 2026-09-08 attempt drove a full NOTIF phase across the phone
-   and found no `[RESUME]` line at all - **which is not evidence the reload never ran**: the success
-   path logs at `debug`, which a release build may filter, and the JS half of the sequence never
-   reaches logcat, because logcat carries only the native side and the WebView's console is read over
-   CDP. So the owed line is one CDP console read across a background/resume.
-2. **A DEVICE THAT CAN REPORT ITS OWN STATE CENSUS**, and it is now cheaper than (1): groups, members,
-   one-time bundles, last-resort. It would settle this entry, the blob entry and the 2026-09-06
-   19.5 MB question in one line each. Filed on the blob entry, where it serves three items.
-3. **THE PER-CONNECTION FALLBACK REUSE**, already filed against the blob entry - the same family of
-   waste.
-
-**AND THE SHIPPED GUARD CLOSES THE OBSERVED CASE, NOT THE CLASS.** `publishedThisSession` is
-per-process and deliberately not durable - the claim it supports is "this process minted these
-bytes". Packages minted in an EARLIER session are still purgeable, so a device whose keystore is
-emptied and then RESTARTED would run the loop again with nothing to refuse it.
+Population, refuted causes and rules are on [key-package-pool](protocols/key-package-pool.md), the only copy. **Owed, in order:** (1) one CDP console read (not logcat) of the reload path across a background/resume on a real handset, looking for `[RESUME]` and the `publishedThisSession` refusal counter; (2) a device-side state census (groups, members, one-time bundles, last-resort); (3) the per-connection fallback reuse. The shipped guard closes the observed case, not the class: `publishedThisSession` is per-process, so a keystore emptied and then RESTARTED would run the loop again.
 
 ### P2 - NOTHING REPUBLISHES A LAST-RESORT PACKAGE'S EXPIRY, SO THE UNDATED ROWS DRAIN ONLY AS THEIR OWNERS UPGRADE (production, re-measured 2026-09-22)
 
-**DOWNGRADED P1 -> P2 ON 2026-10-01.** Both client repairs below are REFUTED and the entry itself
-says it closes on the drain; what is owed is a re-measure and, only if the count floors, the
-server-decoder decision. The 1013-key-package web measurement that used to sit above this entry was
-closed (`0 expired`, accrual correct by construction) and its numbers are on
-[key-package-pool](protocols/key-package-pool.md#a-web-profile-holds-1024-bundles-all-live-and-that-is-accrual-correct-by-construction-production-consoles-2026-09-16).
-
-**The re-measurement this entry was waiting for happened, and it refuted the entry.** The server did
-NOT refuse expired last-resort packages: the guard tested `device.notAfter && ...`, that column is
-written only by `register-device`, and 683 of 719 rows on production were NULL - so 95% of devices
-escaped the refusal entirely. A console export the user took on 2026-09-18 caught one served 3.88
-days dead, the join failing on every launch. The shipped half, the one-way bound that needs no client
-to speak, and why the two tables need opposite answers are on
-[key-package-pool](protocols/key-package-pool.md).
-
-**What is owed is the half a server cannot do.** `lastResortDeadline` condemns the rows it can PROVE dead; the rest stay unjudgeable until their owner re-enrols, because `republishKeyMaterial` refreshes the one-time pool every 30 s and never touches the last-resort row. Both client shapes (carry the date on that routine; re-mint the last resort when it has elapsed) are REFUTED, and not to be re-opened: each is code the client runs, so it reaches only devices already dating their row at `register-device` (`mlsDeliveryApi.ts`, #759, first in `v0.18.10`). Migration 025 (v0.18.12) made the one-time pool TOTAL (0 undated of 31,636, `DEFAULT now() + '84 days'`) and refused the 3 last-resort rows it could prove dead; 677 stayed unjudgeable.
-
-#### THE UNDATED ROWS ARE A CLIENT VERSION, NOT A MYSTERY - AND THEY ARE DRAINING (production, 2026-09-22)
-
-**759 rows, and the split is EXACT on one version boundary with no exception anywhere in the table:**
-
-| `deviceAppVersion` | dated | undated |
-| --- | --- | --- |
-| `>= 0.18.10` | **162** | 0 |
-| `< 0.18.10` | 0 | 134 |
-| none at all (a column older rows predate) | 0 | 463 |
-
-`notAfter` is not derived by the server: `register-device` reads `body.notAfter`, so **the column
-records whether the CLIENT sent one**. 162 of 162 and 597 of 597, across 28 distinct versions - and
-**the cause is confirmed rather than inferred from the correlation**: `git log -S` puts the line that
-sends it (`mlsDeliveryApi.ts`) in `f88a65d0b` (#759, 2026-09-16), and `git tag --contains` makes
-`v0.18.10` the first release carrying it. The boundary in the table and the boundary in the history
-are the same one. So "unjudgeable BY CONSTRUCTION" was the wrong reading - these rows name the
-un-upgraded fleet, and nothing about the package or the protocol is unknowable.
-
-**AND THAT IS WHY BOTH SHAPES ABOVE ARE REFUTED.** Each is code the CLIENT would run, so each can
-only reach a device already on a build that dates its row at `register-device`. **A repair written
-in the client can never be the fix for a population defined by not carrying the client change.**
-
-**THE ROWS DATE THEMSELVES, AND THE RATE IS MEASURED**: 677 undated on 2026-09-18, **597 four days
-later** - about 20 a day, through nothing but people opening an updated app. Of the 246 devices
-that re-registered in the last 7 days, 162 (66%) were already on `>= 0.18.10`. By age since last
-registration the undated residue is 84 under 7 days, 359 at 7-30 days, 76 at 30-60 and 77 at 60-84,
-so most of it is devices that simply have not been opened since the boundary shipped.
-
-**ONE SHAPE IS LEFT AND IT IS A SERVER ONE, WITH A COST THIS ENTRY DOES NOT PAY BLIND.** The date is
-a property of the `keyPackage` bytes the server already stores, so the server could read it without
-any client speaking - which is the only thing that can reach the 597. It would mean decoding an MLS
-KeyPackage's leaf lifetime in `chat-delivery-service`, a TypeScript service whose whole design is
-that it never interprets MLS bytes, and no decoder exists there. **That is the trade to decide, and
-it is the entry - not a count nobody can produce.**
-
-**SO THIS CLOSES ON THE DRAIN, NOT ON A FIX.** Re-measure the table; if the undated count keeps
-falling at ~20/day it reaches zero by itself, and the server-side decoder buys only the tail. The
-one number that would change the disposition is a floor: an undated count that stops falling while
-devices are still registering means a population that never upgrades, and only then is the decoder
-worth its cost.
+Undated rows are exactly the clients below `0.18.10`, draining about 20 a day; both client repairs are REFUTED. Measurements and mechanism: [key-package-pool](protocols/key-package-pool.md). **Owed:** re-measure the undated count; only if it stops falling, decide on a server-side KeyPackage lifetime decoder in `chat-delivery-service` (which today never interprets MLS bytes).
 
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
 
-`saveMlsStateEncrypted` refuses any tagged write whose version is not strictly newer than the stored
-one. The version comes from `tagMlsSnapshot`, which is `++_snapshotSeq` - a module-level counter,
-and therefore **one counter per DOCUMENT**, seeded from the persisted version by
-`seedMlsSnapshotSeq` when the tab loads.
-
-Within one tab this is exactly right and is what the guard was written for: a slow off-thread Argon2
-flush finishing after a fresher one must not clobber it, and there `version < stored` is a true
-statement about ordering.
-
-**Across two tabs it is comparing two unrelated sequences.** Both tabs load, both seed from stored
-version *N*, and both then produce *N+1* for their next snapshot - different bytes, same number. The
-guard sees `version <= stored` and drops the second one. Measured on TAB-4, which drives two tabs of
-one client: `Skipping stale MLS state write (v3294 <= stored v3294)` on an ordinary run.
-
-**What is not yet answered is whether anything is LOST.** The dropped snapshot may hold state the
-winner does not - the second tab may have processed a frame the first had not - and the counter
-cannot say, because it is not a clock over the pair. In practice a later flush from either tab
-carries a higher number and lands, so the state is expected to converge; that expectation is
-untested and the window is unmeasured. **A clock written by one writer is not evidence about
-another's ordering** - the same rule as a liveness column written by something other than the thing
-whose liveness it measures.
-
-The wording is already fixed (2026-09-05): the collision case says so instead of claiming staleness,
-and `hex.mlsVersion.test.ts` pins both branches. That makes the event visible; it does not decide
-it. Deciding it means either making the version a shared counter (a `BroadcastChannel` claim, or an
-IndexedDB read-modify-write inside the same transaction as the put - the transaction is already
-there) or establishing that convergence always happens and how long it takes.
+Whether anything is lost is unmeasured; the state is expected to converge. **Owed:** a shared counter or a proof of convergence and its delay ([mls-desync-prevention](protocols/mls-desync-prevention.md#the-checkpoint-window-and-the-per-document-snapshot-counter-moved-from-the-backlog-2026-10-08)).
 
 ## Payments
 
-### A PAID PUBLIC FORM (user, 2026-09-30) - PARKED BEHIND LYDIA, THE FREE HALF IS BUILT
+Lydia ("Paiement Canari") and cash are the only payments since Stripe was removed (#1589, [stripe-archive](stripe-archive.md), which lists the names kept for rollback and old clients). `payment_provider` is `lydia | disabled`, default `disabled`; mechanism in [payments](frontend/modules/payments.md) and [core-service](services/core-service.md#payments-stripe--lydia).
 
-Asked for: a form anyone can open from a shared link, with no Canari account, that can take a single price. **The free half is shipped** (`/f/:id`, migration 068, [forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)); **owed: one guest answer sent from a private window on `dev.canari-emse.fr`, and the `canari-dev-frontend-1` log showing a real client address rather than the Docker gateway** (the `real_ip` change it carries). **The paid half waits for WP-LYDIA-1 below**, because Lydia does not work today and Stripe is leaving the app (user). **Open question first:** does the existing paid-form checkout work at all - read the core-service and social-service logs on dev (the scoping notes are on [forms](frontend/modules/forms.md#the-paid-half-what-it-needs-scoped-2026-09-30)).
+### WP-LYDIA-1 - Lydia live in production, with one payment observed end to end
 
-### Flipping `payment_provider` from Stripe to Lydia (WP-LYDIA-1)
+**Owed:** Master tests one homologation payment end to end on dev with a test account (payer e-mail prompt, callback included; not yet observed); production tokens and `LYDIA_ENV=production`; each association re-onboarding on Lydia (**an association with a Stripe-only payment account is no longer payment-ready until it does**); Lydia's still-open Livrable A answers ([plan](../../plans/stripe-to-lydia-migration.md)). The `business/create` `BUSINESS_VALIDATED` webhook is deliberately NOT built: no documented signature and `vendor_token` is public, so anyone could forge an association's onboarding state - ask Lydia whether it signs before building it.
 
-**The code is not the blocker - it is already written and tested.** `PaymentProvider` is an interface
-(`apps/core-service/src/payment/payment-provider.interface.ts`), `LydiaPaymentProvider` implements the
-two flows that map cleanly onto it (one-off checkout, session lookup) with its own signature module
-and specs, and the choice is a platform config column (`payment_provider`) that **defaults to
-`stripe`**. Stripe is what runs today and nothing about that is broken.
+### Owed to the user after the Stripe removal
 
-What is missing is not code, which is why this is a question and not a P-anything: **the answers
-Lydia still owes** (Livrable A, below). **The homologation credentials themselves are no longer
-missing** - the `provider_token`/`private_token` pair arrived 2026-09-18 and is in GitHub secrets
-(`LYDIA_PROVIDER_TOKEN`, `LYDIA_PROVIDER_PRIVATE_TOKEN`), so `serve-prod.yml` writes them into
-`core-service` on the next stable release exactly as it already does for Stripe's. **This does
-NOT flip anything live**: `platform_config.paymentProvider` still defaults to `stripe`, an
-admin-only switch at `/admin/platform` - the credentials merely make homologation testing
-possible once flipped, deliberately, by a human. Everything that does not map - live balance and
-status, saved payment methods - throws a documented error rather than faking a result, and that is
-deliberate: Lydia has no live status-poll endpoint, and the saved-card flow was **explicitly
-dropped by the user** rather than reimplemented, so every purchase becomes its own interactive
-request. Do not re-litigate that.
+Delete the GitHub secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUB_KEY` and the Stripe webhook endpoint; review the rewritten CGU and privacy text naming Lydia. Later, once the previous release is no longer a rollback target: drop the three Stripe columns and rename the permission with a data migration ([stripe-archive](stripe-archive.md#the-names-that-outlived-the-processor-kept-on-purpose)).
 
-The full provider mapping, the remaining open questions and the credentials still owed are in
-[`plans/stripe-to-lydia-migration.md`](../../plans/stripe-to-lydia-migration.md), which the wiki page
-[payments](frontend/modules/payments.md) already points at.
+### A PAID PUBLIC FORM (user, 2026-09-30) - the paid half waits for Lydia
 
-Checkout routing and server-side confirmation are shipped: `resolvePaymentTarget` takes the active provider, `POST /api/payments/lydia-request-callback` verifies the signature and fans out through a shared `order_ref` (`lydia-order-ref.ts`) - mechanism on [core-service](services/core-service.md#payments-stripe--lydia).
-
-**What still blocks actually flipping the switch:**
-1. **The payer's address shipped (2026-10-05)**: the PAYER TYPES it at payment (`PayerEmailPrompt`, only when the provider is Lydia), it is never stored ([payments](frontend/modules/payments.md#the-payer-types-an-e-mail-and-lydia-bounds-the-amount-2026-10-05)). **NOT yet observed end to end**: it needs a dev pre-release and one homologation payment.
-2. **The `business/create` `BUSINESS_VALIDATED`/`BUSINESS_UNVALIDATED` webhook is deliberately not
-   built.** It has no documented signature and `vendor_token` is PUBLIC - building it as-is would let
-   anyone knowing another association's vendor_token forge or break its `lydiaOnboardingComplete`,
-   with no resync since Lydia sends the event once. Add "does `business/create`'s `webhook` param
-   have a signature scheme?" to Livrable A below before building this.
-
----
-
-### Removing Stripe from Canari - decided by the user 2026-10-05, NOT started
-
-"In fine il va falloir tout enlever (a minima archiver) ce qui concerne Stripe" (user). 129 files
-mention Stripe (counted 2026-10-05 with `git grep -il stripe` over apps, frontend/src, infrastructure
-and .github; `bun.lock` and generated Paraglide output not excluded by the count, so treat it as an
-order of magnitude). **Nothing here is safe before Lydia has taken a real payment in production and
-every residual Stripe balance has been paid out** - the dependency order is the whole plan:
-
-1. Lydia live (production tokens, `LYDIA_ENV=production`, each club re-onboarded) and one payment
-   observed end to end, callback included.
-2. Residual Stripe Connect balances paid out (three prod associations are onboarded on Stripe today).
-3. Then, one pull request per layer, each green alone: the saved-card surface
-   (`setup-payment-method`, `payment-methods`, `charge-*-saved-method`, `PaymentModal`,
-   `SettingsPaymentsSection`, `SavedCardsList`, `AddCardForm`, already dropped BY DECISION for Lydia);
-   `StripePaymentProvider`, its webhook, `stripe-*.ts`, `stripeFees` and the SDK dependency; the
-   `stripe*` columns and `paymentProvider`'s `stripe` value (a migration, never a rename); the
-   `STRIPE_*` secrets in CI, compose files and `infrastructure/MIGRATION.md`; the CGU and privacy
-   text naming the processor.
-4. "Archive" = delete from `main` and keep the commit reachable under a tag (`archive/stripe`);
-   no dead code stays in the tree (CLAUDE.md: delete unused code immediately).
-
-Until then the platform switch `payment_provider = disabled` is the kill switch, and
-`stripeAccountId` columns must keep being written by nothing but the Stripe provider.
-
----
+The free half is shipped (`/f/:id`, migration 068, [forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)). **Owed:** one guest answer sent from a private window on `dev.canari-emse.fr`, with the `canari-dev-frontend-1` log showing a real client address rather than the Docker gateway (the `real_ip` change it carries); the paid half is scoped on [forms](frontend/modules/forms.md#the-paid-half-what-it-needs-scoped-2026-09-30) and needs WP-LYDIA-1.
 
 ### P3 - an admin who never joined a private salon is not told when it is deleted
 
-`channelAudience` is the salon's roster, and since 2026-08-19 an administrator reaches a private
-salon by JOINING it rather than through `workspace.manage` - so one who has not joined is not on the
-roster and receives no `channel.deleted`, nor any other event the salon emits. They ARE shown that
-the salon exists (name only, `viewerHasAccess: false`), so their sidebar keeps a row for something
-that is gone until their next load.
-
-**Not fixed by widening the audience**, which is the obvious move and the wrong one: that is exactly
-what put every private salon's messages, typing, pins and poll tallies on the socket of members the
-same server refuses to serve them over REST, and it was closed this week. The shape that would work
-is a separate, contentless `channel.gone` addressed to the community - worth doing only if the stale
-row is ever seen to matter, since a reload clears it and nothing is wrong underneath.
+Not on the roster, so no `channel.deleted`; the sidebar keeps a stale row until the next load. **Do not widen the audience** (that is what leaked private-salon traffic to non-members); the shape that would work is a contentless `channel.gone` addressed to the community, worth doing only if the stale row is ever seen to matter.
 
 ### P2 - WP-RESTORE-1: Zero-Tap Sign-In restoration, required by Google Play from April 2027
 
-**Play's requirement, verbatim in substance:** an app that supports user sign-in, optional or
-mandatory, must support Zero-Tap Sign-In restoration when the user moves to a new Android device.
-Mobile and tablet only. Games are exempt; Canari is not. Enforcement begins **April 2027**. Three
-exemptions exist and none obviously fits us: a Block Store integration completed by **30 September
-2026**, enterprise or permanently-private apps, and a regulatory exemption requested for
-financial/healthcare mandates.
-
-**The mechanism is the Restore Credentials API**, and a restore credential is a system-managed
-WebAuthn public key credential - a passkey the user never sees, tied to the package name, created
-silently after sign-in, backed up with the device and readable on the new one during setup. It is
-`androidx.credentials`, minimum Android 9 (our minSdk is exactly 28, so every install qualifies),
-GMS core 24220000 or higher. **It works regardless of `android:allowBackup`**, which matters here:
-the credential lives in the system credential store, not in app data, so it is orthogonal to the
-device-transfer exclusion shipped on 2026-08-26 and does not reopen it.
-
-**What this costs is a server we do not have.** `grep` over `apps/core-service/src` for `webauthn`,
-`passkey`, `publicKeyCredential` and `fido` returns NOTHING: there is no WebAuthn registration or
-assertion endpoint anywhere, and a restore key needs both - a `PublicKeyCredentialCreationOptions`
-to create, an assertion to verify, and a store that keeps restore keys distinguishable from real
-passkeys. Canari's session model is an opaque refresh row plus a stateless 1 h access token
-([sessions](sessions.md)); a successful assertion has to mint exactly that pair.
-
-**THE PRINCIPLE IS DECIDED - THE USER ACCEPTED IT ON 2026-08-26, AND THE WORK IS SCHEDULED AFTER
-THE CAMPAIGN.** The question put to them was not technical: zero-tap means the new device is signed
-in with no password and no second factor, and Google's documentation states plainly that the API
-"does not handle multi-factor authentication", while Canari has 2FA and SETUP-4 exists because
-re-enrolling a device costs one. It was accepted on the ground below - a restored session
-authenticates, it does not decrypt - and because the exemptions on offer (enterprise, permanently
-private, financial or healthcare regulation) do not describe a student messaging app, so refusing
-would have risked a publication block rather than bought time. **Do not re-open the principle; what
-is open is the build, and it does not start before the ladder reaches the bottom.**
-
-**What it does NOT restore, and why that is fine.** Keystore material is non-exportable, so the MLS
-device key does not travel. A zero-tap sign-in authenticates; it does not decrypt. The new device
-still enrols as a new MLS client and is re-invited, exactly as
-[frontend/backup](frontend/backup.md) already describes for a restore onto a different device. The
-feature is therefore coherent with E2EE - it removes a password prompt, not a re-enrolment.
-
-**Three traps to carry into the work when it is scheduled:**
-
-- **The logout half is a requirement, not a nicety** - Play requires the restore key be deleted when
-  the user signs out. Canari's logout lives in TypeScript, so this needs a Tauri command down to
-  `ClearCredentialStateRequest(TYPE_CLEAR_RESTORE_CREDENTIAL)`, and it must run on the paths that
-  log out WITHOUT a user gesture too - a 401/403, a revoked session.
-- **The library is `1.7.0-alpha03` at the time of writing.** An alpha is not shippable on the
-  release track here; check for a stable line before starting, not after.
-- **`E2eeUnavailableException` is expected, not exceptional** - it fires when the user has no screen
-  lock or no Google backup, and the documented handling is to retry with `isCloudBackupEnabled =
-  false`. That is a second path, so it is logged at a level that accuses and its rate is measured
-  before anyone believes what it says.
-
+The principle is accepted (user, 2026-08-26) and the work is scheduled AFTER the campaign; the Block Store exemption date of 30 September 2026 has passed and enforcement begins April 2027. It needs a WebAuthn server `core-service` does not have. Mechanism, the E2EE argument and the three traps: [mobile](frontend/mobile.md#wp-restore-1---zero-tap-sign-in-restoration-accepted-2026-08-26-scheduled-after-the-campaign).
 
 ## Tooling
 
 ### P2 - a cargo bump in `mls-core` leaves two committed lockfiles Dependabot will never fix
 
-`frontend/mls-core` is a library: its `Cargo.lock` is gitignored. `frontend/mls-wasm` and
-`frontend/src-tauri` are binaries with COMMITTED lockfiles, and both depend on `mls-core` by path -
-so every crate `mls-core` names appears in their locks too.
+`mls-wasm` and `src-tauri` carry committed locks and depend on `mls-core` by path, so Dependabot's single pull request (against `mls-core/Cargo.toml`) is incomplete by construction and fails CI's lockfile step - the one dependency update that cannot merge unattended. **Remedy, not done:** one cargo workspace with ONE `Cargo.lock` for `frontend/`, which restructures a Tauri build this workstation can only compile. Until then such a bump is done by hand in one commit refreshing all three locks ([cicd](cicd.md#dependency-updates-and-the-auto-merge-that-ships-them)).
 
-**Dependabot opens one pull request, against `mls-core/Cargo.toml`, and that pull request is
-incomplete by construction.** There is no manifest to change in the other two directories, so their
-locks keep the old version and CI's `Refuse a lockfile the manifests no longer describe` step fails
-with `cannot update the lock file ... because --locked was passed`. Measured on PR #300 (argon2
-0.5.3 -> 0.6.0, since CLOSED unmerged - the class still holds): four jobs red, two of them for this
-reason alone and nothing to do with argon2.
+### P1 - ONE CLASS OF DEPENDENCY UPDATE STILL CANNOT MERGE UNATTENDED, AND IT NAMES ITS MISSING TEST
 
-This is not a ceiling refusal - the gate is right to fail, the pull request really is unmergeable -
-and it is not something `@dependabot recreate` can fix either. **It is the one shape of dependency
-update in this repository that CANNOT be merged unattended**, which is what makes it worth a row.
-
-**The remedy, named rather than done:** make `frontend/` a single cargo workspace with ONE
-`Cargo.lock` covering `mls-core`, `mls-wasm` and `src-tauri`. One lock means one resolution, so
-Dependabot's pull request is complete again and the class of failure disappears. It was not done in
-the same pass as the argon2 bump because `src-tauri` is the crate whose build this workstation can
-only COMPILE - never run on iOS or macOS - and restructuring a Tauri build is not a change to make
-where the only available gate is `cargo check`. Until then, a bump of any crate `mls-core` names is
-done by hand in one commit that refreshes all three locks, and the Dependabot pull request is
-superseded rather than merged.
-
-### P1 - TWO CLASSES OF DEPENDENCY UPDATE STILL CANNOT MERGE UNATTENDED, AND EACH NAMES ITS MISSING TEST
-
-**`ci.yml`'s `Dependency ceiling` check refuses only what this repository has no gate for**, and
-every refusal names its missing test in its own annotation (`::error title=No gate would see this
-fail::`), which is part of `CI passed` and therefore binding rather than advisory. The standing directive is that a refusal is
-never a routing decision to a human queue (user, 2026-08-31), so THIS TABLE IS THE WORK: each row
-closed is a whole class of update that starts merging on its own. Five rows closed between
-2026-08-31 and 2026-09-15 and are not repeated here - the gates they bought are in `CHANGELOG.md`
-and [cicd](cicd.md). **Quote no refuse COUNT from anywhere**: the hourly sweep that used to print one
-was deleted 2026-09-04, so the only current reading is `gh pr list --app dependabot` with the
-ceiling check's annotation on each.
-
-| Refused | Why the suite cannot see it | The test that retires it | State |
-| --- | --- | --- | --- |
-| `webrtc` and the ICE crates (no PR open as of 2026-10-01; the last, #431, was CLOSED) | the SFU has ten tests and not one touches the ICE stack | one relay-path call - campaign rung 15 CALL, which has no runner | not started, and the SFU is already SIX majors unplaced (see "the SFU runs SIX webrtc majors it has never placed a call on" in this file). **AND THE NEXT ONE IS A PORT, NOT A BUMP** - `webrtc` 0.20 is a rewrite onto the Sans-I/O `rtc` crate and gives 26 errors against this SFU, measured 2026-09-15, so the call comes after the port |
-| `stripe` | **half of it the compiler already sees, and that half is safe.** The SDK types `apiVersion` as the literal its release was cut against and this service pins that value in one constant, so a bump that still COMPILES cannot change which API the app talks to and merges like anything else. A bump that crosses an API version stops the tree compiling in four files at once. What no gate can answer is whether the app still READS what the new API sends - payload shapes and object fields are what an API version decides | fixtures per API version for this service's Stripe surface: the events `webhook.controller.ts` handles and the fields `stripe-payment-provider.ts` and `users.service.ts` read, so a crossing is proved rather than read in a changelog | open, and no Stripe bump PR is open as of 2026-10-01 (#304, 22.3.2 -> 22.6.x, was CLOSED unmerged; it wanted `2026-08-26.dahlia` where the constant says `2026-06-24.dahlia`, and CI was red on exactly those four files). The next crossing is the live case. Crossing it is a decision about PAYMENTS and therefore the USER's - see `apps/core-service/src/payment/stripe-api-version.ts`, which says so in its own docblock |
-
-**ONE FLAKE IS RECORDED HERE BECAUSE AN UNATTENDED MERGE IS EXACTLY WHAT A FLAKE BREAKS.**
-chat-delivery-service's suite failed 1 test in the first of five consecutive local runs on
-2026-08-31 and passed 308/308 in the other four; the failing run was concurrent with a CD build on
-the same machine, and its output was not captured. Not reproduced, not identified. If it recurs,
-capture the suite name before anything else - a green-gated auto-merge that retries into a green run
-will merge on the second try and tell nobody.
-
-**Do not widen this list to feel safe.** Every entry costs the queue it blocks, and the honest test
-of a new one is: name the failure, then name the test that would have caught it. If you cannot name
-the test, the entry is a guess.
+`webrtc` and the ICE crates are refused by `ci.yml`'s `Dependency ceiling` check: the SFU has ten tests and none touches the ICE stack. The test that retires it is one relay-path call (campaign rung 15 CALL, which has no runner), and the next version is a PORT onto the `rtc` crate (26 errors against this SFU, measured 2026-09-15), not a bump. See the SFU entry under "iOS, platform and runtime". Quote no refuse count: read `gh pr list --app dependabot`. **Recorded flake:** chat-delivery-service failed one test in one of five local runs on 2026-08-31 and was not reproduced; if it recurs, capture the suite name first. Do not widen the ceiling list to feel safe: name the failure, then the test that would have caught it.
 
 ### P3 - `submissions.formId` names a form nothing keeps, and 28 rows point at deleted ones
 
-**Measured on prod 2026-08-31.** There is no foreign key at all:
+No foreign key (measured on prod 2026-08-31): 28 orphaned submissions over twelve missing forms, 5 of them `paid` (36,00 EUR). **Decision owed**, not "add a foreign key" (a cascade would delete paid submissions): a tombstoned form (soft delete) or a `formTitle` denormalised on the submission at write time.
 
-```sql
-SELECT conname FROM pg_constraint WHERE conrelid = 'submissions'::regclass AND contype = 'f';
--- (0 rows)
-```
+### P3 - MiGallery's `resolve()` bypasses, and an inherited disable is the only reason nobody sees them
 
-Twelve `formId` values in `submissions` match no row in `forms`. Of the 28 orphaned submissions,
-**5 are `paid`** (36,00 EUR in total), 6 `pending` (101,00 EUR never charged), 16 `free` and 1
-`cancelled`. Only one form of the thirteen referenced still exists. The amounts date from May and
-June 2026 and read as forms from the development period, so this is P3 on the money and P3 on the
-count - but not on the shape.
-
-**What it costs today**: five people have a paid line whose title nobody can render, and
-`markPaid`'s own `grantCotisationIfConfigured` would have had nothing to read either. Deleting a form
-also strands whatever `user_tags` its `grantsCotisation` had issued, which no longer names anything.
-
-**The decision this needs is not "add a foreign key"** - a cascade would DELETE paid submissions,
-which is worse than the orphan. The shapes worth weighing are a tombstoned form (soft delete, the
-title survives, the join keeps working) or a denormalised `formTitle` on the submission at write
-time. The first keeps one truth; the second survives a hard delete. Neither is obviously right,
-which is why this is written down rather than done.
-
-### P3 - 108 navigations bypass `resolve()` (92 here, 16 on MiGallery, counted 2026-08-27), and an inherited disable is the only reason nobody sees them
-
-**The Canari half is done (2026-10-05)** - every call site goes through `resolve()` (`internalPath()`, `src/lib/utils/internalPath.ts`) and the lint gate is the test that the sweep stays complete. **What is left is MiGallery**: `../MiGallery/oxvelte.config.json` still disables `svelte/no-navigation-without-resolve` (verified 2026-10-06; 16 call sites, 86 vs 70 findings with the file moved aside). Work: wrap them in `resolve()` via the same `internalPath()` pattern, then delete the disable. **Measure by MOVING the file, never by dropping `--config`**: oxvelte finds the file in the working directory either way, and that comparison is a thing against itself.
+The Canari half is done; `../MiGallery/oxvelte.config.json` still disables `svelte/no-navigation-without-resolve` (16 call sites). Wrap them with the same `internalPath()` pattern, then delete the disable. Measure by MOVING the config file, never by dropping `--config`.
 
 ## Localisation
 
 ### P2 - NO REFUSAL CAN BE TOLD FROM ANOTHER, BECAUSE ONLY SOME ENDPOINTS CLASSIFY AT THE THROW
 
-The sweep that stopped the server's English reaching a French screen is finished - `src` is owned
-whole by `frontend/src/lib/associations/serverProse.test.ts`, which walks 1 004 hand-written sources
-and holds ONE allowlist entry. The mechanism, the rule it enforces and the two routes to a localized
-line (`LocalizedError` for a throw whose message is the reader's, `describeApiRefusal` for a status)
-are on [durable-rules](durable-rules.md) and
-[social-service](services/social-service.md); the passes are in `CHANGELOG.md`.
-
-**WHAT THE SWEEP NEVER NEEDED IS STILL OWED.** Not showing English needed nothing from the server;
-distinguishing one refusal from another does, and that is **a code at the THROW, per endpoint**. The
-shape to copy is the delivery service's `DEVICE_REVOKED` / `DEVICE_LIMIT_REACHED`, and
-`PARTNERSHIP_NO_CODES_LEFT` plus its three siblings. It is per-endpoint judgement about which
-refusals a user can ACT on, never a mechanical rewrite - which is why it is endpoint by endpoint,
-most-used screens first. Until an endpoint has one, a screen that cannot map a refusal shows a
-generic localised line, which is correct and uninformative.
-
-**AND ONE SITE CANNOT CLOSE ALONE.** `sessionAuth.ts:793` compares an error against the shared
-constant `MLS_LOCAL_STATE_UNDECRYPTABLE` - stable matching, but the defect is upstream:
-`classifyStateLoadFailure` already separates `sealed` (an old PIN opens it) from `unknown`
-(corruption, no PIN helps), and both throws collapse the two into that one marker. Typing the marker
-without deciding what the screen DOES with `unknown` ships the same wrong diagnosis behind a better
-shape. It closes with the P1 that reports a damaged MLS state as a PIN rotation. It is the guard's
-one allowlist entry, and that entry FAILS the day the site stops offending, so it cannot rot while
-the P1 waits.
+The English-on-a-French-screen sweep is finished ([durable-rules](durable-rules.md), [social-service](services/social-service.md)). **Owed:** a code at the THROW, per endpoint, most-used screens first, for the refusals a user can act on (model: `DEVICE_REVOKED`, `PARTNERSHIP_NO_CODES_LEFT`). One site cannot close alone: `sessionAuth.ts` compares against `MLS_LOCAL_STATE_UNDECRYPTABLE`, which collapses `sealed` and `unknown`; it closes with the damaged-MLS-state P1, and its allowlist entry in `serverProse.test.ts` fails the day the site stops offending.
 
 ## Infrastructure
 
 ### P2 - MIGALLERY'S ONLY OFFSITE STILL LANDS ON THE OLD CANARI VM
 
-Sky took `sky.emse.fr` on 2026-09-28; the old name is a pure `301` and the relay on `mitv` stays on purpose ([estate-migration](infrastructure/estate-migration.md)). What is left:
-
-- **MiGallery's offsite still lands on the old Canari VM, and it is its ONLY offsite.** `mitv` root's `backup-offsite.sh` (~2 GB/night) pushes the Immich dump to `canari:~/migallery-offsite`. It needs a destination off `mitv` (the School host, on the private path) before the old VM can be wound down - the user's decision, then a MiGallery PR.
-- **The user's gestures**: a real Sky sign-in with `/admin/legacy` showing the June data, and deleting the stopped `sky-sky-1` container with `/home/mitv/Sky/database`.
+`mitv`'s `backup-offsite.sh` pushes the Immich dump (~2 GB/night) to `canari:~/migallery-offsite`. **Owed:** the user's decision on a destination off `mitv` on the private path, then a MiGallery PR, before the old VM can be wound down. User gestures: a real Sky sign-in with `/admin/legacy` showing the June data, and deleting the stopped `sky-sky-1` container with `/home/mitv/Sky/database` ([estate-migration](infrastructure/estate-migration.md)).
 
 ### P2 - A DEPLOY NO LONGER ERASES THE LOGS, BUT NO ARCHIVE HAS BEEN SEEN YET (merged 2026-10-08)
 
-Rotation (`x-logging`, 3 x 10 MB) and a per-deploy log archive are in the compose files and
-`deploy-environment.sh` ([logging](infrastructure/logging.md), which carries the 2026-09-21 incident
-and the measurements). **Owed, after the next deploy of each estate:** read
-`~/deploy-log-archive/<project>/` on the host and confirm one `.log.gz` per container, and
-`docker inspect` a recreated container for `max-size`. **Not covered:** Authentik's stack (hand-run,
-`infrastructure/authentik/compose.yml`) is bounded only when next recreated and is not archived.
-
----
+**Owed after the next deploy of each estate:** one `.log.gz` per container in `~/deploy-log-archive/<project>/` and `max-size` on a recreated container ([logging](infrastructure/logging.md)). Authentik's hand-run stack is bounded only when next recreated and is not archived.
 
 ### P3 - docker-prune is built for the Portail-etu host but not installed there
 
-The allowlisted release-image removal is in `prune.py` with tests ([README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet), [estate-migration](infrastructure/estate-migration.md)); the host was `/` 88 % used on 2026-10-08. **Open:** the user or Master runs the one-off command from that README, then a cron entry. **Dangling VOLUMES are never pruned by a flag**: enumerate by name against an allowlist ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
+The host was `/` 88 % used on 2026-10-08. **Open:** the user or Master runs the one-off command in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet), then a cron entry. Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 
-### P2 - nothing repairs a notice already duplicated on a device, and nothing should, blind
-
-Owed: the POPULATION first - on one real device, the count of `isSystem` rows sharing
-`(conversation, content)`. Only if that number is large is a repair worth its risk, and then only
-the repo's shape for one: a one-shot pass gated on proof that the state is broken, an allowlist of
-the rows it may delete, and a report of what it did. Never a heuristic collapse.
-
-### P2 - 13 full archive walks and 37 reconciliation answers in ten minutes, for one group
-
-Owed (production logs): with `[HISTORY]` / `[HISTORY_BATCH]` now carrying `user=... device=...`,
-measure walks per group per hour across the estate and the `after=start` fraction per DEVICE.
-Only against that population is one group being built (31 members in batches) a defect or not.
-The 2026-09-16 measurement it replaces (one prod group, 31 members, 14:17-14:49): 13 `[HISTORY]
-after=start` walks (two in the same second), two cursor resumes from before the announcement, 37
-`[HISTORY_REQ] FORWARDED` over seven devices (8/7/6/5/5/4/1) and 14 `NO_PEER_ONLINE` - unattributed,
-since it predates the `user=`/`device=` fields.
+- **P2 - nothing repairs a notice already duplicated on a device.** Owed: the population first (on one real device, the count of `isSystem` rows sharing `(conversation, content)`). Only if large, a one-shot pass gated on proof of breakage with an allowlist of rows - never a heuristic collapse.
+- **P2 - 13 full archive walks and 37 reconciliation answers in ten minutes, for one group.** Owed: from production logs (`[HISTORY]` carries `user=`/`device=` since 2026-09-16), walks per group per hour across the estate and the `after=start` fraction per DEVICE.
 
 ## Post-campaign projects - decided, not scheduled
 
-### The MLS + Graine explanation, written FOR THE USER - WRITTEN 2026-10-08
-
-[chiffrement-et-historique](../user-guide/chiffrement-et-historique.md) (French, non-technical, linked
-from the user-guide index). **Still owed: the user's read**, and a re-check whenever retention, the
-history rules or the device limits change, since the guide quotes screen wording and the one-year
-salon window. The maintainer and security-assessor audiences were declined 2026-08-20;
-[channel-encryption](protocols/channel-encryption.md) and
-[the state machine](protocols/mls-graine-state-machine.md) are the maintainer's pages.
-
-### One MLS client in a SharedWorker - decided 2026-08-17
-
-**It would remove the multi-tab class outright**, and that class is not theoretical: W2 was measured
-carrying seven `canari-emse.fr` tabs, each a full MLS client with its own gateway socket and its own
-in-memory counters, sharing one IndexedDB key. Two campaign findings dissolved on that fact alone
-(see [testing-methodology](testing-methodology.md), rule 5), and the harness's answer - `client()`
-refusing an ambiguous browser, `onetab.mjs` repairing it - protects the INSTRUMENT and not the user.
-
-**Why it is not a queue item.** The cost is not the worker: it is the worker TRANSPORT, the startup
-sequence, the PIN unlock and the Safari/mobile fallback, all of which have to be redone. Doing it
-before the campaign would invalidate every verdict already taken, since the boot path is what half of
-them measure.
+- **The MLS + Graine guide for the user** shipped ([chiffrement-et-historique](../user-guide/chiffrement-et-historique.md), #1585). **Owed: the user's read**, and a re-check whenever retention, history rules or device limits change.
+- **One MLS client in a SharedWorker** - decided 2026-08-17, after the campaign: [mls-wasm](frontend/mls-wasm.md#one-mls-client-in-a-sharedworker---decided-2026-08-17-not-scheduled).
 
 ### `dev.canari-emse.fr` - the two things that outlived the chantier
 
-The environment is built (2026-09-01) and is the pre-release target. **Every decision about it -
-isolation, the unscrubbed prod copy, `DEV_<NAME>` secrets, Access, how a release picks the estate -
-is on [dev-environment](infrastructure/dev-environment.md), the only copy, and is TAKEN.** One thing
-outlived the chantier:
+Environment and decisions: [dev-environment](infrastructure/dev-environment.md). **Owed to the user, nothing here can do it:** the mobile half - a dev Firebase project (the Play service account lacks `serviceusage.services.enable`), a dev keystore and where it is backed up, and a second package id so a pre-release can be measured against production (one item with "a second package id" above).
 
-1. **Phase 2, mobile, is OWED TO THE USER and nothing here can do it.** The dev Firebase project -
-   the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it
-   can neither create a project nor turn an API on - and the dev keystore, plus a decision on where
-   that keystore is backed up. See the table at the top of this file.
+### A SECOND campaign, for everything that is not chat - asked 2026-08-16
 
-### A SECOND campaign, for everything that is not chat - asked for 2026-08-16
+Not started. Design, the named starting point (the `social` notification family) and the three things to settle first (venue, observer, what a verdict rests on): [cross-client-campaign](cross-client-campaign.md#the-second-campaign-for-everything-that-is-not-chat---asked-2026-08-16).
 
-**It is a second campaign, not more sections on this one** - the user's framing, and it settles a
-structural question. The expected size is dozens of checks per surface, where the current dashboard
-already carries 18 sections in one file whose entire job is to be a LIVE summary someone can read.
-Pouring a second campaign into it destroys that property. So: its own dashboard, its own manifest, its
-own phase files - and `checks.mjs`'s phase list is the seam to look at first, since a second campaign
-must be runnable without re-running this one.
+## THE DELIVERY CHAIN REVIEW - opened by the 2026-09-06 outage
 
-The 18 sections were written around one class of failure: a message crossing between two transports
-and two platforms, and the silent loss that class produces. That leaves whole surfaces with **no check
-at all** - posts, forms, communities as a management surface, profiles, media browsing, calendar,
-payments - and a surface with no check is not a surface that works, it is one nobody has asked about.
-
-The named starting point is the **`social` notification family**: a post, a comment, a reaction on a
-post, a form alert. It does **not** share the chat path - no MLS, no per-device fan-out, no outbox -
-so none of the verdicts already taken transfer to it, and its delivery is server-decided, which is a
-different failure mode (an audience computed wrong notifies the wrong people, and nothing on the
-client can detect that).
-
-Three things must be settled BEFORE writing checks:
-
-- **The venue.** Every existing check sends into the two-test-account DM or `Canari Test Venue`
-  precisely because production is shared. A post or a form alert has an AUDIENCE, so the same
-  discipline needs an answer that does not exist yet: what does a test post look like that no real
-  member is notified by? Until that is answered, no social check may run on prod.
-- **The observer.** `srvlog.mjs` partitions its window by subject and classifies every line. The
-  services behind posts and forms are not in that window today, and an unclassified window is not an
-  observation.
-- **What a verdict rests on.** A chat check reads the peer's DOM. A notification with an audience is
-  only correct if the people who should NOT get it did not - an assertion about absence, over a
-  population, needing its window sized from a measured latency rather than guessed
-  ([testing-methodology](testing-methodology.md), rule 13).
-
-**The twelve emoji rows belong to this campaign** - they are listed under "Emoji pictures - the
-campaign rows" (section Composer and reactions), which is their only copy.
-
-## THE DELIVERY CHAIN REVIEW - opened by the 2026-09-06 outage, agreed with the user the same night
-
-*"C'est peut-etre pour ca qu'apres la resolution rapide de ce probleme, il faut qu'on revoie le
-workflow"* (user, 2026-09-06), after an earlier exchange in which the complaint was READABILITY -
-*"C'est pas un peu alambique tout ces workflows ?"*. The outage turned that into seven items (items 1 and 5
-shipped) that are DEMONSTRATED rather than argued. Ordered by value, which is not the order they were noticed in.
-
-**2. A DEPLOYED ESTATE IS NOT ASKED WHETHER IT WORKS.** P1, and it is what let this reach users.
-The release run was green, `canari-emse.fr` and `dev.canari-emse.fr` both answered `HTTP 200`, and
-every login was refused. `CLAUDE.md` already says a green deploy proves the containers started and
-never that the site answers; **answering does not prove it works either**.
-`tools/cross-client-harness/deployed-wasm-check.mjs` was written during the incident and refuses an
-estate serving a wasm that can panic - it named `mls_wasm_bg.YXThuGSF.wasm` on production, the exact
-file in the user's stack trace, with no credentials and in seconds. **SHIPPED 2026-10-06 as a gate**:
-`serve-dev.yml` runs it before `dev-deployed` moves, so a refused wasm cannot reach a stable
-([cicd](cicd.md)). It is NOT a login and must not be sold as one - the sign-in below is what stays open.
-
-**The honest check cannot be a campaign row**: the rig has targeted the LOCAL estate since
-2026-09-03, deliberately, and the next defect of this class may not be in the wasm at all. **The real
-check is a sign-in against the deployed estate, in the pipeline, right after the dev deploy and
-before the stable is allowed to proceed.** That needs a USER decision rather than code: a dedicated
-smoke account on both estates, its credentials as GitHub secrets, and accepting that a CI job holds a
-real login on production. **The alternative - that nobody signs in before users do - is what happened
-on 2026-09-06.**
-
-(Items 1 and 4 to 7 are closed: 1 and 4 shipped, 5 shipped in `v0.18.18`, and 6 and 7 were DECIDED
-not to be built, with the reasons on [cicd](cicd.md#two-incident-time-items-decided-not-to-be-built-2026-10-06).
-**Any proposal here must keep four visible workflows** - user, not to be relitigated.)
+**Open: a real sign-in against the deployed estate, in the pipeline, right after the dev deploy and before a stable proceeds.** The wasm check ships as a gate (2026-10-06, [cicd](cicd.md)) but is not a login. It needs a USER decision: a dedicated smoke account on both estates, its credentials as GitHub secrets, and accepting that a CI job holds a real login on production. The other items shipped or were decided not to be built ([cicd](cicd.md#two-incident-time-items-decided-not-to-be-built-2026-10-06)); any proposal must keep four visible workflows.
 
 ## The first iOS feedback (2026-09-20) - one reading and one measurement
 
-- **One reading on the reporting iPhone**: the `/posts` and associations scroll, on a build carrying
-  the fix ([design-reference section 28](frontend/design-reference.md#28-every-scroll-in-the-app-ran-on-the-main-thread-for-a-gesture-ten-prefixes-cannot-perform));
-  the Mi 9T settles only Chromium, and WebKit is the engine that reported it.
-- **P3 - one memory measurement on a long feed**: the feed is not virtualised (the composited layer
-  grows with every page), and the avatars carry no `loading="lazy"` on purpose (a cached blob sets
-  `imageLoaded` eagerly; a lazy one would show an empty disc mid-fling). Measure before changing
-  either.
+- **One reading on the reporting iPhone**: the `/posts` and associations scroll on a build carrying the fix ([design-reference section 28](frontend/design-reference.md#28-every-scroll-in-the-app-ran-on-the-main-thread-for-a-gesture-ten-prefixes-cannot-perform)); the Mi 9T settles only Chromium.
+- **P3 - one memory measurement on a long feed** (not virtualised; avatars deliberately not lazy). Measure before changing either.
 
----
+## Audiences of associations, lists and institutions - built, on dev in `v1.2.0-alpha.1`
 
-## Audiences of associations, lists and institutions - decided by the user 2026-10-07, ready to build
+WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominative read grants WP-C (#1606) and their write-boundary fixes (#1608) are built. Decisions and as-built: [profiles-and-access](profiles-and-access.md#the-audiences-chantier---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08). **Owed:**
 
-Seven decisions, in the user's answers of 2026-10-07 (the last one asked for Master's opinion and was accepted as recommended):
+- **The on-device look** at the Audience tab, the profile campus prompt and the `/admin/read-access` grid.
+- **Dev checks that were NOT TESTABLE, and no stable may ship the read grants until they run** (Master, 2026-10-08): all four dev sandbox accounts are ICM / saint-etienne and the campus is only an Authentik attribute (`attributes.profile`, read by `apps/core-service/src/users/miconnect-profile.ts`). Authentik is ONE instance for dev and prod, so even a read-only `ak shell` counts as production access and was denied. **User:** create an Authentik user `canari-test-epsilon` with campus gardanne (same groups and attributes shape as `canari-test-delta`, credentials into `F:/Programmation/canari-harness/test-accounts.json`, never on a command line) or allow a scoped permission rule for creating it. Then the agent verifies: a grantee sees the association posts of the granted campus and NO personal post, can react and comment, cannot vote nor republish through the grant, and a revoke restores the baseline; and a star's audience read, own campus versus another campus.
+- **User decision:** let the directory be widened for grantees? (not widened now; only posts, comments, reactions and events are).
+- **Ambiguity to answer:** what "an institution of another campus" means for a reader (the grant reaches it today).
+- The document-reviewer rows were NOT moved into the grants table (a separate capability on the same page).
 
-1. **The manager chooses among THREE presets**, never the raw grid: my campus; my campus plus the formations I name; everyone. `everyone` is offered to institutions only. The global admin keeps the full grid in Espaces & audiences.
-2. **Default at creation**: the association's campus, every formation, applied automatically and editable. A list gets the same default.
-3. **An association present on two campuses is TWO associations**, partners on a shared event (D39, migration 074); there is no multi-campus audience on one entity.
-4. **A change of audience applies to everything, past posts included**: visibility follows the current rule, nothing is frozen on the post.
-5. **A manager with no campus completes their profile first**: the presets are computed from a campus.
-6. **Only institutions, created by a global admin, may target everyone.** The server REFUSES an `everyone` rule on any other type - the UI hiding it is not the rule.
-7. **The star (space BDE) may set the audience of the associations of ITS campus, and only that**: the super-role "manage associations" includes the audience, bounded to the BDE's own campus; never another campus, never an institution.
+## Answers of 2026-10-07 that are not done
 
-**WP-A (server) BUILT 2026-10-08**, as built in [profiles-and-access](profiles-and-access.md#audiences-policy-as-built-wp-a-2026-10-08); **WP-B (client + creation bound) BUILT 2026-10-08**, as built in [profiles-and-access](profiles-and-access.md#audiences-client-presets-as-built-wp-b-2026-10-08); owed: one look at the Audience tab and the prompt on a signed-in estate (not rendered by the agent). A BDE star READS `GET /api/associations/:id/audiences` inside its campus (user, 2026-10-08), the editor preselects the preset.
-
-Work packages: (a) server: default rule at creation, refusal of `everyone` outside institutions, the BDE's campus bound on writes, with tests; (b) client: the three presets on the association page for a manager and a BDE, the profile prompt for a campus-less manager; (c) wiki: [profiles-and-access](profiles-and-access.md) D-section. Done when a manager of a fresh association sees it reach its campus with no setup, can narrow or widen it to the presets, and a hand-written `everyone` is refused by the server for a non-institution.
-
----
-
-## Nominative read access to the student feed - decided by the user 2026-10-07, built WITH the audiences chantier (1.2)
-
-This is WP7 of [profiles-and-access](profiles-and-access.md) (D24: grants only ADD, a global admin grants across spaces), given its first capability. Cases named by the user: Celine Haton (director of the ME), Aurelie Boyer (ME communication) and Julie Blanc (School, student liaison) reading the posts of associations, **but not the personal posts of students**; and a director of formations reading the associations of Saint-Etienne and Gardanne, formations ICM and another.
-
-Decisions:
-
-1. **A grid of checkboxes per person**, shaped like `/admin/spaces`: one cell per campus x formation (and "whole campus"), so one grant can cover several campuses and formations. It replaces the document-reviewers page, whose rows migrate into it.
-2. **Covers**: the posts of associations, lists AND institutions of the ticked spaces - an institution of ANOTHER campus too, which its own audience (whole campus) never shows a reader of this one - with their comments and reactions, and the events and agenda of those associations.
-3. **Never** the personal posts of students: the capability reads posts published AS an entity, nothing else.
-4. **Readers may react and comment**, like any reader of the feed.
-5. A global admin grants it (it crosses spaces); a BDE would grant only inside its own space. The grant ADDS to what the population gives and never removes.
-6. This closes the staff-feed question: staff without a cursus see nothing more by default, the named ones do.
-7. **No end date, ever** - only grant and revoke. **The list of named readers is internal**: only global admins see it; students are not told. **A journal** keeps who granted what to whom and when (`granted_by`, date), visible to global admins.The user's example formation "ISTP" is FSSS (answered 2026-10-07): no new formation. Done when a named reader sees exactly the association, list and institution posts of their ticked cells and no student's personal post, and a reader with no grant sees what they saw before.
-
-**BUILT 2026-10-08 (WP-C)**, as built in [profiles-and-access](profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08). Left: one signed-in look at `/admin/read-access`; the user's call on the directory (a named reader's directory is NOT widened, only posts, comments, reactions and events are); moving the document-reviewer rows into the grants table was NOT done (a separate capability, kept on the same page).
-
----
-
-## Answers of 2026-10-07 that fix the order of work
-
-- **Named readers (the nominative read grants above) only READ and react**: publishing goes through an institution (D31), a separate gesture; they get NO notifications for their perimeter.
-- **1.1.2 carries nothing more** than what is already in it (deploy order, the author of an association post notified, edit caret and banner, own-space agenda, the Lydia fixes, the three-section Spaces page, institutions UI). **Stripe is removed in a dedicated batch AFTER 1.1.2.**
 - **`minClientVersion` rises after 1.1.2, once both stores serve at least 1.0.3** - the user's gesture; G3 of Graine v2 waits for it.
-- **The Lydia payment is tested end to end on dev by Master alone**, on a test account.
-- **The staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton) get `posts=["ME"]` in Authentik BY THE USER, from a table Master hands over.
+- **Staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton) get `posts=["ME"]` in Authentik BY THE USER, from a table Master hands over.

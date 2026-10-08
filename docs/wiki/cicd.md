@@ -495,7 +495,7 @@ runs `tools/cross-client-harness/deployed-wasm-check.mjs https://dev.canari-emse
 `Record the deployed commit` step, so a dev estate serving a wasm that can panic (the 2026-09-06
 class: every login refused as a wrong PIN, every status code 200) never moves the marker, and gate 4
 refuses the stable. It is not a login; the sign-in smoke test stays a user decision
-([backlog](backlog.md#the-delivery-chain-review---opened-by-the-2026-09-06-outage-agreed-with-the-user-the-same-night)).
+([backlog](backlog.md#the-delivery-chain-review---opened-by-the-2026-09-06-outage)).
 `release-chain.test.sh` pins the order; `archive/deployed-wasm-selftest.mjs` pins the three exit codes.
 
 **A PULL REQUEST THAT MERGES BETWEEN THE PRE-RELEASE AND THE STABLE COSTS ONE MORE PRE-RELEASE, AND
@@ -1252,7 +1252,6 @@ retires it**:
 |---|---|---|
 | `aes-gcm` | it opens a channel push sealed by ANOTHER member's device, so both directions are cross-version, and `src-tauri` freezes neither | a channel-push fixture |
 | `webrtc*`, `str0m`, `sdp`, `ice`, `turn`, `stun` | the SFU's ten tests never touch the ICE stack | one relay-path call (campaign rung 15 CALL) |
-| `stripe` | the SDK's literal `apiVersion` type stops a silent API crossing at COMPILE time, but nothing here proves the app still reads what a new API SENDS | fixtures per API version, over the webhook events and object fields the service actually reads |
 | `postgres`, `redis`, `garage` - **a major crossing only** | a datastore major is refused by the data ALREADY ON DISK, and every gate here creates its cluster from an EMPTY volume - the one case that always works | starting the new major against a data directory written by the old one, and proving the documented upgrade path carries it |
 
 **Five families have already LEFT this table, which is what a refusal is for** - it names a missing
@@ -1285,7 +1284,7 @@ feeds that filter the file list a real bump produces and requires it to fire. Wh
 cover: one group, one epoch, one application frame each way - a change breaking only a removal, an
 external join or a PSK would pass it. The live
 list is in
-[backlog](backlog.md#p1---two-classes-of-dependency-update-still-cannot-merge-unattended-and-each-names-its-missing-test).
+[backlog](backlog.md#p1---one-class-of-dependency-update-still-cannot-merge-unattended-and-it-names-its-missing-test).
 
 A refusal is **never** routed to a human queue. It is posted as a comment on the pull request naming
 the missing test, once, behind the marker `<!-- canari-auto-merge-ceiling -->`.

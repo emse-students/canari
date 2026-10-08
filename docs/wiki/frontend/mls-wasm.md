@@ -322,3 +322,7 @@ for the same reason. `src/lib/paraglide/` had always worked this way and never d
 repository's history - a dozen full copies, roughly 19 MB of a 34 MB pack, since wasm does not delta
 well. That is not a reason to rewrite history. A `filter-repo` would force-push a public repository
 with another active contributor to reclaim 19 MB. The history stops growing here, which is enough.
+
+## One MLS client in a SharedWorker - decided 2026-08-17, not scheduled
+
+It would remove the multi-tab class outright, and that class is not theoretical: W2 was measured carrying seven `canari-emse.fr` tabs, each a full MLS client with its own gateway socket and in-memory counters, sharing one IndexedDB key. Two campaign findings dissolved on that fact alone ([testing-methodology](../testing-methodology.md), rule 5), and the harness's answer (`client()` refusing an ambiguous browser, `onetab.mjs` repairing it) protects the INSTRUMENT and not the user. The cost is not the worker but its TRANSPORT, the startup sequence, the PIN unlock and the Safari/mobile fallback, all of which have to be redone; doing it before the campaign would invalidate every verdict already taken, since the boot path is what half of them measure.

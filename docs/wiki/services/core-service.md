@@ -358,7 +358,7 @@ Lydia `request/do` payment is also confirmed server-side: `POST /api/payments/ly
 verifies the signed `confirm_url`/`cancel_url`/`expire_url` callback and fans out to the
 fulfillment, via an `order_ref` Canari encodes itself
 (`lydia-order-ref.ts`). **Still blocking an actual switch to Lydia** (tracked in
-[backlog](../backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1), harmless today
+[backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), harmless today
 since `payment_provider` defaults to `disabled`): nothing resolves the `payerRecipient` `request/do`
 requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
 `lydiaOnboardingComplete` automatically) is deliberately unbuilt - no documented signature, and
