@@ -25,6 +25,7 @@
  * Idempotent: a community that exists is read, not created.
  */
 import { execFileSync } from 'node:child_process';
+import { requireScript } from './scriptpath.mjs';
 import { subjectFor } from './accounts.mjs';
 import { awaitAppSettled, clearOverlays, client, ensureChat, evaluate, openChannel, reachCommunities, send, until } from './chat.mjs';
 import { acceptInviteLink, createChannel, createCommunity, enterCommunities, inviteLink, listCommunities, openCommunity } from './comm.mjs';
@@ -277,7 +278,7 @@ const scenarios = {};
 /** Reloads the reader past the cache and answers its PIN, as a user's restart does. */
 async function restartReader(cx) {
   await reloadAndWait(cx, { ignoreCache: true });
-  execFileSync(process.execPath, ['unlock.mjs', '--device', 'W2'], { stdio: 'ignore' });
+  execFileSync(process.execPath, [requireScript('unlock.mjs'), '--device', 'W2'], { stdio: 'ignore' });
   await sleep(4000);
 }
 
