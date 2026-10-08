@@ -25,9 +25,12 @@ export class ReadGrantsController {
   @Put()
   @HttpCode(204)
   async set(@Headers('x-user-id') actor: string, @Body() dto: SetReadGrantDto) {
+    // `users.id` is the OIDC subject LOWERCASED: core-service lowercases `x-user-id` at the guard
+    // (`NginxAuthGuard`), so every id stored or compared is lowercase. Both ids are normalised the
+    // same way here, so a grant typed with a capital still matches the reader it names.
     await this.service.setCell(
-      actor,
-      dto.userId.trim(),
+      actor.trim().toLowerCase(),
+      dto.userId.trim().toLowerCase(),
       dto.campus,
       dto.formation ?? null,
       dto.granted

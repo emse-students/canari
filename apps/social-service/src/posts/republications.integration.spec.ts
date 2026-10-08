@@ -56,11 +56,14 @@ const USERS: Record<string, { campus: string | null; formation: string | null }>
   eSe: { campus: 'saint-etienne', formation: 'ICM' },
   // Publisher of the promo list L.
   lister: { campus: 'saint-etienne', formation: 'ICM' },
+  // A NAMED READER (read grant on ICM Saint-Etienne) with no space, who may publish as A3 (WP7).
+  gMember: { campus: null, formation: null },
 };
 
 const A1 = '00000000-0000-4000-8000-00000000a001'; // (ICM, saint-etienne)
 const A2 = '00000000-0000-4000-8000-00000000a002'; // (NULL, gardanne)
 const L = '00000000-0000-4000-8000-00000000a00f'; // a promo list, (ICM, saint-etienne)
+const A3 = '00000000-0000-4000-8000-00000000a003'; // no rule at all: reaches its members only
 
 const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const POSTS: {
@@ -126,7 +129,8 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
         kind varchar NOT NULL DEFAULT 'post', "expiresAt" timestamptz, markdown text,
-        "feedNotifiedAt" timestamptz, "createdAt" timestamptz NOT NULL DEFAULT now());
+        "feedNotifiedAt" timestamptz, "createdAt" timestamptz NOT NULL DEFAULT now(),
+        "publishedAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);
     `);
@@ -139,6 +143,11 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
     await q(migration('071_spaces.sql'));
     await q(migration('072_drop_is_bde.sql'));
     await q(migration('073_republications.sql'));
+    await q(migration('078_read_grants.sql'));
+    await q(
+      `INSERT INTO associations (id, name, slug, type) VALUES ($1, 'A3', 'a3', 'association')`,
+      [A3]
+    );
     await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A2]);
     await q(
       `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, 'gardanne')`,
@@ -155,6 +164,13 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
       `INSERT INTO association_members ("associationId", "userId", permissions) VALUES
          ($1, 'aSe', $4), ($2, 'bGa', $4), ($2, 'eSe', $4), ($3, 'lister', $4)`,
       [A1, A2, L, POST_AS]
+    );
+    await q(
+      `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'gMember', $2)`,
+      [A3, POST_AS]
+    );
+    await q(
+      `INSERT INTO read_grants (user_id, campus, formation, granted_by) VALUES ('gMember', 'saint-etienne', 'ICM', 'admin')`
     );
     for (const p of POSTS) {
       await q(
@@ -218,6 +234,22 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
       await expect(republications.republish(P(1), A2, 'bGa', false)).rejects.toBeInstanceOf(
         NotFoundException
       );
+    });
+
+    it('a nominative read grant READS the post but never republishes it, even into an association the reader publishes as (WP7)', async () => {
+      // The grant opens A1's post to gMember for reading ...
+      expect(await sees(P(1), 'gMember')).toBe(true);
+      // ... and a non-grantee with no space still does not see it.
+      expect(await sees(P(1), 'cGa')).toBe(false);
+      // gMember may publish as A3, yet cannot republish what only the grant shows them.
+      await expect(republications.republish(P(1), A3, 'gMember', false)).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+      const rows: unknown[] = await q(
+        `SELECT 1 FROM post_republications WHERE "postId" = $1 AND "associationId" = $2`,
+        [P(1), A3]
+      );
+      expect(rows).toEqual([]);
     });
 
     it('refuses a reader who may not publish as the association (403)', async () => {

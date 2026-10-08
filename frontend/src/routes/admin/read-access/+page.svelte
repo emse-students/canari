@@ -98,10 +98,18 @@
     try {
       Log.d('admin.read-access.toggle', { userId, campus, formation });
       await setReadGrant(userId, campus, formation, !heldCells.has(key));
-      await loadGrants();
     } catch (e) {
       Log.d('admin.read-access.toggle failed', e);
       error = m.readaccess_save_error();
+      savingCells.delete(key);
+      return;
+    }
+    // The write SUCCEEDED: a failed re-read is a stale grid, not a failed save, and says so.
+    try {
+      await loadGrants();
+    } catch (e) {
+      Log.d('admin.read-access.refresh failed', e);
+      error = m.readaccess_refresh_error();
     } finally {
       savingCells.delete(key);
     }
@@ -116,16 +124,24 @@
   async function load() {
     loading = true;
     error = null;
-    try {
-      reviewers = await listDocumentReviewers();
+    // The two lists load INDEPENDENTLY: one failing must not hide the other's section.
+    const [reviewersResult, grantsResult] = await Promise.allSettled([
+      listDocumentReviewers(),
+      canGrant ? loadGrants() : Promise.resolve(),
+    ]);
+    if (reviewersResult.status === 'fulfilled') {
+      reviewers = reviewersResult.value;
       resolveNames(reviewers.map((r) => r.userId));
-      if (canGrant) await loadGrants();
-    } catch (e) {
-      Log.d('admin.read-access.load failed', e);
-      error = m.common_load_error();
-    } finally {
-      loading = false;
+    } else {
+      Log.d('admin.read-access.load reviewers failed', reviewersResult.reason);
     }
+    if (grantsResult.status === 'rejected') {
+      Log.d('admin.read-access.load grants failed', grantsResult.reason);
+    }
+    if (reviewersResult.status === 'rejected' || grantsResult.status === 'rejected') {
+      error = m.common_load_error();
+    }
+    loading = false;
   }
 
   async function handleAdd() {

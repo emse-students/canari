@@ -285,6 +285,19 @@ export class InternalController {
       this.reportRepo.update({ reporterId: userId }, { reporterId: '[deleted]' }),
     ]);
 
+    // Nominative read grants (WP7): no foreign key crosses services, so the standing grant of a
+    // deleted account is removed here - an id re-issued later must not inherit it. The journal is
+    // history and stays, with the account anonymised on both of its sides.
+    await this.postRepo.manager.query(`DELETE FROM read_grants WHERE user_id = $1`, [userId]);
+    await this.postRepo.manager.query(
+      `UPDATE read_grant_journal SET user_id = '[deleted]' WHERE user_id = $1`,
+      [userId]
+    );
+    await this.postRepo.manager.query(
+      `UPDATE read_grant_journal SET actor = '[deleted]' WHERE actor = $1`,
+      [userId]
+    );
+
     await this.channelService.repairWorkspacesAfterAccountDeletion(affectedWorkspaceIds, userId);
 
     this.logger.log(

@@ -368,10 +368,13 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
    * The pull path's "a post one's association already sees": the actor can open it - the same
    * predicate as reading it by its id (`PostsService.assertVisible`), so a global admin acting in an
    * association's name may republish what they can open.
+   *
+   * GRANT-FREE (`readGrants: false`): a nominative read grant opens a post to READ, never to
+   * republish it - publishing goes through an institution (user, 2026-10-07).
    */
   private async assertVisibleTo(postId: string, actorId: string): Promise<void> {
     const rows: { visible: boolean }[] = await this.repo.manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible
+      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false })} AS visible
          FROM posts WHERE posts.id = $1`,
       [postId, actorId]
     );

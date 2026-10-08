@@ -262,6 +262,44 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
     }
   });
 
+  it('READ, REACT and COMMENT open on an in-scope post; a VOTE and a REPUBLICATION never do', async () => {
+    // `assertVisible('READ_OR_REACT')` is the default predicate, `assertVisible('VOTE')` and the
+    // republication gate pass `readGrants: false`. Both with `adminSeesAll`, as the services do.
+    const open = async (postId: string, id: UserId, readGrants?: boolean) => {
+      const { rows } = await client.query(
+        `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants })} AS visible
+           FROM posts WHERE posts.id = $1`,
+        [postId, id]
+      );
+      return rows[0].visible === true;
+    };
+    for (const post of POSTS) {
+      for (const id of EVERYONE) {
+        const reads = post.seenBy.includes(id);
+        expect({ post: post.label, id, readOrReact: await open(post.id, id) }).toEqual({
+          post: post.label,
+          id,
+          readOrReact: reads,
+        });
+        // Without the grant: only what the reader's own spaces, membership or authorship give.
+        const own = await open(post.id, id, false);
+        const grantOnly = reads && GRANTEES.includes(id) && post.associationId !== null;
+        const expectedOwn = grantOnly ? false : reads;
+        expect({ post: post.label, id, vote: own }).toEqual({
+          post: post.label,
+          id,
+          vote: expectedOwn,
+        });
+      }
+    }
+    // Spelled out for the case that matters: a grantee reads and reacts to A2's post, cannot vote.
+    expect(await open(POSTS[1].id, 'grantGa')).toBe(true);
+    expect(await open(POSTS[1].id, 'grantGa', false)).toBe(false);
+    // A non-grantee is unchanged either way.
+    expect(await open(POSTS[1].id, 'isminGa')).toBe(true);
+    expect(await open(POSTS[1].id, 'isminGa', false)).toBe(true);
+  });
+
   it('a reader with no grant sees exactly what they saw before', async () => {
     // The same matrix computed with the grants table emptied for the duration.
     await client.query('BEGIN');
