@@ -162,3 +162,32 @@ camera. The Passwords autofill sheet offers a keychain login of the phone's owne
 form: dismiss it, never fill it. `ios.mjs type` appended a stray letter twice when a tap landed on the
 keyboard after the layout shifted: read the field back, and press Return with `type` of a newline
 instead of tapping "Se connecter".
+
+## 2026-10-08 - origin/main without #1630 (Mi 9T, debug APK, local stack rebuilt)
+
+Rig: the Pixel 6a left the bench, so every check ran on the Mi 9T only (a second Android phone still owes
+a second OEM's notification grouping, three-button navigation and the multi-device read-mark cases).
+The local estate has no migration runner (ledger stops at 068): migrations 069-079 were applied by hand.
+
+- `PASS` A: 10 of 10 community salon rows open the conversation (taps at x >= 200 px; a tap under that
+  hits the rail). `PASS` B: the unread badges come back from the SERVER count after force-stop, a network
+  cycle and lock/unlock, and a mere launch posts no read mark.
+- `PASS` D: the grouped reaction notification is one row per post (collage of up to 3 faces).
+- `PASS` NOTIF-7c and 7d (salon push tap, backgrounded and killed behind the PIN). A first run looked
+  like a FAIL of 7d; it was the instrument: `phone.ensure()` and `unlock.mjs` reload the page and drop
+  the pending deep link. Use `keepIntent` and `pin.mjs --device A1`.
+- DEFECT FOUND AND FIXED: a calendar, admin-agenda or proposal push tap did NOTHING on Android. Root
+  cause: the four hosts were absent from `plugins.deep-link.mobile`, so the plugin never forwarded
+  the intent (see [mobile](frontend/mobile.md)). After the fix, read backgrounded and killed: the event,
+  the agenda and the proposal queue open. Test: `deepLinkHostsDeclared.test.ts`.
+- `PASS` follow end to end: a real `social_followed_post` push reached the phone for a person followed in
+  the same space; with the `posts` category disabled (set through `PUT /api/mls/notification-preferences`,
+  NOT by tapping the settings switch) the next post announced to the same recipient raised no notification.
+  Data note: a campus stored as `SAINT-ETIENNE` against `saint-etienne` shares no space (recipients=0);
+  whether campus should be normalised is an open question.
+- OPEN, measured and NOT fixed: with the session deleted server-side, a killed-app tap on a post push
+  boots, the refresh answers 401 and the app lands on a bare `/login`; the log shows NO
+  `[hooks] Processing URL`, so the post target is dropped before any `returnTo` can carry it. A
+  `returnTo` fix in `ChatBackgroundService` was tried and reverted: it does not touch this cold-start path.
+- NOT taken: the tap on the DM (NOTIF-7/7b) and stale targets were not re-read in a form worth a verdict,
+  the admin hub with a tier account, list edit, three-button navigation, and everything iOS.
