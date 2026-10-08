@@ -215,7 +215,7 @@
         showToast(m.inst_new_reach_error());
       }
     }
-    await goto(resolve(`/associations/${created.slug}/edit?section=members`));
+    await goto(resolve(`/associations/${created.slug}/edit/members`));
   }
 </script>
 

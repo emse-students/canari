@@ -4,8 +4,8 @@ import { APP_PLACES } from '$lib/navigation/places';
 import { SITE } from '$lib/seo/site';
 import type { SeoMeta } from '$lib/seo/types';
 
-/** `/associations/<slug>/edit` - the edit page shared by associations, lists and institutions. */
-export const ASSOCIATION_EDIT_PATH = /^\/associations\/([^/]+)\/edit$/;
+/** `/associations/<slug>/edit[/<section>]` - the edit pages shared by associations, lists and institutions. */
+export const ASSOCIATION_EDIT_PATH = /^\/associations\/([^/]+)\/edit(?:\/[^/]+)?$/;
 
 /**
  * Every page this app does not offer to a search engine, by path prefix.

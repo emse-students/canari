@@ -1,6 +1,8 @@
 <script lang="ts">
   import { ArrowLeft } from '@lucide/svelte';
   import type { Snippet } from 'svelte';
+  import Breadcrumb from '$lib/components/navigation/Breadcrumb.svelte';
+  import type { Crumb } from '$lib/components/navigation/breadcrumb';
 
   interface Props {
     /** The page title. Already localized by the caller. */
@@ -15,6 +17,12 @@
     backHref?: string;
     /** The label for `backHref`. Required with it. */
     backLabel?: string;
+    /**
+     * The full path to this page (root first, the current page last), for a page nested more than
+     * one level deep. Replaces `backHref`: its arrow goes to the previous crumb and every crumb is a
+     * link. Never pass both.
+     */
+    crumbs?: Crumb[];
     /** One line under the title. Omit for a page whose title says everything. */
     subtitle?: string;
     /** Controls on the title's own line, at the far end (a "publish" button, a filter). */
@@ -23,7 +31,7 @@
     children?: Snippet;
   }
 
-  let { title, subtitle, backHref, backLabel, actions, children }: Props = $props();
+  let { title, subtitle, backHref, backLabel, crumbs, actions, children }: Props = $props();
 </script>
 
 <!--
@@ -42,7 +50,9 @@
   the class the feed carried was a no-op that made one page look deliberate and the rest accidental.
 -->
 <header class="mb-6">
-  {#if backHref && backLabel}
+  {#if crumbs && crumbs.length > 1}
+    <Breadcrumb {crumbs} />
+  {:else if backHref && backLabel}
     <a
       href={backHref}
       class="text-text-muted hover:text-text-main mb-1 inline-flex items-center gap-1.5 text-sm transition-colors"
