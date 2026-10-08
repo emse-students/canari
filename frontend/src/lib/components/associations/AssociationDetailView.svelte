@@ -36,15 +36,26 @@
     Bell,
     BellOff,
     Settings,
-    Building2,
     CalendarDays,
     Users,
     ShoppingBag,
     Handshake,
     Download,
     Mail,
-    ArrowLeft,
   } from '@lucide/svelte';
+  import Breadcrumb from '$lib/components/navigation/Breadcrumb.svelte';
+  import SectionHub from '$lib/components/navigation/SectionHub.svelte';
+  import type { HubRow } from '$lib/components/navigation/breadcrumb';
+  import {
+    mayOpenPublicSection,
+    parsePublicSection,
+    publicSectionHref,
+    publicSectionWidth,
+    publicTrail,
+    visiblePublicSections,
+    type PublicBase,
+    type PublicSection,
+  } from '$lib/associations/publicSections';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
@@ -62,12 +73,6 @@
   }
 
   let { slug, kind = 'association' }: Props = $props();
-
-  /** Base path for the listing page this entity belongs to. */
-  const basePath = $derived(kind === 'list' ? '/lists' : '/associations');
-  const backLabel = $derived(
-    kind === 'list' ? m.asso_back_to_lists() : m.asso_back_to_associations()
-  );
 
   let asso = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
@@ -123,35 +128,97 @@
   let following = $state(false);
   let followLoading = $state(false);
   /**
-   * A link INTO a specific section (a post's "see the event" link, e.g.) names it in `?section=`,
-   * read once here rather than by each caller re-deciding which tab that means - the same seam
-   * `AssociationCalendarSection` reads `?fromPost=` through for a specific event within it.
+   * The open section is a ROUTE segment (`/associations/<slug>/<section>`), never local state: Back
+   * goes up one level, a reload keeps the place and a link can be shared. `null` is the hub. A post's
+   * "see the event" link (`?section=calendar&fromPost=`) is redirected to the segment by `+page.ts`;
+   * `AssociationCalendarSection` still reads `?fromPost=` for the event within it.
    */
-  let activeSection = $state<'about' | 'calendar' | 'members' | 'shop' | 'partnerships'>(
-    page.url.searchParams.get('section') === 'calendar' ? 'calendar' : 'about'
+  let activeSection = $derived<PublicSection | null>(
+    parsePublicSection((page.params as Record<string, string | undefined>).section)
   );
 
   /**
-   * THE WIDTH FOLLOWS THE SECTION, BECAUSE THIS PAGE IS FIVE PAGES BEHIND A TAB BAR.
-   *
-   * It was one `tool` column for all five, chosen as the compromise of a "genuinely mixed" page -
-   * and a compromise width is one that fits none of them: `shop` and `partnerships` are the same
-   * card walls `/shop` and `/associations` draw at `grid`, and `calendar` is a MONTH, which is the
-   * example `pageWidth.ts` gives for `grid`. Capping them at 1024px did not shorten anything, it
-   * just drew fewer columns (user, 2026-09-14: *"les pages doivent utiliser l'espace disponible.
-   * Donc si on a besoin de la largeur, on prend la largeur"*).
-   *
-   * `about` and `members` stay `tool`: one is prose, the other a column of full-width rows, and
-   * neither has a second column to put in the space.
+   * THE WIDTH FOLLOWS THE SECTION, BECAUSE THIS PAGE IS SEVERAL PAGES (user, 2026-09-14: *"les pages
+   * doivent utiliser l'espace disponible"*): the reasoning is on `publicSectionWidth`.
    */
-  const sectionWidth = $derived<PageWidth>(
-    activeSection === 'calendar' || activeSection === 'shop' || activeSection === 'partnerships'
-      ? 'grid'
-      : 'tool'
-  );
+  const sectionWidth = $derived<PageWidth>(publicSectionWidth(activeSection));
   let products = $state<AssociationProduct[]>([]);
   let partnerships = $state<PartnershipCard[]>([]);
   let shopCustomAmounts = $state<Record<string, number>>({});
+
+  /** What decides which conditional sections exist: ONE rule, shared by the hub and the route guard. */
+  const content = $derived({
+    productCount: products.length,
+    partnershipCount: partnerships.length,
+  });
+  const base = $derived<PublicBase>(kind === 'list' ? '/lists' : '/associations');
+  const words = $derived(wordingFor(kind));
+
+  const SECTION_ICONS: Record<PublicSection, HubRow['icon']> = {
+    calendar: CalendarDays,
+    members: Users,
+    shop: ShoppingBag,
+    partnerships: Handshake,
+  };
+
+  /** The localized name of a section; a message must be read at render time, hence a function. */
+  function sectionLabel(section: PublicSection): string {
+    switch (section) {
+      case 'calendar':
+        return m.asso_tab_calendar();
+      case 'members':
+        return m.common_members_label();
+      case 'shop':
+        return m.asso_tab_shop();
+      case 'partnerships':
+        return m.asso_tab_partnerships();
+    }
+  }
+
+  /** The path to this page (see `publicTrail`); every crumb is a link. */
+  const crumbs = $derived(
+    publicTrail(base, slug, activeSection, {
+      directory: words.directoryLabel(),
+      directoryHref: words.directoryHref,
+      asso: asso?.name,
+      section: activeSection ? sectionLabel(activeSection) : undefined,
+    })
+  );
+
+  /** One hub row per section that exists; a count only where the roster already has it. */
+  const hubRows = $derived(
+    visiblePublicSections(content).map((section): HubRow => ({
+      key: section,
+      href: publicSectionHref(base, slug, section),
+      label: sectionLabel(section),
+      icon: SECTION_ICONS[section],
+      summary:
+        section === 'members'
+          ? kind === 'list'
+            ? m.asso_member_count_list({ count: members.length })
+            : m.asso_member_count_association({ count: members.length })
+          : undefined,
+    }))
+  );
+
+  /**
+   * Whether the requested section may be DRAWN: a typed `/shop` on an association with nothing to
+   * sell is refused here, in the same render that knows the content, so the empty card never
+   * flashes before the effect below sends the reader to the hub.
+   */
+  const sectionRefused = $derived(
+    activeSection !== null && !loading && !!asso && !mayOpenPublicSection(activeSection, content)
+  );
+
+  // A segment is user input: once the page is loaded, a section that does not exist for it (a shop
+  // with nothing to sell) is replaced by the hub rather than drawn empty.
+  $effect(() => {
+    if (loading || !asso || !activeSection) return;
+    if (!mayOpenPublicSection(activeSection, content)) {
+      Log.d('AssociationDetailView: section refused, back to the hub', activeSection);
+      void goto(resolve(publicSectionHref(base, slug)), { replaceState: true });
+    }
+  });
 
   onMount(loadData);
 
@@ -166,11 +233,15 @@
       const loaded = await getAssociationBySlug(slug);
       // Enforce canonical URL: lists live under /lists, associations under /associations.
       if (loaded.type === 'list' && kind !== 'list') {
-        await goto(resolve(`/lists/${encodeURIComponent(slug)}`), { replaceState: true });
+        await goto(resolve(publicSectionHref('/lists', slug, activeSection)), {
+          replaceState: true,
+        });
         return;
       }
       if (loaded.type !== 'list' && kind === 'list') {
-        await goto(resolve(`/associations/${encodeURIComponent(slug)}`), { replaceState: true });
+        await goto(resolve(publicSectionHref('/associations', slug, activeSection)), {
+          replaceState: true,
+        });
         return;
       }
       asso = loaded;
@@ -254,13 +325,11 @@
   of text - which is why the widening is free and the capping was not.
 -->
 <PageContainer width={sectionWidth} class="space-y-8">
-  <a
-    href={resolve(basePath)}
-    class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
-  >
-    <ArrowLeft size={16} />
-    {backLabel}
-  </a>
+  <!--
+    THE PATH, NOT A BACK LINK (user, 2026-10-08: "on navigue en profondeur"): directory > the
+    entity > the open section, every crumb a link, the arrow going up ONE level.
+  -->
+  <Breadcrumb {crumbs} />
 
   {#if loading}
     <div class="flex items-center justify-center py-20">
@@ -273,8 +342,13 @@
       {error}
     </div>
   {:else if asso}
-    <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
-      <!--
+    <!--
+      THE IDENTITY CARD BELONGS TO THE HUB. Inside a section the path already names the entity, and
+      repeating a 150px card above a month or a card wall pushed the content under the fold.
+    -->
+    {#if activeSection === null}
+      <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
+        <!--
         THE HEADER WRAPS, AND THE NAME IS NO LONGER CUT. Three children sat in one non-wrapping row
         - an avatar and an action group both `shrink-0`, with `min-w-0 flex-1` between them - so on
         a phone the name got whatever was left, and `truncate` then hid the overflow. That is the
@@ -284,13 +358,13 @@
         width before anything is dropped, and the `truncate` goes with it: a long name wraps onto a
         second line instead of ending in an ellipsis.
       -->
-      <div class="flex flex-wrap items-start gap-4">
-        <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
-        <div class="min-w-0 flex-1 basis-64">
-          <h1 class="text-text-main text-xl font-bold tracking-tight [overflow-wrap:anywhere]">
-            {asso.name}
-          </h1>
-          <!--
+        <div class="flex flex-wrap items-start gap-4">
+          <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
+          <div class="min-w-0 flex-1 basis-64">
+            <h1 class="text-text-main text-xl font-bold tracking-tight [overflow-wrap:anywhere]">
+              {asso.name}
+            </h1>
+            <!--
             THE META LINE IS A FLEX ROW, NOT A RUN OF TEXT, and the separators are its children.
             Written as prose it read `{/if}@{asso.slug}`, and Svelte TRIMS the whitespace at the end
             of an `{#if}` block - so the space that was supposed to follow the middot never reached
@@ -300,14 +374,14 @@
             NO MEMBER COUNT (user, 2026-09-23). The members tab states it, and on a list it printed
             "0 membre" for a campaign whose roster is simply not registered yet.
           -->
-          <p class="text-text-muted flex flex-wrap items-center gap-x-1.5 text-xs">
-            {#if kind === 'list' && asso.parentName}
-              <span class="text-text-main font-semibold">{asso.parentName}</span>
-              <span aria-hidden="true">&#183;</span>
-            {/if}
-            <span>@{asso.slug}</span>
-          </p>
-          <!--
+            <p class="text-text-muted flex flex-wrap items-center gap-x-1.5 text-xs">
+              {#if kind === 'list' && asso.parentName}
+                <span class="text-text-main font-semibold">{asso.parentName}</span>
+                <span aria-hidden="true">&#183;</span>
+              {/if}
+              <span>@{asso.slug}</span>
+            </p>
+            <!--
             THE SECOND LOGO SITS WITH THE SECOND NAME, not with the first (user, 2026-09-23: *"ce
             n'est pas logique d'avoir logo1 puis titre1 et titre2 puis logo2"*). Both logos used to
             share one row at `lg` while both names shared the `<h1>`, so the pairing a reader had to
@@ -316,132 +390,72 @@
             way, and `& ` in front of a name (whose leading space Svelte also trimmed, giving
             `Mines'tagnard& Mines'diana Jones`) is gone with the shape that needed it.
           -->
-          {#if hasSecondTheme}
-            <div class="mt-1.5 flex items-center gap-2">
-              <AssociationAvatar name={secondName || asso.name} logoUrl={secondLogoUrl} size="sm" />
-              {#if secondName}
-                <span
-                  class="text-text-muted min-w-0 text-sm font-semibold [overflow-wrap:anywhere]"
-                >
-                  {secondName}
-                </span>
-              {/if}
-            </div>
-          {/if}
-          {#if kind === 'list' && asso.promo}
-            <span
-              class="text-cn-dark bg-cn-yellow/20 mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
-            >
-              {m.list_campaigns_heading({ year: asso.promo })}
-            </span>
-          {/if}
-        </div>
-        <div
-          class="flex w-full shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center"
-        >
-          {#if userId}
-            <button
-              type="button"
-              onclick={() => toggleFollow()}
-              disabled={followLoading}
-              class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
-            >
-              {#if following}
-                <BellOff size={16} />
-                {m.asso_unfollow_button()}
-              {:else}
-                <Bell size={16} />
-                {m.asso_follow_button()}
-              {/if}
-            </button>
-          {/if}
-          {#if canManage}
-            <a
-              href="{basePath}/{encodeURIComponent(slug)}/edit"
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
-            >
-              <Settings size={16} />
-              {wordingFor(asso.type).manageButton()}
-            </a>
-          {/if}
+            {#if hasSecondTheme}
+              <div class="mt-1.5 flex items-center gap-2">
+                <AssociationAvatar
+                  name={secondName || asso.name}
+                  logoUrl={secondLogoUrl}
+                  size="sm"
+                />
+                {#if secondName}
+                  <span
+                    class="text-text-muted min-w-0 text-sm font-semibold [overflow-wrap:anywhere]"
+                  >
+                    {secondName}
+                  </span>
+                {/if}
+              </div>
+            {/if}
+            {#if kind === 'list' && asso.promo}
+              <span
+                class="text-cn-dark bg-cn-yellow/20 mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
+              >
+                {m.list_campaigns_heading({ year: asso.promo })}
+              </span>
+            {/if}
+          </div>
+          <div
+            class="flex w-full shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center"
+          >
+            {#if userId}
+              <button
+                type="button"
+                onclick={() => toggleFollow()}
+                disabled={followLoading}
+                class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
+              >
+                {#if following}
+                  <BellOff size={16} />
+                  {m.asso_unfollow_button()}
+                {:else}
+                  <Bell size={16} />
+                  {m.asso_follow_button()}
+                {/if}
+              </button>
+            {/if}
+            {#if canManage}
+              <a
+                href="{base}/{encodeURIComponent(slug)}/edit"
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
+              >
+                <Settings size={16} />
+                {wordingFor(asso.type).manageButton()}
+              </a>
+            {/if}
+          </div>
         </div>
       </div>
-    </div>
+    {/if}
 
     {#if error}
       <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
         {error}
       </div>
     {/if}
-
-    <nav
-      class="border-cn-border/80 bg-cn-bg sticky top-0 z-30 -mx-4 border-y px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border"
-      aria-label={m.asso_sections_nav_label()}
-    >
-      <div class="flex gap-2 overflow-x-auto pb-1" data-swipe-nav-ignore>
-        <button
-          type="button"
-          onclick={() => (activeSection = 'about')}
-          class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {activeSection === 'about'
-            ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-        >
-          <Building2 size={17} />
-          {m.asso_tab_about()}
-        </button>
-        <button
-          type="button"
-          onclick={() => (activeSection = 'calendar')}
-          class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {activeSection === 'calendar'
-            ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-        >
-          <CalendarDays size={17} />
-          {m.asso_tab_calendar()}
-        </button>
-        <button
-          type="button"
-          onclick={() => (activeSection = 'members')}
-          class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {activeSection === 'members'
-            ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-        >
-          <Users size={17} />
-          {m.common_members_label()}
-        </button>
-        {#if products.length > 0}
-          <button
-            type="button"
-            onclick={() => (activeSection = 'shop')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {activeSection === 'shop'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <ShoppingBag size={17} />
-            {m.asso_tab_shop()}
-          </button>
-        {/if}
-        {#if partnerships.length > 0}
-          <button
-            type="button"
-            onclick={() => (activeSection = 'partnerships')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {activeSection === 'partnerships'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <Handshake size={17} />
-            {m.asso_tab_partnerships()}
-          </button>
-        {/if}
-      </div>
-    </nav>
-
-    {#if activeSection === 'about'}
+    {#if sectionRefused}
+      <!-- Nothing is drawn: the effect above is already sending the reader back to the hub. -->
+    {:else if activeSection === null}
+      <SectionHub rows={hubRows} label={m.asso_sections_nav_label()} />
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_about()}</h2>
         <!--
@@ -474,7 +488,7 @@
     {:else if activeSection === 'calendar'}
       <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
         <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h2>
+          <h1 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h1>
           <a
             href="/calendar?association={encodeURIComponent(asso.id)}"
             class="text-cn-dark text-xs font-semibold hover:underline"
@@ -492,9 +506,9 @@
     {:else if activeSection === 'members'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
-          <h2 class="text-text-main text-lg font-bold tracking-tight">
+          <h1 class="text-text-main text-lg font-bold tracking-tight">
             {m.common_members_label()}
-          </h2>
+          </h1>
           {#if members.length > 0}
             <button
               type="button"
@@ -525,10 +539,10 @@
     {:else if activeSection === 'shop'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
-          <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+          <h1 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
             <ShoppingBag size={20} />
             {m.asso_tab_shop()}
-          </h2>
+          </h1>
           <a href={resolve('/shop')} class="text-cn-dark text-xs font-semibold hover:underline">
             {m.asso_view_all_shop()}
           </a>
@@ -609,10 +623,10 @@
       </div>
     {:else if activeSection === 'partnerships'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
-        <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+        <h1 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
           <Handshake size={20} />
           {m.asso_tab_partnerships()}
-        </h2>
+        </h1>
         <PartnershipCardList cards={partnerships} accentColor={cardAccentColor} />
       </div>
     {/if}
