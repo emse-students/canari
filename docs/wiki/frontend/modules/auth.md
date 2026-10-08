@@ -196,6 +196,20 @@ dans l'App Store") and `google-play-badge.png` (play.google.com, `fr_badge_web_g
 (29px above and below on the French one); it is cropped to its real content so both badges share
 one visual height side by side (`h-10` on both `<img>` tags).
 
+### Open in the app, from the login page (2026-10-08)
+
+The 2026-09-25 audit also found no "Ouvrir dans l'application" on `/login`. `LoginPage` now computes
+`loginOpenInAppOffer` (`lib/mobile/openInApp.ts`) beside the badges, so it shows only on a
+phone-sized web visit, never in the native app. `/login` is not a path the app claims, so the
+target is the page behind `returnTo` when claimed, else `/chat` (the app's home, which asks for a
+sign-in itself). Android: the `intent://` URL on the https App Link filter (Play listing as
+fallback); iOS: `fr.emse.canari://open?url=...` (nothing happens without the app - the badges sit
+right below). Hosts outside `MOBILE_APP_LINK_HOSTS` (dev) get no link. Same builder as the in-app
+browser banner ([mobile](../mobile.md#leaving-an-in-app-browser-for-the-app)). The English-badge
+half of that audit entry had already shipped on 2026-10-01 (above). **Owed: one tap on each phone
+with the app installed** - measured only as the rendered link in a headless Chrome with an Android
+user agent (local host temporarily whitelisted), never followed into the app.
+
 **The card is FLAT** (same audit, checklist line 1 of
 [ecosystem-convergence §12](../../ecosystem-convergence.md#12-the-interface-bar---one-checklist-for-every-site-each-rule-tied-to-a-measurement-2026-09-25)):
 the sign-in button's yellow glow, the logo tile's 32px shadow, the card's `shadow-2xl` and the

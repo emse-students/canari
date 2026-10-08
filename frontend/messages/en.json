@@ -10,6 +10,7 @@
   "auth_privacy": "Privacy",
   "auth_terms": "Terms",
   "auth_get_app_prompt": "Get the Canari app",
+  "auth_open_in_app": "Open in the app",
   "auth_app_store_button": "App Store",
   "auth_play_store_button": "Google Play",
   "auth_maintenance_default": "Canari is under maintenance. Only administrators can sign in.",

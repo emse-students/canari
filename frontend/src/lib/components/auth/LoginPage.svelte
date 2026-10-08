@@ -11,6 +11,7 @@
   } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
+  import { loginOpenInAppOffer } from '$lib/mobile/openInApp';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { PHONE_VIEWPORT_QUERY, isPhoneViewport, onViewportChange } from '$lib/utils/viewport';
   import { onAppForegroundChange } from '$lib/utils/appForeground';
@@ -28,6 +29,7 @@
   let requestedReturnTo = '';
   /** Store badges: a phone-sized WEB visitor, never the native app itself. */
   let showStoreBadges = $state(false);
+  let openInAppHref = $state<string | null>(null);
 
   const platformInfo = $derived(getAppVersionCheck());
   const loginDisabled = $derived(isBelowMinClientVersion());
@@ -219,8 +221,11 @@
   $effect(() => {
     if (isTauriRuntime()) {
       showStoreBadges = false;
+      openInAppHref = null;
       return;
     }
+    openInAppHref =
+      loginOpenInAppOffer(window.location.href, navigator.userAgent)?.openHref ?? null;
     showStoreBadges = isPhoneViewport();
     return onViewportChange(PHONE_VIEWPORT_QUERY, (narrow) => {
       showStoreBadges = narrow;
@@ -235,6 +240,7 @@
   {maintenanceNotice}
   {loginDisabled}
   {showStoreBadges}
+  {openInAppHref}
   onLogin={handleLogin}
   onPasswordLogin={handlePasswordLogin}
 />
