@@ -761,7 +761,9 @@ export function useChannelWorkspaces() {
           ctx.log(`[WORKSPACE-LOAD] communities/channels loaded (attempt ${attempt + 1})`);
           // THE SALONS EXIST NOW, and what is unread in them is the server's to say: the live tally
           // this device keeps is empty after any reload. See `salonUnread.ts`.
-          await reconcileSalonUnreadFromServer({
+          // NOT awaited: this runs under `isLoadingWorkspaces`, and a slow answer must not make
+          // every other load refuse.
+          void reconcileSalonUnreadFromServer({
             conversations: ctx.conversations,
             selectedId: ctx.getSelectedConversationId?.() ?? null,
             userId: currentUserId() ?? '',

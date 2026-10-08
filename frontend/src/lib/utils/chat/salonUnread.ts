@@ -35,6 +35,8 @@ export interface SalonUnreadAnswer {
 
 /** A monotonic counter: every reconcile start and every salon opening takes the next value. */
 let ticks = 0;
+/** Bumped when the session ends: an answer asked under an earlier session belongs to nobody now. */
+let generation = 0;
 const openedAtTick = new Map<string, number>();
 
 /** Records that the reader opened `conversationId` now, for the reconcile that may be in flight. */
@@ -48,9 +50,13 @@ export function beginUnreadReconcile(): number {
   return ++ticks;
 }
 
-/** Forgets every stamp. Called when the session ends, and by tests. */
+/**
+ * Forgets every stamp and orphans every request still in flight. Called when the session ends, and
+ * by tests: an answer counted for the account that just left must not land on the next one's salons.
+ */
 export function resetSalonUnread(): void {
   ticks = 0;
+  generation++;
   openedAtTick.clear();
 }
 
@@ -125,8 +131,16 @@ export async function reconcileSalonUnreadFromServer(opts: {
   reason: string;
 }): Promise<void> {
   const token = beginUnreadReconcile();
+  const startedIn = generation;
   try {
-    const answer = parseSalonUnreadAnswer(await opts.fetchCounts());
+    const raw = await opts.fetchCounts();
+    if (startedIn !== generation) {
+      opts.log(
+        `[UNREAD] ${opts.reason}: the session ended while the counts were in flight - dropped`
+      );
+      return;
+    }
+    const answer = parseSalonUnreadAnswer(raw);
     if (!answer) {
       console.warn(
         `[UNREAD] ${opts.reason}: the server answered a shape nobody recognises - counts left as they were`

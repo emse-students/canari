@@ -10,6 +10,7 @@ import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage } from '$lib/db';
+import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import {
   applyNewDeviceKeyLocally,
@@ -2017,6 +2018,7 @@ export function tearDownLiveSession(
   // The watchdog's candidate set IS the live conversation map, so emptying it is half of why
   // nothing can drive recovery for a session that has ended.
   cb.conversations.clear();
+  resetSalonUnread();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.

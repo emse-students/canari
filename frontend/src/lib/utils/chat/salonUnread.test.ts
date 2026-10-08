@@ -5,6 +5,7 @@ import {
   noteSalonOpened,
   parseSalonUnreadAnswer,
   reconcileSalonUnread,
+  reconcileSalonUnreadFromServer,
   resetSalonUnread,
 } from './salonUnread';
 
@@ -137,6 +138,27 @@ describe('reconcileSalonUnread', () => {
     const map = new Map([['some-group-id', convo({ id: 'some-group-id', unreadCount: 2 })]]);
     reconcileSalonUnread(map, { asOf: 1, counts: {} }, null, ME, beginUnreadReconcile());
     expect(map.get('some-group-id')?.unreadCount).toBe(2);
+  });
+});
+
+describe('reconcileSalonUnreadFromServer', () => {
+  it('drops an answer asked under a session that has since ended', async () => {
+    resetSalonUnread();
+    const map = new Map([[SALON, convo()]]);
+    const logs: string[] = [];
+    await reconcileSalonUnreadFromServer({
+      conversations: map,
+      selectedId: null,
+      userId: ME,
+      reason: 'test',
+      log: (m) => logs.push(m),
+      fetchCounts: async () => {
+        resetSalonUnread();
+        return { asOf: 1, counts: { [SALON.replace('channel_', '')]: 4 } };
+      },
+    });
+    expect(map.get(SALON)?.unreadCount).toBe(0);
+    expect(logs.join()).toContain('dropped');
   });
 });
 

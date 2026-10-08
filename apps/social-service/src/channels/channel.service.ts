@@ -3592,9 +3592,8 @@ export class ChannelService {
   async listUnreadCounts(
     userId: string
   ): Promise<{ asOf: number; counts: Record<string, number> }> {
-    const asOf = Date.now();
     const members = await this.memberRepo.find({ where: { userId } });
-    if (members.length === 0) return { asOf, counts: {} };
+    if (members.length === 0) return { asOf: Date.now(), counts: {} };
     const memberOf = new Map(members.map((m) => [m.workspaceId, m]));
     const channels = await this.channelRepo.find({
       where: { workspaceId: In([...memberOf.keys()]) },
@@ -3605,24 +3604,40 @@ export class ChannelService {
         return !!member && this.canAccessChannel(c, member, userId);
       })
       .map((c) => c.id);
-    if (readable.length === 0) return { asOf, counts: {} };
+    if (readable.length === 0) return { asOf: Date.now(), counts: {} };
 
+    // asOf is taken HERE, right before the count, not at the top of the method: the client adds
+    // every live message newer than it, so each millisecond between the two is a window in which a
+    // message is counted by both sides.
+    const asOf = Date.now();
     const rows: { channelId: string; n: string }[] = await this.messageRepo.query(
-      `SELECT m."channelId" AS "channelId", COUNT(*) AS n
-         FROM channel_messages m
-         JOIN channel_members cm ON cm."workspaceId" = m."workspaceId" AND cm."userId" = $1
-        -- Whole milliseconds on both sides: a mark is a JS instant (truncated), createdAt keeps
-        -- microseconds, and comparing them raw counted the very message just read.
-        WHERE m."channelId" = ANY($2::uuid[])
-          AND m.silent = false
-          AND m."authorId" <> $1
-          AND floor(extract(epoch from m."createdAt") * 1000) >
-              GREATEST(
-                COALESCE((cm."readMarks" ->> (m."channelId")::text)::bigint, 0),
-                floor(extract(epoch from cm."createdAt") * 1000)::bigint,
-                $3::bigint
-              )
-        GROUP BY m."channelId"`,
+      `SELECT ch.id AS "channelId", u.n AS n
+         FROM channel_members cm
+         JOIN channels ch ON ch."workspaceId" = cm."workspaceId" AND ch.id = ANY($2::uuid[])
+        -- The instant after which a message counts, per salon: the later of the member's mark, the
+        -- member's arrival and the tracking floor.
+        CROSS JOIN LATERAL (
+          SELECT GREATEST(
+                   COALESCE((cm."readMarks" ->> ch.id::text)::bigint, 0),
+                   floor(extract(epoch from cm."createdAt") * 1000)::bigint,
+                   $3::bigint
+                 ) AS since
+        ) b
+        CROSS JOIN LATERAL (
+          SELECT COUNT(*) AS n
+            FROM channel_messages m
+           WHERE m."channelId" = ch.id
+             AND m.silent = false
+             AND m."authorId" <> $1
+             -- Sargable pre-filter on migration 079's index: without it every row of the salon was
+             -- read to be thrown away (300 ms on 1.5M rows, 6 ms with it). A superset of the exact
+             -- test below, so it never contradicts it.
+             AND m."createdAt" >= (to_timestamp(b.since / 1000.0) AT TIME ZONE 'UTC')
+             -- Whole milliseconds on both sides: a mark is a JS instant (truncated), createdAt keeps
+             -- microseconds, and comparing them raw counted the very message just read.
+             AND floor(extract(epoch from m."createdAt") * 1000) > b.since
+        ) u
+        WHERE cm."userId" = $1 AND u.n > 0`,
       [userId, readable, UNREAD_TRACKED_SINCE_MS]
     );
     const counts: Record<string, number> = {};
