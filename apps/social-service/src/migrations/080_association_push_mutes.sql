@@ -1,4 +1,4 @@
--- Migration 079 : a per-association MUTE of push notifications.
+-- Migration 080 : a per-association MUTE of push notifications.
 --
 -- One row = one account that no longer wants the PUSH of ONE association. It silences nothing else:
 -- the post stays in the feed, the in-app notification row is still written, and an association's

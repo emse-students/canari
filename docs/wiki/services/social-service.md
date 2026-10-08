@@ -572,7 +572,7 @@ because a mark is also the "Lu par" receipt other people see. `read-mark` accept
 (the row's own `createdAt`) and stores the later of it and `at`, still bounded by the newest message - the
 author's `sentAt` is earlier than `createdAt`, which left the newest message "unread" for ever. A
 membership notice that is not silent is counted until the salon is opened. The count is one LATERAL
-per salon bounded by `createdAt >= since`, riding `IDX_channel_messages_channel_created` (migration 079):
+per salon bounded by `createdAt >= since`, riding `IDX_channel_messages_channel_created` (migration 080):
 300 ms on 1.5M rows / 300 salons with the old `channelId` index, 6 ms with it (EXPLAIN, `jit=off`). Why the client needs it:
 [chat](../frontend/modules/chat.md#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08).
 
@@ -878,7 +878,7 @@ than the recipients.
 | | What it is | Does it decide who is PUSHED? |
 | --- | --- | --- |
 | **Follow** (`association_follows`, button "Suivre") | a reading preference: it feeds the "followed" view of the feed | **No.** Every association post is pushed to everyone who can SEE it; the follow table is not consulted for announcing (STATUS QUO, chosen on purpose) |
-| **Mute** (`association_push_mutes`, migration 079) | "stop pushing me THIS association", and only that | **Yes - it removes the recipient from the PUSH**, never from the feed or the bell |
+| **Mute** (`association_push_mutes`, migration 080) | "stop pushing me THIS association", and only that | **Yes - it removes the recipient from the PUSH**, never from the feed or the bell |
 | **Nominative read grant** (`read_grants`) | access to read | **No.** A read grant is access, not subscription: its holders are not announced to |
 
 **Where a mute is applied: ONE place, server-side.** `PostNotificationsService.createNotifications`
