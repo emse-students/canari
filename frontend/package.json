@@ -47,7 +47,7 @@
     "@lucide/svelte": "^1.52.0",
     "@sosweetham/tauri-plugin-system-components-api": "0.1.8",
     "@tauri-apps/api": "^2.12.1",
-    "@tauri-apps/plugin-biometric": "^2.3.3",
+    "@tauri-apps/plugin-biometric": "^2.4.1",
     "@tauri-apps/plugin-deep-link": "^2.4.10",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-fs": "^2.6.0",

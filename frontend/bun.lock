@@ -17,7 +17,7 @@
         "@lucide/svelte": "^1.52.0",
         "@sosweetham/tauri-plugin-system-components-api": "0.1.8",
         "@tauri-apps/api": "^2.12.1",
-        "@tauri-apps/plugin-biometric": "^2.3.3",
+        "@tauri-apps/plugin-biometric": "^2.4.1",
         "@tauri-apps/plugin-deep-link": "^2.4.10",
         "@tauri-apps/plugin-dialog": "^2.7.3",
         "@tauri-apps/plugin-fs": "^2.6.0",
@@ -536,7 +536,7 @@
 
     "@tauri-apps/cli-win32-x64-msvc": ["@tauri-apps/cli-win32-x64-msvc@2.12.1", "", { "os": "win32", "cpu": "x64" }, "sha512-dIFaKslrzcbesb+bBh+E1R9km241pHyj32w6D9FPtvQeYpRUFbiCLEa/2S+S0UnIytfxepp4P+X8IerGqnXeYg=="],
 
-    "@tauri-apps/plugin-biometric": ["@tauri-apps/plugin-biometric@2.3.3", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-lNPZhN/LL9IGUxdJeUpltuxMZ0qHydhqtNEjgXW+YFLJWpt2WJGDlaGs6iDttj0PArfLYe0/CruAsZ8Anl3CFQ=="],
+    "@tauri-apps/plugin-biometric": ["@tauri-apps/plugin-biometric@2.4.1", "", { "dependencies": { "@tauri-apps/api": "^2.12.0" } }, "sha512-dH/IPC+NTiB28iBZMnqrjsRNJKRcMCh6r89fOhCrrgRW5g5+iaoCw9iB6Zs1TnTaYEUggJpEsqdY33uaVNIxvw=="],
 
     "@tauri-apps/plugin-deep-link": ["@tauri-apps/plugin-deep-link@2.4.10", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-SuXI47ORUzYuwG6c8dluLDrStTvli5bAZDRa2+VuUEzK/9TEa7FZz7UKXBQriL7+CPFXRHQsz5tSocc47tRXQQ=="],
 
