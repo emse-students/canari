@@ -193,6 +193,8 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
       associationLogoUrl: from.logoUrl,
       associationLogoMediaId: from.logoMediaId,
       text: previewOf(post.markdown ?? ''),
+      // The tap opens the receiving association's queue, not the feed.
+      pushData: { queueAssociationId: proposal.toAssociationId },
     });
     this.logger.log(`[REPOST] proposal ${proposal.id.slice(0, 8)} announced to ${count}`);
   }

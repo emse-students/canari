@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appRouteForDeepLink } from './deepLinkRoutes';
+import { appRouteForDeepLink, proposalQueueAssociationId } from './deepLinkRoutes';
 
 const route = (url: string) => appRouteForDeepLink(new URL(url));
 
@@ -38,5 +38,21 @@ describe('appRouteForDeepLink', () => {
 
   it('keeps an id inside one path segment', () => {
     expect(route('fr.emse.canari://post/a%2F..%2Fb')).toBe('/posts/a%2F..%2Fb');
+  });
+});
+
+describe('proposalQueueAssociationId', () => {
+  const id = (url: string) => proposalQueueAssociationId(new URL(url));
+
+  it('names the receiving association of a proposal push', () => {
+    expect(id('fr.emse.canari://proposals/a1')).toBe('a1');
+  });
+
+  it('leaves every other link, and a link with no id, alone', () => {
+    expect(id('fr.emse.canari://proposals')).toBeNull();
+    expect(id('fr.emse.canari://post/p1')).toBeNull();
+    expect(id('https://canari.emse.fr/proposals/a1')).toBeNull();
+    // Not a page the generic table owns: its route needs the slug.
+    expect(route('fr.emse.canari://proposals/a1')).toBeNull();
   });
 });

@@ -796,7 +796,7 @@ export function useNotifications() {
             notifNav.navigate(conversationId);
             try {
               const { goto } = await import('$app/navigation');
-              await goto('/chat');
+              await goto(chatDeepLinkRoute(conversationId));
             } catch {
               /* ignore */
             }
