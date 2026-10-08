@@ -405,21 +405,11 @@ Left: authentik's own untranslated "Go back" (its reason on that page). **One ob
 `miconnect-auth` opened while signed in, on the Mi 9T, should now go straight through.
 
 
-### P3 - Canari's web login shows developer vocabulary and English store badges (measured on the Mi 9T, 2026-09-25)
+### P3 - the login page's "Ouvrir dans l'application": one tap owed on each phone (2026-10-08)
 
-Seen at `canari.emse.fr/login` on the Mi 9T, against the ecosystem checklist
-([ecosystem-convergence](ecosystem-convergence.md#12-the-interface-bar---one-checklist-for-every-site-each-rule-tied-to-a-measurement-2026-09-25)):
-"**Connexion externe (service-account)**" is shown to every user; the store badges are the English artwork
-("Download on the App Store", "GET IT ON Google Play") though both stores publish French ones; and a
-phone that HAS the app gets no "Ouvrir dans l'application". The signed-in web app was NOT audited:
-a web sign-in registers an MLS device on the account, so it waits for the user to say which account.
-
-**Decided by the user, 2026-09-25**: "Réinitialiser l'appareil" was a developer tool, removed from
-the login page by #1097. "Connexion externe (service-account)" STAYS - the store reviewers sign in
-through it - and its wording stays exactly as it is. The signed-in web app is NOT to be audited
-here: Canari's interface is its own long-running work, and this entry was about the login page only.
-
-**Still open, re-read 2026-10-06**: the English badge artwork, and no "Ouvrir dans l'application" on `/login`.
+The French badges and the link are shipped ([auth](frontend/modules/auth.md#open-in-the-app-from-the-login-page-2026-10-08));
+"Connexion externe (service-account)" stays word for word by the user's decision. Owed: tap the
+link on a phone WITH the app (Android and iPhone) and see it open.
 
 
 ### P3 - a CrowdSec ban on this host closes the co-tenant sites too (measured 2026-09-25)

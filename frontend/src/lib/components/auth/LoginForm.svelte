@@ -16,6 +16,8 @@
     loginDisabled?: boolean;
     /** True on a phone-sized web visit (never the native app): offers the store badges. */
     showStoreBadges?: boolean;
+    /** Where "Ouvrir dans l'application" goes (phone web visit with a claimed host); null hides it. */
+    openInAppHref?: string | null;
     /** Called when the user clicks the main OIDC login button. */
     onLogin: () => void;
     /** Called when the user clicks the password test login button (store review). */
@@ -29,6 +31,7 @@
     maintenanceNotice = null,
     loginDisabled = false,
     showStoreBadges = false,
+    openInAppHref = null,
     onLogin,
     onPasswordLogin,
   }: Props = $props();
@@ -123,6 +126,13 @@
       {#if showStoreBadges}
         <div class="border-cn-border mt-8 border-t pt-6" transition:slide>
           <p class="text-text-muted mb-3 text-xs font-medium">{m.auth_get_app_prompt()}</p>
+          {#if openInAppHref}
+            <a
+              href={openInAppHref}
+              class="text-cn-yellow mb-4 inline-block text-sm font-semibold underline"
+              >{m.auth_open_in_app()}</a
+            >
+          {/if}
           <div class="flex items-center justify-center gap-3">
             <a href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">
               <img src="/app-store-badge.svg" alt={m.auth_app_store_button()} class="h-10 w-auto" />

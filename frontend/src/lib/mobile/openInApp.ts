@@ -61,7 +61,37 @@ export interface OpenInAppOffer {
 export function openInAppOffer(href: string, userAgent: string): OpenInAppOffer | null {
   const os = detectInAppBrowser(userAgent);
   if (!os || !isPublicAppUrl(href)) return null;
-  const url = pageBehindLogin(new URL(href));
+  return offerFor(os, pageBehindLogin(new URL(href)));
+}
+
+/**
+ * The offer for a phone on the LOGIN page, in any browser: "Ouvrir dans l'application".
+ *
+ * `/login` is not a path the app claims, so the target is the page behind it (`returnTo`) when that
+ * is claimed, else `/chat` - the app's home, which asks for a sign-in itself when it must. Null
+ * for a desktop, an unknown system, or a host no App Link filter names (dev). Unlike an Android
+ * link tapped in Chrome, nothing here is resolved by the system before the visitor chooses, so
+ * the offer is the only way a phone that HAS the app gets there from the web login.
+ */
+export function loginOpenInAppOffer(href: string, userAgent: string): OpenInAppOffer | null {
+  const os = phoneOs(userAgent);
+  if (!os || !isPublicAppUrl(href)) return null;
+  const url = new URL(href);
+  const behind = pageBehindLogin(url);
+  const claimed = offerFor(os, behind);
+  if (claimed) return claimed;
+  return offerFor(os, new URL('/chat', url.origin));
+}
+
+/** The phone system named by `userAgent`, whatever the browser. */
+function phoneOs(userAgent: string): InAppBrowserOs | null {
+  if (/Android/.test(userAgent)) return 'android';
+  if (/iPhone|iPad|iPod/.test(userAgent)) return 'ios';
+  return null;
+}
+
+/** The offer for `url` on `os`, or null when it is not a page the app claims. */
+function offerFor(os: InAppBrowserOs, url: URL): OpenInAppOffer | null {
   if (!isPublicAppUrl(url.href)) return null;
   // The claimed HOSTS, not every Canari name: an intent naming the package matches only the filter,
   // and `dev.canari-emse.fr` is in no filter - it would send a phone with the app to the store.
