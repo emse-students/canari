@@ -13,10 +13,10 @@ export function previousCrumb(crumbs: readonly Crumb[]): Crumb | undefined {
 }
 
 /**
- * How many crumbs a phone folds away: everything but the last `keep`, never the root. The back
+ * How many crumbs a phone folds away: everything but the root and the last `keep - 1`: on a phone only the root and the page you are on stay, the arrow reaching the level above. The back
  * arrow already reaches the level above, so what is folded is only the middle of a long path.
  */
-export function foldedCrumbCount(total: number, keep = 3): number {
+export function foldedCrumbCount(total: number, keep = 2): number {
   return Math.max(0, total - keep);
 }
 

@@ -55,13 +55,14 @@ it('has no back arrow for a path of one', () => {
 });
 
 it('folds the middle of a long path on a phone and never the root or the tail', () => {
-  expect(foldedCrumbCount(3)).toBe(0);
-  expect(foldedCrumbCount(4)).toBe(1);
+  expect(foldedCrumbCount(3)).toBe(1);
+  expect(foldedCrumbCount(4)).toBe(2);
   const root = render(Breadcrumb, { crumbs: TRAIL });
   const items = [...root.querySelectorAll('ol > li')].filter((li) => li.querySelector('a'));
   const hiddenOnPhone = items.filter((li) => li.className.includes('hidden sm:flex'));
-  expect(hiddenOnPhone).toHaveLength(1);
-  expect(hiddenOnPhone[0].textContent).toContain('BDE');
+  expect(hiddenOnPhone).toHaveLength(2);
+  expect(hiddenOnPhone.map((li) => li.textContent).join(' ')).toContain('BDE');
+  expect(hiddenOnPhone.map((li) => li.textContent).join(' ')).toContain('Gestion');
 });
 
 it('draws a hub row as a link with its label, summary and a danger tone', () => {
