@@ -23,11 +23,22 @@ export const SHUTTER_HOLD_THRESHOLD_MS = 350;
  * Android's WebView writes VP9/Opus WebM by default. Either is brought to ONE fragmented H.264/AAC MP4
  * by `prepareVideoForUpload` before upload (C3), so this choice only has to be a format the engine
  * records well. The first one `isTypeSupported` accepts wins; none means the engine cannot record.
+ *
+ * ANDROID RECORDS H.264 FIRST (Mi 9T, WebView 152, lava-lamp bench 2026-10-09, same 590x1280 canvas
+ * stream, 8 s): VP9 is a SOFTWARE encoder and kept 19-20 of 30 frames (17 gaps over 80 ms in the
+ * user's own file), where the hardware H.264 encoder kept 30.0 with none. The VP9 recorder stays a
+ * candidate for an engine with no H.264 one.
  */
 export function reelRecorderMimeCandidates(ios: boolean): readonly string[] {
   return ios
     ? ['video/mp4;codecs=avc1,mp4a', 'video/mp4']
-    : ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+    : [
+        'video/webm;codecs=h264,opus',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+        'video/mp4',
+      ];
 }
 
 /** The first candidate the engine records, or `null` when it records none of them. */

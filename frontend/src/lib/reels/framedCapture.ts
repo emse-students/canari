@@ -44,6 +44,22 @@ export const REEL_CAPTURE_MAX_LONG_SIDE = 1280;
 /** The frame rate asked of the camera and of the framed stream. */
 export const REEL_CAPTURE_FPS = 30;
 
+/**
+ * The microphone a reel is recorded with: NO voice-call processing. Echo cancellation, noise
+ * suppression and automatic gain are a telephone's chain - they gate music and ambience, pump the
+ * level and, with the gain, pushed the user's reel to -10 LUFS with its peak over 0 dBFS (2026-10-09).
+ * Measured on the Mi 9T against one loud source, 6 s: gain control alone read 6 dB hotter than none
+ * (peak -10.9 against -17.1 dBFS). A reel records the room as it is, as a camera app does.
+ */
+export const REEL_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: false,
+  noiseSuppression: false,
+  autoGainControl: false,
+};
+
+/** Audio bitrate asked of the recorder, so its Opus is not left at an engine default. */
+export const REEL_RECORD_AUDIO_BITRATE = 128_000;
+
 /** The most a take is recorded at: above the 2.5 Mb/s upload target, so the preparation compresses once. */
 export const REEL_RECORD_BITRATE_MAX = 4_000_000;
 

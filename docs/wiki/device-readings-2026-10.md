@@ -191,3 +191,42 @@ The local estate has no migration runner (ledger stops at 068): migrations 069-0
   `returnTo` fix in `ChatBackgroundService` was tried and reverted: it does not touch this cold-start path.
 - NOT taken: the tap on the DM (NOTIF-7/7b) and stale targets were not re-read in a form worth a verdict,
   the admin hub with a tier account, list edit, three-button navigation, and everything iOS.
+
+## 2026-10-09 - CanaReels capture: the video was not fluid and the sound was hot (Mi 9T, lava-lamp bench)
+
+User report: a received reel (`_UAn5N-A.mp4`) is not fluid and sounds horrible; and the screen after a
+capture has black bars. The phone sat in front of a lava lamp so the image is never still. Method: the
+capture code's own settings run in the app's WebView over CDP (same constraints, same canvas relay, same
+`MediaRecorder` options), the real `prepareVideoForUpload` bundled and injected, every file pulled over
+adb and read with ffprobe/ffmpeg. **This drives the code paths, not the app's screens; the fixed APK
+was NOT built, and the rebuilt screen was measured in headless Chrome only.**
+
+The user's file: 570x1278, H.264 High, `avg_frame_rate` 20.18 against `r_frame_rate` 57600 (variable),
+138 frames over 6.86 s, inter-frame 12-173 ms with 17 gaps over 80 ms, key frames every 2 s (the
+transcode's, correct); audio AAC mono 48 kHz 128 kb/s, **RMS -10.2 dB, peak +0.18 dB, EBU I -10 LUFS**:
+hot and clipped; audio 7.36 s against video 6.92 s.
+
+| Stage (590x1280, 8-10 s) | Before (VP9 + canvas relay) | After (hardware H.264 + canvas relay) |
+| --- | --- | --- |
+| Camera track itself | 29.8-30.0 fps | 30.0 fps |
+| (i) Recorder file | 18.9-20.2 fps, 11-17 gaps over 80 ms, max 135-173 ms | 29.9-30.0 fps, 0 gaps, max 54 ms |
+| (ii) After preparation (WebCodecs, 3.1-3.8 s) | 18.9 fps, 10 gaps, 400 kB | 28.8 fps, 0 gaps, 2.85 Mb/s |
+| (iv) Playback in the WebView | 0 dropped (plays the 19 fps it is given) | 0 dropped, 0 gaps |
+
+- **Cause of the stutter is the recorder, not compression, upload or playback.** The software VP9
+  encoder cannot keep up with the canvas stream and drops a third of the frames; the hardware H.264 one
+  (`video/webm;codecs=h264,opus`, supported, written as Matroska) keeps all of them. The transcode copies
+  timestamps through and playback drops nothing, so they only carry the loss. Recording the camera
+  stream directly with VP9 also read 29.9 fps (the cost is the canvas readback plus the software encoder);
+  drawing on `requestVideoFrameCallback` instead of `requestAnimationFrame` gave no gain over H.264 and
+  left a few gaps, so `requestAnimationFrame` stays. Upload was not a stage that can change frames: the
+  file is encrypted and stored as is.
+- **Audio**: `getUserMedia({ audio: true })` leaves the voice-call chain on. Against one source, 6 s,
+  gain control alone read 6 dB hotter than none (peak -10.9 against -17.1 dBFS); echo cancellation also
+  removes whatever the app itself plays. Reels now ask for all three OFF and 128 kb/s Opus. NOT
+  proven by ear (tests stayed silent by decision): the loudness of a real voice with the chain off.
+- **Preview screen**: the media is `object-cover`, absolute, looping, no seek bar, timecode or bottom
+  sound button; the sound button stays at the top beside the pencil and the cross. Headless Chrome
+  at 320x640, 390x844 and 1280x800: the media box equals the viewport at all three (0,0,w,h), no range
+  input, "Next" over the bottom edge. A portrait clip on a 1280 wide window is cropped hard by `cover`.
+- OPEN: the prepared file has ~4 % fewer frames than the recording (287 of 299); the cause was not found.

@@ -1,9 +1,7 @@
 /**
- * A take is reviewed on Canari's own poster, never the engine's (user, 2026-10-02, Mi 9T: Android's
- * native video glyph showed right after a recording, before the video loaded). The review is the
- * real `VideoPlayer`, so this pins what the reel flow relies on: the element's `poster` is the
- * transparent one, Canari's poster covers the full-screen box until the first frame, and the box
- * has its final size from the first paint.
+ * The review is NOT a player (user, 2026-10-09: black bars after a capture): the take fills the
+ * screen under `object-cover`, loops, and carries no seek bar, timecode or bottom sound button.
+ * Pencil, sound and cross live at the top; "Next" floats over the bottom edge.
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -28,30 +26,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("shows Canari's poster and no native one until the take's first frame", () => {
-  const target = document.createElement('div');
-  document.body.appendChild(target);
-  mounted.push(
-    mount(ReelReview, {
-      target,
-      props: {
-        clip: { blob: new Blob(['x'], { type: 'video/webm' }), source: 'camera' },
-        ondiscard: () => {},
-        onnext: () => {},
-      },
-    })
-  );
-  flushSync();
-  const video = target.querySelector('video')!;
-  expect(video.getAttribute('poster')).toBe(TRANSPARENT_VIDEO_POSTER);
-  expect(video.className).toContain('h-full');
-  expect(target.querySelector('[aria-hidden="true"].bg-linear-to-br')).not.toBeNull();
-
-  video.dispatchEvent(new Event('loadeddata'));
-  flushSync();
-  expect(target.querySelector('[aria-hidden="true"].bg-linear-to-br')).toBeNull();
-});
-
 function mountReview(props: Record<string, unknown>) {
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -70,21 +44,41 @@ function mountReview(props: Record<string, unknown>) {
   return target;
 }
 
-it('puts "Next" in a bar of its own, never over the player and its controls', () => {
+it("shows no native poster until the take's first frame", () => {
   const target = mountReview({});
-  const next = target.querySelector('[data-reel-next]')!;
-  const player = target.querySelector('[data-video-player]')!;
-  expect(player.contains(next)).toBe(false);
-  expect(target.querySelector('[data-video-controls]')!.contains(next)).toBe(false);
-  // The bar is a sibling of the take's area, in the same column, and owns the bottom inset.
+  expect(target.querySelector('video')!.getAttribute('poster')).toBe(TRANSPARENT_VIDEO_POSTER);
+});
+
+it('fills the screen with the media: no letterbox, looping, no player controls', () => {
+  const target = mountReview({});
+  const video = target.querySelector('video')!;
+  expect(video.className).toContain('object-cover');
+  expect(video.className).not.toContain('object-contain');
+  expect(video.className).toContain('absolute inset-0');
+  expect(video.loop).toBe(true);
+  expect(video.autoplay).toBe(true);
+  expect(video.hasAttribute('controls')).toBe(false);
+  expect(target.querySelector('[data-video-controls]')).toBeNull();
+  expect(target.querySelector('[data-video-player]')).toBeNull();
+  expect(target.querySelector('input[type="range"]')).toBeNull();
+});
+
+it('keeps pencil, sound and cross together at the TOP, and "Next" over the bottom edge', () => {
+  const target = mountReview({});
+  const top = target.querySelector('[data-reel-sound]')!.closest('.top-0')!;
+  expect(top.querySelectorAll('button').length).toBe(3);
   const bar = target.querySelector('[data-reel-review-bar]')!;
-  expect(bar.contains(next)).toBe(true);
+  expect(bar.contains(target.querySelector('[data-reel-next]'))).toBe(true);
+  expect(bar.className).toContain('bottom-0');
   expect(bar.className).toContain('safe-area-inset-bottom');
-  expect(bar.parentElement!.className).toContain('flex-col');
-  // So the player does not pad for the home indicator a second time.
-  expect(target.querySelector('[data-video-controls]')!.className).not.toContain(
-    'env(safe-area-inset-bottom)'
-  );
+  expect(top.contains(bar)).toBe(false);
+});
+
+it('draws a photo full-bleed too', () => {
+  const target = mountReview({
+    clip: { blob: new Blob(['x'], { type: 'image/webp' }), source: 'camera' },
+  });
+  expect(target.querySelector('img')!.className).toContain('object-cover');
 });
 
 it('removes the sound on the CLIP, keeps the preview silent, and says so', () => {
@@ -93,6 +87,7 @@ it('removes the sound on the CLIP, keeps the preview silent, and says so', () =>
   const button = target.querySelector<HTMLButtonElement>('[data-reel-sound]')!;
   expect(button.getAttribute('aria-pressed')).toBe('false');
   expect(target.querySelector('[data-reel-sound-removed]')).toBeNull();
+  expect(target.querySelector('video')!.muted).toBe(false);
   button.click();
   expect(changes).toEqual([true]);
 
@@ -101,13 +96,7 @@ it('removes the sound on the CLIP, keeps the preview silent, and says so', () =>
     onsoundchange: (value: boolean) => changes.push(value),
   });
   expect(removed.querySelector('[data-reel-sound-removed]')).not.toBeNull();
-  const video = removed.querySelector('video')!;
-  expect(video.muted).toBe(true);
-  // The player's own listening toggle is out of play: what is heard is what is published.
-  const listening = removed.querySelector<HTMLButtonElement>(
-    '[data-video-controls] button[aria-pressed]'
-  )!;
-  expect(listening.disabled).toBe(true);
+  expect(removed.querySelector('video')!.muted).toBe(true);
   removed.querySelector<HTMLButtonElement>('[data-reel-sound]')!.click();
   expect(changes).toEqual([true, false]);
 });
@@ -117,36 +106,4 @@ it('offers no sound button for a photo', () => {
     clip: { blob: new Blob(['x'], { type: 'image/webp' }), source: 'camera' },
   });
   expect(target.querySelector('[data-reel-sound]')).toBeNull();
-});
-
-it('shows a captured photo as an image in the review', () => {
-  const target = document.createElement('div');
-  document.body.appendChild(target);
-  mounted.push(
-    mount(ReelReview, {
-      target,
-      props: {
-        clip: { blob: new Blob(['x'], { type: 'image/webp' }), source: 'camera' },
-        ondiscard: () => {},
-        onedit: () => {},
-        onnext: () => {},
-      },
-    })
-  );
-  flushSync();
-  expect(target.querySelector('img')).not.toBeNull();
-  expect(target.querySelector('video')).toBeNull();
-});
-
-it('rings every control, so one over the letterbox bars is still drawn', () => {
-  const target = mountReview({
-    clip: { blob: new Blob(['x'], { type: 'video/webm' }), source: 'camera' },
-    ondiscard: () => {},
-    onnext: () => {},
-  });
-  const round = [...target.querySelectorAll('button')].filter((b) =>
-    b.className.includes('rounded-full bg-black')
-  );
-  expect(round.length).toBeGreaterThanOrEqual(3);
-  for (const b of round) expect(b.className).toContain('ring-white/30');
 });

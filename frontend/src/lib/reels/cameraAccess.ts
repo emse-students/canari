@@ -15,7 +15,7 @@
  * NO SECOND PATH. A refused camera is a state the screen explains (`CameraScreen`), never a hand-off
  * to the system camera app - the capture screen is the app's own (R3).
  */
-import { cameraVideoConstraints } from './framedCapture';
+import { REEL_AUDIO_CONSTRAINTS, cameraVideoConstraints } from './framedCapture';
 
 /** Why the camera could not be opened. One code per cause the screen draws differently. */
 export type CameraFault =
@@ -105,7 +105,7 @@ export async function openReelCamera(facing: CameraFacing): Promise<MediaStream>
         height: { ideal: wanted.height },
         frameRate: { ideal: wanted.frameRate },
       },
-      audio: true,
+      audio: REEL_AUDIO_CONSTRAINTS,
     });
     const video = stream.getVideoTracks()[0];
     const reported = video?.getSettings?.().facingMode;
