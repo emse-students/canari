@@ -64,7 +64,7 @@
     "jspdf": "^4.2.1",
     "jsqr": "^1.4.0",
     "mediabunny": "^1.61.1",
-    "pdfjs-dist": "^6.3.289",
+    "pdfjs-dist": "^6.4.299",
     "qrcode": "^1.5.4",
     "svelte-dnd-action": "^0.9.79",
     "thumbhash": "^0.1.1"
