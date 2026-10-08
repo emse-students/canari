@@ -16,6 +16,7 @@
     type PostFeed,
     type ScheduledPost,
   } from '$lib/posts/api';
+  import { msUntilNextDue, stillScheduled } from '$lib/posts/scheduledDue';
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
   import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
   import { progressiveCount } from '$lib/utils/progressiveMount.svelte';
@@ -194,6 +195,29 @@
       /* silent */
     }
   }
+
+  /**
+   * ONE timer, armed on the earliest scheduled time the strip holds - no polling clock. When it
+   * fires the due posts leave the strip and the feed is re-read so they appear where the server
+   * now publishes them; the effect then re-arms on the next one (it also re-runs whenever the list
+   * changes, and a wait beyond the timer limit just wakes early and re-arms).
+   */
+  $effect(() => {
+    const delay = msUntilNextDue(scheduledPosts, Date.now());
+    if (delay === null) return;
+    const timer = setTimeout(() => {
+      const remaining = stillScheduled(scheduledPosts, Date.now());
+      if (remaining.length === scheduledPosts.length) {
+        // A capped wait, not a due post: re-arm without touching the feed.
+        scheduledPosts = [...scheduledPosts];
+        return;
+      }
+      Log.d('POSTS', `scheduled post(s) due: ${scheduledPosts.length - remaining.length}`);
+      scheduledPosts = remaining;
+      if (!searchResults) void refreshPosts();
+    }, delay);
+    return () => clearTimeout(timer);
+  });
 
   async function deleteScheduled(id: string) {
     try {

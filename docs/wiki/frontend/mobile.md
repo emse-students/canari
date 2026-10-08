@@ -2230,7 +2230,12 @@ Each fact is now answered where it lives, by durable state rather than a clock:
 
 - **a paused socket does not exist** - `pauseConnectionImpl` calls `IMlsService.pauseSocket`
   (frame, then release with no disconnect callback), and the session's pause flag refuses every
-  reconnect request (`online`, the service's own hook) until the foreground `resumeConnectionImpl`;
+  reconnect request (`online`, the service's own hook) until the foreground `resumeConnectionImpl`.
+  **The frame is the probe (2026-10-08):** the Tauri socket the OS closed under a backgrounding app
+  delivers no `Close`, but its `send` rejects and the plugin has already dropped it, so
+  `disconnect()` could only answer "Trying to work with closed connection" - a `console.warn` on every
+  background (Mi 9T, 2026-10-06). The native disconnect now follows an ACCEPTED frame only; a refused
+  one is logged at `log` level as "already closed natively";
 - **the resume merges the shade first** - `ChatBackgroundService` flushes the FCM cache and
   `consumeNativeReadWatermarks` BEFORE reopening the socket, in login's order;
 - **already read is not news, on both builders' doorsteps** - `notifyInbound` asks

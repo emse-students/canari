@@ -1279,6 +1279,14 @@ The "link to an event" picker (`linkableEventPickerOptions`, `utils/time.ts`, us
 and the editor) lists the furthest future event first and the furthest past last; the server answers
 ascending, so the sort lives in that one function.
 
+**The strip leaves at the scheduled time (2026-10-08).** It used to stay stale until the tab was left
+and re-entered (read on the Mi 9T, 2026-10-07: still listed a minute after the server published).
+`/posts` arms ONE `setTimeout` on the earliest `scheduledAt` the strip holds
+(`msUntilNextDue`, `posts/scheduledDue.ts`; nothing polls). When it fires the due posts leave the
+strip (`stillScheduled`) and the feed is re-read so they appear where the server now publishes them;
+the effect re-arms on the next one. A wait beyond the timer limit wakes early, finds nothing due and
+re-arms. Server-clock skew is not corrected: a client a second fast re-reads the feed a second early.
+
 ## One notion of "when it became visible": `publishedAt` (2026-10-06)
 
 Cause of the report "scheduled at noon for 18:00, published at 18:00 but shown as 12:00, behind newer
