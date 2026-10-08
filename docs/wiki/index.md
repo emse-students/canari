@@ -75,6 +75,7 @@
 - [Container logs](infrastructure/logging.md) - the bounded json-file stanza on every service, and the per-deploy archive that keeps a log past the container a deploy recreates
 - [Nginx routing](infrastructure/nginx.md) — Route table (source of truth), auth_request
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment
+- [Mino access](infrastructure/mino-access.md) — Wiki.js and Omeka permissions driven by Authentik groups, the three archive levels
 - [MiConnect profiles and access](profiles-and-access.md) — the reform decided 2026-09-29: affiliations, spaces, who reaches which app, and the production state it was measured against
 - [Cloudflare edge](infrastructure/cloudflare-edge.md) — the zone configured by hand with no representation in git: what lives there, how to read it, and the tunnel token rotation
 - [Databases](infrastructure/databases.md) — PostgreSQL, Redis, Garage
