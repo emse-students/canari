@@ -1006,6 +1006,42 @@ export async function unfollowAssociation(associationId: string): Promise<{ ok: 
   });
 }
 
+/**
+ * The PUSH mute of one association: it silences that association's push notifications for the
+ * caller and nothing else - the post stays in the feed and the bell. A separate fact from
+ * following, which only decides what the feed's "followed" view shows.
+ */
+export async function getAssociationPushMuteStatus(
+  associationId: string
+): Promise<{ muted: boolean }> {
+  return request<{ muted: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/push-mute`
+  );
+}
+
+export async function muteAssociationPush(associationId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/push-mute`,
+    { method: 'PUT' }
+  );
+}
+
+export async function unmuteAssociationPush(associationId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/push-mute`,
+    { method: 'DELETE' }
+  );
+}
+
+/** The associations the caller muted - the unmute list of the notification settings. */
+export async function listMutedAssociations(): Promise<
+  Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]
+> {
+  return request<Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]>(
+    '/api/associations/me/push-mutes'
+  );
+}
+
 export async function createAssociation(payload: CreateAssociationPayload): Promise<Association> {
   const created = await request<Association>('/api/associations', {
     method: 'POST',

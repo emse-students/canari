@@ -5,6 +5,10 @@ import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
 import { PushService } from '../push/push.service';
 import {
+  AssociationPushMutesService,
+  MUTABLE_PUSH_TYPES,
+} from '../follows/association-push-mutes.service';
+import {
   mentionContent,
   replyContent,
   reactionContent,
@@ -51,7 +55,8 @@ export class PostNotificationsService {
   constructor(
     @InjectRepository(PostNotification) private readonly notifRepo: Repository<PostNotification>,
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
-    private readonly push: PushService
+    private readonly push: PushService,
+    private readonly pushMutes: AssociationPushMutesService
   ) {}
 
   /**
@@ -300,12 +305,26 @@ export class PostNotificationsService {
       );
       return recipients.length;
     }
+    // THE MUTE, applied HERE and server-side: the in-app rows above are already written (a mute
+    // silences the PUSH, never the bell or the feed), and only a type that reaches a READER of the
+    // association is eligible - managers' operational pushes are never muted (`MUTABLE_PUSH_TYPES`).
+    let pushRecipients = recipients;
+    if (data.associationId && MUTABLE_PUSH_TYPES.has(data.type)) {
+      const muted = await this.pushMutes.mutedAmong(data.associationId, recipients);
+      if (muted.size > 0) {
+        pushRecipients = recipients.filter((id) => !muted.has(id));
+        this.logger.log(
+          `[NOTIFY] type=${data.type} association=${data.associationId.slice(0, 8)} ` +
+            `push withheld from ${muted.size} muted of ${recipients.length}`
+        );
+      }
+    }
     // Fire-and-forget, BOUNDED, and logged PER RECIPIENT. Bounded because `recipients` is as wide
     // as the audience and not as wide as the caller: announcing a post to the whole feed is 356
     // recipients on today's population, and `Promise.all` would open 356 sockets to the delivery
     // service from a single cron tick. Per recipient because a batch that reports once loses
     // every failure after the first, and in a best-effort path the log is all a loss leaves.
-    void forEachBounded(recipients, PUSH_FAN_OUT_LIMIT, (recipientId) =>
+    void forEachBounded(pushRecipients, PUSH_FAN_OUT_LIMIT, (recipientId) =>
       this.push.notifyContent(recipientId, content, { type: 'social', ...data.pushData })
     ).then((failures) => {
       for (const { item, error } of failures) {

@@ -25,6 +25,8 @@ describe('PostNotificationsService.createNotifications', () => {
   const saved: unknown[] = [];
   const updates: unknown[] = [];
   const pushes: { userId: string; content: PushContent }[] = [];
+  const mutedIds = new Set<string>();
+  const muteAsks: string[] = [];
   let warn: jest.SpyInstance;
 
   function service(): PostNotificationsService {
@@ -47,13 +49,26 @@ describe('PostNotificationsService.createNotifications', () => {
         return Promise.resolve();
       },
     };
-    return new PostNotificationsService(notifRepo as never, {} as never, push as never);
+    const mutes = {
+      mutedAmong: (associationId: string, ids: string[]) => {
+        muteAsks.push(associationId);
+        return Promise.resolve(new Set(ids.filter((id) => mutedIds.has(id))));
+      },
+    };
+    return new PostNotificationsService(
+      notifRepo as never,
+      {} as never,
+      push as never,
+      mutes as never
+    );
   }
 
   beforeEach(() => {
     saved.length = 0;
     updates.length = 0;
     pushes.length = 0;
+    mutedIds.clear();
+    muteAsks.length = 0;
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
 
@@ -273,5 +288,54 @@ describe('PostNotificationsService.createNotifications', () => {
         values: { read: true },
       },
     ]);
+  });
+
+  describe('the per-association mute', () => {
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+    const base = {
+      postId: 'p1',
+      actorId: 'member1',
+      actorName: 'BDE',
+      text: 'Soiree',
+      associationId: 'asso1',
+    };
+
+    it('writes the in-app row for a muted reader and withholds only the push', async () => {
+      mutedIds.add('b');
+      const written = await service().createNotifications({
+        ...base,
+        recipientIds: ['a', 'b', 'c'],
+        type: 'association_post',
+      });
+      await flush();
+
+      expect(written).toBe(3);
+      expect(saved.map((r) => (r as { recipientId: string }).recipientId)).toEqual(['a', 'b', 'c']);
+      expect(pushes.map((p) => p.userId)).toEqual(['a', 'c']);
+      expect(muteAsks).toEqual(['asso1']);
+    });
+
+    it('applies to a republication as well', async () => {
+      mutedIds.add('a');
+      await service().createNotifications({
+        ...base,
+        recipientIds: ['a', 'b'],
+        type: 'association_repost',
+      });
+      await flush();
+      expect(pushes.map((p) => p.userId)).toEqual(['b']);
+    });
+
+    it('never reaches a manager-side type, whoever muted', async () => {
+      mutedIds.add('a');
+      await service().createNotifications({
+        ...base,
+        recipientIds: ['a', 'b'],
+        type: 'repost_proposed',
+      });
+      await flush();
+      expect(pushes.map((p) => p.userId)).toEqual(['a', 'b']);
+      expect(muteAsks).toEqual([]);
+    });
   });
 });
