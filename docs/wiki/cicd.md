@@ -1708,6 +1708,38 @@ package owed an A1 deep-link run, so **all three stay held and their PRs open**.
 crate move together, in the PR that rebases `tao`. The latest versions the CURRENT tauri accepts
 are `tauri-plugin-store` 2.4.5, `-opener` 2.5.5, `-http` 2.7.0 (JS 2.4.x/2.5.x/2.7.x to match).
 
+### Four audit advisories are suppressed on one edge of media-service, and why each is unreachable
+
+The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-because-they-cannot-be-reached-and-should-stop-being); the reasoning is here. The reachability argument for the `decode-uri-component` ignore and the assertion that keeps it honest are in `.github/workflows/code-analysis.yml`, the only copy of that half.
+
+- `GHSA-vcc3-ghjq-m6fr` (moderate, denial of service) covers every `decode-uri-component` at or below 0.4.2 and reaches media-service as `minio > query-string > decode-uri-component`. It is ignored for that one service only: nothing in the chain can move (minio 8.0.7 is the latest release and pins `query-string: ^7.1.3`, which pins `decode-uri-component: ^0.2.2`), and the fixed 0.5.0 is ESM-only where `query-string@7` is CommonJS, so an override would fail at boot instead of at audit.
+- `GHSA-528h-pc64-c93x` (moderate, denial of service; added 2026-09-03 when it turned every pull request red) covers every `stream-json` at or below 3.4.0, whose `pick`/`ignore`/`filter`/`replace` filters are O(depth^2) on nested input, and arrives as `minio > stream-json`. minio requires `stream-json: ^1.8.0` and the fix is 3.5.0, two majors outside it. It is unreachable twice over: minio imports exactly one thing from the package (`stream-json/jsonl/Parser.js`, in its bucket-notification module) and none of the four filters, and media-service never calls that API (its whole use of the client is `bucketExists`, `fPutObject`, `getObject`, `makeBucket`, `putObject`, `removeObject`).
+- Third and fourth, 2026-10-06: `GHSA-hqr4-qq8f-hg3x` (JSONC parser/verifier re-scan, <= 3.5.0) and `GHSA-mjw6-4jj6-33hc` (Assembler prototype pollution, < 3.6.0) on the same `minio > stream-json` edge. The override to 3.x was refused: the fixed stream-json is `type: module` with `src/` entry points where minio's CJS build `require`s it, and nothing proves that boot. Both ride leg one, now an ALLOWLIST (minio may import only `stream-json/jsonl/Parser.js`) in `.github/scripts/stream-json-premise.sh`, self-tested by `tests/stream-json-premise.test.sh`.
+
+**What retires them:** minio publishing a release that moves either pin (dropping `query-string@7`, or requiring a `stream-json` at or above 3.5.0, 3.6.0 being the floor for the fourth). The ignore and the premise assertion beside it are then deleted the same day. Until then the assertions are what stop the suppressions outliving their reason: CI fails if minio ever parses a query string, if the `stringify` call site the measurement was taken on disappears, if minio starts importing a stream-json FILTER, or if the service starts calling the notification API.
+
+**The third retirement condition originally listed is dead, not pending**: `query-string` DOES now depend on a fixed `decode-uri-component` (latest 9.5.1, on `^0.5.0`), but minio's pin is `^7.1.3` and cannot reach a 9.x, so only minio moving retires either suppression.
+
+**Upstream re-check log**: 2026-09-15, 2026-09-22, 2026-09-24, 2026-10-06 - `minio` still 8.0.7 (published 2026-02-27), `query-string: ^7.1.3` and `stream-json: ^1.8.0` unchanged. The registry answers in one request; record the date of the next check here.
+
+### A merged branch that is still there was pushed back, not left behind (measured 2026-09-22)
+
+Two specimens of a squash-merged branch still on the remote: #341 (2026-09-03, present twelve minutes after an auto-merge while #339 and #340 were already 404; a `DELETE /git/refs/heads/...` removed it with no error) and #825. Of 596 merges since 2026-09-17, exactly one branch was still there on 2026-09-22: `perf/le-blob-ne-traverse-plus-le-pont`, whose merge consumed head `9ff6d0755` (2026-09-17 19:09:28 Z) while the branch carried `4b4b5862b`, committed 22:08 Z, three hours AFTER the merge.
+
+**GitHub re-creates a branch when something pushes to it**, so nothing failed to delete anything: the branch was deleted on merge and a workstation pushed it back (which also explains #341). The cost is not untidiness: the commit pushed there was a CHANGELOG shortening the user had asked for that evening, and it never travelled to `main` (a merged pull request does not carry another commit). **Work pushed to a merged branch is committed, pushed and unshipped, and nothing says so** - `git status` is clean and the push succeeds. The prevention is the `git branch -D` at the end of THE DEVELOPMENT CYCLE in `CLAUDE.md`: a local branch kept past its merge is the only thing that can be pushed back.
+
+### A pre-release tag can still race a merge, between the head read and the tag
+
+Gate 2 of `.github/scripts/release-preflight.sh` refuses an alpha whose sha `main` has moved past, and a rerun re-reads the SAME tag, so it cannot rescue one. The stable half closed with #1367 (a stable ships the latest pre-release of its version on `release/vX.Y.Z` and the tag moves, see above). If it recurs on an alpha: let the gesture name "the release" and the machine take `main` HEAD, never a sha a human read seconds earlier - and never a rebase or a lenient gate 4, which are fallbacks.
+
+### The last node runtime: four jest suites that will not run under bun (decided 2026-08-27, after the campaign)
+
+npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the one `bun run test` in the Makefile's `test-history`). What survives is the node RUNTIME: `actions/setup-node` twice in `ci.yml` (backend suites, harness self-tests) and once in `code-analysis.yml`.
+
+**The measured blocker is one file**: `apps/chat-delivery-service/src/controllers/admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under the bun runtime, which is why CI installs, lints and builds with bun but TESTS with node. Do not collapse the two runtimes without re-running that spec.
+
+**The work**: port four NestJS services from jest to `bun test` - `jest.fn()`/`jest.spyOn` to bun's `mock`/`spyOn`, `ts-jest` (which TypeScript 7 already could not load, see [ecosystem-convergence](ecosystem-convergence.md) section 9), the `moduleNameMapper`, the `@nestjs/testing` fixtures. Days, not hours, and it touches suites guarding MLS storage - the wrong place to discover a mock that silently stopped asserting. It waits for the campaign ladder to reach the bottom, because a test-framework migration changes what "green" means for every rung still to be taken. Until then: bun is the package manager and runtime everywhere except one test invocation, which runs on node on purpose.
+
 ## Notable CI gotchas
 
 - **A CONFLICTING PR PRODUCES NO `pull_request` RUN, AND THE CHECKS LIST STILL LOOKS BUSY.** The `pull_request` event is computed against the MERGE ref; with a conflict GitHub cannot build one, so `CI` is never queued - not red, not skipped, simply never created. `arm-auto-merge` is `pull_request_target`, evaluates against the base, and runs anyway, so one green row sits there while nothing tests the code. PR #525 waited twice and survived a close/reopen before the state was actually asked for. `gh run list` returning nothing is an ANSWER: read `gh pr view <n> --json mergeable,mergeStateStatus` (`CONFLICTING` / `DIRTY`), then rebase on a freshly fetched `main` and `git push --force-with-lease`.

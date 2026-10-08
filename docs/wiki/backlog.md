@@ -655,7 +655,7 @@ Shipped in `v0.18.28`; what is left is readings, one decision, three test rows a
   ([board](cross-client-testing.md)).
 - **P2 - the Rust half of a push handled in a KILLED app logs nowhere**: `tauri_plugin_log` installs
   the logger when Tauri starts; a push in a dead app calls Rust through JNI without it, so every
-  `[PushBG]` line is lost exactly where it is needed. A logger installed in `JNI_OnLoad` would take
+  `[PushBG]` line is lost. `JNI_OnLoad` (`lib.rs`) installs no logger; one installed there would take
   the global slot from the plugin at a normal start, so the two must be reconciled, not stacked.
 
 ## Reported by the USER on 2026-09-18 and 2026-09-17 - what is still owed
@@ -687,353 +687,116 @@ is already asserted (`notificationChannels.test.ts`); how it sounds is not.
 
 ### P3 - THREE SERVICES REFUSE AN UNSIGNED CALLER THREE DIFFERENT WAYS, AND MERGING THEM IS A POLICY DECISION
 
-Owed to the USER: a written decision of which refusal is intended, before any file is touched -
-picking one guard as "the" guard silently changes what the other two refuse. The HMAC they share is
-already one declared file (`internal-token.ts`).
-
-| Where | Refuses on |
-| --- | --- |
-| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` |
-| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET |
-| `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` (logs a denial on `/push/` routes) |
-| `chat-gateway/src/presence.rs` | empty `x-user-id` - Rust, stays where it is |
-
-The same decision says whether `X-Internal-Token` is required OUTSIDE production too (today only
-production asserts it). Not an access-rule question: presence about an arbitrary user id is parked
-in `presence.rs`'s docblock.
+Owed to the USER: a written decision of which refusal is intended, before any file is touched, and
+whether `X-Internal-Token` is required outside production too. The table of the four guards and why
+picking one changes what the others refuse is on
+[core-service](services/core-service.md#three-services-refuse-an-unsigned-caller-three-different-ways).
 
 ### P2 (hardware-owed) - a FIRST message from someone you have no conversation with, measured end to end (user, 2026-09-08)
 
 Both halves are fixed since `v0.18.18`; nothing has run them on a genuine first contact. Owed:
 
 1. **Enrol a third account** (`canari-test-gamma` exists on Authentik, credentials out of tree): a
-   first sign-in through the app (materialises the user row and its display name), a Chrome
-   profile with its `PORTS` / `ORIGIN` / `ACCOUNT_OF` entries, and a third identity in `names.mjs`
+   first sign-in through the app, a Chrome profile with its `PORTS` / `ORIGIN` / `ACCOUNT_OF` entries,
+   and a third identity in `names.mjs`
    ([harness entry](#p2---the-rig-can-express-exactly-two-identities-and-the-third-and-fourth-accounts-now-exist-measured-2026-09-10)).
 2. **One run**: A1 backgrounded and alive, the new peer starts a conversation and sends one message;
    read the shade, whether the tap lands, whether the conversation is in A1's list WITHOUT a
-   restart, and `builtBy`. Then the same with an INVITATION into a community (the user's question
-   of 2026-09-05), and once with A1 COLD, which collects the message from history.
+   restart, and `builtBy`. Then the same with an INVITATION into a community, and once with A1 COLD.
 3. **NOTIF-17b re-run on the `admits` route** (a device added while offline is a recipient of the
    next message).
 
 ### P3 - three tap/reply rows owed against Android's single notification builder
 
-Owed on the board, each stating its trigger (`builtBy` - a direct message is notified by the
-WebSocket frame, a salon message by the FCM push, on the same backgrounded phone): NOTIF-6c (quick
-reply, backgrounded, and its 2026-08-30 `403` fix), NOTIF-7c and NOTIF-7d (tap into a CHANNEL,
-backgrounded and killed). Also settle whether NOTIF-11/-12 (`MessagingStyle` stacking) already
-speak for the backgrounded path, which reaches the same builder.
+Owed on the board, each stating its trigger (`builtBy`): NOTIF-6c (quick reply, backgrounded, and its
+2026-08-30 `403` fix), NOTIF-7c and NOTIF-7d (tap into a CHANNEL, backgrounded and killed). Also
+settle whether NOTIF-11/-12 (`MessagingStyle` stacking) already speak for the backgrounded path,
+which reaches the same builder.
 
 ## CI and the chain that runs unattended
 
-### P3 - a PRE-RELEASE tag still races a merge between the head read and the tag (the stable half closed by #1367)
+### P3 - a PRE-RELEASE tag still races a merge between the head read and the tag
 
-Gate 2 of `.github/scripts/release-preflight.sh` refuses an alpha whose sha `main` has moved past, and a rerun re-reads the SAME tag, so it cannot rescue one. A stable no longer has this problem: it ships the latest pre-release of its version on `release/vX.Y.Z` and the tag moves ([cicd](cicd.md)). **Open only if it recurs on an alpha**: let the gesture name "the release" and the machine take `main` HEAD, never a sha a human read seconds earlier - and never a rebase or a lenient gate 4, which are fallbacks.
+The stable half closed with #1367. Open only if it recurs on an alpha; the direction is in
+[cicd](cicd.md#a-pre-release-tag-can-still-race-a-merge-between-the-head-read-and-the-tag).
 
 ### P3 - EVERY `.swift` IN THE iOS TREE IS UNGUARDED, AND NOTHING HAS MEASURED WHETHER A SUITE EVEN EXISTS
 
-**The Android half of this closed on 2026-09-22** and is on
-[mobile](frontend/mobile.md#the-android-half-of-it-is-one-function-compiled-twice-2026-09-22): the
-ladder is one pure function in `fr.emse.canari.push`, a source directory of the app module AND of
-the standalone JVM test project, so `PushDecryptLadderTest` drives the code the service runs. The
-cost this entry feared - needing the app module, whose `tauri.settings.gradle` is gitignored and
-whose `google-services.json` is a secret - did not arrive, because the shared package imports no
-Android and a plain source directory carries it.
-
-**iOS is untouched by that.** The same trap covers it - a test file nobody runs reads as coverage -
-and nothing here has measured whether an equivalent suite even exists. **The Android answer is a
-shape to copy, not a precedent to argue from**: what made it cheap was that the ladder needed no
-platform, and whether any Swift here is in that position has not been looked at.
+The Android half closed on 2026-09-22 (one pure function compiled twice, [mobile](frontend/mobile.md#the-android-half-of-it-is-one-function-compiled-twice-2026-09-22)).
+iOS is untouched: two Swift test targets exist under the vendored plugins (`tauri-plugin-keystore`,
+`tauri-plugin-customtabs`), and nothing has measured whether the NSE/app Swift is in the position the
+Android ladder was (needing no platform), nor whether those targets run anywhere.
 
 ### P1 - production goes dark in the 22h band, and the only thing both boxes share is the School's firewall (measured 2026-09-11)
 
-**The measurement, the drop pattern and the shared uplink are on
-[cloudflare-edge](infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it),
-the only copy.** In one line: every hostname on two zones, on two machines, returned 1033 for six
-minutes; 175 `cloudflared` edge-dial timeouts in seven days, ALL in hours 22 and 23 CEST; the single
-element both egress paths crossed is `fw-ste.emse.fr`, the School's Stormshield border firewall.
+The measurement (175 `cloudflared` edge-dial timeouts in seven days, all at 22h-23h CEST, the School's
+`fw-ste.emse.fr` the only element both egress paths cross), the two refuted hypotheses and the egress
+probe are on [cloudflare-edge](infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it).
 
-**Open since the 2026-09-24 cutover:** production left both boxes, the two netwatch witnesses stopped
-themselves on 2026-09-12, and nothing records that their ledgers were read. Whether the Portail-etu
-host sees the same 22h-23h drop is UNMEASURED: read `journalctl -u cloudflared` on
-`portail-etu-direct` for 1033 and edge-dial timeouts at hours 22-23 over seven days, and ask the
-School's network service what is scheduled on `fw-ste.emse.fr` only if it does.
+**Open since the 2026-09-24 cutover:** whether the Portail-etu host sees the same drop is UNMEASURED.
+Read `journalctl -u cloudflared` on `portail-etu-direct` for 1033 and edge-dial timeouts at hours 22-23
+over seven days; ask the School's network service what is scheduled on `fw-ste.emse.fr` only if it
+does. **Re-arm the egress probe on the Portail-etu host or retire it** (its crontab is on the old VM,
+which runs no container).
 
-**TWO HYPOTHESES ARE REFUTED AND MUST NOT BE RE-OPENED.** A Proxmox `vzdump` freezing the container
-(both journals carried entries for every minute of the window; the ledger gap was the probe's own
-`AbortSignal.timeout` - **a gap in a ledger is evidence about its WRITER before it is evidence about
-the world**, [durable-rules](durable-rules.md)), and "the whole campus loses the network every
-evening" (zero events on 09-05, 09-06 and 09-07).
+### P3 - audit advisories are suppressed because they cannot be reached, and should stop being
 
-**The egress half**: `UpstreamUnreachableError` and `OUTBOUND_BUDGET_MS` are shipped; whether such
-stalls are CORRELATED is read from [`infrastructure/egress-probe/`](../../infrastructure/egress-probe/README.md),
-armed in the `canari` crontab - the old VM since the cutover, which runs no container. **Re-arm it on
-the Portail-etu host or retire it.**
-
-### P3 - A MERGED BRANCH THAT IS STILL THERE WAS NOT LEFT BEHIND, IT WAS PUSHED BACK (measured 2026-09-22)
-
-**THE CAUSE IS NO LONGER UNMEASURED, AND IT IS NOT GITHUB.** This row used to record one
-occurrence - #341, 2026-09-03, whose branch was still present twelve minutes after a squash
-auto-merge while #339 and #340 were already 404 - and said the cause was unknown. A second
-specimen settles it.
-
-On 2026-09-22 exactly ONE branch of a merged pull request was still on the remote out of **596
-merges since that day**: `perf/le-blob-ne-traverse-plus-le-pont`, from #825. Its numbers say what
-happened:
-
-| | |
-| --- | --- |
-| #825 merged (squash, auto-merge) | 2026-09-17 19:09:28 Z |
-| head the merge consumed | `9ff6d0755` |
-| head the branch carries today | `4b4b5862b`, committed **2026-09-17 22:08 Z** |
-
-Three hours AFTER the merge. **GitHub re-creates a branch when something pushes to it**, so nothing
-failed to delete anything: the branch was deleted on merge and a workstation pushed it back. That
-also explains #341 without a second theory - the row already records that `DELETE
-/git/refs/heads/...` removed it with **no error and no refusal**, which is exactly what a
-deleted-then-recreated branch looks like from the API.
-
-**WHAT IT COSTS, AND IT IS NOT THE UNTIDINESS.** The commit pushed there was a CHANGELOG shortening
-the USER had asked for that same evening. It never travelled to `main` on that branch - a pull
-request that has already merged does not carry another commit - and it only reached `main` because
-the same edit was made again later. **Work pushed to a merged branch is committed, pushed, and
-unshipped, and nothing says so**: `git status` is clean, the push succeeds, and the branch exists.
-
-**The prevention already exists and this is why it is there**: THE DEVELOPMENT CYCLE in `CLAUDE.md`
-ends with `git branch -D`. A local branch kept past its merge is the only thing that can be pushed
-back, which is the sentence that line was missing.
-### P3 - TWO audit advisories are suppressed because they cannot be reached, and both should stop being
-
-`GHSA-vcc3-ghjq-m6fr` (moderate, denial of service) covers every `decode-uri-component` at or below
-0.4.2 and reaches media-service as `minio > query-string > decode-uri-component`. **It is ignored
-for that one service only**, because nothing in the chain can move - minio 8.0.7 is the latest
-release and pins `query-string: ^7.1.3`, which pins `decode-uri-component: ^0.2.2` - and because the
-fixed 0.5.0 is ESM-only where `query-string@7` is CommonJS, so an override would fail at boot
-instead of at audit. The reachability argument and the assertion that keeps it honest are in
-`.github/workflows/code-analysis.yml`, which is the only copy.
-
-`GHSA-528h-pc64-c93x` (moderate, denial of service) is the SECOND, added 2026-09-03 when it turned
-every pull request red. It covers every `stream-json` at or below 3.4.0 - its `pick`/`ignore`/
-`filter`/`replace` filters are O(depth^2) on nested input - and arrives as `minio > stream-json`.
-Again nothing in the chain can move: minio 8.0.7 requires `stream-json: ^1.8.0` and the fix is
-3.5.0, two majors outside it. It is unreachable twice over: minio imports exactly one thing from the
-package (`stream-json/jsonl/Parser.js`, in its bucket-notification module) and NONE of the four
-filters the advisory is about, and this service never calls that API at all - its whole use of the
-client is `bucketExists`, `fPutObject`, `getObject`, `makeBucket`, `putObject`, `removeObject`.
-
-**THIRD AND FOURTH, 2026-10-06:** `GHSA-hqr4-qq8f-hg3x` (JSONC parser/verifier re-scan, <= 3.5.0) and
-`GHSA-mjw6-4jj6-33hc` (Assembler prototype pollution, < 3.6.0) on the same `minio > stream-json`
-edge. The override to 3.x was refused: fixed stream-json is `type: module` with `src/` entry points
-where minio's CJS build `require`s it, and nothing proves that boot. Both ride leg one, now an
-ALLOWLIST (minio may import only `stream-json/jsonl/Parser.js`) in `.github/scripts/stream-json-premise.sh`,
-self-tested by `tests/stream-json-premise.test.sh`. The retirement condition is unchanged, with 3.6.0 as the floor.
-
-**What retires this row:** minio publishing a release that moves either pin - dropping
-`query-string@7`, or requiring a `stream-json` at or above 3.5.0 - or `query-string` itself
-depending on a `decode-uri-component` above 0.4.2. Any of those makes an ignore unnecessary, and it
-should be deleted the same day, along with the premise assertion beside it. Until then the
-assertions are what stop the suppressions outliving their reason: CI fails if minio ever parses a
-query string, if the `stringify` call site the measurement was taken on disappears, if minio starts
-importing a stream-json FILTER, or if this service starts calling the notification API.
-
-**UPSTREAM RE-CHECKED 2026-10-06 AND NOTHING HAS MOVED** (previous checks 2026-09-24, 2026-09-22, 2026-09-15): `minio` is
-still 8.0.7, published 2026-02-27, with `query-string: ^7.1.3` and `stream-json: ^1.8.0` unchanged.
-Both suppressions are still correctly refused. Record the date of the next such check here rather
-than re-deriving it - the registry answers in one request and the answer is the whole of this row.
-
-**AND ONE OF THE THREE RETIREMENT CONDITIONS ABOVE IS ALREADY SPENT WITHOUT HELPING**, which is
-worth writing down so a later reading does not chase it: `query-string` DOES now depend on a fixed
-`decode-uri-component` - latest is 9.5.1 on `^0.5.0`. It changes nothing, because minio's pin is
-`^7.1.3` and cannot reach a 9.x. **So only minio moving retires either suppression**, and the
-third condition should be read as dead rather than pending.
-
----
+Four advisories (`GHSA-vcc3-ghjq-m6fr`, `GHSA-528h-pc64-c93x`, `GHSA-hqr4-qq8f-hg3x`,
+`GHSA-mjw6-4jj6-33hc`) are ignored on the `minio > ...` edge of media-service. **Retire the ignores and
+the premise assertion (`.github/scripts/stream-json-premise.sh`) the day minio publishes a release that
+moves either pin** (last checked 2026-10-06: minio still 8.0.7). The reasoning, the upstream-check log
+and the dead retirement condition are in [cicd](cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
 
 ### P2 - THREE hosts take security updates that nothing reports on, and a library nothing restarts (the rest closed 2026-09-03)
 
-**The mechanism and the report both exist since 2026-09-03**, installed on the user's decision
-(*"unattended-upgrades securite + rapport"*) across all four hosts: security origins only, nothing
-reboots, and `.github/workflows/scheduled.yml` fails a daily run on any finding. The whole
-write-up - the policy, the `#clear` that the file needs to not be decorative, the 30-second `502`
-this scope does NOT incur and the evidence for that, and the two defects the report itself had - is
-[host-updates](infrastructure/host-updates.md), the only copy.
+The mechanism and report exist since 2026-09-03 ([host-updates](infrastructure/host-updates.md)). Three
+open items, each with its retirement condition in
+[host-updates](infrastructure/host-updates.md#what-stays-open-the-reports-reach-the-raid-channel-and-libraries-nothing-restarts):
 
-**THREE THINGS STAY OPEN and they are smaller than what closed.**
-
-1. **The report covered the old production origin and no other host - and production moved to the Portail-etu host on 2026-09-24.** First settle where `host-update-report.sh` (run by `scheduled.yml`) points now; the runner's key was authorised on none of the other three (measured 2026-09-03). So `mitv`, `cercle` and `miconnect` apply their security updates with
-   nothing saying whether they still are - which is exactly the shape this row was opened about, one
-   estate smaller. **Retired by** either a key for the runner on the other three (a privilege
-   expansion, so the user's decision), or the Cloudflare Access service token already listed as
-   optional in the dev-environment work, which would let an `ubuntu-latest` job reach all four the
-   way a workstation does.
-2. **`mitv`'s 7.3 TB RAID1 has a sensor and no report** (merged here from its own entry; the
-   kernel reboot this item used to name was TAKEN on 2026-09-03 and is what found the array).
-   `mdmonitor.service` had refused to start on every boot back to at least 9 June; it runs since
-   2026-09-03, severity by event class, its alarm proved by a test event through the real path
-   ([host-updates](infrastructure/host-updates.md#the-73-tb-raid1-nobody-was-watching-found-while-rebooting-for-the-kernel-2026-09-03),
-   including why `MAILADDR` would have made it worse). **What stays open is the channel**: the events
-   go to syslog, read by nobody - postfix and exim4 inactive, `monit` with no `set alert` and no
-   `set mailserver` - so a failing disk is RECORDED and not REPORTED. **Retired by** `/proc/mdstat`
-   read into the daily host report (a degraded array is the shape it already handles) PLUS item 1,
-   the report reaching `mitv`. The two close together or not at all.
-3. **A library security fix is installed, not in effect.** `unattended-upgrades` restarts no
-   services, so an `openssl`/`libssl3t64` upgrade leaves every long-running process mapped to the
-   old library until something restarts it. Nothing measures that. **Retired by** reading
-   `needrestart -b` (or `/usr/lib/needrestart/`) into the same report - which turns a silent gap
-   into a named finding without deciding to restart anything.
+1. the report points at the OLD production origin and reaches no other host (`mitv`, `cercle`,
+   `miconnect` unreported) - a runner key on them is the user's decision;
+2. `mitv`'s 7.3 TB RAID1 has a sensor (`mdmonitor`) and no channel - `/proc/mdstat` into the daily report;
+3. a library fix is installed, not in effect - `needrestart -b` into the same report.
 
 ## iOS, platform and runtime - the residue that fits no other section
 
 ### P2 - iOS carries none of the window-layout work Android already has (user, 2026-08-28)
 
-**Named by the user from real use on an iPhone**, and one of the three is already fixed. The Android
-half of each of these took a measurement and a comment to get right (`MainActivity`,
-[mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)); iOS inherited
-none of it because `gen/apple` is a different generated project nothing compared against `gen/android`.
-
-- **DONE 2026-08-28 - the keyboard.** WKWebView was never resized, so the shell was pinned to the
-  visible height inside a full-height document and a keyboard-tall empty band opened below it.
-  `CanariApplyKeyboardLayout` shrinks the WebView's frame; no web change was needed. Written up on
-  [mobile](frontend/mobile.md#ios-shrinks-the-webview-and-that-is-the-same-decision-taken-twice).
-- **OWED - an iPhone re-read of the bars.** The code half shipped (#1242, #1261, #1289; [android-ios-parity](frontend/android-ios-parity.md) 1.1, 1.3 and 1.4 are FIXED); what is owed is the user's look at the status bar and the home indicator on the iPhone, with the liquid-glass chrome ([backlog](#the-liquid-glass-conversation-chrome---decided-2026-09-30-wp-g1-then-wp-g2)).
-
-**This closes by HARDWARE, one item at a time**, like every other iOS finding: three of three defects
-so far were invisible to every gate here.
+**OWED - an iPhone re-read of the bars.** The code half shipped (#1242, #1261, #1289;
+[android-ios-parity](frontend/android-ios-parity.md) 1.1, 1.3 and 1.4 are FIXED); what is owed is the
+user's look at the status bar and the home indicator on the iPhone, with the liquid-glass chrome
+([backlog](#the-liquid-glass-conversation-chrome---decided-2026-09-30-wp-g1-then-wp-g2)). This closes
+by hardware, never by a fix against a suspected bug nobody has seen.
 
 ### P3 - nothing records which BUILD each device runs, though two mechanisms already carry it (2026-08-27)
 
-Asked by the user while debugging the iOS session: is there one place naming the version of every
-device? There is not, and the two pages that look like it are not it - `/admin/platform` WRITES
-`minClientVersion` (a policy, not an observation) and `/admin/status` reads live presence out of the
-gateway (no version at all). The question mattered immediately: every `Refresh refused` line from an
-iPhone was ambiguous until the user stated by hand that all of them were on 0.14.5.
-
-**Two mechanisms already receive the value.** `GET /users/me/announcement?clientVersion=` takes it from
-every client on every launch and uses it only to decide an announcement's audience, then discards it;
-and since 2026-08-27 `POST /auth/refresh?clientVersion=` carries it for the refusal log. Meanwhile
-`push_token` already holds exactly one row per `(userId, deviceId)` with a `platform` and an
-`updatedAt`. Recording the version against a device is therefore a column and a write, not a feature -
-and it would have answered both this question and the iOS FCM one above without asking anybody.
-
-Not done tonight because the cheap version is genuinely cheap and the useful version is a decision:
-which table owns it, whether a web session counts as a device, and what a dashboard should show
-(distribution by version, or the laggards below `minClientVersion`).
-
-`key_package.deviceAppVersion` is written on every platform since #613 (2026-09-14: the web and the iOS native path used to leave it NULL); devices enrolled before it re-report only when they next publish a key package. It is the column `minClientVersion` decisions must be measured against ([durable-rules](durable-rules.md#release-and-ci---cicd)).
+A column and a write, and a decision (which table owns it, whether a web session is a device, what a
+dashboard shows). The two mechanisms and the question are on
+[core-service](services/core-service.md#nothing-records-which-build-each-device-runs-2026-08-27).
 
 ### P3 - the native refresh credential could live in the platform keychain, on BOTH platforms (2026-08-27)
 
-**Not a defect - a strict improvement, deliberately not bundled with the fix that needed shipping.**
-Today the credential sits in a file inside the app sandbox: the Chromium cookie file on Android, a
-`@tauri-apps/plugin-store` file on `tauri://localhost` ([sessions](sessions.md#the-credential-a-client-carries-itself)).
-Both are protected by the OS at the container level and neither is encrypted as a secret. The
-platforms both offer better - iOS Keychain, Android Keystore / `EncryptedSharedPreferences` - and the
-same argument applies to each, which is why this is one item and not two.
-
-**What blocks it from being trivial:** `patches/tauri-plugin-keystore` already reaches the iOS keychain,
-but its `ios/Sources/CustomTabsPlugin`-style path builds `SecAccessControlCreateWithFlags` with
-BIOMETRIC flags, because it guards the MLS device key - reading it raises Face ID, which cannot sit in
-front of every cold start. So this needs a second, non-biometric command in the vendored plugin
-(`kSecAttrAccessibleAfterFirstUnlock`), Kotlin parity so the Android build still links, a permission
-entry, and an iOS build to verify - none of it measurable from this machine.
-
-**Do not start it as a security fix.** The current posture is the one Android has had all along and
-which the user has accepted; this is an upgrade to both, worth doing when native work is being done
-anyway rather than as an emergency.
+An upgrade, not a defect; do it when native work is happening anyway. Why it is not trivial (a
+non-biometric command in the vendored keystore plugin, Kotlin parity, an iOS build) is on
+[sessions](sessions.md#the-native-refresh-credential-could-live-in-the-platform-keychain-on-both-platforms-2026-08-27).
 
 ### P3 - the last node runtime: four jest suites that will not run under bun (decided 2026-08-27, AFTER the campaign)
 
-**Scheduled, not parked, and the decision behind it is the user's** (2026-08-27): npm leaves now,
-node leaves later. npm is already gone - `node --run test` replaced the one `npm test` in
-`ci.yml` and the one `bun run test` in the Makefile's `test-history`, so nothing in this repository
-invokes a package manager other than bun. What survives is the node RUNTIME, in three places:
-`actions/setup-node` twice in `ci.yml` (once for the backend suites, once for the harness
-self-tests) and once in `code-analysis.yml`.
-
-**The measured blocker, and it is one file.**
-`apps/chat-delivery-service/src/controllers/admin-storage.controller.mls.spec.ts` passes 8/8 under
-node and fails under the bun runtime. That single spec is why CI installs, lints and builds with bun
-but TESTS with node, and both call sites say so in a comment. **Do not collapse the two runtimes
-without re-running that spec** - the note has been in `CLAUDE.md` since the bun migration and it is
-the only thing standing between a green pipeline and a silently weaker one.
-
-**What the work actually is.** Porting four NestJS services from jest to `bun test`: `jest.fn()` and
-`jest.spyOn` to bun's `mock`/`spyOn`, `ts-jest` (which TypeScript 7 already could not load - see
-[ecosystem-convergence](ecosystem-convergence.md) section 9), the `moduleNameMapper`, and the
-`@nestjs/testing` module fixtures. It is days, not hours, and it touches suites that guard MLS
-storage - the wrong place to discover a mock that silently stopped asserting.
-
-**Sequencing, and why it is not now.** The campaign is running and prod is the test server. A test
-framework migration changes what "green" means for every rung still to be taken, so it waits until
-the ladder reaches the bottom. Until then the honest description of this repo is: **bun is the
-package manager and the runtime everywhere except one test invocation, which runs on node on
-purpose, for a reason that has been measured.**
+One spec (`admin-storage.controller.mls.spec.ts`) passes under node and fails under bun; porting four
+NestJS services to `bun test` waits for the campaign ladder to reach the bottom
+([cicd](cicd.md#the-last-node-runtime-four-jest-suites-that-will-not-run-under-bun-decided-2026-08-27-after-the-campaign)).
 
 ### P3 (blocked: calls held off) - the SFU runs SIX webrtc majors it has never placed a call on (2026-08-27)
 
-**RE-RATED P1 -> P3 on 2026-10-01**: `CALLS_ENABLED = false` since 2026-09-01 (`CLAUDE.md` queue
-item 18), so no user can reach this code; it becomes P1 again the day calling is revived, and the
-one relay-path call below is the revival's gate.
-
-**This is not a bug report. It is the absence of one, which is worse.** `apps/call-service` was
-brought back to compiling on 2026-08-27 after two Dependabot majors had merged onto `main` through a
-CI hole (story in `CHANGELOG.md`; the hole itself is closed - the crate is in the Rust matrix now).
-The bumps were `webrtc` 0.11 -> 0.17 and `axum` 0.7 -> 0.8. **What is verified is that it builds,
-that clippy is clean under `--all-features`, and that its ten unit tests pass. Not one of those runs
-the ICE stack, and not one of them places a call.** The repository's own rule names exactly this
-distance: a green gate is not a working system.
-
-**Six majors of webrtc-rs is not a version bump, it is a different library.** One behaviour change is
-already known because it caused a compile error: `RTCIceServer::credential_type` is gone, and the
-rule it carried moved inside the crate - `RTCIceServer::urls()` now returns `ErrNoTurnCredentials`
-for a `turn:`/`turns:` URL whose username or credential is empty, where 0.11 accepted the same input
-with an `Unspecified` credential type. A misconfigured TURN entry therefore used to degrade quietly
-and now fails the WHOLE ICE configuration for that peer connection. `build_rtc_ice_server` warns and
-names the offending server, which is the only thing that can be done from here without a call.
-
-That one surfaced because it broke the build. **The ones that did not break the build are the reason
-this entry exists**, and they cannot be enumerated by reading a diff - between 0.11 and 0.17 the
-crate reworked ICE gathering, DTLS and the RTP/RTCP interceptor chain, none of which this crate's
-types force it to acknowledge.
-
-**AND THE NEXT BUMP IS A PORT, NOT A BUMP - MEASURED 2026-09-15**: `webrtc` 0.20 is webrtc-rs re-founded over the Sans-I/O `rtc` crate, 26 errors with the imports not even resolving; the port table is on [calls](frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15). The refusal text in `.github/scripts/lib/ceiling.sh` says so.
-
-**What settles it is one call, and only one call.** Two peers, audio and video, over the SFU, with
-TURN configured as production configures it - the relay path specifically, because that is the path
-the `ErrNoTurnCredentials` change sits on and the path a STUN-only test never touches. Watch for: the
-peer connection reaching `connected` at all; the terminal ICE line the crate already logs; whether
-renegotiation still lands (`main.rs` has a renegotiation path that no test covers either).
-
-**AND IT IS TAKEN BY HAND, WITH NO CALL RUNNER WRITTEN** (decided 2026-09-06). This is rung 15 of
-the ladder, CALL, one of the three phases with no runner - and building one is not what the single
-call above needs. `CALLS_ENABLED` is flipped in the LOCAL tree only and put back; the five switches
-that move together at a real revival stay untouched. **The twenty CALL rows stay NEVER RUN,
-deliberately**, the user's ranking being unchanged since 2026-09-01 (*"les appels video et audio ne
-sont pas la priorite"*) - so the campaign cannot be called finished, which is an honest state rather
-than a gap. Until the call is placed, calls are UNVERIFIED on this build, not broken: nothing
-observed them failing, because nothing observed them at all.
-
-**What is still owed is unchanged, and now has a name to flip.** One relay-path call, two peers, audio and video, with TURN as production configures it - prod HAS it configured and has never once used it. The revival is one commit (`CALLS_ENABLED = false` is held off since 2026-09-01, [calls](frontend/modules/calls.md)).
+Calls are UNVERIFIED, not broken; it becomes P1 the day calling is revived. What settles it is one
+relay-path call, two peers, audio and video, TURN as production configures it, taken by hand
+([calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)).
 
 ### P2 - what made the profile fetches fail on that device at that moment
 
-**What is owed is the DENOMINATOR, and it is a measurement rather than a change.** The log line that
-makes it countable did not exist when the symptom was seen - twice on 2026-08-16, on both platforms,
-nine of ten sidebar rows carrying "Utilisateur inconnu" for twenty seconds. Do not assume it is the
-same fault as the avatar endpoint, and do not assume it is not.
-
-The denominator rides on the accusation since 2026-08-19: every warn in `displayName.ts` ends `(failed/attempted lookups failed this session, X%)`, counting only lookups that reached the network.
-
-**Where the number will come from:** the campaign run logs, on both platforms. Nothing here is sent
-anywhere - there is no client telemetry and this did not add any - so the rate is read from a device
-or a browser console during a run, which is exactly where the symptom was seen. Server-side is not
-an option: `GET /api/users/:id` is not request-logged, and a client that never reached the network
-would not appear there anyway.
-
-**Then decide about `FAILURE_BACKOFF_MS`.** A high rate argues the two-minute suppression is doing
-real work against a refusing server; a rate near zero argues it is a clock hiding a name for two
-minutes over a blip that the reconnection listener already handles.
+Owed: the DENOMINATOR (the `(failed/attempted lookups failed this session, X%)` suffix on every
+`displayName.ts` warn), read from a device or browser console during a run, then a decision about
+`FAILURE_BACKOFF_MS` ([chat](frontend/modules/chat.md#profile-fetches-that-failed-on-a-device-and-the-denominator-that-is-owed-2026-08-16)).
 
 ---
 
@@ -1041,184 +804,28 @@ minutes over a blip that the reconnection listener already handles.
 
 ### P2 - a bundle of pure DECLINES still goes out as transport, and a dropped decline strands a requester
 
-**What is left is the same shape, smaller, and has never been observed.** A bundle of PURE DECLINES
-still goes out as transport, deliberately: it carries no key material and restates a fact the requester
-could derive. But a dropped decline strands a requester exactly as permanently as a dropped seed did -
-it is the fact that sends them to the NEXT member, and nothing re-asks.
-
-**Why it is not fixed with the other half.** It needs the ability to deliver a frame to a device that
-presence reports offline WITHOUT appending it to the group's log - the fourth combination `DELIVERY`
-does not have (`silent` and `durable` were one boolean until 2026-08-12, and `durable` still gates both
-the presence filter and the history append server-side). Splitting them is a wire-level change, so it
-waits for a measurement that needs it rather than being guessed at now.
+Never observed. Fixing it needs a frame delivered to an offline device WITHOUT appending it to the
+group's log (the fourth `DELIVERY` combination) - a wire-level change that waits for a measurement
+([mls-graine-state-machine](protocols/mls-graine-state-machine.md#a-bundle-of-pure-declines-goes-out-as-transport-open-never-observed)).
 
 ## Messaging convergence
 
 ### P1 - the repair of a rewound sender lands on a coin flip, the ask cadence is identical either way, and a peer 21 messages behind was told "same state - nothing to do" (measured 2026-09-08, ten runs across three builds)
 
-**THE ROW IS HEAL-repair, AND ITS `PASS` OF 2026-09-06 WAS ONE DRAW OF A THREE-SIDED COIN** (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](durable-rules.md)).
-
-**WHAT ACTUALLY SEPARATES A HEALED RUN FROM A PARTIAL ONE, and it is not the asking.** The cadence is
-identical in both: three asks, about 33 s apart, `escalated: true` every time. The difference is
-whether any one of them is ANSWERED.
-
-    healed    01:44:32  asked ... whether we hold the same history     <- nothing comes back
-              01:45:06  asked ...                                     <- nothing comes back
-              01:45:39  asked ...
-              01:45:40  [HISTORY_BUNDLE] 18 messages received         <- 172 ms later
-
-    partial   01:48:53  asked ...
-              01:49:27  asked ...
-              01:50:00  [HISTORY_REQ] same state as <W1> - nothing to do
-              01:50:00  asked ...                                     <- no bundle, ever
-
-Every PARTIAL run contains ZERO `[HISTORY_BUNDLE]` lines. Every HEALED run contains exactly one, and
-it answers the LAST ask rather than the first.
-
-**AND THE FIRST LEG HAS BEEN WRONG AT LEAST ONCE, WHICH IS THE HARDEST FACT HERE.** On the healed run
-of 01:07:
-
-    01:07:46.524  [HISTORY_REQ] 2bd5add9... same state as <W1> (287cc8e5...) - nothing to do
-    01:07:46.689  [HISTORY_DIGEST] Sent for 2bd5add9... - ids mode, 837 id(s), asking from 2026-06-10
-    01:07:46.791  [HISTORY_BUNDLE] 21 messages received for 2bd5add9... from f7a9bb80
-
-The state-key leg answered *we hold the same history* and a digest found **21 missing messages 267 ms
-later**. Both keys are computed over the ASKER'S window (`historyStateKeyFor(groupId, probe.since)`),
-so this is not two devices measuring different spans. The stale-cache explanation is already
-excluded: `invalidateHistoryStateKey` is called on every write path of BOTH backends
-(`indexeddb.ts`, `sqlite.ts`). What is NOT excluded, and is where to look first, is the window -
-`historyRangeStartFor` - and whether an empty or clipped span makes two different stores hash alike.
-
-**THE SAME DEFECT IS WHY TAB-3b IS `PASS-DIRTY`, and that is how long it has been standing.** W1
-reports the *same two frames* on reload after reload - r2, r3, r4, r5 of one run - as `[History]
-frame never read here and unreadable for good (secret-reuse); will reconcile`, group `2bd5add9`,
-frames `7e:4yhgc8` and `5p:1s1iuic`. The reconciliation is promised four times and never happens. A
-row that stays dirty across reloads is not noise: it is this P1, seen from a check that was not
-looking for it.
-
-**THE DIRECTION, AND IT IS ALREADY WRITTEN DOWN.** [durable-rules](durable-rules.md) says of this
-exact handshake that *a deadline is not a termination proof* and *a leg that needs no remembered
-state to answer must not require a live waiter to answer it*. An answer that arrives only when the
-responder happens to be idle is the live waiter, and three asks 33 s apart is the deadline. Neither
-half is fixed by asking more often, which removing the 30 s coalescing window proved by trying.
-
-**ROOT CAUSE, FOUND 2026-09-08 AFTER THE ABOVE, AND IT IS ARITHMETIC.** The server elects a RANDOM
-online member. Over the A/B window the twenty history requests were routed:
-
-    10  ->  mtnci3lc-7mhd   (W3 - same user as W1, real and active, 5 groups, seen the same day)
-     7  ->  mtry8bhy-u3tl   (W1 - the ONLY device that holds the messages)
-     3  ->  mtmp9dha-9nia   (W2 - these are W1's own asks)
-
-**Half the asks go to a member that cannot help, and the run heals only when one draws W1.** Three
-candidate responders, one holder: `P(draw the holder)` is about a third, and the row heals three
-times in ten. The stale-device theory is dead - `bun devices.mjs` shows W3 idle `0d` with five
-groups, so it is a legitimate member, not a ghost in Redis. It cannot help for a good reason: the
-rewind is on W1's SENDER ratchet, so every receiver fails those frames identically, and W3 is
-missing exactly what W2 is missing.
-
-**AND THE WALK TERMINATES ON A FALSE PROOF, at a line that says so itself.** `actions.ts`, the state
-leg: when `ourKey === probe.key` the responder logs `same state - nothing to do` and answers with its
-COVERAGE. Coverage that is adequate is signalled by SILENCE - *"a member whose coverage turns out to
-be adequate simply says nothing"* - so the asker reads *we agree, and this member is complete* and
-stops. Both halves are individually right: W2 and W3 really do hold the same messages, and W3's
-coverage really does span the window. The defect is the INFERENCE. The comment above that branch
-already says **AGREEMENT IS NOT COMPLETENESS** and then addresses only the window case - two peers
-missing the years below - never the case measured here, where two peers agree while a THIRD member
-holds what both lack.
-
-**What makes this fixable rather than philosophical: the asker holds POSITIVE PROOF it is
-incomplete** - frames it has and cannot read - which is the same evidence `escalateReconciliation` is
-already gated on. So the rule is *a peer's agreement is not a termination while this device holds
-frames it cannot read; it is a reason to EXCLUDE that peer and elect another*. That drives the
-exclusion walk from an ANSWER rather than from an absence, which is the only safe form of it - the
-2026-09-08 attempt that drove it from an absence excluded W1 two hundred milliseconds after electing
-it (see [durable-rules](durable-rules.md)).
-
-**NOT ATTEMPTED IN THIS SESSION, DELIBERATELY.** The three previous attempts to carry "this group is
-incomplete" across an exchange were all wrong in subtle and different ways - a durable marker read as
-"have I already asked", a coalescing clock, an absence read as silence - and each was measured wrong
-only after shipping. This one needs its state specified before it is built: WHAT is remembered, for
-HOW LONG, and WHAT discharges it, with the discharge being the repair landing rather than any peer
-saying anything.
-
+HEAL-repair heals 3 times in 10 because the server elects a random online member, one of three holds
+the messages, and the walk stops on a peer's AGREEMENT. Open: specify the state the fix remembers
+(WHAT, for HOW LONG, what discharges it - the repair landing) and exclude an agreeing peer while the
+asker holds frames it cannot read. The measurement, the root cause and the two refuted causes (not to
+be re-opened) are in [history-reconciliation](protocols/history-reconciliation.md#heal-repair-lands-on-a-coin-flip-the-measurement-and-the-root-cause-2026-09-08).
 
 ### P3 - the pull and the socket hand the SAME row in, and the queue notices afterwards instead of the overlap not existing (measured 2026-09-08)
 
-**SEEN ON THE PHONE FOR THE FIRST TIME, 2026-09-08, AND IT IS WORSE THERE.** NOTIF-7 (backgrounded,
-push, tap, foreground) left six `severe` lines on A1: two frames at ONE epoch - group 2bd5add9,
-`msg_epoch=196 group_epoch=196`, generations 7 and 8 - each refused with
-`Ciphertext generation out of bounds` / `SecretReuseError` and
-`MLS decryption failed at exactly its own epoch, so no redelivery can help`.
-
-A same-epoch `SecretReuseError` means the generation was ALREADY CONSUMED, so these are duplicates
-and not losses - which the row's own count confirms: it displayed exactly one message and passed
-every assertion it makes.
-
-**The asymmetry is the point.** On the web the same overlap is caught by the queue and files
-`[QUEUE] delivery ... arrived twice`, a notice. On the phone nothing catches it and it reaches
-openmls, which reports at ERROR - so the same defect costs a `PASS-DIRTY` on the web and SIX SEVERE
-LINES on a handset, in a log a user's crash reporter would carry. It is one more reason the overlap
-has to stop existing rather than be reconciled afterwards.
-
-**RE-MEASURED ON `00a86a1a8`, 2026-09-23, AND IT IS STILL THERE - TWO SEVERE LINES WHERE THERE WERE
-SIX.** The same row (NOTIF-7b, killed mode), the same shape: one epoch, `msg_epoch=2 group_epoch=2`,
-`SecretReuseError`, 21 ms apart, on a run that PASSED its own assertions. So the count moved and the
-mechanism did not, which is what this entry predicts - the overlap is still reconciled after the
-fact rather than absent, and a handset still pays for it at ERROR. Nothing here is closed by that
-reading; it dates the entry against current code so the next session does not re-derive it.
-
-**RE-READ 2026-10-06 AFTER NOTIF-10 WENT `FAIL` ON THE MI 9T (2026-10-05, TWICE, `7ab8f1780`) - THE
-ENTRY BELOW IS WRONG ABOUT WHO CONSUMES THE GENERATION, AND THE BANNER HAS ITS OWN MECHANISM.**
-Read from code and from the two `results.ndjson` records; no phone touched.
-
-1. **The push path does NOT consume anything durably.** `background.rs`
-   (`decrypt_push_message_with_key`, header "These never persist `mls.bin`") loads the state, decrypts
-   in memory and discards the manager; only the outbox batch and the Welcome paths call
-   `save_encrypted_with_key`. So the 2026-09-08 sentence *"the FCM service writes the advanced state
-   back"* is not what the code does. A push decrypt answering `SecretReuse` was refused because ANOTHER
-   ENGINE persisted that generation first: the JS/WebView engine (socket drain, catch-up pull) or the
-   `MlsBackgroundWorker`. The two consumers are still different layers, which is the entry's point; the
-   consumer is just not the Kotlin service.
-2. **The banner is a straight line, not a leak.** `RefusedForGood` (`mls-refused-for-good`, kind
-   `SecretReuse`) on a VISIBLE push skips the ladder and the worker (#1394) but still falls through
-   `decrypted == null` in `handleMlsFrame` to `buildFallbackText` -> `Fallback notification: Nouveau
-   message de <sender>` -> `showMessageNotification`. Nothing posted earlier is replaced: the generic
-   line IS the notification. It is suppressed only when `MainActivity.isInForeground` is true at post
-   time.
-3. **NOTIF-10, 2026-10-05, both runs, same shape**: FOUR pushes refused `SecretReuse` at one epoch
-   (`msg_epoch=group_epoch=20`, then 26), 0.5-1.4 s apart, four `Fallback notification` lines, and ONLY
-   the last ends in `showMessageNotification: app in foreground -> suppressed`. So three generic
-   banners were posted while `isInForeground` was false and one was suppressed after it flipped - the
-   same "three nameless banners" the 2026-09-23 run saw. 5 of 5 markers still arrive (the JS engine
-   holds all five), which is why the verdict is a banner and not a loss.
-4. **DECIDED AND IMPLEMENTED 2026-10-06: DESIGN (b).** The Mi 9T logcat (`mi9t-notif10-logcat.txt`) is case (i): the JS engine's `[QUEUE] Processing` at 19:46:17.46 came ~1.4 s before the first push `SecretReuse` refusal (18.892), no `onResume` between, no `MlsBackgroundWorker` line - and the JS engine DOES post a real banner (`notifyMessageFromWebSocket`, 18.970), 56 ms BEFORE the push's generic line (19.026), which is why the shade showed both. Kotlin-side only: `push/GenericBannerLedger.kt` pairs the two in either order (see [mobile](frontend/mobile.md)). **OWED: one on-device NOTIF-10 re-read by the lead** (the batched-banner half, `covers`, was added after the 2026-10-06 `messages=5` reading) (the service itself cannot be compiled outside the Tauri Android project; the ledger is JVM-tested).
-
-**WHAT THE 2026-09-08 READING GOT WRONG, AND WHAT SURVIVES IT.** It followed one frame from `CanariFCM tryDecrypt` (generation 117 consumed, the notification shown) to the pull offering the same two rows 10 s later and `SecretReuseError` on generation 117, and concluded that the Kotlin handler consumes the generation durably and never acknowledges. The code read of 2026-10-06 above refutes the first half (a push decrypt persists nothing), so the fix it proposed - acknowledge the row at the cache write, or make the foreground consult the FCM cache by `messageId` + `groupId` - is WITHDRAWN now that item 4 names the consumer (the JS engine). **What survives:** the frames ARE the same ids end to end (`queuedMessageId` in `CanariFCM` is `qId` in `[QUEUE]`); `BaseMlsService.deliveries` cannot see a consumer in another layer; and `read_and_clear_fcm_cache` clears BEFORE the JS has persisted anything, so a crash between that clear and `saveMessage` loses the plaintext for good - a window to close on its own (read, persist, THEN clear), never by retrying or suppressing the log line (*a fallback is a signal, never a path*).
-
-**What is seen.** One line on W3, on every HEAL-NEW run that has a fresh device pulling while a
-socket is already live:
-
-    [QUEUE] delivery 32db7fea... arrived twice - the pull listed a row the socket had already
-    handed in and this device has not drained yet - the ordinary crossing, and nothing is wrong;
-    not decrypting it again. Further ones of this shape are counted, not printed.
-
-**Why it is filed rather than declared expected.** Nothing is lost and nothing is decrypted twice -
-the line is the app correctly recognising its own duplicate. But it is the visible end of two
-delivery paths overlapping BY CONSTRUCTION, and *a race that heals cleanly is still a defect*: the
-reconciliation after the fact is a witness, not a fix. Declaring it `ignoringExpectedLog` on the
-rows that meet it would demote a real overlap to keep a cell green, which is the one disposition
-[durable-rules](durable-rules.md) refuses. So HEAL-NEW-2 stays `PASS-DIRTY` until the overlap goes.
-
-**The direction, and it is small.** The duplicate is caught at the DRAIN, by a queue that already
-holds the row the socket handed in. The pull that lists it again could ask that same question one
-step earlier - a row already queued for this device is not a row to queue - which deletes the
-crossing rather than absorbing it. Both halves are in-memory and in the same module, so this is a
-membership test, not a new ledger.
-
-**What is owed before the change.** The RATE, against the population: this is currently known from
-one row on one client shape. `notableCount` on the same record was 91, so the counted-not-printed
-tail is where the real number is. Measure it before believing the shape is as narrow as it looks.
-
+Open: (1) the web overlap - the pull should not queue a row already queued for the device (a
+membership test in the same module), after measuring the RATE (`notableCount` was 91 on one record);
+(2) one on-device NOTIF-10 re-read of the generic-banner ledger (#1550); (3) `read_and_clear_fcm_cache`
+clears before the JS has persisted - read, persist, THEN clear. The analysis, who consumes the
+generation and the withdrawn 2026-09-08 fix are on
+[mobile](frontend/mobile.md#one-row-arriving-through-the-push-the-pull-and-the-socket-measured-2026-09-08-to-2026-10-06).
 
 ## Background notifications on Android - what the 2026-09-05 investigation left open
 

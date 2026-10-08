@@ -470,6 +470,12 @@ access scope here, no attempt was made to authenticate against it, and that deci
 What is still open - and the two instruments left running to settle it - is in
 [backlog](../backlog.md#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11).
 
+### Two refuted explanations, and the egress probe
+
+**Do not re-open either refuted hypothesis.** (1) A Proxmox `vzdump` freezing the container: both journals carried entries for every minute of the window, and the ledger gap was the probe's own `AbortSignal.timeout` - a gap in a ledger is evidence about its WRITER before it is evidence about the world ([durable-rules](../durable-rules.md)). (2) "The whole campus loses the network every evening": zero events on 09-05, 09-06 and 09-07.
+
+**The egress half.** `UpstreamUnreachableError` and `OUTBOUND_BUDGET_MS` are shipped; whether such stalls are CORRELATED across boxes is read from [`infrastructure/egress-probe/`](../../../infrastructure/egress-probe/README.md), armed in the `canari` crontab - which since the 2026-09-24 cutover is the old VM, running no container. The two netwatch witnesses stopped themselves on 2026-09-12 and nothing records that their ledgers were read. The open measurement (whether the Portail-etu host sees the same 22h-23h drop) is in [backlog](../backlog.md#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11).
+
 ## Working against the API
 
 The account id and token are **not in this repository and must never be** - it is public. They live

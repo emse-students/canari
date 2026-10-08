@@ -1029,3 +1029,7 @@ That is what a store-and-forward queue for currently-offline devices looks like,
   learns something false about code that is correct. **So the convention is now `file` plus the
   SYMBOL** - a name a rename has to touch every caller to change, and one a reader can search for
   when it does move. Every pointer on this page was converted.
+
+## A bundle of pure declines goes out as transport (open, never observed)
+
+A bundle of PURE DECLINES still goes out as transport, deliberately: it carries no key material and restates a fact the requester could derive. But a dropped decline strands a requester exactly as permanently as a dropped seed did - it is the fact that sends them to the NEXT member, and nothing re-asks. Fixing it needs the ability to deliver a frame to a device that presence reports offline WITHOUT appending it to the group's log: the fourth combination `DELIVERY` does not have (`silent` and `durable` were one boolean until 2026-08-12, and `durable` still gates both the presence filter and the history append server-side). Splitting them is a wire-level change, so it waits for a measurement that needs it. The open line is in [backlog](../backlog.md#p2---a-bundle-of-pure-declines-still-goes-out-as-transport-and-a-dropped-decline-strands-a-requester).
