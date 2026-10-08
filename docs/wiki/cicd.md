@@ -1690,6 +1690,25 @@ therefore not three independent draws; they are one npm blip lasting minutes. Th
 anyway, because the CALLER could not read the answer, and that defect is above. *The classifier's
 rate says the design is right; only its reader was wrong.*
 
+### A Tauri plugin bump is two halves, and the crate half can be a runtime bump (2026-10-08)
+
+`Security / Guard the committed lockfiles` runs `frontend/scripts/check-tauri-plugin-versions.mjs`:
+the JS package (`package.json`) and the crate (`src-tauri/Cargo.lock`) must agree on major.minor.
+Dependabot's `bun` block moves the JS half and cannot move the crate (its `cargo` entry for
+`frontend/src-tauri` is unreachable, see the block in `.github/dependabot.yml`), so every plugin
+minor arrives red by construction: #1491 (`plugin-store` 2.5.0), #1596 (`plugin-opener` 2.7.0),
+#1597 (`plugin-http` 2.8.0). **Grouping the pair is not possible** - a group only spans what the
+ecosystem can open a PR for, and the cargo side opens none here; `dependabot.yml` is unchanged.
+
+Measured 2026-10-08, one at a time from a clean `origin/main` with `cargo update -p <crate>
+--precise <version>`: each of the three crates (`tauri-plugin-store` 2.5.0, `-opener` 2.7.0, `-http`
+2.7.0+/2.8.1) requires `tauri ^2.12`, so the lock moves `tauri 2.11.1 -> 2.12.1`, `wry 0.55.1 ->
+0.57.0`, `tao 0.35 -> 0.37`, and cargo reports the vendored `patches/tao` as `patch.unused`. That
+is the rebase in [backlog](backlog.md) ("the wry bump that removes the abort"), a native work
+package owed an A1 deep-link run, so **all three stay held and their PRs open**. The JS and the
+crate move together, in the PR that rebases `tao`. The latest versions the CURRENT tauri accepts
+are `tauri-plugin-store` 2.4.5, `-opener` 2.5.5, `-http` 2.7.0 (JS 2.4.x/2.5.x/2.7.x to match).
+
 ## Notable CI gotchas
 
 - **A CONFLICTING PR PRODUCES NO `pull_request` RUN, AND THE CHECKS LIST STILL LOOKS BUSY.** The `pull_request` event is computed against the MERGE ref; with a conflict GitHub cannot build one, so `CI` is never queued - not red, not skipped, simply never created. `arm-auto-merge` is `pull_request_target`, evaluates against the base, and runs anyway, so one green row sits there while nothing tests the code. PR #525 waited twice and survived a close/reopen before the state was actually asked for. `gh run list` returning nothing is an ANSWER: read `gh pr view <n> --json mergeable,mergeStateStatus` (`CONFLICTING` / `DIRTY`), then rebase on a freshly fetched `main` and `git push --force-with-lease`.
