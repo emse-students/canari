@@ -169,7 +169,7 @@ async function sweepCommunities(cx) {
     // The rail label gains a ", unread" suffix while the community has unread salons, so the click
     // addresses the label as drawn and the proof is the panel header, which never carries it.
     await realClick(cx, `[aria-label=${JSON.stringify(label)}]`);
-    await until(cx, `((document.querySelector('.sidebar-panel h2') || {}).textContent || '').trim() === ${JSON.stringify(name)}`, 10000).catch(async (e) => {
+    await until(cx, `((document.querySelector('.sidebar-panel h2') || {}).textContent || '').trim() === ${JSON.stringify(name)}`, 10000).catch(async () => {
       throw new Error(`rail click on ${JSON.stringify(label)} did not open it: ${JSON.stringify(await readUi(cx))}`);
     });
     await awaitAppSettled(cx).catch(() => null);
