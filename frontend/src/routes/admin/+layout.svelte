@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import Breadcrumb from '$lib/components/navigation/Breadcrumb.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import type { Component } from 'svelte';
   import {
     isGlobalAdmin,
     isAssociationSuperAdmin,
@@ -13,38 +12,9 @@
     isEventValidator,
   } from '$lib/stores/user';
   import { adminScopeLabels, ensureMayOpenAdmin } from '$lib/admin/access';
-  import AdminNavGroup from '$lib/components/admin/AdminNavGroup.svelte';
-  import {
-    Shield,
-    CalendarClock,
-    Activity,
-    ArrowLeft,
-    ShieldAlert,
-    UserCog,
-    UserPen,
-    Wrench,
-    Building2,
-    Wallet,
-    FileCheckCorner,
-    Map,
-    HardDrive,
-    History,
-    Database,
-    Layers,
-  } from '@lucide/svelte';
+  import { adminTrail, mayOpenAdminPath, type AdminTiers } from '$lib/admin/adminSections';
+  import { Shield, ArrowLeft } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-
-  interface NavItem {
-    href: string;
-    label: string;
-    icon: Component;
-  }
-
-  interface NavGroup {
-    label: string;
-    icon: Component;
-    items: NavItem[];
-  }
 
   let { children } = $props();
 
@@ -81,78 +51,23 @@
     }
   });
 
-  // Grouped into dropdowns by theme rather than a flat row of up to 9 tabs. A group renders only
-  // if at least one of its items is visible to the current user, so a plain association admin
-  // (not global, not BDE super-admin) still sees just "Moderation" (containing only Agenda).
-  const navGroups = $derived.by((): NavGroup[] => {
-    const moderationItems: NavItem[] = [];
-    if (isEventValidatorUser) {
-      moderationItems.push({
-        href: '/admin/agenda',
-        label: m.admin_pending_agenda_label(),
-        icon: CalendarClock,
-      });
-    }
-    // Reports, hidden posts and mutes: the same tier the server's `isContentModerator` accepts.
-    // Gating this on `isGlobalAdminUser` alone is what left a BDE holding MODERATE with a right
-    // and no way in.
-    if (isGlobalAdminUser || isModeratorUser) {
-      moderationItems.push({
-        href: '/admin/moderation',
-        label: m.admin_reported_posts_label(),
-        icon: ShieldAlert,
-      });
-    }
-
-    const communityItems: NavItem[] = [];
-    if (isGlobalAdminUser) {
-      communityItems.push({
-        href: '/admin/spaces',
-        label: m.admin_spaces_label(),
-        icon: Layers,
-      });
-    }
-    // Document-reviewer grants + Carte de la Vie Asso: global admins and BDE super-admins.
-    if (isGlobalAdminUser || isSuperAdminUser) {
-      communityItems.push(
-        {
-          href: '/admin/read-access',
-          label: m.readaccess_nav_label(),
-          icon: FileCheckCorner,
-        },
-        { href: '/admin/carte', label: m.carte_card_label(), icon: Map }
-      );
-    }
-
-    const platformItems: NavItem[] = isGlobalAdminUser
-      ? [
-          { href: '/admin/platform', label: m.admin_platform_label(), icon: Wrench },
-          { href: '/admin/users', label: m.admin_admins_label(), icon: UserCog },
-          {
-            href: '/admin/profile-corrections',
-            label: m.profile_corrections_nav_label(),
-            icon: UserPen,
-          },
-          { href: '/admin/status', label: m.admin_presence_connections_label(), icon: Activity },
-        ]
-      : [];
-
-    return [
-      { label: m.admin_group_moderation_label(), icon: ShieldAlert, items: moderationItems },
-      { label: m.admin_group_community_label(), icon: Building2, items: communityItems },
-      { label: m.admin_group_platform_label(), icon: Wrench, items: platformItems },
-    ].filter((group) => group.items.length > 0);
+  const tiers = $derived<AdminTiers>({
+    isGlobalAdmin: isGlobalAdminUser,
+    isSuperAdmin: isSuperAdminUser,
+    isModerator: isModeratorUser,
+    isEventValidator: isEventValidatorUser,
   });
+  // THE LAYOUT IS THE AUTHORITY on which page renders: a typed URL for a page this tier cannot
+  // open is sent to the hub, whatever the page itself checks. The hub lists only what `tiers` may
+  // open, so a refused path is exactly one the reader was never shown.
+  const allowed = $derived(ready && mayOpenAdminPath(path, tiers));
+  const isHub = $derived(path === '/admin' || path === '/admin/');
+  const trail = $derived(isHub ? undefined : adminTrail(path, scope.title()));
 
-  // Single-page sections stay direct links rather than one-item dropdowns.
-  const directLinks = $derived.by((): NavItem[] => {
-    if (!isGlobalAdminUser) return [];
-    return [
-      { href: '/admin/cercle', label: m.admin_cercle_label(), icon: Wallet },
-      { href: '/admin/storage', label: m.admin_storage_label(), icon: HardDrive },
-      { href: '/admin/database', label: m.admin_database_label(), icon: Database },
-      { href: '/admin/legacy-cotisations', label: m.admin_legacy_label(), icon: History },
-    ];
+  $effect(() => {
+    if (!ready || allowed) return;
+    console.warn('[ADMIN] path not open to this tier, redirecting to the hub:', path);
+    void goto(resolve('/admin'), { replaceState: true });
   });
 </script>
 
@@ -171,60 +86,38 @@
        1440px: eleven pages, eleven times 896.
        `tool` and not `reading`, because every one of them is a table or a board rather than a
        column of prose. The three pages that declared their own container no longer do - one
-       column per page, and the layout owns it here because the header above is part of it. -->
+       column per page, and the layout owns it here because the header above is part of it.
+
+       NAVIGATION IS DEPTH, NOT A STRIP (user, 2026-10-08): the hub at `/admin` lists the pages by
+       group, a page shows its path (`Admin > Group > Page`), and there is no row of links or
+       dropdown to scroll or open. -->
   <PageContainer width="tool" class="space-y-6">
-    <a
-      href={resolve('/dashboard')}
-      class="tap-target text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
-    >
-      <ArrowLeft size={14} />
-      {m.admin_dashboard_link()}
-    </a>
-
-    <header class="flex items-start gap-3">
-      <span
-        class="bg-cn-yellow/20 text-cn-dark flex h-11 w-11 items-center justify-center rounded-2xl"
-      >
-        <Shield size={22} />
-      </span>
-      <div>
-        <h1 class="text-text-main text-xl font-bold tracking-tight">{scope.title()}</h1>
-        <p class="text-text-muted mt-0.5 text-sm">{scope.description()}</p>
-      </div>
-    </header>
-
-    <nav class="flex gap-2 overflow-x-auto pb-1" aria-label={scope.title()} data-swipe-nav-ignore>
+    {#if isHub}
       <a
-        href={resolve('/admin')}
-        class="tap-target shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
- {path === '/admin'
-          ? 'bg-cn-yellow text-cn-ink shadow-sm'
-          : 'border-cn-border text-text-muted hover:text-text-main border'}"
+        href={resolve('/dashboard')}
+        class="tap-target text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
       >
-        {m.admin_home_label()}
+        <ArrowLeft size={14} />
+        {m.admin_dashboard_link()}
       </a>
-      {#each navGroups as group (group.label)}
-        <AdminNavGroup
-          label={group.label}
-          icon={group.icon}
-          items={group.items}
-          active={group.items.some((item) => path.startsWith(item.href))}
-        />
-      {/each}
-      {#each directLinks as item (item.href)}
-        <a
-          href={resolve(internalPath(item.href))}
-          class="tap-target inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
- {path.startsWith(item.href)
-            ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border-cn-border text-text-muted hover:text-text-main border'}"
-        >
-          <item.icon size={15} />
-          {item.label}
-        </a>
-      {/each}
-    </nav>
 
-    {@render children?.()}
+      <header class="flex items-start gap-3">
+        <span
+          class="bg-cn-yellow/20 text-cn-dark flex h-11 w-11 items-center justify-center rounded-2xl"
+        >
+          <Shield size={22} />
+        </span>
+        <div>
+          <h1 class="text-text-main text-xl font-bold tracking-tight">{scope.title()}</h1>
+          <p class="text-text-muted mt-0.5 text-sm">{scope.description()}</p>
+        </div>
+      </header>
+    {:else if trail}
+      <Breadcrumb crumbs={trail} />
+    {/if}
+
+    {#if allowed}
+      {@render children?.()}
+    {/if}
   </PageContainer>
 {/if}

@@ -279,7 +279,7 @@ clamps it to the viewport, and re-runs on scroll and resize. `matchAnchorWidth` 
 **Portalling breaks the accessible relationship too, and nothing warns.** Once the panel is no longer
 a descendant of its trigger, `aria-expanded` on that trigger announces "expanded" without naming what
 expanded, and there is no DOM structure left for a screen reader to infer it from — so the panel
-needs an `id` and the button an `aria-controls` pointing at it. Found on `AdminNavGroup` while a
+needs an `id` and the button an `aria-controls` pointing at it. Found on the admin dropdown (deleted 2026-10-08, the console is a hub now) while a
 harness check went looking for exactly that back-reference, failed to find it, and reported a working
 dropdown as clipped: the selector was wrong *and* the thing it looked for should have existed.
 

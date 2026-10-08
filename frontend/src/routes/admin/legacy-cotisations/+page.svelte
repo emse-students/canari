@@ -2,7 +2,10 @@
   import { resolve } from '$app/paths';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
+  import { page as routePage } from '$app/state';
+  import { parseTab, tabUrl } from '$lib/admin/tabQuery';
+  import { internalPath } from '$lib/utils/internalPath';
   import { isGlobalAdmin } from '$lib/stores/user';
   import {
     listLegacyCotisations,
@@ -17,7 +20,16 @@
   const SEARCH_DEBOUNCE_MS = 300;
 
   let ready = $state(false);
-  let tab = $state<LegacyCotisationStatus>('pending');
+  const TAB_KEYS = [
+    'pending',
+    'claimed',
+    'collisions',
+    'all',
+  ] as const satisfies readonly LegacyCotisationStatus[];
+  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  let tab = $state<LegacyCotisationStatus>(
+    parseTab(routePage.url.searchParams.get('tab'), TAB_KEYS, 'pending')
+  );
   let search = $state('');
   let items = $state<LegacyCotisationAdminItem[]>([]);
   let total = $state(0);
@@ -65,6 +77,7 @@
   function switchTab(next: LegacyCotisationStatus) {
     if (tab === next) return;
     tab = next;
+    replaceState(resolve(internalPath(tabUrl(routePage.url, next, 'pending'))), routePage.state);
     void load(0, true);
   }
 
@@ -136,11 +149,17 @@
     </div>
   {/if}
 
-  <div class="border-cn-border flex gap-1 rounded-xl border bg-(--cn-surface) p-1">
+  <div
+    class="border-cn-border grid grid-cols-4 gap-1 rounded-xl border bg-(--cn-surface) p-1"
+    role="tablist"
+    aria-label={m.admin_legacy_title()}
+  >
     {#each tabs as t (t.key)}
       <button
+        role="tab"
+        aria-selected={tab === t.key}
         onclick={() => switchTab(t.key)}
-        class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
+        class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-center text-sm font-medium transition-colors sm:flex-row sm:gap-2 {tab ===
         t.key
           ? 'bg-cn-yellow text-cn-ink shadow-sm'
           : 'text-text-muted hover:text-text-main'}"
