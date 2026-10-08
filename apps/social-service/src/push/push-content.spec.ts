@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
@@ -100,6 +101,13 @@ describe('reactionTypeToEmoji', () => {
     expect(reactionTypeToEmoji('Marteau')).toBe('🔨');
     expect(reactionTypeToEmoji("J'aime")).toBe('❤️');
     expect(reactionTypeToEmoji('Énervé')).toBe('😠');
+  });
+
+  it('keeps an unknown type as its label rather than inventing a heart', () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    expect(reactionTypeToEmoji('Nouveau')).toBe('Nouveau');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"Nouveau"'));
+    warn.mockRestore();
   });
 
   it('keeps the list in step with the picker the app draws', () => {

@@ -4156,6 +4156,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deepLink: String,
         channel: String,
     ) {
+        // THE LOCK COVERS THE POST AS WELL AS THE LEDGER. Each push runs on a thread of its own, and
+        // the join-or-restart decision reads "is the notification still shown": with the lock
+        // released before `notify`, a burst (six reactions at once - the very case this exists for)
+        // found the shade still empty, restarted the ledger each time and kept only the last
+        // reactor. Held across the face fetch, the second push waits and then finds the first one
+        // posted; faces are cached for 24 h, so the wait is one fetch per new face.
+        synchronized(POST_REACTION_LOCK) {
+            showPostReactionNotificationLocked(data, postId, deepLink, channel)
+        }
+    }
+
+    private fun showPostReactionNotificationLocked(
+        data: Map<String, String>,
+        postId: String,
+        deepLink: String,
+        channel: String,
+    ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notifId = getStableNotifId(this, postReactionNotifKey(postId))
         val newcomer = PostReactionGroup.Actor(data["iconUserId"].orEmpty(), data["actorName"].orEmpty())

@@ -294,18 +294,18 @@ const reactionLogger = new Logger('PushContent');
 /**
  * The emoji a stored reaction type stands for.
  *
- * An unknown type answers with the same heart the app draws for it (`reactionTypeToEmoji` in the
- * frontend), so the notification and the post agree - and it is logged at `warn`, because it means
- * the two lists have drifted and a reaction was added on one side only.
+ * An unknown type answers with the stored label itself, and says so at `warn`: it means the two
+ * lists have drifted and a reaction was added on one side only. The label is what the person
+ * picked, so the sentence stays true; inventing a heart would state a reaction nobody gave.
  */
 export function reactionTypeToEmoji(reactionType: string): string {
   const emoji = REACTION_EMOJI[reactionType];
   if (emoji) return emoji;
   reactionLogger.warn(
-    `[NOTIFY] unknown reaction type "${reactionType}" - drawn as a heart, as the app draws it. ` +
+    `[NOTIFY] unknown reaction type "${reactionType}" - sent as its label. ` +
       'REACTION_EMOJI and frontend REACTIONS have drifted.'
   );
-  return '❤️';
+  return reactionType;
 }
 
 /**
