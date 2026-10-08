@@ -958,3 +958,7 @@ The app still has THREE hover/tap systems (native `title`, the `PostPolls` voter
 ### P2 - A post push tapped with the session already dead lands on a bare /login (Mi 9T, 2026-10-08)
 
 Killed app, session deleted server-side, tap a post push: refresh 401, the app lands on `/login` with no `returnTo`, and the log has no `[hooks] Processing URL`, so the deep link is lost before the login can carry it. Warm-app expiry was not measured. Substance: [device-readings-2026-10](device-readings-2026-10.md).
+
+## CanaReels: the camera tab cannot be guessed (user, 2026-10-09)
+
+Swiping right from the leftmost tab opens the camera, and nothing says so. Wanted AFTER the video, discard and weak-network chantiers are stable, not before. Ideas to weigh with the user: a peeking camera edge on the leftmost tab (a visible handle that nudges once); a first-run coachmark shown once per account and remembered server-side; a permanent camera icon in the app bar next to the plus; and a "Canareels" entry in the plus menu so the feature is reachable without the swipe. Measure how many users have ever opened the camera before choosing.
