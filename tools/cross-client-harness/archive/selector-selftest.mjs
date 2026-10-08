@@ -224,6 +224,7 @@ if (structuralClaims('.conversation-side-panel [aria-label="Fermer"]', panelSour
  * component. Takes the selector as an argument so the control case can hand it a retired shape.
  */
 const MODAL = join(HERE, '../../../frontend/src/lib/components/shared/Modal.svelte');
+const FR_MESSAGES = join(HERE, '../../../frontend/messages/fr.json');
 function modalClaims(selector, modalSource) {
   const parts = /^\[role="(\w+)"\]\[(data-[\w-]+)\] \[aria-label="([^"]+)"\]$/.exec(selector);
   if (!parts) return [`${selector} is not the "[role][data-attr] [aria-label]" shape this gate can read`];
@@ -231,7 +232,13 @@ function modalClaims(selector, modalSource) {
   const markup = modalSource.slice(modalSource.indexOf('</script>'));
   const tag = new RegExp(`<div\\s+role="${role}"[^>]*\\s${attr}[\\s>=]`).exec(markup);
   if (!tag) return [`no <div role="${role}" ${attr}> backdrop in Modal.svelte, so ${selector} matches nothing`];
-  const button = new RegExp(`<button[^>]*aria-label="${label}"`).test(markup.slice(tag.index));
+  // The component declares the label either as a literal or as a Paraglide call; the selector names
+  // the RENDERED French text, so a message key is resolved through fr.json.
+  const rest = markup.slice(tag.index);
+  const keys = [...rest.matchAll(/<button[^>]*aria-label=\{m\.(\w+)\(\)\}/g)].map((x) => x[1]);
+  const fr = JSON.parse(readFileSync(FR_MESSAGES, 'utf8'));
+  const button =
+    new RegExp(`<button[^>]*aria-label="${label}"`).test(rest) || keys.some((k) => fr[k] === label);
   return button ? [] : [`no <button aria-label="${label}"> inside the backdrop of Modal.svelte`];
 }
 const MODAL_CLOSE = /export const MODAL_CLOSE =\s*'([^']+)';/.exec(groupnavSource)?.[1] ?? '';
