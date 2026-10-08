@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { AssociationPermissionFlag } from '$lib/associations/api';
 import {
   EDIT_SECTIONS,
+  LIST_EDIT_SECTIONS,
   editRights,
   editSectionHref,
   editTrail,
@@ -89,6 +90,18 @@ describe('which sections a reader may open', () => {
     ).toBe(true);
   });
 
+  it('gives a list three sections and refuses it the association-only ones', () => {
+    const admin = editRights({ ...none, isGlobalAdmin: true }, 'list');
+    expect(visibleEditSections(admin, LIST_EDIT_SECTIONS)).toEqual([
+      'profile',
+      'members',
+      'danger',
+    ]);
+    const plain = editRights(none, 'list');
+    expect(visibleEditSections(plain, LIST_EDIT_SECTIONS)).toEqual(['profile']);
+    expect(LIST_EDIT_SECTIONS).not.toContain('payments');
+  });
+
   it('gives a global admin every section', () => {
     expect(visibleEditSections(editRights({ ...none, isGlobalAdmin: true }))).toEqual([
       ...EDIT_SECTIONS,
@@ -135,6 +148,20 @@ describe('Back goes up exactly one level', () => {
     const trail = editTrail('bde', 'members', labels);
     expect(trail.every((c) => c.href.startsWith('/'))).toBe(true);
     expect(trail.at(-1)?.href).toBe(editSectionHref('bde', 'members'));
+  });
+
+  it('a list keeps every level of its path under /lists', () => {
+    const trail = editTrail('liste-x', 'members', {
+      ...labels,
+      directoryHref: '/lists',
+      base: '/lists',
+    });
+    expect(trail.map((c) => c.href)).toEqual([
+      '/lists',
+      '/lists/liste-x',
+      '/lists/liste-x/edit',
+      '/lists/liste-x/edit/members',
+    ]);
   });
 
   it('drops the entity crumb until its name is known', () => {

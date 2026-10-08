@@ -8,8 +8,6 @@
   import {
     getAssociationBySlug,
     listMembers,
-    mayActOnAssociation,
-    AssociationPermissionFlag,
     getMyBdeReach,
     type Association,
     type AssociationMember,
@@ -21,13 +19,31 @@
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
   import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
   import EditDangerTab from '$lib/components/associations/edit/EditDangerTab.svelte';
+  import SectionHub from '$lib/components/navigation/SectionHub.svelte';
+  import type { HubRow } from '$lib/components/navigation/breadcrumb';
+  import {
+    LIST_EDIT_SECTIONS,
+    editRights,
+    editSectionHref,
+    editTrail,
+    mayOpenEditSection,
+    parseEditSection,
+    visibleEditSections,
+    type EditSection,
+  } from '$lib/associations/editSections';
+  import { wordingFor } from '$lib/associations/kindWording';
 
   let list = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
   let resolvedMemberNames = $state<Record<string, string>>({});
   let loading = $state(true);
   let error = $state('');
-  let editSection = $state<'profile' | 'members' | 'danger'>('profile');
+  /**
+   * The open section is a ROUTE segment (`/lists/<slug>/edit/<section>`), never local state: Back
+   * goes up one level, a reload keeps the place. `null` is the hub; a segment that is not one of the
+   * list's three sections never reaches here - `+page.ts` redirects it.
+   */
+  let editSection = $derived<EditSection | null>(parseEditSection(page.params.section));
 
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
@@ -48,9 +64,8 @@
     isSuperAdmin: isSuperAdminUser,
     memberPermissions: myMembership?.permissions,
   });
-  let canManageMembers = $derived(
-    mayActOnAssociation(AssociationPermissionFlag.MANAGE_MEMBERS, permissionContext)
-  );
+  let rights = $derived(editRights(permissionContext, 'list'));
+  let canManageMembers = $derived(rights.members);
   /**
    * Archiving is `PATCH :id { archived }`, admitted at `MANAGE_MEMBERS`; deleting is `DELETE :id`
    * behind a bare global-admin guard. The tab opens on the first, the delete card carries the
@@ -61,6 +76,63 @@
   let canDeleteList = $derived(isGlobalAdminUser || isSuperAdminUser);
 
   const slug = $derived((page.params as Record<string, string>).slug);
+
+  const SECTION_ICONS: Partial<Record<EditSection, HubRow['icon']>> = {
+    profile: Building2,
+    members: Users,
+    danger: TriangleAlert,
+  };
+
+  /** The localized name of a section; a message must be read at render time, hence a function. */
+  function sectionLabel(section: EditSection): string {
+    switch (section) {
+      case 'members':
+        return m.common_members_label();
+      case 'danger':
+        return m.asso_edit_tab_danger();
+      default:
+        return m.asso_edit_tab_profile();
+    }
+  }
+
+  /** The path to this page (see `editTrail`); every crumb is a link. */
+  let crumbs = $derived(
+    editTrail(slug, editSection, {
+      directory: wordingFor('list').directoryLabel(),
+      directoryHref: wordingFor('list').directoryHref,
+      asso: list?.name,
+      edit: m.list_edit_page_title(),
+      section: editSection ? sectionLabel(editSection) : undefined,
+      base: '/lists',
+    })
+  );
+
+  /** One hub row per section the reader may open. */
+  let hubRows = $derived(
+    visibleEditSections(rights, LIST_EDIT_SECTIONS).map((section): HubRow => ({
+      key: section,
+      href: editSectionHref(slug, section, '/lists'),
+      label: sectionLabel(section),
+      icon: SECTION_ICONS[section]!,
+      summary:
+        section === 'members'
+          ? m.asso_edit_hub_members_summary({ count: members.length })
+          : undefined,
+      tone: section === 'danger' ? 'danger' : 'default',
+    }))
+  );
+
+  // A segment is user input: once the rights are known, a section its reader may not open is
+  // replaced by the hub. Only for someone admitted to the area at all - `loadData` sends the rest
+  // to the public page and a second redirect must not race it.
+  let mayEnterArea = $derived(isGlobalAdminUser || !!myMembership?.isAdmin);
+  $effect(() => {
+    if (loading || !list || !editSection || !mayEnterArea) return;
+    if (!mayOpenEditSection(editSection, rights)) {
+      console.warn('[lists/edit] section refused, back to the hub', editSection);
+      void goto(resolve(editSectionHref(slug, null, '/lists')), { replaceState: true });
+    }
+  });
 
   onMount(loadData);
 
@@ -105,12 +177,11 @@
 
 <PageContainer>
   <PageHeader
-    title={m.list_edit_page_title()}
+    title={editSection ? sectionLabel(editSection) : m.list_edit_page_title()}
     subtitle={list
       ? `@${list.slug}${list.promo ? ` · ${m.list_campaigns_heading({ year: list.promo })}` : ''}`
       : undefined}
-    backHref="/lists/{encodeURIComponent(slug)}"
-    backLabel={m.list_edit_back_to_public()}
+    {crumbs}
   />
 
   <div class="space-y-6">
@@ -131,52 +202,9 @@
         </div>
       {/if}
 
-      <!-- Section tabs -->
-      <nav
-        data-swipe-nav-ignore
-        class="border-cn-border/80 bg-cn-bg sticky top-0 z-30 -mx-4 border-y px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border"
-        aria-label={m.list_edit_sections_aria()}
-      >
-        <div class="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onclick={() => (editSection = 'profile')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'profile'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <Building2 size={17} />
-            Profil
-          </button>
-          {#if canManageMembers}
-            <button
-              type="button"
-              onclick={() => (editSection = 'members')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'members'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <Users size={17} />
-              {m.common_members_label()}
-            </button>
-          {/if}
-          {#if canArchiveList}
-            <button
-              type="button"
-              onclick={() => (editSection = 'danger')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'danger'
-                ? 'bg-red-err/20 text-red-err border-red-err/30 border'
-                : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
-            >
-              <TriangleAlert size={17} />
-              {m.asso_edit_tab_danger()}
-            </button>
-          {/if}
-        </div>
-      </nav>
+      {#if editSection === null}
+        <SectionHub rows={hubRows} label={m.asso_edit_hub_label()} />
+      {/if}
 
       {#if editSection === 'profile'}
         <EditProfileTab asso={list} canEdit={canManageMembers} onUpdated={(a) => (list = a)} />

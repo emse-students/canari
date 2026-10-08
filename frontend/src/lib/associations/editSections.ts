@@ -113,18 +113,32 @@ export function mayOpenEditSection(section: EditSection, rights: EditRights): bo
   }
 }
 
-/** The sections the hub lists, in order. */
-export function visibleEditSections(rights: EditRights): EditSection[] {
-  return EDIT_SECTIONS.filter((s) => mayOpenEditSection(s, rights));
+/**
+ * The sections a LIST's management area has: its profile, its roster and the archive/delete card.
+ * A list sells nothing, so the shop and payment sections do not exist for it; the rights are the
+ * SAME `mayOpenEditSection` answers, only the roster of keys is shorter.
+ */
+export const LIST_EDIT_SECTIONS: readonly EditSection[] = ['profile', 'members', 'danger'];
+
+/** Where a management area lives: associations and institutions under `/associations`, lists under `/lists`. */
+export type EditBase = '/associations' | '/lists';
+
+/** The sections the hub lists, in order; `among` narrows the keys for a kind with fewer. */
+export function visibleEditSections(
+  rights: EditRights,
+  among: readonly EditSection[] = EDIT_SECTIONS
+): EditSection[] {
+  return among.filter((s) => mayOpenEditSection(s, rights));
 }
 
 /** The route of the hub (no section) or of one section. */
-export function editSectionHref(
+export function editSectionHref<B extends EditBase = '/associations'>(
   slug: string,
-  section?: EditSection | null
-): `/associations/${string}/edit` | `/associations/${string}/edit/${EditSection}` {
-  const base = `/associations/${encodeURIComponent(slug)}/edit` as const;
-  return section ? `${base}/${section}` : base;
+  section?: EditSection | null,
+  base: B = '/associations' as B
+): `${B}/${string}/edit` | `${B}/${string}/edit/${EditSection}` {
+  const root = `${base}/${encodeURIComponent(slug)}/edit` as const;
+  return section ? `${root}/${section}` : root;
 }
 
 /** The localized names a trail is drawn with; the structure is `editTrail`'s, never the caller's. */
@@ -135,6 +149,8 @@ export interface EditTrailLabels {
   asso?: string;
   edit: string;
   section?: string;
+  /** Where the entity's own public page lives; `/associations` unless it is a list. */
+  base?: EditBase;
 }
 
 /**
@@ -146,13 +162,17 @@ export function editTrail(
   section: EditSection | null,
   labels: EditTrailLabels
 ): { label: string; href: string }[] {
+  const base = labels.base ?? '/associations';
   const trail = [{ label: labels.directory, href: labels.directoryHref }];
   if (labels.asso !== undefined) {
-    trail.push({ label: labels.asso, href: `/associations/${encodeURIComponent(slug)}` });
+    trail.push({ label: labels.asso, href: `${base}/${encodeURIComponent(slug)}` });
   }
-  trail.push({ label: labels.edit, href: editSectionHref(slug) });
+  trail.push({ label: labels.edit, href: editSectionHref(slug, null, base) });
   if (section) {
-    trail.push({ label: labels.section ?? section, href: editSectionHref(slug, section) });
+    trail.push({
+      label: labels.section ?? section,
+      href: editSectionHref(slug, section, base),
+    });
   }
   return trail;
 }

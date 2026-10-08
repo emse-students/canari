@@ -154,7 +154,7 @@ describe('no member-facing tree renders a server sentence', () => {
     expect(files).toContain('src/lib/components/associations/edit/EditCotisationsTab.svelte');
     expect(files).toContain('src/routes/shop/+page.svelte');
     expect(files).toContain('src/lib/components/posts/PostCard.svelte');
-    expect(files).toContain('src/routes/lists/[slug]/edit/+page.svelte');
+    expect(files).toContain('src/routes/lists/[slug]/edit/[[section]]/+page.svelte');
     expect(files).toContain('src/routes/calendar/+page.svelte');
     expect(files).toContain('src/routes/auth/callback/+page.svelte');
     expect(files).toContain('src/routes/directory/+page.svelte');

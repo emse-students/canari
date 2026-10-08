@@ -1,11 +1,17 @@
 import { m } from '$lib/paraglide/messages';
 import { wordingFor } from '$lib/associations/kindWording';
+import { PUBLIC_SECTIONS } from '$lib/associations/publicSections';
 import { APP_PLACES } from '$lib/navigation/places';
 import { SITE } from '$lib/seo/site';
 import type { SeoMeta } from '$lib/seo/types';
 
 /** `/associations/<slug>/edit[/<section>]` - the edit pages shared by associations, lists and institutions. */
 export const ASSOCIATION_EDIT_PATH = /^\/associations\/([^/]+)\/edit(?:\/[^/]+)?$/;
+
+/** `/associations/<slug>/<section>` - a section of the public page, built from the section keys. */
+export const ASSOCIATION_SECTION_PATH = new RegExp(
+  `^/associations/([^/]+)/(?:${PUBLIC_SECTIONS.join('|')})$`
+);
 
 /**
  * Every page this app does not offer to a search engine, by path prefix.
@@ -208,6 +214,14 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
     // is only the answer for a path nobody has resolved yet.
     if (ASSOCIATION_EDIT_PATH.test(path)) {
       return appPageSeo(path, wordingFor('association').editTitle());
+    }
+    // A SECTION of the public page (`/associations/<slug>/calendar`) is the same entity seen from
+    // inside, never a second indexable page: the hub is the one page the sitemap offers, and a
+    // section is `noindex` on the server answer too, so a crawler that finds one by a link does not
+    // list it beside its hub.
+    const sectionMatch = path.match(ASSOCIATION_SECTION_PATH);
+    if (sectionMatch) {
+      return appPageSeo(path, decodeURIComponent(sectionMatch[1]));
     }
     const slugMatch = path.match(/^\/associations\/([^/]+)$/);
     if (slugMatch) {
