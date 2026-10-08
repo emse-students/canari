@@ -322,6 +322,12 @@ device it cannot claim.
   taken, and it is backwards for the case you rotate in. Rotating the signing secret is the hard cut;
   the everyday lever is the session row.
 
+## The native refresh credential could live in the platform keychain, on both platforms (2026-08-27)
+
+Not a defect, a strict improvement deliberately not bundled with the fix that needed shipping; the open line is in [backlog](backlog.md). Today the credential sits in a file inside the app sandbox - the Chromium cookie file on Android, a `@tauri-apps/plugin-store` file on `tauri://localhost` (see the credential section above). Both are protected by the OS at the container level and neither is encrypted as a secret. iOS Keychain and Android Keystore / `EncryptedSharedPreferences` are better, and the same argument applies to each.
+
+**What blocks it from being trivial**: `patches/tauri-plugin-keystore` already reaches the iOS keychain, but builds `SecAccessControlCreateWithFlags` with BIOMETRIC flags because it guards the MLS device key - reading it raises Face ID, which cannot sit in front of every cold start. It needs a second, non-biometric command in the vendored plugin (`kSecAttrAccessibleAfterFirstUnlock`), Kotlin parity so the Android build still links, a permission entry and an iOS build to verify - none of it measurable from a workstation. **Do not start it as a security fix**: the current posture is the one Android has always had and the user has accepted; do it when native work is happening anyway.
+
 ## Impersonation
 
 **It belongs in the session ROW, never in a second cookie.** A parallel credential outlives the logout

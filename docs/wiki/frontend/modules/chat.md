@@ -2922,3 +2922,7 @@ take the key from the caller (`MainChatPage` passes `convs.selectedContact`), an
 entry of `ctx.selectedContact`. No clear-on-change effect is needed - nothing is shared, so nothing leaks.
 Returning to the DM shows its reply again, like a draft. Each decision logs `[REPLY]`.
 Test: `useMessaging.replyScope.svelte.test.ts`.
+
+## Profile fetches that failed on a device, and the denominator that is owed (2026-08-16)
+
+The symptom was seen twice on 2026-08-16, on both platforms: nine of ten sidebar rows carrying "Utilisateur inconnu" for twenty seconds. The log line that makes it countable did not exist then; since 2026-08-19 every warn in `displayName.ts` ends `(failed/attempted lookups failed this session, X%)`, counting only lookups that reached the network. Do not assume it is the same fault as the avatar endpoint, and do not assume it is not. The number is read from a device or browser console during a campaign run: there is no client telemetry, and server-side is not an option (`GET /api/users/:id` is not request-logged, and a client that never reached the network would not appear anyway). **Then decide about `FAILURE_BACKOFF_MS`**: a high rate says the two-minute suppression does real work against a refusing server; a rate near zero says it is a clock hiding a name for two minutes over a blip the reconnection listener already handles.

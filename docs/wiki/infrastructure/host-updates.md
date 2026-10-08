@@ -210,6 +210,14 @@ CHANNEL**, which is the same gap already open for the three hosts the update rep
 one subject wider. It is in [backlog](../backlog.md) with what closes it: `/proc/mdstat` read into
 the same daily report, and that report reaching more than the production box.
 
+## What stays open: the report's reach, the RAID channel, and libraries nothing restarts
+
+The mechanism and the report exist since 2026-09-03 (security origins only, nothing reboots, `.github/workflows/scheduled.yml` fails a daily run on any finding). Three things are smaller than what closed; the open line is in [backlog](../backlog.md#p2---three-hosts-take-security-updates-that-nothing-reports-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03).
+
+1. **The report covered the old production origin and no other host - and production moved to the Portail-etu host on 2026-09-24.** Settle first where `host-update-report.sh` points now; the runner's key was authorised on none of the other three (measured 2026-09-03), so `mitv`, `cercle` and `miconnect` apply their security updates with nothing saying whether they still are. **Retired by** either a key for the runner on the other three (a privilege expansion, so the user's decision) or the Cloudflare Access service token already listed as optional in [dev-environment](dev-environment.md), which would let an `ubuntu-latest` job reach all four the way a workstation does.
+2. **`mitv`'s 7.3 TB RAID1 has a sensor and no report.** `mdmonitor.service` had refused to start on every boot back to at least 9 June and runs since 2026-09-03, severity by event class, its alarm proved by a test event through the real path (see the RAID section above, including why `MAILADDR` would have made it worse). **What stays open is the channel**: the events go to syslog, read by nobody (postfix and exim4 inactive, `monit` with no `set alert` and no `set mailserver`), so a failing disk is RECORDED and not REPORTED. **Retired by** `/proc/mdstat` read into the daily host report plus item 1; the two close together or not at all.
+3. **A library security fix is installed, not in effect.** `unattended-upgrades` restarts no services, so an `openssl`/`libssl3t64` upgrade leaves every long-running process mapped to the old library until something restarts it. **Retired by** reading `needrestart -b` (or `/usr/lib/needrestart/`) into the same report, which turns a silent gap into a named finding without deciding to restart anything.
+
 ## See also
 
 - [backlog](../backlog.md) - what stays open: the other three hosts' reporter, and the library

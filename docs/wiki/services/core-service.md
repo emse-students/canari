@@ -511,6 +511,25 @@ this addresses is a readable database, not a hostile operator.
 it back as `legacyNotes` while no ciphertext exists, the client re-saves it encrypted, and the save
 nulls the column. Only the client can encrypt, so the conversion cannot happen in SQL.
 
+## Open design questions: the version of each device, and three unsigned-caller guards
+
+### Nothing records which BUILD each device runs (2026-08-27)
+
+Asked while debugging the iOS session: is there one place naming the version of every device? There is not. `/admin/platform` WRITES `minClientVersion` (a policy, not an observation) and `/admin/status` reads live presence from the gateway (no version). Two mechanisms already receive the value: `GET /users/me/announcement?clientVersion=` (every client, every launch; used only for an announcement's audience, then discarded) and `POST /auth/refresh?clientVersion=` (since 2026-08-27, for the refusal log). `push_token` already holds one row per `(userId, deviceId)` with a `platform` and an `updatedAt`, so recording the version is a column and a write. The cheap version is cheap; the useful version is a decision: which table owns it, whether a web session counts as a device, and what a dashboard shows (distribution by version, or laggards below `minClientVersion`). `key_package.deviceAppVersion` has been written on every platform since #613 (2026-09-14); devices enrolled before it re-report only when they next publish a key package, and it is the column `minClientVersion` decisions must be measured against ([durable-rules](../durable-rules.md#release-and-ci---cicd)).
+
+### Three services refuse an unsigned caller three different ways
+
+Merging them is a policy decision: picking one guard as "the" guard silently changes what the other two refuse. The HMAC they share is already one declared file (`internal-token.ts`).
+
+| Where | Refuses on |
+| --- | --- |
+| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` |
+| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET |
+| `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` (logs a denial on `/push/` routes) |
+| `chat-gateway/src/presence.rs` | empty `x-user-id` - Rust, stays where it is |
+
+The same decision says whether `X-Internal-Token` is required OUTSIDE production too (today only production asserts it). Presence about an arbitrary user id is not an access-rule question; it is parked in `presence.rs`'s docblock.
+
 ## Environment variables
 
 | Variable | Required | Description |

@@ -1716,6 +1716,22 @@ message sent while the browser was down (a 156 ms spread): something waits about
 offline device is given a message the server already holds. `PHASE_STUCK_MS` is 60 s but only REPORTS, so
 it is not that. On a phone this is a minute of an empty conversation.
 
+## HEAL-repair lands on a coin flip: the measurement and the root cause (2026-09-08)
+
+The open line is in [backlog](../backlog.md#p1---the-repair-of-a-rewound-sender-lands-on-a-coin-flip-the-ask-cadence-is-identical-either-way-and-a-peer-21-messages-behind-was-told-same-state---nothing-to-do-measured-2026-09-08-ten-runs-across-three-builds). The row HEAL-repair and its `PASS` of 2026-09-06 were one draw of a three-sided coin (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](../durable-rules.md)).
+
+**What separates a healed run from a partial one is not the asking.** The cadence is identical: three asks about 33 s apart, `escalated: true` every time. The difference is whether any one is ANSWERED. Every PARTIAL run contains zero `[HISTORY_BUNDLE]` lines; every HEALED run contains exactly one, answering the LAST ask (172 ms after it in the sampled run), never the first.
+
+**The state-key leg has been wrong at least once.** On the healed run of 01:07 the responder logged `same state as <W1> - nothing to do` and a digest found 21 missing messages 267 ms later. Both keys are computed over the ASKER'S window (`historyStateKeyFor(groupId, probe.since)`), so the two devices were not measuring different spans; the stale-cache explanation is excluded (`invalidateHistoryStateKey` is called on every write path of both backends). Not excluded, and where to look first: `historyRangeStartFor`, and whether an empty or clipped span makes two different stores hash alike. **The same defect is why TAB-3b is `PASS-DIRTY`**: W1 reports the same two frames (group `2bd5add9`, `7e:4yhgc8` and `5p:1s1iuic`) as `never read here and unreadable for good (secret-reuse); will reconcile` on reload after reload, a reconciliation promised four times and never done.
+
+**Root cause: arithmetic.** The server elects a RANDOM online member. Over the A/B window the twenty history requests were routed 10 to W3 (same user as W1, real and active, 5 groups, idle `0d`), 7 to W1 (the ONLY device holding the messages) and 3 to W2 (W1's own asks). Three candidate responders, one holder: the run heals only when one draws W1, about a third of the time. W3 cannot help for a good reason: the rewind is on W1's SENDER ratchet, so every receiver fails those frames identically.
+
+**And the walk terminates on a false proof.** In `actions.ts`, state leg: when `ourKey === probe.key` the responder logs `same state - nothing to do` and answers with its COVERAGE. Adequate coverage is signalled by SILENCE ("a member whose coverage turns out to be adequate simply says nothing"), so the asker reads *we agree, and this member is complete* and stops. Both halves are individually right; the defect is the INFERENCE. The comment above that branch already says AGREEMENT IS NOT COMPLETENESS but addresses only the window case, never two peers agreeing while a THIRD member holds what both lack.
+
+**The rule that makes it fixable**: the asker holds POSITIVE PROOF that it is incomplete (frames it has and cannot read - the evidence `escalateReconciliation` is already gated on), so *a peer's agreement is not a termination while this device holds frames it cannot read; it is a reason to EXCLUDE that peer and elect another*. That drives the exclusion walk from an ANSWER rather than from an absence, the only safe form - the 2026-09-08 attempt that drove it from an absence excluded W1 200 ms after electing it. [durable-rules](../durable-rules.md) already says a deadline is not a termination proof, and a leg that needs no remembered state to answer must not require a live waiter.
+
+**Not built, deliberately**: three earlier attempts to carry "this group is incomplete" across an exchange were each wrong in a different way (a durable marker read as "have I already asked", a coalescing clock, an absence read as silence). This one needs its state specified first: WHAT is remembered, for HOW LONG, and WHAT discharges it - the discharge being the repair landing, never any peer saying anything.
+
 ## Open questions
 
 **None are open.** Two were closed on 2026-08-12 and moved into [Decisions](#decisions-taken) - what
