@@ -51,14 +51,14 @@ describe('resolveNotificationHref', () => {
     const lookup = vi.fn(async (id: string) => (id === 'assoc-1' ? 'bde' : 'other'));
     await expect(
       resolveNotificationHref({ type: 'repost_proposed', postId: 'assoc-1' }, lookup)
-    ).resolves.toBe('/associations/bde/edit?section=republications');
+    ).resolves.toBe('/associations/bde/edit/republications');
   });
 
   it('sends a co-organisation proposal to the same queue (D39)', async () => {
     const lookup = vi.fn(async () => 'club');
     await expect(
       resolveNotificationHref({ type: 'coorganise_proposed', postId: 'assoc-2' }, lookup)
-    ).resolves.toBe('/associations/club/edit?section=republications');
+    ).resolves.toBe('/associations/club/edit/republications');
     expect(lookup).toHaveBeenCalledWith('assoc-2');
   });
 

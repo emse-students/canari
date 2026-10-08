@@ -138,7 +138,7 @@
     </div>
     <a
       href="/forms/create?association={encodeURIComponent(asso.id)}&returnTo={encodeURIComponent(
-        `/associations/${asso.slug}/edit?section=formulaires`
+        `/associations/${asso.slug}/edit/formulaires`
       )}"
       class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
     >

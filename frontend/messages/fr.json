@@ -3394,5 +3394,18 @@
   "audience_save": "Enregistrer le public",
   "audience_saved": "Public enregistré.",
   "audience_save_error": "Le public n'a pas pu être enregistré.",
-  "audience_grid_link": "Ouvrir la grille des espaces"
+  "audience_grid_link": "Ouvrir la grille des espaces",
+  "nav_breadcrumb_label": "Fil d'Ariane",
+  "common_back_to": "Retour : {label}",
+  "asso_edit_hub_label": "Sections de gestion",
+  "asso_edit_hub_members_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} membre",
+        "countPlural=other": "{count} membres"
+      }
+    }
+  ]
 }

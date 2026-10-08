@@ -3394,5 +3394,18 @@
   "audience_save": "Save the audience",
   "audience_saved": "Audience saved.",
   "audience_save_error": "The audience could not be saved.",
-  "audience_grid_link": "Open the spaces grid"
+  "audience_grid_link": "Open the spaces grid",
+  "nav_breadcrumb_label": "Breadcrumb",
+  "common_back_to": "Back to {label}",
+  "asso_edit_hub_label": "Management sections",
+  "asso_edit_hub_members_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} member",
+        "countPlural=other": "{count} members"
+      }
+    }
+  ]
 }

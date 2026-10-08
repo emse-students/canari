@@ -67,5 +67,5 @@ export async function resolveNotificationHref(
   const section = ASSOCIATION_QUEUE_TYPES[notif.type];
   if (!section) return notificationHref(notif);
   const slug = await lookupSlug(notif.postId);
-  return `/associations/${encodeURIComponent(slug)}/edit?section=${section}`;
+  return `/associations/${encodeURIComponent(slug)}/edit/${section}`;
 }

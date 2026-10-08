@@ -9,9 +9,7 @@
     getAssociationBySlug,
     listMembers,
     isPaymentAccountReady,
-    mayActOnAssociation,
     getMyBdeReach,
-    AssociationPermissionFlag,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
@@ -32,6 +30,17 @@
     Inbox,
     Globe,
   } from '@lucide/svelte';
+  import SectionHub from '$lib/components/navigation/SectionHub.svelte';
+  import type { Crumb, HubRow } from '$lib/components/navigation/breadcrumb';
+  import {
+    editRights,
+    editTrail,
+    editSectionHref,
+    mayOpenEditSection,
+    parseEditSection,
+    visibleEditSections,
+    type EditSection,
+  } from '$lib/associations/editSections';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
   import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
@@ -92,45 +101,12 @@
     return () => setPageTitle(null);
   });
 
-  type EditSection =
-    | 'profile'
-    | 'members'
-    | 'documents'
-    | 'achats'
-    | 'cotisations'
-    | 'payments'
-    | 'delegation'
-    | 'formulaires'
-    | 'partnerships'
-    | 'republications'
-    | 'audience'
-    | 'danger';
-
-  const EDIT_SECTIONS: EditSection[] = [
-    'profile',
-    'members',
-    'documents',
-    'achats',
-    'cotisations',
-    'payments',
-    'delegation',
-    'formulaires',
-    'partnerships',
-    'republications',
-    'audience',
-    'danger',
-  ];
-
-  /** A link INTO a specific tab (the "create a form" button coming back, e.g.) names it in
-   *  `?section=`, read once here the same way `AssociationDetailView` reads it for its own tabs. */
-  function initialEditSection(): EditSection {
-    const requested = page.url.searchParams.get('section');
-    return EDIT_SECTIONS.includes(requested as EditSection)
-      ? (requested as EditSection)
-      : 'profile';
-  }
-
-  let editSection = $state<EditSection>(initialEditSection());
+  /**
+   * The open section is a ROUTE segment (`/edit/<section>`), never local state: Back goes up one
+   * level, a reload keeps the place and a link can be shared. `null` is the hub. A segment that is
+   * not a section never reaches here - `+page.ts` redirects it.
+   */
+  let editSection = $derived<EditSection | null>(parseEditSection(page.params.section));
 
   /**
    * The three tiers this page gates on, gathered once. `myMembership.permissions` is always
@@ -143,40 +119,24 @@
     memberPermissions: myMembership?.permissions,
   });
 
-  let canManageDocuments = $derived(
-    mayActOnAssociation(AssociationPermissionFlag.MANAGE_DOCUMENTS, permissionContext)
-  );
-  let canManageMembers = $derived(
-    mayActOnAssociation(AssociationPermissionFlag.MANAGE_MEMBERS, permissionContext)
-  );
-  let canManageProducts = $derived(
-    mayActOnAssociation(AssociationPermissionFlag.MANAGE_PRODUCTS, permissionContext)
-  );
-  let canManageForms = $derived(
-    mayActOnAssociation(AssociationPermissionFlag.MANAGE_FORMS, permissionContext)
-  );
-  let canManagePartnerships = $derived(
-    mayActOnAssociation(AssociationPermissionFlag.MANAGE_PARTNERSHIPS, permissionContext)
-  );
+  /** Every right the sections gate on - ONE rule, shared with the hub and the route guard. */
+  let rights = $derived(editRights(permissionContext, asso?.type));
+  let canManageDocuments = $derived(rights.documents);
+  let canManageMembers = $derived(rights.members);
+  let canManageProducts = $derived(rights.products);
+  let canManageForms = $derived(rights.forms);
+  let canManagePartnerships = $derived(rights.partnerships);
   /**
-   * The proposal queue: republications (D38) and co-organisations (D39). `POST_AS_ASSO` accepts
-   * both (and sends republications - only an association does, the server refuses the rest);
-   * `PROPOSE_EVENT` sends and withdraws co-organisations. The server filters the rows per kind, so
-   * holding either is what makes the tab worth drawing. The section key stays `republications`:
-   * notifications already in people's lists deep-link to it.
+   * The proposal queue: republications (D38) and co-organisations (D39). The section key stays
+   * `republications`: notifications already in people's lists deep-link to it.
    */
-  let canHandleProposals = $derived(
-    mayActOnAssociation(AssociationPermissionFlag.POST_AS_ASSO, permissionContext) ||
-      mayActOnAssociation(AssociationPermissionFlag.PROPOSE_EVENT, permissionContext)
-  );
+  let canHandleProposals = $derived(rights.proposals);
   /**
    * The super-admin tier drops out on its own: `MANAGE_STRIPE_CONNECT` is in
    * `SUPER_ADMIN_EXCLUDED_FLAGS`, so the exception is read from the same data the server reads it
    * from instead of being an omission in this expression.
    */
-  let canManageStripeConnect = $derived(
-    mayActOnAssociation(AssociationPermissionFlag.MANAGE_STRIPE_CONNECT, permissionContext)
-  );
+  let canManageStripeConnect = $derived(rights.stripeConnect);
 
   /** Paiements tab: boutique and/or the payment account. */
   let canManagePaymentsSection = $derived(canManageStripeConnect || canManageProducts);
@@ -212,15 +172,97 @@
    * or a list of its own campus; an institution's audience is a global admin's alone
    * (`AUDIENCE_INSTITUTION_ADMIN_ONLY`). A member of the association is never enough.
    */
-  let canEditAudience = $derived(
-    isGlobalAdminUser || (isSuperAdminUser && asso?.type !== 'institution')
-  );
+  let canEditAudience = $derived(rights.audience);
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
+  const SECTION_ICONS: Record<EditSection, HubRow['icon']> = {
+    profile: Building2,
+    members: Users,
+    payments: CreditCard,
+    documents: FolderLock,
+    achats: UsersIcon,
+    cotisations: HandCoins,
+    delegation: Share2,
+    formulaires: ClipboardList,
+    partnerships: Handshake,
+    republications: Inbox,
+    audience: Globe,
+    danger: TriangleAlert,
+  };
+
+  /** The localized name of a section; a message must be read at render time, hence a function. */
+  function sectionLabel(section: EditSection): string {
+    switch (section) {
+      case 'profile':
+        return m.asso_edit_tab_profile();
+      case 'members':
+        return m.common_members_label();
+      case 'payments':
+        return m.asso_edit_tab_payments();
+      case 'documents':
+        return m.asso_edit_tab_documents();
+      case 'achats':
+        return m.asso_edit_tab_achats();
+      case 'cotisations':
+        return m.asso_edit_tab_cotisations();
+      case 'delegation':
+        return m.asso_edit_tab_delegation();
+      case 'formulaires':
+        return m.asso_edit_tab_formulaires();
+      case 'partnerships':
+        return m.asso_edit_tab_partenariats();
+      case 'republications':
+        return m.asso_edit_tab_proposals();
+      case 'audience':
+        return m.asso_edit_tab_audience();
+      case 'danger':
+        return m.asso_edit_tab_danger();
+    }
+  }
+
+  /** The path to this page (see `editTrail`); every crumb is a link. */
+  let crumbs = $derived(
+    editTrail(slug, editSection, {
+      directory: words.directoryLabel(),
+      directoryHref: words.directoryHref,
+      asso: asso?.name,
+      edit: words.editTitle(),
+      section: editSection ? sectionLabel(editSection) : undefined,
+    })
+  );
+
+  /** One hub row per section the reader may open; a count only where the roster already has it. */
+  let hubRows = $derived(
+    visibleEditSections(rights).map((section): HubRow => ({
+      key: section,
+      href: editSectionHref(slug, section),
+      label: sectionLabel(section),
+      icon: SECTION_ICONS[section],
+      summary:
+        section === 'members'
+          ? m.asso_edit_hub_members_summary({ count: members.length })
+          : undefined,
+      tone: section === 'danger' ? 'danger' : 'default',
+    }))
+  );
+
+  // A segment is user input: once the rights are known, a section its reader may not open is
+  // replaced by the hub. `loading` guards the moment `rights` is still the empty default.
+  // Only for someone admitted to the area at all: a reader `loadData` is sending to the public page
+  // must not be raced by a second redirect.
+  let mayEnterArea = $derived(isGlobalAdminUser || isSuperAdminUser || !!myMembership?.isAdmin);
+  $effect(() => {
+    if (loading || !asso || !editSection || !mayEnterArea) return;
+    if (!mayOpenEditSection(editSection, rights)) {
+      console.warn('[associations/edit] section refused, back to the hub', editSection);
+      void goto(resolve(editSectionHref(slug)), { replaceState: true });
+    }
+  });
+
   onMount(async () => {
     // Fetched on arrival, not on the first click of the payments tab: a deep link
-    // (`?section=payments`) draws that tab with no click at all.
+    // (`/edit/payments`) draws that section with no click at all.
     void loadActivePaymentProvider();
     await loadData();
   });
@@ -264,10 +306,9 @@
 
 <PageContainer width="tool">
   <PageHeader
-    title={words.editTitle()}
+    title={editSection ? sectionLabel(editSection) : words.editTitle()}
     subtitle={asso ? `@${asso.slug}` : undefined}
-    backHref="/associations/{encodeURIComponent(slug)}"
-    backLabel={m.asso_edit_page_back()}
+    {crumbs}
   />
 
   <div class="space-y-6">
@@ -288,172 +329,9 @@
         </div>
       {/if}
 
-      <!-- Section tabs -->
-      <nav
-        data-swipe-nav-ignore
-        class="border-cn-border/80 bg-cn-bg sticky top-0 z-30 -mx-4 border-y px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border"
-        aria-label="Edit sections"
-      >
-        <div class="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onclick={() => (editSection = 'profile')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'profile'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <Building2 size={17} />
-            {m.asso_edit_tab_profile()}
-          </button>
-          {#if canManageMembers}
-            <button
-              type="button"
-              onclick={() => (editSection = 'members')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'members'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <Users size={17} />
-              {m.common_members_label()}
-            </button>
-          {/if}
-          {#if canManagePaymentsSection}
-            <button
-              type="button"
-              onclick={() => {
-                editSection = 'payments';
-                void loadActivePaymentProvider();
-              }}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'payments'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <CreditCard size={17} />
-              {m.asso_edit_tab_payments()}
-            </button>
-          {/if}
-          {#if canManageDocuments}
-            <button
-              type="button"
-              onclick={() => (editSection = 'documents')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'documents'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <FolderLock size={17} />
-              {m.asso_edit_tab_documents()}
-            </button>
-          {/if}
-          {#if canManageProducts}
-            <button
-              type="button"
-              onclick={() => (editSection = 'achats')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'achats'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <UsersIcon size={17} />
-              {m.asso_edit_tab_achats()}
-            </button>
-          {/if}
-          {#if (canManageMembers || canManageProducts) && asso}
-            <button
-              type="button"
-              onclick={() => (editSection = 'cotisations')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'cotisations'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <HandCoins size={17} />
-              {m.asso_edit_tab_cotisations()}
-            </button>
-          {/if}
-          {#if canManageProducts}
-            <button
-              type="button"
-              onclick={() => (editSection = 'delegation')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'delegation'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <Share2 size={17} />
-              {m.asso_edit_tab_delegation()}
-            </button>
-          {/if}
-          {#if canManageForms}
-            <button
-              type="button"
-              onclick={() => (editSection = 'formulaires')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'formulaires'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <ClipboardList size={17} />
-              {m.asso_edit_tab_formulaires()}
-            </button>
-          {/if}
-          {#if canManagePartnerships}
-            <button
-              type="button"
-              onclick={() => (editSection = 'partnerships')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'partnerships'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <Handshake size={17} />
-              {m.asso_edit_tab_partenariats()}
-            </button>
-          {/if}
-          {#if canHandleProposals}
-            <button
-              type="button"
-              onclick={() => (editSection = 'republications')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'republications'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <Inbox size={17} />
-              {m.asso_edit_tab_proposals()}
-            </button>
-          {/if}
-          {#if canEditAudience}
-            <button
-              type="button"
-              onclick={() => (editSection = 'audience')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'audience'
-                ? 'bg-cn-yellow text-cn-ink shadow-sm'
-                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-            >
-              <Globe size={17} />
-              {m.asso_edit_tab_audience()}
-            </button>
-          {/if}
-          {#if canArchiveAssociation}
-            <button
-              type="button"
-              onclick={() => (editSection = 'danger')}
-              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'danger'
-                ? 'bg-red-err/20 text-red-err border-red-err/30 border'
-                : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
-            >
-              <TriangleAlert size={17} />
-              {m.asso_edit_tab_danger()}
-            </button>
-          {/if}
-        </div>
-      </nav>
+      {#if editSection === null}
+        <SectionHub rows={hubRows} label={m.asso_edit_hub_label()} />
+      {/if}
 
       {#if editSection === 'profile'}
         <EditProfileTab {asso} canEdit={canManageMembers} onUpdated={(a) => (asso = a)} />
@@ -555,7 +433,7 @@
           {asso}
           {onlinePaymentsReady}
           {canManageStripeConnect}
-          onGoToPayments={() => (editSection = 'payments')}
+          onGoToPayments={() => goto(resolve(editSectionHref(slug, 'payments')))}
         />
       {/if}
 
