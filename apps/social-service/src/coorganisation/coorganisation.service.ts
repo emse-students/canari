@@ -306,6 +306,8 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
       associationLogoUrl: from.logoUrl,
       associationLogoMediaId: from.logoMediaId,
       text: ev.title,
+      // The tap opens the receiving association's queue, not the feed.
+      pushData: { queueAssociationId: proposal.toAssociationId },
     });
     this.logger.log(`[COORG] proposal ${proposal.id.slice(0, 8)} announced to ${count}`);
   }

@@ -527,6 +527,61 @@ back `refreshRan: false` at once, re-armed, and asked again on the next mutation
 `landingRecovery` now WAITS while `isLoadingWorkspaces` (made reactive for this) is true; the
 in-flight load settling re-runs the landing.
 
+#### What every notification opens, and what was measured (2026-10-08)
+
+**Asked by the user: does a tap land on the right page, and do I get notified of what I follow?**
+Built from the code and the tests, with no phone (both questions at the end of this section). Every
+emitter in `apps/social-service`, `apps/chat-delivery-service` and `apps/core-service` was listed; the
+destination column is what the app opens, the coverage column is what a test or a hardware row pins.
+
+| Notification | Channel | Destination field | App opens | Pinned by | Verdict |
+|---|---|---|---|---|---|
+| DM / group message | FCM + APNs (NSE) | `groupId` | `/chat`, conversation selected through `notifNav` (survives PIN, login, cold start) | NOTIF-7/7b `pending`; `notificationRouting` tests | routes; **no scroll to the message** (opens at the unread marker, by design) |
+| Message reaction | FCM + APNs | `groupId` | same conversation | NOTIF-15 | routes |
+| Salon (community) message | FCM + APNs (NSE writes `chat/channel_<id>`) | `channelId` | `/communities`, channel selected, community derived by the sidebar | **NOTIF-7c / 7d `pending`** | routes by code; phone layout never read |
+| Mention, reply, comment on my post/comment | FCM + APNs | `postId` | `/posts/<id>` with comments open | `push-target.spec`, `deepLinkRoutes.test` | routes; **no comment anchor** (a long thread is not scrolled to the comment) |
+| Reaction to a post | FCM + APNs | `postId` | `/posts/<id>` | same | routes |
+| `association_post`, `followed_post`, `association_repost` | FCM + APNs | `postId` | `/posts/<id>` | same | routes |
+| `repost_proposed`, `coorganise_proposed` | FCM + APNs | none (`postId` is the RECEIVING association) | **was the feed `/posts`**; now `proposals/<associationId>` -> slug lookup -> `/associations/<slug>/edit/republications` | `push-target.spec`, `deepLinkRoutes.test` | **fixed on the branch**, never run on a phone |
+| `form_opening_soon`, `form_open` | FCM + APNs | `formId` | `/forms/<id>` | same | routes |
+| `event_proposed` | FCM + APNs | `associationId`, `action` | `/admin/agenda` | same | routes (iOS read on hardware 2026-10-05) |
+| `event_validated/rejected/updated/deleted/pending` | FCM + APNs | same | `/calendar` | same | routes |
+| `profile_correction_applied/refused` | none (`skipPush`) | `requestId` | in-app row only, `/profile` | `notificationTarget.test` | no push by design |
+| Incoming call | FCM silent frame | `groupId`, `callId` | `/chat`, accept recorded | NOTIF rows | HELD: `CALLS_ENABLED = false` |
+| Browser (web) notification | `new Notification` from a WebSocket frame, **no service worker, no web push** | `conversationId` | `chatDeepLinkRoute` | `useNotifications.webClick.test` | **was `/chat` for a salon, fixed on the branch**; a closed tab gets nothing |
+
+**The three app states.** A tap is an `Intent` / `openURL` carrying `fr.emse.canari://<host>/<id>`.
+Running or backgrounded, `onOpenUrl` delivers it; killed, `getCurrent()` does (granted by `deep-link:default`,
+pinned by `tauriCapabilities.test.ts`). A chat or salon target is held in `notifNav` and landed by
+`ChatBackgroundService` once the session is logged in and the conversation is known - the only path that
+survives the PIN gate and a login. **A page target (`post`, `form`, `calendar`, `admin-agenda`) is a plain `goto`**:
+logged out, the root layout turns the destination into `/login?returnTo=<path>`, so it survives a login; behind the
+PIN gate the iPhone opened the post after the PIN on a cold start (2026-10-05), Android cold start was read on
+2026-08-11. A STALE target is handled where it lands: a deleted or unreadable post renders "Publication introuvable"
+(refusal and absence are not told apart on purpose); a channel the device does not know triggers one community
+refresh then `abandon`; a form that is gone shows the forms page error state.
+
+**What the 2026-10-08 section navigation does to taps: nothing breaks.** The only association link a push can carry is the
+queue one, and `/associations/<slug>/edit/republications` is still a section key (`editSections.ts`, "old
+notifications link to it"); the legacy `?section=` form is redirected by `edit/[[section]]/+page.ts`. `/admin/agenda`
+exists. Nobody may reach a section they lack the right for: that is decided after the roster loads (`mayOpenEditSection`).
+
+**Hosts the Android manifest does not declare.** `AndroidManifest.xml` and `tauri.conf.json` list `callback`, `stripe`, `chat`,
+`post`, `form` only. `posts`, `calendar`, `admin-agenda` and the new `proposals` are opened by an EXPLICIT intent from the
+notification's own `PendingIntent`, which needs no filter - plausible, never read on Android hardware (phase 2).
+
+**Following: what "Suivre" does and does not change.** Two tables, `association_follows` and `user_follows`
+(`FollowsService`). Following feeds the `followed` tab of the feed and nothing else for an ASSOCIATION: its post is
+announced by `PostAnnounceScheduler` to everyone who can SEE the post (`announceRecipientsSql`, the same predicate as
+every read), `association_follows` is deliberately not consulted. A PERSON's post is announced to their followers
+who also share a space with them (`followersOnly` plus `postVisibleToUserSql`); an anonymous personal post is
+never announced. Measured on the local database, in a rolled-back transaction: with no follow row nobody is selected;
+with two followers, the one sharing campus and formation is selected, the one with no space is not. A push is
+`social_association_post` or `social_followed_post`, one notification per post per reader, no batching, no quiet hours.
+The only switch is the account-wide `posts` category (it governs both kinds); there is no per-association or
+per-person mute, and the per-channel levels only cover salons. A holder of a nominative read grant is not announced
+(the recipient SQL passes no `readGrants`), although the post is in their feed.
+
 ## Where an update comes from
 
 Canari ships from three places at once: Google Play (`fr.emse.canari`), the App Store

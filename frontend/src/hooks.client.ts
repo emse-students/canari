@@ -9,7 +9,7 @@
 
 import { version } from '$app/environment';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
-import { appRouteForDeepLink } from '$lib/mobile/deepLinkRoutes';
+import { appRouteForDeepLink, proposalQueueAssociationId } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { createStaleBuildRecovery } from '$lib/utils/staleBuild';
@@ -207,6 +207,31 @@ if (isTauriRuntime()) {
             // Page deep links a notification tap lands on: post/{id}, form/{id}, posts, calendar,
             // admin-agenda. The table is `appRouteForDeepLink`; a host it does not own falls through
             // to the handlers below.
+            // A proposal push (repost, co-organisation): its page is reached by SLUG, so the
+            // association is looked up first - the path the notifications page takes for the same
+            // row. A lookup that fails is logged, never replaced by another destination.
+            const queueAssociationId = proposalQueueAssociationId(u);
+            if (queueAssociationId) {
+              Promise.all([
+                import('$app/navigation'),
+                import('$lib/stores/globalChatSingleton.svelte'),
+                import('$lib/posts/notificationTarget'),
+                import('$lib/associations/api'),
+              ])
+                .then(async ([{ goto }, { appendLog }, { resolveNotificationHref }, assos]) => {
+                  appendLog(
+                    `[notifNav] deep link received: ${url} -> proposals ${queueAssociationId}`
+                  );
+                  const route = await resolveNotificationHref(
+                    { type: 'repost_proposed', postId: queueAssociationId },
+                    async (id) => (await assos.getAssociation(id)).slug
+                  );
+                  return goto(route);
+                })
+                .catch((err) => console.error('[hooks] Proposal queue navigation failed', err));
+              continue;
+            }
+
             const pageRoute = appRouteForDeepLink(u);
             if (pageRoute) {
               Promise.all([

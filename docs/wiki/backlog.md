@@ -485,6 +485,22 @@ Owed on the board, each stating its trigger (`builtBy`): NOTIF-6c (quick reply, 
 settle whether NOTIF-11/-12 (`MessagingStyle` stacking) already speak for the backgrounded path,
 which reaches the same builder.
 
+### P3 - notification taps: what the 2026-10-08 audit left open
+
+Matrix and reasoning: [mobile](frontend/mobile.md#what-every-notification-opens-and-what-was-measured-2026-10-08).
+Fixed on a branch (not shipped until released): a proposal push opened the feed, three notices had no switch, a
+browser salon notification clicked through `/chat`. Open:
+
+1. **P3 - a comment, reply or mention opens the post, not the comment.** No `commentId` travels in the payload or the URL.
+2. **P3 - the Android manifest and `tauri.conf.json` declare five hosts; the page hosts a push writes (`posts`,
+   `calendar`, `admin-agenda`, `proposals`) rely on the explicit intent of the notification.** Read it once on the Mi 9T.
+3. **Question for the user - following an ASSOCIATION changes nothing about notifications.** Everyone its post reaches is
+   told, followed or not, and only the whole `posts` category can be muted. Do you want a follow to MEAN something
+   (a per-association mute, or announcing only followed associations)? A follower of a person is told only when they
+   share a space with them.
+4. **Question for the user - nominative read-grant holders are never announced a post they can read** (the announce SQL
+   passes no `readGrants`; the feed shows it). Intended?
+
 ## CI and the chain that runs unattended
 
 ### P3 - a PRE-RELEASE tag still races a merge between the head read and the tag
