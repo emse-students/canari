@@ -37,7 +37,10 @@
   } from '$lib/posts/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { ensureContentModerator } from '$lib/associations/api';
-  import { goto } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
+  import { page } from '$app/state';
+  import { parseTab, tabUrl } from '$lib/admin/tabQuery';
+  import { internalPath } from '$lib/utils/internalPath';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
@@ -45,9 +48,11 @@
   import { copyId } from '$lib/utils/copyId';
   import { getLocale } from '$lib/paraglide/runtime';
 
-  type Tab = 'reports' | 'hidden' | 'muted';
+  const TABS = ['reports', 'hidden', 'muted'] as const;
+  type Tab = (typeof TABS)[number];
 
-  let tab = $state<Tab>('reports');
+  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  let tab = $state<Tab>(parseTab(page.url.searchParams.get('tab'), TABS, 'reports'));
   let reports = $state<ContentReport[]>([]);
   let mutedUsers = $state<MutedUser[]>([]);
   let hiddenPosts = $state<HiddenPost[]>([]);
@@ -87,6 +92,9 @@
       return;
     }
     void loadReports();
+    // Arriving on `?tab=hidden|muted`: the other lists load on first view, so load the open one.
+    if (tab === 'muted') void loadMuted();
+    if (tab === 'hidden') void loadHidden();
   });
 
   /** Resolves a set of user IDs to display names asynchronously. */
@@ -155,6 +163,7 @@
   async function switchTab(t: Tab) {
     tab = t;
     error = '';
+    replaceState(resolve(internalPath(tabUrl(page.url, t, 'reports'))), page.state);
     if (t === 'muted' && mutedUsers.length === 0) void loadMuted();
     if (t === 'hidden' && hiddenPosts.length === 0) void loadHidden();
   }
@@ -364,10 +373,16 @@
 </PageHeader>
 
 <!-- Tabs -->
-<div class="mb-6 flex gap-1 rounded-xl bg-black/5 p-1">
+<div
+  class="mb-6 grid grid-cols-3 gap-1 rounded-xl bg-black/5 p-1"
+  role="tablist"
+  aria-label={m.moderation_title()}
+>
   <button
+    role="tab"
+    aria-selected={tab === 'reports'}
     onclick={() => switchTab('reports')}
-    class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
+    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-2 sm:px-1 sm:text-sm {tab ===
     'reports'
       ? 'bg-cn-surface text-text-main shadow-sm'
       : 'text-text-muted hover:text-text-main'}"
@@ -381,8 +396,10 @@
     {/if}
   </button>
   <button
+    role="tab"
+    aria-selected={tab === 'hidden'}
     onclick={() => switchTab('hidden')}
-    class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
+    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-2 sm:px-1 sm:text-sm {tab ===
     'hidden'
       ? 'bg-cn-surface text-text-main shadow-sm'
       : 'text-text-muted hover:text-text-main'}"
@@ -396,8 +413,10 @@
     {/if}
   </button>
   <button
+    role="tab"
+    aria-selected={tab === 'muted'}
     onclick={() => switchTab('muted')}
-    class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
+    class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-2 sm:px-1 sm:text-sm {tab ===
     'muted'
       ? 'bg-cn-surface text-text-main shadow-sm'
       : 'text-text-muted hover:text-text-main'}"
