@@ -572,7 +572,7 @@ because a mark is also the "Lu par" receipt other people see. `read-mark` accept
 (the row's own `createdAt`) and stores the later of it and `at`, still bounded by the newest message - the
 author's `sentAt` is earlier than `createdAt`, which left the newest message "unread" for ever. A
 membership notice that is not silent is counted until the salon is opened. The count is one LATERAL
-per salon bounded by `createdAt >= since`, riding `IDX_channel_messages_channel_created` (migration 080):
+per salon bounded by `createdAt >= since`, riding `IDX_channel_messages_channel_created` (migration 079):
 300 ms on 1.5M rows / 300 salons with the old `channelId` index, 6 ms with it (EXPLAIN, `jit=off`). Why the client needs it:
 [chat](../frontend/modules/chat.md#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08).
 
@@ -886,6 +886,8 @@ asks `AssociationPushMutesService.mutedAmong(associationId, recipients)` just be
 and drops the muted. The in-app `post_notifications` row is still written (the bell is the record, a
 push is the interruption), and the announce SQL is untouched. Nothing is filtered by the client, and
 no cache or feed key is involved.
+
+**If the mute lookup fails the push FAILS CLOSED and LOUD**: `[NOTIFY] mute lookup failed` at error level, the error rethrown to the caller's own warning, the in-app rows kept. Pushing everyone would override a stated choice. The announce stamp is a CONDITIONAL update (`feedNotifiedAt IS NULL`), so two overlapping instances cannot both announce a post. Account deletion purges the account's mutes (`internal.controller.ts`).
 
 **Per type, and the list is an ALLOWLIST** (`MUTABLE_PUSH_TYPES`; a new type is never muted by
 accident):

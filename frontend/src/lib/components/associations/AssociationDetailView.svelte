@@ -268,7 +268,10 @@
           ? getAssociationFollowStatus(asso.id).catch(() => ({ following: false }))
           : Promise.resolve({ following: false }),
         uid
-          ? getAssociationPushMuteStatus(asso.id).catch(() => ({ muted: false }))
+          ? getAssociationPushMuteStatus(asso.id).catch((err) => {
+              Log.d('AssociationDetailView: push-mute status unreadable', err);
+              return { muted: false };
+            })
           : Promise.resolve({ muted: false }),
       ]);
       following = followStatus.following;

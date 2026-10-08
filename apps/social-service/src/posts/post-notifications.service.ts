@@ -310,7 +310,19 @@ export class PostNotificationsService {
     // association is eligible - managers' operational pushes are never muted (`MUTABLE_PUSH_TYPES`).
     let pushRecipients = recipients;
     if (data.associationId && MUTABLE_PUSH_TYPES.has(data.type)) {
-      const muted = await this.pushMutes.mutedAmong(data.associationId, recipients);
+      // FAIL CLOSED, LOUDLY: if the lookup fails the push is NOT sent to everyone (that would
+      // override a stated privacy choice) and not silently dropped either - the error is logged
+      // here and rethrown, so the caller's own warning names the post that was not pushed. The
+      // in-app rows are already written, so the bell still carries it.
+      const muted = await this.pushMutes
+        .mutedAmong(data.associationId, recipients)
+        .catch((e: unknown) => {
+          this.logger.error(
+            `[NOTIFY] mute lookup failed for association=${data.associationId?.slice(0, 8)} - ` +
+              `push NOT sent to ${recipients.length} recipient(s), in-app rows kept: ${String(e)}`
+          );
+          throw e;
+        });
       if (muted.size > 0) {
         pushRecipients = recipients.filter((id) => !muted.has(id));
         this.logger.log(
