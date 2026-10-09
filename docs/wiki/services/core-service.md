@@ -528,7 +528,9 @@ Merging them is a policy decision: picking one guard as "the" guard silently cha
 | `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` (logs a denial on `/push/` routes) |
 | `chat-gateway/src/presence.rs` | empty `x-user-id` - Rust, stays where it is |
 
-The same decision says whether `X-Internal-Token` is required OUTSIDE production too (today only production asserts it). Presence about an arbitrary user id is not an access-rule question; it is parked in `presence.rs`'s docblock.
+**CodeQL 2547 (`js/user-controlled-bypass`, 2026-10-09) WAS REAL, AND IS CLOSED FOR `chat-delivery-service` ONLY.** Its guard skipped the HMAC when `INTERNAL_SHARED_SECRET` was unset and `NODE_ENV` was not `production`, so `x-user-logged-in: true` alone was the credential (proved by a failing test first). nginx clears and re-sets that header, and prod/dev pin `NODE_ENV=production` with the secret, so no estate was exposed; a bare local run was. The guard now requires the secret, a non-empty `x-user-id` and a valid token in EVERY environment, and the only callers of its routes are nginx-fronted. **The other two guards still skip the HMAC outside production when the secret is unset** (core and social, which also refuses an unset `NODE_ENV`): same latent shape, no alert because the header they read is `x-user-id`, and still the user's policy decision below.
+
+The same decision says whether `X-Internal-Token` is required OUTSIDE production too for core and social (chat-delivery answers yes since 2026-10-09). Presence about an arbitrary user id is not an access-rule question; it is parked in `presence.rs`'s docblock.
 
 ## Environment variables
 
