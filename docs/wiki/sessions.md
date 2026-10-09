@@ -307,6 +307,17 @@ can name a device, and a holder who never unlocks MLS never names one at all - w
 stolen cookie takes. The settings panel gives such a row its own entry instead of hiding it under a
 device it cannot claim.
 
+## A dead session sends the user to `/login` carrying where they were going (2026-10-09)
+
+A post push tapped from a KILLED app whose session had been deleted server-side landed on a bare
+`/login` (Mi 9T, 2026-10-08): the deep link's `goto('/post/<id>')` ran the root layout's `load`, whose
+refresh answered 401, and `handleSessionExpired` (`ChatBackgroundService`) then went to `/login`
+without a `returnTo` - and while that navigation is in flight the page SHOWN is still `/`. The
+handler now reads `navigating.to?.url` (else the current location) through `loginAfterSessionExpiry`
+(`utils/internalPath.ts`, tested) BEFORE `clearAuth` awaits, so the same `returnTo` the layout's own
+redirect would have built survives; the root and the sign-in pages stay bare. Source guard:
+`sessionExpiredRelease.test.ts`. The hardware reading is [check H](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android), step 4.
+
 ## Keys
 
 - **An empty key can fail OPEN or CLOSED and you cannot guess which.** `crypto.createHmac('sha256','')`

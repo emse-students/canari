@@ -83,6 +83,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 
 | What | The measurement that closes it |
 | --- | --- |
+| a post push tapped with the session dead lands on `/login?returnTo=` the post (2026-10-09) | check H step 4 on the Mi 9T, killed app AND backgrounded ([device-verification](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)); a bare `/login` with no `[hooks] Processing URL` means the intent never reached the JS |
 | a salon carries read receipts (#1235, `v0.18.32`) | `READ-6` on the rig, then one look in a real community: a member who is not an admin sees the double check and "Lu par" under their own last message ([social-service](services/social-service.md#read-receipts-in-a-salon)) |
 | a salon's settings are offered only to who may change them (#1228, `v0.18.32`) | one look with a Membre account: the access tab reads only, rename and delete are absent; then grant `channel.manage` to Moderateur in the grid with a moderator's panel open - the controls must appear without a reload |
 | `/forms/success` no longer asks for a form called `success` | after a completed payment on production, social-service logs no `invalid input syntax for type uuid: "success"` (once per payment, so ONE payment settles it) |
@@ -970,10 +971,6 @@ Two menu patterns, both bad on a phone: a scrolling row hides tabs, a wrapped gr
 ## Tooltips: one remaining inconsistency (audit 2026-10-08)
 
 The app still has THREE hover/tap systems (native `title`, the `PostPolls` voters bubble, `MessageInfoTooltip`) and no shared `Tooltip` component. Redesign only if a fourth appears; the 38 icon buttons whose `title` and `aria-label` are two different keys for the same hint could share one key ([convention](frontend/design-reference.md#tooltips-one-convention-audited-2026-10-08)). `ReactionsDisplay`'s native reactor `title` is removed in its own PR.
-
-### P2 - A post push tapped with the session already dead lands on a bare /login (Mi 9T, 2026-10-08)
-
-Killed app, session deleted server-side, tap a post push: refresh 401, the app lands on `/login` with no `returnTo`, and the log has no `[hooks] Processing URL`, so the deep link is lost before the login can carry it. Warm-app expiry was not measured. Substance: [device-readings-2026-10](device-readings-2026-10.md).
 
 ## CanaReels: the camera tab cannot be guessed (user, 2026-10-09)
 

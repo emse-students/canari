@@ -14,6 +14,8 @@
   import { onMount, untrack } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import { navigating } from '$app/state';
+  import { internalPath, loginAfterSessionExpiry } from '$lib/utils/internalPath';
   import { m } from '$lib/paraglide/messages';
   import { BiometricService } from '$lib/services/biometric';
   import { isBiometricPromptDue } from '$lib/services/biometricCadence';
@@ -504,9 +506,19 @@
       return;
     }
     _sessionExpiredHandled = true;
-    appendLog('[AUTH] Session expired - logging out and redirecting to /login.');
+    // The page the user was GOING to is read before `clearAuth` awaits: a deep link's navigation is
+    // usually still in flight here (its `load` is what met the 401), and `navigating.to` is the
+    // only place that target lives. A bare `/login` dropped a tapped post push (Mi 9T, 2026-10-08).
+    const loginPath = loginAfterSessionExpiry(
+      (navigating.to?.url ?? (typeof window === 'undefined' ? null : window.location)) as {
+        pathname: string;
+        search: string;
+        hash: string;
+      } | null
+    );
+    appendLog(`[AUTH] Session expired - logging out and redirecting to ${loginPath}.`);
     await clearAuth().catch(() => {});
-    void goto(resolve('/login'), { replaceState: true });
+    void goto(resolve(internalPath(loginPath)), { replaceState: true });
   }
 
   /**

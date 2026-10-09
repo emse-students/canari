@@ -7,7 +7,7 @@ import { currentUserId, fetchUserProfile, UserProfileFetchError } from '$lib/sto
 import { refresh } from '$lib/stores/auth';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
+import { internalPath, isSignedOutPath, loginReturningTo } from '$lib/utils/internalPath';
 import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 // See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 export const ssr = false;
@@ -17,11 +17,7 @@ export const load = async (event: LoadEvent) => {
 
   // `/f/` is a PUBLIC form's guest page: answered without an account, so a visitor with no
   // session must reach it rather than be sent to the login screen.
-  const isAuthRoute =
-    event.url.pathname.startsWith('/login') ||
-    event.url.pathname.startsWith('/auth') ||
-    event.url.pathname.startsWith('/legal') ||
-    event.url.pathname.startsWith('/f/');
+  const isAuthRoute = isSignedOutPath(event.url.pathname);
 
   if (typeof window === 'undefined') return;
   if (isAuthRoute) return;
