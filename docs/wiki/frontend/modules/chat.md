@@ -528,7 +528,7 @@ mounted. Rendering `<ComposerEmojiPicker>` far from the button (e.g. beside `Gif
 it an origin outside the anchor, and every click on the panel's own contents - its search box, a
 category tab, an emoji - then reads as "outside" and closes it a frame before the pick can register.
 
-### Every keyboard rise moves the composer for a moment, on both phones (measured 2026-10-02, OPEN)
+### Every keyboard rise moves the composer for a moment, on both phones (measured 2026-10-02, FIXED 2026-10-09, reading owed)
 
 Found while reading the GIF panel (#1345). The composer's top was recorded on every animation frame
 via CDP, with the keyboard opened by tapping the text field. **Both happen on a plain keyboard open
@@ -547,10 +547,20 @@ cause is a different stale number on each phone.
   `max(0.75rem, var(--safe-area-inset-bottom))`, so the composer stands 22 pt (34 - 12) too high
   until the inset catches up.
 
-Not fixed. The Android one wants the WebView's double report recognised for what it is (a viewport
-that shrank inside a layout viewport that already shrank). The iOS one wants the footer not to pad a
-safe area the keyboard already covers - which runs against the comment on that rule ("the reserved
-space must not visibly shrink just because the keyboard opened"), to be read before changing it.
+**Fixed 2026-10-09 in `keyboardViewport.svelte.ts`, both halves proven in unit tests only.**
+- **Android**: `computeSnapshot` reads a visual viewport that is more than 0.35 x threshold SHORTER
+  than a layout viewport that already gave up a keyboard's worth (`baseline - winH > threshold`) as
+  that layout viewport's own height - it can only be counting the keyboard again (a pan keeps `winH`
+  full, a pinch-zoom bails out on `scale`). The test replays 945 / 588 / 230 and gets the settled
+  snapshot, keyboard height 357.
+- **iOS**: the "must not visibly shrink" comment on the footer rule is about the RESTING state, and
+  the resting inset with the keyboard open is already 0 (the footer settles at 0.75rem), so pinning
+  `--safe-area-inset-bottom: 0px` inline while an iOS keyboard is open (`keyboardSafeAreaBottomOverride`,
+  `pinSafeAreaBottom`) changes no resting state and removes only the ~400 ms transient. The pin puts
+  back the inline value it replaced - `app.html` pins `0px` itself outside Tauri. Android is left
+  alone: its inset was never measured to lag.
+
+The reading owed is the original one, on both phones ([device-verification](../../device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)).
 Readings: [#1345](https://github.com/emse-students/canari/pull/1345#issuecomment-5943602239).
 
 ## Message pipeline
