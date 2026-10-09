@@ -166,10 +166,6 @@ for ref_case in   "dependabot/cargo/apps/chat-gateway/redis-1.7.0|cargo"   "depe
   fi
 done
 
-echo "unrunnable paths (the version is not consulted):"
-expect_refused webrtc-ice "0.20.3" "rung 15 CALL has no runner"
-expect_refused turn "0.9.0" "the relay path is unmeasured"
-
 # -------------------------------------------------------------------------------------------------
 # What must KEEP merging on its own. Each of these left the table when its gate was written, and a
 # regression that put one back would stop a whole class of update without anybody deciding to.
@@ -178,6 +174,9 @@ echo "what the suite is evidence about:"
 expect_allowed "@nestjs/common" "12.0.1"   # released by `boot-nest-apps`, 2026-08-31
 expect_allowed "@nestjs/core" "12.0.1"
 expect_allowed typeorm "1.1.0"             # released by `app-module.boot-spec.ts`, 2026-08-31
+expect_allowed webrtc "0.17.3"             # released by `apps/call-service/tests/relay_path.rs`, 2026-10-09
+expect_allowed webrtc-ice "0.17.3"
+expect_allowed turn "0.17.3"
 expect_allowed argon2 "0.6.0"              # released by `cross_version_state.rs`, 2026-08-31
 expect_allowed aes-gcm "0.11.0"            # released by `cross_version_push.rs`
 # THE WIRE-FORMAT FAMILY, released by `mls-forward-compat.test.sh` on 2026-09-15. It had been
