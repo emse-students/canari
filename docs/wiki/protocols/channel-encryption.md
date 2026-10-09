@@ -3119,7 +3119,11 @@ the key-group frame route reads it to decide whether a gap is closed.
 
 - `syncGroupCachesFromNative` rebuilds the held groups AND their epochs from the native manager, at
   start-up and when the resume installs `mls.bin`. The file may be AHEAD of the live manager, and a
-  stale-low epoch reads as "behind".
+  stale-low epoch reads as "behind". It writes into the LIVE caches, never swaps them, because
+  commits, joins and forgets keep landing while it awaits. Every reading and every forget takes a
+  per-group stamp BEFORE its native call and is written only if nothing started later has been.
+  So a sync reading never lowers a newer refresh, a group created or joined mid-sync keeps its
+  entry (no false 0, no false gap), and a group forgotten mid-sync is not re-listed.
 - Every native call that can move an epoch refreshes it before returning: a commit applied
   (`processIncomingMessage` answering null), a batch, a merge (now awaited), a create, a join, a
   Welcome.
