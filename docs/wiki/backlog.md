@@ -214,17 +214,16 @@ Measured on the local estate with the ten-community rig ([chat](frontend/modules
 
 `UNREAD_TRACKED_SINCE_MS` (`channel.service.ts`) floors the server's count for a salon the member has no read mark in, so history from before marks existed (2026-09-29) is not called unread. Messages posted between that date and the deploy of `unread-counts` count for a never-opened salon, which is true. Open: a membership notice that is not `silent` counts as unread until the salon is opened (the client cannot be asked, the row is encrypted); mute levels are ignored, as the badges already did; and the in-session mark of a phone with the app asleep still depends on the 2 s receipt debounce.
 
-### P2 - about one CAS return in six reaches MiConnect with no code and no state, and the sign-in fails (measured 2026-09-29)
+### P2 - some CAS returns reach MiConnect with no code and no state, and a client can stay out (diagnosed 2026-10-09, DSI answer owed)
 
-The measurement is on
-[authentik](infrastructure/authentik.md#the-hand-built-configuration-audited-2026-09-29): 72
-`State check failed` against ~420 callbacks, every failing request on the BARE callback URL (no `code`,
-no `state`). **A request is with the DSI (user, 2026-09-29) and the rest waits for its answer**; nothing
-may be changed on the CAS side from here. **Next probe**: read the access log of ONE failing sequence end
-to end (the request before the bare callback, its `Referer`, the time since
-`/source/oauth/login/cas-emse/`), then reproduce it on purpose; what the user SEES afterwards is
-unobserved. The fix may be a DSI ticket, or a MiConnect flow that restarts the authorization instead of
-failing.
+Read end to end on 2026-10-09 ([authentik](infrastructure/authentik.md#the-hand-built-configuration-audited-2026-09-29),
+last bullet): **52 % of the failing requests are server-side probes, not people**, the flow heals itself
+once for a browser, and one Android client failed three times in a row. Nothing can be changed from here
+(the CAS is the DSI's, MiConnect is shared production). **Owed**: (1) the DSI's answer on the request of
+2026-09-29, now with the two facts they can use: a Java HttpClient calls the bare callback, and
+`-cas1`/`-cas2` bridge nodes; (2) **`docker logs miconnect-server-1` is unreadable since the 2026-10-07
+restart (NUL bytes in the json log)**: a recreate of the container by whoever owns the box restores it, and
+only then can the browser failure rate be re-counted without the probes.
 
 ### P2 - NOTIF-10: a refused push after real banners leaves a generic line no real post will replace (`FAIL` on #1550, 2026-10-07)
 

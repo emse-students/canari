@@ -541,7 +541,28 @@ printed in full (the rollback):**
   browser to the callback without answering the authorization request. The same user agent fails
   three times in a row (a Linux desktop and an Android phone on 2026-09-29), so people retry and stay
   out. The deny text of the unreferenced `miconnect-auth-fallback` flow describes exactly this, so
-  somebody met it before and it was never measured. Open: [backlog](../backlog.md#p2---about-one-cas-return-in-six-reaches-miconnect-with-no-code-and-no-state-and-the-sign-in-fails-measured-2026-09-29).
+  somebody met it before and it was never measured. Open: [backlog](../backlog.md#p2---some-cas-returns-reach-miconnect-with-no-code-and-no-state-and-a-client-can-stay-out-diagnosed-2026-10-09-dsi-answer-owed).
+- **The failing sequence read end to end (read-only, 2026-10-09; `docker logs` and a `SELECT` on
+  `authentik_events_event`, nothing changed).** Over the only readable window (2026-10-05 to 10-06 22:40)
+  **121 requests failed the state check, and 63 of them (52 %) are not browsers**: `Apache-HttpClient/5.5.1
+  (Java/21)` 55, `okhttp/4.12` 8 (and a `curl`) - server-to-server calls to the bare callback URL, not people
+  who lost a sign-in; 118 of the 121 fall on 10-06, the day the DSI replaced the callback and tested it (two
+  addresses calling `cas-emse` then `cas-lab` every ~20 s between 13:22 and 14:48). The **"1 in 6" was
+  therefore an over-count**: it counted those probes as users. The other 58 are real browsers (Windows and
+  Linux Chrome 31, Android Chrome 8, iPhone Safari 5, Facebook in-app 3).
+  **What a browser failure looks like**: `GET /source/oauth/login/cas-emse/` (302 to the CAS), then 5-8 s later
+  the BARE `GET /source/oauth/callback/cas-emse/` (302), then authentik restarts `miconnect-auth` and
+  `login/cas-emse` runs a second time. On an iPhone (2026-10-06 09:29:59) the second hop returned a
+  `code` + `state` and the user signed in 4 s later: **the flow heals itself once**. On an Android at 09:08 the
+  same pair happened three times in 10 s and the sign-in never completed (nothing after 09:08:11 from that
+  client), so a client CAN stay out. Note the callback is often read with a different user agent
+  (`Linux`) from the login hop (`Android`): the bare request is not always the user's own browser. The
+  working codes carry `OC-<n>-...-cas1` / `-cas2`, TWO bridge nodes behind the CAS name; whether a node is
+  what answers bare is not visible from this side.
+  **Not readable and not fixed**: `docker logs miconnect-server-1` stops at 10-06 22:40 with `invalid character
+  '\x00'` (the json-file log holds NUL bytes, the container restarted 10-07 07:03 on a host at 88 % disk),
+  so NOTHING since the restart can be counted; the events table records only successes (127-132 `login` a day
+  on 10-07/08, one `login_failed` a day). Nothing was changed on MiConnect or the CAS.
 - The CAS source sends no PKCE although the CAS advertises `S256`; application launch URLs still name
   `mitv.fr` and `canari-emse.fr` hosts; names mix French and English (`Personnel de l'école`,
   `School Worker`, `Provider for Sky`); the Cercle's tokens live 30 s / 2 min where every other
