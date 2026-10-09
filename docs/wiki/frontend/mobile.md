@@ -2793,6 +2793,10 @@ The open line is in [backlog](../backlog.md#p3---the-pull-and-the-socket-hand-th
 
 **The web-side overlap (HEAL-NEW).** One line on W3 on every HEAL-NEW run with a fresh device pulling while a socket is live: `[QUEUE] delivery ... arrived twice - the pull listed a row the socket had already handed in ...; not decrypting it again`. Nothing is lost or decrypted twice, but it is the visible end of two delivery paths overlapping BY CONSTRUCTION, and a race that heals cleanly is still a defect. Declaring it `ignoringExpectedLog` would demote a real overlap to keep a cell green, so HEAL-NEW-2 stays `PASS-DIRTY` until the overlap goes. **The direction is small**: the duplicate is caught at the DRAIN, by a queue that already holds the row; the pull that lists it again could ask the same question one step earlier (a row already queued for this device is not a row to queue). Both halves are in memory in the same module, so it is a membership test, not a new ledger. **Owed before the change**: the RATE against the population - `notableCount` on the same record was 91, so the counted-not-printed tail holds the real number.
 
+## The group summary never alerts (measured on a Pixel 6a, 2026-10-09)
+
+Logcat 12:16:49: a `type=channel` push at .069, a `type=channel_read` at .103 (`cancelConversationNotification` id=1035, which calls `refreshBadgeSummary`), the message banner posted at .147, then Android logged "Muting recently noisy" on the summary id 9999. The summary was rebuilt by every post and cancel with default alert behaviour, so each rebuild counted as a noisy post and tripped the platform's rate limit on the group. `refreshBadgeSummary` now sets `setOnlyAlertOnce(true)` and `GROUP_ALERT_CHILDREN`: only a child line may sound. No change to the message repost: a message already announced and cancelled by a read push is refused by the alerted ledger (`hasAlreadyAlerted`), and one not yet announced is rightly its first alert, so a second `setOnlyAlertOnce` there would only hide a real first sound.
+
 ## See also
 
 - [`frontend/architecture.md`](../architecture.md) — SvelteKit architecture, stores, routing
