@@ -34,7 +34,7 @@
  */
 
 /** The prefix `BaseMlsService.resolveDeviceId` stores an enrolled device id under, per user. */
-const DEVICE_ID_PREFIX = 'mls_device_id_';
+export const MLS_DEVICE_ID_PREFIX = 'mls_device_id_';
 
 /**
  * Whether this browser profile has ever enrolled an MLS device, and therefore will need the WASM.
@@ -49,7 +49,7 @@ const DEVICE_ID_PREFIX = 'mls_device_id_';
 export function browserHasEnrolledMlsDevice(storage: Pick<Storage, 'length' | 'key'>): boolean {
   for (let i = 0; i < storage.length; i++) {
     const key = storage.key(i);
-    if (key?.startsWith(DEVICE_ID_PREFIX)) return true;
+    if (key?.startsWith(MLS_DEVICE_ID_PREFIX)) return true;
   }
   return false;
 }

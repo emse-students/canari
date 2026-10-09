@@ -209,6 +209,19 @@ interface IMlsService {
 }
 ```
 
+## When the binary starts downloading (web)
+
+Two starts, one download. `wasmPreload.ts` writes an inline head script (substituted for a marker in
+`app.html` by `hooks.server.ts`, which knows the content-hashed URL through `?url`) that appends a
+`<link rel=preload as=fetch crossorigin=anonymous fetchpriority=low>` as soon as `localStorage` holds a
+`mls_device_id_*` key - from the first bytes of the document, beside the JavaScript. Later
+`prefetchMlsWasmAtBoot` (in the bundle, `hooks.client.ts`) and then `loadMlsWasmModule` run their own
+`fetch(url, { credentials: 'same-origin' })`, which the browser answers from the preload in flight: the
+`as=fetch` + anonymous-CORS pair is what makes the request identical, and a test pins it
+(`hooks.server.test.ts`). One predicate, one prefix constant (`MLS_DEVICE_ID_PREFIX`), so an anonymous
+visitor never pays for the engine. Tauri is excluded (the frontend is embedded). Measurement and the
+reason `low`: [offline-and-weak-network](offline-and-weak-network.md#10-package-status-2026-10-09).
+
 ## State persistence
 
 WASM state is serialized by `saveState(deviceKeyB64)` as an encrypted blob using ChaCha20-Poly1305 directly with `deviceKeyB64` (no Argon2id derivation). Storage backend:
