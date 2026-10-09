@@ -46,6 +46,7 @@ import {
 } from '$lib/utils/graine/distributionGroup';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
+import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
@@ -466,7 +467,7 @@ export function useChannelWorkspaces() {
     } else if (error instanceof GraineSealUnavailableError) {
       // Nothing was sent: this device holds no key for the scope yet (join not landed, session not
       // wired). Said as a TYPE at the throw, so it no longer lands in the nameless arm below.
-      message = m.channel_action_error_not_ready({ action });
+      message = sealUnavailableMessage(error.reason);
     } else if (isRetryableLoadError(error)) {
       // ONE PREDICATE, NOT TWO. "Worth retrying" and "say it is the network" are the same
       // question - the server did not decide anything - and they were two hand-kept lists that

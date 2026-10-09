@@ -1,4 +1,4 @@
-import { GraineSealUnavailableError } from './sealUnavailable';
+import { GraineSealUnavailableError, type GraineSealUnavailableReason } from './sealUnavailable';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import type { GraineDistributionFrame, StoredGraineSession } from '$lib/db/types';
@@ -18,12 +18,27 @@ import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
  * (`docs/wiki/protocols/channel-encryption.md`).
  */
 
-/** Thrown when a seed cannot be distributed because the scope's group is not in hand. */
+/** Why a scope's key group cannot carry a seed - the key-group half of the seal's reasons. */
+export type KeyGroupUnavailableReason = Extract<GraineSealUnavailableReason, `key-group-${string}`>;
+
+/** What each reason means, for the one line that names it. */
+const KEY_GROUP_REASON_TEXT: Record<KeyGroupUnavailableReason, string> = {
+  'key-group-unregistered': 'has no distribution group registered on this device',
+  'key-group-not-held': 'has a distribution group this device holds no tree for',
+  'key-group-unsettled': 'has a distribution group whose base the server has not arbitrated yet',
+  'key-group-catching-up': 'has a distribution group behind its server, being caught up',
+};
+
+/** Thrown when a seed cannot be distributed because the scope's group is not usable. */
 export class GraineDistributionUnavailableError extends GraineSealUnavailableError {
-  constructor(readonly scope: DistributionScope) {
+  constructor(
+    readonly scope: DistributionScope,
+    reason: KeyGroupUnavailableReason
+  ) {
     super(
-      `[GRAINE] ${scopeLabel(scope)} has no distribution group on this device - ` +
-        `nothing can be sealed for it until the join lands`
+      `[GRAINE] ${scopeLabel(scope)} ${KEY_GROUP_REASON_TEXT[reason]} (${reason}) - ` +
+        `nothing can be sealed for it until that changes`,
+      reason
     );
     this.name = 'GraineDistributionUnavailableError';
   }
@@ -50,11 +65,24 @@ export function distributionEpochFor(
   mlsService: IMlsService,
   scope: DistributionScope
 ): number | null {
+  const reading = readDistributionEpoch(mlsService, scope);
+  return 'epoch' in reading ? reading.epoch : null;
+}
+
+/**
+ * {@link distributionEpochFor} with the reason kept: the epoch, or WHICH of the four facts it asks
+ * is missing. The seal reads this one, because its refusal is shown to a member and logged.
+ */
+export function readDistributionEpoch(
+  mlsService: IMlsService,
+  scope: DistributionScope
+): { epoch: number } | { unavailable: KeyGroupUnavailableReason } {
   const groupId = mlsService.distributionGroupFor(scope);
-  if (!groupId || !holdsGroupState(mlsService, groupId)) return null;
-  if (!mlsService.isDistributionBaseSettled(groupId)) return null;
-  if (isInEpochGap(groupId)) return null;
-  return mlsService.getEpoch(groupId);
+  if (!groupId) return { unavailable: 'key-group-unregistered' };
+  if (!holdsGroupState(mlsService, groupId)) return { unavailable: 'key-group-not-held' };
+  if (!mlsService.isDistributionBaseSettled(groupId)) return { unavailable: 'key-group-unsettled' };
+  if (isInEpochGap(groupId)) return { unavailable: 'key-group-catching-up' };
+  return { epoch: mlsService.getEpoch(groupId) };
 }
 
 /**
@@ -80,7 +108,7 @@ export async function distributeGraineSeed(
   session: StoredGraineSession
 ): Promise<GraineDistributionFrame> {
   const groupId = mlsService.distributionGroupFor(scope);
-  if (!groupId) throw new GraineDistributionUnavailableError(scope);
+  if (!groupId) throw new GraineDistributionUnavailableError(scope, 'key-group-unregistered');
 
   const frame = encodeAppMessage({
     // The same wire form a repair relays, so a v2 session's endorsement leaves exactly as held.

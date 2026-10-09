@@ -13,6 +13,8 @@ import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { m } from '$lib/paraglide/messages';
 import { cutReplyPreview, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
+import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -135,6 +137,12 @@ export async function sendChatMessage(
       // this tree joinable: over twenty files under `src/lib/utils` use the ternary for logs, so
       // that guard cannot own this directory until it can tell a log from a render - measured
       // 2026-09-15, see docs/wiki/backlog.md.
+      // A SEAL THIS DEVICE COULD NOT MAKE IS NAMED BY ITS TYPED REASON: nothing left the device,
+      // there is no status, and the generic line below hid which of six facts was missing.
+      if (error instanceof GraineSealUnavailableError) {
+        deps.log(`[SEND] channel send not sealed (reason=${error.reason}): ${String(error)}`);
+        return { success: false, error: sealUnavailableMessage(error.reason) };
+      }
       const status = refusalStatus(error);
       deps.log(`[SEND] channel send refused (status=${status ?? 'none'}): ${String(error)}`);
       return {

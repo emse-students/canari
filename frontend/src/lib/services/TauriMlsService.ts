@@ -71,6 +71,25 @@ export class TauriMlsService extends BaseMlsService {
   private _knownGroups: Set<string> = new Set();
   /** Last known MLS epoch per group (native); keeps sync `getEpoch()` meaningful on Tauri. */
   private _epochByGroupId: Map<string, number> = new Map();
+  /**
+   * The stamp of the last reading (or forget) written into the two caches, per group.
+   *
+   * READINGS ARE LINEARISED BY WHEN THEY STARTED, NOT BY WHEN THEY RESOLVED. Native calls run in the
+   * order they were issued, so a reading started later saw a later state - but two awaits can
+   * resolve in either order, and the start-up/resume sync reads many groups while commits, merges,
+   * joins and forgets keep landing. A stamp taken BEFORE each native read, and a write applied only
+   * when no later-started one has been written, is what keeps an older reading from overwriting a
+   * newer one, and a sync from resurrecting a group forgotten while it ran.
+   */
+  private _cacheStamp: Map<string, number> = new Map();
+  /**
+   * The latest stamp ISSUED per group - set when a reading or a forget STARTS, where
+   * {@link _cacheStamp} is set when one is written. The sync reads it to leave alone a group some
+   * call is already working on (a create or join whose epoch read has not resolved yet).
+   */
+  private _touchStamp: Map<string, number> = new Map();
+  /** Source of {@link _cacheStamp} values; strictly increasing for the life of the service. */
+  private _stampSeq = 0;
   /** In-flight Rust MLS mutations; drained before `saveState` so mls.bin matches `_knownGroups`. */
   private pendingRustMutations: Promise<unknown>[] = [];
   // Device key kept in memory after init() to re-encrypt the MLS state after each
@@ -97,24 +116,65 @@ export class TauriMlsService extends BaseMlsService {
     await Promise.allSettled(pending);
   }
 
-  /** Refresh cached epoch from native MLS (best-effort). */
+  /**
+   * Re-reads one group's epoch from the native manager into the cache `getEpoch` answers from.
+   *
+   * Called after EVERY native operation that can move an epoch - a commit applied, a merge, a join,
+   * a Welcome - and awaited there, because the synchronous `getEpoch` is read right after them: the
+   * commit replay compares it with its target after each commit, and the key-group frame route
+   * decides from it whether a gap is closed.
+   */
   private async refreshEpochCache(groupId: string): Promise<void> {
-    try {
-      const e = await invoke<number>('obtenir_epoch', { groupId });
-      this._epochByGroupId.set(groupId, e);
-      logMlsMetric({ kind: 'epoch_cache', platform: 'tauri', groupId, epoch: e });
-    } catch {
-      this._epochByGroupId.delete(groupId);
-    }
+    await this.readEpochIntoCache(groupId, this.nextCacheStamp(groupId));
   }
 
   /**
-   * Platform hook: refresh the epoch cache after each successfully processed message.
-   * Called by BaseMlsService.processQueue after a successful messageCallback invocation.
+   * A new stamp for {@link _cacheStamp}, taken BEFORE the native call it will guard. Given a group,
+   * it also records that group as touched from now on ({@link _touchStamp}).
    */
-  protected override async onMessageProcessed(groupId: string | undefined): Promise<void> {
-    if (groupId) {
-      await this.refreshEpochCache(groupId);
+  private nextCacheStamp(groupId?: string): number {
+    const stamp = ++this._stampSeq;
+    if (groupId !== undefined) this._touchStamp.set(groupId, stamp);
+    return stamp;
+  }
+
+  /** Whether a write under `stamp` may land for `groupId`: nothing started later has been written. */
+  private cacheWriteAllowed(groupId: string, stamp: number): boolean {
+    return (this._cacheStamp.get(groupId) ?? 0) <= stamp;
+  }
+
+  /** Whether no call has started on `groupId` since `stamp` was issued. */
+  private untouchedSince(groupId: string, stamp: number): boolean {
+    return (this._touchStamp.get(groupId) ?? 0) <= stamp;
+  }
+
+  /**
+   * Reads `groupId`'s epoch under `stamp` and writes it, unless a later-started reading or a forget
+   * was written meanwhile (see {@link _cacheStamp}).
+   */
+  private async readEpochIntoCache(groupId: string, stamp: number): Promise<void> {
+    let epoch: number | null;
+    let failure: unknown = null;
+    try {
+      epoch = await invoke<number>('obtenir_epoch', { groupId });
+    } catch (err) {
+      epoch = null;
+      failure = err;
+    }
+    if (!this.cacheWriteAllowed(groupId, stamp)) return;
+    this._cacheStamp.set(groupId, stamp);
+    if (epoch !== null) {
+      this._epochByGroupId.set(groupId, epoch);
+      logMlsMetric({ kind: 'epoch_cache', platform: 'tauri', groupId, epoch });
+      return;
+    }
+    this._epochByGroupId.delete(groupId);
+    // Ordinary for a group just forgotten; for a held one it means `getEpoch` now answers 0.
+    if (this._knownGroups.has(groupId)) {
+      console.error(
+        `[MLS][Tauri] held group ${groupId.slice(0, 8)}... has no readable epoch - getEpoch answers 0 for it:`,
+        String(failure)
+      );
     }
   }
 
@@ -663,19 +723,64 @@ export class TauriMlsService extends BaseMlsService {
     // critical path in a way the write above is not - which is the whole reason both carry a clock.
     beginBootSpan('mls-list-groups');
     try {
-      const groups = await invoke<string[]>('lister_groupes');
-      endBootSpan('mls-list-groups', { groups: groups.length });
-      this._knownGroups = new Set(groups);
-    } catch {
+      const groups = await this.syncGroupCachesFromNative();
+      endBootSpan('mls-list-groups', { groups });
+    } catch (e) {
       endBootSpan('mls-list-groups', { failed: true });
       // Non-blocking: cache stays empty, GroupAlreadyExists fallback will handle it.
+      console.error('[MLS][Tauri] listing the held groups at start-up failed:', String(e));
     }
+  }
+
+  /**
+   * Rebuilds BOTH caches of the native manager - the groups it holds and the epoch of each - from
+   * the manager itself, as one fact.
+   *
+   * THE EPOCH CACHE WAS NEVER FILLED HERE, and `getEpoch` answers 0 for a group it has no entry for.
+   * So after every cold start, every group held whose drain carried no frame read as epoch 0 - and
+   * a key group the server had at 56 then looked 56 epochs BEHIND. `verifyDistributionEpoch` asked
+   * the commit log from epoch 0, the replay broke on the first commit (epoch 0, against a tree at
+   * 56), the gap stayed armed - so `distributionEpochFor` refused every seal - and 45 s later the
+   * sync watchdog forgot the tree and external-joined again, one burst per device across all its
+   * key groups. Production 2026-10-09: 449 re-joins in six days, 378 from native apps, each at the
+   * head of a log whose previous commit was the same device's own join.
+   *
+   * IT WRITES INTO THE LIVE CACHES, NEVER SWAPS THEM. Commits, merges, joins, Welcomes and forgets
+   * keep landing while it awaits, so every write is guarded by {@link _cacheStamp}: a group created,
+   * joined or forgotten after the listing started keeps what that call wrote, and an epoch read by a
+   * later-started refresh is never lowered by this function's older reading.
+   *
+   * @returns how many groups the manager holds
+   */
+  private async syncGroupCachesFromNative(): Promise<number> {
+    const listStamp = this.nextCacheStamp();
+    const groups = await invoke<string[]>('lister_groupes');
+    const listed = new Set(groups);
+    // A group some call started on after the listing did (created, joined, refreshed or forgotten)
+    // carries a newer fact than this listing - it is left to that call, listed or not.
+    const settled = groups.filter((groupId) => this.untouchedSince(groupId, listStamp));
+    for (const groupId of settled) this._knownGroups.add(groupId);
+    for (const groupId of new Set([...this._knownGroups, ...this._epochByGroupId.keys()])) {
+      if (listed.has(groupId) || !this.untouchedSince(groupId, listStamp)) continue;
+      this._knownGroups.delete(groupId);
+      this._epochByGroupId.delete(groupId);
+      this._cacheStamp.set(groupId, listStamp);
+    }
+    // Each reading takes its own stamp NOW, before its read, and lands as it resolves.
+    await Promise.all(
+      settled.map((groupId) => this.readEpochIntoCache(groupId, this.nextCacheStamp(groupId)))
+    );
+    console.log(
+      `[MLS][Tauri] group caches rebuilt from the native manager - ${groups.length} group(s)`
+    );
+    return groups.length;
   }
 
   /** Tauri-native `invoke` wrapper - calls `creer_groupe` in Rust and updates the local known-groups cache. */
   async createGroup(groupId: string): Promise<void> {
     await invoke('creer_groupe', { groupId });
     this._knownGroups.add(groupId);
+    await this.refreshEpochCache(groupId);
   }
 
   /**
@@ -760,7 +865,9 @@ export class TauriMlsService extends BaseMlsService {
         deviceKeyB64: this._deviceKeyB64,
       });
       if (outcome === 'reloaded') {
-        this._knownGroups = new Set(await invoke<string[]>('lister_groupes'));
+        // The installed manager may be AHEAD of the live one (a background engine advanced the
+        // file), so the epochs are re-read with the groups - a stale-low epoch reads as "behind".
+        await this.syncGroupCachesFromNative();
         console.log('[MLS][Tauri] mls.bin reloaded on resume (C2) - group cache refreshed.');
       } else if (outcome === 'live-ahead') {
         console.warn(
@@ -1026,7 +1133,7 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - merges the pending staged commit (server accepted) and refreshes the epoch cache. */
   protected async mergePendingCommit(groupId: string): Promise<void> {
     await invoke('confirmer_commit', { groupId });
-    void this.refreshEpochCache(groupId);
+    await this.refreshEpochCache(groupId);
   }
 
   /** Tauri-native `invoke` wrapper - clears the pending staged commit (server rejected, no fork). */
@@ -1042,11 +1149,21 @@ export class TauriMlsService extends BaseMlsService {
 
   /** Tauri-native `invoke` wrapper - reads the authoritative pre-merge epoch via `obtenir_epoch`. */
   protected async freshEpoch(groupId: string): Promise<number> {
+    const stamp = this.nextCacheStamp(groupId);
     try {
       const epoch = await invoke<number>('obtenir_epoch', { groupId });
-      this._epochByGroupId.set(groupId, epoch);
+      if (this.cacheWriteAllowed(groupId, stamp)) {
+        this._cacheStamp.set(groupId, stamp);
+        this._epochByGroupId.set(groupId, epoch);
+      }
       return epoch;
-    } catch {
+    } catch (e) {
+      // The caller asked for the AUTHORITATIVE epoch and gets the cached one instead - a fallback,
+      // so it accuses.
+      console.error(
+        `[MLS][Tauri] freshEpoch: native epoch of ${groupId.slice(0, 8)}... unreadable - answering the cached ${this.getEpoch(groupId)}:`,
+        String(e)
+      );
       return this.getEpoch(groupId);
     }
   }
@@ -1101,7 +1218,12 @@ export class TauriMlsService extends BaseMlsService {
       'recevoir_message_bytes',
       { groupId, messageBytes: Array.from(messageBytes) }
     );
-    if (!res) return null;
+    // Null is a commit or a proposal - the one result that may have moved the epoch, and the
+    // commit replay reads `getEpoch` on the very next line (see `refreshEpochCache`).
+    if (!res) {
+      await this.refreshEpochCache(groupId);
+      return null;
+    }
     assertVerifiedSender(groupId, envelope, res.sender);
     return Uint8Array.from(res.data);
   }
@@ -1116,6 +1238,8 @@ export class TauriMlsService extends BaseMlsService {
       groupId,
       messages: messages.map((m) => Array.from(m)),
     });
+    // A page may carry commits; one read covers the whole batch.
+    await this.refreshEpochCache(groupId);
     return mapNativeBatchDecryptResults(raw);
   }
 
@@ -1216,24 +1340,34 @@ export class TauriMlsService extends BaseMlsService {
     };
   }
 
-  /** Returns the last cached MLS epoch for a group, or 0 if unknown; cache is refreshed by `refreshEpochCache`. */
+  /**
+   * The MLS epoch of a group, from the cache every epoch-moving native call refreshes (see
+   * `refreshEpochCache` and `syncGroupCachesFromNative`). 0 for a group this device does not hold.
+   */
   getEpoch(groupId: string): number {
     return this._epochByGroupId.get(groupId) ?? 0;
   }
 
   /** Tauri-native `invoke` wrapper - calls `oublier_groupe` in Rust to drop local MLS state and removes the group from the epoch cache. */
   forgetGroup(groupId: string, minEpoch = 0): void {
+    // A forget is a cache write like any reading: stamped, so a sync or refresh that started
+    // before it cannot bring the group back (see `_cacheStamp`).
+    this._cacheStamp.set(groupId, this.nextCacheStamp(groupId));
     this._epochByGroupId.delete(groupId);
     // Keep `_knownGroups` in sync synchronously (Web reads WASM live via get_groups()).
     this._knownGroups.delete(groupId);
     this.trackRustMutation(
       invoke('oublier_groupe', { groupId, minEpoch }).catch((e) => {
         console.warn('[MLS] forgetGroup error:', e);
-        return invoke<string[]>('lister_groupes')
-          .then((groups) => {
-            this._knownGroups = new Set(groups);
-          })
-          .catch(() => {});
+        // The native manager may still hold it: re-read both caches from the manager.
+        return this.syncGroupCachesFromNative()
+          .then(() => undefined)
+          .catch((err) =>
+            console.error(
+              '[MLS][Tauri] re-listing groups after a failed forget failed:',
+              String(err)
+            )
+          );
       })
     );
   }

@@ -13,8 +13,8 @@ import {
 } from './runtime';
 import {
   distributeGraineSeed,
-  distributionEpochFor,
   GraineDistributionUnavailableError,
+  readDistributionEpoch,
 } from './seedDistribution';
 import { reserveOutboundSlot } from './sessionManager';
 import { endorseNewSession } from './endorseSession';
@@ -154,7 +154,8 @@ export class GraineReplayError extends Error {
 export class GraineUnknownChannelError extends GraineSealUnavailableError {
   constructor(readonly channelId: string) {
     super(
-      `[GRAINE] channel ${channelId.slice(0, 8)} belongs to no community this session has loaded`
+      `[GRAINE] channel ${channelId.slice(0, 8)} belongs to no community this session has loaded`,
+      'unknown-channel'
     );
     this.name = 'GraineUnknownChannelError';
   }
@@ -186,8 +187,15 @@ export async function sealChannelMessage(
   // Null, not zero: a scope whose distribution group is not in hand cannot receive a seed, so
   // sealing under a session nobody will ever be able to read is refused here rather than
   // discovered by every reader separately.
-  const distributionEpoch = distributionEpochFor(mlsService, scope);
-  if (distributionEpoch === null) throw new GraineDistributionUnavailableError(scope);
+  const reading = readDistributionEpoch(mlsService, scope);
+  if ('unavailable' in reading) {
+    const refusal = new GraineDistributionUnavailableError(scope, reading.unavailable);
+    // AT A LEVEL THAT ACCUSES: nothing left the device, and the member sees a refusal. Which of the
+    // four facts was missing is what tells a join not landed from a catch-up that never closed.
+    console.error(`[SEND] seal refused for channel ${channel.slice(0, 8)}: ${refusal.message}`);
+    throw refusal;
+  }
+  const distributionEpoch = reading.epoch;
 
   const slot = await reserveOutboundSlot(
     {

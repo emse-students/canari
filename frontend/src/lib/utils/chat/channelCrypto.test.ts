@@ -103,7 +103,10 @@ describe('sendEncryptedChannelMessage', () => {
   });
 
   it('never reaches the server when the seal itself refused', async () => {
-    const refusal = new GraineDistributionUnavailableError(workspaceScope('ws-1'));
+    const refusal = new GraineDistributionUnavailableError(
+      workspaceScope('ws-1'),
+      'key-group-not-held'
+    );
     sealChannelMessage.mockRejectedValue(refusal);
 
     await expect(sendEncryptedChannelMessage(CHANNEL, PAYLOAD)).rejects.toBe(refusal);

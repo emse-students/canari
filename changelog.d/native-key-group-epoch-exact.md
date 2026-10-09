@@ -1,0 +1,3 @@
+### Fixed - the native app no longer reads its key groups as epoch 0 and re-joins them all, and a refused seal names its cause
+
+After a cold start the native app's epoch cache answered 0 for every held key group. A false catch-up then refused every salon send and re-joined each group 45 s later, about 70 times a day across the estate. The cache is now rebuilt with the group list and refreshed by every commit, and the refusal toast names which of six facts was missing ([channel-encryption](docs/wiki/protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09)).

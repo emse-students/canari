@@ -1751,9 +1751,6 @@ export abstract class BaseMlsService implements IMlsService {
             this.welcomeProcessedCallback?.(groupId);
             welcomedGroups.push(groupId);
           }
-
-          // Platform hook: called after each successful message (e.g. Tauri epoch cache refresh).
-          await this.onMessageProcessed(groupId);
         } catch (e) {
           console.error(`[QUEUE] Error processing message:`, e);
 
@@ -1838,13 +1835,6 @@ export abstract class BaseMlsService implements IMlsService {
       void this.processQueue();
     }
   }
-
-  /**
-   * Platform hook called after each successfully processed message.
-   * Override in subclasses to perform platform-specific post-processing
-   * (e.g. refreshing epoch cache on Tauri).
-   */
-  protected async onMessageProcessed(_groupId: string | undefined): Promise<void> {}
 
   /**
    * Fetches offline-queued messages from the delivery service and routes each through the priority

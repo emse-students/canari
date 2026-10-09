@@ -3079,3 +3079,72 @@ and only because the server was further ahead (on the PC it was not, for three d
 to checkpoint - a reload before the next write would rejoin", or two tabs before the leader lock
 settled. Either way the join leaves a state on disk that a later commit evicts, and that state is
 what this section now repairs on sight.
+
+### 22.3 The native app read every held key group as epoch 0, and re-joined them all - FIXED 2026-10-09
+
+**Measured on production, 2026-10-09.** Community key groups were kept alive almost only by
+external joins: 54 to 85 a day for six days, 378 of 449 from native apps. In one salon's key group,
+every commit from epoch 44 to 57 was an external join by a member's own native device, and the
+commit before each re-join was the SAME device's previous join, one to seven minutes earlier. The
+device was current and re-joined anyway. In between, members sending to the salon got "Échec de
+l'envoi" with no request reaching the server, so the seal had refused.
+
+**The edge log named the path.** Every burst was `GET .../distribution-group` for each scope, then
+`GET /api/mls/device-memberships`, then one `POST /api/mls/commit` per key group, all within one
+second. About 47 s before each burst the same device had asked `GET /api/mls/commits/<group>?sinceEpoch=0`
+for all its key groups, which it had joined minutes earlier.
+
+**The cause: `TauriMlsService.getEpoch` is a cache, and it answered 0.** The cache
+(`_epochByGroupId`) was filled after a queued message's callback and by a few native calls. It was
+never filled at start-up, and it answered `0` for a group with no entry. After a cold start, every
+held key group whose drain carried no frame therefore read as epoch 0. Then:
+
+1. The loader's held branch ran `verifyDistributionEpoch(group, activeEpoch)` and saw it 56 epochs
+   behind.
+2. `catchUpDistributionGroup` armed the gap and asked the log from 0.
+3. The replay broke on the epoch-0 commit against a tree at 56, and the verdict was `replay-failed`.
+4. The gap stayed armed, so `distributionEpochFor` refused every seal for the scope. That is the
+   refused send.
+5. 45 s later the sync watchdog (`STUCK_EPOCH_GAP_MS`) took `rejoinBehindDistributionGroup`. It
+   forgot the tree, re-read the distribution group, read the device memberships (`active`, so no
+   Welcome is owed) and external-joined. That is the burst, across every key group the device
+   holds.
+
+Each re-join also moved every other member one epoch. The web never did any of this, because
+`WebMlsService.getEpoch` reads WASM live. The cache also lagged every commit the replay applied
+itself (`attemptCommitReplay` compares `getEpoch` with its target after each commit), and
+the key-group frame route reads it to decide whether a gap is closed.
+
+**The fix is the cache, at its source** (`TauriMlsService`):
+
+- `syncGroupCachesFromNative` rebuilds the held groups AND their epochs from the native manager, at
+  start-up and when the resume installs `mls.bin`. The file may be AHEAD of the live manager, and a
+  stale-low epoch reads as "behind". It writes into the LIVE caches, never swaps them, because
+  commits, joins and forgets keep landing while it awaits. Every reading and every forget takes a
+  per-group stamp BEFORE its native call and is written only if nothing started later has been.
+  So a sync reading never lowers a newer refresh, a group created or joined mid-sync keeps its
+  entry (no false 0, no false gap), and a group forgotten mid-sync is not re-listed.
+- Every native call that can move an epoch refreshes it before returning: a commit applied
+  (`processIncomingMessage` answering null), a batch, a merge (now awaited), a create, a join, a
+  Welcome.
+- The queue's post-callback hook (`onMessageProcessed`) is deleted: it was the only refresher, and
+  it ran too late.
+
+A held group whose epoch cannot be read accuses at `error`, because `getEpoch` then answers 0 for
+it. Pinned by `TauriMlsService.epochCache.test.ts`. On the old code its cold-start case answers
+`replay-failed`, the exact verdict that armed the gap.
+
+**The refused seal now says which fact was missing.** `distributionEpochFor` folded four
+facts into one null and one sentence ("has no distribution group on this device"), which was false
+for the case that fired. `readDistributionEpoch` keeps the reason
+(`key-group-unregistered | not-held | unsettled | catching-up`), and `GraineSealUnavailableError`
+carries it with `no-session` and `unknown-channel`. The seal logs it at `error`. Both send surfaces
+(`sendChatMessage`, `toUiActionError`) show `sealUnavailableMessage(reason)`: one Paraglide sentence
+per fact, in place of "Échec de l'envoi" or "pas encore prêt".
+
+**Old clients (1.0.3 to 1.1.2) carry the same cache and keep re-joining until they update.** No
+server change can stop the loop without making it worse. The re-join FORGETS the tree before it
+asks to join, so refusing a "redundant" external join would leave a device holding nothing for the
+scope, which is worse than one extra epoch. Making the replay from 0 "succeed" would mean the server
+answering a question the client did not ask. The churn ends as the store floor
+(`minClientVersion`) reaches the release that carries this.
