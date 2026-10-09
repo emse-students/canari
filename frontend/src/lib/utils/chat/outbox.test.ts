@@ -37,7 +37,7 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
 import { createOutbox, buildOutboxProto, type OutboxDeps } from './outbox';
 import { GroupDeletedError, SenderNotActiveError } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
-import { MediaKind } from '$lib/proto/codec';
+import { MediaKind, decodeAppMessage, mediaReelFromProto } from '$lib/proto/codec';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
 import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -888,6 +888,44 @@ describe('outbox flusher', () => {
     // Placeholder content swapped for the real attachment envelope (now carries the mediaId).
     expect(conversations.get('g1')!.messages[0].content).toContain('mid-1');
     expect(conversations.get('g1')!.messages[0].status).toBe('sent');
+  });
+
+  it("carries a reel message's declared intent, length and expiry hint onto the wire and the stored message", async () => {
+    const mediaEntry: OutboxEntry = {
+      id: 'mr',
+      conversationId: 'g1',
+      sentAt: 100,
+      kind: 'media',
+      media: {
+        kind: MediaKind.MEDIA_KIND_VIDEO,
+        mimeType: 'video/mp4',
+        size: 3,
+        intent: 'reel-message',
+        durationMs: 42_000,
+        expiresAtMs: 1_790_000_000_000,
+        fileBytes: new Uint8Array([1, 2, 3]),
+      },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+    const storage = makeStorage([mediaEntry]);
+    const mlsService = makeMls();
+    const uploadMedia = vi.fn().mockResolvedValue({ mediaId: 'mid-2', key: 'aa', iv: 'bb' });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['mr'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, uploadMedia, isGroupHealthy: () => true })
+    );
+
+    await outbox.flush();
+
+    const sent = decodeAppMessage(mlsService.sendMessage.mock.calls[0][1] as Uint8Array);
+    expect(mediaReelFromProto(sent!.media!)).toEqual({
+      intent: 'reel-message',
+      durationMs: 42_000,
+      expiresAtMs: 1_790_000_000_000,
+    });
+    expect(conversations.get('g1')!.messages[0].content).toContain('"intent":"reel-message"');
   });
 
   it('publishes the uploaded media before a slow MLS send completes', async () => {

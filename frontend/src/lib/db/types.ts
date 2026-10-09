@@ -2,6 +2,7 @@
 // Shared types and the IStorage interface for Canari's local message store.
 // ---------------------------------------------------------------------------
 
+import type { MediaIntent } from '$lib/media';
 import type { ConversationLifecycle, MessageReaction, ReadWatermarks } from '$lib/types';
 
 /** Lightweight metadata row for a conversation stored in the local DB (no message payload). */
@@ -130,6 +131,10 @@ export interface OutboxMediaPayload {
   placeholder?: string;
   /** Recorded by the composer rather than picked from disk - see `MediaRef.voiceNote`. */
   voiceNote?: boolean;
+  /** Declared by the sender - see `MediaRef.intent`, `durationMs` and `expiresAtMs`. */
+  intent?: MediaIntent;
+  durationMs?: number;
+  expiresAtMs?: number;
   /**
    * Raw (already client-compressed) file bytes, kept until the blob is uploaded.
    * Cleared once `uploadedRef` is set so the queue does not hold the file twice.

@@ -1,6 +1,7 @@
 <script lang="ts">
   /**
-   * Saves one of the member's reels before its deletion (C6): into the phone's gallery on the phone
+   * Saves a reel - any reel being watched, since 2026-10-09 (user), and the member's own before its
+   * deletion (C6): into the phone's gallery on the phone
    * apps, as a download elsewhere (`saveReel`).
    *
    * A REFUSED GALLERY ACCESS NAMES ITS REMEDY AND OFFERS IT: the toast says the access is in the
@@ -8,13 +9,12 @@
    * names a remedy the screen does not offer leaves the member to find it alone.
    */
   import { Download, LoaderCircle, Settings } from '@lucide/svelte';
-  import type { MyReel } from '$lib/posts/api';
-  import { saveReel } from '$lib/reels/saveReel';
+  import { saveReel, type SaveableReel } from '$lib/reels/saveReel';
   import { openAppSettings } from '$lib/reels/gallery';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
 
-  let { reel }: { reel: MyReel } = $props();
+  let { reel }: { reel: SaveableReel } = $props();
 
   let saving = $state(false);
   let denied = $state(false);

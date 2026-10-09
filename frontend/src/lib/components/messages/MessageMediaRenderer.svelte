@@ -26,6 +26,10 @@
   import MessageInlineText from './MessageInlineText.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import { nearViewport } from '$lib/actions/nearViewport';
+  import ChatReelTile from './ChatReelTile.svelte';
+  import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
+  import { isReelMessage, isReelMessageExpired, reelMessageAsPost } from '$lib/reels/chatReel';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
     /** Parsed media descriptor from the message envelope, or null for text-only messages. */
@@ -67,6 +71,10 @@
     senderId?: string;
     /** When the message was sent: the viewer's title and its information panel. */
     sentAt?: Date;
+    /** The message's id: a received reel's viewer keys its slide, and names a saved file, by it. */
+    messageId?: string;
+    /** Bearer token the reel viewer's own download resolves; a tile fetches nothing without a tap. */
+    authToken?: string;
   }
 
   let {
@@ -82,7 +90,30 @@
     bleed = false,
     senderId,
     sentAt,
+    messageId = '',
+    authToken = '',
   }: Props = $props();
+
+  /**
+   * A CanaReel SENT IN A CONVERSATION is a tile, not a video. Decided by the sender's declared
+   * intent, never by the file name or the bytes - a picked clip stays an ordinary video.
+   */
+  const isReel = $derived(isReelMessage(mediaRef));
+  let showReelViewer = $state(false);
+  /** The hint, read when the row is drawn: a tombstone needs no request to be told it is one. */
+  const reelExpired = $derived(!!mediaRef && isReel && isReelMessageExpired(mediaRef, Date.now()));
+  const reelSenderName = $derived(senderId ? getUserDisplayNameSync(senderId, senderId) : '');
+  const reelPost = $derived(
+    showReelViewer && mediaRef && isReel
+      ? reelMessageAsPost({
+          messageId: messageId || mediaRef.mediaId,
+          media: mediaRef,
+          caption: textContent,
+          senderName: reelSenderName,
+          sentAt: sentAt ?? new Date(),
+        })
+      : null
+  );
 
   let showLightbox = $state(false);
   let showPdfViewer = $state(false);
@@ -156,7 +187,16 @@
          every state is a layer inside it. `w-56`, or `w-68` under a caption: an explicit width at
          every breakpoint, because the bubble is `w-fit` and a percentage has nothing to resolve
          against. docs/wiki/frontend/media-frame.md -->
-    {#if mediaRef.type === 'image' || mediaRef.type === 'video'}
+    {#if isReel}
+      <ChatReelTile
+        {mediaRef}
+        expired={reelExpired}
+        senderName={reelSenderName}
+        sentAt={sentAt ?? new Date()}
+        {bleed}
+        onOpen={() => (showReelViewer = true)}
+      />
+    {:else if mediaRef.type === 'image' || mediaRef.type === 'video'}
       <MediaFrame
         width={mediaRef.width}
         height={mediaRef.height}
@@ -421,6 +461,18 @@
       {/each}
     </p>
   {/if}
+{/if}
+
+{#if reelPost}
+  <!-- THE FEED'S REEL VIEWER, on this one reel: it downloads and streams on its own (nothing was
+       fetched by the tile), shows the sender and the age, and carries the save beside the volume.
+       No further page: a conversation's reels are not the feed's. -->
+  <ReelViewer
+    startPost={reelPost}
+    {authToken}
+    onClose={() => (showReelViewer = false)}
+    loadPage={async () => []}
+  />
 {/if}
 
 {#if showPdfViewer && blobUrl && mediaRef}

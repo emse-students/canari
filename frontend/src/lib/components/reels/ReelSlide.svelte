@@ -9,6 +9,9 @@
    * instead, because every mounted player counts as an open viewer and claims playback
    * (`followVideoSound`); the NEXT reel preloads its video meanwhile (`ReelPreload`), so its player
    * takes the warm path and shows the first frame the moment the swipe lands.
+   *
+   * THE SAVE BUTTON (`ReelSaveButton`) is in the player's bar next to the volume button, for every
+   * reel (user, 2026-10-09: "public or not"). Nothing here claims the video is protected.
    */
   import PostMedia from '$lib/components/posts/PostMedia.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
@@ -17,7 +20,6 @@
   import { ReelPreload } from '$lib/reels/reelPreload';
   import { markdownToPlainText } from '$lib/seo/text';
   import { exactDate, timeAgo } from '$lib/utils/time';
-  import { myReels } from '$lib/reels/myReels.svelte';
   import ReelSaveButton from './ReelSaveButton.svelte';
 
   interface Props {
@@ -34,12 +36,6 @@
   const video = $derived((post.media ?? post.images ?? [])[0]);
   const caption = $derived(markdownToPlainText(post.markdown ?? ''));
 
-  /** The member's own reel, with its expiry and its key - `undefined` for anybody else's. */
-  const mine = $derived(myReels.find(post.id));
-  $effect(() => {
-    if (active) myReels.ensure(post);
-  });
-
   $effect(() => {
     if (!preload || active || !video || !authToken) return;
     const ahead = new ReelPreload(video);
@@ -47,10 +43,17 @@
   });
 </script>
 
+<!-- THE SAVE IS IN THE PLAYER'S BAR, BESIDE THE VOLUME, FOR EVERY REEL (user, 2026-10-09): public or
+     not, the member's own or anybody's. It saves what the viewer holds - the ref with its key that
+     the player itself decrypts - so nothing here asks the server who owns the reel. -->
+{#snippet barActions()}
+  <ReelSaveButton reel={post} />
+{/snippet}
+
 <div class="relative h-full w-full overflow-hidden bg-black" data-reel-slide={post.id}>
   <div class="flex h-full w-full items-center justify-center">
     {#if active && video}
-      <PostMedia media={video} {authToken} galleryMode />
+      <PostMedia media={video} {authToken} galleryMode {barActions} />
     {:else}
       <VideoPoster />
     {/if}
@@ -70,11 +73,4 @@
       <p class="mt-1 line-clamp-3 text-sm leading-snug opacity-90">{caption}</p>
     {/if}
   </div>
-
-  {#if mine && active}
-    <!-- The author's save, right of the caption where Instagram puts a reel's actions. -->
-    <div class="absolute right-3 bottom-[calc(var(--safe-area-inset-bottom,0px)+5rem)]">
-      <ReelSaveButton reel={mine} />
-    </div>
-  {/if}
 </div>

@@ -306,6 +306,28 @@ message MediaMsg {
   // its plain surface tone. A reader that cannot decode it ignores it - it is decoration, never
   // content. docs/wiki/frontend/media-frame.md
   bytes placeholder = 13;
+  // What this media is FOR (CanaReels in a conversation, docs/wiki/frontend/modules/reels-in-chat.md).
+  // DECLARED BY THE SENDER, like `voice_note`: a camera take and a picked clip are the same bytes.
+  // `kind` stays MEDIA_KIND_VIDEO either way.
+  //
+  // 0 (absent, and every message written before it) is an ordinary attachment. A reader that does
+  // not know the field plays the blob as a plain video - softer than the promise, never broken -
+  // and one that knows the field but not the VALUE must read it as an ordinary attachment too,
+  // never as an error.
+  MediaIntent intent = 14;
+  // Declared length of the video in milliseconds, drawn on the tile before a byte is fetched.
+  // Display only: never trusted for a limit. 0 = not declared.
+  uint32 duration_ms = 15;
+  // When the blob is expected to be gone (sentAt + 30 days), epoch milliseconds. A DISPLAY HINT so
+  // the tile can draw its tombstone without a request: the media service's clock is the authority
+  // and a 410 is the truth. 0 = not declared.
+  int64 expires_at_ms = 16;
+}
+
+enum MediaIntent {
+  MEDIA_INTENT_NONE = 0;
+  MEDIA_INTENT_REEL_MESSAGE = 1; // an ephemeral CanaReel sent in a conversation (30 days)
+  // 2 is reserved for a later view-once mode, which would need a minClientVersion gate.
 }
 
 enum MediaEncoding {

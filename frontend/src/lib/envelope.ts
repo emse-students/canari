@@ -243,6 +243,15 @@ export function parseEnvelope(content: string): MessageEnvelope {
               // Kept whatever its value: an encoding this client does not know is refused by the
               // reader by name, and dropping it here would make the blob read as a single block.
               ...(typeof media.encoding === 'string' ? { encoding: media.encoding } : {}),
+              // The declaration of a reel message. An intent this client does not know is dropped:
+              // it reads as an ordinary attachment, never as an error.
+              ...(media.intent === 'reel-message' ? { intent: 'reel-message' as const } : {}),
+              ...(typeof media.durationMs === 'number' && media.durationMs > 0
+                ? { durationMs: media.durationMs }
+                : {}),
+              ...(typeof media.expiresAtMs === 'number' && media.expiresAtMs > 0
+                ? { expiresAtMs: media.expiresAtMs }
+                : {}),
             },
             caption: typeof obj.caption === 'string' ? obj.caption : undefined,
             replyTo: safeReplyTo(obj.replyTo),

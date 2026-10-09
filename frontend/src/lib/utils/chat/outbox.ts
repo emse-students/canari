@@ -7,6 +7,7 @@ import type { MediaRef } from '$lib/media';
 import {
   encodeAppMessage,
   mediaEncodingProtoField,
+  mediaReelProtoFields,
   mediaKindToType,
   mediaPlaceholderProtoField,
   mkMedia,
@@ -393,6 +394,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           log(`[OUTBOX] ${entry.id.slice(0, 8)}… media ref not persisted: ${String(e)}`)
         );
     }
+    // What the sender declared (a reel message's intent, length and expiry hint): empty for an
+    // ordinary attachment, which therefore encodes exactly as before.
+    const declaration = {
+      ...(media.intent ? { intent: media.intent } : {}),
+      ...(media.durationMs ? { durationMs: media.durationMs } : {}),
+      ...(media.expiresAtMs ? { expiresAtMs: media.expiresAtMs } : {}),
+    };
     const fullRef: MediaRef = {
       type: mediaKindToType(media.kind),
       mediaId: ref.mediaId,
@@ -406,6 +414,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       ...(media.placeholder ? { placeholder: media.placeholder } : {}),
       ...(media.voiceNote ? { voiceNote: true } : {}),
       ...(ref.encoding ? { encoding: ref.encoding } : {}),
+      ...declaration,
     };
     const proto = encodeAppMessage({
       ...mkMedia({
@@ -421,6 +430,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
         ...mediaPlaceholderProtoField(media.placeholder),
         ...mediaEncodingProtoField(ref.encoding),
+        ...mediaReelProtoFields(declaration),
       }),
       messageId: entry.id,
       sentAt: entry.sentAt,

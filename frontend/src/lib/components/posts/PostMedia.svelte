@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
   import { FileText, Download, Image as ImageIcon, Mic } from '@lucide/svelte';
   import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
@@ -83,6 +84,8 @@
     deferred?: boolean;
     /** The post's publisher and date, for the viewer's title and information panel. */
     postInfo?: Pick<MediaViewerInfo, 'senderName' | 'sentAt'>;
+    /** Extra controls for a video's bar in `galleryMode`, beside the volume button. */
+    barActions?: Snippet;
   }
 
   let {
@@ -93,6 +96,7 @@
     letterbox = false,
     deferred = false,
     postInfo,
+    barActions,
   }: Props = $props();
 
   let blobUrl = $state<string | null>(null);
@@ -300,7 +304,12 @@
       />
     {:else if mediaType === 'video'}
       <!-- A streamed `playUrl` reaches the element untouched: `VideoPlayer` never appends to it. -->
-      <VideoPlayer src={playUrl!} disableRemotePlayback={streamManaged} class="h-full w-full" />
+      <VideoPlayer
+        src={playUrl!}
+        disableRemotePlayback={streamManaged}
+        class="h-full w-full"
+        {barActions}
+      />
     {:else}
       <div class="flex flex-col items-center gap-3 text-white/80">
         <FileText size={48} strokeWidth={1.5} />

@@ -15,6 +15,7 @@
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
   import MessageMediaRenderer from './MessageMediaRenderer.svelte';
+  import { isReelMessage } from '$lib/reels/chatReel';
   import ChannelPoll from '../channels/ChannelPoll.svelte';
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
@@ -230,6 +231,14 @@
       (envelope.kind === 'text' || envelope.kind === 'media' ? envelope.replyTo : undefined)
   );
   let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
+  /**
+   * A CanaReel sent in this conversation: a tile that fetches NOTHING until it is tapped (the
+   * viewer downloads), and a message that is NOT forwarded - forwarding copies the media ref, so
+   * the key, and a reel message is as widely seen as the audience it was sent to
+   * ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md)).
+   */
+  const isReelMessageRow = $derived(isReelMessage(mediaRef));
+  const forwardAction = $derived(onForward && !isReelMessageRow ? onForward : undefined);
   // Image/video with no caption and no reply quote - render naked (no bubble background)
   const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
   // A photo or a video WITH text: the media fills the top of the bubble and the caption sits under
@@ -558,6 +567,8 @@
     // Empty mediaId = media still queued in the outbox (upload pending): leave blobUrl null
     // so MessageMediaRenderer shows its skeleton/spinner. Don't attempt a download (would 404).
     if (!mediaRef || !mediaRef.mediaId || !authToken || !isNearViewport) return;
+    // A reel message's tile downloads nothing: its viewer does, on the tap.
+    if (isReelMessageRow) return;
 
     void mediaAttempt;
     let destroyed = false;
@@ -798,6 +809,8 @@
                 bleed={bleedsMedia}
                 {senderId}
                 sentAt={timestamp}
+                {messageId}
+                {authToken}
                 onNear={() => (isNearViewport = true)}
               />
 
@@ -833,7 +846,7 @@
               hasMedia={!!mediaRef}
               {showEmojiPicker}
               onReply={onReply ? () => onReply!(messageId) : undefined}
-              onForward={onForward ? () => onForward!(messageId) : undefined}
+              onForward={forwardAction ? () => forwardAction!(messageId) : undefined}
               onReact={onReact ? (emoji) => onReact!(messageId, emoji) : undefined}
               userReactions={userOwnReactions}
               onToggleEmojiPicker={!isDeleted && onReact
@@ -920,7 +933,7 @@
             showMobileActions = false;
           }
         : undefined}
-      onForward={onForward && !isDeleted ? () => onForward!(messageId) : undefined}
+      onForward={forwardAction && !isDeleted ? () => forwardAction!(messageId) : undefined}
       {pinned}
       onPin={!isDeleted && onTogglePin
         ? () => {

@@ -53,6 +53,7 @@ import { getUserDisplayNameSync, notificationSenderName } from '$lib/utils/users
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import { MediaService } from '$lib/media';
+import { isReelMessage } from '$lib/reels/chatReel';
 import {
   applyEditToBody,
   getPreviewText,
@@ -1713,6 +1714,13 @@ export function useMessaging() {
     if (!convo) return { success: false, error: m.chat_forward_error_conversation_missing() };
 
     const env = parseEnvelope(sourceContent);
+
+    // A reel message is never relayed: the forward would copy its key and ref into a conversation
+    // that outlives the reel's 30-day audience. The bubble hides the button; THIS is the rule.
+    if (env.kind === 'media' && isReelMessage(env.media)) {
+      ctx.log(`[FORWARD] refused: a reel message is never forwarded (target "${targetName}")`);
+      return { success: false, error: m.chat_forward_error_reel() };
+    }
 
     // Channels are server-authoritative and always sendable: no MLS group, no outbox, and no
     // local echo (the `channel.message.created` broadcast is what renders the bubble).

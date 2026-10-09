@@ -346,25 +346,26 @@ time by the viewer, since an MSE URL feeds one element - the same rule the media
 
 ## Saving before the deletion (C6)
 
-**What says a reel is the member's own is the server's list**, `GET /api/posts/my-reels`
-(`reels/myReels.svelte.ts`), never `authorId`: a reel published as an association or anonymously
-carries no author for anybody, its author included, and is still theirs to save. The list is asked
-once, held FOR THE ACCOUNT THAT ASKED (another account signing in on the same device sees none of
-it), and asked again only when a reel being drawn was created AFTER the list's `serverNow` and is
-absent from it - a fact, never a timer.
+**The "my reels" list is gone from the client (2026-10-09).** The save used to need it: only the author
+had the key, so a reel was the member's own when `GET /api/posts/my-reels` said so. The save is now for
+EVERY reel (below), and it reads the ref the viewer's own player already holds, so `reels/myReels.svelte.ts`
+and `getMyReels` were deleted; the server route stays ([reels (server)](../../services/reels.md)).
 
 **There is no "deleted in N days" chip, and that is a decision** (user, 2026-10-02: *"ce n'est pas
 discret"*; the 30 days are known). #1340 had put one on the member's own reels, amber once the server
 said `expiringSoon`; it is gone from the feed card and the viewer, with its two strings
-(`reels_expires_in`, `reels_expires_today`), `myReels.daysLeft` and `reelDaysLeft`. What a reel shows
+(`reels_expires_in`, `reels_expires_today`), `myReels.daysLeft` and `reelDaysLeft` (and, since
+2026-10-09, `myReels` itself). What a reel shows
 instead is its AGE, discreetly and from the one helper (`timeAgo`, with `exactDate` as its title): the
 feed card has it in the post header, and the viewer - which has no header - carries it beside the
 author's name. `expiresAt`, `expiringSoon` and `serverNow` stay on the server's `my-reels` answer
-([reels (server)](../../services/reels.md)); `serverNow` still decides when the list is asked again.
+([reels (server)](../../services/reels.md)), which no client reads any more.
 The publish step's own note ("visible 30 days...") is unchanged and is the user's to rule on.
 
-**The save** (`ReelSaveButton`, the member's own reel, in the viewer) reads the video out of the
-media cache with the key `my-reels` handed over, and gives it to:
+**The save** (`ReelSaveButton`) is **for EVERY reel, public or not, in the player's bar right after the
+volume button** (user, 2026-10-09: *"un bouton pour sauvegarder tous les reels, public ou non"*). It is a
+`barActions` snippet that `ReelSlide` hands to `PostMedia` (gallery mode), which hands it to `VideoPlayer`;
+it reads the video out of the media cache with the key the viewer's own ref carries, and gives it to:
 
 | Where | Path | Permission |
 | --- | --- | --- |
