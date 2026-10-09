@@ -417,6 +417,12 @@ which is a tap on a notification that woke them up.
 1. Kill the app. Have the peer send a DM, then a channel message.
 2. Tap each notification. Each must land in the right conversation, **not** merely the right tab.
 3. Repeat with the app merely backgrounded (HOME, not killed).
+4. **With the session dead** (sign in, delete the device's session server-side, kill the app), tap a
+   POST push: the app must land on `/login?returnTo=%2Fpost%2F<id>` and, after signing in, on the post
+   ([sessions](sessions.md#a-dead-session-sends-the-user-to-login-carrying-where-they-were-going-2026-10-09)).
+   Read `[AUTH] Session expired - logging out and redirecting to /login?returnTo=...` in the log. A bare
+   `/login` means the deep link never reached `goto` (then `[hooks] Processing URL` is absent too, and
+   the fault is upstream of this fix: read `[hooks] launch URL read on attempt N`).
 
 **Read the log, not just the screen.** This check was recorded PASS on v0.11.7 and the DM half was
 broken the whole time: the tap does reach the right tab, and "right tab" is what a pass looks like

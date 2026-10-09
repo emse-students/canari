@@ -185,7 +185,7 @@ The local estate has no migration runner (ledger stops at 068): migrations 069-0
   NOT by tapping the settings switch) the next post announced to the same recipient raised no notification.
   Data note: a campus stored as `SAINT-ETIENNE` against `saint-etienne` shares no space (recipients=0);
   whether campus should be normalised is an open question.
-- OPEN, measured and NOT fixed: with the session deleted server-side, a killed-app tap on a post push
+- FIXED 2026-10-09 (reading owed, [check H step 4](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)): with the session deleted server-side, a killed-app tap on a post push
   boots, the refresh answers 401 and the app lands on a bare `/login`; the log shows NO
   `[hooks] Processing URL`, so the post target is dropped before any `returnTo` can carry it. A
   `returnTo` fix in `ChatBackgroundService` was tried and reverted: it does not touch this cold-start path.
