@@ -8,6 +8,7 @@ import { notifNav } from '$lib/stores/notifNav.svelte';
 import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
+import { playTone } from '$lib/utils/toneOutput';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 import {
   postNativeMessageNotification,
@@ -87,8 +88,44 @@ function stableNotifId(conversationId: string): number {
   return Math.abs(hash) || 1;
 }
 
+/** The shape of one synthesised voice; every time is in seconds after the voice's start. */
+interface SweepShape {
+  type: OscillatorType;
+  /** Frequency at the start, in Hz. */
+  from: number;
+  /** Frequency reached at `glideEnd` (equal to `from` for a steady pitch). */
+  to: number;
+  glideEnd: number;
+  /** Gain at the top of the attack. */
+  peak: number;
+  attackEnd: number;
+  decayEnd: number;
+  stopAt: number;
+}
+
+/**
+ * Schedules one voice - an exponential pitch glide under an attack/decay envelope - and returns its
+ * oscillator, already started and stopped, so `toneOutput` can release the output on its `ended`.
+ */
+function sweepVoice(ctx: AudioContext, startAt: number, shape: SweepShape): OscillatorNode {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = shape.type;
+  osc.frequency.setValueAtTime(shape.from, startAt);
+  if (shape.to !== shape.from) {
+    osc.frequency.exponentialRampToValueAtTime(shape.to, startAt + shape.glideEnd);
+  }
+  gain.gain.setValueAtTime(0.0001, startAt);
+  gain.gain.exponentialRampToValueAtTime(shape.peak, startAt + shape.attackEnd);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + shape.decayEnd);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startAt);
+  osc.stop(startAt + shape.stopAt);
+  return osc;
+}
+
 export function useNotifications() {
-  let audioContext = $state<AudioContext | null>(null);
   let lastNotificationAt = $state(0);
   let lastSendToneAt = $state(0);
   let lastReadToneAt = $state(0);
@@ -206,22 +243,8 @@ export function useNotifications() {
 
   // ---------- Audio ----------
 
-  /**
-   * Returns the shared {@link AudioContext}, creating it on first use and resuming it if the
-   * browser parked it.
-   *
-   * The resume is the point. A context constructed before the page has had a user gesture is born
-   * `suspended`, and a suspended context accepts every scheduling call without complaint and makes
-   * no sound - so the surrounding try/catch sees nothing to catch and the tone is dropped in
-   * silence. That is the ordinary case for a tab left alone: a message arrives, this is the first
-   * audio the page ever asked for, and it is inaudible. `resume()` may legitimately reject when no
-   * gesture has ever happened, which is the browser's decision to make and not an error to report.
-   */
-  function getAudioContext(): AudioContext {
-    audioContext = audioContext ?? new AudioContext();
-    if (audioContext.state === 'suspended') void audioContext.resume().catch(() => {});
-    return audioContext;
-  }
+  // The output itself - opened for a tone, suspended when the last one ends, closed when the app
+  // leaves the screen - is `toneOutput`'s; every tone below only schedules its oscillators.
 
   /** Plays a two-note descending chime (rate-limited to one every 600 ms) when an incoming message arrives. */
   function playNotificationTone() {
@@ -231,25 +254,18 @@ export function useNotifications() {
     if (now - lastNotificationAt < 600) return;
     lastNotificationAt = now;
 
-    try {
-      const ctx = getAudioContext();
-      const startAt = ctx.currentTime + 0.01;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(920, startAt);
-      osc.frequency.exponentialRampToValueAtTime(680, startAt + 0.11);
-      gain.gain.setValueAtTime(0.0001, startAt);
-      gain.gain.exponentialRampToValueAtTime(0.08, startAt + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.14);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(startAt);
-      osc.stop(startAt + 0.16);
-    } catch {
-      // Browser/autoplay restriction - silently ignored.
-    }
+    playTone('notification', (ctx, startAt) => [
+      sweepVoice(ctx, startAt, {
+        type: 'sine',
+        from: 920,
+        to: 680,
+        glideEnd: 0.11,
+        peak: 0.08,
+        attackEnd: 0.02,
+        decayEnd: 0.14,
+        stopAt: 0.16,
+      }),
+    ]);
   }
 
   /** Plays a short ascending chirp when the user sends a message (rate-limited to one every 200 ms). */
@@ -260,25 +276,18 @@ export function useNotifications() {
     if (now - lastSendToneAt < 200) return;
     lastSendToneAt = now;
 
-    try {
-      const ctx = getAudioContext();
-      const startAt = ctx.currentTime + 0.01;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(740, startAt);
-      osc.frequency.exponentialRampToValueAtTime(980, startAt + 0.08);
-      gain.gain.setValueAtTime(0.0001, startAt);
-      gain.gain.exponentialRampToValueAtTime(0.05, startAt + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.11);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(startAt);
-      osc.stop(startAt + 0.12);
-    } catch {
-      // Browser/autoplay restriction - silently ignored.
-    }
+    playTone('send', (ctx, startAt) => [
+      sweepVoice(ctx, startAt, {
+        type: 'triangle',
+        from: 740,
+        to: 980,
+        glideEnd: 0.08,
+        peak: 0.05,
+        attackEnd: 0.015,
+        decayEnd: 0.11,
+        stopAt: 0.12,
+      }),
+    ]);
   }
 
   /** Alias for playNotificationTone - used when a message is received from another user. */
@@ -291,29 +300,23 @@ export function useNotifications() {
     if (typeof window === 'undefined') return;
     if (!settings.soundsEnabled) return;
 
-    try {
-      const ctx = getAudioContext();
-      const startAt = ctx.currentTime + 0.01;
-
-      for (const [freq, offset] of [
+    playTone('incoming-call ring', (ctx, startAt) =>
+      [
         [440, 0],
         [480, 0.25],
-      ] as const) {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, startAt + offset);
-        gain.gain.setValueAtTime(0.0001, startAt + offset);
-        gain.gain.exponentialRampToValueAtTime(0.12, startAt + offset + 0.03);
-        gain.gain.exponentialRampToValueAtTime(0.0001, startAt + offset + 0.22);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(startAt + offset);
-        osc.stop(startAt + offset + 0.24);
-      }
-    } catch {
-      /* autoplay restriction */
-    }
+      ].map(([freq, offset]) =>
+        sweepVoice(ctx, startAt + offset, {
+          type: 'sine',
+          from: freq,
+          to: freq,
+          glideEnd: 0,
+          peak: 0.12,
+          attackEnd: 0.03,
+          decayEnd: 0.22,
+          stopAt: 0.24,
+        })
+      )
+    );
   }
 
   /** Starts repeating the incoming-call ring until {@link stopIncomingCallRingtone}. */
@@ -530,25 +533,18 @@ export function useNotifications() {
     if (now - lastReadToneAt < 250) return;
     lastReadToneAt = now;
 
-    try {
-      const ctx = getAudioContext();
-      const startAt = ctx.currentTime + 0.01;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(1080, startAt);
-      osc.frequency.exponentialRampToValueAtTime(820, startAt + 0.07);
-      gain.gain.setValueAtTime(0.0001, startAt);
-      gain.gain.exponentialRampToValueAtTime(0.04, startAt + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.09);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(startAt);
-      osc.stop(startAt + 0.1);
-    } catch {
-      // Browser/autoplay restriction - silently ignored.
-    }
+    playTone('read', (ctx, startAt) => [
+      sweepVoice(ctx, startAt, {
+        type: 'sine',
+        from: 1080,
+        to: 820,
+        glideEnd: 0.07,
+        peak: 0.04,
+        attackEnd: 0.01,
+        decayEnd: 0.09,
+        stopAt: 0.1,
+      }),
+    ]);
   }
 
   // ---------- System (OS-level) notifications ----------

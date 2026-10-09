@@ -1,3 +1,5 @@
+import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { Log } from '$lib/utils/Log';
 
 /**
@@ -18,9 +20,16 @@ import { Log } from '$lib/utils/Log';
  * ({@link isForegroundPlaying}). They never steal playback back from what the reader chose; they pick
  * up again once the foreground goes quiet ({@link onPlaybackIdle}).
  *
+ * THE APP LEAVING THE SCREEN (2026-10-09, `toneOutput.ts` has the measurement): the app holds no
+ * audio output when it is not playing something, and a frozen process plays nothing. So on leaving
+ * the screen ({@link onAppScreenChange}) the AMBIENT videos are paused everywhere - nobody watches a
+ * muted feed in the background - and on a native phone, which Android freezes in the background,
+ * EVERY registered media is paused too: playback there would stop mid-stream and leave the output
+ * `started`. A web or desktop tab keeps a voice note the reader started playing behind another tab.
+ * Coming back resumes only the ambient video on screen, through {@link onPlaybackIdle}.
+ *
  * WHAT IT DELIBERATELY DOES NOT DO: a refused `play()` raises no `play` event, so it claims nothing and
- * pauses nothing; a page going to the background pauses nothing new (no `visibilitychange` listener);
- * notification sounds and a call's streams are not registered, so they are untouched.
+ * pauses nothing; notification sounds and a call's streams are not registered, so they are untouched.
  */
 export interface PlaybackOptions {
   /** Background playback (muted feed videos): yields to every foreground media. */
@@ -92,7 +101,30 @@ export function onPlaybackIdle(listener: () => void) {
 
 function notifyIfIdle() {
   if (isAnythingPlaying()) return;
+  // Off screen, "idle" brings nothing back: the pauses below would otherwise restart the feed.
+  if (!isAppOnScreen()) return;
   for (const listener of idleListeners) listener();
+}
+
+let screenWatchArmed = false;
+
+/** Registers, once, the pause on leaving the screen and the ambient resume on coming back. */
+function armScreenWatch() {
+  if (screenWatchArmed) return;
+  screenWatchArmed = true;
+  onAppScreenChange((onScreen) => {
+    if (onScreen) {
+      Log.d('VIDEO', 'playback arbiter: back on screen, the ambient video may resume');
+      notifyIfIdle();
+      return;
+    }
+    const everything = isMobileTauriRuntime();
+    Log.d(
+      'VIDEO',
+      `playback arbiter: the app left the screen, pausing ${everything ? 'every media' : 'ambient videos'}`
+    );
+    pausePlayback(undefined, !everything, 'the app left the screen');
+  });
 }
 
 /**
@@ -100,6 +132,7 @@ function notifyIfIdle() {
  * Unregisters on `destroy`, so nothing outlives its element.
  */
 export function arbitratePlayback(el: HTMLMediaElement, options: PlaybackOptions = {}) {
+  armScreenWatch();
   registry.set(el, { ambient: options.ambient === true });
   const onPlay = () => claimPlayback(el);
   const onQuiet = () => notifyIfIdle();
