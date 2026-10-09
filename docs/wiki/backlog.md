@@ -64,14 +64,6 @@ rollback and old clients). Left: a drop/rename migration once `minClientVersion`
 release; and an association whose delegation was onboarded on Stripe only is not payment-ready until it
 onboards on Lydia.
 
-### Open question - may EMSE/ME staff (no cursus) read the association posts of their campus?
-
-User, 2026-10-07: staff have no cursus by definition and see no association post today (the agenda
-already lets them follow their whole campus). Showing every association post of the campus may be
-SENSITIVE and the user has not decided. Candidates: personal posts of other staff plus institution posts
-of their campus only (the minimal reading), or the whole campus feed as for the agenda. Nothing to build
-until answered. (A named grant, #1606, is the per-person route.)
-
 ---
 
 ## Owed a VERIFICATION, and nothing else
@@ -143,7 +135,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **create an Authentik test user `canari-test-epsilon` (campus gardanne), or allow a scoped permission rule for it** - the read-grants dev checks need a second campus and Authentik is one instance for dev and prod, so no agent may touch it. No stable ships the read grants before they run | 1 account | [Audiences](#audiences-of-associations-lists-and-institutions---built-on-dev-in-v120-alpha1) |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala` (the repository answers `404`). Nothing runs from it; it is somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
-| **may staff read the association posts of their campus?** | 1 decision | [above](#open-question---may-emseme-staff-no-cursus-read-the-association-posts-of-their-campus) |
+| **may staff read the association posts of their campus?** one line: keep (1), institution posts of the campus (2), or the whole campus (3) | 1 decision | [open-questions](open-questions.md#may-emseme-staff-no-cursus-read-the-association-posts-of-their-campus) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
 
