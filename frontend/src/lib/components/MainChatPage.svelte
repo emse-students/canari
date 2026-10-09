@@ -1201,6 +1201,8 @@
                 )
             : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
           canModerate={canModerateSelectedChannel}
+          onRetrySend={(msgId) => void messaging.retrySend(msgCtx(), msgId)}
+          onDiscardSend={(msgId) => messaging.discardSend(msgCtx(), msgId)}
           onDelete={isSelectedChannel
             ? (msgId) =>
                 void channels.deleteChannelMessage(

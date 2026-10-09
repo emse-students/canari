@@ -305,6 +305,8 @@ export function isChannelConversationId(conversationId: string): boolean {
  * and the only thing that invalidates it - the community's roster moving - is checked before the
  * seal, not discovered by a refusal afterwards. *Never learn by failing what a fact could have
  * told you.*
+ *
+ * Resolves with the id of the row the server created, when its reply carries one.
  */
 export async function sendEncryptedChannelMessage(
   channelId: string,
@@ -313,10 +315,10 @@ export async function sendEncryptedChannelMessage(
   poll?: ChannelPollInput,
   mentionedUserIds?: string[],
   options?: { silent?: boolean }
-): Promise<void> {
+): Promise<string | undefined> {
   const channel = rawChannelId(channelId);
   const sealed = await sealChannelMessage(channel, payloadBytes);
-  await channelService.sendMessage(channel, {
+  const row = await channelService.sendMessage(channel, {
     ciphertext: sealed.ciphertext,
     nonce: sealed.nonce,
     senderSessionId: sealed.senderSessionId,
@@ -329,6 +331,9 @@ export async function sendEncryptedChannelMessage(
       ? { silent: true }
       : { seedFrame: sealed.seedFrame, seedGroupId: sealed.seedGroupId }),
   });
+  // The id the SERVER gave its row, which the sender's own echo is re-keyed to (WP-OFF-2).
+  const serverId = (row as { id?: unknown } | null | undefined)?.id;
+  return typeof serverId === 'string' && serverId ? serverId : undefined;
 }
 
 /**
