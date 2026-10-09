@@ -1145,6 +1145,23 @@ The seven decisions of [the decisions](#the-nominative-read-grants---the-decisio
 - **Cost, measured** (throwaway PostgreSQL 16, 50,000 posts over 300 associations, 20,000 users, 40,000 requested grants = 8,000 grantees with a few cells each - a real grantee holds at most 12 cells, so "20k grants on 200 users" cannot exist; `EXPLAIN (ANALYZE, BUFFERS)` of `postVisibleToViewerSql` as a filter, `ORDER BY createdAt DESC LIMIT 20`, 3rd run, JIT off): a reader with NO grant 600 ms / 198k buffers before this change, 670 ms / 268k buffers with it (+10%, the per-row grant lookup finding no row); a grantee 1,060 ms / 464k buffers. With JIT on the same queries are 930 / 1,180 / 1,500 ms. The baseline itself is a nested loop over every post (the predicate is evaluated per row), which is the pre-existing shape of the feed predicate, not this change. **No index added**: `CREATE INDEX ON association_audiences ("associationId")` was tried and the planner kept the sequential scan of a 300-row table in all six plans; `read_grants` is already served by `idx_read_grants_user` (bitmap index scan).
 - **Owed**: one look at the grid signed in. The feed cache is dropped on every real change.
 
+#### The eight dev checks (2026-10-09, `dev.canari-emse.fr` on `1.2.1-alpha.1`, same code as `v1.2.1`)
+
+Set up through the API as the dev global admin (`canari-test-delta`): two throwaway associations, one with the audience `(campus gardanne, every formation)` holding a post and a poll post, one saint-etienne control. Grantee: `canari-test-gamma` (ICM, saint-etienne), granted the whole gardanne campus with `PUT /api/associations/read-grants`. Every fixture, the grant, the membership and the BDE flag were removed afterwards (re-read in the dev database: 0 left).
+
+| # | Check | Verdict | Evidence |
+|---|---|---|---|
+| 1 | a grantee sees the association posts of the granted campus | PASS | before the grant `GET /api/posts/:id` 404 for both posts; after it 200, and both are in `GET /api/posts?limit=50` |
+| 2 | no personal post of that campus | PASS, on the predicate | dev has NO personal post by a gardanne author and `canari-test-epsilon`'s credentials are not in `test-accounts.json`, so no end-to-end post. The shipped `postVisibleToViewerSql` was run read-only on the dev database with the grant live, over a personal post by each of the 8 gardanne users: `false` for all 8, `true` for the association post |
+| 3 | can react | PASS | `POST /reactions` 201 |
+| 4 | can comment | PASS | `POST /comments` 201 |
+| 5 | cannot vote through the grant | PASS | `POST /polls/:pollId/vote` 404 `Post not found`; the stored poll keeps zero votes |
+| 6 | cannot republish through the grant | PASS | the grantee, `POST_AS` of a saint-etienne association, gets 404 `Post not found` and no row is written; control: the same grantee republishes a post it sees natively, 201 |
+| 7 | a revoke restores the baseline | PASS | after the revoke: post 404, reaction 404, comment 404, the posts gone from the feed, `Publication introuvable` on screen |
+| 8 | a star reads audiences of its own campus only | PASS | before: 403 `AUDIENCE_ADMIN_OR_BDE_REQUIRED`; as `MANAGE_ASSO` of a saint-etienne BDE: own-campus association 200 `[{campus: saint-etienne}]`, the gardanne association 403 `AUDIENCE_OUTSIDE_BDE_CAMPUS` |
+
+Two P3 client defects were found on the way, both in the [backlog](backlog.md#audiences-of-associations-lists-and-institutions---built-in-production-since-v120).
+
 ### FEED_GATE - a 403 is a verdict, not a failure (2026-10-06)
 
 Proven cause: `FeedAudienceGuard` answers a signed-in reader with no space and no association `403` (by design, tested in `feed-audience.guard.spec.ts`), and `routes/posts/+page.svelte` mapped EVERY rejected posts read to `posts_load_error_title`. The redirect to `/chat` only fires on a KNOWN `false` verdict, so an unknown or stale `true` verdict (revalidated behind the render, no redirect) landed on the error. Fix on the client, by status: `isFeedAudienceRefusal` / `isOutsideFeedAudience` (`lib/posts/feedAudience.ts`) classify a 403, correct the remembered verdict, and the page renders the `posts_no_audience_*` empty state; 401/5xx/transport keep the generic error and its retry. Test: `feedAudienceRefusal.test.ts`.
