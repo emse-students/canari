@@ -701,7 +701,19 @@ retried. `requestBodyBytes` fails closed: a body of unknown size (a stream) coun
 **A failed chunked attempt gives its session back.** Every restart uses a new uploadId, so the staged bytes
 would wait for the 24 h sweep. `MediaService` calls `DELETE /api/media/upload/chunk/:id` (best effort, logged,
 never delaying the failure) on a cancel, a refusal, a stall or a lost chunk, and the server route is owner-checked
-and idempotent. `complete` is idempotent too: a repeated call for a finished session returns the same mediaId.
+and idempotent. `complete` is idempotent too: a repeated call for a finished session returns the same mediaId, from a
+`<uploadId>.done` sidecar file next to the staging (so it survives a restart or a redeploy; it ages out with
+the 24 h orphan sweep). **The client uses it**: on a lost answer, a transport failure or a 5xx of `complete`
+it re-asks the SAME uploadId, at most 3 times (a counter, no clock); starting over under a new uploadId would
+store the object twice. After those 3 the attempt fails, the session is released and the outbox restarts under a
+new uploadId: if the server had finished every time, one object is orphaned (ephemeral class: the idle sweep
+takes it). The **single-request route (< 8 MiB) has no memo**, a repeat stores a second object, so it keeps the
+45 s bound for the answer instead of the 5 min of a chunked `complete`. A cancel during `complete` is logged
+(the assembled object is then unreferenced). **What releases a session when the app is killed: nothing but the
+24 h sweep** - the DELETE is a best-effort of a live page (it refreshes an expired token through `fetchUpload`).
+**A blocked upload is parked, not ended**: a CrowdSec ban is time-limited, so the entry stays in the queue with
+the bubble phase `blocked` (retry + delete), is never retried by the ladder, and a reload makes one new
+attempt.
 Pinned by `media.chunkLifecycle.test.ts` (failure at chunk N, refusal, cancel, slow complete) and
 `media.service.chunk-lifecycle.spec.ts`. The outbox ends the entry at once (`failPermanently`: bubble `error`, entry
 deleted, a notice in the thread, metric cause), and the bubble shows *Envoi refuse par le serveur* with the

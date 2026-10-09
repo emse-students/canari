@@ -19,7 +19,9 @@
 
   const percent = $derived(uploadPercent(view));
   const moving = $derived(view.phase === 'uploading' || view.phase === 'preparing');
-  const retryable = $derived(view.phase === 'stalled' || view.phase === 'waiting');
+  const retryable = $derived(
+    view.phase === 'stalled' || view.phase === 'waiting' || view.phase === 'blocked'
+  );
 </script>
 
 <!-- A ring that FILLS with the bytes sent, the cancel cross inside it (Messenger's and WhatsApp's

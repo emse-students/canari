@@ -18,6 +18,8 @@ export function uploadCaption(view: UploadView, declaredSize: number): string {
       return m.upload_preparing();
     case 'waiting':
       return m.upload_waiting();
+    case 'blocked':
+      return m.upload_blocked();
     case 'stalled':
       return m.upload_stalled({ sent: formatFileSize(view.loaded), total });
     case 'uploading': {

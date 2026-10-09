@@ -75,12 +75,15 @@ it('the cancel is there while it moves and reaches the sender, the retry is not 
   expect(button(m.upload_retry_label())).toBeUndefined();
 });
 
-it.each(['stalled', 'waiting'] as const)('%s offers a retry beside the cancel', (phase) => {
-  const { button, onRetryUpload } = render({ ...uploading, phase });
-  button(m.upload_retry_label())!.click();
-  expect(onRetryUpload).toHaveBeenCalledOnce();
-  expect(button(m.upload_cancel_label())).toBeDefined();
-});
+it.each(['stalled', 'waiting', 'blocked'] as const)(
+  '%s offers a retry beside the cancel',
+  (phase) => {
+    const { button, onRetryUpload } = render({ ...uploading, phase });
+    button(m.upload_retry_label())!.click();
+    expect(onRetryUpload).toHaveBeenCalledOnce();
+    expect(button(m.upload_cancel_label())).toBeDefined();
+  }
+);
 
 it('waiting names what it waits for rather than showing a percentage', () => {
   render({ phase: 'waiting', loaded: 0, total: 0, attempt: 2 });

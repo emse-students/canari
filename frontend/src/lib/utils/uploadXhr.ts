@@ -42,8 +42,10 @@ export const DEFAULT_UPLOAD_IDLE_MS = 45_000;
 /**
  * How long the server may take to ANSWER once the whole body has been sent. Five minutes: a chunked
  * `complete` of 100 MB to object storage is the slowest thing the media service does. The route is
- * idempotent (a repeated `complete` returns the same mediaId), so a client that does give up and
- * asks again cannot duplicate the object.
+ * idempotent PER uploadId (a repeated `complete` returns the same mediaId), so a client that gives up
+ * must re-ask the SAME uploadId (`MediaService` does, a counted number of times) - restarting under a
+ * new one stores the object twice. The single-request route has no such memo and is given the short
+ * idle bound as its answer bound instead.
  */
 export const DEFAULT_UPLOAD_ANSWER_MS = 300_000;
 

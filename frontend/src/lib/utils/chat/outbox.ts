@@ -238,6 +238,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   const transportHeld = new Set<string>();
   /** The subset armed by a reconnect: each id skips its backoff ONCE, then is forgotten. */
   const resuming = new Set<string>();
+  /**
+   * Entries whose upload the GATEWAY blocked (a CrowdSec 403 ban page). A ban is time-limited and
+   * says nothing about the file, so the entry is KEPT - never deleted, never auto-retried in a loop -
+   * until the member taps retry (or deletes it). In memory by design: a reload makes ONE new attempt,
+   * which re-parks it if the ban still stands.
+   */
+  const parked = new Set<string>();
   const lanes = new Map<string, Promise<void>>();
   /** Conversations whose running lane must look at the queue once more (an enqueue or wake-up arrived). */
   const laneRerun = new Set<string>();
@@ -553,7 +560,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function failPermanently(
     entry: OutboxEntry,
     terminalId: string,
-    cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large' | 'blocked' | 'refused'
+    cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large' | 'refused'
   ): Promise<FlushOutcome> {
     // THE KIND IS THE SEVERITY, and this line used to omit the one thing that decides it. A
     // `control` entry dying with its group is a read receipt or a reaction that lost a race to a
@@ -568,18 +575,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     patchStatus(entry.id, 'error');
     clearUpload(entry.id);
     if (entry.kind !== 'control') {
-      if (cause === 'too-large' || cause === 'blocked' || cause === 'refused') {
+      if (cause === 'too-large' || cause === 'refused') {
         // THE ONE PERMANENT FAILURE THAT IS ABOUT THE OBJECT, NOT THE GROUP: nothing about the
         // conversation changed, so no banner and no eviction - only a line in the thread that tells
         // the author which message will never go and what to do about it. Best-effort, and logged.
         await deps
           .addMessageToChat?.(
             'system',
-            cause === 'too-large'
-              ? m.outbox_upload_too_large()
-              : cause === 'blocked'
-                ? m.outbox_upload_blocked()
-                : m.outbox_upload_refused(),
+            cause === 'too-large' ? m.outbox_upload_too_large() : m.outbox_upload_refused(),
             entry.conversationId,
             { isSystem: true }
           )
@@ -685,6 +688,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // Consumed here, whether or not the backoff was still running, so a stale arming cannot outlive
     // the reconnect it came from.
     const resumed = resuming.delete(entry.id);
+    if (!resumed && parked.has(entry.id)) return 'skip';
+    parked.delete(entry.id);
     if (!resumed && entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… skipped, backing off for ${entry.nextAttemptAt - Date.now()}ms (attempt ${entry.attempts})`
@@ -876,6 +881,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // 2026-10-10, which spun the bubble for ever). It accuses: each is the visible end of an upload
       // path that shipped something the other side cannot take.
       const refusal = uploadRefusalCause(e);
+      if (refusal === 'blocked') {
+        log(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… upload BLOCKED by the gateway (${String(e).slice(0, 120)}) - parked for a manual retry, entry kept`
+        );
+        console.error(`[OUTBOX] upload blocked by the gateway: ${String(e).slice(0, 120)}`);
+        parked.add(entry.id);
+        patchStatus(entry.id, 'pending');
+        patchUpload(entry.id, { phase: 'blocked' });
+        return 'skip';
+      }
       if (refusal) {
         const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;
         const line = `[OUTBOX] ${entry.id.slice(0, 8)}… upload REFUSED (${refusal}: ${String(e).slice(0, 120)}) - ${detail} in ${terminalId.slice(0, 8)}…: no retry can succeed, giving up`;
@@ -1092,6 +1107,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // the durable row (every future flush), this tab's snapshot (a flush already walking), and
       // the other tabs' snapshots (a leader draining on our behalf).
       cancelled.add(messageId);
+      parked.delete(messageId);
       publishOutboxEntryCancelled(messageId);
       await storage
         .deleteOutboxEntry(messageId)
@@ -1129,6 +1145,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // Skip the backoff for this entry (the one `resuming` already exists for) and, when its
       // transfer is on the wire and stalled, abandon it: the flush then restarts it at once.
       resuming.add(messageId);
+      parked.delete(messageId);
       const running = uploads.get(messageId);
       if (running) running.abort('retry');
       else runFlush();

@@ -2055,11 +2055,6 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
   });
 
   it.each([
-    [
-      'a gateway 403 (the host WAF ban page)',
-      new MediaUploadError(403, 'ban', 'gateway'),
-      'blocked',
-    ],
     ['an application 403', new MediaUploadError(403, 'nope'), 'refused'],
     ['a 422', new MediaUploadError(422, 'bad'), 'refused'],
   ])(
@@ -2093,6 +2088,58 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
       errorSpy.mockRestore();
     }
   );
+
+  it('a gateway 403 PARKS the entry: kept, no auto-retry, retry offered, then it goes up', async () => {
+    const storage = makeStorage([mediaEntry('k1')]);
+    const uploadMedia = vi
+      .fn()
+      .mockRejectedValueOnce(new MediaUploadError(403, 'ban', 'gateway'))
+      .mockResolvedValue(REF);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['k1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+    await outbox.flush();
+    await outbox.flush();
+
+    expect(uploadMedia).toHaveBeenCalledTimes(1); // parked: not retried by the ladder
+    expect(storage._map.has('k1')).toBe(true); // kept, not deleted
+    expect(uploadViewOf('k1')?.phase).toBe('blocked');
+
+    outbox.retryUpload('k1');
+    await vi.waitFor(() => expect(storage._map.has('k1')).toBe(false));
+    expect(uploadMedia).toHaveBeenCalledTimes(2);
+    errorSpy.mockRestore();
+  });
+
+  it('a parked entry can still be deleted', async () => {
+    const storage = makeStorage([mediaEntry('k2')]);
+    const uploadMedia = vi.fn().mockRejectedValue(new MediaUploadError(403, 'ban', 'gateway'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['k2'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+    await outbox.flush();
+    expect(await outbox.cancelPending('k2')).toBe(true);
+    expect(storage._map.has('k2')).toBe(false);
+    errorSpy.mockRestore();
+  });
 
   it('a 429 and a 503 are still retried: they say later, not no', async () => {
     for (const status of [429, 503]) {

@@ -41,6 +41,10 @@ function service(putDelayMs = 0) {
 const staged: string[] = [];
 afterEach(async () => {
   for (const f of staged.splice(0)) await fs.remove(f);
+  // Completion records are sidecars next to the staging; none may outlive a test.
+  for (const n of await fs.readdir('chunks_temp').catch(() => [] as string[])) {
+    if (n.endsWith('.done')) await fs.remove(`chunks_temp/${n}`);
+  }
 });
 
 async function openAndStage(svc: MediaService, internals: Internals, owner = OWNER) {
@@ -111,5 +115,74 @@ describe('completeChunkedUpload is idempotent', () => {
     await expect(
       svc.completeChunkedUpload(uploadId, 1e8, 'someone-else', 'ephemeral')
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('the completion record survives the process', () => {
+  it('a NEW service instance (a restart) still answers the same mediaId and stores nothing', async () => {
+    const first = service();
+    const { uploadId } = await openAndStage(first.svc, first.internals);
+    const mediaId = await first.svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
+    staged.push(first.internals.chunkTempPath(uploadId) + '.done');
+
+    const restarted = service();
+    const again = await restarted.svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
+
+    expect(again).toBe(mediaId);
+    expect(restarted.internals.storage.putFileStream).not.toHaveBeenCalled();
+  });
+
+  it('refuses another member after the restart too', async () => {
+    const first = service();
+    const { uploadId } = await openAndStage(first.svc, first.internals);
+    await first.svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
+    staged.push(first.internals.chunkTempPath(uploadId) + '.done');
+
+    const restarted = service();
+    await expect(
+      restarted.svc.completeChunkedUpload(uploadId, 1e8, 'someone-else', 'ephemeral')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('the opener map does not leak', () => {
+  const owners = (i: Internals) =>
+    (i as unknown as { chunkOwners?: Map<string, string> }).chunkOwners;
+
+  it('forgets a session once it completed', async () => {
+    const { svc, internals } = service();
+    const { uploadId } = await openAndStage(svc, internals);
+    expect(owners(internals)?.has(uploadId)).toBe(true);
+    await svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
+    staged.push(internals.chunkTempPath(uploadId) + '.done');
+    expect(owners(internals)?.has(uploadId)).toBe(false);
+  });
+
+  it('forgets a session whose append went over the cap', async () => {
+    const { svc, internals } = service();
+    const uploadId = await svc.initChunkedUpload(OWNER, undefined, undefined, 100);
+    staged.push(internals.chunkTempPath(uploadId));
+    await expect(svc.appendChunk(uploadId, Buffer.alloc(200), 100)).rejects.toThrow(
+      'Chunked upload exceeds'
+    );
+    expect(owners(internals)?.has(uploadId)).toBe(false);
+  });
+
+  it('forgets a session whose complete failed', async () => {
+    const { svc, internals } = service();
+    const { uploadId } = await openAndStage(svc, internals);
+    internals.storage.putFileStream.mockRejectedValueOnce(new Error('storage down'));
+    await expect(svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral')).rejects.toThrow(
+      'storage down'
+    );
+    expect(owners(internals)?.has(uploadId)).toBe(false);
+  });
+
+  it('the sweeper forgets an opener whose staged file is gone', async () => {
+    const { svc, internals } = service();
+    const { uploadId, file } = await openAndStage(svc, internals);
+    await fs.remove(file);
+    await (svc as unknown as { purgeOrphanedChunks: () => Promise<void> }).purgeOrphanedChunks();
+    expect(owners(internals)?.has(uploadId)).toBe(false);
   });
 });

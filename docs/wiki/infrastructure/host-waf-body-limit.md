@@ -29,8 +29,8 @@ It is not a slow-link problem and no retry changes it.
   (`upload/chunk/init`, chunks, `complete`); `fetchUpload` refuses to send a body over the host limit.
   The media-service 100 MB chunked policy and 50 MB `maxBytes` are unchanged.
 - **A refusal is an answer, never transient.** `MediaUploadError` carries status and origin (HTML =
-  `gateway`); the outbox ends the entry with `blocked` / `refused` / `too-large`, an error bubble with the
-  delete action, and a notice in the thread. `blocked` is ONLY a gateway 403 HTML page; other gateway
+  `gateway`); the outbox ends the entry with `refused` / `too-large` (an error bubble with the delete
+  action and a notice in the thread). A gateway 403 HTML page is `blocked`: PARKED, not ended (a ban is time-limited), with retry + delete, never auto-retried. Other gateway
   statuses are retried. A failed chunk session is released with `DELETE /api/media/upload/chunk/:id`.
 - **Raise the constants only after the host's limit is raised AND re-measured.**
 

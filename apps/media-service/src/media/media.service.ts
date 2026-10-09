@@ -19,7 +19,6 @@ import sharp from 'sharp';
 /** UUID v4 pattern - used to validate user-supplied IDs before path joins and property accesses. */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 /** How many finished legacy chunk sessions are remembered (uploadId -> mediaId) for an idempotent `complete`. */
-const COMPLETED_MEMO_MAX = 2000;
 
 const CHUNK_DIR = path.join(process.cwd(), 'chunks_temp');
 // Stored in a dedicated directory so it can be mounted as a named Docker volume
@@ -300,13 +299,6 @@ export class MediaService {
    * routes (media-streaming-upload WP-S6).
    */
   private chunkOwners?: Map<string, string>;
-  /**
-   * The mediaId each COMPLETED legacy session produced, by uploadId, so a `complete` whose answer was
-   * lost (or abandoned by a client that gave up waiting) and is asked again returns the SAME id
-   * instead of failing - or, worse, being retried from scratch and storing the object twice.
-   * Bounded ({@link COMPLETED_MEMO_MAX}), oldest first out.
-   */
-  private completedChunkUploads?: Map<string, { mediaId: string; ownerId?: string }>;
   private readonly sweepIntervalMs = Number.parseInt(
     process.env.MEDIA_RETENTION_SWEEP_MS ?? `${DEFAULT_SWEEP_MS}`,
     10
@@ -1103,7 +1095,6 @@ export class MediaService {
       await fs.ensureFile(this.chunkTempPath(uploadId));
     } catch (err) {
       this.dropChunkSession(uploadId);
-      this.chunkOwners?.delete(uploadId);
       throw err;
     }
     return uploadId;
@@ -1133,7 +1124,6 @@ export class MediaService {
       const existed = await fs.pathExists(tempFile);
       if (existed) await fs.remove(tempFile);
       this.dropChunkSession(uploadId);
-      this.chunkOwners?.delete(uploadId);
       this.logger.log(
         `Chunked upload ${uploadId} abandoned by its client (${existed ? 'staged bytes removed' : 'nothing staged'})`
       );
@@ -1143,6 +1133,7 @@ export class MediaService {
 
   /** Gives a session's reservation back and forgets it; a no-op for a session that held none. */
   private dropChunkSession(uploadId: string): void {
+    this.chunkOwners?.delete(uploadId);
     const session = this.chunkSessions?.get(uploadId);
     if (!session) return;
     session.release();
@@ -1219,7 +1210,7 @@ export class MediaService {
       // A `complete` asked again for a session that already produced its object answers with the
       // SAME id (a lost or abandoned response, a client retry) - never a second stored copy. The lock
       // serialises it behind a first call still assembling, so the memo is read after it lands.
-      const done = this.completedChunkUploads?.get(uploadId);
+      const done = await this.readCompletedChunkUpload(uploadId);
       if (done) {
         if (done.ownerId !== ownerId) throw new ForbiddenException('Not your upload session');
         this.logger.log(
@@ -1267,10 +1258,7 @@ export class MediaService {
         // Entry registered: the reservation hands over to it in this same synchronous run.
         release();
         this.dropChunkSession(uploadId);
-        this.chunkOwners?.delete(uploadId);
-        const memo = (this.completedChunkUploads ??= new Map());
-        memo.set(uploadId, { mediaId, ownerId });
-        if (memo.size > COMPLETED_MEMO_MAX) memo.delete(memo.keys().next().value as string);
+        await this.writeCompletedChunkUpload(uploadId, { mediaId, ownerId });
         await this.persistMetadata();
 
         return mediaId;
@@ -1279,6 +1267,40 @@ export class MediaService {
         this.dropChunkSession(uploadId);
       }
     });
+  }
+
+  /**
+   * THE ANSWER OF A COMPLETED LEGACY SESSION, kept as a sidecar file next to the staging
+   * (`<uploadId>.done`) so a `complete` whose answer was lost, and is asked again, gets the SAME
+   * mediaId instead of storing the object twice. On disk, not in memory, so it survives a restart or
+   * a redeploy (the common moment for a lost answer); it ages out with the 24 h orphan sweep, which
+   * is also the lifetime of the session it answers for. Failures are logged, never thrown: a memo
+   * that cannot be written costs only the idempotence of a retry.
+   */
+  private async writeCompletedChunkUpload(
+    uploadId: string,
+    done: { mediaId: string; ownerId?: string }
+  ): Promise<void> {
+    try {
+      await fs.writeFile(`${this.chunkTempPath(uploadId)}.done`, JSON.stringify(done));
+    } catch (err) {
+      this.logger.warn(
+        `Chunked upload ${uploadId}: could not record its completion: ${String(err)}`
+      );
+    }
+  }
+
+  private async readCompletedChunkUpload(
+    uploadId: string
+  ): Promise<{ mediaId: string; ownerId?: string } | null> {
+    const file = `${this.chunkTempPath(uploadId)}.done`;
+    if (!(await fs.pathExists(file))) return null;
+    try {
+      return JSON.parse(await fs.readFile(file, 'utf8')) as { mediaId: string; ownerId?: string };
+    } catch (err) {
+      this.logger.warn(`Chunked upload ${uploadId}: unreadable completion record: ${String(err)}`);
+      return null;
+    }
   }
 
   /**
@@ -1540,8 +1562,12 @@ export class MediaService {
     } catch {
       // CHUNK_DIR may not exist yet on first run - ignore.
     }
-    // A reservation must not outlive its staged file (swept above, or lost with the volume).
-    for (const uploadId of this.chunkSessions?.keys() ?? []) {
+    // A reservation must not outlive its staged file (swept above, or lost with the volume), and
+    // neither must the record of who opened it.
+    for (const uploadId of [
+      ...(this.chunkSessions?.keys() ?? []),
+      ...(this.chunkOwners?.keys() ?? []),
+    ]) {
       if (!(await fs.pathExists(this.chunkTempPath(uploadId)))) this.dropChunkSession(uploadId);
     }
     if (removed > 0) {

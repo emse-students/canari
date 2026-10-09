@@ -20,10 +20,12 @@ import { SvelteMap } from 'svelte/reactivity';
  * - `preparing`: the file is being read and encrypted on this device, no byte has left yet.
  * - `uploading`: bytes are leaving; `loaded`/`total` are real.
  * - `stalled`: bytes were leaving and none has moved for a while (the guard will abandon it).
+ * - `blocked`: the gateway refused the request (a time-limited ban). Nothing is retried on its own;
+ *   the member retries or deletes.
  * - `waiting`: the last attempt failed (or the link is down) and the next one is queued. The bytes
  *   already sent are gone: the media route has no offset, so an attempt always restarts at zero.
  */
-export type UploadPhase = 'preparing' | 'uploading' | 'stalled' | 'waiting';
+export type UploadPhase = 'preparing' | 'uploading' | 'stalled' | 'waiting' | 'blocked';
 
 export interface UploadView {
   phase: UploadPhase;
@@ -78,6 +80,12 @@ export function retryUpload(messageId: string): void {
  * media service takes to assemble and store the object. `null` when no honest figure exists.
  */
 export function uploadPercent(view: UploadView): number | null {
-  if (view.total <= 0 || view.phase === 'preparing' || view.phase === 'waiting') return null;
+  if (
+    view.total <= 0 ||
+    view.phase === 'preparing' ||
+    view.phase === 'waiting' ||
+    view.phase === 'blocked'
+  )
+    return null;
   return Math.min(99, Math.floor((view.loaded / view.total) * 100));
 }

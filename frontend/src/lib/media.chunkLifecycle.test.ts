@@ -139,6 +139,79 @@ describe('a chunked upload that ends without an object', () => {
     expect(calls.at(-1)).toBe('/upload/chunk/u1/complete');
   });
 
+  it('a lost answer of complete re-asks the SAME uploadId, never a new session', async () => {
+    let completes = 0;
+    plan = (url) =>
+      url.endsWith('/complete') && completes++ === 0
+        ? { status: 0, failNetwork: true }
+        : { status: 200 };
+    const ref = await new MediaService().encryptAndUpload(
+      fileOf(THREE_CHUNKS),
+      't',
+      undefined,
+      'ephemeral',
+      {}
+    );
+    expect(ref.mediaId).toBe('m1');
+    expect(calls.filter((c) => c.endsWith('/init'))).toHaveLength(1);
+    expect(calls.filter((c) => c === '/upload/chunk/u1/complete')).toHaveLength(2);
+    expect(calls.filter((c) => c === '/upload/chunk/u1')).toHaveLength(3); // chunks sent once
+    expect(deletes).toEqual([]);
+  });
+
+  it('a 503 answer of complete is re-asked too', async () => {
+    let completes = 0;
+    plan = (url) =>
+      url.endsWith('/complete') && completes++ === 0 ? { status: 503 } : { status: 200 };
+    const ref = await new MediaService().encryptAndUpload(
+      fileOf(THREE_CHUNKS),
+      't',
+      undefined,
+      'ephemeral',
+      {}
+    );
+    expect(ref.mediaId).toBe('m1');
+    expect(calls.filter((c) => c.endsWith('/complete'))).toHaveLength(2);
+  });
+
+  it('gives up after a COUNTED number of re-asks, then releases the session', async () => {
+    plan = (url) =>
+      url.endsWith('/complete') ? { status: 0, failNetwork: true } : { status: 200 };
+    const err = await new MediaService()
+      .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {})
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TypeError);
+    expect(calls.filter((c) => c.endsWith('/complete'))).toHaveLength(3);
+    await vi.waitFor(() => expect(deletes).toEqual(['/upload/chunk/u1']));
+  });
+
+  it('a refusal of complete is NOT re-asked', async () => {
+    plan = (url) => (url.endsWith('/complete') ? { status: 422 } : { status: 200 });
+    const err = await new MediaService()
+      .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {})
+      .catch((e: unknown) => e);
+    expect(uploadRefusalCause(err)).toBe('refused');
+    expect(calls.filter((c) => c.endsWith('/complete'))).toHaveLength(1);
+  });
+
+  it('a cancel during complete is logged as a possibly unreferenced object', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const control = new AbortController();
+    plan = (url) => {
+      if (url.endsWith('/complete')) queueMicrotask(() => control.abort('cancel'));
+      return { status: 200, delayMs: 20 };
+    };
+    await new MediaService()
+      .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {
+        signal: control.signal,
+      })
+      .catch(() => {});
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('cancelled during complete'))).toBe(
+      true
+    );
+    warn.mockRestore();
+  });
+
   it('a success releases nothing', async () => {
     await new MediaService().encryptAndUpload(
       fileOf(THREE_CHUNKS),

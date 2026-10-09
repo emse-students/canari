@@ -181,7 +181,17 @@ import {
 import { prepareVideoForUpload, type PrepareVideoOptions } from '$lib/video/prepareVideoForUpload';
 import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
 import { mediaUrl } from '$lib/utils/apiUrl';
-import { xhrUpload, type XhrUploadOptions, type UploadProgress } from '$lib/utils/uploadXhr';
+import {
+  DEFAULT_UPLOAD_IDLE_MS,
+  UploadAbortedError,
+  xhrUpload,
+  type XhrUploadOptions,
+  type UploadProgress,
+} from '$lib/utils/uploadXhr';
+import { isTransportFailure } from '$lib/stores/connectivity.svelte';
+
+/** How many times `complete` is asked for ONE uploadId when its answer is lost. */
+const COMPLETE_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -600,16 +610,67 @@ export class MediaService {
   // -------------------------------------------------------------------------
 
   /**
+   * Asks the server to assemble a staged session, and RE-ASKS THE SAME uploadId when the answer is
+   * lost. `complete` streams the whole object to storage and the server records its outcome per
+   * uploadId, so a repeat returns the same mediaId; starting over under a new uploadId would store
+   * the object a second time and orphan the first. Bounded by a COUNTER ({@link COMPLETE_ATTEMPTS}),
+   * not a clock: only the absence of an answer (a transport failure, a 5xx) is re-asked, never a
+   * refusal and never a cancel.
+   */
+  private async completeChunkedUpload(
+    uploadId: string,
+    authToken: string,
+    retentionClass: MediaRetentionClass,
+    transport?: XhrUploadOptions
+  ): Promise<string> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const res = await fetchUpload(
+          `${this.baseUrl}/api/media/upload/chunk/${uploadId}/complete`,
+          (t) => ({
+            method: 'POST',
+            headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ retentionClass }),
+          }),
+          authToken,
+          transport && { ...transport, onProgress: undefined }
+        );
+        if (res.status >= 500 && attempt < COMPLETE_ATTEMPTS) {
+          console.warn(
+            `[media] complete ${uploadId} answered ${res.status}: asking again (${attempt})`
+          );
+          continue;
+        }
+        if (!res.ok) {
+          throw await uploadRefusalFrom(res, 'chunked upload complete failed', {
+            sessionLost: res.status === 404,
+          });
+        }
+        const { mediaId } = await res.json();
+        return mediaId;
+      } catch (err) {
+        if (err instanceof UploadAbortedError || attempt >= COMPLETE_ATTEMPTS) throw err;
+        if (!isTransportFailure(err)) throw err;
+        console.warn(
+          `[media] complete ${uploadId} got no answer (${attempt}/${COMPLETE_ATTEMPTS}): asking again`,
+          err
+        );
+      }
+    }
+  }
+
+  /**
    * Gives a staged legacy chunk session back to the server (`DELETE /media/upload/chunk/:id`).
    * Best effort by design: the caller is already failing and must not wait on, or be changed by,
    * this call; the server's 24 h sweep remains the backstop. Every outcome is logged.
    */
   private releaseChunkSession(uploadId: string, authToken: string): void {
-    fetch(`${this.baseUrl}/api/media/upload/chunk/${uploadId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${authToken}` },
-      keepalive: true,
-    })
+    // Through `fetchUpload` so a token that expired during a long upload is renewed once.
+    fetchUpload(
+      `${this.baseUrl}/api/media/upload/chunk/${uploadId}`,
+      (t) => ({ method: 'DELETE', headers: { Authorization: `Bearer ${t}` }, keepalive: true }),
+      authToken
+    )
       .then((res) =>
         console.debug(`[media] released chunk session ${uploadId}: HTTP ${res.status}`)
       )
@@ -674,6 +735,7 @@ export class MediaService {
       // Whatever ends this attempt before the object exists (a cancel, a refusal, a stall, a lost
       // session) leaves staged bytes that the NEXT attempt, under a new uploadId, never reuses:
       // release them, best effort, without delaying the failure.
+      let completing = false;
       try {
         // 3.2 Upload chunks
         const totalChunks = Math.ceil(ciphertext.byteLength / CHUNK_SIZE);
@@ -713,27 +775,16 @@ export class MediaService {
         }
 
         // 3.3 Complete chunked upload
-        const completeRes = await fetchUpload(
-          `${this.baseUrl}/api/media/upload/chunk/${uploadId}/complete`,
-          (t) => ({
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${t}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ retentionClass }),
-          }),
-          authToken,
-          transport && { ...transport, onProgress: undefined }
-        );
-        if (!completeRes.ok) {
-          throw await uploadRefusalFrom(completeRes, 'chunked upload complete failed', {
-            sessionLost: completeRes.status === 404,
-          });
-        }
-        const completeData = await completeRes.json();
-        mediaId = completeData.mediaId;
+        completing = true;
+        mediaId = await this.completeChunkedUpload(uploadId, authToken, retentionClass, transport);
       } catch (err) {
+        if (completing && err instanceof UploadAbortedError) {
+          // The cancel landed while the server may have been assembling: the object can exist and
+          // nothing references it. The idle sweep takes it; said here so it is never a mystery.
+          console.warn(
+            `[media] upload ${uploadId} cancelled during complete: the assembled object may be unreferenced`
+          );
+        }
         this.releaseChunkSession(uploadId, authToken);
         throw err;
       }
@@ -753,7 +804,9 @@ export class MediaService {
         `${this.baseUrl}/api/media/upload`,
         (t) => ({ method: 'POST', headers: { Authorization: `Bearer ${t}` }, body: formData }),
         authToken,
-        transport
+        // No per-session memo on this route: a repeat stores a second object. So it is NOT given the
+        // long answer bound of a chunked `complete` - under 8 MiB the answer is quick or lost.
+        transport && { ...transport, answerMs: transport.answerMs ?? DEFAULT_UPLOAD_IDLE_MS }
       );
 
       if (!res.ok) {
