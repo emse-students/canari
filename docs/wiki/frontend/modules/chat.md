@@ -849,7 +849,7 @@ count is accurate - which is why the refutation is written down rather than dele
 Whoever counts them next should find this before they find eight things to fuse.
 
 Every trigger reaches `runFlush`, and every gate lives there and nowhere else: the tab election, the
-leader gate, `connectivity.isOffline`, `canFlush`, and the `flushing`/`rerun` coalescer. There is no
+leader gate, `connectivity.isOffline`, `canFlush`, and the per-conversation lane claim (below). There is no
 second flusher. **FIVE sites are internal wake-ups**, each bound to the one condition it is the seam
 for - `connectivity.onReconnect`, `visibilitychange`, a follower tab's `outbox_flush_request`, the
 backoff timer, and `enqueue`. **THREE are external moments nothing inside the module can observe:**
@@ -876,6 +876,25 @@ flush look redundant and the reconnect path look uncovered, which are wrong in o
 `outbox.test.ts` drives the five internal triggers plus the external door over ONE table, asserting
 for each that the same gate refuses it shut and drains it open, and a source check pins the three
 external sites so a fourth has to be argued for rather than added.
+
+### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
+
+The flush used to walk the whole queue awaiting one entry at a time, so a send that never answered
+(the MLS POST had no deadline) froze every message in every conversation behind it. `runFlush` now
+claims **one lane per conversation** (`lanes: Map<conversationId, Promise>`, checked and set with no
+`await` between them, so two wake-ups cannot start two lanes and send an entry twice) and each lane
+drains its own entries oldest first. Rules that came with it:
+
+- **Order is per conversation and kept by construction**: an entry that must retry or is backing off
+  holds its successors; `sent`, `gone` (withdrawn) and `error` (permanent) let the next one go. The
+  old loop attempted later entries after a failed one, so a failed message could be overtaken.
+- **A wake-up while a lane runs does not start a second one**, it marks the lane to look at the queue
+  once more (`laneRerun`), which is how an entry enqueued mid-send is still picked up.
+- **`MAX_CONCURRENT_SENDS = 3`** frames on the wire across lanes (a slot is handed to the next waiter,
+  never freed and re-raced): enough that one stalled lane freezes only itself, few enough that a
+  50 kbit/s uplink is not cut into slivers that each miss their deadline.
+- The send POST is under a `write` deadline ([offline-and-weak-network](offline-and-weak-network.md#9-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)),
+  so a stalled lane ends as `DeliveryUnreachableError` and takes the ordinary backoff.
 
 ### Everything the outbox swallows, it logs
 
