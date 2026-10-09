@@ -29,18 +29,19 @@ export type ReconnectListener = () => void;
  *
  * - **Smoothed answer latency.** An exponentially-weighted mean (alpha 0.3, so ~5 samples settle it)
  *   of the time to the response head of every ordinary call. Measured on this app's estate, a good
- *   link answers in 60-150 ms, Slow 3G in 0.5-1.0 s and the 2G-like profile in 1.3-2.5 s. The
- *   state is entered at 1.5 s (the 2G-like profile, clearly slower than a person tolerates without
- *   noticing) and left at 0.8 s (a Slow 3G answer): the gap is hysteresis, so a link hovering at the
- *   threshold does not make the hint flicker.
+ *   link answers a small GET in ~16 ms, the Slow 3G profile (400 ms RTT) in ~440 ms and the 2G-like
+ *   profile (800 ms RTT) in ~960 ms (CDP, 2026-10-09, [offline-and-weak-network]). The state is
+ *   entered at 700 ms - between Slow 3G, which is slow but workable and earns no strip, and the
+ *   2G-like profile, where every screen visibly waits - and left at 350 ms, below Slow 3G: the gap is
+ *   hysteresis, so a link hovering at the threshold does not make the hint flicker.
  * - **A request still unanswered after 5 s.** The smoothed value only moves when an answer arrives,
  *   so a link that has just gone quiet would show nothing for the whole deadline. One request
- *   unanswered for 5 s is, by the numbers above, slower than the worst measured profile twice over.
+ *   unanswered for 5 s is, by the numbers above, five times the worst measured profile's answer.
  *
  * Neither can cause load, only a hint: if either were wrong, a calm line of text would be wrong.
  */
-export const SLOW_ENTER_MS = 1_500;
-export const SLOW_EXIT_MS = 800;
+export const SLOW_ENTER_MS = 700;
+export const SLOW_EXIT_MS = 350;
 export const SLOW_IN_FLIGHT_MS = 5_000;
 const LATENCY_ALPHA = 0.3;
 /** Samples needed before the smoothed value may enter `slow` - one outlier is not a link. */
