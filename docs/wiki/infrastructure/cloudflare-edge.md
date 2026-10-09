@@ -476,28 +476,43 @@ What is still open - and the two instruments left running to settle it - is in
 
 **The egress half.** `UpstreamUnreachableError` and `OUTBOUND_BUDGET_MS` are shipped; whether such stalls are CORRELATED across boxes is read from [`infrastructure/egress-probe/`](../../../infrastructure/egress-probe/README.md), armed in the `canari` crontab - which since the 2026-09-24 cutover is the old VM, running no container. The two netwatch witnesses stopped themselves on 2026-09-12 and nothing records that their ledgers were read. The open measurement (whether the Portail-etu host sees the same 22h-23h drop) is in [backlog](../backlog.md#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11).
 
-## A request body over 1 MiB is refused with a 413 on the legacy names (measured 2026-10-07, re-read 2026-10-08)
+## A request body over 1 MiB is refused with a 413 on the legacy names - IT IS THE RELAY'S NGINX, NOT CLOUDFLARE (measured 2026-10-07, cause found 2026-10-09)
 
 Found in the user's dev console log: two 1.1 MB videos failing 800+ times. An unauthenticated
 `POST /api/media/upload` with a 1.2 MB body answers `413` with `Server: cloudflare` on
 `canari-emse.fr` (legacy) and `dev.canari-emse.fr`; a 600 KB body reaches the app (`401`).
 
-- **The limit is exactly 1 MiB**: 1 048 576 bytes pass, 1 100 000 get the `413`, zone-wide (not a path
-  rule). The zone is on the Free plan.
-- **`canari.emse.fr` (the current name) is NOT limited**: it does not cross this zone and answers
-  `401` from nginx for the same 1.2 MB body.
-- **Nothing of ours is the limit**: the frontend nginx allows 100 MB, the host's `nginx.conf` 2 GB,
-  `media-service` 50 MB. Encrypted media is cut into segments of 1 MiB plus overhead, so on the two
-  legacy-zone names every media object above one segment is refused.
-- **The rule is UNREAD**: neither the user token nor the account token can read the zone's rulesets
-  or page rules (`Authentication error` on every phase), so the cause is presumed (a custom rule, a
-  body limit or a transform), not seen. The dashboard (Security > Events, filter on status 413) names
-  it; a token with zone-rules read would let an agent read it.
+**THE 413 PAGE ITSELF NAMES THE AUTHOR.** Read the whole response, not the status line: the HTML body is
+nginx's own `<h1>413 Request Entity Too Large</h1><hr><center>nginx</center>`, which Cloudflare only
+decorates with its beacon script. Cloudflare Free would say `413` with ITS error page and its limit is
+100 MB. **The limit is nginx's DEFAULT `client_max_body_size 1m`**, and 1 048 576 bytes pass while
+1 100 000 do not because that default is exactly 1 MiB.
+
+- **Where**: the relay on the old VM (`ssh canari`, NOT a container): `/etc/nginx/sites-enabled/canari-relay-prod.conf`
+  (`server_name canari-emse.fr`, `listen 8080`) and `canari-relay-dev.conf` (`dev.canari-emse.fr`,
+  `listen 127.0.0.1:3080`), each a `location /` with `proxy_pass https://193.49.175.122` and **no
+  `client_max_body_size` anywhere in the file or in `nginx.conf`** (read 2026-10-09, read-only). The
+  tunnel points at this relay, so every request to the two legacy names crosses it.
+- **`canari.emse.fr` (the current name) is NOT limited**: it does not cross the relay and answers
+  `401` from the host's nginx for the same 1.2 MB body.
+- **Nothing downstream is the limit**: the frontend nginx allows 100 MB, the host's `nginx.conf` 2 GB,
+  `media-service` 50 MB.
+- **The fix, one gesture on the old VM (the repo has no copy of these two files, they are hand-written
+  there)**: add `client_max_body_size 100m;` and `proxy_request_buffering off;` inside the `server` block
+  of BOTH relay files (the first matches the frontend's 100 MB; the second streams a body to the target
+  instead of spooling it to the relay's disk), then `sudo nginx -t && sudo systemctl reload nginx`.
+  Verify: `curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary @<1.2 MB file>
+  https://dev.canari-emse.fr/api/media/upload` answers `401` (the app refusing an unauthenticated
+  caller), no longer `413`; same on `canari-emse.fr`.
 - **The client no longer retries a 413** (#1583,
   [chat](../frontend/modules/chat.md#a-413-ends-the-entry-2026-10-08)): the entry ends with a visible
-  notice. The client still sends a media as ONE `POST /api/media/upload` and only chunks above
-  `CHUNK_SIZE = 50 MB` (`media.ts`), so on the legacy names a media over 1 MiB fails permanently
-  until either the edge limit is lifted or the chunk size drops under 1 MiB.
+  notice. The client sends a media as ONE `POST /api/media/upload` and only chunks above
+  `CHUNK_SIZE = 50 MB` (`media.ts`).
+- **An app-side avoidance exists and is NOT recommended**: dropping `CHUNK_SIZE` under 1 MiB would send
+  every media in hundreds of requests to dodge a one-line misconfiguration on a VM that retires with the
+  legacy names, and the chunk endpoints assemble on the server. The 301 on `canari-emse.fr` documents
+  already moves every current client to `canari.emse.fr`, which has no such limit; only an old APK and
+  an open tab's `/api/` calls still cross the relay.
 
 ## Working against the API
 

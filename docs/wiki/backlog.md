@@ -48,14 +48,13 @@ BUILT (#1582, #1584, #1593, #1606, #1608, [profiles-and-access](profiles-and-acc
 
 ## Cloudflare, Stripe and the staff feed (2026-10-07/08)
 
-### P1 - an upload over 1 MiB is refused by Cloudflare on `dev.canari-emse.fr` and `canari-emse.fr`
+### P1 - an upload over 1 MiB is refused with a 413 on `dev.canari-emse.fr` and `canari-emse.fr` - the relay's nginx, one line (cause found 2026-10-09)
 
-The measurement (exactly 1 MiB, zone-wide, `canari.emse.fr` NOT limited, nothing of ours is the limit,
-the client stops retrying a 413 since #1583) is on
-[cloudflare-edge](infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names-measured-2026-10-07-re-read-2026-10-08).
-**Owed, by the USER**: Security > Events filtered on status 413 names the rule (or a token with zone
-rules read, which no agent holds). **Then**: lift the limit, or drop `CHUNK_SIZE` (`media.ts`, 50 MB
-today) below 1 MiB. Done when a 1.2 MB and a 20 MB upload reach `media-service` on both legacy names.
+NOT a Cloudflare rule: the 413 page body is nginx's, and both relay files on the old VM lack
+`client_max_body_size` (default 1m). Measurement, the two lines to add and the verification are on
+[cloudflare-edge](infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names---it-is-the-relays-nginx-not-cloudflare-measured-2026-10-07-cause-found-2026-10-09).
+**Owed: the gesture on `ssh canari` (the owed table).** Done when a 1.2 MB and a 20 MB upload reach
+`media-service` on both legacy names. Not an app change: chunking under 1 MiB is rejected there.
 
 ### P3 - Stripe's leftover names: columns, permission flag, routes, deep-link host
 
@@ -134,7 +133,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **look up the Cloudflare rule that refuses a body over 1 MiB**: Security > Events, filter on status 413, on the `canari-emse.fr` zone (or hand an agent a token with zone rules read) | 1 dashboard look | [the P1 above](#p1---an-upload-over-1-mib-is-refused-by-cloudflare-on-devcanari-emsefr-and-canari-emsefr) |
+| **add `client_max_body_size 100m;` and `proxy_request_buffering off;` to the `server` block of `/etc/nginx/sites-enabled/canari-relay-prod.conf` and `canari-relay-dev.conf` on `ssh canari`, then `sudo nginx -t && sudo systemctl reload nginx`** (the 1 MiB 413 is the relay's nginx default, not Cloudflare) | 1 ssh gesture, 2 lines | [the P1 above](#p1---an-upload-over-1-mib-is-refused-with-a-413-on-devcanari-emsefr-and-canari-emsefr---the-relays-nginx-one-line-cause-found-2026-10-09) |
 | **upload the APNs authentication key in the DEVELOPMENT slot of Firebase** (2 minutes): Firebase Console > Project settings > Cloud Messaging > the iOS app `fr.emse.canari` > APNs authentication key - the same `.p8` (Key ID + Team ID) already in the Production slot. The agent then resends the test DM | click | [the iOS push rows](#owed-a-verification-and-nothing-else) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** The Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so no agent can create a project. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [the second package id](#p3---a-second-package-id-so-a-pre-release-can-be-measured-against-production-decided-2026-09-15) |
