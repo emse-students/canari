@@ -5,20 +5,58 @@ import {
   respondToNewMessage,
   shouldFollowThreadBottom,
   THREAD_BOTTOM_SLACK_PX,
+  threadReach,
   type NewMessageState,
   type ThreadGrowth,
 } from './threadAnchor';
 
 const settled: ThreadGrowth = {
-  previousHeight: 1000,
-  currentHeight: 1000,
+  previousReach: 1000,
+  currentReach: 1000,
   wasNearBottom: true,
   isLoadingOlder: false,
   isEntering: false,
 };
 
 /** A reaction chip is about 28 px of row - the growth the message count could never see. */
-const grew = (by = 28): ThreadGrowth => ({ ...settled, currentHeight: 1000 + by });
+const grew = (by = 28): ThreadGrowth => ({ ...settled, currentReach: 1000 + by });
+
+describe('threadReach', () => {
+  it('is the largest scrollTop', () => {
+    expect(threadReach({ scrollHeight: 2000, scrollTop: 0, clientHeight: 600 })).toBe(1400);
+  });
+
+  /**
+   * THE KEYBOARD CASE (production 1.1.2, Android, 2026-10-09). The soft keyboard takes 330 px of the
+   * pane's BOX and leaves the content alone: `scrollHeight` is the same number before and after, so
+   * a judgement keyed on it saw no growth, the reader kept their `scrollTop` and the last messages
+   * ended under the keyboard. The reach moves by exactly the lost box.
+   */
+  it('grows when the box shrinks under unchanged content, which a scrollHeight cannot see', () => {
+    const before = { scrollHeight: 2000, scrollTop: 1400, clientHeight: 600 };
+    const after = { ...before, clientHeight: 270 };
+    expect(after.scrollHeight).toBe(before.scrollHeight);
+    expect(threadReach(after) - threadReach(before)).toBe(330);
+    expect(
+      shouldFollowThreadBottom({
+        ...settled,
+        previousReach: threadReach(before),
+        currentReach: threadReach(after),
+      })
+    ).toBe(true);
+  });
+
+  it('leaves a reader who had gone up where they are when the keyboard rises', () => {
+    expect(
+      shouldFollowThreadBottom({
+        ...settled,
+        previousReach: 1400,
+        currentReach: 1730,
+        wasNearBottom: false,
+      })
+    ).toBe(false);
+  });
+});
 
 describe('shouldFollowThreadBottom', () => {
   it('follows the bottom when a row grows under a reader who was at the bottom', () => {
@@ -38,7 +76,7 @@ describe('shouldFollowThreadBottom', () => {
    * change, and it would move the reader who had scrolled away.
    */
   it('does nothing when a row shrinks - the bottom already came to meet the reader', () => {
-    expect(shouldFollowThreadBottom({ ...settled, currentHeight: 972 })).toBe(false);
+    expect(shouldFollowThreadBottom({ ...settled, currentReach: 972 })).toBe(false);
   });
 
   /**

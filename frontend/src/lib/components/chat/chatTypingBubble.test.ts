@@ -85,6 +85,14 @@ describe('the thread follows its own bottom from four triggers', () => {
     expect(wiring).toContain("scroller.style.overflowAnchor = 'none';");
   });
 
+  it('measures the REACH, so a box shrinking under the keyboard counts like content growing', () => {
+    const wiring = read(GROWTH);
+    expect(wiring).toContain('let previousReach = threadReach(scroller);');
+    expect(wiring).toContain('const currentReach = threadReach(scroller);');
+    // `scrollHeight` alone never moves when only the pane's box does (the keyboard rising).
+    expect(wiring).not.toContain('const currentHeight = scroller.scrollHeight;');
+  });
+
   it('holds the stick-to-bottom judgement in one shared predicate', () => {
     const body = read(CHAT_AREA);
     expect(body).toContain('isNearBottom = isPinnedToBottom(chatContainer);');
