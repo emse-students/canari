@@ -354,6 +354,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
 	@bun .github/scripts/tests/static-headers.test.mjs
+	@bun .github/scripts/tests/static-compression.test.mjs
 	@bun .github/scripts/tests/adminer-route.test.mjs
 	@bun .github/scripts/tests/access-log-redaction.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
