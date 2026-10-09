@@ -72,10 +72,14 @@ import {
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
-import { mergeReadWatermarks, parseReadWatermarks } from '$lib/utils/chat/readState';
+import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
 import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
-import { flushSalonReadMarks } from '$lib/utils/chat/salonReadMarkQueue';
+import {
+  flushSalonReadMarks,
+  owedSalonReadMarks,
+  salonMarksAfterLoad,
+} from '$lib/utils/chat/salonReadMarkQueue';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -568,12 +572,19 @@ export function useConversations() {
       if (current) {
         // Same race as the DM path, and worse: decrypting 200 channel rows takes seconds, and every
         // live message posted meanwhile used to be discarded when this resolved.
+        // The reader's OWN mark comes from the server and the owed queue, never from a belief the
+        // device restored: one held above the server's stops the receipt from ever being posted.
+        const readWatermarks = salonMarksAfterLoad(
+          current.readWatermarks,
+          rawMarks === undefined ? undefined : (parseReadWatermarks(rawMarks) ?? {}),
+          ctx.userId,
+          owedSalonReadMarks(ctx.userId)[channelConversationId]?.at,
+          channelConversationId
+        );
         conversations.set(channelConversationId, {
           ...current,
           messages: mergeMessagePage(current.messages, loadedEdited),
-          readWatermarks:
-            mergeReadWatermarks(current.readWatermarks, parseReadWatermarks(rawMarks)) ??
-            current.readWatermarks,
+          ...(readWatermarks !== undefined ? { readWatermarks } : {}),
         });
         channelHistoryLoadedAt.set(channelConversationId, {
           loadedAt: Date.now(),
