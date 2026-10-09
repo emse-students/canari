@@ -254,6 +254,8 @@ class MainActivity : TauriActivity() {
         // Opening the app clears lingering message notifications (read here or on another
         // device) - the visible half of cross-device read-state sync.
         CanariFirebaseMessagingService.cancelAllMessageNotifications(this)
+        // The notification plugin's empty "Default" channel, created at its load (see the helper).
+        CanariApplication.removePluginDefaultChannel(this)
         pushForeground(true)
         Log.d("MainActivity", "onResume: isInForeground=true, worker failure flag reset")
         // Migrates pending_push_secret.txt → Keystore on first foreground resume after

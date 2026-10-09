@@ -1454,6 +1454,16 @@ the channel would fix the wording and discard the sound and importance THEY chos
 larger harm. `ensureChannels(context, manager)` therefore takes a `Context` and does its best at
 creation time; there is no repair after it.
 
+**The notification plugin's own "Default" channel is deleted at every resume (2026-10-09).**
+`tauri-plugin-notification` 2.4.0 creates a channel `default` when it loads, named and described
+with the hardcoded literal "Default" (`TauriNotificationManager.kt:96`), so a French app's settings
+listed six French channels and one called "Default" (measured 2026-09-23). Nothing posts to it - every
+`sendNotification` goes through `androidNotificationOptions`, asserted by `notificationChannels.test.ts`
+- so `CanariApplication.removePluginDefaultChannel`, called from `MainActivity.onResume`, deletes it:
+not from `Application.onCreate`, which runs BEFORE the plugin's load creates the channel. This was
+written and checked by the test, NOT compiled or run on a device from here; the reading owed is on
+[the backlog](../backlog.md#owed-a-verification-and-nothing-else).
+
 **iOS's quick-action titles are the one native string that CAN follow a language change**, and they
 do. `setNotificationCategories` REPLACES the whole category set, where an Android channel is written
 once and never again, so `CanariRefreshNotificationCategories` re-registers Reply / Send / Mark as
