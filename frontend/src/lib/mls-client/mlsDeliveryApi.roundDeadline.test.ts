@@ -61,13 +61,35 @@ describe('the key package round has a per-request deadline', () => {
     expect(await failing).toBeInstanceOf(DeliveryDeadlineError);
   });
 
-  it('keeps the failure answers of the count and the purge (0 and nothing)', async () => {
-    const api = makeApi();
-    const count = api.fetchPrekeyCount();
-    const purge = api.deleteAllOneTimePrekeys();
+  it('FAILS the round on a prekey count that hangs - it is NOT read as 0', async () => {
+    // Read as 0, both platforms mint and publish a full pool of fifty against a server that never
+    // answered: the deadline would have become a heal.
+    const counting = makeApi()
+      .fetchPrekeyCount()
+      .catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(KEY_PACKAGE_REQUEST_DEADLINE_MS);
-    expect(await count).toBe(0);
-    expect(await purge).toEqual([]);
+    const e = await counting;
+    expect(e).toBeInstanceOf(DeliveryDeadlineError);
+    expect((e as DeliveryDeadlineError).operation).toBe('prekey-count');
+  });
+
+  it('answers a hung purge with nothing to forget, ACCUSED at error level', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const purging = makeApi().deleteAllOneTimePrekeys();
+    await vi.advanceTimersByTimeAsync(KEY_PACKAGE_REQUEST_DEADLINE_MS);
+    expect(await purging).toEqual([]);
+    expect(error.mock.calls.flat().join(' ')).toContain('prekey purge');
+  });
+
+  it('still reads a refused count as 0 (an answer, not a hang), and says so', async () => {
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: vi
+        .fn()
+        .mockResolvedValue(new Response('{}', { status: 500 })) as unknown as typeof fetch,
+    });
+    expect(await api.fetchPrekeyCount()).toBe(0);
   });
 
   it('answers `unanswered` for the fact read, which no join may act on', async () => {

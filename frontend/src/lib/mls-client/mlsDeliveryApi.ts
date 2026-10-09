@@ -999,7 +999,13 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Returns the number of one-time prekeys still available for this device on the server. */
+  /**
+   * Returns the number of one-time prekeys still available for this device on the server.
+   *
+   * A request that EXCEEDED ITS DEADLINE IS NOT A ZERO: it throws {@link DeliveryDeadlineError} and
+   * fails the round, because reading it as `0` made both platforms mint and publish a full pool of
+   * fifty against a server that never answered - the deadline would have become a heal.
+   */
   async fetchPrekeyCount(): Promise<number> {
     try {
       return await this.underDeadline('prekey-count', async (signal) => {
@@ -1011,7 +1017,9 @@ export class MlsDeliveryApi {
         const data = await res.json();
         return typeof data.count === 'number' ? data.count : 0;
       });
-    } catch {
+    } catch (e) {
+      if (e instanceof DeliveryDeadlineError) throw e;
+      console.warn('[MLS] prekey count unreadable - read as 0:', String(e).slice(0, 200));
       return 0;
     }
   }
@@ -1049,7 +1057,10 @@ export class MlsDeliveryApi {
         return list.filter((k: unknown): k is string => typeof k === 'string' && k.length > 0);
       });
     } catch (e) {
-      console.warn('[MLS] prekey purge did not reach the server:', String(e).slice(0, 200));
+      // A DEADLINE IS ACCUSED, not demoted to the warning an unreachable server earns: the caller
+      // goes on to mint against a pool this call did not clear, and a hang is the cause to find.
+      const log = e instanceof DeliveryDeadlineError ? console.error : console.warn;
+      log('[MLS] prekey purge did not reach the server:', String(e).slice(0, 200));
       return [];
     }
   }

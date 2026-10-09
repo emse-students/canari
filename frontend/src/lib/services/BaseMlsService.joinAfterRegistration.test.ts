@@ -33,25 +33,28 @@ import { DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
  * whose request never answered. The wait is now on the published fact (the read of what the gate
  * reads), and the round is only what makes it true.
  */
-type Server = { answer: () => unknown };
-const proto = BaseMlsService.prototype as unknown as Record<string, unknown>;
+import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
 
-function makeCtx(overrides: Record<string, unknown> = {}) {
+const PUBLISHED = { kind: 'package', device: { keyPackage: new Uint8Array(), deviceId: 'd' } };
+const ABSENT = { kind: 'none', reason: 'unregistered' };
+
+type Server = { answer: unknown };
+
+/**
+ * A real `BaseMlsService` (prototype chain, no constructor) with only the fields the join needs, so
+ * every private helper of the wait is the production one.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function makeCtx(overrides: Record<string, unknown> = {}): any {
   // What the server says about this device's KeyPackage: published by default (the ordinary join).
-  const server: Server = {
-    answer: () => ({ kind: 'package', device: { deviceId: 'd' } }),
-  };
-  return {
+  const server: Server = { answer: PUBLISHED };
+  return Object.assign(Object.create(BaseMlsService.prototype), {
     server,
-    keyPackagePublishedFor: null as string | null,
-    keyPackageRoundWaiters: [] as unknown[],
-    awaitOwnKeyPackagePublished: proto.awaitOwnKeyPackagePublished,
-    nextKeyPackageRound: proto.nextKeyPackageRound,
-    settleKeyPackageRoundWaiters: proto.settleKeyPackageRoundWaiters,
+    ...keyPackageWaitFields(),
     userId: 'u',
     deviceId: 'd',
     delivery: {
-      fetchDeviceKeyPackage: vi.fn(async () => server.answer()),
+      fetchDeviceKeyPackage: vi.fn(async () => server.answer),
       fetchGroupInfo: vi
         .fn()
         .mockResolvedValue({ groupInfo: 'AA==', baseEpoch: 5, activeEpoch: 5 }),
@@ -59,51 +62,58 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       storeGroupInfo: vi.fn().mockResolvedValue(undefined),
     },
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
-    groupInfoChannel: (
-      BaseMlsService.prototype as unknown as { groupInfoChannel: (groupId: string) => unknown }
-    ).groupInfoChannel,
     distributionScopeByGroup: new Map<string, string>(),
     knownDistributionGroups: new Set<string>(),
     distributionGroupInfo: null,
     joinByExternalCommit: vi.fn().mockResolvedValue({ groupId: 'g', commit: new Uint8Array([9]) }),
     getEpoch: vi.fn(() => 6),
     exportGroupInfo: vi.fn().mockResolvedValue(new Uint8Array([7, 7])),
-    exportBaseForPublication: (
-      BaseMlsService.prototype as unknown as {
-        exportBaseForPublication: (groupId: string) => Promise<{ base: string; baseEpoch: number }>;
-      }
-    ).exportBaseForPublication,
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
     forgetGroup: vi.fn(),
-    keyPackageRoundInFlight: null as Promise<unknown> | null,
     ...overrides,
-  };
+  });
 }
 
-const externalJoin = (ctx: unknown, groupId: string): Promise<ExternalJoinOutcome> =>
-  (
-    BaseMlsService.prototype.externalJoin as unknown as (g: string) => Promise<ExternalJoinOutcome>
-  ).call(ctx, groupId);
+const externalJoin = (ctx: { externalJoin(g: string): Promise<ExternalJoinOutcome> }, g: string) =>
+  ctx.externalJoin(g);
 
-const generateKeyPackage = (ctx: unknown, deviceKey: string): Promise<unknown> =>
-  (BaseMlsService.prototype.generateKeyPackage as unknown as (k: string) => Promise<unknown>).call(
-    ctx,
-    deviceKey
-  );
+const KP = { bytes: new Uint8Array(), notAfterSecs: 1 };
 
 /** Lets every already-resolved promise chain run, so "has not happened yet" is a real reading. */
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-describe('a join waits for the key package round that is already running', () => {
-  it('does not build or submit its commit until the round has published', async () => {
-    let publish!: () => void;
-    const round = new Promise<void>((resolve) => {
-      publish = resolve;
-    });
-    const ctx = makeCtx({ keyPackageRoundInFlight: round });
-    ctx.server.answer = () => ({ kind: 'none', reason: 'unregistered' });
+/** A round implementation that publishes (flips the server's answer) when released. */
+function controlledRound(ctx: { server: Server }) {
+  let release!: () => void;
+  let fail!: (e: unknown) => void;
+  const impl = vi.fn(
+    () =>
+      new Promise((resolve, reject) => {
+        release = () => {
+          ctx.server.answer = PUBLISHED;
+          resolve(KP);
+        };
+        fail = reject;
+      })
+  );
+  return { impl, release: () => release(), fail: (e: unknown) => fail(e) };
+}
 
+describe('a join waits on the PUBLISHED FACT, not on a round', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('does not build or submit its commit until the round has published', async () => {
+    const ctx = makeCtx();
+    ctx.server.answer = ABSENT;
+    const round = controlledRound(ctx);
+    ctx.generateKeyPackageImpl = round.impl;
+
+    const running = ctx.generateKeyPackage('k');
     const joined = externalJoin(ctx, 'g');
     await settle();
 
@@ -111,96 +121,174 @@ describe('a join waits for the key package round that is already running', () =>
     expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
     expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
 
-    // The round publishes: the server's statement becomes true and the round's end wakes the join.
-    ctx.server.answer = () => ({ kind: 'package', device: { deviceId: 'd' } });
-    publish();
-    (proto.settleKeyPackageRoundWaiters as () => void).call(ctx);
+    round.release();
+    await running;
     expect(await joined).toEqual({ joined: true });
     expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
   });
 
-  it('waits for a round that has NOT STARTED YET (the join that begins before the round)', async () => {
-    // The residual of the in-flight-round wait: no round field is set, so there was nothing to wait
-    // on and the commit went out unpublished. The fact is false, so the join parks on the next
-    // round and proceeds only once the server says the device is published.
-    const ctx = makeCtx({
-      generateKeyPackageImpl: vi.fn(async function (this: { server: Server }) {
-        this.server.answer = () => ({ kind: 'package', device: { deviceId: 'd' } });
-        return { bytes: new Uint8Array(), notAfterSecs: 1 };
-      }),
-    });
-    ctx.server.answer = () => ({ kind: 'none', reason: 'unregistered' });
-
-    const joined = externalJoin(ctx, 'g');
-    await settle();
-    expect(ctx.keyPackageRoundInFlight).toBeNull();
-    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
-
-    await generateKeyPackage(ctx, 'k');
-    expect(await joined).toEqual({ joined: true });
+  it('joins at once when the server already holds the package', async () => {
+    const ctx = makeCtx();
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
     expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
   });
 
   it('reads an ELAPSED package as published: the gate checks presence, not freshness', async () => {
     const ctx = makeCtx();
-    ctx.server.answer = () => ({ kind: 'none', reason: 'expired' });
+    ctx.server.answer = { kind: 'none', reason: 'expired' };
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
   });
 
-  it('does not attempt the join when the fact cannot be read and no round can change it', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('LOST WAKE-UP: a round that settles while the fact is being read is not waited for', async () => {
+    // The first read is in flight (it will answer ABSENT, true when it was asked) while a round
+    // publishes and settles. Parking on that stale answer would wait for a round that already came
+    // and went - for ever.
     const ctx = makeCtx();
-    ctx.server.answer = () => ({ kind: 'unanswered', detail: 'HTTP 502' });
-    expect(await externalJoin(ctx, 'g')).toEqual({ joined: false, reason: 'unreachable' });
-    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
-    warn.mockRestore();
-  });
+    let answerStale!: () => void;
+    ctx.delivery.fetchDeviceKeyPackage
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            answerStale = () => resolve(ABSENT);
+          })
+      )
+      .mockImplementation(async () => ctx.server.answer);
+    ctx.generateKeyPackageImpl = vi.fn(async () => {
+      ctx.server.answer = PUBLISHED;
+      return KP;
+    });
 
-  it('reads the fact once, then trusts the published id (a re-enrolled id is read afresh)', async () => {
-    const ctx = makeCtx();
-    await externalJoin(ctx, 'g');
-    await externalJoin(ctx, 'g2');
-    expect(ctx.delivery.fetchDeviceKeyPackage).toHaveBeenCalledTimes(1);
-    ctx.deviceId = 'd-other';
-    await externalJoin(ctx, 'g3');
-    expect(ctx.delivery.fetchDeviceKeyPackage).toHaveBeenCalledTimes(2);
-  });
-
-  it('joins at once when no round is running', async () => {
-    const ctx = makeCtx();
-    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
-    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not attempt the join, and says why as a type, when the round FAILED', async () => {
-    // A failed round already reported itself to its own caller (the device cap has a toast). The
-    // join would earn the `no_key_package` refusal this wait exists to avoid, so it is not made:
-    // the caller gets a typed outcome, not a doomed commit and a log line.
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const round = Promise.reject(
-      new Error('register-device 502' + String.fromCharCode(10) + 'forged line')
-    );
-    round.catch(() => {});
-    const ctx = makeCtx({ keyPackageRoundInFlight: round });
-    ctx.server.answer = () => ({ kind: 'none', reason: 'unregistered' });
-
-    const joinedP = externalJoin(ctx, 'g');
+    const joined = externalJoin(ctx, 'g');
     await settle();
-    (proto.settleKeyPackageRoundWaiters as (e: unknown) => void).call(
-      ctx,
-      new Error('register-device 502' + String.fromCharCode(10) + 'forged line')
-    );
-    expect(await joinedP).toEqual({
+    await ctx.generateKeyPackage('k'); // publishes and settles during the read
+    answerStale();
+
+    expect(await joined).toEqual({ joined: true });
+    expect(ctx.keyPackageRoundWaiters).toHaveLength(0);
+  });
+
+  it('WEDGE: absent with no round running STARTS the round instead of parking for ever', async () => {
+    // A device row deleted server-side: no boot, republish or replenish is coming. The join starts
+    // the only thing that can make the fact true.
+    const ctx = makeCtx();
+    ctx.server.answer = ABSENT;
+    ctx.generateKeyPackageImpl = vi.fn(async () => {
+      ctx.server.answer = PUBLISHED;
+      return KP;
+    });
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+    expect(ctx.generateKeyPackageImpl).toHaveBeenCalledTimes(1);
+    expect(ctx.generateKeyPackageImpl).toHaveBeenCalledWith('device-key');
+  });
+
+  it('refuses typed when the round it started FAILED, and attempts no commit', async () => {
+    const ctx = makeCtx();
+    ctx.server.answer = ABSENT;
+    ctx.generateKeyPackageImpl = vi.fn().mockRejectedValue(new Error('register-device 502'));
+
+    expect(await externalJoin(ctx, 'g')).toEqual({
       joined: false,
       reason: 'key_package_round_failed',
     });
     expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
-    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
-    // The logged error is sanitised: no line break survives to forge a second log line.
-    const logged = warn.mock.calls.flat().map(String).join(' ');
-    expect(logged).toContain('key package round FAILED');
-    expect(logged).not.toContain(String.fromCharCode(10));
-    warn.mockRestore();
+  });
+
+  it('a round that succeeded but left the fact absent is unverified, never a second round', async () => {
+    const ctx = makeCtx();
+    ctx.server.answer = ABSENT;
+    ctx.generateKeyPackageImpl = vi.fn(async () => KP);
+
+    expect(await externalJoin(ctx, 'g')).toEqual({
+      joined: false,
+      reason: 'own_key_package_unverified',
+    });
+    expect(ctx.generateKeyPackageImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not attempt the join, with its OWN reason, when the fact cannot be read and no round runs', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx();
+    ctx.server.answer = { kind: 'unanswered', detail: 'HTTP 502' };
+    ctx.generateKeyPackageImpl = vi.fn();
+
+    expect(await externalJoin(ctx, 'g')).toEqual({
+      joined: false,
+      reason: 'own_key_package_unverified',
+    });
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+    expect(ctx.generateKeyPackageImpl).not.toHaveBeenCalled();
+    // The detail of the unanswered read reaches the log: it is the only evidence of why.
+    expect(warn.mock.calls.flat().join(' ')).toContain('HTTP 502');
+  });
+
+  it('a failing round does not refuse a join while an OVERLAPPING round still runs', async () => {
+    const ctx = makeCtx();
+    ctx.server.answer = ABSENT;
+    const older = controlledRound(ctx);
+    const newer = controlledRound(ctx);
+    ctx.generateKeyPackageImpl = vi
+      .fn()
+      .mockImplementationOnce(older.impl)
+      .mockImplementationOnce(newer.impl);
+
+    const a = ctx.generateKeyPackage('k');
+    const b = ctx.generateKeyPackage('k');
+    a.catch(() => {});
+    b.catch(() => {});
+    const joined = externalJoin(ctx, 'g');
+    await settle();
+
+    // The NEWER round fails; the older one is still alive and may publish.
+    newer.fail(new Error('boom'));
+    await settle();
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+
+    older.release();
+    expect(await joined).toEqual({ joined: true });
+  });
+
+  it('a join is not refused when the OLD round fails after the NEW one succeeded (re-enrolment)', async () => {
+    const ctx = makeCtx();
+    ctx.server.answer = ABSENT;
+    const older = controlledRound(ctx);
+    const newer = controlledRound(ctx);
+    ctx.generateKeyPackageImpl = vi
+      .fn()
+      .mockImplementationOnce(older.impl)
+      .mockImplementationOnce(newer.impl);
+
+    const a = ctx.generateKeyPackage('k');
+    const b = ctx.generateKeyPackage('k');
+    a.catch(() => {});
+    const joined = externalJoin(ctx, 'g');
+    await settle();
+
+    newer.release();
+    await b;
+    expect(await joined).toEqual({ joined: true });
+
+    older.fail(new Error('late failure of the abandoned identity'));
+    await a.catch(() => {});
+    expect(ctx.keyPackageRoundsActive).toBe(0);
+  });
+
+  it('releases a parked join and the group flights when the client is torn down', async () => {
+    const ctx = makeCtx({ destroyPlatformResources: vi.fn(), heldFrames: [] });
+    ctx.server.answer = ABSENT;
+    const round = controlledRound(ctx);
+    ctx.generateKeyPackageImpl = round.impl;
+    const running = ctx.generateKeyPackage('k');
+    running.catch(() => {});
+
+    const joined = externalJoin(ctx, 'g');
+    await settle();
+    expect(ctx.keyPackageRoundWaiters).toHaveLength(1);
+
+    ctx.destroy();
+    expect(await joined).toEqual({ joined: false, reason: 'own_key_package_unverified' });
+    expect(ctx.keyPackageRoundWaiters).toHaveLength(0);
+    round.release();
   });
 
   it('excludes the device id the round LEFT it with, not the one it started with', async () => {
@@ -215,7 +303,6 @@ describe('a join waits for the key package round that is already running', () =>
       release = resolve;
     });
     const ctx = makeCtx({
-      deviceId: 'd',
       rotateDeviceIdentity: rotate,
       generateKeyPackageImpl: vi
         .fn()
@@ -223,11 +310,14 @@ describe('a join waits for the key package round that is already running', () =>
           await gate;
           throw new DeviceRevokedError('d');
         })
-        .mockResolvedValue({ bytes: new Uint8Array(), notAfterSecs: 1 }),
+        .mockImplementation(async () => {
+          ctx.server.answer = PUBLISHED;
+          return KP;
+        }),
     });
-    ctx.server.answer = () => ({ kind: 'none', reason: 'unregistered' });
+    ctx.server.answer = ABSENT;
 
-    const round = generateKeyPackage(ctx, 'k');
+    const round = ctx.generateKeyPackage('k');
     const joined = externalJoin(ctx, 'g');
     await settle();
     expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
@@ -240,21 +330,17 @@ describe('a join waits for the key package round that is already running', () =>
   });
 
   it('shares ONE join between two callers of the same group', async () => {
-    // The recovery seam's cooldown is 60 s and the wait has no clock: a second caller must not
-    // start a second external commit for a group the first is about to hold.
-    let publish!: () => void;
-    const round = new Promise<void>((resolve) => {
-      publish = resolve;
-    });
-    const ctx = makeCtx({ keyPackageRoundInFlight: round });
-    ctx.server.answer = () => ({ kind: 'none', reason: 'unregistered' });
+    const ctx = makeCtx();
+    ctx.server.answer = ABSENT;
+    const round = controlledRound(ctx);
+    ctx.generateKeyPackageImpl = round.impl;
+    const running = ctx.generateKeyPackage('k');
 
     const first = externalJoin(ctx, 'g');
     const second = externalJoin(ctx, 'g');
     await settle();
-    ctx.server.answer = () => ({ kind: 'package', device: { deviceId: 'd' } });
-    publish();
-    (proto.settleKeyPackageRoundWaiters as () => void).call(ctx);
+    round.release();
+    await running;
 
     expect(await first).toEqual({ joined: true });
     expect(await second).toEqual({ joined: true });
@@ -267,54 +353,51 @@ describe('a join waits for the key package round that is already running', () =>
   });
 });
 
-describe('generateKeyPackage names the round it runs', () => {
-  it('holds the round for exactly its own span, on success and on failure', async () => {
-    let release!: () => void;
-    const ctx = makeCtx({
-      generateKeyPackageImpl: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            release = () => resolve({ bytes: new Uint8Array(), notAfterSecs: 1 });
-          })
-      ),
-    });
+describe('generateKeyPackage names the rounds it runs', () => {
+  it('counts a round for exactly its own span, on success and on failure', async () => {
+    const ctx = makeCtx();
+    const round = controlledRound(ctx);
+    ctx.generateKeyPackageImpl = round.impl;
 
-    const running = generateKeyPackage(ctx, 'k');
+    const running = ctx.generateKeyPackage('k');
     expect(ctx.keyPackageRoundInFlight).toBeInstanceOf(Promise);
-    release();
+    expect(ctx.keyPackageRoundsActive).toBe(1);
+    round.release();
     await running;
     expect(ctx.keyPackageRoundInFlight).toBeNull();
+    expect(ctx.keyPackageRoundsActive).toBe(0);
+    expect(ctx.keyPackageRoundsSettled).toBe(1);
 
     // A throw must not leave a round behind: every later join would wait on a settled failure.
     const failing = makeCtx({
       generateKeyPackageImpl: vi.fn().mockRejectedValue(new Error('boom')),
     });
-    await expect(generateKeyPackage(failing, 'k')).rejects.toThrow('boom');
+    await expect(failing.generateKeyPackage('k')).rejects.toThrow('boom');
     expect(failing.keyPackageRoundInFlight).toBeNull();
+    expect(failing.keyPackageRoundsActive).toBe(0);
   });
-  it('keeps the newer round when an older one settles first (identity check)', async () => {
-    const releases: Array<() => void> = [];
-    const ctx = makeCtx({
-      generateKeyPackageImpl: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            releases.push(() => resolve({ bytes: new Uint8Array(), notAfterSecs: 1 }));
-          })
-      ),
-    });
 
-    const a = generateKeyPackage(ctx, 'k');
-    const b = generateKeyPackage(ctx, 'k');
-    const newer = ctx.keyPackageRoundInFlight;
-    expect(newer).toBeInstanceOf(Promise);
+  it('keeps counting the newer round when an older one settles first', async () => {
+    const ctx = makeCtx();
+    const older = controlledRound(ctx);
+    const newer = controlledRound(ctx);
+    ctx.generateKeyPackageImpl = vi
+      .fn()
+      .mockImplementationOnce(older.impl)
+      .mockImplementationOnce(newer.impl);
 
-    releases[0]();
+    const a = ctx.generateKeyPackage('k');
+    const b = ctx.generateKeyPackage('k');
+    const newerPromise = ctx.keyPackageRoundInFlight;
+
+    older.release();
     await a;
-    // The older round settling must not clear the newer one a join may be waiting on.
-    expect(ctx.keyPackageRoundInFlight).toBe(newer);
+    expect(ctx.keyPackageRoundInFlight).toBe(newerPromise);
+    expect(ctx.keyPackageRoundsActive).toBe(1);
 
-    releases[1]();
+    newer.release();
     await b;
     expect(ctx.keyPackageRoundInFlight).toBeNull();
+    expect(ctx.keyPackageRoundsActive).toBe(0);
   });
 });
