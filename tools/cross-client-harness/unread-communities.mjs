@@ -16,7 +16,7 @@
  * `wire` empty means nothing was marked read, whatever the screen says.
  *
  *   bun unread-communities.mjs setup [--n 10]   create the communities, invite the reader, post
- *   bun unread-communities.mjs run <scenario>   one of: arrive, walk, gatewaydown, open [--community X --salon Y --then-reload], mobile
+ *   bun unread-communities.mjs run <scenario>   one of: arrive, walk, gatewaydown, open [--community X --salon Y --then-reload], mobile, join [--name N]
  *   bun unread-communities.mjs snapshot [--sweep]  one reading, nothing moved
  *   bun unread-communities.mjs post --label L    the owner posts 2 messages into every salon
  *
@@ -377,6 +377,51 @@ scenarios.arrive = async () => {
   await restartReader(w2);
   await reachCommunities(w2);
   await snapshot('A3 after a reload of the reader', { cx: w2, sinceIso: t2, sweep: true });
+};
+
+/**
+ * A JOIN IN-SESSION LISTS EVERY SALON, with NO reload (P1 of 2026-10-08, community UNR-11).
+ *
+ * The owner makes a fresh community with three public salons, the reader accepts its link through an
+ * in-app navigation, and BEFORE any reload the reader's sidebar must list all of them and a message
+ * posted in each must raise that salon's badge. Server side, `channel_members` for the reader must
+ * exist and `canAccessChannel` allows all three, so a short sidebar is the CLIENT's. Run with
+ * `--name UNR-J1` (any unused name); not part of `setup` because it creates a community per run.
+ */
+scenarios.join = async () => {
+  const name = flag('name', `${TAG}-J${Date.now() % 100000}`);
+  const salons = ['salon-a', 'salon-b'];
+  const w1 = await client(PORTS.W1);
+  const w2 = await client(PORTS.W2);
+  await enterCommunities(w1);
+  await createCommunity(w1, name);
+  for (const s of salons) await createChannel(w1, s, { visibility: 'public' });
+  await openCommunity(w1, name);
+  const path = new URL(await inviteLink(w1)).pathname;
+  await clearOverlays(w1);
+  await enterCommunities(w2);
+  await spaNavigate(w2, path);
+  await until(w2, `document.body.innerText.length > 0`, 10000);
+  await acceptInviteLink(w2);
+  await awaitAppSettled(w2).catch(() => null);
+  const wanted = ['général', ...salons];
+  // The listing is asynchronous (it enters the community's group first): wait for the FACT, no clock.
+  await until(w2, `${JSON.stringify(wanted)}.every(function (n) { return !!document.querySelector('[data-channel-row=' + JSON.stringify(n) + ']'); })`, 30000).catch(async () => {
+    throw new Error(`JOIN FAIL: the sidebar after an in-session join lists ${JSON.stringify((await readUi(w2)).rows.map((r) => r.name))}, wanted ${JSON.stringify(wanted)}`);
+  });
+  const t0 = new Date().toISOString();
+  for (const s of salons) {
+    await openChannel(w1, name, s);
+    await send(w1, `J-${name}-${s}`);
+  }
+  await sleep(3000);
+  const ui = await readUi(w2);
+  console.log(`J1 ${name}: sidebar ${JSON.stringify(ui.rows)}`);
+  for (const s of salons) {
+    const row = ui.rows.find((r) => r.name === s);
+    if (!row || !row.badge) throw new Error(`JOIN FAIL: no unread badge on ${s} for a message posted after the join`);
+  }
+  console.log(`JOIN PASS ${name} (since ${t0})`);
 };
 
 const [cmd, name] = args;

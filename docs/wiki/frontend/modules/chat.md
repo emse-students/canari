@@ -175,9 +175,26 @@ right after it was read.
   made on another device.
 - *The server marks anything.* `readMarks` is written in one place, `advanceChannelReadMark`, on request.
 
-**Found on the way, owed** ([backlog](../../backlog.md)): a member who joins a community in-session by
-invitation link sees only the landing salon in the sidebar, and every message in its other salons is
-dropped (no conversation row) until a reload.
+### A community joined in-session is listed whole (2026-10-08)
+
+Measured on the local estate (`UNR-11`: three public salons, the joiner a workspace member of all):
+after an invitation link the reader's sidebar listed ONE salon and `channel.message.created` for the
+others took `Message received for an unknown channel` until a reload.
+
+- **Cause.** `acceptWorkspaceInvite` publishes exactly ONE `channel.member.joined`, for the first
+  public salon (`channelRepo.findOne`), whatever the community holds. `onChannelMemberJoined`
+  (`ChatBackgroundService`) registered that salon alone. Worse, it made the landing target known, so
+  the landing effect's "channel unknown - refreshing communities" fallback never ran either.
+- **Fix.** A community this device has never seen (`isCommunityUnknownToEvent`, read before the
+  placeholder is made) is hydrated by `hydrateJoinedCommunity`: ONE `loadChannelWorkspacesFromBackend`,
+  the path a reload runs, which registers, enters the groups and lists every salon the member may
+  read - private ones included, through `enterPrivateSalonGroup` as at startup. It REPLACES
+  `registerJoinedChannel` for that event (no double entry); a known community still takes
+  `registerJoinedChannel`. A load already in flight answered before the join, so the join is owed one
+  more listing, run in that load's `finally` (a flag, not a timer).
+- **Not read:** the join through the deep link on a phone, and the Graine entry of a private salon the
+  joiner may read right after the join (the listing is the reload's own path, unmeasured live). The
+  harness row is `bun unread-communities.mjs run join`; it was written, not run, because W1/W2 were held.
 
 ### Every member list reads by family name, and a row never moves because its name arrived (2026-10-05)
 

@@ -203,6 +203,8 @@ export function useChannelWorkspaces() {
    * the landing must re-run when that load settles rather than start a second one.
    */
   let isLoadingWorkspaces = $state(false);
+  /** A join landed while a listing was in flight; that listing's answer predates it. */
+  let joinedCommunityReloadOwed = false;
   let workspacesLoadError = $state<string | null>(null);
 
   const service = new ChannelService();
@@ -816,7 +818,42 @@ export function useChannelWorkspaces() {
       return true;
     } finally {
       isLoadingWorkspaces = false;
+      // A join that arrived while THIS listing was in flight is not in its answer, so it is owed one
+      // more. Run here, after the flag drops, because that is the one moment a second load is legal.
+      const owed = joinedCommunityReloadOwed;
+      joinedCommunityReloadOwed = false;
+      if (owed) void loadChannelWorkspacesFromBackend(ctx);
     }
+  }
+
+  /**
+   * True when no community of this device matches the event: the first sight of a community, which
+   * is what a join in-session looks like from the receiving end.
+   */
+  function isCommunityUnknownToEvent(event: { workspaceId?: string; workspaceSlug?: string }) {
+    const slug = event.workspaceSlug?.trim().toLowerCase();
+    return !channelWorkspaces.some(
+      (workspace) =>
+        (event.workspaceId && workspace.workspaceDbId === event.workspaceId) ||
+        (slug && workspace.id === slug)
+    );
+  }
+
+  /**
+   * Hydrates a community this device has just JOINED, through the one path a reload uses.
+   *
+   * WHY IT EXISTS (measured 2026-10-08, UNR-11): accepting an invitation link makes the SERVER
+   * publish ONE `channel.member.joined`, for one representative public salon, whatever the
+   * community holds. Handled alone it registered that salon and nothing else, so the sidebar listed
+   * one salon and every message in the others hit `Message received for an unknown channel` until
+   * the next full load. The event names a community, never its roster: the roster is the listing's
+   * to say, so the listing runs - once, awaited by nobody, and owed again if one was already in
+   * flight (its answer predates the join).
+   */
+  async function hydrateJoinedCommunity(ctx: ChannelWorkspaceContext): Promise<void> {
+    ctx.log('[WORKSPACE-LOAD] community joined in-session - loading its salons');
+    const ran = await loadChannelWorkspacesFromBackend(ctx);
+    if (!ran) joinedCommunityReloadOwed = true;
   }
 
   /** Creates a new workspace with the given name, loads its default channels, then auto-selects the first channel. */
@@ -1709,6 +1746,8 @@ export function useChannelWorkspaces() {
     removeChannelFromWorkspaces,
     /** Returns or creates a sidebar workspace entry for an incoming real-time channel event. */
     ensureWorkspaceForChannelEvent,
+    isCommunityUnknownToEvent,
+    hydrateJoinedCommunity,
     /** Records the community of a channel the user was just added to in-session (no relaunch needed). */
     registerJoinedChannel,
     /** Enters a private salon an admin can see but has not joined, then re-reads the community. */

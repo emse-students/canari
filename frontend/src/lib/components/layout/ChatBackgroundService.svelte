@@ -752,6 +752,9 @@
       onChannelMemberJoined: (event: any) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
+        // READ BEFORE THE PLACEHOLDER IS MADE: a community this device has never seen is a join
+        // in-session, and the event names ONE salon of it.
+        const communityIsNew = globalChannels.isCommunityUnknownToEvent(event);
         const workspace = globalChannels.ensureWorkspaceForChannelEvent(event);
         const isPrivate = event.visibility === 'private';
         globalChannels.addChannelToWorkspace(workspace.id, {
@@ -776,7 +779,12 @@
         // path is concerned, so the first message typed into it is refused until an app relaunch
         // runs the full workspace hydration. A private salon also enters its own distribution
         // group here, for the same reason and in the same window.
-        if (workspace.workspaceDbId) {
+        if (communityIsNew) {
+          // The listing a reload runs registers, enters and lists EVERY salon of the community this
+          // member may read, this one included - so it replaces `registerJoinedChannel` here rather
+          // than following it.
+          void globalChannels.hydrateJoinedCommunity(channelsCtx());
+        } else if (workspace.workspaceDbId) {
           void globalChannels
             .registerJoinedChannel(
               event.channelId,
