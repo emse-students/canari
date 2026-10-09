@@ -27,14 +27,6 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
-## School mail on the device (IMAP/SMTP) - a study, no code (2026-10-09)
-
-User idea, decided on-device and native-only. [mail-imap](frontend/modules/mail-imap.md) carries the
-feasibility, the security design, the work packages and the eight decisions owed. First step is the DSI
-question (charter, app passwords, OAuth), not code.
-
----
-
 ## Institutions: what the creation UI does not do yet (2026-10-07)
 
 [associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07)
