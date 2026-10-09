@@ -3057,6 +3057,10 @@ A comment offered "Voir plus" past 280 characters but clamps at five LINES, so a
 
 The reaction pill carried `title=<every reactor's name>` beside `ReactorsPanel`, so hovering showed the browser's tooltip over the app's list (user report, desktop). Rule: where the app has its own display for a fact, the element carries NO `title` for it. A `title` stays only as the sole label of an icon-only control with no tooltip of its own.
 
+## A popover's height comes from its content, never from a constant (2026-10-09)
+
+`ReactorsPanel` passed `estimatedHeight: 200` to `bindFixedPopover`, which turns it into the frame's `max-height`; past ~7 names the rows overflowed the frame onto the comment below (user report, 11 reactors). The panel cannot scroll (any scroll closes it), so `ReactorsPanel` now passes the viewport as the only cap, measures how many rows the real `maxHeight` holds, and lays the names out in as many columns as fit (`layoutReactors`, 8rem minimum column); what still does not fit is one `+K` line. Measured in headless Chrome at 360x640, 390x844 and 1280x800 with 1, 3, 11, 40 and 200 reactors, at centre, bottom, right and top anchors and a very long name: 63 of 63 cases have `scrollHeight <= clientHeight`, every row inside the frame and the frame inside the viewport. The other `bindFixedPopover` callers scroll inside their own box (pickers, autocomplete, `FloatingSurface`) or hold fixed menus, so their constants only bound a scroller.
+
 ## Tooltips: one convention, audited 2026-10-08
 
 Audit of every `title` in `frontend/src` (about 440 hits, 270 of them `title={m.x()}` on an element).
