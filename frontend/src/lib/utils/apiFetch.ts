@@ -5,25 +5,41 @@
  * - On a 401 response, attempts one silent token refresh and retries.
  * - On a second 401, throws `SessionExpiredError` so the caller can redirect.
  * - Never issues an anonymous request in place of an expired session (see below).
+ * - Every call has a response-head deadline (a typed `RequestDeadlineError`, a transport failure -
+ *   never a logout) and feeds the connectivity store's `slow` reading.
  * - Never flattens a refusal into a sentence: what `refresh()` threw is what callers catch.
  */
 
 import { getToken, refresh, SessionExpiredError } from '$lib/stores/auth';
-import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { trackedFetch } from '$lib/utils/trackedFetch';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 
 /**
- * `fetch` that keeps the connectivity store honest: a transport failure marks the server
- * unreachable, any HTTP answer marks it reachable. Only the transport half is a connectivity
- * signal - a 502 is the server telling us it is there and unhappy.
+ * One attempt: the shared tracked, deadline-bounded fetch. A transport failure marks the server
+ * unreachable, any HTTP answer marks it reachable, and a response head that never arrives raises
+ * `RequestDeadlineError` - see `trackedFetch` and `requestDeadline`.
+ *
+ * A stalled GET is retried ONCE: the connection is probably dead rather than the server slow, and a
+ * fresh socket is what fixes that. The retry is bounded so it cannot multiply load - a single
+ * attempt, a GET only (a write of unknown fate is never replayed here), jittered so a burst of
+ * stalls does not retry in lockstep, and skipped as soon as the store has seen two stalls in a row
+ * (`isOffline`), at which point the link, not the call, is the problem.
  */
-async function trackedFetch(url: string, init: RequestInit): Promise<Response> {
+async function attempt(
+  url: string,
+  init: RequestInit,
+  deadlineMs: number | undefined
+): Promise<Response> {
   try {
-    const res = await fetch(url, init);
-    connectivity.notifyServerReachable();
-    return res;
+    return await trackedFetch(fetch, url, init, { deadlineMs });
   } catch (e) {
-    if (isTransportFailure(e)) connectivity.notifyServerUnreachable();
-    throw e;
+    const isGet = (init.method ?? 'GET').toUpperCase() === 'GET';
+    if (!(e instanceof RequestDeadlineError) || !isGet || connectivity.isOffline) throw e;
+    const jitter = 250 + Math.random() * 750;
+    console.warn(`[API] ${e.message} - one retry in ${Math.round(jitter)} ms`);
+    await new Promise((r) => setTimeout(r, jitter));
+    return trackedFetch(fetch, url, init, { deadlineMs });
   }
 }
 
@@ -31,10 +47,16 @@ async function trackedFetch(url: string, init: RequestInit): Promise<Response> {
 export interface ApiFetchOptions extends RequestInit {
   /** Extra headers merged in (in addition to Content-Type and Authorization). */
   headers?: Record<string, string>;
+  /**
+   * Overrides the response-head deadline (ms) chosen from the method and body size; `0` disables
+   * it. Only for a route that legitimately computes for longer than a class allows.
+   */
+  deadlineMs?: number;
 }
 
 /** Authenticated fetch wrapper: injects the Bearer token, retries once on 401, and throws on a second 401. */
-export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise<Response> {
+export async function apiFetch(url: string, options: ApiFetchOptions = {}): Promise<Response> {
+  const { deadlineMs, ...init } = options;
   const method = (init.method ?? 'GET').toUpperCase();
   const logUrl = url.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
   const t0 = Date.now();
@@ -79,7 +101,7 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
   const log = POLL_ROUTES.some((r) => logUrl.startsWith(r)) ? console.debug : console.log;
 
   log(`[API] → ${method} ${logUrl}`);
-  let res = await trackedFetch(url, { ...init, headers });
+  let res = await attempt(url, { ...init, headers }, deadlineMs);
   log(`[API] ← ${res.status} ${method} ${logUrl} (${Date.now() - t0}ms)`);
 
   if (res.status === 401) {
@@ -87,7 +109,7 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
     try {
       const newToken = await refresh();
       headers['Authorization'] = `Bearer ${newToken}`;
-      res = await trackedFetch(url, { ...init, headers });
+      res = await attempt(url, { ...init, headers }, deadlineMs);
       console.log(`[API] ← ${res.status} ${method} ${logUrl} (retry, ${Date.now() - t0}ms)`);
     } catch (e) {
       // RETHROWN AS IT CAME, because `refresh()` already answered the only question that matters

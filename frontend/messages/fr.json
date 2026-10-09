@@ -3069,6 +3069,8 @@
   "offline_banner_title": "Hors connexion.",
   "offline_banner_desc": "Vous pouvez lire vos conversations ; les nouveaux messages partiront dès le retour du réseau.",
   "offline_banner_reconnecting": "Connexion retrouvée, synchronisation de vos messages...",
+  "slow_banner_title": "Connexion lente.",
+  "slow_banner_desc": "Vos messages partent quand même ; les chargements peuvent prendre plus de temps.",
   "link_label_home": "Accueil",
   "link_label_chat": "Discussion",
   "link_label_community": "Communauté",

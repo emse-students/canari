@@ -18,8 +18,47 @@
  * flaky link.
  */
 
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+
 /** Callback invoked when connectivity is regained (offline -> online). */
 export type ReconnectListener = () => void;
+
+/**
+ * The `slow` state is DERIVED FROM WHAT ANSWERS ACTUALLY TOOK, not from a guess about the link
+ * (WP-OFF-5). Two readings feed it, and each has a stated reason:
+ *
+ * - **Smoothed answer latency.** An exponentially-weighted mean (alpha 0.3, so ~5 samples settle it)
+ *   of the time to the response head of every ordinary call. Measured on this app's estate, a good
+ *   link answers in 60-150 ms, Slow 3G in 0.5-1.0 s and the 2G-like profile in 1.3-2.5 s. The
+ *   state is entered at 1.5 s (the 2G-like profile, clearly slower than a person tolerates without
+ *   noticing) and left at 0.8 s (a Slow 3G answer): the gap is hysteresis, so a link hovering at the
+ *   threshold does not make the hint flicker.
+ * - **A request still unanswered after 5 s.** The smoothed value only moves when an answer arrives,
+ *   so a link that has just gone quiet would show nothing for the whole deadline. One request
+ *   unanswered for 5 s is, by the numbers above, slower than the worst measured profile twice over.
+ *
+ * Neither can cause load, only a hint: if either were wrong, a calm line of text would be wrong.
+ */
+export const SLOW_ENTER_MS = 1_500;
+export const SLOW_EXIT_MS = 800;
+export const SLOW_IN_FLIGHT_MS = 5_000;
+const LATENCY_ALPHA = 0.3;
+/** Samples needed before the smoothed value may enter `slow` - one outlier is not a link. */
+const MIN_SAMPLES = 3;
+/**
+ * Consecutive deadline expiries (with no answer in between) after which the server is treated as
+ * unreachable. One expiry is a slow or lossy moment; two in a row with nothing answered is the
+ * black-holed link that raises no error at all.
+ */
+export const STALLS_BEFORE_UNREACHABLE = 2;
+
+/** A request counted by {@link ConnectivityStore.trackRequest}; settle it exactly once. */
+export interface TrackedRequest {
+  /** The server answered (any status). `latencyMs` is excluded from the average when `measured` is false. */
+  answered(measured?: boolean): void;
+  /** The request failed before an answer: a transport failure, a deadline expiry or a cancellation. */
+  failed(error: unknown): void;
+}
 
 class ConnectivityStore {
   /** `navigator.onLine`, kept in sync with the `online`/`offline` events. Optimistic by nature. */
@@ -30,6 +69,21 @@ class ConnectivityStore {
    * Starts optimistic: nothing has failed yet, so nothing justifies degrading the UI.
    */
   serverReachable = $state(true);
+
+  /**
+   * True while answers are arriving but slowly (see {@link SLOW_ENTER_MS}). Never set while
+   * offline: a link that reaches nothing is `isOffline`, and the two hints must not stack.
+   */
+  slow = $state(false);
+
+  /** Smoothed time-to-response-head in ms, 0 until the first answer. Exposed for diagnostics and tests. */
+  latencyMs = 0;
+  private samples = 0;
+  private latencySlow = false;
+  private inFlightSlow = false;
+  private consecutiveStalls = 0;
+  private nextRequestId = 0;
+  private readonly inFlight = new Map<number, ReturnType<typeof setTimeout>>();
 
   /** True when the app should behave as offline: no network, or a network that reaches nothing. */
   get isOffline(): boolean {
@@ -82,6 +136,79 @@ class ConnectivityStore {
     if (!this.serverReachable) return;
     console.log('[CONNECTIVITY] server unreachable (transport failure)');
     this.serverReachable = false;
+    this.recomputeSlow();
+  }
+
+  /**
+   * Starts counting a request that left the device. Every REST call goes through here (via
+   * `trackedFetch`), so the store sees the whole population rather than the calls that happen to
+   * be interesting. Settle the returned handle exactly once.
+   */
+  trackRequest(): TrackedRequest {
+    this.ensureGlobalListeners();
+    const id = this.nextRequestId++;
+    const startedAt = Date.now();
+    this.inFlight.set(
+      id,
+      setTimeout(() => {
+        if (!this.inFlight.has(id)) return;
+        this.inFlightSlow = true;
+        this.recomputeSlow();
+      }, SLOW_IN_FLIGHT_MS)
+    );
+    const settle = (): void => {
+      const timer = this.inFlight.get(id);
+      if (timer === undefined) return;
+      clearTimeout(timer);
+      this.inFlight.delete(id);
+      // Nothing is left waiting past the threshold once the last slow request has settled.
+      if (this.inFlight.size === 0) this.inFlightSlow = false;
+    };
+    return {
+      answered: (measured = true) => {
+        if (!this.inFlight.has(id)) return;
+        settle();
+        this.consecutiveStalls = 0;
+        this.notifyServerReachable();
+        if (measured) this.observeLatency(Date.now() - startedAt);
+        this.recomputeSlow();
+      },
+      failed: (error) => {
+        if (!this.inFlight.has(id)) return;
+        settle();
+        if (error instanceof RequestDeadlineError) {
+          this.consecutiveStalls++;
+          console.warn(
+            `[CONNECTIVITY] ${error.message} (stall ${this.consecutiveStalls}/${STALLS_BEFORE_UNREACHABLE})`
+          );
+          if (this.consecutiveStalls >= STALLS_BEFORE_UNREACHABLE) this.notifyServerUnreachable();
+        } else if (isTransportFailure(error)) {
+          this.notifyServerUnreachable();
+        }
+        this.recomputeSlow();
+      },
+    };
+  }
+
+  /** Folds one answer's time-to-head into the smoothed latency. */
+  private observeLatency(ms: number): void {
+    this.latencyMs =
+      this.samples === 0 ? ms : this.latencyMs + LATENCY_ALPHA * (ms - this.latencyMs);
+    this.samples++;
+    if (this.samples >= MIN_SAMPLES && this.latencyMs >= SLOW_ENTER_MS) this.latencySlow = true;
+    else if (this.latencyMs <= SLOW_EXIT_MS) this.latencySlow = false;
+  }
+
+  /** Derives `slow` from its two readings; logged only on a change so a flapping link stays one line each way. */
+  private recomputeSlow(): void {
+    const next = !this.isOffline && (this.latencySlow || this.inFlightSlow);
+    if (next === this.slow) return;
+    this.slow = next;
+    console.log(
+      next
+        ? `[CONNECTIVITY] slow link (smoothed answer ${Math.round(this.latencyMs)} ms, ${this.inFlight.size} request(s) in flight)`
+        : `[CONNECTIVITY] link no longer slow (smoothed answer ${Math.round(this.latencyMs)} ms)`
+    );
   }
 
   /**
@@ -110,6 +237,14 @@ class ConnectivityStore {
     this.isOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
     this.serverReachable = true;
     this.listeners.clear();
+    for (const timer of this.inFlight.values()) clearTimeout(timer);
+    this.inFlight.clear();
+    this.slow = false;
+    this.latencyMs = 0;
+    this.samples = 0;
+    this.latencySlow = false;
+    this.inFlightSlow = false;
+    this.consecutiveStalls = 0;
   }
 }
 
@@ -125,6 +260,9 @@ export const connectivity = new ConnectivityStore();
  * answered by the server and is not a connectivity problem.
  */
 export function isTransportFailure(error: unknown): boolean {
+  // A deadline expiry is the absence of an answer, never one - recognised by TYPE, raised where the
+  // deadline was armed.
+  if (error instanceof RequestDeadlineError) return true;
   if (error instanceof TypeError) return true;
   if (!(error instanceof Error)) return false;
   return /network|failed to fetch|fetch failed|load failed|connection/i.test(error.message);
