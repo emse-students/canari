@@ -1742,7 +1742,7 @@ The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-be
 
 **The third retirement condition originally listed is dead, not pending**: `query-string` DOES now depend on a fixed `decode-uri-component` (latest 9.5.1, on `^0.5.0`), but minio's pin is `^7.1.3` and cannot reach a 9.x, so only minio moving retires either suppression.
 
-**Upstream re-check log**: 2026-09-15, 2026-09-22, 2026-09-24, 2026-10-06 - `minio` still 8.0.7 (published 2026-02-27), `query-string: ^7.1.3` and `stream-json: ^1.8.0` unchanged. The registry answers in one request; record the date of the next check here.
+**Upstream re-check log**: 2026-09-15, 2026-09-22, 2026-09-24, 2026-10-06, 2026-10-09 - `minio` still 8.0.7 (published 2026-02-27), `query-string: ^7.1.3` and `stream-json: ^1.8.0` unchanged. The registry answers in one request; record the date of the next check here.
 
 ### A merged branch that is still there was pushed back, not left behind (measured 2026-09-22)
 
