@@ -37,6 +37,7 @@
     isBelowMinClientVersion,
   } from '$lib/stores/appVersionCheck.svelte';
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
+  import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
   import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -600,6 +601,7 @@
 <a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
 
 <PlatformGateOverlay />
+<IdentitySplitOverlay />
 
 <!-- The swipe gesture's touch listeners are bound to this node in script, and only on a screen that
      can swipe - see the effect above. They are deliberately NOT `ontouch*` attributes: those bind

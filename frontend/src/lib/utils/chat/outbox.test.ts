@@ -39,6 +39,7 @@ import {
   DeliveryUnreachableError,
   GroupDeletedError,
   SenderNotActiveError,
+  SendForbiddenError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind, decodeAppMessage, mediaReelFromProto } from '$lib/proto/codec';
@@ -1033,6 +1034,52 @@ describe('outbox flusher', () => {
     );
     expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('REFUSED with 413'))).toBe(true);
     errorSpy.mockRestore();
+  });
+
+  /**
+   * A 403 is an ANSWER about the caller (a token naming another account than the frame's sender):
+   * the same six entries were re-posted 23 times on a bench phone. Classified from the TYPE, the
+   * entry is KEPT but parked after ONE attempt, and the log accuses.
+   */
+  it('parks an entry after a 403 instead of re-posting it for ever', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const send = vi.fn(async () => {
+      throw new SendForbiddenError('g1');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls({ send }), storage, isGroupHealthy: () => true })
+    );
+
+    await outbox.flush();
+    await outbox.flush();
+    await outbox.flush();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    // Nothing the user wrote is lost: the row stays, pending, for after a sign-in.
+    expect(storage._map.has('m1')).toBe(true);
+    expect(storage._map.get('m1')?.status).toBe('pending');
+    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('REFUSED with 403'))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it('does not treat a 5xx as the 403 answer: it still climbs the ladder', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls({
+          send: async () => {
+            throw new Error('Message send HTTP error: 503');
+          },
+        }),
+        storage,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(storage._map.get('m1')?.attempts).toBe(1);
   });
 
   it('still retries a 5xx upload refusal: only a 413 is permanent', async () => {

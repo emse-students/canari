@@ -18,8 +18,9 @@ vi.mock('$lib/stores/user', () => ({
   clearUserLocally: vi.fn(),
 }));
 
-const { refresh, setSessionExpiredHandler, setToken, isRefreshCredentialProvenDead } =
+const { refresh, setSessionExpiredHandler, setToken, isRefreshCredentialProvenDead, clearAuth } =
   await import('$lib/stores/auth');
+const { IdentitySplitError, getIdentitySplit } = await import('$lib/stores/tokenIdentity.svelte');
 
 /** A refresh response with the given status; 200 carries a syntactically valid JWT. */
 function answer(status: number): Response {
@@ -164,5 +165,48 @@ describe('the fetch a refresh is made with', () => {
     fetchMock.mockResolvedValue(answer(200));
     await expect(refresh()).resolves.toMatch(/^h\./);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * THE TOKEN MUST NAME THE LOCAL IDENTITY (bench phone, 2026-10-10: MLS identity Alpha, token Delta,
+ * every request a 403 and the outbox re-posting 23 times). The comparison is made where a token is
+ * obtained, so it is tested here: refused, not published, not asked again, lifted only by sign-out.
+ */
+describe('a token for another account than the local identity', () => {
+  /** A refresh answer whose token names `sub`. */
+  function answerFor(sub: string): Response {
+    const claims = btoa(JSON.stringify({ sub, exp: Math.floor(Date.now() / 1000) + 3600 }));
+    return new Response(JSON.stringify({ access_token: `h.${claims}.s` }), { status: 200 });
+  }
+
+  it('throws IdentitySplitError, publishes nothing and keeps the MLS state', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    currentUserId.mockReturnValue('alpha');
+    fetchMock.mockResolvedValue(answerFor('delta'));
+
+    const failure = await refresh().catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(IdentitySplitError);
+    expect(getIdentitySplit()).toEqual({ tokenSub: 'delta', localId: 'alpha' });
+    expect(document.cookie).not.toContain('canari_ws_token=h');
+  });
+
+  it('does not ask the server again while the split stands', async () => {
+    fetchMock.mockClear();
+
+    await expect(refresh()).rejects.toBeInstanceOf(IdentitySplitError);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('is lifted by the sign-out, and a matching token is then accepted', async () => {
+    fetchMock.mockResolvedValue(new Response('', { status: 200 }));
+    await clearAuth();
+    expect(getIdentitySplit()).toBeNull();
+
+    currentUserId.mockReturnValue('delta');
+    fetchMock.mockResolvedValue(answerFor('delta'));
+    await expect(refresh()).resolves.toMatch(/^h\./);
   });
 });

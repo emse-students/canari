@@ -218,6 +218,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * the trigger.
    */
   const transportHeld = new Set<string>();
+  /**
+   * Ids that were answered 403: parked, never re-posted by this controller. In memory on purpose -
+   * a restart earns ONE more attempt per entry (bounded), and a sign-in builds a new controller.
+   */
+  const forbiddenParked = new Set<string>();
   /** The subset armed by a reconnect: each id skips its backoff ONCE, then is forgotten. */
   const resuming = new Set<string>();
   const lanes = new Map<string, Promise<void>>();
@@ -618,6 +623,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
     // Consumed here, whether or not the backoff was still running, so a stale arming cannot outlive
     // the reconnect it came from.
+    if (forbiddenParked.has(entry.id)) return 'skip';
     const resumed = resuming.delete(entry.id);
     if (!resumed && entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
       log(
@@ -791,6 +797,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // request body above exactly 1 MiB; no retry shrinks the file, so the ladder would re-post the
       // same upload once a minute for ever (attempt 806, 2026-10-07). It accuses: the refusal is the
       // visible end of an upload path that shipped a body the edge cannot carry.
+      // A 403 IS AN ANSWER ABOUT THE CALLER, read from the TYPE (`SendForbiddenError` is an
+      // `ApiRefusalError`), and re-posting the same frame cannot change who the caller is. The
+      // ladder re-posted six entries 23 times on a bench phone whose token named another account
+      // (2026-10-10). The entry is KEPT - nothing the user wrote is lost, and it goes out after a
+      // sign-in - but it is PARKED for this controller's life (a new sign-in builds a new one), and
+      // the line accuses: the 403 is the visible end of an identity or authorization defect upstream.
+      if (refusalStatus(e) === 403) {
+        forbiddenParked.add(entry.id);
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with 403 in ${terminalId.slice(0, 8)}… - the caller is not allowed to send this; parked, no retry until the next sign-in`;
+        console.error(line);
+        log(line);
+        patchStatus(entry.id, 'pending');
+        return 'skip';
+      }
       if (refusalStatus(e) === 413) {
         const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;
         const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with 413 (request body too large) - ${detail} in ${terminalId.slice(0, 8)}…: no retry can succeed, giving up`;

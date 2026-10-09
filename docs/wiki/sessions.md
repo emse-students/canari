@@ -318,6 +318,37 @@ handler now reads `navigating.to?.url` (else the current location) through `logi
 redirect would have built survives; the root and the sign-in pages stay bare. Source guard:
 `sessionExpiredRelease.test.ts`. The hardware reading is [check H](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android), step 4.
 
+## A token that names another account than the local identity is refused (2026-10-10)
+
+The MLS identity (`canari_saved_user`, the `userId` the WASM client is initialised with) comes from
+local state; the session the server sees is the access token's `sub`. Two writers, nothing
+comparing them: a bench phone ran with Alpha's identity and Delta's credential, the gateway
+registered the socket as Delta carrying Alpha's device id, every send/history/seed request answered
+`403 AUTHZ FAIL caller != requester`, and live frames were routed to an offline account.
+
+**One comparison, where a token is obtained** (`_doRefresh` in `stores/auth.ts`, through
+`checkTokenIdentity` in `stores/tokenIdentity.svelte.ts`, ids compared case-insensitively). With no
+local id, or an unreadable token, there is nothing to compare and the token is used. On a mismatch:
+
+- the token is **not published** (no memory copy, no `canari_ws_token` cookie) and the rotation is
+  still persisted, so the sign-out that follows can revoke the session;
+- the verdict is **latched** and `refresh()` throws `IdentitySplitError` without asking the server
+  again (a request would only rotate the credential for the same verdict); `apiFetch` does not
+  retry anonymously, the reconnect ladder stops, `loginImpl` stops, `promoteOfflineSession` stays
+  offline, and the outbox's `canFlush` gate reads it;
+- the console line **accuses** with both ids and nothing else (`IDENTITY SPLIT: ...`);
+- **nothing is wiped.** The MLS state belongs to whoever signs in as the right account;
+- `IdentitySplitOverlay` (mounted in the root layout) blocks the app with ONE action, the ordinary
+  sign-out (`clearAuth()` then `/login`). `clearAuth` and a new OIDC callback lift the latch.
+
+**A 403 on a send is an answer, classified at the throw.** `postApplicationMessage` raises
+`SendForbiddenError` (an `ApiRefusalError`, status 403) for every 403 that is not
+`sender_not_active`; the outbox reads the status from the type, keeps the entry (nothing the user
+wrote is lost), parks it for that controller's life and logs it as an error. A restart earns one more
+attempt per entry, a sign-in builds a new controller. A 5xx still climbs the backoff ladder. Tests:
+`auth.test.ts`, `tokenIdentity.svelte.test.ts`, `mlsDeliveryApi.forbidden.test.ts`,
+`outbox.test.ts`. HOW the split is produced is open: [backlog](backlog.md).
+
 ## Keys
 
 - **An empty key can fail OPEN or CLOSED and you cannot guess which.** `crypto.createHmac('sha256','')`
