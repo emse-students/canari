@@ -133,13 +133,12 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together, always in that band; the firewall is outside the access scope here | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
 | **create the new Cloudflare tunnel on the `rootz-emse.fr` zone.** The project's token answers 200 with an EMPTY list on `cfd_tunnel` and 403 on Access groups, so tunnels are out of its scope. (verify: phase 1 completed for all three estates on 2026-09-24 without it - whether this tunnel is still wanted at all) | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
 | **the spaces release order (WP6b), three gestures in THIS order**: (1) go for the WP3 profile backfill on production once 6a/6d's release ran migration 071 (`backfill-canari-profiles.sh apply`); (2) set every association's real reach and the BDEs at `/admin/spaces` - the seed gave all of them (ICM, saint-etienne) only; (3) only then cut the release carrying 6b. Out of order, ISMIN/Gardanne/FSSS/Autre readers see no existing association post, and anyone not backfilled loses the feed | 1 go, 1 grid, 1 release | [profiles-and-access](profiles-and-access.md), "WP6b as built" |
-| **create an Authentik test user `canari-test-epsilon` (campus gardanne), or allow a scoped permission rule for it** - the read-grants dev checks need a second campus and Authentik is one instance for dev and prod, so no agent may touch it. No stable ships the read grants before they run | 1 account | [Audiences](#audiences-of-associations-lists-and-institutions---built-on-dev-in-v120-alpha1) |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala` (the repository answers `404`). Nothing runs from it; it is somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
 | **install docker-prune on the Portail-etu host (88 % full)**: four copy-paste commands and one `crontab -e` line, ready in the README | 4 commands, 1 cron line | [the P3](#p3---docker-prune-is-built-for-the-portail-etu-host-but-not-installed-there) |
 | **decide two privileges for the host-update report**: a sudoers rule letting the runner account run `needrestart -b` (without it the check is blind), and/or a runner key on `mitv`, `cercle`, `miconnect` | 1 decision | [the P2](#p2---three-hosts-take-security-updates-that-nothing-reports-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
 | **decide whether `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App itself** (a lockfile-refresh superseding a Dependabot pull request, which is how the last class of dependency update that needs a person would merge unattended) | 1 decision | [the P2](#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
-| **raise `minClientVersion` once both stores serve at least 1.0.3** (the stable after 1.1.2 is its natural moment); Graine v2's G3 waits for it | 1 gesture | [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
+| **raise `minClientVersion` to `1.2.1` once BOTH stores serve `1.2.1`** - `1.0.3`-`1.1.2` keep the native key-group epoch bug (a cold start arms an epoch gap, salon sends are refused, the device re-joins 45 s later); the same floor clears Graine v2's `>= 1.0.3` | 1 gesture | [channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09), [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **may staff read the association posts of their campus?** one line: keep (1), institution posts of the campus (2), or the whole campus (3) | 1 decision | [open-questions](open-questions.md#may-emseme-staff-no-cursus-read-the-association-posts-of-their-campus) |
 
@@ -194,6 +193,32 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 ## P1 - Offline and weak network: salon sends are lost offline, the cold start is 103 s on Slow 3G (user, 2026-10-09; measured, not built)
 
 DMs and groups already have an optimistic row and a durable outbox; **salon writes have neither** (offline send: text lost) and **nothing has a deadline**. Cold start on Slow 3G: first paint 23 s, list usable 103 s (JS 57 s, then the 2 MB WASM 45 s, then the list); warm 2.1 s. Fourteen ordered work packages, each with its test, and the measured table: [offline-and-weak-network](frontend/offline-and-weak-network.md). Start with WP-OFF-1 (keep the salon draft on failure), WP-W1/W2 (compression, WASM preload), WP-W3. Owed: peer-side delivery, Android and iOS runs (the page lists them).
+
+## Seen on the 2026-10-09 bench runs (around `v1.2.1`)
+
+### P1 - a tab or app open across a production deploy sees the outage as "Échec de l'envoi"
+
+The 1-2 min a prod deploy takes answers `502`, and a send in that window shows "Échec de l'envoi". Clients older than `1.2.1` then stayed blocked by the key-group epoch bug ([channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09)), but the deploy outage is user-visible on its own: whether the deploy library can be zero-downtime is the open question ([cicd](cicd.md)).
+
+### P2 - the dev estate cannot send a push
+
+Firebase is not initialized in `canari-dev-chat-delivery-service`, so no notification check can be performed on `dev.canari-emse.fr` ([dev-environment](infrastructure/dev-environment.md)).
+
+### P2 - iPhone: once, a message that arrived while the app was killed left no unread dot
+
+Neither the tab nor the salon showed one. Not reproduced.
+
+### P3 - iPhone: the sticky "AUJOURD'HUI" date chip overlaps a sender name while a salon scrolls
+
+### P3 - switching accounts on one iPhone install makes the local store unreadable
+
+The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
+
+### P3 - every cold start re-registers the device and fetches `/groups` two or three times
+
+`POST /api/mls/register-device` runs on every cold start; the Mi 9T also sends `POST /mls/history-request` twice.
+
+### P3 - the harness gamma bench PIN is refused on dev
 
 ## Open defects, in severity order
 
@@ -798,7 +823,7 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 ### Owed to the user after the Stripe removal
 
-Delete the GitHub secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUB_KEY` and the Stripe webhook endpoint; review the rewritten CGU and privacy text naming Lydia. Later, once the previous release is no longer a rollback target: drop the three Stripe columns and rename the permission with a data migration ([stripe-archive](stripe-archive.md#the-names-that-outlived-the-processor-kept-on-purpose)).
+Delete the GitHub secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUB_KEY` and the Stripe webhook endpoint (the CGU and privacy text naming Lydia was APPROVED by the user on 2026-10-08). Three later items: the unsigned Lydia partnership contract, proof the payer e-mail is not kept, and association enrolment with conditions and uploaded documents. Later, once the previous release is no longer a rollback target: drop the three Stripe columns and rename the permission with a data migration ([stripe-archive](stripe-archive.md#the-names-that-outlived-the-processor-kept-on-purpose)).
 
 ### A PAID PUBLIC FORM (user, 2026-09-30) - the paid half waits for Lydia
 
@@ -875,12 +900,12 @@ Not started. Design, the named starting point (the `social` notification family)
 - **One reading on the reporting iPhone**: the `/posts` and associations scroll on a build carrying the fix ([design-reference section 28](frontend/design-reference.md#28-every-scroll-in-the-app-ran-on-the-main-thread-for-a-gesture-ten-prefixes-cannot-perform)); the Mi 9T settles only Chromium.
 - **P3 - one memory measurement on a long feed** (not virtualised; avatars deliberately not lazy). Measure before changing either.
 
-## Audiences of associations, lists and institutions - built, on dev in `v1.2.0-alpha.1`
+## Audiences of associations, lists and institutions - built, in production since `v1.2.0`
 
 WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominative read grants WP-C (#1606) and their write-boundary fixes (#1608) are built. Decisions and as-built: [profiles-and-access](profiles-and-access.md#the-audiences-chantier---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08). **Owed:**
 
 - **The on-device look** at the Audience tab, the profile campus prompt and the `/admin/read-access` grid.
-- **Dev checks that were NOT TESTABLE, and no stable may ship the read grants until they run** (Master, 2026-10-08): all four dev sandbox accounts are ICM / saint-etienne and the campus is only an Authentik attribute (`attributes.profile`, read by `apps/core-service/src/users/miconnect-profile.ts`). Authentik is ONE instance for dev and prod, so even a read-only `ak shell` counts as production access and was denied. **User:** create an Authentik user `canari-test-epsilon` with campus gardanne (same groups and attributes shape as `canari-test-delta`, credentials into `F:/Programmation/canari-harness/test-accounts.json`, never on a command line) or allow a scoped permission rule for creating it. Then the agent verifies: a grantee sees the association posts of the granted campus and NO personal post, can react and comment, cannot vote nor republish through the grant, and a revoke restores the baseline; and a star's audience read, own campus versus another campus.
+- **Dev checks that were NOT TESTABLE, and no stable may ship the read grants until they run** (Master, 2026-10-08): all four dev sandbox accounts are ICM / saint-etienne and the campus is only an Authentik attribute (`attributes.profile`, read by `apps/core-service/src/users/miconnect-profile.ts`). Authentik is ONE instance for dev and prod, so even a read-only `ak shell` counts as production access and was denied. The user created `canari-test-epsilon` (campus gardanne) on 2026-10-08 and its 8 dev checks were started that day; their verdicts are not recorded here yet. They verify: a grantee sees the association posts of the granted campus and NO personal post, can react and comment, cannot vote nor republish through the grant, and a revoke restores the baseline; and a star's audience read, own campus versus another campus.
 - **User decision:** let the directory be widened for grantees? (not widened now; only posts, comments, reactions and events are).
 - **Ambiguity to answer:** what "an institution of another campus" means for a reader (the grant reaches it today).
 - The document-reviewer rows were NOT moved into the grants table (a separate capability on the same page).
