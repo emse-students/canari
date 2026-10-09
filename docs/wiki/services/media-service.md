@@ -290,6 +290,10 @@ breakdown was split to fix on 2026-08-18. At the rate measured on the day it shi
 4.5 months, ~110 MB/year) this is indolent; the line exists so that stays a measurement.
 
 
+## One request body is at most 8 MiB (2026-10-10)
+
+The host's WAF drops any body over 10 MiB ([host-waf-body-limit](../infrastructure/host-waf-body-limit.md)), so the client sends a single-request upload only up to 8 MiB of ciphertext and uses `upload/chunk/init` + 8 MiB chunks + `complete` above it. The server needed no change (chunks append in order, 100 MB policy). A chunk that fails restarts the whole upload under a new session: there is no offset route yet (reels-in-chat RC-5).
+
 ## The `chat-reel` class: a reel sent in a conversation (RC-2, 2026-10-09)
 
 **Server half of [reels-in-chat](../frontend/modules/reels-in-chat.md). Draft, waiting for review: nothing

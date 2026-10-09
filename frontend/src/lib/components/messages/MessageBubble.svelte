@@ -15,6 +15,11 @@
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
   import MessageMediaRenderer from './MessageMediaRenderer.svelte';
+  import {
+    retryUpload,
+    uploadViewOf,
+    type UploadView,
+  } from '$lib/utils/chat/uploadProgress.svelte';
   import { isReelMessage } from '$lib/reels/chatReel';
   import ChannelPoll from '../channels/ChannelPoll.svelte';
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
@@ -563,6 +568,23 @@
    */
   let isNearViewport = $state(false);
 
+  /**
+   * An attachment of mine that has not finished uploading: its ref has no `mediaId` yet and the
+   * outbox still owns it. The outbox's own view while it runs; `waiting` when it has none (a reload
+   * brought the queued row back and nothing is advancing it yet). A message that FAILED for good
+   * (`error`) or was sent has no upload to show, so the bubble falls back to its plain state.
+   */
+  /**
+   * The upload was REFUSED for good (the outbox ended the entry): the bubble says so and offers the
+   * delete, instead of the spinner a missing `mediaId` would otherwise draw for ever.
+   */
+  const uploadFailed = $derived(isOwn && !!mediaRef && !mediaRef.mediaId && status === 'error');
+  const upload = $derived.by((): UploadView | null => {
+    if (!isOwn || !mediaRef || mediaRef.mediaId) return null;
+    if (status !== 'pending' && status !== 'sending') return null;
+    return uploadViewOf(messageId) ?? { phase: 'waiting', loaded: 0, total: 0, attempt: 0 };
+  });
+
   $effect(() => {
     // Empty mediaId = media still queued in the outbox (upload pending): leave blobUrl null
     // so MessageMediaRenderer shows its skeleton/spinner. Don't attempt a download (would 404).
@@ -812,6 +834,10 @@
                 {messageId}
                 {authToken}
                 onNear={() => (isNearViewport = true)}
+                {upload}
+                {uploadFailed}
+                onCancelUpload={onDelete ? () => onDelete(messageId) : undefined}
+                onRetryUpload={() => retryUpload(messageId)}
               />
 
               {#if !mediaRef}

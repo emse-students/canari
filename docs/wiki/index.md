@@ -77,6 +77,7 @@
 
 - [Docker & services](infrastructure/docker.md) — Docker Compose setup, service dependencies
 - [Container logs](infrastructure/logging.md) - the bounded json-file stanza on every service, and the per-deploy archive that keeps a log past the container a deploy recreates
+- [Host WAF body limit](infrastructure/host-waf-body-limit.md) - the school-managed CrowdSec drops any request body over 10 MiB; why every upload body stays under 8 MiB
 - [Nginx routing](infrastructure/nginx.md) — Route table (source of truth), auth_request
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment
 - [Mino access](infrastructure/mino-access.md) — Wiki.js and Omeka permissions driven by Authentik groups, the three archive levels

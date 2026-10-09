@@ -18,7 +18,7 @@ import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { m } from '$lib/paraglide/messages';
-import { refusalStatus } from '$lib/utils/apiRefusal';
+import { uploadRefusalCause } from '$lib/utils/mediaErrors';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import { recordEviction } from '$lib/utils/chat/eviction';
@@ -26,6 +26,8 @@ import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
 import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
+import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
+import { clearAllUploads, clearUpload, patchUpload, setUploadRetry } from './uploadProgress.svelte';
 import {
   getIsTabLeader,
   getTabLeadership,
@@ -135,7 +137,10 @@ export interface OutboxDeps {
    */
   saveConversation?: (key: string) => Promise<void>;
   /** Encrypt + upload a queued media file, returning the server media ref (queued-media flush). */
-  uploadMedia?: (media: NonNullable<OutboxEntry['media']>) => Promise<MediaRef>;
+  uploadMedia?: (
+    media: NonNullable<OutboxEntry['media']>,
+    transport?: XhrUploadOptions
+  ) => Promise<MediaRef>;
   /**
    * True when the session is in a state where sending can succeed. Returns false for a session
    * unlocked offline that has no access token yet: the browser can report `online` before the
@@ -167,6 +172,12 @@ export interface OutboxController {
   cancelPending: (messageId: string) => Promise<boolean>;
   /** Drain the outbox. Gated on tab leadership here, not by the caller. Coalesces concurrent calls. */
   flush: () => Promise<void>;
+  /**
+   * "Try this attachment again NOW" (a bubble's retry): skips its backoff, and abandons a transfer
+   * that is on the wire but stalled. The bytes already sent are lost - the media route has no
+   * offset - so a retry restarts the upload at zero.
+   */
+  retryUpload: (messageId: string) => void;
   /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
   applyPendingStatuses: () => Promise<void>;
   /** Stop the internal backoff timer. */
@@ -183,6 +194,13 @@ type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip' | 'gone';
  * not carved into slivers each of which then misses its deadline.
  */
 export const MAX_CONCURRENT_SENDS = 3;
+
+/**
+ * How long an attachment may move no byte before its bubble says so (`stalled`). DISPLAY ONLY: the
+ * transport's own guard (`DEFAULT_UPLOAD_IDLE_MS`) is what abandons the attempt, and this merely
+ * tells the member sooner than that that nothing is moving and a retry is on offer.
+ */
+export const UPLOAD_STALL_HINT_MS = 10_000;
 
 /**
  * Creates the outbox controller. The flusher re-encodes the proto against the current epoch at
@@ -265,6 +283,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * fall back to a `delete_message` event instead of silently losing the delete.
    */
   let inFlight: string | null = null;
+
+  /**
+   * The transfer of each queued attachment that is being uploaded right now, by message id. It is
+   * what lets a bubble's cancel and retry reach a request already on the wire: withdrawing the row
+   * alone would leave a 13 MB body leaving a weak uplink for a message nobody wants any more.
+   * Reasons: `'cancel'` (the member withdrew it) and `'retry'` (try again now, skip the backoff).
+   */
+  const uploads = new Map<string, AbortController>();
 
   /**
    * Read the queue. A failure here is indistinguishable from an empty queue to every caller, so
@@ -419,7 +445,34 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (!ref) {
       if (!deps.uploadMedia) throw new Error('uploadMedia callback not provided');
       logMlsMetric({ kind: 'outbox_upload_attempt', conversationId: entry.conversationId });
-      const uploaded = await deps.uploadMedia(media);
+      const control = new AbortController();
+      uploads.set(entry.id, control);
+      patchUpload(entry.id, {
+        phase: 'preparing',
+        loaded: 0,
+        total: 0,
+        attempt: entry.attempts + 1,
+      });
+      // The hint only: the transport abandons a dead transfer on its own, this says so earlier.
+      let lastMoved = Date.now();
+      const hint = setInterval(() => {
+        if (Date.now() - lastMoved > UPLOAD_STALL_HINT_MS)
+          patchUpload(entry.id, { phase: 'stalled' });
+      }, 2_000);
+      let uploaded: MediaRef;
+      try {
+        uploaded = await deps.uploadMedia(media, {
+          signal: control.signal,
+          onProgress: ({ loaded, total }) => {
+            lastMoved = Date.now();
+            patchUpload(entry.id, { phase: 'uploading', loaded, total });
+          },
+        });
+      } finally {
+        clearInterval(hint);
+        uploads.delete(entry.id);
+      }
+      clearUpload(entry.id);
       ref = {
         mediaId: uploaded.mediaId,
         key: uploaded.key,
@@ -500,7 +553,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function failPermanently(
     entry: OutboxEntry,
     terminalId: string,
-    cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large'
+    cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large' | 'blocked' | 'refused'
   ): Promise<FlushOutcome> {
     // THE KIND IS THE SEVERITY, and this line used to omit the one thing that decides it. A
     // `control` entry dying with its group is a read receipt or a reaction that lost a race to a
@@ -513,15 +566,23 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         (entry.kind === 'control' ? ' (control: nothing the user wrote is lost)' : '')
     );
     patchStatus(entry.id, 'error');
+    clearUpload(entry.id);
     if (entry.kind !== 'control') {
-      if (cause === 'too-large') {
+      if (cause === 'too-large' || cause === 'blocked' || cause === 'refused') {
         // THE ONE PERMANENT FAILURE THAT IS ABOUT THE OBJECT, NOT THE GROUP: nothing about the
         // conversation changed, so no banner and no eviction - only a line in the thread that tells
         // the author which message will never go and what to do about it. Best-effort, and logged.
         await deps
-          .addMessageToChat?.('system', m.outbox_upload_too_large(), entry.conversationId, {
-            isSystem: true,
-          })
+          .addMessageToChat?.(
+            'system',
+            cause === 'too-large'
+              ? m.outbox_upload_too_large()
+              : cause === 'blocked'
+                ? m.outbox_upload_blocked()
+                : m.outbox_upload_refused(),
+            entry.conversationId,
+            { isSystem: true }
+          )
           .catch((e: unknown) =>
             log(`[OUTBOX] ${entry.id.slice(0, 8)}… too-large notice not posted: ${String(e)}`)
           );
@@ -582,6 +643,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (opts.transport) transportHeld.add(entry.id);
     else transportHeld.delete(entry.id);
     patchStatus(entry.id, 'pending');
+    // An attachment still to upload shows that its next attempt is queued (and starts from zero).
+    if (entry.kind === 'media' && !entry.media?.uploadedRef) {
+      patchUpload(entry.id, { phase: 'waiting', loaded: 0, attempt: entry.attempts + 1 });
+    }
     const attempts = entry.attempts + 1;
     await storage
       ?.updateOutboxEntry(
@@ -610,6 +675,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // is the only thing standing between a message the user deleted and the wire.
     if (cancelled.has(entry.id)) {
       cancelled.delete(entry.id);
+      clearUpload(entry.id);
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… cancelled before it was sent - dropped, not delivered`
       );
@@ -713,6 +779,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // The media envelope was installed immediately after upload, before the MLS send.
       await persistSent(terminalId, entry.id);
       patchStatus(entry.id, 'sent');
+      clearUpload(entry.id);
       transportHeld.delete(entry.id);
       // The tab that composed this may be a follower, whose own echo is still showing `pending`.
       publishOutboxEntrySent(entry.id, mediaContent);
@@ -747,6 +814,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // ONE READ OF THE DISCRIMINATOR, used by all three branches below. It was classified three
       // times for the same error, which is three chances for the arms to drift apart on what they
       // think happened.
+      // A TRANSFER THE MEMBER ENDED ON PURPOSE, read from the TYPE the transport threw. Cancel: the
+      // row is already withdrawn (`cancelPending` deleted it before aborting), so this is only the
+      // flush learning of it. Retry: not a failure at all - the member asked for another attempt
+      // now, so the backoff is skipped and the lane re-runs at once.
+      if (e instanceof UploadAbortedError) {
+        if (e.reason === 'retry') {
+          log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload restarted on request`);
+          resuming.add(entry.id);
+          laneRerun.add(entry.conversationId);
+          return 'retry';
+        }
+        cancelled.delete(entry.id);
+        clearUpload(entry.id);
+        log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`);
+        return 'gone';
+      }
       const kind = classifyOutgoingSendError(e);
       if (kind === 'sender-not-active') {
         log(
@@ -786,17 +869,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         );
         return failPermanently(entry, terminalId, 'group-deleted');
       }
-      // A 413 IS AN ANSWER ABOUT THE BODY, read from the TYPE the throw carried (`MediaUploadError`
-      // is an `ApiRefusalError`) and never from its message. The edge (Cloudflare Free) refuses any
-      // request body above exactly 1 MiB; no retry shrinks the file, so the ladder would re-post the
-      // same upload once a minute for ever (attempt 806, 2026-10-07). It accuses: the refusal is the
-      // visible end of an upload path that shipped a body the edge cannot carry.
-      if (refusalStatus(e) === 413) {
+      // AN ANSWER IS NEVER TRANSIENT. A refusal the media service (or the gateway in front of it)
+      // gave to THIS upload is read from the TYPE the throw carried (status and origin, never the
+      // message), and no retry changes it: the ladder used to re-post the same body once a minute for
+      // ever (attempt 806 on a 413, 2026-10-07; a 403 CrowdSec ban page on every 10 MiB+ body,
+      // 2026-10-10, which spun the bubble for ever). It accuses: each is the visible end of an upload
+      // path that shipped something the other side cannot take.
+      const refusal = uploadRefusalCause(e);
+      if (refusal) {
         const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;
-        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with 413 (request body too large) - ${detail} in ${terminalId.slice(0, 8)}…: no retry can succeed, giving up`;
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… upload REFUSED (${refusal}: ${String(e).slice(0, 120)}) - ${detail} in ${terminalId.slice(0, 8)}…: no retry can succeed, giving up`;
         console.error(line);
         log(line);
-        return failPermanently(entry, terminalId, 'too-large');
+        return failPermanently(entry, terminalId, refusal);
       }
       if (kind === 'evicted') {
         log(
@@ -1018,6 +1103,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           cancelled.delete(messageId);
         });
       if (!cancelled.has(messageId)) return false;
+      // A body already on the wire is stopped too, not only forgotten. AFTER the check above: the
+      // abort wakes the flush that owns the transfer, which consumes `cancelled`.
+      uploads.get(messageId)?.abort('cancel');
       // The mirror is the native background sender's own copy of the queue: leaving the entry in it
       // sends the message from Android after it was withdrawn here.
       await refreshMirror();
@@ -1037,6 +1125,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return runFlush();
     },
 
+    retryUpload(messageId: string): void {
+      // Skip the backoff for this entry (the one `resuming` already exists for) and, when its
+      // transfer is on the wire and stalled, abandon it: the flush then restarts it at once.
+      resuming.add(messageId);
+      const running = uploads.get(messageId);
+      if (running) running.abort('retry');
+      else runFlush();
+    },
+
     async applyPendingStatuses(): Promise<void> {
       if (!storage) return;
       const entries = await readQueue('pending statuses');
@@ -1050,6 +1147,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     },
 
     dispose(): void {
+      for (const running of uploads.values()) running.abort('cancel');
+      uploads.clear();
+      clearAllUploads();
       if (backoffTimer) clearTimeout(backoffTimer);
       backoffTimer = null;
       unsubscribeTabOutbox();
@@ -1071,12 +1171,15 @@ export function registerOutbox(deps: OutboxDeps): OutboxController {
   // The prompt resume needs the store to be able to ask the server whether it is back (WP-OFF-6).
   installReachabilityProbe();
   active = createOutbox(deps);
+  const controller = active;
+  setUploadRetry((messageId) => controller.retryUpload(messageId));
   return active;
 }
 
 /** Tear down the active controller (logout). */
 export function unregisterOutbox(): void {
   active?.dispose();
+  setUploadRetry(null);
   active = null;
 }
 

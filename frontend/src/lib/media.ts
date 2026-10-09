@@ -172,10 +172,16 @@ import {
   writesSegmented,
 } from '$lib/mediaSegmented';
 import { refresh, SessionExpiredError } from '$lib/stores/auth';
-import { MediaUploadError } from '$lib/utils/mediaErrors';
+import { uploadRefusalFrom } from '$lib/utils/mediaErrors';
+import {
+  GATEWAY_MAX_BODY_BYTES,
+  MEDIA_REQUEST_BODY_BUDGET_BYTES,
+  requestBodyBytes,
+} from '$lib/utils/mediaRequestLimits';
 import { prepareVideoForUpload, type PrepareVideoOptions } from '$lib/video/prepareVideoForUpload';
 import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
 import { mediaUrl } from '$lib/utils/apiUrl';
+import { xhrUpload, type XhrUploadOptions, type UploadProgress } from '$lib/utils/uploadXhr';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -198,14 +204,41 @@ import { mediaUrl } from '$lib/utils/apiUrl';
  * @param url       Absolute upload URL.
  * @param build     Builds the request init for a token (headers + body).
  * @param authToken The token the caller holds.
+ * @param transport When given, the request goes through {@link xhrUpload} instead of `fetch`, which
+ *                  is the only way to see its progress, cancel it and bound it by silence. The 401
+ *                  retry is the same on both, and a retry reports its progress from zero again.
  */
 async function fetchUpload(
   url: string,
   build: (token: string) => RequestInit,
-  authToken: string
+  authToken: string,
+  transport?: XhrUploadOptions
 ): Promise<Response> {
   const where = url.replace(/^https?:\/\/[^/]+/, '');
-  const res = await fetch(url, build(authToken));
+  const send = (token: string): Promise<Response> => {
+    const init = build(token);
+    // A BODY THE HOST'S WAF WOULD DROP IS NEVER SENT: it answers a 403 HTML page after the whole
+    // body has left, which used to read as a failure to retry for ever. Reaching this line means a
+    // caller built a request that does not respect the budget - a defect of ours, said loudly.
+    const bytes = requestBodyBytes(init.body);
+    if (bytes > GATEWAY_MAX_BODY_BYTES) {
+      throw new Error(
+        `[media] refusing to send ${bytes} body bytes to ${where}: over the ${GATEWAY_MAX_BODY_BYTES}-byte gateway limit`
+      );
+    }
+    return transport
+      ? xhrUpload(
+          url,
+          {
+            method: init.method,
+            headers: init.headers as Record<string, string> | undefined,
+            body: init.body as FormData | Blob | string | null | undefined,
+          },
+          transport
+        )
+      : fetch(url, init);
+  };
+  const res = await send(authToken);
   if (res.status !== 401) return res;
   console.warn(`[media] 401 on ${where} - refreshing the token and retrying once`);
   let fresh: string;
@@ -216,7 +249,7 @@ async function fetchUpload(
     console.warn(`[media] refresh failed on ${where} - ${cause}`);
     throw e;
   }
-  const retry = await fetch(url, build(fresh));
+  const retry = await send(fresh);
   console.log(`[media] ${retry.status} on ${where} (retry after refresh)`);
   if (retry.status === 401) {
     console.warn(`[media] double 401 on ${where} - session invalid`);
@@ -576,6 +609,10 @@ export class MediaService {
    *                       cannot tell a post photo from a chat photo, so the surface says it here,
    *                       where it is already known. REQUIRED, so no new call site can forget it:
    *                       `'ephemeral'` (chat) is the only class the idle sweep may take.
+   * @param transport      Optional progress sink, cancel signal and stall guard (see
+   *                       {@link xhrUpload}). Without it the body goes through `fetch`, which can
+   *                       report nothing until the answer arrives - every surface that shows a
+   *                       bubble for the upload passes it.
    * @returns              A `MediaRef` ready to be JSON-serialised and embedded
    *                       inside the MLS application message.
    */
@@ -583,7 +620,8 @@ export class MediaService {
     file: File,
     authToken: string,
     dimensions: Partial<ImageDimensions> | undefined,
-    retentionClass: MediaRetentionClass
+    retentionClass: MediaRetentionClass,
+    transport?: XhrUploadOptions
   ): Promise<MediaRef> {
     const plaintext = await file.arrayBuffer();
     // THE FORMAT IS DECIDED HERE AND DECLARED IN THE REF - see `SEGMENTED_MEDIA_WRITER_ENABLED`,
@@ -597,22 +635,22 @@ export class MediaService {
       : await encryptMediaBuffer(plaintext);
 
     // 3. Upload the encrypted blob (server stores opaque bytes, no key)
-    const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB
+    // ONE REQUEST BODY NEVER EXCEEDS THE HOST WAF'S LIMIT (10 MiB, measured 2026-10-10): the budget is
+    // the single-request ceiling AND the chunk size, so anything bigger takes the chunked route.
+    const CHUNK_SIZE = MEDIA_REQUEST_BODY_BUDGET_BYTES;
     let mediaId: string;
 
     if (ciphertext.byteLength > CHUNK_SIZE) {
-      // Chunked upload for large files (>50MB) to bypass limits
+      // Chunked upload for anything over the per-request budget
       // 3.1 Initialize chunked upload
       const initRes = await fetchUpload(
         `${this.baseUrl}/api/media/upload/chunk/init`,
         (t) => ({ method: 'POST', headers: { Authorization: `Bearer ${t}` } }),
-        authToken
+        authToken,
+        transport && { ...transport, onProgress: undefined }
       );
       if (!initRes.ok) {
-        throw new MediaUploadError(
-          initRes.status,
-          `chunked upload init failed (${initRes.status})`
-        );
+        throw await uploadRefusalFrom(initRes, 'chunked upload init failed');
       }
       const { uploadId } = await initRes.json();
 
@@ -636,12 +674,18 @@ export class MediaService {
             headers: { Authorization: `Bearer ${t}` },
             body: chunkFormData,
           }),
-          authToken
+          authToken,
+          // Progress is the WHOLE blob's, so a chunk reports from where the previous one ended.
+          transport && {
+            ...transport,
+            onProgress: (p: UploadProgress) =>
+              transport.onProgress?.({ loaded: start + p.loaded, total: ciphertext.byteLength }),
+          }
         );
         if (!chunkRes.ok) {
-          throw new MediaUploadError(
-            chunkRes.status,
-            `chunk upload failed at chunk ${i + 1}/${totalChunks} (${chunkRes.status})`
+          throw await uploadRefusalFrom(
+            chunkRes,
+            `chunk upload failed at chunk ${i + 1}/${totalChunks}`
           );
         }
       }
@@ -657,13 +701,11 @@ export class MediaService {
           },
           body: JSON.stringify({ retentionClass }),
         }),
-        authToken
+        authToken,
+        transport && { ...transport, onProgress: undefined }
       );
       if (!completeRes.ok) {
-        throw new MediaUploadError(
-          completeRes.status,
-          `chunked upload complete failed (${completeRes.status})`
-        );
+        throw await uploadRefusalFrom(completeRes, 'chunked upload complete failed');
       }
       const completeData = await completeRes.json();
       mediaId = completeData.mediaId;
@@ -682,16 +724,12 @@ export class MediaService {
       const res = await fetchUpload(
         `${this.baseUrl}/api/media/upload`,
         (t) => ({ method: 'POST', headers: { Authorization: `Bearer ${t}` }, body: formData }),
-        authToken
+        authToken,
+        transport
       );
 
       if (!res.ok) {
-        const responseText = await res.text();
-        const details = responseText ? ` - ${responseText}` : '';
-        throw new MediaUploadError(
-          res.status,
-          `media upload failed (${res.status} ${res.statusText})${details}`
-        );
+        throw await uploadRefusalFrom(res, 'media upload failed');
       }
 
       const data = await res.json();
@@ -781,11 +819,7 @@ export class MediaService {
     );
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new MediaUploadError(
-        res.status,
-        `avatar upload failed (${res.status})${text ? ` - ${text}` : ''}`
-      );
+      throw await uploadRefusalFrom(res, 'avatar upload failed');
     }
 
     const data = await res.json();

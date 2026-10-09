@@ -155,8 +155,59 @@ export function logMediaFailure(
  * its own module has finished evaluating.
  */
 export class MediaUploadError extends ApiRefusalError {
-  constructor(status: number, message: string) {
+  constructor(
+    status: number,
+    message: string,
+    /**
+     * WHO ANSWERED, read from the response's Content-Type at the throw. `gateway`: an HTML page,
+     * which the application never produces (its refusals are JSON) - the host's WAF or a proxy
+     * speaking, e.g. the CrowdSec ban page a body over 10 MiB earns. `app`: our own service.
+     */
+    readonly origin: 'app' | 'gateway' = 'app'
+  ) {
     super(status, null, message);
     this.name = 'MediaUploadError';
   }
+}
+
+/**
+ * Builds the typed refusal for a non-2xx answer to an upload. The sentence is for logs: it carries
+ * the status and, for the application's own JSON answers only, a short excerpt - NEVER the HTML of
+ * a gateway page (it was 5.75 KB of ban page in every retry line). Nothing reads it back.
+ */
+export async function uploadRefusalFrom(res: Response, what: string): Promise<MediaUploadError> {
+  const contentType = res.headers?.get('Content-Type') ?? '';
+  const origin = /text\/html/i.test(contentType) ? 'gateway' : 'app';
+  const text = origin === 'app' ? await res.text().catch(() => '') : '';
+  const excerpt = text ? ` - ${text.slice(0, 160)}` : '';
+  return new MediaUploadError(
+    res.status,
+    `${what} (${res.status}${origin === 'gateway' ? ', answered by the gateway, not the app' : ''})${excerpt}`,
+    origin
+  );
+}
+
+/**
+ * Why an upload was REFUSED for good, or `null` when trying again could change the answer.
+ *
+ * AN ANSWER IS NEVER TRANSIENT: the server (or the gateway in front of it) has said no to THIS
+ * request, and sending the same bytes again asks the same question. Read from the TYPE the throw
+ * carried (status and origin), never from its message.
+ *
+ * - `too-large`: 413.
+ * - `blocked`: a 4xx from the GATEWAY (the host WAF's ban page): the body or the sender was refused
+ *   before the application saw it (a 429 from it is still "later", not a ban).
+ * - `refused`: any other 4xx from the application, except the ones a retry can mend: 401 (the token
+ *   is renewed once by `fetchUpload`), 408, 425 and 429 (the server says "later").
+ *
+ * A 5xx, a deadline, a network error: `null`, retried with backoff as before.
+ */
+export function uploadRefusalCause(err: unknown): 'too-large' | 'blocked' | 'refused' | null {
+  if (!(err instanceof MediaUploadError)) return null;
+  const { status } = err;
+  if (status === 413) return 'too-large';
+  if (status < 400 || status >= 500) return null;
+  if ([408, 425, 429].includes(status)) return null;
+  if (err.origin === 'gateway') return 'blocked';
+  return status === 401 ? null : 'refused';
 }

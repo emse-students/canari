@@ -234,7 +234,10 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     // bubble, no explanation, and a conversation that read as live again after a reload.
     addMessageToChat: cb.addMessageToChat,
     saveConversation: cb.saveConversation,
-    uploadMedia: async (media: NonNullable<import('$lib/db').OutboxEntry['media']>) => {
+    uploadMedia: async (
+      media: NonNullable<import('$lib/db').OutboxEntry['media']>,
+      transport?: import('$lib/utils/uploadXhr').XhrUploadOptions
+    ) => {
       const { MediaService } = await import('$lib/media');
       const token = await getToken();
       const bytes = media.fileBytes ?? new Uint8Array(0);
@@ -245,7 +248,8 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
         file,
         token,
         { width: media.width, height: media.height },
-        'ephemeral'
+        'ephemeral',
+        transport
       );
     },
   };
