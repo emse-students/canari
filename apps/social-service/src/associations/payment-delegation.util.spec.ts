@@ -10,8 +10,6 @@ import type { Association } from './entities/association.entity';
 const asso = (o: Partial<Association> = {}): Association =>
   ({
     id: 'club',
-    stripeAccountId: null,
-    stripeOnboardingComplete: false,
     lydiaAccountId: null,
     lydiaOnboardingComplete: false,
     paymentParentAssociationId: null,
@@ -59,16 +57,6 @@ describe('payment-delegation util', () => {
         null,
         'lydia'
       );
-      expect(t.ready).toBe(false);
-    });
-
-    it('never reads the historic stripe columns', () => {
-      const t = resolvePaymentTarget(
-        asso({ stripeAccountId: 'acct_club', stripeOnboardingComplete: true }),
-        null,
-        'lydia'
-      );
-      expect(t.connectAccountId).toBeNull();
       expect(t.ready).toBe(false);
     });
 

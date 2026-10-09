@@ -35,24 +35,37 @@ the compose files, `.env.example`, `env-from-prod.sh`; the harness log rule for 
 The provider choice is now `'lydia' | 'disabled'`, default `disabled`; migration
 `011_platform_config_drop_stripe.sql` moves a stored `stripe` to `disabled`.
 
-## The names that outlived the processor (kept on purpose)
+## The names that outlived the processor - what 2026-10-09 renamed, and what stays
 
-A rename is not free: old APKs embed their frontend, a rollback must find its columns, and a
-permission flag is persisted. Each is data or a wire name now, not behaviour.
+**Renamed, nothing persisted by name** (2026-10-09): the permission `MANAGE_STRIPE_CONNECT` is now
+`MANAGE_PAYOUT_ACCOUNT` - only the BIT (`1 << 9`) is stored, never the name, so no data migration was
+needed (this page used to say "persisted flag"; it is the number that is). The same for
+`canManagePayoutAccount`, the Paraglide key `asso_flag_manage_payout_account`, the editor right
+`payoutAccount`, and the internal wire field `connectAccountId` between social and core-service (the two
+deploy together). **Deleted:** the social routes `stripe-account`, `stripe-complete`, `stripe-disconnect`
+(no caller since core-service lost Stripe; internal-secret only, so no client in the wild could call
+them), the `stripe*` pair from the internal `payment-account` answer, and `stripeAccountId` from the
+submission read (now `paymentAccountId`). **A real defect fixed with them:** the delegation state and
+its approval still tested the Stripe pair, so a parent onboarded on Lydia could not approve a request;
+both read `lydiaOnboardingComplete` and `lydiaAccountId` now.
 
-| Name | Why it stays |
-| --- | --- |
-| Columns `stripeAccountId`, `stripeOnboardingComplete` (associations), `stripeCustomerId` (users) | the previous release still maps them; dropping them breaks a rollback |
-| Permission `MANAGE_STRIPE_CONNECT` / `canManageStripeConnect` | persisted flag; it now gates the payout account of either provider |
-| Wire field `stripeConnectAccountId` between social and core-service | both services deploy together, the name is internal |
-| social routes `stripe-account`, `.../complete`, `.../disconnect` | clients in the wild call them |
-| Deep-link host `stripe` (`canari://stripe/...`) | registered natively in the shipped apps |
-| `paymentMethod: 'stripe'` and `PurchaseRecord.paymentMethod = 'stripe'` | every row written before 2026-10-08; read as `online`, never written again ([legacy-compatibility](legacy-compatibility.md)) |
-| The `stripeCustomerId` strips in `copy-strips.sh`, `copy-prod-to-dev.sh`, `restore-into-local.sh` | the column still exists in a copied database |
+**Deep-link host, additive:** a checkout return is `fr.emse.canari://payment/...`; `stripe` stays
+declared (manifest, `tauri.conf.json`), accepted by the server and routed by the client for builds that
+still send it - an entry in [legacy-compatibility](legacy-compatibility.md) with its removal condition.
+`deepLinkHostsDeclared.test.ts` pins both hosts in `tauri.conf.json` and the Android manifest.
 
-**Later migration (backlog):** once the previous release is no longer a rollback target, a migration
-drops the three columns and the permission is renamed with a data migration of the persisted flag,
-then the routes and the deep-link host follow the same `minClientVersion` rule.
+**Still in the database, on purpose, and the plan that removes them:**
+
+| Name | State | Step |
+| --- | --- | --- |
+| Columns `associations."stripeAccountId"` and `"stripeOnboardingComplete"`, `users."stripeCustomerId"` | no longer mapped by any entity, read and written by nothing | **DROP** in a migration once the previous release (which still maps them) is no longer a rollback target; the strips in `copy-strips.sh`, `copy-prod-to-dev.sh`, `restore-into-local.sh` go in the same change. Dropping earlier gains nothing and a rollback would crash on the missing column |
+| `submissions."stripeSessionId"`, `purchase_records."stripePaymentIntentId"` | LIVE: they hold the Lydia order reference | a rename is expand, then contract: add `paymentRef`, backfill by `UPDATE`, ship code reading and writing the new column, drop the old one a release later. No measured need to rename yet, so it is not started |
+| `paymentMethod: 'stripe'` on rows and in the DTO | data at rest, read as `online`, never written | [legacy-compatibility](legacy-compatibility.md) |
+| `stripe` checkout host | legacy, see above | same entry |
+
+**The rule the columns follow** ([databases](infrastructure/databases.md)): additive first, destructive
+last, and a destructive migration is cut only when the release that stopped mapping the column has been
+in production through a rollback window. Nothing here drops data for a name.
 
 ## Notes for whoever reads this next
 

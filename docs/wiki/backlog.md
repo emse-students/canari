@@ -39,14 +39,6 @@ P3. The cap (#1721), the stacked faces in the list and day rows, the detail moda
 
 P3. Built in [offline-and-weak-network 13.6](frontend/offline-and-weak-network.md): lazy decode, the `error` parking of an attachment, the banner fix. OWED: (a) a SIZE CAP at compose time for a queued attachment, and keeping the bytes OUT of the row (a file in app storage, the row holding its path) - deliberately not done, it moves the durability story of the file (crash, PIN change, native mirror) and needs its own design; until then a due attachment is still decoded once per attempt, bounded by `MAX_UNEXPECTED_ATTEMPTS`; (b) a terminal, visible state for a NON-media entry that keeps failing (a text on a persistent 5xx) - it needs a surface a text bubble does not have; (c) a re-read on the Pixel 6a of the freeze with a 13 MB attachment queued (nothing here was run on that phone).
 
-## Cloudflare, Stripe and the staff feed (2026-10-07/08)
-
-### P3 - Stripe's leftover names: columns, permission flag, routes, deep-link host
-
-Stripe itself is gone (#1589, [stripe-archive](stripe-archive.md), which lists each name kept for
-rollback and old clients). Left: a drop/rename migration once `minClientVersion` passed the removal
-release; and an association whose delegation was onboarded on Stripe only is not payment-ready until it
-onboards on Lydia.
 
 ---
 

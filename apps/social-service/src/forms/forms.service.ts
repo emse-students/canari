@@ -969,11 +969,11 @@ export class FormsService {
 
       try {
         // If the form belongs to an association, route payment via its connected account
-        let stripeConnectAccountId: string | undefined;
+        let connectAccountId: string | undefined;
         if (form.associationId) {
           await this.associationsService.assertPaymentsReady(form.associationId);
           const acctId = await this.associationsService.getPaymentAccountId(form.associationId);
-          if (acctId) stripeConnectAccountId = acctId;
+          if (acctId) connectAccountId = acctId;
         }
 
         // order_ref for Lydia's request/do callback (see webhook.controller.ts).
@@ -1004,7 +1004,7 @@ export class FormsService {
             successUrl: withSubmissionReturnKey(successUrl, savedSubmission.id),
             cancelUrl: withSubmissionReturnKey(cancelUrl, savedSubmission.id),
             metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
-            stripeConnectAccountId,
+            connectAccountId,
             idempotencyKey,
             payerEmail: input.payerEmail,
           },
@@ -1061,7 +1061,7 @@ export class FormsService {
       totalPaid: submission.totalPaid,
       currency: form?.currency ?? 'eur',
       paymentStatus: submission.paymentStatus,
-      stripeAccountId: form?.associationId
+      paymentAccountId: form?.associationId
         ? await this.associationsService.getPaymentAccountId(form.associationId)
         : null,
     };

@@ -50,8 +50,8 @@
         label: m.asso_flag_manage_partnerships(),
       },
       {
-        flag: AssociationPermissionFlag.MANAGE_STRIPE_CONNECT,
-        label: m.asso_flag_manage_stripe_connect(),
+        flag: AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,
+        label: m.asso_flag_manage_payout_account(),
       },
       { flag: AssociationPermissionFlag.VALIDATE_EVENTS, label: m.asso_flag_validate_events() },
       { flag: AssociationPermissionFlag.MANAGE_ASSO, label: m.asso_flag_manage_asso() },
