@@ -893,7 +893,7 @@ drains its own entries oldest first. Rules that came with it:
 - **`MAX_CONCURRENT_SENDS = 3`** frames on the wire across lanes (a slot is handed to the next waiter,
   never freed and re-raced): enough that one stalled lane freezes only itself, few enough that a
   50 kbit/s uplink is not cut into slivers that each miss their deadline.
-- The send POST is under a `write` deadline ([offline-and-weak-network](offline-and-weak-network.md#9-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)),
+- The send POST is under a `write` deadline ([offline-and-weak-network](offline-and-weak-network.md#11-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)),
   so a stalled lane ends as `DeliveryUnreachableError` and takes the ordinary backoff.
 
 ### Everything the outbox swallows, it logs
@@ -3039,6 +3039,10 @@ take the key from the caller (`MainChatPage` passes `convs.selectedContact`), an
 entry of `ctx.selectedContact`. No clear-on-change effect is needed - nothing is shared, so nothing leaks.
 Returning to the DM shows its reply again, like a draft. Each decision logs `[REPLY]`.
 Test: `useMessaging.replyScope.svelte.test.ts`.
+
+### A refused salon send gives the draft back (WP-OFF-1, 2026-10-09)
+
+A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - only if the same conversation is still selected, and it logs either way. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
 
 ## Profile fetches that failed on a device, and the denominator that is owed (2026-08-16)
 

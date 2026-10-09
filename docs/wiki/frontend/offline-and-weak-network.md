@@ -21,9 +21,11 @@ await the network, and the phone measurement of 2026-09-22 this page extends) an
    after **103-108 s** (first paint 23 s). Warm it is 2.1 s (Slow 3G) / 6.0 s (2G-like).
 3. **Nothing in the app has a deadline.** `apiFetch` has no timeout; the connectivity store only knows
    "reachable" or "transport failure", never "slow". A slow link is a spinner of unknown length.
-4. **The local estate serves JS/CSS/WASM uncompressed over HTTP/1.1** (production's edge compresses:
-   the WASM is 723 kB brotli there, measured 2026-09-16). The numbers below are therefore a
-   pessimistic bound for bytes, and exact for the SHAPE of the critical path.
+4. **The local estate serves JS/CSS/WASM uncompressed over HTTP/1.1, and so did PRODUCTION until
+   WP-W1 (2026-10-09)**: `canari.emse.fr` answers from the host with no CDN in front (the 723 kB brotli
+   WASM of 2026-09-16 was a Cloudflare-era number), and a `curl`/Chrome read that day showed no
+   `Content-Encoding` on any JS, CSS or WASM. Production does speak h2, which the local rig does not,
+   so the local bytes are exact and the local latency rounds are pessimistic ([section 10](#10-package-status-2026-10-09)).
 5. **The warm start fires ~90 API calls** (duplicates included) for a 2-conversation, 8-community
    account; on Slow 3G the chain keeps running for **18.6 s after the list is usable**.
 
@@ -135,12 +137,10 @@ Three structural facts fall out, each independent of the local estate's compress
    x3, `mls/users/.../groups` x3, `unread-counts` x2, `users/batch` x2, every `mls/groups/<id>` x2.
    Two `404 /api/users/<id>/avatar` per start (a user without an avatar asks every boot).
 
-Production already serves the WASM at **723 kB brotli** (wasmPrefetch.ts header, 2026-09-16), so the
-production byte cost is roughly 0.55 MB (JS+CSS, brotli, measured here by compressing the same files) +
-0.72 MB (WASM) + 0.07 MB (fonts) = **about 1.4 MB, i.e. ~28 s of pure transfer at 50 kB/s** instead of 88 s.
-The local nginx compresses only `application/json` (`infrastructure/local/Dockerfile.frontend:86-88`).
-Whether the production origin (not the edge) does is owed a `curl -I -H 'Accept-Encoding: br'` against
-production, which this phase was not allowed to run.
+*Correction, 2026-10-09:* this paragraph assumed production's edge compressed (the 723 kB brotli WASM
+of 2026-09-16). It no longer does: production's origin served the raw 2 126 190-byte WASM, the raw
+240 kB stylesheet and raw JS, exactly like the local nginx, which compressed only `application/json`.
+The gzip fix and its measurement are [section 10](#10-package-status-2026-10-09).
 
 ### 3.3 Per screen, client-side navigation from `/chat` (sandbox data, so FLOORS)
 
@@ -186,10 +186,10 @@ uplink occupied, and on a slow link everything else queues behind it.
 | R3 | Salon edit / pin / vote apply only after the await; salon read-mark swallows failure | `useChannelWorkspaces.svelte.ts:1314`, `ChannelService.ts:808` | no echo, no retry |
 | R4 | The server ignores the client's `messageId` and mints its own row id | `channel.dto.ts:218`, `channel.service.ts:3100` | a replay of a salon send has no idempotence key (only the `(session, index)` unique constraint answers 409 `CHANNEL_MESSAGE_KEY_REUSED`, `:3208`) |
 | R5 | No deadline on any REST call; no "slow" notion | `apiFetch.ts:37`, `connectivity.svelte.ts` | spinners of unknown length; one stalled POST blocks the outbox |
-| R6 | Cold start downloads JS -> auth -> WASM strictly in series | `hooks.client.ts:67`, `mlsWasmLoader.ts` | 57 s + 45 s on Slow 3G |
-| R7 | First list render waits for the WASM | boot ordering (to confirm, WP-W3) | 103 s vs 58 s |
+| R6 | Cold start downloads JS -> auth -> WASM strictly in series | `hooks.client.ts:67`, `mlsWasmLoader.ts` | 57 s + 45 s on Slow 3G. **Fixed by WP-W2** (section 10) |
+| R7 | First list render waits for the WASM, the gateway socket and the session flip | `sessionAuth.ts:758` -> `:871` -> `:1184` -> `:1208` (graph in section 10.3) | 103 s vs 58 s. **Diagnosed, NOT fixed** |
 | R8 | The boot sync is a ~90-call chain with duplicates, per-community and per-group calls | `loadExistingConversations`, `useChannelWorkspaces` | 18.6 s settle on Slow 3G warm; 2G did not settle in 26 s |
-| R9 | The origin compresses only JSON | `Dockerfile.frontend:86-88` | 4.4 MB cold locally instead of ~1.4 MB (edge may already fix it) |
+| R9 | The origin compresses only JSON, PRODUCTION INCLUDED (no CDN in front) | `Dockerfile.frontend` gzip block | 4.4 MB cold instead of 1.65 MB. **Fixed by WP-W1** (section 10) |
 | R10 | No service worker: web cold start offline is the browser's error page | measured | 0 % usable offline on web (native is unaffected) |
 | R11 | E2E media has no thumbnail variant | `media.ts:130`, media-service | full image per bubble |
 | R12 | Reconnect to flush takes 3.8-5.3 s: `online` -> reachability only on a successful call -> incoming-queue barrier | `connectivity.svelte.ts`, `outbox.ts:835-846` | slow resume |
@@ -202,11 +202,11 @@ package merges. Each is a pull request of its own.
 
 | WP | What | Effort | Gain | Test |
 | --- | --- | --- | --- | --- |
-| **WP-OFF-1** | **Never destroy a salon draft**: clear the composer only on success; on failure keep the text and show the error on the composer. No new mechanism | S | stops the only measured DATA LOSS | unit on the send handler (failure keeps the draft) + harness row: offline salon send, text still in the composer |
+| **WP-OFF-1 (BUILT 2026-10-09, [chat](modules/chat.md#a-refused-salon-send-gives-the-draft-back-wp-off-1-2026-10-09))** | **Never destroy a salon draft**: clear the composer only on success; on failure keep the text and show the error on the composer. No new mechanism | S | stops the only measured DATA LOSS | unit on the send handler (failure keeps the draft) + harness row: offline salon send, text still in the composer |
 | **WP-W1** | Verify production's origin compression (`curl -I` with `Accept-Encoding: br`); enable gzip/brotli for `js/css/wasm/svg/woff2` in the frontend nginx where missing | S | local/dev/non-edge cold Slow 3G 103 s -> ~38 s *(est from bytes)*; production gain depends on the check | asserted by a test reading the generated nginx config, plus a curl row in the deploy smoke |
 | **WP-W2** | Start the WASM in parallel with the JS: `<link rel="preload" as="fetch" crossorigin>` for the hashed `.wasm` in `app.html` (hash known at build) | S | removes the serial 44 s (-> bandwidth-bound: ~-20 s on Slow 3G *(est, same bytes in parallel)*, more on a real h2 link) | build test: the hashed name in the preload equals the `?url` import; measured with the CDP profile |
 | **WP-W3** | Find out whether the list truly needs the WASM; if not, render the list (names, previews, unread) from the local store before it | M | up to **-45 s** cold Slow 3G (list at ~58 s instead of 103 s) | trace of what in `ensureMls` the first list render awaits; then a boot-order unit test that the list renders with the WASM promise pending |
-| **WP-OFF-5** | **SHIPPED 2026-10-09 (section 9).** **A deadline and a `slow` state**: route `apiFetch` through the progress-deadline helper (silence, never total), type the failure `StalledRequestError`, add `connectivity.slow` (a request > N s in flight) and show "Connexion lente" instead of an endless spinner; the outbox treats a stall as retry-with-backoff and stops head-of-line blocking | M | bounds every "spinner of unknown length"; unblocks the queue behind one dead POST | `apiFetch` stall unit test; outbox test "a stalled first entry does not delay the second" |
+| **WP-OFF-5** | **SHIPPED 2026-10-09 (section 11).** **A deadline and a `slow` state**: route `apiFetch` through the progress-deadline helper (silence, never total), type the failure `StalledRequestError`, add `connectivity.slow` (a request > N s in flight) and show "Connexion lente" instead of an endless spinner; the outbox treats a stall as retry-with-backoff and stops head-of-line blocking | M | bounds every "spinner of unknown length"; unblocks the queue behind one dead POST | `apiFetch` stall unit test; outbox test "a stalled first entry does not delay the second" |
 | **WP-W4** | Cut the boot chain: dedupe the repeated calls (`devices` x3, `groups` x3, `groups/<id>` x2, `unread-counts` x2), one batched call for the per-community triplet, conditional requests (ETag/304) for stable payloads, stop asking for avatars that 404 every boot | M | ~90 -> ~35 calls *(est)*; Slow 3G settle 18.6 s -> ~6 s *(est)*; 2G becomes settleable | a counting test over a recorded boot (the CDP log of this page is the fixture): no URL twice, request budget |
 | **WP-OFF-2** | **Salon optimistic row** with `pending/sending/error` and a retry/delete affordance; id = the client UUID already placed inside the ciphertext (`AppMessage.message_id`), reconciled with the `channel.message.created` row by that inner id | M | salon bubble in ~40 ms like DMs (today 96 ms-600 ms+ and offline never) | reducer test: local row replaced, never duplicated, by the server row; harness row on both clients |
 | **WP-OFF-3** | **Salon durable outbox** (IndexedDB, same store as MLS, `channel` kind) + server idempotence: store the client `messageId` as a nullable unique `(author, channel, client_message_id)` and answer the stored row on repeat | M-L | offline salon send works; replay without duplicate | server spec (repeat POST returns the same row), outbox spec (replay after a cut), harness: offline send, kill, restore |
@@ -318,9 +318,9 @@ The probes were throw-away scripts (a CDP client, no Playwright), described so t
 **Delivery at the peer** (W1 is logged out; needs the service-account sign-in the brief forbade for this
 session). **Open questions:** (1) does the salon reader dedupe on the inner `messageId`?
 (2) does the delivery service accept a byte-identical repeat of an MLS frame (WP-OFF-7)? (3) how many
-generations does a failed POST burn, and what is the receiver's forward-distance limit? (4) is the
-production ORIGIN compressing JS/WASM (curl against production)? (5) what exactly does the first list
-render await (WP-W3)?
+generations does a failed POST burn, and what is the receiver's forward-distance limit? (4) ~~is the
+production ORIGIN compressing JS/WASM~~ - answered 2026-10-09: it was not ([section 10](#10-package-status-2026-10-09));
+(5) ~~what exactly does the first list render await~~ - answered, section 10.3.
 
 **Android (Mi 9T, another agent owns it now), to run later:** (a) airplane/no-link: `adb shell cmd
 connectivity airplane-mode enable|disable`, or `adb shell svc wifi disable; svc data disable`; (b) weak
@@ -341,7 +341,133 @@ path under a flapping link.
 **Web:** repeat sections 3.1-3.2 with an HTTP/2 front (the production nginx image behind a local TLS
 proxy) and compression on, to replace the pessimistic bytes; and on a real salon / feed with media.
 
-## 9. WP-OFF-5 shipped: a deadline, a slow state, and lanes
+## 9. Related
+
+[local-first-ui](local-first-ui.md), [cold-start](cold-start.md), [chat](modules/chat.md),
+[channel-encryption](../protocols/channel-encryption.md), [websocket-protocol](../protocols/websocket-protocol.md),
+[mobile](mobile.md), [backlog](../backlog.md).
+
+## 10. Package status (2026-10-09)
+
+| WP | State | Reaches users through |
+| --- | --- | --- |
+| **WP-W1** origin compression | **built** (one nginx block + `static-compression.test.mjs`) | the next pre-release / stable: it is an nginx image change |
+| **WP-W2** WASM beside the JS | **built** (`wasmPreload.ts` + `hooks.server.ts`) | the next pre-release / stable (web build only; Tauri is inert by construction) |
+| **WP-OFF-5** deadline, `slow`, lanes | **built** (section 11) | the next pre-release / stable (frontend only) |
+| **WP-W3** list before the WASM | **diagnosed, NOT built**: the dependency is real, section 10.3 | - |
+
+### 10.1 What production served, read before changing anything
+
+`curl -H 'Accept-Encoding: br,gzip'` and one headless Chrome load of `https://canari.emse.fr/login`
+(read-only, public, no sign-in), 2026-10-09. The name resolves straight to the host (193.49.175.122),
+**no CDN in front**, so the Cloudflare-era figures of this page (723 kB brotli WASM) no longer describe
+production.
+
+| Asset | Served | `Content-Encoding` | Cache-Control |
+| --- | --- | --- | --- |
+| HTML (`/`, `/login`) | 19 kB | gzip (nginx's default `text/html`) | `public, max-age=0, s-maxage=60` |
+| JS (123 files on `/login`) | 1305 kB | **none** | `public, max-age=31536000, immutable` |
+| CSS `0.DPWcxRH8.css` | 239 701 B | **none** | immutable |
+| WASM `mls_wasm_bg.GxLDQQfn.wasm` | **2 126 190 B** | **none** | immutable |
+
+HTTP/2 on every request (Chrome `protocol`), no `alt-svc`, so no HTTP/3. **The cache half was already
+right** (long immutable on every hashed asset, asserted by `static-headers.test.mjs`); only the
+compression was missing, because `gzip_types` named `application/json` alone.
+
+### 10.2 The fix, and the numbers
+
+**WP-W1.** `infrastructure/local/Dockerfile.frontend`: `gzip_types` now lists JS, CSS, WASM, SVG, JSON,
+manifests; `gzip_proxied any` (the host proxy adds `Via`, and nginx then skips compression without a log
+line); `gzip_vary on`; level 6. **No brotli**: the stock `nginx:stable-alpine` has no brotli module and
+a module built against another nginx is a worse failure than the bytes it would save (brotli would be
+~15-25 % smaller still: owed if the image ever carries the module). The WASM goes 2 093 565 -> 764 038
+bytes, JS 1970 -> 730 kB, CSS 237 -> 37 kB.
+
+**WP-W2.** An inline head script, substituted for a marker in `app.html` by `hooks.server.ts`, appends
+`<link rel=preload as=fetch crossorigin=anonymous fetchpriority=low href=<hashed wasm>>` when
+`localStorage` holds a `mls_device_id_*` key (the predicate and the prefix constant of
+`prefetchMlsWasmAtBoot`, now shared) and the shell is not Tauri. `as=fetch` + anonymous CORS is
+exactly the request `mlsWasmLoader` later makes, so the browser answers it from the download in
+flight (one `.wasm` request in every run). `low` so the 1.5 MB of JS that paints the screen is not
+slowed (measured: JS done 52.5 s -> 52.7 s with the WASM running beside it).
+
+**Rig** (`headless=new`, absolute private profile, private port, CDP `Network.emulateNetworkConditions`,
+cache cleared for cold; Slow 3G = 400 ms / 400 kbit, 2G = 800 ms / 50 kbit): the nginx and SSR images
+built from the same artifact in Docker, a stub for the API upstreams so they fail in tens of ms rather
+than a DNS timeout. **Unauthenticated `/chat`** with `mls_device_id_*` pre-set in `localStorage` (so the
+WASM prefetch runs): no sign-in against the production identity provider was needed, and it measures
+exactly what W1/W2 change - the transfer of JS, CSS and WASM. It does NOT measure what comes after
+(sections 3.2 / 10.3). HTTP/1.1 locally (6 connections), h2 in production: bytes are exact, the latency
+rounds of 201 files are pessimistic. "Before" is the already-running local estate on `main`; the
+single-package rows are the new build behind the old config (W2 only) and `main`'s own assets behind
+the new config (W1 only).
+
+Cold, seconds (`FCP` / last JS byte / WASM start -> end / bytes):
+
+| Run | FCP | JS done | WASM | Transferred | Everything in |
+| --- | --- | --- | --- | --- | --- |
+| **Slow 3G, `main` (before)** | 22.5 | 52.5 | 46.1 -> 94.2 | 4401 kB | 94.2 |
+| Slow 3G, W2 only | 22.5 | 52.7 | 0.8 -> 91.3 | 4402 kB | 91.3 |
+| Slow 3G, W1 only | 3.5 | 23.2 | 22.5 -> 39.4 | 1653 kB | 39.4 |
+| **Slow 3G, W1 + W2 (after)** | **3.5** | **23.3** | **0.8 -> 39.3** | **1654 kB** | **39.3** |
+| **2G, `main` (before)** | 208.7 | 427 | 318.8 -> 723.8 | 4401 kB | 723.8 (12 min) |
+| **2G, W1 + W2 (after)** | **32.2** | **163.1** | **3.5 -> 283.4** | **1654 kB** | **283.4 (4.7 min)** |
+| Good link, `main` / W1 + W2 | 0.2 / 0.2 | 0.2 / 0.2 | start 0.2-0.3 / 0.0 | 4401 / 1654 kB | no regression |
+| Slow 3G warm, `main` / W1 + W2 | 0.5 / 0.5 | cached | cached | 3 / 5 kB | no regression |
+
+**Reading it honestly.** W1 is the whole gain, because a weak link is bytes divided by bandwidth: the
+screen paints 19 s sooner on Slow 3G and 3 min sooner on 2G, everything is in 55 s sooner (Slow 3G) and
+7 min sooner (2G). **W2 adds almost nothing once W1 is in** (end 39.4 -> 39.3 s): the link is saturated
+by the same bytes either way. What it does is move the WASM start from after-the-bundle (46 s, or 22.5 s
+once the bytes shrink) to the first second, which is time that is only worth something where the link
+has slack - a fast link with a long round trip, where 201 files cost 34 round trips and the binary used
+to wait behind them. It costs one inline script and no extra byte. **Not measured here:** production
+itself (an nginx change reaches users only in a pre-release or stable; the first row to read after
+`serve-dev` is `curl -sI -H 'Accept-Encoding: gzip' -H 'Via: 1.1 x'` on a hashed `.wasm` of the dev
+estate showing `content-encoding: gzip`, which proves the proxied case), h2 multiplexing, and a
+signed-in warm start (the rig is unauthenticated).
+
+### 10.3 WP-W3: the first list render depends on the WASM only by ORDER, and the order is the session
+
+The brief for this package was to render the conversation list before the WASM when the first render has
+no real dependency on it. The dependency graph, read on `main` 2026-10-09:
+
+```
+login()                         composables/session/sessionAuth.ts
+  :758  mlsService.init(...)    <- needs the WASM (decrypts the MLS state, builds WasmMlsClient)   [A]
+        timeBootSpan('storage-open', getStorage())  :771  <- IndexedDB only, runs in PARALLEL with A
+  :871  ctx.setIsLoggedIn(true)                       <- AWAITS A
+  :881  cb.onMlsReady()
+  :1172 await mlsService.markInboundReady()
+  :1184 await openGatewayConnection(...)              <- a WebSocket handshake over the weak link  [B]
+  :1208 await cb.loadAndRestoreConversations()        <- AWAITS A, then B
+          utils/chat/conversations.ts:799 loadExistingConversations
+            phase 1 (stubs: names, lastMessageAt)     <- storage only
+            phase 1b storage.getMessagesPage(deviceKey) <- IndexedDB + WebCrypto, no WASM
+            phase 2 getUserGroups / fetchHistoryBatch / replayConversationHistory <- network + WASM
+MainChatPage.svelte:143,1089   `!session.isLoggedIn` -> "connecting" overlay; `{#if session.isLoggedIn}` draws the list
+```
+
+**What the list itself needs:** conversation rows and their last messages come from IndexedDB, opened
+by `getStorage`, and are decrypted with the device key through WebCrypto - no WASM. **What it is made
+to wait for anyway:** (1) `mlsService.init` (the WASM download and the state decrypt), (2)
+`ctx.setIsLoggedIn(true)`, which gates the whole page and about a dozen effects in `MainChatPage`, (3) a
+**gateway WebSocket handshake** (`:1184`) - so on a weak link the list also waits for a socket it never
+reads from - and (4) `loadExistingConversations`'s single entry point, which runs the local phases and
+the network/WASM phase in one call that clears and rebuilds the map.
+
+**Verdict: no data dependency, a real structural one.** Painting the list early is a change to the
+session's boot state machine, not a reordering of two statements: it needs a new state between "storage
+open and device key known" and `isLoggedIn` (a `localReady`), a split of `loadExistingConversations`
+into its local phase and its network phase so the second no longer `clear()`s what the first drew, every
+consumer of `isLoggedIn` classified as "needs MLS" or "does not", and the "securing" state on the
+composer. That is `login()` and the MLS session, which this package was not to touch, and it cannot be
+verified without a signed-in device (the rig here is unauthenticated). **It is the biggest remaining
+win after W1** (the list could appear when the JS ends, ~23 s on Slow 3G now, instead of when the WASM,
+the socket and the replay have all finished) and it should be its own package with its own
+`localReady` design review.
+
+## 11. WP-OFF-5 shipped: a deadline, a slow state, and lanes
 
 **What was built** (`utils/requestDeadline.ts`, `utils/trackedFetch.ts`, `stores/connectivity.svelte.ts`,
 `utils/apiFetch.ts`, `mls-client/mlsDeliveryApi.ts`, `utils/chat/outbox.ts`, `components/shared/OfflineBanner.svelte`):
@@ -390,9 +516,3 @@ stage (the frame REACHES the server, the answer is lost) plus `offline`. `refres
 NO deadline: it ROTATES the refresh token, and abandoning a request whose answer may already have
 rotated it invites the replay detection (a revoked session) that this work must never cause; its
 bound belongs to a design of its own (open).
-
-## 10. Related
-
-[local-first-ui](local-first-ui.md), [cold-start](cold-start.md), [chat](modules/chat.md),
-[channel-encryption](../protocols/channel-encryption.md), [websocket-protocol](../protocols/websocket-protocol.md),
-[mobile](mobile.md), [backlog](../backlog.md).

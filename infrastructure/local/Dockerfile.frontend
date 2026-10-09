@@ -83,8 +83,23 @@ server {\n\
     index index.html;\n\
     # Limite d\'upload pour les médias (évite les 413 nginx par défaut ~1MB)\n\
     client_max_body_size 100m;\n\
+    # THE ORIGIN COMPRESSES EVERYTHING TEXT-SHAPED, THE WASM INCLUDED (2026-10-09). It used to name\n\
+    # `application/json` alone, so the 2.1 MB MLS engine, the 240 kB stylesheet and ~2 MB of\n\
+    # JavaScript left this container raw. Measured on production that day (`curl` with\n\
+    # `Accept-Encoding: br,gzip`, DNS straight to the host, no CDN in front): no Content-Encoding\n\
+    # on any of them, 2 126 190 bytes for the WASM. On Slow 3G that is the difference between a\n\
+    # cold start of ~100 s and one of ~40 s ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).\n\
+    # `gzip_proxied any`: the host proxy in front of this container adds a `Via` header, and nginx\n\
+    # refuses to compress a request that carries one unless told otherwise - a silent no-op that a\n\
+    # direct `curl` to the container would never reveal. `gzip_vary` because the same URL now has\n\
+    # two representations. woff2 and images are already compressed and stay out of the list.\n\
+    # No brotli: the stock image has no such module, and a module built against a different nginx\n\
+    # is a worse failure than the extra bytes it would save.\n\
     gzip on;\n\
-    gzip_types application/json;\n\
+    gzip_comp_level 6;\n\
+    gzip_proxied any;\n\
+    gzip_vary on;\n\
+    gzip_types application/json application/javascript text/javascript text/css application/wasm image/svg+xml application/manifest+json application/xml text/plain;\n\
     gzip_min_length 256;\n\
     proxy_buffering off;\n\
     tcp_nodelay on;\n\
