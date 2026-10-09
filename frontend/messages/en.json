@@ -1245,6 +1245,7 @@
   "notif_new_message": "New message",
   "chat_forward_error_conversation_missing": "Conversation not found.",
   "chat_forward_error_nothing_to_forward": "Nothing to forward.",
+  "chat_forward_error_reel": "A CanaReel cannot be forwarded.",
   "chat_forward_error_conversation_not_ready": "Conversation not ready.",
   "chat_call_session_not_ready": "The secure session is not ready yet. Please try again in a moment.",
   "chat_call_group_desynced": "This group is out of sync. Delete this conversation and create a new one.",

@@ -1276,6 +1276,7 @@
   "notif_new_message": "Nouveau message",
   "chat_forward_error_conversation_missing": "Conversation introuvable.",
   "chat_forward_error_nothing_to_forward": "Rien à transférer.",
+  "chat_forward_error_reel": "Une CanaReel ne peut pas être transférée.",
   "chat_forward_error_conversation_not_ready": "Conversation pas encore prête.",
   "chat_call_session_not_ready": "La session sécurisée n'est pas encore prête. Réessayez dans un instant.",
   "chat_call_group_desynced": "Ce groupe est désynchronisé. Supprimez cette conversation et recréez-en une nouvelle.",
