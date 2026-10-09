@@ -1,6 +1,9 @@
 import { sendChatMessage } from '$lib/utils/chat/messaging';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import type { Conversation } from '$lib/types';
+import { m } from '$lib/paraglide/messages';
+import { GraineDistributionUnavailableError } from '$lib/utils/graine/seedDistribution';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 const sendEncryptedChannelMessage = vi.fn();
 vi.mock('$lib/utils/chat/channelCrypto', async (orig) => {
@@ -33,13 +36,13 @@ describe('a refused channel send is described from its status, never from its bo
 
   const SERVER_WORDS = 'You are not a member of this channel';
 
-  function deps() {
+  function deps(log: (line: string) => void = () => {}) {
     return {
       userId: 'me',
       conversation,
       deviceKeyB64: 'k',
       mlsService: {} as unknown,
-      log: () => {},
+      log,
       addMessageToChat: async () => {},
     } as never;
   }
@@ -88,5 +91,25 @@ describe('a refused channel send is described from its status, never from its bo
 
     expect(result.success).toBe(false);
     expect(result.error).not.toContain('sealChannelMessage');
+  });
+
+  it('names a refused seal by its TYPED reason, and logs which one fired', async () => {
+    // Production 2026-10-09: members read "Échec de l'envoi" for ten minutes while a key-group
+    // catch-up that never closed refused every seal - and the line could not say so.
+    const refusal = new GraineDistributionUnavailableError(
+      workspaceScope('ws-1'),
+      'key-group-catching-up'
+    );
+    sendEncryptedChannelMessage.mockImplementation(() => Promise.reject(refusal));
+    const log = vi.fn();
+
+    const result = await sendChatMessage('hello', 'channel_c1', null, deps(log));
+
+    expect(result).toEqual({
+      success: false,
+      error: m.chat_send_error_seal_key_group_catching_up(),
+    });
+    expect(result.error).not.toBe(m.chat_send_error_generic());
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('reason=key-group-catching-up'));
   });
 });

@@ -36,13 +36,13 @@ describe('TauriMlsService.reloadStateFromDisk - the resume that must not rewind 
     invoke.mockReset();
   });
 
-  it('refreshes the group cache when mls.bin was installed', async () => {
+  it('refreshes the group cache AND each epoch when mls.bin was installed', async () => {
     const svc = makeService();
     invoke.mockImplementation(async (cmd: string) =>
-      cmd === 'recharger_mls_au_resume' ? 'reloaded' : ['g1']
+      cmd === 'recharger_mls_au_resume' ? 'reloaded' : cmd === 'obtenir_epoch' ? 3 : ['g1']
     );
     await svc.reloadStateFromDisk();
-    expect(commands()).toEqual(['recharger_mls_au_resume', 'lister_groupes']);
+    expect(commands()).toEqual(['recharger_mls_au_resume', 'lister_groupes', 'obtenir_epoch']);
   });
 
   it('PERSISTS the live state when the native side reports it is ahead of the file', async () => {

@@ -354,6 +354,10 @@ describe('a private salon seals on its OWN group', () => {
     await expect(sealChannelMessage(CHANNEL, new Uint8Array([1]))).rejects.toBeInstanceOf(
       GraineDistributionUnavailableError
     );
+    // And it says WHICH fact was missing, for the toast and the log (production 2026-10-09).
+    await expect(sealChannelMessage(CHANNEL, new Uint8Array([1]))).rejects.toMatchObject({
+      reason: 'key-group-unsettled',
+    });
     expect(sent).toHaveLength(0);
   });
 });

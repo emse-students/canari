@@ -249,7 +249,7 @@ async function resolveRepairTargets(channelId: string): Promise<RepairTargets> {
   if (!scope) throw new Error(`channel ${channelId} belongs to no loaded community`);
   const workspaceId = scope.workspaceId;
   const groupId = mlsService.distributionGroupFor(scope);
-  if (!groupId) throw new GraineDistributionUnavailableError(scope);
+  if (!groupId) throw new GraineDistributionUnavailableError(scope, 'key-group-unregistered');
 
   // THE ROSTER TO ASK IS THE ROSTER THAT HOLDS THE SEED. On a private salon that is the salon's own
   // members, and asking the community's would name an answerer who cannot even see the request -
@@ -657,7 +657,7 @@ export async function requestCommunityHistory(
 
   const scope = workspaceScope(workspaceId);
   const groupId = mlsService.distributionGroupFor(scope);
-  if (!groupId) throw new GraineDistributionUnavailableError(scope);
+  if (!groupId) throw new GraineDistributionUnavailableError(scope, 'key-group-unregistered');
 
   // The same rule as a seed request, for the same reason: see {@link askedOn}.
   await mlsService.whenDistributionEpochSettled(groupId);

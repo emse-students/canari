@@ -40,9 +40,11 @@ vi.mock('$lib/paraglide/messages', () => ({
     channel_action_error_generic: vi.fn(
       ({ action, detail }: { action: string; detail: string }) => `${action}: ${detail}`
     ),
-    channel_action_error_not_ready: vi.fn(
-      ({ action }: { action: string }) => `${action}: not ready`
-    ),
+    chat_send_error_seal_no_session: vi.fn(() => 'seal: no-session'),
+    chat_send_error_seal_unknown_channel: vi.fn(() => 'seal: unknown-channel'),
+    chat_send_error_seal_key_group_missing: vi.fn(() => 'seal: key-group-missing'),
+    chat_send_error_seal_key_group_unsettled: vi.fn(() => 'seal: key-group-unsettled'),
+    chat_send_error_seal_key_group_catching_up: vi.fn(() => 'seal: key-group-catching-up'),
     channel_action_error_conflict: vi.fn(({ action }: { action: string }) => `${action}: conflict`),
   },
 }));
@@ -844,14 +846,15 @@ describe('useChannelWorkspaces - salon names and order', () => {
     const { api, ctx } = await loadedStore();
     const channels = api.channelWorkspaces[0].channels;
 
-    for (const failure of [
-      new GraineNotReadyError('cannot seal'),
-      new GraineUnknownChannelError('c1c1c1c1c1'),
-    ]) {
+    for (const [failure, said] of [
+      [new GraineNotReadyError('cannot seal'), 'seal: no-session'],
+      [new GraineUnknownChannelError('c1c1c1c1c1'), 'seal: unknown-channel'],
+    ] as const) {
       vi.mocked(showToast).mockClear();
       reorderChannels.mockRejectedValue(failure);
       await api.reorderChannels('promo', [channels[2], channels[1], channels[0]], ctx);
-      expect(showToast).toHaveBeenCalledWith(expect.stringContaining('not ready'), 'error');
+      // The toast names WHICH fact was missing, from the reason the refusal carries.
+      expect(showToast).toHaveBeenCalledWith(said, 'error');
     }
   });
 
