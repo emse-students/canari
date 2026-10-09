@@ -134,6 +134,8 @@ export interface PostEntity {
    * has not republished it yet. Which one is chosen in `RepublishDialog`; the server checks it again.
    */
   canRepublish?: boolean;
+  /** The poll may be voted: false for a reader who sees the post only through a read grant. */
+  canVote?: boolean;
   /** "Proposer a une association": the reader publishes in this post's association's name. */
   canProposeRepublication?: boolean;
   /** The republishers (ids in `republishedBy`) whose republication this reader may withdraw. */

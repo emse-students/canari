@@ -31,9 +31,22 @@
      * browser's own and lost by a few hundred milliseconds, permanently (COMM-15, 2026-08-25).
      */
     isOver: (poll: Poll) => boolean;
+    /**
+     * Whether this reader may vote at all, as the SERVER decided (`canVote`): a reader who sees the
+     * post only through a nominative read grant reads the poll but is refused its vote. False
+     * leaves the options read-only and drops the submit button.
+     */
+    canVote?: boolean;
   }
 
-  let { polls, selectedOptions, onVoteClick, onSubmitVote, isOver }: Props = $props();
+  let {
+    polls,
+    selectedOptions,
+    onVoteClick,
+    onSubmitVote,
+    isOver,
+    canVote = true,
+  }: Props = $props();
 
   // Tooltip state
   let tooltipOptionId = $state<string | null>(null);
@@ -200,7 +213,7 @@
         <div class="space-y-2.5">
           {#each poll.options as option (option.id)}
             {@const isSelected = selectedOptions.includes(option.id)}
-            {@const refuses = over || locked(poll) || (full && !isSelected)}
+            {@const refuses = over || locked(poll) || !canVote || (full && !isSelected)}
             {@const percentage = getPercentage(option.votes, totalVotes)}
             {@const voteCount = getVoteCount(option.votes)}
             {@const voterIds = getVoterIds(option.votes)}
@@ -316,7 +329,7 @@
             <span class="text-text-muted text-xs font-bold opacity-60">
               {m.post_poll_anonymous_locked()}
             </span>
-          {:else if poll.multipleChoice || poll.anonymous}
+          {:else if canVote && (poll.multipleChoice || poll.anonymous)}
             {#if full}
               <span class="text-text-muted text-xs font-bold opacity-70">
                 {m.post_poll_selection_full_hint({ count: poll.maxSelections ?? 0 })}
