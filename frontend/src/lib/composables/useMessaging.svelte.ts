@@ -37,8 +37,7 @@ import {
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
-import { readerCanSeeArrival } from '$lib/utils/chat/arrivalVisibility';
-import { isNarrowChatLayout } from '$lib/utils/viewport';
+import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
   activeReactions,
@@ -372,17 +371,7 @@ export function useMessaging() {
    * backgrounded Tauri app reports `visible`/`hasFocus` exactly as a foregrounded one does.
    */
   function canSeeArrival(ctx: MessagingContext, conversationKey: string): boolean {
-    if (typeof document === 'undefined') return false;
-    const mobile = isMobileTauriRuntime();
-    return readerCanSeeArrival({
-      conversationKey,
-      selectedConversationKey: ctx.selectedContact,
-      pathname: window.location.pathname,
-      appOnScreen: mobile
-        ? isAppInForeground()
-        : document.visibilityState === 'visible' && document.hasFocus(),
-      narrowLayout: isNarrowChatLayout(),
-    });
+    return canSeeArrivalNow(conversationKey, ctx.selectedContact);
   }
 
   function notifyInbound(
@@ -696,7 +685,9 @@ export function useMessaging() {
       return;
     }
 
-    const isConversationOpen = ctx.selectedContact === normalized;
+    // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
+    // to another route or put the window away, which counted a message nobody saw as read.
+    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedContact);
     // The same question the batch path asks, which until 2026-08-30 it did not: this one forgot
     // the watermark AND counted system messages, so a replayed frame taking the single path could
     // still raise a badge for something already read, and a "X joined" notice raised one for
@@ -931,7 +922,9 @@ export function useMessaging() {
       return;
     }
 
-    const isConversationOpen = ctx.selectedContact === normalized;
+    // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
+    // to another route or put the window away, which counted a message nobody saw as read.
+    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedContact);
     // COUNTED AGAINST THIS USER'S OWN WATERMARK, not against "arrived just now". The two are the
     // same thing only for live traffic; a reconciliation delivers frames that are new to THIS
     // device and were read long ago on another one, and counting those raised a badge the next

@@ -1,4 +1,10 @@
-import { readerCanSeeArrival, isChatRoute, type ArrivalContext } from './arrivalVisibility';
+import {
+  readerCanSeeArrival,
+  readerIsReadingConversation,
+  isChatRoute,
+  isMessagingRoute,
+  type ArrivalContext,
+} from './arrivalVisibility';
 
 /**
  * THE WHOLE MATRIX, because the defect this predicate exists for was one cell of it.
@@ -31,10 +37,17 @@ describe('readerCanSeeArrival', () => {
     expect(
       readerCanSeeArrival(ctx({ selectedConversationKey: 'convo-b', narrowLayout: true }))
     ).toBe(true);
-    // And off the chat route entirely, which a deep-linked conversation can be.
+    // On the communities route too, where a salon is the selected conversation.
+    expect(
+      readerCanSeeArrival(ctx({ selectedConversationKey: 'convo-b', pathname: '/communities' }))
+    ).toBe(true);
+  });
+
+  it('a selection that outlived its route is NOT on screen (2026-10-10)', () => {
+    // The selection is a global singleton and survives a visit to /posts: nothing there draws it.
     expect(
       readerCanSeeArrival(ctx({ selectedConversationKey: 'convo-b', pathname: '/posts' }))
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('THE DEFECT: narrow, another conversation open - nothing is visible', () => {
@@ -82,5 +95,42 @@ describe('isChatRoute', () => {
     expect(isChatRoute('/chatter')).toBe(false);
     expect(isChatRoute('/')).toBe(false);
     expect(isChatRoute('/posts')).toBe(false);
+  });
+});
+
+describe('readerIsReadingConversation', () => {
+  const reading = ctx({ selectedConversationKey: 'convo-b', pathname: '/communities' });
+
+  it('is true for the selected conversation, on a messaging route, with the app in front', () => {
+    expect(readerIsReadingConversation(reading)).toBe(true);
+    expect(readerIsReadingConversation({ ...reading, pathname: '/chat' })).toBe(true);
+  });
+
+  it('is false when any one of the three terms is missing', () => {
+    expect(readerIsReadingConversation({ ...reading, appOnScreen: false })).toBe(false);
+    expect(readerIsReadingConversation({ ...reading, pathname: '/posts' })).toBe(false);
+    expect(readerIsReadingConversation({ ...reading, selectedConversationKey: 'convo-a' })).toBe(
+      false
+    );
+  });
+
+  it('never matches an empty key against an empty selection', () => {
+    expect(
+      readerIsReadingConversation({ ...reading, conversationKey: '', selectedConversationKey: '' })
+    ).toBe(false);
+  });
+});
+
+describe('isMessagingRoute', () => {
+  it('accepts the two messaging routes and their children', () => {
+    for (const p of ['/chat', '/chat/x', '/communities', '/communities/x/y']) {
+      expect(isMessagingRoute(p)).toBe(true);
+    }
+  });
+
+  it('rejects every other route and look-alikes', () => {
+    for (const p of ['/', '/posts', '/calendar', '/chatter', '/communitiesx']) {
+      expect(isMessagingRoute(p)).toBe(false);
+    }
   });
 });
