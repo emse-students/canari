@@ -172,7 +172,15 @@ export interface OutboxController {
 }
 
 /** Result of attempting to flush a single entry. */
-type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip';
+type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip' | 'gone';
+
+/**
+ * How many conversations may have a frame on the wire at once. Lanes (below) remove head-of-line
+ * blocking between conversations; this bounds what they may cost a weak link: three concurrent POSTs
+ * is enough that one stalled lane never freezes the rest, and few enough that a 50 kbit/s uplink is
+ * not carved into slivers each of which then misses its deadline.
+ */
+export const MAX_CONCURRENT_SENDS = 3;
 
 /**
  * Creates the outbox controller. The flusher re-encodes the proto against the current epoch at
@@ -186,8 +194,23 @@ type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip';
 export function createOutbox(deps: OutboxDeps): OutboxController {
   const { conversations, storage, mlsService, deviceKey, log, canFlush } = deps;
 
-  let flushing = false;
-  let rerun = false;
+  /**
+   * ONE LANE PER CONVERSATION (WP-OFF-5). The flush used to await its entries one by one across the
+   * whole queue, so one stalled POST - measured: no deadline, no limit - froze every message queued
+   * behind it, in every conversation. Conversations share nothing a send needs (each group has its
+   * own ratchet, and `runAsEpochSend` is per group), so each one drains in its own lane while a
+   * stalled one holds only itself.
+   *
+   * ORDER IS PER CONVERSATION AND IT IS KEPT BY CONSTRUCTION: inside a lane the next entry is not
+   * attempted until the previous one SENT (or is gone). An entry that must retry or is backing off
+   * holds its successors, which the old loop did not - it attempted the later ones anyway, so a
+   * failed message could be overtaken by the next one.
+   */
+  const lanes = new Map<string, Promise<void>>();
+  /** Conversations whose running lane must look at the queue once more (an enqueue or wake-up arrived). */
+  const laneRerun = new Set<string>();
+  let activeSends = 0;
+  const sendWaiters: Array<() => void> = [];
   let backoffTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
@@ -199,7 +222,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * its own. Measured on HEAL-REVOKE-5, 2026-08-29: ONE `Flush deferred` line (identical, so the
    * dedup key folded it) and TWENTY `Leadership decided as leader after N ms` lines inside one
    * second, each carrying its own start offset - 6017 ms down to 3871 ms. The flush itself already
-   * coalesces through `flushing`/`rerun`, but only AFTER this gate, so the coalescing could not
+   * coalesces through the per-conversation lanes, but only AFTER this gate, so the coalescing could not
    * reach the waiting.
    *
    * NOT A CORRECTNESS FIX AND THAT IS THE POINT. Every waiter resumed and no message was lost; what
@@ -271,7 +294,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * cleared". It fires on BOTH transitions - the store emits it from the `online` handler and from
    * `notifyServerReachable` - so it strictly supersedes the listener it replaces rather than adding
    * a second one. Listeners here must stay idempotent and cheap: a flapping link fires it often,
-   * and `runFlush` already collapses re-entry through `flushing`/`rerun`.
+   * and `runFlush` already collapses re-entry through the per-conversation lanes.
    */
   const onVisible = (): void => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') runFlush();
@@ -566,7 +589,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… cancelled before it was sent - dropped, not delivered`
       );
-      return 'skip';
+      return 'gone';
     }
 
     if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
@@ -835,55 +858,86 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log('[OUTBOX] Flush skipped - session not ready to send yet.');
       return;
     }
-    if (flushing) {
-      rerun = true;
-      return;
+    const queued = await readQueue('flush');
+    if (queued.length === 0) return;
+    // CHECK AND CLAIM WITH NO AWAIT BETWEEN THEM: two wake-ups landing together must not both start
+    // a lane for one conversation, because two lanes would send one entry twice.
+    const started: Promise<void>[] = [];
+    for (const conversationId of new Set(queued.map((e) => e.conversationId))) {
+      if (lanes.has(conversationId)) {
+        laneRerun.add(conversationId);
+        continue;
+      }
+      const lane = drainLane(conversationId).finally(() => lanes.delete(conversationId));
+      lanes.set(conversationId, lane);
+      started.push(lane);
     }
-    flushing = true;
+    if (started.length === 0) return;
     try {
-      // Before any send: let the INCOMING message queue drain. fetchPendingMessages
-      // (on reconnect/resume) only enqueues the pending frames - their processing (commits
-      // that advance the epoch) is asynchronous. Without this barrier, a flush triggered by
-      // online/visibilitychange can go out BEFORE the missed commits are applied:
-      // the message would be encrypted at a stale epoch, hence undecryptable by up-to-date peers
-      // (silent loss - the "cold send on resume" race). Waiting for idle guarantees the local
-      // epoch is up to date. In steady state the queue is already idle -> immediate resolution,
-      // no added latency. [[DF1c]]
-      // `null`: a flush is raised by a reconnect, a visibility change or a session promotion, never
-      // from inside a decrypt session - and it is about whatever the queue happens to hold.
-      await mlsService.waitForMessageQueueIdle('outbox flush', null).catch((e) =>
-        // The barrier failing does NOT stop the flush - a queue that cannot drain must not block
-        // sending forever. But it means exactly the condition the barrier exists to prevent, so it
-        // is the first thing to look for when a message is accepted locally and never arrives.
+      await Promise.all(started);
+      // Re-read for backoff scheduling (statuses/attempts changed during the lanes).
+      const remaining = await readQueue('backoff scheduling');
+      if (remaining.length > 0) {
         log(
-          `[OUTBOX] Incoming-queue barrier failed, sending at a possibly stale epoch: ${String(e)}`
-        )
-      );
-      do {
-        rerun = false;
-        const entries = await readQueue('flush');
-        if (entries.length === 0) break;
-        logMlsMetric({ kind: 'outbox_pending_count', count: entries.length });
-        log(`[OUTBOX] Flushing ${entries.length} queued entr${entries.length === 1 ? 'y' : 'ies'}`);
-        let anySent = false;
-        for (const entry of entries) {
-          const outcome = await flushOne(entry);
-          if (outcome === 'sent') anySent = true;
-        }
-        // Re-read for backoff scheduling (statuses/attempts changed during the loop).
-        const remaining = await readQueue('backoff scheduling');
-        if (remaining.length > 0) {
-          log(
-            `[OUTBOX] ${remaining.length} entr${remaining.length === 1 ? 'y' : 'ies'} still queued`
-          );
-          scheduleBackoff(remaining);
-        }
-        // Chain another pass if a send unblocked dependents, or a concurrent enqueue arrived.
-        if (!anySent) break;
-      } while (rerun);
+          `[OUTBOX] ${remaining.length} entr${remaining.length === 1 ? 'y' : 'ies'} still queued`
+        );
+        scheduleBackoff(remaining);
+      }
     } finally {
-      flushing = false;
       void refreshMirror();
+    }
+  }
+
+  /** Runs `fn` while holding one of {@link MAX_CONCURRENT_SENDS} slots; a released slot is handed on, never freed and re-raced. */
+  async function withSendSlot<T>(fn: () => Promise<T>): Promise<T> {
+    if (activeSends < MAX_CONCURRENT_SENDS) activeSends++;
+    else await new Promise<void>((resolve) => sendWaiters.push(resolve));
+    try {
+      return await fn();
+    } finally {
+      const next = sendWaiters.shift();
+      if (next) next();
+      else activeSends--;
+    }
+  }
+
+  /** Drains ONE conversation, oldest entry first, until nothing more can be sent now. */
+  async function drainLane(conversationId: string): Promise<void> {
+    // Before any send: let the INCOMING message queue drain. fetchPendingMessages
+    // (on reconnect/resume) only enqueues the pending frames - their processing (commits
+    // that advance the epoch) is asynchronous. Without this barrier, a flush triggered by
+    // online/visibilitychange can go out BEFORE the missed commits are applied:
+    // the message would be encrypted at a stale epoch, hence undecryptable by up-to-date peers
+    // (silent loss - the "cold send on resume" race). Waiting for idle guarantees the local
+    // epoch is up to date. In steady state the queue is already idle -> immediate resolution,
+    // no added latency. [[DF1c]]
+    // `null`: a flush is raised by a reconnect, a visibility change or a session promotion, never
+    // from inside a decrypt session - and it is about whatever the queue happens to hold.
+    await mlsService.waitForMessageQueueIdle('outbox flush', null).catch((e) =>
+      // The barrier failing does NOT stop the flush - a queue that cannot drain must not block
+      // sending forever. But it means exactly the condition the barrier exists to prevent, so it
+      // is the first thing to look for when a message is accepted locally and never arrives.
+      log(`[OUTBOX] Incoming-queue barrier failed, sending at a possibly stale epoch: ${String(e)}`)
+    );
+    for (;;) {
+      laneRerun.delete(conversationId);
+      const entries = (await readQueue('flush')).filter((e) => e.conversationId === conversationId);
+      if (entries.length === 0) return;
+      logMlsMetric({ kind: 'outbox_pending_count', count: entries.length });
+      log(
+        `[OUTBOX] Flushing ${entries.length} queued entr${entries.length === 1 ? 'y' : 'ies'} for ${conversationId.slice(0, 8)}…`
+      );
+      let anySent = false;
+      for (const entry of entries) {
+        const outcome = await withSendSlot(() => flushOne(entry));
+        if (outcome === 'sent') anySent = true;
+        // Withdrawn or permanently failed: the entry is out of the queue, so what follows it may go.
+        else if (outcome === 'gone' || outcome === 'error') continue;
+        // Retry or backing off: the successors wait, which is what keeps the conversation in order.
+        else break;
+      }
+      // Chain another pass if a send unblocked dependents, or a concurrent enqueue arrived.
+      if (!anySent && !laneRerun.has(conversationId)) return;
     }
   }
 
@@ -1003,7 +1057,7 @@ export function getOutbox(): OutboxController | null {
  *
  * Every one of them funnels into `runFlush`, which is where all the gates live and the only place
  * they live: the tab election, the leader gate, `connectivity.isOffline`, `canFlush`, and the
- * `flushing`/`rerun` coalescer. There is no second flusher to fuse this with. FIVE sites are
+ * the per-conversation lanes coalescer. There is no second flusher to fuse this with. FIVE sites are
  * internal wake-ups, each bound to the one condition it is the seam for - `connectivity.onReconnect`,
  * `visibilitychange`, a follower tab's `outbox_flush_request`, the backoff timer, and `enqueue`.
  * THREE are external moments nothing inside this module can observe:

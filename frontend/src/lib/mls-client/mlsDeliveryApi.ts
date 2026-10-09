@@ -6,6 +6,7 @@ import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService
 import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
+import { trackedFetch } from '$lib/utils/trackedFetch';
 
 export type MlsDeliveryFetch = typeof fetch;
 
@@ -1018,18 +1019,28 @@ export class MlsDeliveryApi {
     const headers = await this.auth({ 'Content-Type': 'application/json' });
     let res: Response;
     try {
-      res = await this.f(`${this.historyUrl}/api/mls/send`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          senderId: this.userId,
-          senderDeviceId: this.deviceId,
-          groupId,
-          proto: protoBase64,
-          silent: delivery.silent,
-          durable: delivery.durable,
-        }),
-      });
+      // UNDER A DEADLINE (WP-OFF-5, class `write`): a POST that never answers used to hold the whole
+      // outbox lane for as long as the engine tolerated. Expiry is typed (`RequestDeadlineError`)
+      // and surfaces below as `DeliveryUnreachableError`, i.e. a transport failure: the frame's
+      // fate is unknown, so the outbox retries it as a NEW frame with the same inner messageId and
+      // receivers deduplicate - the existing at-least-once rule, unchanged.
+      res = await trackedFetch(
+        this.f,
+        `${this.historyUrl}/api/mls/send`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            senderId: this.userId,
+            senderDeviceId: this.deviceId,
+            groupId,
+            proto: protoBase64,
+            silent: delivery.silent,
+            durable: delivery.durable,
+          }),
+        },
+        { requestClass: 'write' }
+      );
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') throw e;
       console.warn(`[DELIVERY] send to ${groupId.slice(0, 8)} could not be reached:`, e);

@@ -3076,6 +3076,8 @@
   "offline_banner_title": "Offline.",
   "offline_banner_desc": "You can read your conversations; new messages will be sent once the connection is back.",
   "offline_banner_reconnecting": "Connection restored, syncing your messages...",
+  "slow_banner_title": "Slow connection.",
+  "slow_banner_desc": "Your messages are still sent; loading may take longer than usual.",
   "link_label_home": "Home",
   "link_label_chat": "Conversation",
   "link_label_community": "Community",

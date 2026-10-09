@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CloudOff, RefreshCw } from '@lucide/svelte';
+  import { CloudOff, RefreshCw, SignalLow } from '@lucide/svelte';
   import Banner from './Banner.svelte';
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -22,9 +22,25 @@
    * the short window in which the token is being reissued and the socket reopened.
    */
   let reconnecting = $derived(!connectivity.isOffline && session.isOfflineSession);
+
+  /**
+   * The third state (WP-OFF-5): answers are arriving, slowly. A calm, non-blocking hint on the same
+   * surface - nothing is disabled, because a slow link is not an offline one and the queue is
+   * still sending. Derived from observed answer latency, never from a timer that guesses (see
+   * `connectivity.slow`), and never shown on top of the offline banner.
+   */
+  let showSlow = $derived(session.isLoggedIn && !show && connectivity.slow);
 </script>
 
-{#if show}
+{#if showSlow}
+  <Banner>
+    <SignalLow size={15} class="shrink-0 opacity-70" aria-hidden="true" />
+    <span class="flex min-w-0 flex-wrap gap-x-1">
+      <span class="font-semibold">{m.slow_banner_title()}</span>
+      <span class="opacity-80">{m.slow_banner_desc()}</span>
+    </span>
+  </Banner>
+{:else if show}
   <Banner busy={reconnecting}>
     {#if reconnecting}
       <RefreshCw size={15} class="shrink-0 animate-spin opacity-70" aria-hidden="true" />
