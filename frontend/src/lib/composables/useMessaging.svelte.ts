@@ -1054,7 +1054,7 @@ export function useMessaging() {
     ctx: MessagingContext,
     messageText: string,
     opts?: { files?: import('$lib/media').PendingMediaFile[] }
-  ) {
+  ): Promise<boolean | undefined> {
     const text = messageText.trim();
     const sendsQueue = !opts?.files;
     const filesToSend = opts?.files ?? [...pendingMediaFiles];
@@ -1269,11 +1269,17 @@ export function useMessaging() {
         ctx.setSendError(result.error);
         ctx.log(`[SEND] Failed: ${result.error}`);
       }
-      return;
+      // A refused SALON send left no bubble and no queue entry: the reply target goes back too, so
+      // the caller can restore the draft and lose nothing (WP-OFF-1).
+      if (isChannel && currentReplyingTo) {
+        replyByConversation.set(ctx.selectedContact, currentReplyingTo);
+      }
+      return false;
     }
 
     ctx.log('[SEND] handleSendChat completed (message queued).');
     ctx.playSendTone?.();
+    return true;
   }
 
   // ── File handling ─────────────────────────────────────────────────────────
