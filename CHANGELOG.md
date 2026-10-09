@@ -14,6 +14,56 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-09
+
+### Android - the notification group summary never alerts, so a read push right after a message no longer re-sounds the conversation
+
+The summary is now `setOnlyAlertOnce(true)` with `GROUP_ALERT_CHILDREN`; see [mobile](docs/wiki/frontend/mobile.md#the-group-summary-never-alerts-measured-on-a-pixel-6a-2026-10-09).
+
+### Docs - the two leftover answers of 2026-10-07 are on the owed table, and a pointer-only backlog section is gone
+
+`minClientVersion` after 1.1.2 and the two ME staff attributes are one-line gestures of the user now, in the [backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks); nothing else in those sections was buildable.
+
+### Changed - the host-update report's reach and the needrestart blindness are measured
+
+The report reads the Portail-etu host, where the runner lives; `needrestart -b` is blind to an unprivileged account, so it is not wired in until a sudoers rule exists ([host-updates](docs/wiki/infrastructure/host-updates.md#what-stays-open-the-reports-reach-the-raid-channel-and-libraries-nothing-restarts)).
+
+### Changed - the lockfile-superseding mechanism for Dependabot is recorded, parked on one decision
+
+Designed and tested on 2026-10-09; arming a bot-opened pull request is the user's call ([backlog](docs/wiki/backlog.md#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix)).
+
+### Fixed - the native app no longer reads its key groups as epoch 0 and re-joins them all, and a refused seal names its cause
+
+After a cold start the native app's epoch cache answered 0 for every held key group. A false catch-up then refused every salon send and re-joined each group 45 s later, about 70 times a day across the estate. The cache is now rebuilt with the group list and refreshed by every commit, and the refusal toast names which of six facts was missing ([channel-encryption](docs/wiki/protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09)).
+
+### Fixed - the app no longer holds an audio output while nothing plays (looping noises on Android)
+
+The notification tones' audio output stayed open for ever, frozen app included, and replayed its buffer when a push woke the app. It is now suspended when the last tone ends and closed when the app leaves the screen; background media is paused too ([sounds](docs/wiki/frontend/sounds.md)).
+
+### Fixed - a push refused after real banners no longer leaves a generic "Nouveau message de ..." line
+
+The Android banner ledger now remembers, bounded and cleared with the notification, the real banners no push was waiting for, so a push refused for good (the engine already held the message) posts nothing next to them ([mobile](docs/wiki/frontend/mobile.md)). Owed one NOTIF-10 run on the Mi 9T.
+
+### Fixed - the "who reacted" list no longer spills out of its frame
+
+With more than about seven reactors the names ran past the frame onto the text below; the frame's height now comes from its content and the names flow into columns, then a "+K" line ([design-reference](docs/wiki/frontend/design-reference.md#a-popovers-height-comes-from-its-content-never-from-a-constant-2026-10-09)).
+
+### Fixed - a salon read mark that failed or was cut short is no longer lost, so read messages stay read after a reload
+
+The mark is now owed durably from the instant it is decided and delivered before the unread counts are asked; see [offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md).
+
+### Changed - nothing is installed, removed or re-secured on the shared host without the DSI's written agreement
+
+The DSI found `gitlab-runner` on the host and set the rule; the installed set is now listed for their audit ([estate-migration](docs/wiki/infrastructure/estate-migration.md#what-this-project-installed-on-the-shared-host-and-what-the-dsi-must-map-2026-10-09)).
+
+### Fixed - the conversation rises with the keyboard when you are at its bottom
+
+The pinned-to-bottom judgement watched `scrollHeight`, which does not move when only the pane's box shrinks, so the keyboard covered the last messages and the scroll-to-bottom arrow appeared. It now watches the reach (`scrollHeight - clientHeight`), measured in headless Chrome at 390x844: distance from the bottom 330 px before, 0 after ([chat](docs/wiki/frontend/modules/chat.md#a-box-shrinking-is-growth-too-the-keyboard-and-the-pinned-thread-2026-10-09)).
+
+### The 1.2.1 store notes
+
+`store/whats-new.txt` names what 1.2.1 fixes for members: salon sends after a cold start, the notification sounds, read state that survives a restart ([store/whats-new.txt](store/whats-new.txt)).
+
 ## [1.2.0] - 2026-10-09
 
 ### Fixed - a calendar, agenda-validation or proposal notification tap did nothing on Android
