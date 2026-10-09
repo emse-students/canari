@@ -111,7 +111,9 @@ describe('the slow state is derived from observed answers, and never stacks on o
   it('enters slow once smoothed answers pass the threshold, not on one outlier', async () => {
     await answerAfter(100);
     await answerAfter(100);
-    await answerAfter(3000);
+    // One answer at twice the entry threshold: alone it lifts the average (alpha 0.3) to ~490 ms,
+    // still under SLOW_ENTER_MS - one outlier is not a link.
+    await answerAfter(SLOW_ENTER_MS * 2);
     expect(connectivity.slow).toBe(false);
     for (let i = 0; i < 4; i++) await answerAfter(SLOW_ENTER_MS + 500);
     expect(connectivity.slow).toBe(true);
