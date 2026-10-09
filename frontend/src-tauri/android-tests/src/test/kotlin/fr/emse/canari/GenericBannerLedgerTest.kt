@@ -41,12 +41,48 @@ class GenericBannerLedgerTest {
     }
 
     @Test
-    fun `a real post with no push in flight leaves no credit behind`() {
+    fun `a real post with no push in flight leaves no CREDIT, only one unclaimed note`() {
         val ledger = GenericBannerLedger()
-        // The ACK won the race: no push was ever sent for this message.
+        // The ACK won the race: no push was in flight for this message.
         assertEquals(emptyList<Long>(), ledger.realPosted(g, 1))
+        // A push queued afterwards is covered by the unclaimed note only if it is REFUSED for good
+        // (the caller asks only then): the note is one, and spent once.
         ledger.pushQueued(g)
-        assertFalse("a stale credit must not swallow a later generic banner", ledger.refusedCoveredByRealPost(g))
+        assertTrue(ledger.refusedCoveredByRealPost(g))
+        assertFalse("the note is spent once", ledger.refusedCoveredByRealPost(g))
+    }
+
+    @Test
+    fun `the Mi 9T 2026-10-07 case - five real banners while the push channel was cut, then three refused pushes`() {
+        val ledger = GenericBannerLedger()
+        // Five messages, each with its OWN real banner and no push in flight.
+        repeat(5) { assertEquals(emptyList<Long>(), ledger.realPosted(g, 1)) }
+        // The radios return: three pushes arrive and are refused SecretReuse.
+        repeat(3) { ledger.pushQueued(g) }
+        repeat(3) {
+            assertTrue("a refused push after real banners posts no generic line", ledger.refusedCoveredByRealPost(g))
+        }
+    }
+
+    @Test
+    fun `unclaimed real posts are bounded per group`() {
+        val ledger = GenericBannerLedger()
+        repeat(GenericBannerLedger.MAX_UNCLAIMED + 5) { ledger.realPosted(g, 1) }
+        repeat(GenericBannerLedger.MAX_UNCLAIMED) { assertTrue(ledger.refusedCoveredByRealPost(g)) }
+        assertFalse(ledger.refusedCoveredByRealPost(g))
+    }
+
+    @Test
+    fun `a cancelled group forgets its real posts, so a later refused push still posts its line`() {
+        val ledger = GenericBannerLedger()
+        ledger.realPosted(g, 2)
+        ledger.groupCleared(g)
+        assertFalse(ledger.refusedCoveredByRealPost(g))
+        ledger.realPosted(g, 1)
+        ledger.realPosted("group-b", 1)
+        ledger.allCleared()
+        assertFalse(ledger.refusedCoveredByRealPost(g))
+        assertFalse(ledger.refusedCoveredByRealPost("group-b"))
     }
 
     @Test
@@ -77,7 +113,11 @@ class GenericBannerLedgerTest {
         assertTrue(ledger.refusedCoveredByRealPost(g))
         assertTrue(ledger.refusedCoveredByRealPost(g))
         assertTrue(ledger.refusedCoveredByRealPost(g))
-        assertFalse("credits are bounded by the pushes in flight", ledger.refusedCoveredByRealPost(g))
+        // CREDITS are bounded by the pushes in flight (3); the 2 messages of the batch no push was
+        // waiting for stay as unclaimed notes, and the sixth refusal has nothing left.
+        assertTrue(ledger.refusedCoveredByRealPost(g))
+        assertTrue(ledger.refusedCoveredByRealPost(g))
+        assertFalse(ledger.refusedCoveredByRealPost(g))
     }
 
     @Test
@@ -90,6 +130,9 @@ class GenericBannerLedgerTest {
         repeat(2) { ledger.pushFinished(g) }
         assertEquals(listOf(10L, 20L), ledger.realPosted(g, 5))
         assertTrue("the third push is still in flight and is covered by the remainder", ledger.refusedCoveredByRealPost(g))
+        // 5 messages: 2 replaced a generic each, 1 a credit, 2 are unclaimed notes.
+        assertTrue(ledger.refusedCoveredByRealPost(g))
+        assertTrue(ledger.refusedCoveredByRealPost(g))
         assertFalse(ledger.refusedCoveredByRealPost(g))
     }
 
@@ -105,10 +148,11 @@ class GenericBannerLedgerTest {
     }
 
     @Test
-    fun `a batched post with no push behind it still leaves no credit`() {
+    fun `a batched post with no push behind it leaves unclaimed notes, not credits`() {
         val ledger = GenericBannerLedger()
         assertEquals(emptyList<Long>(), ledger.realPosted(g, 5))
         ledger.pushQueued(g)
+        repeat(5) { assertTrue(ledger.refusedCoveredByRealPost(g)) }
         assertFalse(ledger.refusedCoveredByRealPost(g))
     }
 }
