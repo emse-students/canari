@@ -3011,6 +3011,18 @@ could fire a refresh at the end of an unrelated stroke) now do both; the other t
 (`MessageBubble`, `ReelViewer`, `MediaLightbox`, `PdfViewerModal`) already handle `touchcancel`.
 Tests: `swipeBack.test.ts` (a cancelled edge touch, then a mid-screen scroll).
 
+**What was left after that fix: the NEXT scroll does not move the list (Mi 9T, 2026-10-05, measured
+with adb-injected gestures, which may not behave as a finger).** The conversation no longer closes, but
+the first scroll after an edge swipe is swallowed while the same scroll from mid-screen works. Nothing
+in the page is known to hold it: `swipeBack` never calls `preventDefault`, its `touchmove` is passive,
+and `reset()` clears the transform. The two live explanations are outside the page's code (Chromium
+spending the first stroke after a cancelled touch sequence, or the injected gesture itself) and a
+reading with a real finger separates them - **since 2026-10-09 `swipeBack` logs `[swipeBack] armed`,
+`touch cancelled` and `released`** so that reading is one logcat/CDP read rather than a guess
+([device-verification X](../device-verification.md#x-the-scroll-after-an-edge-swipe---owed-on-the-mi-9t)).
+Not fixed on suspicion: a change made against a lifecycle fault nobody has observed is the class this
+repository refuses.
+
 ## 42. The profile rendered, then broke: a late section threw on a repeated key (2026-10-06)
 
 **Report (production, iPhone store build):** "Mon profil" showed, then a loading state, then the error screen.
