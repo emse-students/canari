@@ -1536,3 +1536,22 @@ Decided by the user: Le Cercle shows a presentation only, Sky a minimal public h
 ## The `mitv` ports stay open on the School network (user, 2026-10-06)
 
 `10.0.0.4:3002` (Wiki.js), `:8081` (Omeka S) and `:3001` (Sky) answer in plain HTTP to the whole School private network. **Decided: left as they are** - the user judges that network not sensitive, and the simplest option is no firewall rule. Nothing is owed. Revisit only if one of these services starts holding something a neighbour on that network must not read.
+
+## What this project installed on the shared host, and what the DSI must map (2026-10-09)
+
+The DSI asked who had put `gitlab-runner` on the host. This project had, on 2026-09-24 at 01:52, for Le Cercle's GitLab CI. They answered that such software needs weekly updates, must be mapped by them for an audit and is theirs to install, then that a further install, removal or security setting done without their agreement costs this project its privileges (the rule is in [durable-rules](../durable-rules.md)). Nothing was changed on the host to answer. The list below was read from `dpkg.log`, `apt/history.log`, systemd, the crontabs, nginx and `docker ps`; **`apt` does not record who ran a command, so each row is attributed by its date and by this page.**
+
+| What | Detail |
+| --- | --- |
+| Packages, 2026-09-22 | `docker.io` 26.1.5, `docker-compose`, `docker-cli`, `docker-buildx`, `containerd`, `runc`, `criu`, `tini`, `needrestart` |
+| Packages, 2026-09-23/24 | `rsync`, `jq`, `s-nail`; `cloudflared` installed 01:29 and purged 10:41 the same day |
+| `gitlab-runner` | 19.3.2-1 + `gitlab-runner-helper-images`, repository `gitlab-runner.sources`, shell executor, runner `cercle-portail` locked to the Cercle project, **not** in the unattended-upgrades origins so it never updates itself |
+| Accounts | `gha-runner` (no password, no sudo, group `docker`) and `gitlab-runner` (group `docker`) |
+| Units | `actions.runner.emse-students.canari`, `.portail-etu`, `actions.runner.emse-students-Sky.sky-ecole`, `gitlab-runner` |
+| Containers | Canari prod (12, with `adminer` on `127.0.0.1:8888`) and dev (9), Cercle, Sky, Portail-etu, Authentik prod and test; every port bound to `127.0.0.1`, nginx is the only entry |
+| nginx vhosts | `canari`, `canari-dev`, `canari-prod`, `authentik`, `cercle`, `cercle-emse`, `sky`, `sky-emse`, `miconnect-emse`, `miconnect-test`, `mino-emse`, `wiki-legacy` |
+| Cron (`gha-runner`) | backups at 03:30, 04:00, 04:15 and 04:45, and the egress probe every minute |
+| Directories | `/srv/{canari,canari-dev,canari-backups,canari-egress,le-cercle,le-cercle-backups,miconnect,miconnect-test,sky,sky-backups}`, `/opt/actions-runner` |
+| Removed, 2026-09-24 | `apache2`, PHP 7.0 to 8.4, `phpmyadmin`, MySQL server and client, `automysqlbackup`, `nodejs`/`npm`, `mutt`, `w3m`, the GTK/Mesa/WebKit libraries |
+
+**Three rows are not settled by the logs:** who ran the Docker install of 2026-09-22 and the purges of 2026-09-24 (the dates and the migration say it was this project, nothing records it), and what changed in `/etc/apt/apt.conf.d/50unattended-upgrades` on 2026-09-24 at 01:32, a security setting. **Owed to the DSI: their decision on `gitlab-runner`** - removed, with Le Cercle deployed another way, or kept with their written agreement and an update plan.
