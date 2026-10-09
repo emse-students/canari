@@ -1,3 +1,4 @@
+import { parseSettingsSection, settingsSectionLabel } from '$lib/settings/settingsSections';
 import { m } from '$lib/paraglide/messages';
 import { wordingFor } from '$lib/associations/kindWording';
 import { PUBLIC_SECTIONS } from '$lib/associations/publicSections';
@@ -197,6 +198,14 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
 
   if (path.startsWith('/g/join/')) {
     return appPageSeo(path, m.group_join_page_title());
+  }
+
+  // A settings section is a page of its own, named for what it holds.
+  const settingsSection = path.startsWith('/settings/')
+    ? parseSettingsSection(path.slice('/settings/'.length))
+    : null;
+  if (settingsSection) {
+    return appPageSeo(path, settingsSectionLabel(settingsSection));
   }
 
   const pageTitle = PAGE_TITLES[path];

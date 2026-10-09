@@ -1,20 +1,9 @@
 <script lang="ts">
-  import { resolve } from '$app/paths';
-  import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
-  import { currentUserId } from '$lib/stores/user';
-  import SettingsPreferencesSection from '$lib/components/settings/SettingsPreferencesSection.svelte';
-  import SettingsNotificationsSection from '$lib/components/settings/SettingsNotificationsSection.svelte';
-  import SettingsSecuritySection from '$lib/components/settings/SettingsSecuritySection.svelte';
-  import SettingsBackupSection from '$lib/components/settings/SettingsBackupSection.svelte';
-  import SettingsAboutSection from '$lib/components/settings/SettingsAboutSection.svelte';
-  import SettingsStorageSection from '$lib/components/settings/SettingsStorageSection.svelte';
-  import SettingsBlockedSection from '$lib/components/settings/SettingsBlockedSection.svelte';
-  import SettingsDangerZone from '$lib/components/settings/SettingsDangerZone.svelte';
+  import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import MinesweeperModal from '$lib/components/settings/MinesweeperModal.svelte';
+  import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
+  import { settingsHubRows } from '$lib/settings/settingsSections';
   import { m } from '$lib/paraglide/messages';
 
   /** Consecutive taps needed on the device id to unlock the easter egg. */
@@ -22,21 +11,9 @@
   /** Max gap between taps (ms); slower sequences reset the counter. */
   const EASTER_EGG_WINDOW_MS = 2000;
 
-  // Account management hub: preferences, security, sync, payments and the danger zone.
-  // Identity (avatar, bio, associations...) stays on /profile. Each section owns its own
-  // data loading, so this page is a thin assembly.
-  //
-  // The guard tests for an ACCOUNT session, not `session.isLoggedIn` (which means "MLS is
-  // ready"). Those two diverge whenever the OIDC session is valid but MLS init failed, and
-  // bouncing to /login there produced an endless ping-pong: the login page saw a live refresh
-  // cookie and sent the user straight back. Sections that need MLS handle its absence
-  // themselves.
-  onMount(() => {
-    if (!currentUserId()) {
-      void goto(resolve('/login?returnTo=/settings'), { replaceState: true });
-    }
-  });
-
+  // Account management hub: a list of sections, each a route segment (`/settings/<section>`).
+  // Identity (avatar, bio, associations...) stays on /profile. Each section owns its own data
+  // loading; the sign-in guard is the layout's.
   let minesweeperOpen = $state(false);
   let tapCount = $state(0);
   let lastTapAt = 0;
@@ -54,32 +31,23 @@
   }
 </script>
 
-<PageContainer>
-  <PageHeader title={m.settings_page_title()} subtitle={m.settings_page_subtitle()} />
+<PageHeader title={m.settings_page_title()} subtitle={m.settings_page_subtitle()} />
 
-  <div class="space-y-6 md:space-y-8">
-    <SettingsPreferencesSection />
-    <SettingsNotificationsSection />
-    <SettingsSecuritySection />
-    <SettingsBackupSection />
-    <SettingsBlockedSection />
-    <SettingsAboutSection />
-    <SettingsStorageSection />
-    <SettingsDangerZone />
+<div class="space-y-6 md:space-y-8">
+  <SectionHub rows={settingsHubRows()} label={m.settings_page_title()} />
 
-    <!-- Device identifier (discreet diagnostic). Tap 5x quickly to unlock Minesweeper. -->
-    {#if session.myDeviceId}
-      <button
-        type="button"
-        class="text-text-muted/40 text-2xs block w-full cursor-default pt-2 text-center font-mono select-none"
-        onclick={onDeviceIdTap}
-        aria-label={m.settings_device_id_label({ id: session.myDeviceId })}
-      >
-        {m.settings_device_id_label({ id: session.myDeviceId })}
-      </button>
-    {/if}
-  </div>
-</PageContainer>
+  <!-- Device identifier (discreet diagnostic). Tap 5x quickly to unlock Minesweeper. -->
+  {#if session.myDeviceId}
+    <button
+      type="button"
+      class="text-text-muted/40 text-2xs block w-full cursor-default pt-2 text-center font-mono select-none"
+      onclick={onDeviceIdTap}
+      aria-label={m.settings_device_id_label({ id: session.myDeviceId })}
+    >
+      {m.settings_device_id_label({ id: session.myDeviceId })}
+    </button>
+  {/if}
+</div>
 
 {#if minesweeperOpen}
   <MinesweeperModal open={true} onClose={() => (minesweeperOpen = false)} />
