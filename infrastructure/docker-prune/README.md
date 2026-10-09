@@ -142,13 +142,35 @@ Nothing was installed. Dry-run without installing anything (writes no ledger, de
 ssh portail-etu-direct 'python3 - --dry-run' < infrastructure/docker-prune/prune.py
 ```
 
-To enable it, copy the script and run it by hand once before any cron entry:
+Read-only facts about the host, checked 2026-10-09 so the steps below need no guess: the login
+user `jolan.boudin` is in the `docker` group (no sudo needed), `python3` is 3.13, docker is 26.1,
+the user has **no crontab yet**, `/var/lib/docker` is `drwx--x--- root` (the script only calls
+`statvfs` on it, which needs search permission on the parents and nothing more), `/home/canari` does
+not exist (hence `CANARI_PRUNE_DIR` in every command below), and the two compose files are
+`/srv/canari/infrastructure/docker-compose.prod.yml` and
+`/srv/canari-dev/infrastructure/docker-compose.dev.yml`.
+
+To enable it, the user or Master runs these four commands, in this order, and sends back the output
+of the third:
 
 ```sh
 ssh portail-etu-direct 'mkdir -p ~/docker-prune'
 scp infrastructure/docker-prune/prune.py portail-etu-direct:docker-prune/prune.py
-ssh portail-etu-direct 'CANARI_PRUNE_DIR=$HOME/docker-prune python3 ~/docker-prune/prune.py --remove-releases --keep 3'
+ssh portail-etu-direct 'CANARI_PRUNE_DIR=$HOME/docker-prune python3 ~/docker-prune/prune.py --dry-run --remove-releases --keep 3 --compose /srv/canari/infrastructure/docker-compose.prod.yml /srv/canari-dev/infrastructure/docker-compose.dev.yml | head -80'
+ssh portail-etu-direct 'CANARI_PRUNE_DIR=$HOME/docker-prune python3 ~/docker-prune/prune.py --remove-releases --keep 3 --compose /srv/canari/infrastructure/docker-compose.prod.yml /srv/canari-dev/infrastructure/docker-compose.dev.yml'
 ```
+
+The third is the dry run (nothing deleted, no ledger line); the fourth is the first real pass and
+prints nothing on success. Then the cron entry, installed with `ssh portail-etu-direct crontab -e`:
+
+```cron
+# Docker hygiene (05:30) - see infrastructure/docker-prune/README.md in the canari repository
+30 5 * * * CANARI_PRUNE_DIR=$HOME/docker-prune python3 $HOME/docker-prune/prune.py --remove-releases --keep 3 --compose /srv/canari/infrastructure/docker-compose.prod.yml /srv/canari-dev/infrastructure/docker-compose.dev.yml >> $HOME/docker-prune/prune.log 2>&1
+```
+
+**Expected after the first pass** (from the 2026-10-08 census): about 6.5 GB of dangling images and
+about 7 GB of build cache reclaimed, no release image removed (24 kept under `--keep 3`), `/` back
+near 70 %. Read the slope with `tail -3 ~/docker-prune/passes.ndjson` on the host.
 
 The dangling-image and build-cache prune run unfiltered by project on a shared daemon: they only
 reach untagged layers and cache, never a tagged image of another estate.
