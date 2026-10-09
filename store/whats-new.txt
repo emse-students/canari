@@ -1,3 +1,3 @@
-version: 1.2.0
+version: 1.2.1
 
-Les menus de gestion et d'administration s'ouvrent comme un explorateur, avec un fil d'Ariane cliquable. Les réactions à un même post forment une seule notification, avec les visages de ceux qui ont réagi, et les notifications du calendrier et des propositions ouvrent la bonne page sur Android. Les messages non lus des communautés survivent à un redémarrage, et vous pouvez couper les notifications d'une association.
+Les salons des communautés acceptent de nouveau vos messages dès l'ouverture de l'application : un défaut pouvait bloquer l'envoi pendant de longues minutes. Fini les sons étranges à l'arrivée des notifications, et un message ne sonne plus qu'une fois. Les messages que vous avez lus dans les communautés restent lus après un redémarrage, et un échec d'envoi dit enfin pourquoi.
