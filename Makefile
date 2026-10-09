@@ -371,6 +371,8 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/android-unit-tests.test.sh
 	@bash .github/scripts/tests/wait-default-blueprints.test.sh
 	@bash .github/scripts/tests/bench-observables.test.sh
+	@bash .github/scripts/swift-syntax.sh
+	@bash .github/scripts/tests/swift-syntax.test.sh
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs
 

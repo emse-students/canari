@@ -2743,7 +2743,23 @@ showed "not sticky," never why, and the actual gap (0.05px) was only visible by 
 | `android.yml` | `.aab` to Google Play - `internal` track for a pre-release, `production` for a stable |
 
 Both store arms also accept `workflow_dispatch` as a pure compile check: `publish` defaults to
-false there, and it is the only way to compile Swift, ObjC or Kotlin off macOS.
+false there, and it is the only way to COMPILE Swift, ObjC or Kotlin off macOS.
+
+**Swift is PARSED on every pull request since 2026-10-09** (`.github/scripts/swift-syntax.sh`, a step of
+`make test-ci-scripts`, so the always-on `Test CI Scripts` job). It runs `swiftc -parse` over every
+`git ls-files '*.swift'` - 25 files at the time: the notification extension, the vendored plugins'
+`ios/` trees, five `Package.swift` manifests - on the Linux runner, whose image ships Swift (6.4 at the
+time of writing). `-parse` is Swift's own grammar with no SDK, so it needs no UIKit to resolve and no
+Mac. **It finds syntax errors and nothing else**: a type error, a missing symbol, an availability
+mistake or a `guard` body that falls through are semantic and stay with the `ios.yml` dispatch above.
+The set is derived (an empty one fails), a missing `swiftc` fails on CI and is said out loud on a
+workstation, and `tests/swift-syntax.test.sh` shows the instrument able to fail where a real `swiftc`
+exists (a `guard` with no `else`). **There is no Swift test suite to run, and the measurement matters**:
+the two `Tests/PluginTests` targets under the vendored plugins are the Xcode template (`testExample`
+builds a plugin and asserts nothing) against packages that need a Tauri tree only a Mac has, and
+nothing runs them. A real suite needs a macOS runner - `ios.yml` is the only workflow with one, and it
+is a release path - so it is not built; the NSE's pure helpers (the cache-path and URL rules, mirrored
+in Kotlin) are the place to start if it ever is.
 
 See [`cicd.md`](../cicd.md) for the full pipeline.
 

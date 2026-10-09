@@ -48,22 +48,14 @@ BUILT (#1582, #1584, #1593, #1606, #1608, [profiles-and-access](profiles-and-acc
 
 ## Cloudflare, Stripe and the staff feed (2026-10-07/08)
 
-### P1 - an upload over 1 MiB is refused by Cloudflare on `dev.canari-emse.fr` and `canari-emse.fr`
+### P1 - an upload over 1 MiB is refused with a 413 on `dev.canari-emse.fr` and `canari-emse.fr` - the relay's nginx, one line (cause found 2026-10-09)
 
-The measurement (exactly 1 MiB, zone-wide, `canari.emse.fr` NOT limited, nothing of ours is the limit,
-the client stops retrying a 413 since #1583) is on
-[cloudflare-edge](infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names-measured-2026-10-07-re-read-2026-10-08).
-**Owed, by the USER**: Security > Events filtered on status 413 names the rule (or a token with zone
-rules read, which no agent holds). **Then**: lift the limit, or drop `CHUNK_SIZE` (`media.ts`, 50 MB
-today) below 1 MiB. Done when a 1.2 MB and a 20 MB upload reach `media-service` on both legacy names.
+NOT a Cloudflare rule: the 413 page body is nginx's, and both relay files on the old VM lack
+`client_max_body_size` (default 1m). Measurement, the two lines to add and the verification are on
+[cloudflare-edge](infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names---it-is-the-relays-nginx-not-cloudflare-measured-2026-10-07-cause-found-2026-10-09).
+**Owed: the gesture on `ssh canari` (the owed table).** Done when a 1.2 MB and a 20 MB upload reach
+`media-service` on both legacy names. Not an app change: chunking under 1 MiB is rejected there.
 
-### Open question - may EMSE/ME staff (no cursus) read the association posts of their campus?
-
-User, 2026-10-07: staff have no cursus by definition and see no association post today (the agenda
-already lets them follow their whole campus). Showing every association post of the campus may be
-SENSITIVE and the user has not decided. Candidates: personal posts of other staff plus institution posts
-of their campus only (the minimal reading), or the whole campus feed as for the agenda. Nothing to build
-until answered. (A named grant, #1606, is the per-person route.)
 
 ---
 
@@ -77,6 +69,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | What | The measurement that closes it |
 | --- | --- |
 | a post push tapped with the session dead lands on `/login?returnTo=` the post (2026-10-09) | check H step 4 on the Mi 9T, killed app AND backgrounded ([device-verification](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)); a bare `/login` with no `[hooks] Processing URL` means the intent never reached the JS |
+| after an edge swipe the next scroll is swallowed (Mi 9T, 2026-10-05; NOT a code defect anyone has seen: the page never holds the touch) | check X, ONE real-finger scroll on the Mi 9T with the `[swipeBack]` lines now logged ([device-verification](device-verification.md#x-the-scroll-after-an-edge-swipe---owed-on-the-mi-9t)) |
 | a salon carries read receipts (#1235, `v0.18.32`) | `READ-6` on the rig, then one look in a real community: a member who is not an admin sees the double check and "Lu par" under their own last message ([social-service](services/social-service.md#read-receipts-in-a-salon)) |
 | a salon's settings are offered only to who may change them (#1228, `v0.18.32`) | one look with a Membre account: the access tab reads only, rename and delete are absent; then grant `channel.manage` to Moderateur in the grid with a moderator's panel open - the controls must appear without a reload |
 | `/forms/success` no longer asks for a form called `success` | after a completed payment on production, social-service logs no `invalid input syntax for type uuid: "success"` (once per payment, so ONE payment settles it) |
@@ -126,7 +119,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **look up the Cloudflare rule that refuses a body over 1 MiB**: Security > Events, filter on status 413, on the `canari-emse.fr` zone (or hand an agent a token with zone rules read) | 1 dashboard look | [the P1 above](#p1---an-upload-over-1-mib-is-refused-by-cloudflare-on-devcanari-emsefr-and-canari-emsefr) |
+| **add `client_max_body_size 100m;` and `proxy_request_buffering off;` to the `server` block of `/etc/nginx/sites-enabled/canari-relay-prod.conf` and `canari-relay-dev.conf` on `ssh canari`, then `sudo nginx -t && sudo systemctl reload nginx`** (the 1 MiB 413 is the relay's nginx default, not Cloudflare) | 1 ssh gesture, 2 lines | [the P1 above](#p1---an-upload-over-1-mib-is-refused-with-a-413-on-devcanari-emsefr-and-canari-emsefr---the-relays-nginx-one-line-cause-found-2026-10-09) |
 | **upload the APNs authentication key in the DEVELOPMENT slot of Firebase** (2 minutes): Firebase Console > Project settings > Cloud Messaging > the iOS app `fr.emse.canari` > APNs authentication key - the same `.p8` (Key ID + Team ID) already in the Production slot. The agent then resends the test DM | click | [the iOS push rows](#owed-a-verification-and-nothing-else) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** The Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so no agent can create a project. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [the second package id](#p3---a-second-package-id-so-a-pre-release-can-be-measured-against-production-decided-2026-09-15) |
@@ -135,8 +128,9 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **the spaces release order (WP6b), three gestures in THIS order**: (1) go for the WP3 profile backfill on production once 6a/6d's release ran migration 071 (`backfill-canari-profiles.sh apply`); (2) set every association's real reach and the BDEs at `/admin/spaces` - the seed gave all of them (ICM, saint-etienne) only; (3) only then cut the release carrying 6b. Out of order, ISMIN/Gardanne/FSSS/Autre readers see no existing association post, and anyone not backfilled loses the feed | 1 go, 1 grid, 1 release | [profiles-and-access](profiles-and-access.md), "WP6b as built" |
 | **create an Authentik test user `canari-test-epsilon` (campus gardanne), or allow a scoped permission rule for it** - the read-grants dev checks need a second campus and Authentik is one instance for dev and prod, so no agent may touch it. No stable ships the read grants before they run | 1 account | [Audiences](#audiences-of-associations-lists-and-institutions---built-on-dev-in-v120-alpha1) |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala` (the repository answers `404`). Nothing runs from it; it is somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
+| **install docker-prune on the Portail-etu host (88 % full)**: four copy-paste commands and one `crontab -e` line, ready in the README | 4 commands, 1 cron line | [the P3](#p3---docker-prune-is-built-for-the-portail-etu-host-but-not-installed-there) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
-| **may staff read the association posts of their campus?** | 1 decision | [above](#open-question---may-emseme-staff-no-cursus-read-the-association-posts-of-their-campus) |
+| **may staff read the association posts of their campus?** one line: keep (1), institution posts of the campus (2), or the whole campus (3) | 1 decision | [open-questions](open-questions.md#may-emseme-staff-no-cursus-read-the-association-posts-of-their-campus) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
 
@@ -228,12 +222,6 @@ count of real posts no push has claimed, consumed by a refused push) are on
 Not built. Rig: `bun archive/notif.mjs 10`; board row
 [NOTIF-10](cross-client-testing.md#14---notif---notifications).
 
-### P3 - after a swipe from the left edge, the next scroll is swallowed (Mi 9T, 2026-10-05)
-
-The conversation does not close (correct) but the scroll that follows does not move the list; the same
-scroll from mid-screen works. adb injects the gesture, so system gesture navigation may not react as
-under a finger: owed ONE real-finger scroll on the Mi 9T before any fix.
-
 ### P3 - on a fresh Feed the swipe to the camera did nothing three times (Mi 9T, 2026-10-06)
 
 The first load after publishing; after one round trip through another tab it worked. Not reproduced on
@@ -253,7 +241,7 @@ G2-0 to G2-4 and the writer G2-5 are SHIPPED (#1221; the writer in the stable `v
 | --- | --- |
 | G2-5 | **v1 ends (user, 2026-09-28)**: a v1 seed that ARRIVES is refused, v1 seeds already held stay readable until their rows age out (365 days), the v1 reader is deleted. **BLOCKED on the floor**: clients `1.0.0`-`1.0.2` still mint v1 seeds. Unblock = raise `minClientVersion` to >= `1.0.3` once BOTH stores serve it (`bun tools/play-vitals/vitals.mjs` + App Store), then touch `utils/graine/{sessionManager,wireSeed}.ts`, `crypto/graine.ts` and the native `merge_graine_seed` |
 | G2-6b | a salon edit from a v1 session has an unsigned, server-supplied `senderId` (a deliberate level, no code owed, [§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05)); closes with the v1 reader. **Only if a channel ever gets an older-page load:** `listMessages` with a `before` cursor omits edit and reaction rows made after the cursor |
-| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **owed: a run of GRAINE-AUTH-1..3 on the local estate, and NOTIF-19/20 on the Mi 9T against a G2-5 build**; the iPhone reading ([device-verification](device-verification.md)) |
+| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **GRAINE-AUTH-1..3 are `PASS` since 2026-10-05 on the local estate** ([board](cross-client-testing.md#20---graine---an-author-that-is-proven), the claim that they were owed was stale); **owed: NOTIF-19/20 on the Mi 9T against a G2-5 build** (needs adb), **GRAINE-AUTH-4** (no runner can exist without a decision on a mutating dev hook, see the board row) and the iPhone reading ([device-verification](device-verification.md)) |
 
 What v2 does not close: the server can still admit a device it controls or publish a false device key
 (BasicCredential's limit, §21).
@@ -310,16 +298,6 @@ garantir la disponibilite"*, scoped to availability rather than deliberate refus
 | `R-E9`, `R-E11` | peer-unresolved; `readWelcomeOwed() === null` | retried for ever, no counter |
 | `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
 | `G-E10` | `forgetCommunityGraine` with no runtime | warns, returns 0; seeds and joined groups stay |
-
-### P3 - one seat on production has no client behind it, and removing it is not the server's to do (measured 2026-09-22)
-
-Estate-wide, **two** seats belong to users with no `key_package` anywhere: one real member of a real
-two-person conversation (taken 2026-08-10, while `userHasMlsDevices` was a constant `true`, broken until
-2026-08-19) and one brand-new one-member group at epoch 0. The sweep finds no real case after the fix
-([state machine](protocols/mls-graine-state-machine.md#a-seat-with-no-client-behind-it---the-first-real-one-and-the-population-is-two-2026-09-22)).
-**Open, and may close as "leave it"**: whether the MLS tree still carries a leaf for that member is a
-question only a holder's CLIENT can answer, and removing it is a client action inside a real student's
-conversation. The decision is whether one residual seat is worth any mechanism.
 
 ### P1 - a damaged local MLS state is reported as a PIN rotation, and the PIN the user actually holds does not get them back in (measured 2026-09-08)
 
@@ -516,13 +494,6 @@ The two questions of the audit are answered (2026-10-08): a follow keeps its mea
 
 ## CI and the chain that runs unattended
 
-### P3 - EVERY `.swift` IN THE iOS TREE IS UNGUARDED, AND NOTHING HAS MEASURED WHETHER A SUITE EVEN EXISTS
-
-The Android half closed on 2026-09-22 (one pure function compiled twice, [mobile](frontend/mobile.md#the-android-half-of-it-is-one-function-compiled-twice-2026-09-22)).
-iOS is untouched: two Swift test targets exist under the vendored plugins (`tauri-plugin-keystore`,
-`tauri-plugin-customtabs`), and nothing has measured whether the NSE/app Swift is in the position the
-Android ladder was (needing no platform), nor whether those targets run anywhere.
-
 ### P1 - production goes dark in the 22h band, and the only thing both boxes share is the School's firewall (measured 2026-09-11)
 
 The measurement (175 `cloudflared` edge-dial timeouts in seven days, all at 22h-23h CEST, the School's
@@ -540,7 +511,7 @@ which runs no container).
 Four advisories (`GHSA-vcc3-ghjq-m6fr`, `GHSA-528h-pc64-c93x`, `GHSA-hqr4-qq8f-hg3x`,
 `GHSA-mjw6-4jj6-33hc`) are ignored on the `minio > ...` edge of media-service. **Retire the ignores and
 the premise assertion (`.github/scripts/stream-json-premise.sh`) the day minio publishes a release that
-moves either pin** (last checked 2026-10-06: minio still 8.0.7). The reasoning, the upstream-check log
+moves either pin** (last checked 2026-10-09: minio still 8.0.7). The reasoning, the upstream-check log
 and the dead retirement condition are in [cicd](cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
 
 ### P2 - THREE hosts take security updates that nothing reports on, and a library nothing restarts (the rest closed 2026-09-03)
@@ -611,8 +582,13 @@ group's log (the fourth `DELIVERY` combination) - a wire-level change that waits
 HEAL-repair heals 3 times in 10 because the server elects a random online member, one of three holds
 the messages, and the walk stops on a peer's AGREEMENT. Open: specify the state the fix remembers
 (WHAT, for HOW LONG, what discharges it - the repair landing) and exclude an agreeing peer while the
-asker holds frames it cannot read. The measurement, the root cause and the two refuted causes (not to
-be re-opened) are in [history-reconciliation](protocols/history-reconciliation.md#heal-repair-lands-on-a-coin-flip-the-measurement-and-the-root-cause-2026-09-08).
+asker holds frames it cannot read. **Re-read 2026-10-09, STILL OPEN and NOT changed: the fix is a design
+whose state is not specified (WHAT is remembered, for HOW LONG, what discharges it), the cause is measured
+only on the local rig (ten runs), and production's half cannot be read from the server** - 32 h of
+`[HISTORY_REQ]` held 423 `NO_PEER_ONLINE` against 54 `FORWARDED`, which is a population of askers with no
+peer online, not the coin flip. What would settle it: a harness `HEAL-repair` batch with the asker's
+election log beside it, then the exclusion-on-agreement change with its state written first. The
+measurement, the root cause and the two refuted causes (not to be re-opened) are in [history-reconciliation](protocols/history-reconciliation.md#heal-repair-lands-on-a-coin-flip-the-measurement-and-the-root-cause-2026-09-08).
 
 ### P3 - the pull and the socket hand the SAME row in, and the queue notices afterwards instead of the overlap not existing (measured 2026-09-08)
 
@@ -680,36 +656,14 @@ Open: the rung needs a fixture that puts the subject in "owed a Welcome" rather 
 window that returned once on 2026-09-08 is unexplained, so the entry stands
 ([measurements](protocols/campaign-measured-defects.md#five-rows-watch-a-responder-heal-a-device-that-no-longer-needs-one-2026-09-06-2026-09-07)).
 
-### P1 - twelve of sixteen messages were FETCHED AND DROPPED (prod 2026-09-02) - the residue
-
-Four causes fixed. Open: the twelve are recoverable only by diffing the peer's iPhone; **which arm of
-`process_message` dropped them is not established - do not write a fix against a suspected arm**; whether a
-device that dropped a frame should say so is not decided
-([detail](protocols/campaign-measured-defects.md#twelve-of-sixteen-messages-fetched-and-dropped-the-hole-at-epoch-121-prod-2026-09-02)).
-
 ### P3 - the phone polls presence every ten seconds over a live WebSocket (2026-09-02)
 
 Still so (`presenceStore.ts`). A push first needs the decision of who may watch whose presence
 ([detail](protocols/campaign-measured-defects.md#the-presence-poll-logcat-2026-09-02)).
 
-### P2 - a device holds a distribution group the group holds no row for, and heals by rejoining (2026-08-29)
+### P2 - a new device's join of a community's key group reaches the commit gate BEFORE its KeyPackage (2026-08-29, cause measured on production 2026-10-09)
 
-A race that heals is still a defect. First question: is it ONE defect with the `no_key_package` refusal
-below (same group `315b8a1d`, a second apart, recurred on every fresh device)?
-([detail and recurrences](protocols/campaign-measured-defects.md#a-device-holds-a-distribution-group-the-group-holds-no-row-for-2026-08-29))
-
-### P2 - a membership is REFUSED for want of a KeyPackage one second after the device external-joined that group (2026-08-29)
-
-Open: the KeyPackage publication's timestamp against the refusal's names which ordering is real; HEAL-NEW
-verdicts are "clean on the web client", never on the server
-([detail](protocols/campaign-measured-defects.md#a-membership-refused-for-want-of-a-keypackage-one-second-after-the-external-join-2026-08-29)).
-
-### P1 - a device asks for a Welcome for ever and the member that answers resets the row (prod 2026-09-01) - the residue
-
-Six causes fixed (`CHANGELOG.md`). Open: one prod measurement (stale bases at `activeEpoch`, one reading
-of the hourly *kicked with no re-add* ERROR arm) and the local `[KICK] Stale leaf` sighting. The rotation
-fix for the dead-end responder was REFUTED 2026-09-08, not to be re-opened
-([detail](protocols/campaign-measured-defects.md#the-welcome-livelock---the-residue-prod-2026-09-01)).
+**ONE defect, and the two entries that stood here were it.** All six `[MEMBERSHIP_ACTIVE] REFUSED ... no_key_package` of 32 hours of production were on four COMMUNITY distribution groups and no conversation; each device's first run logged `[PURGE_PREKEYS]` (its key package round starting), then the join's commit and its refusal in the same second, then `[REGISTER_DEVICE] START` - the join committed between the mint and the publication, so the gate wrote no membership row and the device held a tree that routed nothing to it ("holds the group, the group holds no row", the rejoin, the extra epoch). Three of the six healed 2 min to 1 h 44 min later (an iPhone among them: seeds unrouted for that long), the other three devices are gone. **A fix is in a DRAFT pull request** (`externalJoin` waits for the key package round already running; failing test first, [detail](protocols/campaign-measured-defects.md#a-new-devices-join-reaches-the-commit-gate-before-its-keypackage-2026-10-09)). **Owed after it ships:** the same read of the server log (REFUSED lines on a distribution group of a `isNew=true` device should be zero), and HEAL-NEW verdicts remain "clean on the web client", never on the server. **Not covered by the fix, and not measured:** a join that starts BEFORE any round has started (no evidence of one in the six)..
 
 ### P2 - a roster seat without a Welcome: the reason is typed on the client, the server report cannot partition on it yet (prod 2026-09-01)
 
@@ -722,13 +676,6 @@ the first real `skipped` lines before designing it
 The server estate is clean; whether a leaf survives in `7da231f8-119c-4ce2-884f-55f5c94c903f` (epoch 118) is
 answered only from a member's own client, which reads the tree
 ([detail](protocols/campaign-measured-defects.md#the-placeholder-and-the-mls-tree)).
-
-### P2 - a group that never leaves its creation epoch keeps collecting device invitations nobody can honour (prod 2026-08-30)
-
-Open decision, three parts together: should an invitation expire, should a group whose creator holds no
-state still be offered, should an unservable group show a tile. Never by widening a sweep; `activeEpoch
-<= 1` is NOT the predicate, a duration measured against the population is
-([population and SQL shape](protocols/campaign-measured-defects.md#a-group-that-never-leaves-its-creation-epoch-keeps-collecting-invitations-prod-2026-08-30)).
 
 ### P2 - a re-admitted device calls its own exclusion window a loss, and reconciles for it (2026-08-26, widened 2026-08-30)
 
@@ -839,9 +786,9 @@ The JS-side `sendNotification` path posts no reply/mark-read actions; only the K
 
 Population, refuted causes and rules are on [key-package-pool](protocols/key-package-pool.md), the only copy. **Owed, in order:** (1) one CDP console read (not logcat) of the reload path across a background/resume on a real handset, looking for `[RESUME]` and the `publishedThisSession` refusal counter; (2) a device-side state census (groups, members, one-time bundles, last-resort); (3) the per-connection fallback reuse. The shipped guard closes the observed case, not the class: `publishedThisSession` is per-process, so a keystore emptied and then RESTARTED would run the loop again.
 
-### P2 - NOTHING REPUBLISHES A LAST-RESORT PACKAGE'S EXPIRY, SO THE UNDATED ROWS DRAIN ONLY AS THEIR OWNERS UPGRADE (production, re-measured 2026-09-22)
+### P2 - NOTHING REPUBLISHES A LAST-RESORT PACKAGE'S EXPIRY, SO THE UNDATED ROWS DRAIN ONLY AS THEIR OWNERS UPGRADE (production, re-measured 2026-10-09)
 
-Undated rows are exactly the clients below `0.18.10`, draining about 20 a day; both client repairs are REFUTED. Measurements and mechanism: [key-package-pool](protocols/key-package-pool.md). **Owed:** re-measure the undated count; only if it stops falling, decide on a server-side KeyPackage lifetime decoder in `chat-delivery-service` (which today never interprets MLS bytes).
+**Re-measured 2026-10-09: 457 undated of 1016 rows (291 users, 116 of them with NO dated row), down from 597 on 2026-09-22 - about 8 a day, the 20 a day of 2026-09-18 slowing.** The split is STILL a client version with no exception (559 of 559 dated rows are `>= 0.18.10`; no undated row is, 393 carry no version at all and 29 are below it), and the newest undated row was created 2026-09-25: the population is frozen and only drains. Both client repairs are REFUTED; mechanism in [key-package-pool](protocols/key-package-pool.md). **The server-side lifetime decoder (an MLS reader in `chat-delivery-service`, which never interprets MLS bytes) is NOT justified while the count falls**; a count that stops falling is what would justify it, so re-measure after the floor moves (`minClientVersion`, the user's gesture) - which is also what empties it.
 
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
 
@@ -903,7 +850,7 @@ The English-on-a-French-screen sweep is finished ([durable-rules](durable-rules.
 
 ### P3 - docker-prune is built for the Portail-etu host but not installed there
 
-The host was `/` 88 % used on 2026-10-08. **Open:** the user or Master runs the one-off command in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet), then a cron entry. Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
+The host was `/` 88 % used on 2026-10-08 and 2026-10-09. **Open:** the user or Master runs the four commands and the one cron entry, written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 

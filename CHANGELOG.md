@@ -13768,7 +13768,7 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   is raised only under the MLS mutex, which is what keeps it deadlock-free. **None of this recovers
   the twelve** - their plaintext exists only on the peer's iPhone - and what remains open, including
   a UI still showing a green "SÉCURISÉ & SYNC" shield on that conversation, is in
-  [backlog](docs/wiki/backlog.md#p1---twelve-of-sixteen-messages-were-fetched-and-dropped-prod-2026-09-02---the-residue).
+  [backlog](docs/wiki/protocols/campaign-measured-defects.md#twelve-of-sixteen-messages-fetched-and-dropped-the-hole-at-epoch-121-prod-2026-09-02).
 
 - **A vulnerability was reported by one switch and fixable by none.** A push printed `GitHub found 1
   vulnerability on the default branch (1 moderate)`, which reads as "the sweep will take it".

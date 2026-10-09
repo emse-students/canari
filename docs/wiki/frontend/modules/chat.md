@@ -896,7 +896,7 @@ arrives (see WP-FWD-1):
 
 ### A 413 ends the entry (2026-10-08)
 
-Cloudflare Free answers `413` to any request body above exactly 1 MiB, and the media upload sends
+The relay's nginx on the old VM answers `413` to any request body above exactly 1 MiB (its default `client_max_body_size`, behind Cloudflare, [cloudflare-edge](../../infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names---it-is-the-relays-nginx-not-cloudflare-measured-2026-10-07-cause-found-2026-10-09)), and the media upload sends
 the whole ciphertext as ONE body up to 50 MB (chunking starts at `CHUNK_SIZE = 50 MB`, `media.ts`).
 The ladder used to re-post such an upload once a minute for ever (attempt 806). Now `MediaUploadError`
 (an `ApiRefusalError`, status carried at the throw) is read through `refusalStatus(e) === 413` in the
