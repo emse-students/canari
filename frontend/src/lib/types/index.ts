@@ -79,6 +79,12 @@ export interface AddMessageToChatOptions {
    * Set from `queuedCreatedAt` in the MLS delivery envelope.
    */
   serverTimestamp?: number;
+  /**
+   * A community-salon echo shown before the server has a row (WP-OFF-2): flags the row
+   * `awaitingServerId` and keeps it OUT of the cross-tab announcements, which would hand a sibling
+   * tab a row it can never reconcile (it would show the message twice once the server row arrives).
+   */
+  salonEcho?: boolean;
 }
 
 /**
@@ -123,6 +129,12 @@ export interface ChatMessage {
   serverTimestamp?: number;
   /** True when displayed from FCM preview before full MLS envelope arrives. */
   isFcmPreview?: boolean;
+  /**
+   * A community-salon message shown BEFORE the server has a row for it (WP-OFF-2): `id` is the
+   * client UUID, not the server's, so every action addressed by a server id (react, edit, delete,
+   * pin) is unavailable until `settleSalonEcho` re-keys it. Memory only, never persisted.
+   */
+  awaitingServerId?: boolean;
 }
 
 /**

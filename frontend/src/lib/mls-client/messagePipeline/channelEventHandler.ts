@@ -1,3 +1,4 @@
+import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
 import { openChannelMessage } from '$lib/utils/graine/channelSeal';
 import { reportUnreadableChannelMessage } from '$lib/utils/chat/channelCrypto';
 import { decodeAppMessage } from '$lib/proto/codec';
@@ -311,6 +312,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     if (convoKey) {
       let content: string | undefined;
       let isSystemNotice = false;
+      // The client UUID sealed INSIDE the ciphertext: what this device's own echo is keyed by.
+      let innerMessageId: string | undefined;
       const channelServerMs = parseServerTimestampMs(data.createdAt);
       try {
         if (data.ciphertext) {
@@ -366,6 +369,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             return;
           }
           if (msg) {
+            innerMessageId = msg.messageId ? String(msg.messageId) : undefined;
             const envelope =
               appMsgToEnvelope(msg, channelServerMs) ??
               appMsgToChannelSystemEnvelope(msg, channelServerMs);
@@ -403,6 +407,19 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       const renderedId = String(data.messageId || data.id);
       const poll = data.poll as ChannelPollMeta | undefined;
       if (poll) setPollMeta(renderedId, poll);
+
+      // THIS DEVICE'S OWN ECHO of the message, if it is still showing one under the client UUID: it
+      // takes the server's id here instead of being drawn a second time (WP-OFF-2). A no-op for every
+      // message that is not an echo - only a row flagged `awaitingServerId` is ever touched.
+      if (innerMessageId && innerMessageId !== renderedId) {
+        applySalonEchoChange(
+          conversations,
+          convoKey,
+          innerMessageId,
+          { kind: 'settled', serverId: renderedId },
+          log
+        );
+      }
 
       // A membership notice is attributed to nobody, exactly like `decodeChannelMessageRow` does
       // on the history path - otherwise the same event reads as a message from its trigger.
