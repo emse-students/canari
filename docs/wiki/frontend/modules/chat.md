@@ -2818,6 +2818,25 @@ nothing happened.
 pill on `.chat-scroll-bottom-button` (`unreadBelowCount`) and leaves the pane exactly where it is -
 the behaviour the user chose over auto-scrolling, and it predates this work.
 
+### A box shrinking is growth too: the keyboard and the pinned thread (2026-10-09)
+
+Reported on production 1.1.2 (Android): at the bottom of a conversation, the keyboard opened over the
+last messages and the scroll-to-bottom arrow appeared. `follow()` asked `shouldFollowThreadBottom`
+about `scrollHeight`, and the keyboard changes the scroller's BOX (`flex-1` loses ~330 px) while
+`scrollHeight` stays the same, so nothing "grew". The judgement now reads the **reach**,
+`scrollHeight - clientHeight` (`threadReach` in `threadAnchor.ts`), the one number a row, a
+reaction, a typing bubble, the composer's padding AND the box all move. No timer, no new observer:
+the `ResizeObserver` on the scroller already fired, it was asked the wrong question.
+
+Measured in headless Chrome (390x844, real `observeThreadGrowth` and the real scroller CSS shape,
+box 844 -> 514 px as the keyboard): pinned, distance from the bottom 330 px before, 0 after, last row
+7 px clear of the composer instead of 323 px under it; scrolled up 700 px nothing moves (the reader's
+row stays at -56 px), which is deliberate - a reader up in history keeps their row. A reaction row
+growing above, and the typing bubble sliding in, were already followed (0 px) and are unchanged.
+**iOS WebKit was not run.** The viewport numbers feeding the box (visual vs layout viewport, the iOS
+safe-area) are `keyboardViewport.svelte.ts`'s, corrected in PR #1667; this change reads only the
+resulting box, so the two combine without overlap.
+
 ### The typing indicator is a row of the thread, not a band over it (2026-09-22)
 
 It used to be a strip inside `ChatComposer`, above the input. It appeared and disappeared UNDER the
