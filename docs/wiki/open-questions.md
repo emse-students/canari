@@ -327,36 +327,3 @@ acted on (the hourly commit-log hole report on the server, the shortfall report 
 client). The question is whether the USER should ever see that a frame was dropped on their device: the
 "SECURISE & SYNC" shield that did so lied, and was removed by the user's choice to stop exposing the
 machinery. **Nothing is blocked on it**, and it is a product decision, not a measurement.
-
-## May EMSE/ME staff (no cursus) read the association posts of their campus?
-
-Moved from the backlog 2026-10-09. A staff account has a campus and an empty cursus, so it has **no
-space** and sees no association post (`FeedAudienceGuard`, [profiles-and-access](profiles-and-access.md));
-the agenda is the one surface that already lets such a reader follow their WHOLE campus
-(`campusWideReaderCampus` in `reader-spaces.ts`). The user (2026-10-07) found showing every association
-post of the campus possibly SENSITIVE and did not decide. **Nothing is built and nothing is blocked.**
-
-**The options, with what each costs:**
-
-1. **Nothing by default, a named grant per person (today).** Decision (6) of the read-grants plan
-   ([profiles-and-access](profiles-and-access.md#the-nominative-read-grants---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08))
-   says staff without a cursus see nothing more and the named ones do; the grant is built (#1606, #1608,
-   `/admin/read-access`: read, react, comment, never vote or publish, never personal posts). Cost: a
-   global admin ticks each person; a new staff member sees an empty feed until then. Risk: none new.
-2. **The minimal reading: the institution posts that reach their campus, and the personal posts of other
-   staff.** Institutions are the School's own voice and carry an explicit audience. Cost: one more predicate
-   next to `campusWideReaderCampus` in the posts feed query and its guard, plus a test per audience shape.
-   The student associations stay invisible, which is the sensitive part.
-3. **The whole campus feed, as for the agenda.** Every post whose author's (or accepted co-organiser's)
-   audience rules reach ANY space of the campus, so every formation of it plus the campus-wide and
-   EMSE-wide audiences. Cost: the same predicate with no institution filter. Risk: an association's
-   audience was chosen for STUDENTS of a formation, and staff would read posts aimed at that room (a
-   party, an internal call) without the association having chosen them; and the feed reaches no
-   notification, so it is silent surveillance in the eyes of a student reading the audience copy.
-
-**Recommendation, not a decision:** keep 1 and use the grant for the few staff who need more; 2 is the
-cheapest widening if the grant proves too heavy once real staff have been through it. 3 should not be
-chosen without the association managers being told.
-
-**ONE LINE FOR THE USER: 1 (keep), 2 (institution posts of the campus), or 3 (whole campus)?** Once
-answered, 1 closes this section; 2 or 3 becomes a backlog entry with the predicate above.

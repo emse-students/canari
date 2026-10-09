@@ -256,7 +256,7 @@ See [section-navigation](docs/wiki/frontend/section-navigation.md) and [backlog]
 
 ### Docs - the staff-reads-campus-posts question is written as three options, one line owed
 
-The question left the backlog for [open-questions](docs/wiki/open-questions.md#may-emseme-staff-no-cursus-read-the-association-posts-of-their-campus) with what each option costs and a recommendation; nothing was built.
+The question left the backlog for [profiles-and-access](docs/wiki/profiles-and-access.md) with what each option costs and a recommendation; nothing was built.
 
 ### Removed - Stripe, Lydia and cash are the only payments left
 
