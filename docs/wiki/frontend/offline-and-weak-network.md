@@ -206,11 +206,11 @@ package merges. Each is a pull request of its own.
 | **WP-W1** | Verify production's origin compression (`curl -I` with `Accept-Encoding: br`); enable gzip/brotli for `js/css/wasm/svg/woff2` in the frontend nginx where missing | S | local/dev/non-edge cold Slow 3G 103 s -> ~38 s *(est from bytes)*; production gain depends on the check | asserted by a test reading the generated nginx config, plus a curl row in the deploy smoke |
 | **WP-W2** | Start the WASM in parallel with the JS: `<link rel="preload" as="fetch" crossorigin>` for the hashed `.wasm` in `app.html` (hash known at build) | S | removes the serial 44 s (-> bandwidth-bound: ~-20 s on Slow 3G *(est, same bytes in parallel)*, more on a real h2 link) | build test: the hashed name in the preload equals the `?url` import; measured with the CDP profile |
 | **WP-W3** | Find out whether the list truly needs the WASM; if not, render the list (names, previews, unread) from the local store before it | M | up to **-45 s** cold Slow 3G (list at ~58 s instead of 103 s) | trace of what in `ensureMls` the first list render awaits; then a boot-order unit test that the list renders with the WASM promise pending |
-| **WP-OFF-5** | **A deadline and a `slow` state**: route `apiFetch` through the progress-deadline helper (silence, never total), type the failure `StalledRequestError`, add `connectivity.slow` (a request > N s in flight) and show "Connexion lente" instead of an endless spinner; the outbox treats a stall as retry-with-backoff and stops head-of-line blocking | M | bounds every "spinner of unknown length"; unblocks the queue behind one dead POST | `apiFetch` stall unit test; outbox test "a stalled first entry does not delay the second" |
+| **WP-OFF-5** | **SHIPPED 2026-10-09 (section 11).** **A deadline and a `slow` state**: route `apiFetch` through the progress-deadline helper (silence, never total), type the failure `StalledRequestError`, add `connectivity.slow` (a request > N s in flight) and show "Connexion lente" instead of an endless spinner; the outbox treats a stall as retry-with-backoff and stops head-of-line blocking | M | bounds every "spinner of unknown length"; unblocks the queue behind one dead POST | `apiFetch` stall unit test; outbox test "a stalled first entry does not delay the second" |
 | **WP-W4** | Cut the boot chain: dedupe the repeated calls (`devices` x3, `groups` x3, `groups/<id>` x2, `unread-counts` x2), one batched call for the per-community triplet, conditional requests (ETag/304) for stable payloads, stop asking for avatars that 404 every boot | M | ~90 -> ~35 calls *(est)*; Slow 3G settle 18.6 s -> ~6 s *(est)*; 2G becomes settleable | a counting test over a recorded boot (the CDP log of this page is the fixture): no URL twice, request budget |
 | **WP-OFF-2** | **Salon optimistic row** with `pending/sending/error` and a retry/delete affordance; id = the client UUID already placed inside the ciphertext (`AppMessage.message_id`), reconciled with the `channel.message.created` row by that inner id | M | salon bubble in ~40 ms like DMs (today 96 ms-600 ms+ and offline never) | reducer test: local row replaced, never duplicated, by the server row; harness row on both clients |
 | **WP-OFF-3** | **Salon durable outbox** (IndexedDB, same store as MLS, `channel` kind) + server idempotence: store the client `messageId` as a nullable unique `(author, channel, client_message_id)` and answer the stored row on repeat | M-L | offline salon send works; replay without duplicate | server spec (repeat POST returns the same row), outbox spec (replay after a cut), harness: offline send, kill, restore |
-| **WP-OFF-6** | Make resume prompt: probe reachability itself on `online` rather than waiting for the next failed/successful call; start the flush as soon as the incoming barrier is idle | S-M | 3.8-5.3 s -> ~1 s *(est)* | `outbox.test.ts` trigger table (the five triggers) plus a CDP row |
+| **WP-OFF-6** | **SHIPPED 2026-10-09 (section 12).** Make resume prompt: probe reachability itself on `online` rather than waiting for the next failed/successful call; start the flush as soon as the incoming barrier is idle | S-M | 3.8-5.3 s -> ~1 s *(est)* | `outbox.test.ts` trigger table (the five triggers) plus a CDP row |
 | **WP-OFF-4** | Salon edit / pin / vote / read-mark through the same queue, optimistic with rollback only when nothing left | M | consistency with DMs | per-action reducer tests |
 | **WP-W5** | Trim the boot bundle: find why 201-270 JS files are fetched before the list (route-level `modulepreload`, eager imports of other tabs), split the 480 kB and 350 kB chunks | M-L | cold JS 57 s -> *(est, needs a bundle report)* | a bundle budget test (entry JS bytes, file count) |
 | **WP-OFF-7** | Persist the encrypted MLS frame once per epoch and re-POST the SAME bytes while the epoch has not moved; re-encrypt only after an epoch change (inner `messageId` dedup stays the safety net) | M | removes the burned generations of R13; needs the delivery service to accept a byte-identical repeat | measure burn per failed attempt first; then a `BaseMlsService` spec with a failing POST |
@@ -353,6 +353,8 @@ proxy) and compression on, to replace the pessimistic bytes; and on a real salon
 | --- | --- | --- |
 | **WP-W1** origin compression | **built** (one nginx block + `static-compression.test.mjs`) | the next pre-release / stable: it is an nginx image change |
 | **WP-W2** WASM beside the JS | **built** (`wasmPreload.ts` + `hooks.server.ts`) | the next pre-release / stable (web build only; Tauri is inert by construction) |
+| **WP-OFF-5** deadline, `slow`, lanes | **built** (section 11) | the next pre-release / stable (frontend only) |
+| **WP-OFF-6** prompt resume | **built** (section 12) | the next pre-release / stable (frontend only) |
 | **WP-W3** list before the WASM | **diagnosed, NOT built**: the dependency is real, section 10.3 | - |
 
 ### 10.1 What production served, read before changing anything
@@ -465,3 +467,98 @@ verified without a signed-in device (the rig here is unauthenticated). **It is t
 win after W1** (the list could appear when the JS ends, ~23 s on Slow 3G now, instead of when the WASM,
 the socket and the replay have all finished) and it should be its own package with its own
 `localReady` design review.
+
+## 11. WP-OFF-5 shipped: a deadline, a slow state, and lanes
+
+**What was built** (`utils/requestDeadline.ts`, `utils/trackedFetch.ts`, `stores/connectivity.svelte.ts`,
+`utils/apiFetch.ts`, `mls-client/mlsDeliveryApi.ts`, `utils/chat/outbox.ts`, `components/shared/OfflineBanner.svelte`):
+
+- **A response-head deadline per call class**, chosen from the method and the body, with its reason in
+  the source: `read` 20 s (a GET is ~16 ms good, ~960 ms on the 2G-like profile; 20 s is twenty times
+  that), `write` 30 s plus the time the body needs to leave at an assumed 4 kB/s uplink (below the
+  2G-like 6.25 kB/s, so an upload is never cut for being big), `probe` 6 s. It bounds the wait for the
+  HEAD only: after the head the server has answered and the rest is transfer, honest at any speed (the
+  same reasoning as `progressDeadline.ts`, which cannot be used here because `apiFetch` returns a live
+  `Response`). `deadlineMs` overrides per call (`0` disables).
+- **Expiry is a TYPED transport failure**, `RequestDeadlineError`, raised where the timer is armed
+  (a caller's own abort is not one). `isTransportFailure` recognises it by type. It is never a status,
+  so it can never reach a 401/403 branch and **never logs anyone out**. Two expiries in a row with
+  nothing answered between flip the store to unreachable (`STALLS_BEFORE_UNREACHABLE`); one answer
+  resets the count.
+- **Retry cannot multiply load**: a stalled GET is retried once, after 250-1000 ms of jitter, and not
+  at all once the store is offline; a write of unknown fate is never replayed by `apiFetch` (the
+  outbox owns that, with the same inner `messageId` so receivers dedupe).
+- **The MLS send POST goes through the same `trackedFetch`** (class `write`); expiry surfaces as
+  `DeliveryUnreachableError` carrying the typed cause. It now also feeds the connectivity store, which
+  it did not before.
+- **`connectivity.slow`**: derived from observed answer latency, never a guess. An EWMA of the time to
+  head (alpha 0.3, at least 3 samples) enters at 700 ms and leaves at 350 ms (hysteresis), and one
+  request unanswered for 5 s enters at once. Measured (CDP, 14 sequential GETs): good 2 ms, Slow 3G
+  440 ms (**no strip**: slow but workable), 2G-like 960 ms (**strip after 2.9 s**, three requests).
+  Never set while offline. UI: the existing `Banner` surface, one calm line, Paraglide `slow_banner_*`,
+  nothing disabled; the offline banner wins when both could show.
+- **Lanes in the outbox** ([chat](modules/chat.md#one-lane-per-conversation-three-frames-on-the-wire-at-most-wp-off-5-2026-10-09)).
+
+**Measured, before and after** (headless Chrome `headless=new` on a private profile, real `apiFetch`,
+real `MlsDeliveryApi` POST and real `createOutbox`, a mock server; CDP network profiles; the `main`
+outbox is the "before"):
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| A POST that never answers | no end (aborted by the harness at 70 s) | `RequestDeadlineError` at **30.06 s** |
+| A GET that never answers | no end | one retry, then `RequestDeadlineError` at **42.05 s** (20 + ~1 jitter + 20) |
+| Conv A's POST stalled, conv B queued behind it | B **never** sent (35 s window), both stay queued | B on the server after **5 ms**, only A stays queued |
+| Slow hint | none | 2G-like: shown after 2.9 s; Slow 3G and good link: not shown |
+
+**Blind spots, stated.** The harness runs the real modules in a real browser network stack but not
+the application: no MLS encryption, no WebSocket, an in-memory outbox store. CDP shaping delays the
+client side only, so "a POST cut mid-flight" is modelled with `Fetch.failRequest` at the response
+stage (the frame REACHES the server, the answer is lost) plus `offline`. `refresh()` has deliberately
+NO deadline: it ROTATES the refresh token, and abandoning a request whose answer may already have
+rotated it invites the replay detection (a revoked session) that this work must never cause; its
+bound belongs to a design of its own (open).
+
+## 12. WP-OFF-6 shipped: a prompt, bounded resume, exactly once in effect
+
+**What was built** (`stores/connectivity.svelte.ts`, `utils/reachabilityProbe.ts`, `utils/chat/outbox.ts`):
+
+- **The store asks, it does not wait to be told.** On the browser's `online` event while
+  `serverReachable` is false it probes at once; on a transport failure with the browser still online
+  it probes after ~1 s (no `online` event will ever announce that return). The probe is `GET
+  /api/version` (unauthenticated, so an expired token cannot keep the device "offline"; any HTTP
+  answer is "reachable", a 502 included) through the same `trackedFetch`, so its answer fires the
+  ordinary reconnect listeners - the outbox flush rides that, no second path. **Bounded and
+  single-flight**: four probes at most per event (0/1/2/4 s after `online`, 1/2/4/8 s after a failure,
+  each jittered +-25 %), a flapping link joins the running probe, and after the last one the store
+  stops and waits for the next `online` event or any successful request - it never polls.
+  Installed from `registerOutbox`, not as an import side effect.
+- **A transport failure skips its backoff when the link returns, a refusal does not.** The outbox
+  remembers (in memory) which entries last failed for want of an ANSWER (`DeliveryUnreachableError`,
+  a deadline, a transport `TypeError`, classified by type); a reconnect arms exactly those to skip
+  their ladder once. `sender-not-active`, a held group and the rest keep their clock: they are facts
+  about the group and no reconnect changes them.
+- **Idempotence comes from durable state, never from a clock.** An entry leaves the durable queue only
+  after a 2xx; one lane per conversation means an entry is never on the wire twice at once; a frame
+  whose answer was lost is re-sent as a NEW frame with the SAME inner `messageId` and receivers
+  deduplicate, which is the existing at-least-once rule, unchanged. Nothing waits for a timer to
+  expire to decide whether a send happened.
+
+**Measured, before and after** (same harness as section 11; the link is cut the instant the POST's
+answer would arrive, modelled with `Fetch.failRequest` at the response stage plus `offline`, so the
+frame REACHES the server and the answer is lost; 3 s later the link returns; background traffic is a
+presence-like poll every 3 s; "before" is the WP-OFF-5 branch):
+
+| Scenario (link back onto...) | Before | After |
+| --- | --- | --- |
+| Cut mid-POST, a good link | 479 / 2851 / 2896 ms to the resent frame | **9 / 6 / 13 ms** |
+| Cut mid-POST, Slow 3G | not run | 462 / 464 ms (one probe round trip) |
+| Cut mid-POST, 2G-like | not run | 1216 / 1216 ms |
+| Offline send, a good link | 2482 / 2412 / 2467 ms (bounded by the 3 s poll) | **6 / 5 / 5 ms** |
+| Offline send, 2G-like | not run | 1207 / 1220 ms |
+
+The server received the cut frame **twice** with the same inner id (`mA`: 2 receipts) and the entry
+left the queue after the second: at-least-once on the wire, once in effect at the receiver. A reload
+between the two is covered by `outbox.test.ts` (a new controller over the same durable queue sends it
+once more and never again). **Not measured**: the whole app (MLS encryption, the incoming-queue
+barrier `waitForMessageQueueIdle`, which adds the time of any pending decrypt after a resume, and the
+WebSocket), and Android/iOS where `plugin-http` is invisible to CDP.
