@@ -51,11 +51,14 @@ export type MediaType = 'image' | 'video' | 'audio' | 'file';
  * - `'reel'` - a CanaReels video: kept by the idle sweep, deleted with its reel 30 days after
  *   publication by social-service's reel worker, which claims the blob at publication
  *   ([reels (server)](docs/wiki/services/reels.md)).
+ * - `'chat-reel'` - a CanaReel sent in a conversation: deleted by AGE, 30 days after upload, and
+ *   counted against the member's 500 MB a day. Naming it can only SHORTEN an object's life, which
+ *   is why the client may set it ([media-service](docs/wiki/services/media-service.md)).
  *
  * An object with no class is KEPT. It used to be the other way round, and an association vault
  * document - uploaded with no class - was swept on production in 2026-09.
  */
-export type MediaRetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel';
+export type MediaRetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel' | 'chat-reel';
 
 export interface MediaRef {
   type: MediaType;

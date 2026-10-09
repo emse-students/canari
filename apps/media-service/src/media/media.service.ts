@@ -1,4 +1,13 @@
-import { Injectable, Logger, BadRequestException, PayloadTooLargeException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  InternalServerErrorException,
+  PayloadTooLargeException,
+} from '@nestjs/common';
 import { StorageService } from './storage.service';
 import { parseByteRange } from './byte-range';
 import { v4 as uuidv4 } from 'uuid';
@@ -27,11 +36,36 @@ const MEDIA_META_FILE = path.join(MEDIA_DATA_DIR, 'media_metadata.json');
  * Only the `ephemeral` class ever reaches this clock - see {@link isSweepable}.
  */
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+/**
+ * A reel SENT IN A CONVERSATION (`chat-reel`) is deleted this long after it was UPLOADED - not after
+ * it was last read. `lastAccessAt` is refreshed by every download, so an idle clock would let a reel
+ * watched every 29 days live for ever, the opposite of the promise the member was shown ("supprime
+ * des serveurs apres 30 jours"). Overridable by env so a bench can cross it in seconds.
+ * [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md)
+ */
+const CHAT_REEL_RETENTION_DAYS = 30;
+const CHAT_REEL_RETENTION_MS = positiveIntEnv(
+  'MEDIA_CHAT_REEL_RETENTION_MS',
+  CHAT_REEL_RETENTION_DAYS * 24 * 60 * 60 * 1000
+);
+/**
+ * What one member may upload as `chat-reel` per rolling 24 hours, so a single account cannot fill
+ * the store (user, 2026-10-09: 500 MB). Counted from the metadata - `ownerId` is the only
+ * attribution this service has - and refused with a 429, an ANSWER the client must not retry blindly.
+ */
+const CHAT_REEL_DAILY_BYTES = positiveIntEnv('MEDIA_CHAT_REEL_DAILY_BYTES', 500 * 1024 * 1024);
+const DAY_MS = 24 * 60 * 60 * 1000;
 /** Purged metadata entries (tombstones) are removed from the index after this delay. */
 const META_TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_SWEEP_MS = 60 * 60 * 1000;
 /** Width of one bucket in the admin panel's growth breakdown. */
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** A positive integer from the environment, or the default: an unset or garbled value is not a zero. */
+function positiveIntEnv(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 /** Renders a window for a log line, so no message ever spells a duration next to its constant. */
 function msToDays(ms: number): number {
@@ -84,6 +118,17 @@ export interface MediaStorageStats {
   reelCount: number;
   reelBytes: number;
   /**
+   * Reels sent in conversations: swept by AGE (30 days from upload). Its own line, and an `overdue`
+   * pair beside it, for the reason `reel` and `archive` have theirs: a count that does not fall back
+   * is the signal that the sweep has stopped, and folded into a total nothing could see it.
+   */
+  chatReelCount: number;
+  chatReelBytes: number;
+  chatReelOverdueCount: number;
+  chatReelOverdueBytes: number;
+  /** The window the sweep applies to them, echoed so the reader need not know the constant. */
+  chatReelRetentionMs: number;
+  /**
    * Live objects carrying no class at all: everything stored before the sweep became an allowlist
    * (2026-10-01), and every upload from a client too old to name its surface. The sweep may not
    * touch them, so this line is where their growth shows.
@@ -95,7 +140,22 @@ export interface MediaStorageStats {
   sweepIntervalMs: number;
 }
 
-type PurgeReason = 'retention_expired' | 'manual_delete';
+/**
+ * Why an object is gone. `reel_expired` (a `chat-reel` swept by age) and `reel_deleted` (its sender
+ * took it back) are answered `410` like `retention_expired`: the member is told the video is gone,
+ * not that it never existed ({@link isGoneTombstone}).
+ */
+type PurgeReason = 'retention_expired' | 'manual_delete' | 'reel_expired' | 'reel_deleted';
+
+/** The tombstones a download answers `410` to. `manual_delete` keeps its older `404`. */
+function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason } | undefined) {
+  return (
+    !!entry?.purgedAt &&
+    (entry.purgeReason === 'retention_expired' ||
+      entry.purgeReason === 'reel_expired' ||
+      entry.purgeReason === 'reel_deleted')
+  );
+}
 
 /**
  * Which retention an object gets. The service holds ciphertext and cannot tell one surface's blob
@@ -124,16 +184,25 @@ type PurgeReason = 'retention_expired' | 'manual_delete';
  *   when the post expires, 30 days after publication. Still reached by account deletion: a reel is
  *   its uploader's.
  *
+ * - `chat-reel` - a CanaReel sent in a conversation. The only class swept by AGE
+ *   ({@link CHAT_REEL_RETENTION_MS} from upload, never from the last read), tombstoned `reel_expired`
+ *   and answered `410`. SET BY THE CLIENT AT UPLOAD, which is safe where `association` is not: a
+ *   client that labels something `chat-reel` gains only a SHORTER life, and pays the daily cap
+ *   ({@link CHAT_REEL_DAILY_BYTES}). It cannot be applied to an existing id (`internal/retention-class`
+ *   refuses it) - the class is attached at the moment its owner and size are known. Its sender may
+ *   delete it ({@link MediaService.removeChatReel}), on the ownership allowlist.
+ *
  * None of them is `publicAsset`: that flag also opens `GET /media/public/:id` (no JWT), so reusing
  * it would put ciphertext on an unauthenticated route.
  */
-export type RetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel';
+export type RetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel' | 'chat-reel';
 
 const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
   'ephemeral',
   'archive',
   'association',
   'reel',
+  'chat-reel',
 ]);
 
 /** What `purgeReels` answers for one object - see {@link MediaService.purgeReels}. */
@@ -163,6 +232,11 @@ interface MediaMetaEntry {
    * reachable only by the retention sweep.
    */
   ownerId?: string;
+  /**
+   * Ciphertext size in bytes, recorded for `chat-reel` uploads ONLY: the daily cap sums it per
+   * owner, and nothing else in the index needs a size (the listing of the store has them).
+   */
+  size?: number;
 }
 
 interface MediaMetadataStore {
@@ -192,6 +266,15 @@ type PublicDownloadResult =
   | { status: 'ok'; data: Buffer; contentType: string }
   | { status: 'not_found' };
 
+/** A chunked upload that declared itself a `chat-reel` at init and so holds budget until it ends. */
+interface ChunkSession {
+  ownerId: string;
+  /** The total the client declared; appends beyond it are refused. */
+  declaredBytes: number;
+  /** Gives the reserved bytes back; idempotent. */
+  release: () => void;
+}
+
 @Injectable()
 export class MediaService {
   private readonly logger = new Logger(MediaService.name);
@@ -199,6 +282,14 @@ export class MediaService {
   private readonly meta: MediaMetadataStore = { items: Object.create(null) };
   /** Per-uploadId locks that serialize concurrent chunk writes to prevent TOCTOU races. */
   private readonly uploadLocks = new Map<string, Promise<void>>();
+  /**
+   * Bytes of `chat-reel` uploads that passed the budget check and are not yet in the index, per
+   * owner. Lazily created (specs build the service without its constructor). See
+   * {@link reserveChatReelBudget}.
+   */
+  private chatReelReservations?: Map<string, number>;
+  /** Chunked sessions that hold a reservation, by uploadId. Lazily created, same reason. */
+  private chunkSessions?: Map<string, ChunkSession>;
   private readonly sweepIntervalMs = Number.parseInt(
     process.env.MEDIA_RETENTION_SWEEP_MS ?? `${DEFAULT_SWEEP_MS}`,
     10
@@ -225,9 +316,16 @@ export class MediaService {
     ownerId?: string,
     retentionClass?: RetentionClass
   ): Promise<string> {
+    const release = this.reserveChatReelBudget(retentionClass, ownerId, encryptedBytes.length);
     const mediaId = uuidv4();
-    await this.storage.put(mediaId, encryptedBytes, encryptedBytes.length);
-    this.setAccess(mediaId, Date.now(), ownerId, retentionClass);
+    try {
+      await this.storage.put(mediaId, encryptedBytes, encryptedBytes.length);
+      // Registered in the same synchronous run that releases the reservation (`finally`), so the
+      // bytes are never invisible to a concurrent check: counted as reserved, then as an entry.
+      this.setAccess(mediaId, Date.now(), ownerId, retentionClass, encryptedBytes.length);
+    } finally {
+      release();
+    }
     await this.persistMetadata();
     return mediaId;
   }
@@ -255,7 +353,7 @@ export class MediaService {
     await this.purgeExpiredMedia();
 
     const entry = this.meta.items[mediaId];
-    if (entry?.purgedAt && entry.purgeReason === 'retention_expired') {
+    if (isGoneTombstone(entry)) {
       return { status: 'purged' };
     }
 
@@ -298,7 +396,7 @@ export class MediaService {
     await this.purgeExpiredMedia();
 
     const entry = this.meta.items[mediaId];
-    if (entry?.purgedAt && entry.purgeReason === 'retention_expired') {
+    if (isGoneTombstone(entry)) {
       return { status: 'purged' };
     }
 
@@ -636,6 +734,111 @@ export class MediaService {
     return Object.fromEntries(results);
   }
 
+  /**
+   * The SENDER takes back a reel they sent in a conversation (delete for everyone).
+   *
+   * Allowed here and refused for ordinary media ({@link remove} is service-to-service) because a reel
+   * message cannot be forwarded: the reason ordinary chat media is never deleted on a message's
+   * deletion - one blob cited from conversations the deleter cannot see - does not apply. THE
+   * ALLOWLIST IS TWO FACTS, both required: the object's class is `chat-reel` AND its `ownerId` is the
+   * caller. Anything else is `refused`, so this route cannot be aimed at a feed photo, a vault
+   * document or somebody else's reel.
+   *
+   * - `deleted` - removed now and tombstoned `reel_deleted` (the next read answers `410`);
+   * - `absent` - no entry, or already purged: SUCCESS, so a retry after a crash lands here;
+   * - `refused` - an entry exists and is not the caller's chat-reel;
+   * - `failed` - the store refused or threw; the entry is kept so the delete can be retried.
+   */
+  async removeChatReel(
+    mediaId: string,
+    ownerId: string
+  ): Promise<'deleted' | 'absent' | 'refused' | 'failed'> {
+    if (!UUID_REGEX.test(mediaId)) {
+      throw new BadRequestException('Invalid mediaId');
+    }
+    const entry = this.meta.items[mediaId];
+    if (!entry || entry.purgedAt) return 'absent';
+    if (!ownerId || entry.ownerId !== ownerId || entry.retentionClass !== 'chat-reel') {
+      this.logger.warn(
+        `Chat-reel delete refused for ${mediaId}: not a chat-reel owned by ${ownerId || '(none)'}`
+      );
+      return 'refused';
+    }
+    try {
+      await this.storage.delete(mediaId);
+    } catch (err) {
+      this.logger.warn(
+        `Chat-reel delete could not remove ${mediaId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return 'failed';
+    }
+    this.meta.items[mediaId] = {
+      createdAt: entry.createdAt,
+      lastAccessAt: entry.lastAccessAt,
+      purgedAt: Date.now(),
+      purgeReason: 'reel_deleted',
+    };
+    await this.persistMetadata();
+    this.logger.log(`Chat-reel ${mediaId} deleted by its sender`);
+    return 'deleted';
+  }
+
+  /**
+   * Refuses (429) an upload that would take a member past the daily `chat-reel` budget, and RESERVES
+   * the bytes in the same synchronous run, returning the function that gives them back.
+   *
+   * WHY A RESERVATION. The check used to be followed by an `await` (the store write) before the
+   * entry was registered, so N concurrent uploads all read the same `used` and all passed: the cap
+   * was per-request, not per-member. Here the check and the reservation share one tick, and the sum
+   * counts live entries of the last 24 hours PLUS what is reserved and not yet registered. The
+   * caller releases in a `finally`, in the same run that registers the entry, so a failed store write
+   * rolls the reservation back and a successful one is never counted twice or not at all.
+   *
+   * Only a `chat-reel` is metered; any other class returns a no-op. A `chat-reel` with NO owner is an
+   * error, not a free pass: the controller always has one (the JWT), so its absence is a caller bug
+   * that would otherwise bypass the cap silently.
+   */
+  private reserveChatReelBudget(
+    retentionClass: RetentionClass | undefined,
+    ownerId: string | undefined,
+    incomingBytes: number
+  ): () => void {
+    if (retentionClass !== 'chat-reel') return () => {};
+    if (!ownerId) {
+      this.logger.error(
+        'Chat-reel upload without an owner: the daily budget cannot be applied, refusing'
+      );
+      throw new InternalServerErrorException('A chat-reel upload needs an authenticated owner');
+    }
+    const reservations = (this.chatReelReservations ??= new Map<string, number>());
+    const since = Date.now() - DAY_MS;
+    let used = reservations.get(ownerId) ?? 0;
+    for (const entry of Object.values(this.meta.items)) {
+      if (entry.purgedAt || entry.retentionClass !== 'chat-reel' || entry.ownerId !== ownerId) {
+        continue;
+      }
+      if (entry.createdAt >= since) used += entry.size ?? 0;
+    }
+    if (used + incomingBytes > CHAT_REEL_DAILY_BYTES) {
+      this.logger.warn(
+        `Chat-reel upload refused for ${ownerId}: ${used} bytes already today or in flight, ${incomingBytes} more over the ${CHAT_REEL_DAILY_BYTES} cap`
+      );
+      throw new HttpException(
+        'Daily chat-reel upload budget reached. Try again tomorrow.',
+        HttpStatus.TOO_MANY_REQUESTS
+      );
+    }
+    reservations.set(ownerId, (reservations.get(ownerId) ?? 0) + incomingBytes);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (reservations.get(ownerId) ?? 0) - incomingBytes;
+      if (left > 0) reservations.set(ownerId, left);
+      else reservations.delete(ownerId);
+    };
+  }
+
   async remove(mediaId: string): Promise<void> {
     // Validate mediaId is a UUID to prevent prototype pollution via property key injection.
     if (!UUID_REGEX.test(mediaId)) {
@@ -761,6 +964,11 @@ export class MediaService {
       associationBytes: 0,
       reelCount: 0,
       reelBytes: 0,
+      chatReelCount: 0,
+      chatReelBytes: 0,
+      chatReelOverdueCount: 0,
+      chatReelOverdueBytes: 0,
+      chatReelRetentionMs: CHAT_REEL_RETENTION_MS,
       unclassifiedCount: 0,
       unclassifiedBytes: 0,
       retentionMs: RETENTION_MS,
@@ -812,6 +1020,16 @@ export class MediaService {
         stats.reelBytes += object.size;
         continue;
       }
+      if (entry.retentionClass === 'chat-reel') {
+        stats.chatReelCount += 1;
+        stats.chatReelBytes += object.size;
+        // The SAME due-ness the sweep applies (`isDue`), so this is a verdict on the sweep.
+        if (this.isDue(entry, now)) {
+          stats.chatReelOverdueCount += 1;
+          stats.chatReelOverdueBytes += object.size;
+        }
+        continue;
+      }
       // Deliberately the SAME predicate purgeExpiredMedia uses. Anything counted as overdue is
       // something the sweep was supposed to have taken, so the number is a verdict on the sweep,
       // not an estimate of it - which is only true while the two predicates stay identical.
@@ -835,11 +1053,49 @@ export class MediaService {
 
   // --- Chunked upload ---
 
-  async initChunkedUpload(): Promise<string> {
+  /**
+   * Opens a staged upload. A `chat-reel` MUST declare its `totalBytes` here: the daily budget is
+   * checked and reserved NOW, so a member over budget is refused before staging anything, and the
+   * staged file cannot grow past what was reserved. (The budget used to be checked only at assembly,
+   * after up to 100 MB had already been staged.) A session that declares nothing keeps the older
+   * behaviour and, if it then names `chat-reel` at completion, is checked there.
+   */
+  async initChunkedUpload(
+    ownerId?: string,
+    retentionClass?: RetentionClass,
+    totalBytes?: number,
+    maxBytes?: number
+  ): Promise<string> {
     const uploadId = uuidv4();
-    const tempFile = this.chunkTempPath(uploadId);
-    await fs.ensureFile(tempFile);
+    if (retentionClass === 'chat-reel') {
+      if (!Number.isInteger(totalBytes) || (totalBytes as number) <= 0) {
+        throw new BadRequestException("A 'chat-reel' chunked upload declares totalBytes at init");
+      }
+      if (maxBytes !== undefined && (totalBytes as number) > maxBytes) {
+        throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
+      }
+      const release = this.reserveChatReelBudget(retentionClass, ownerId, totalBytes as number);
+      (this.chunkSessions ??= new Map()).set(uploadId, {
+        ownerId: ownerId as string,
+        declaredBytes: totalBytes as number,
+        release,
+      });
+    }
+    try {
+      await fs.ensureFile(this.chunkTempPath(uploadId));
+    } catch (err) {
+      this.dropChunkSession(uploadId);
+      throw err;
+    }
     return uploadId;
+  }
+
+  /** Gives a session's reservation back and forgets it; a no-op for a session that held none. */
+  private dropChunkSession(uploadId: string): void {
+    const session = this.chunkSessions?.get(uploadId);
+    if (!session) return;
+    session.release();
+    this.chunkSessions?.delete(uploadId);
   }
 
   async appendChunk(uploadId: string, chunk: Buffer, maxBytes: number): Promise<void> {
@@ -875,7 +1131,12 @@ export class MediaService {
       let overCap = false;
       try {
         const { size } = await handle.stat();
-        overCap = size + chunk.length > maxBytes;
+        // A session that declared its total may not stage more than it reserved.
+        const cap = Math.min(
+          maxBytes,
+          this.chunkSessions?.get(uploadId)?.declaredBytes ?? maxBytes
+        );
+        overCap = size + chunk.length > cap;
         if (!overCap) await handle.write(chunk, 0, chunk.length, size);
       } finally {
         await handle.close();
@@ -887,6 +1148,7 @@ export class MediaService {
       // and acted on outside.
       if (overCap) {
         await fs.remove(tempFile);
+        this.dropChunkSession(uploadId);
         throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
       }
     });
@@ -903,26 +1165,53 @@ export class MediaService {
       throw new BadRequestException('Invalid uploadId');
     }
     return this.withUploadLock(uploadId, async () => {
-      const tempFile = this.chunkTempPath(uploadId);
-      if (!(await fs.pathExists(tempFile))) {
-        throw new Error('Upload session not found or expired');
+      const session = this.chunkSessions?.get(uploadId);
+      if (session && session.ownerId !== ownerId) {
+        // Not the member who opened (and reserved for) this session.
+        this.logger.warn(`Chunked upload ${uploadId} completed by another member than its opener`);
+        throw new ForbiddenException('Not your upload session');
       }
+      // THE RESERVATION IS HELD UNTIL THE ENTRY IS REGISTERED, whichever way this ends.
+      let release: () => void = () => {};
+      try {
+        const tempFile = this.chunkTempPath(uploadId);
+        if (!(await fs.pathExists(tempFile))) {
+          throw new Error('Upload session not found or expired');
+        }
 
-      const stat = await fs.stat(tempFile);
-      if (stat.size > maxBytes) {
+        const stat = await fs.stat(tempFile);
+        if (stat.size > maxBytes) {
+          await fs.remove(tempFile);
+          throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
+        }
+        if (!(session && retentionClass === 'chat-reel')) {
+          // No declaration at init (or another class): checked here, at assembly. A declared
+          // session is already covered by its own reservation, appends being capped to it.
+          try {
+            release = this.reserveChatReelBudget(retentionClass, ownerId, stat.size);
+          } catch (err) {
+            // The member is over their daily budget: the staged bytes are of no use to anyone.
+            await fs.remove(tempFile);
+            throw err;
+          }
+        }
+        const mediaId = uuidv4();
+
+        await this.storage.putFileStream(mediaId, tempFile, stat.size);
+
         await fs.remove(tempFile);
-        throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
+
+        this.setAccess(mediaId, Date.now(), ownerId, retentionClass, stat.size);
+        // Entry registered: the reservation hands over to it in this same synchronous run.
+        release();
+        this.dropChunkSession(uploadId);
+        await this.persistMetadata();
+
+        return mediaId;
+      } finally {
+        release();
+        this.dropChunkSession(uploadId);
       }
-      const mediaId = uuidv4();
-
-      await this.storage.putFileStream(mediaId, tempFile, stat.size);
-
-      await fs.remove(tempFile);
-
-      this.setAccess(mediaId, Date.now(), ownerId, retentionClass);
-      await this.persistMetadata();
-
-      return mediaId;
     });
   }
 
@@ -1017,7 +1306,24 @@ export class MediaService {
    */
   private isSweepable(entry: MediaMetaEntry | undefined): boolean {
     if (!entry) return false;
-    return entry.retentionClass === 'ephemeral' && !this.isPublicAssetEntry(entry);
+    return (
+      (entry.retentionClass === 'ephemeral' || entry.retentionClass === 'chat-reel') &&
+      !this.isPublicAssetEntry(entry)
+    );
+  }
+
+  /**
+   * Whether a sweepable entry's OWN clock has run out: an `ephemeral` object when nobody has read it
+   * for {@link RETENTION_MS}, a `chat-reel` when {@link CHAT_REEL_RETENTION_MS} has passed since it
+   * was UPLOADED (reading it moves nothing). One function, used by the sweep and by the stats'
+   * `overdue` figures, so the number stays a verdict on the sweep and not an estimate of it.
+   */
+  private isDue(entry: MediaMetaEntry, now: number): boolean {
+    if (!this.isSweepable(entry)) return false;
+    if (entry.retentionClass === 'chat-reel') {
+      return entry.createdAt + CHAT_REEL_RETENTION_MS < now;
+    }
+    return entry.lastAccessAt < now - RETENTION_MS;
   }
 
   /**
@@ -1068,7 +1374,8 @@ export class MediaService {
     mediaId: string,
     now: number,
     ownerId?: string,
-    retentionClass?: RetentionClass
+    retentionClass?: RetentionClass,
+    size?: number
   ) {
     const current = this.meta.items[mediaId];
     this.meta.items[mediaId] = {
@@ -1076,6 +1383,8 @@ export class MediaService {
       createdAt: current?.createdAt ?? now,
       lastAccessAt: now,
       ...(ownerId ? { ownerId } : {}),
+      // Written for a `chat-reel` only (the daily cap sums it); `download()` passes none.
+      ...(size !== undefined && retentionClass === 'chat-reel' ? { size } : {}),
       // Conditional for the same reason as ownerId: `download()` and `touch()` call this with
       // neither argument, and an unconditional spread would strip the class on every read.
       ...(retentionClass ? { retentionClass } : {}),
@@ -1084,13 +1393,11 @@ export class MediaService {
 
   private async purgeExpiredMedia() {
     const now = Date.now();
-    const cutoff = now - RETENTION_MS;
     let purgedCount = 0;
 
     for (const [mediaId, entry] of Object.entries(this.meta.items)) {
       if (entry.purgedAt) continue;
-      if (!this.isSweepable(entry)) continue;
-      if (entry.lastAccessAt >= cutoff) continue;
+      if (!this.isDue(entry, now)) continue;
 
       try {
         await this.storage.delete(mediaId);
@@ -1111,7 +1418,7 @@ export class MediaService {
         createdAt: entry.createdAt,
         lastAccessAt: entry.lastAccessAt,
         purgedAt: now,
-        purgeReason: 'retention_expired',
+        purgeReason: entry.retentionClass === 'chat-reel' ? 'reel_expired' : 'retention_expired',
       };
       purgedCount += 1;
     }
@@ -1166,6 +1473,10 @@ export class MediaService {
       }
     } catch {
       // CHUNK_DIR may not exist yet on first run - ignore.
+    }
+    // A reservation must not outlive its staged file (swept above, or lost with the volume).
+    for (const uploadId of this.chunkSessions?.keys() ?? []) {
+      if (!(await fs.pathExists(this.chunkTempPath(uploadId)))) this.dropChunkSession(uploadId);
     }
     if (removed > 0) {
       this.logger.log(`Purged ${removed} orphaned chunked upload temp file(s) (>24h)`);

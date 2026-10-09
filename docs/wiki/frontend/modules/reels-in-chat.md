@@ -514,3 +514,12 @@ the member's, outside the app.
 
 **Not decided here, deliberately:** live streaming (C9, behind the calls revival); stories (C8:
 "not now"); and anything that would make the published reel a conversation attachment.
+
+## 10. What the retention package (RC-2) built (2026-10-09)
+
+**Draft pull request, waiting for review after the 1.2.0 stable.** The server class `chat-reel`, in
+[media-service](../../services/media-service.md#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09):
+age sweep from upload through the shared `isDue`, `reel_expired` / `reel_deleted` tombstones answered
+`410`, the 500 MB per member per day budget (`429`), the sender's owner-only `DELETE`, stats lines.
+Unit specs only; the real-service bench run is owed. The client type `MediaRetentionClass` accepts
+`'chat-reel'`; nothing sends it until RC-4/RC-5.

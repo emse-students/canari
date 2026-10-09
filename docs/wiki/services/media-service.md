@@ -77,12 +77,13 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | GET    | `/api/media/public/:id`                | none              | Download public asset (cached 1 year, no auth)                                                                                                                                   |
 | GET    | `/api/media/:id`                       | JWT               | Download encrypted blob (no-cache, owner or group member); one `Range: bytes=a-b` answers `206` + `Content-Range`, `416` past the end ([ranges](#the-server-serves-byte-ranges)) |
 | DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion)                                                                                                                          |
+| DELETE | `/api/media/chat-reel/:id`             | JWT               | The SENDER takes back a reel sent in a conversation: allowed only for the caller's OWN `chat-reel` object (class AND owner), `403` otherwise, `410` on the next read ([chat-reel](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09)) |
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
 | POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
 | POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`)                                                        |
 
-(`retention-class` refuses `reel`: that class is only ever set through its owner.)
+(`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel`: it is attached at the upload that creates the object.)
 
 Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
@@ -211,6 +212,7 @@ community image (`channel_workspaces`) was unclassified, uploaded before `upload
 | `archive`     | the client, for feed media and avatars; social-service's boot backfill                | keeps        | takes it         |
 | `association` | the client, for a vault upload; social-service on `createDocument` and at boot        | keeps        | **keeps**        |
 | `reel`        | the client at upload; social-service's CLAIM, proven by `ownerId` ([reels](reels.md)) | keeps        | takes it         |
+| `chat-reel`   | the client at upload ([below](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09)) | **by AGE: 30 days from upload** | takes it |
 | none          | an old client, anything before 2026-10-01, an entry re-created after an index loss    | **keeps**    | takes it         |
 
 - **The client's `encryptAndUpload` takes the class as a REQUIRED argument**, so no new call site
@@ -286,6 +288,61 @@ fails is re-applied at the next boot; a release that fails only keeps an object 
 class folded into a total is a class whose growth nothing can ever see - the same defect the bucket
 breakdown was split to fix on 2026-08-18. At the rate measured on the day it shipped (40.8 MB over
 4.5 months, ~110 MB/year) this is indolent; the line exists so that stays a measurement.
+
+
+## The `chat-reel` class: a reel sent in a conversation (RC-2, 2026-10-09)
+
+**Server half of [reels-in-chat](../frontend/modules/reels-in-chat.md). Draft, waiting for review: nothing
+sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on production it reads zero.
+
+- **Swept by AGE from upload, never by idleness.** `isDue(entry, now)` is the ONE clock the sweep and
+  the stats share: an `ephemeral` object is due when nobody has read it for 90 days, a `chat-reel` when
+  `createdAt + 30 days` has passed. `lastAccessAt` moves on every download, so an idle clock would let a
+  reel watched every 29 days live for ever, against the sentence shown to the sender. `isSweepable`
+  stays an ALLOWLIST of classes (`ephemeral`, `chat-reel`): `reel`, `archive`, `association`, an
+  unclassified entry and a public asset are still kept by omission, and a spec pins each.
+- **`410`, not `404`.** The sweep tombstones `reel_expired`, the sender's delete `reel_deleted`, and
+  `isGoneTombstone` answers both (and `retention_expired`) as `purged`. `manual_delete` keeps its older
+  `404`.
+- **The client names the class, which is safe** where `association` is not: a client labelling something
+  `chat-reel` gains only a SHORTER life (the class can only shorten a life, never extend one) and pays the
+  budget. It is CLIENT-NAMED, so nothing here proves a blob is a reel. It cannot be applied to an existing id.
+- **Daily budget, 500 MB per member per rolling 24 h** (user, 2026-10-09), counted from the live
+  `chat-reel` entries of the caller (`size` is recorded for this class only) PLUS the bytes reserved by
+  uploads still in flight, refused `429` BEFORE the bytes are stored. **The check and the reservation share
+  one synchronous run** (`reserveChatReelBudget`), released in a `finally` in the run that registers the
+  entry: the first version checked, then awaited the store write, then registered, so N concurrent uploads
+  all passed (found by review). A failed write rolls the reservation back. A `chat-reel` with no `ownerId`
+  is an error (logged, 500), never a free pass. A swept or deleted reel gives its bytes back; that is
+  accepted, the loop costs the member's own bandwidth.
+- **A chunked upload declares `{retentionClass: 'chat-reel', totalBytes}` at `upload/chunk/init`**: the
+  budget is reserved there (so an over-budget member stages nothing), a chunk past the declared total is a
+  `413`, completion by another member is `403`, and the reservation is released on completion, on error and
+  when the orphan sweep finds the staged file gone. The reservations make a per-owner session cap
+  unnecessary (500 MB / 100 MB = five sessions at most). A session that declares nothing and names
+  `chat-reel` only at completion is still checked there (assembly), after staging: the RC-5 client must
+  declare at init.
+- **ROLLBACK HAZARD.** The index holds no schema version. A build older than this one that boots on the
+  same `media_metadata.json` does not know `chat-reel`: `isSweepable` is an allowlist, so it never sweeps
+  these entries (they live on, size unbounded by age), and a `reel_expired`/`reel_deleted` tombstone is not
+  a `410` there but a `404` (only `retention_expired` is). Both are the safe direction (nothing deleted
+  early) and heal on the roll-forward; the cost is a wrong status while rolled back. A meta version was
+  considered and not added: an old build rewrites the file without the field, so it could not protect
+  against the very build it is meant to warn about.
+- **The sender's delete is an ownership allowlist**: `DELETE /api/media/chat-reel/:id` removes an object
+  only when its class is `chat-reel` AND its `ownerId` is the caller. A feed photo, a vault document, a
+  feed reel, an unclassified blob, an object with no recorded owner or somebody else's reel are `403`.
+  Allowed here and refused for ordinary media because a reel message cannot be forwarded, so no other
+  conversation can cite the blob.
+- **Account deletion takes it** (not `survivesAccountDeletion`).
+- **Stats**: `GET internal/storage-stats` gains `chatReelCount`, `chatReelBytes`,
+  `chatReelOverdueCount`, `chatReelOverdueBytes` and `chatReelRetentionMs`; an overdue figure that does
+  not fall back within a sweep interval says the sweep stopped.
+- **NOT DONE, owed**: salons' moderator purge (social-service calls an internal `chat-reel-purge` with the
+  author the row proves, RC-8), the `/admin/storage` panel line in the frontend, the client's
+  `encryptAndUpload` class argument now accepts `'chat-reel'` but nothing passes it, and the storage
+  forecast re-read with a real send rate (RC-0). **Tested with unit specs over a stubbed store, NOT
+  against a real media-service over HTTP**: that bench run (window shortened by env) is still owed.
 
 ## Segmented media: play while downloading (CanaReels R2) - the READER release, 2026-10-01
 
@@ -455,6 +512,8 @@ machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 | `GARAGE_SECRET_ACCESS_KEY` | yes      | Its secret                                                                                                                                                                                                   |
 | `GARAGE_BUCKET`            | yes      | Bucket name for media blobs (default `canari-media`), **also used for public assets**                                                                                                                        |
 | `MEDIA_MAX_SIZE_MB`        | no       | Max upload size in MB, measured on the CIPHERTEXT (default 100, capped at 100). **Both estates run `50`.** Published by `GET /api/media/limits` and the only copy of the number                              |
+| `MEDIA_CHAT_REEL_RETENTION_MS` | no   | The `chat-reel` age window (default 30 days); a bench shortens it to cross it in seconds |
+| `MEDIA_CHAT_REEL_DAILY_BYTES` | no    | Per-member `chat-reel` upload budget per rolling 24 h (default 500 MB) |
 | `MEDIA_RETENTION_SWEEP_MS` | no       | Retention sweep interval (default 1 h)                                                                                                                                                                       |
 
 **Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself

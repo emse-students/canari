@@ -35,6 +35,8 @@ import {
   UploadedFile,
   NotFoundException,
   GoneException,
+  ForbiddenException,
+  InternalServerErrorException,
   PayloadTooLargeException,
   UnauthorizedException,
   BadRequestException,
@@ -257,10 +259,24 @@ export class MediaController {
   // ---------------------------------------------------------------------------  // POST /media/upload/chunk/init
   // ---------------------------------------------------------------------------
   @Post('upload/chunk/init')
-  async initChunkedUpload(@Req() req: Request): Promise<{ uploadId: string }> {
-    this.verifyToken(req);
-    const uploadId = await this.mediaService.initChunkedUpload();
-    this.logger.log(`Initialized chunked upload: ${uploadId}`);
+  async initChunkedUpload(
+    @Body() body: { retentionClass?: unknown; totalBytes?: unknown } | undefined,
+    @Req() req: Request
+  ): Promise<{ uploadId: string }> {
+    const ownerId = this.verifyToken(req);
+    // A `chat-reel` declares its class and total HERE so the daily budget is reserved before any
+    // byte is staged; every other caller sends no body and is unchanged.
+    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+    const totalBytes = typeof body?.totalBytes === 'number' ? body.totalBytes : undefined;
+    const uploadId = await this.mediaService.initChunkedUpload(
+      ownerId,
+      retentionClass,
+      totalBytes,
+      MAX_BYTES
+    );
+    this.logger.log(
+      `Initialized chunked upload: ${uploadId} (retention=${retentionClass ?? 'unclassified'})`
+    );
     return { uploadId };
   }
 
@@ -391,6 +407,13 @@ export class MediaController {
     if (retentionClass === 'reel') {
       throw new BadRequestException(
         "class 'reel' is set by POST internal/reel-claim, with an owner"
+      );
+    }
+    // `chat-reel` is attached AT UPLOAD, where the owner and the size are known: applying it to an
+    // existing id would make that object sweepable by age and count it against nobody's budget.
+    if (retentionClass === 'chat-reel') {
+      throw new BadRequestException(
+        "class 'chat-reel' is set by the upload that creates the object"
       );
     }
 
@@ -643,6 +666,28 @@ export class MediaController {
     assertInternalSecret(internalSecret);
     const { deleted, failed } = await this.mediaService.removeAllOwnedBy(userId);
     return { ok: true, deleted, failed };
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE /media/chat-reel/:id - the SENDER takes back a reel sent in a conversation
+  //
+  // A user route (JWT, no internal secret), unlike `DELETE /media/:id`: it is safe to expose because
+  // the service allows exactly one thing - the caller's OWN object of class `chat-reel`
+  // (`removeChatReel`). A reel message cannot be forwarded, so no other conversation can cite the
+  // blob. Two segments, so it never collides with the catch-all `@Delete(':id')` below.
+  // ---------------------------------------------------------------------------
+  @Delete('chat-reel/:id')
+  async removeChatReel(@Param('id') id: string, @Req() req: Request): Promise<{ ok: boolean }> {
+    const ownerId = this.verifyToken(req);
+    const outcome = await this.mediaService.removeChatReel(id, ownerId);
+    if (outcome === 'refused') {
+      throw new ForbiddenException('Not a reel you sent');
+    }
+    if (outcome === 'failed') {
+      throw new InternalServerErrorException('The reel could not be deleted. Try again.');
+    }
+    this.logger.log(`Chat-reel ${id}: ${outcome} for its sender`);
+    return { ok: true };
   }
 
   // ---------------------------------------------------------------------------
