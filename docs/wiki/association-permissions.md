@@ -24,7 +24,7 @@ Three tiers, widest first:
 | The association's own member | Judged on their `permissions` bitmask alone | `callerHasFlag` |
 
 The middle tier does not inherit everything. `SUPER_ADMIN_EXCLUDED_FLAGS` -
-`MANAGE_STRIPE_CONNECT | POST_AS_ASSO` - is written **once**, on the entity, with the reasoning:
+`MANAGE_PAYOUT_ACCOUNT | POST_AS_ASSO` - is written **once**, on the entity, with the reasoning:
 pointing an association's payouts at a bank account and speaking in its name are not
 administration. The platform administrator keeps both.
 
@@ -70,7 +70,7 @@ the list filter; a control with the space test removed fails 10 of its 13 cases.
 The same question had **four** different answers before this audit, and they disagreed:
 
 - the route guard granted the super-admin every flag;
-- `canPostAs` and `canManageStripeConnect` forgot the super-admin entirely;
+- `canPostAs` and `canManagePayoutAccount` forgot the super-admin entirely;
 - the calendar edit/delete pair escalated through `VALIDATE_EVENTS` instead;
 - `GET :id/cotisation-options` answered `mayGrant: false` to a BDE super-admin whom the
   `POST :id/cotisants` guard - the endpoint that control calls - would have accepted. The UI hid a
@@ -96,7 +96,7 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association (unscoped: there is none yet), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
 | `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing, deleting and PINNING any post (`assertMayManage`, `pinPost`/`unpinPost`, and the `canManage` / `canPin` fields they are drawn from) |
 | `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
-| `MANAGE_STRIPE_CONNECT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding |
+| `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding |
 | `MANAGE_PARTNERSHIPS` | 10 | 8 | partnership cards, their icons, their codes and their claims |
 
 Nothing is dead: every flag has at least one call site. Re-measure the table rather than trusting it
@@ -105,11 +105,11 @@ in `apps/social-service/src` reproduces it in seconds.
 
 **THE CHECKBOX A MEMBER SEES IS NOT THE COLUMN ABOVE, AND TWO OF THEM NAMED THE WRONG THING.**
 `AssociationMemberRow` renders one `asso_flag_*` label per flag. `MANAGE_PRODUCTS` read "Gerer les
-paiements (boutique)" and `MANAGE_STRIPE_CONNECT` read "Gerer les paiements en ligne" - two nearly
+paiements (boutique)" and `MANAGE_PAYOUT_ACCOUNT` read "Gerer les paiements en ligne" - two nearly
 identical checkboxes, and neither is about taking a payment: the first is the catalogue AND the
 cotisation settings (see its row above), the second is the bank account the payouts land in. They
 now read "Gerer la boutique et les cotisations" and "Gerer le compte bancaire", and the key follows
-the flag (`asso_flag_manage_stripe_connect`).
+the flag (`asso_flag_manage_payout_account`).
 
 **A message that tells a reader to go and ask someone holding a permission must quote a label that
 EXISTS.** The cotisation screen named "Gerer les produits", which the editor has never offered, so
@@ -182,7 +182,7 @@ Three shapes look like the same question and are not. Folding them in would have
    `callerHasAnyBdeFlag`. They answer "which associations" or "any at all", not "may they here".
    `forms.service.list()` needs the first shape and correctly keeps it.
 3. **Existence.** `mayAct` answers rights, never existence: acting on an association that does not
-   exist is a 404 from whoever loads it. `canPostAs` and `canManageStripeConnect` each keep their own
+   exist is a 404 from whoever loads it. `canPostAs` and `canManagePayoutAccount` each keep their own
    `findOne`, and each says why - a post must not name a deleted association, and core-service must
    not open a Connect account against a ghost id.
 

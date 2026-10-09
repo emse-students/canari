@@ -120,7 +120,7 @@ export class InternalController {
    * `GET /api/associations/:id` answers 401 to a caller with no `X-User-Id` since 2026-08-05 (it
    * became "logged-in callers only"), and core-service's connect-status, dashboard-link and Lydia
    * validation all read it server to server - so all three said "Association not found" for ever.
-   * Internal secret, never nginx identity, and ONLY the four payment fields: no other column of the
+   * Internal secret, never nginx identity, and ONLY the two payment fields: no other column of the
    * association leaves through here.
    */
   @Get('associations/:associationId/payment-account')
@@ -133,8 +133,6 @@ export class InternalController {
       where: { id: associationId },
       select: {
         id: true,
-        stripeAccountId: true,
-        stripeOnboardingComplete: true,
         lydiaAccountId: true,
         lydiaOnboardingComplete: true,
       },
@@ -144,8 +142,6 @@ export class InternalController {
       throw new NotFoundException('Association not found');
     }
     return {
-      stripeAccountId: asso.stripeAccountId,
-      stripeOnboardingComplete: asso.stripeOnboardingComplete,
       lydiaAccountId: asso.lydiaAccountId,
       lydiaOnboardingComplete: asso.lydiaOnboardingComplete,
     };

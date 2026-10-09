@@ -57,13 +57,6 @@ the client stops retrying a 413 since #1583) is on
 rules read, which no agent holds). **Then**: lift the limit, or drop `CHUNK_SIZE` (`media.ts`, 50 MB
 today) below 1 MiB. Done when a 1.2 MB and a 20 MB upload reach `media-service` on both legacy names.
 
-### P3 - Stripe's leftover names: columns, permission flag, routes, deep-link host
-
-Stripe itself is gone (#1589, [stripe-archive](stripe-archive.md), which lists each name kept for
-rollback and old clients). Left: a drop/rename migration once `minClientVersion` passed the removal
-release; and an association whose delegation was onboarded on Stripe only is not payment-ready until it
-onboards on Lydia.
-
 ### Open question - may EMSE/ME staff (no cursus) read the association posts of their campus?
 
 User, 2026-10-07: staff have no cursus by definition and see no association post today (the agenda

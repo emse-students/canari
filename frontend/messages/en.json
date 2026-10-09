@@ -1339,7 +1339,7 @@
   "asso_flag_manage_documents": "Manage documents",
   "asso_flag_manage_forms": "Manage forms",
   "asso_flag_manage_products": "Manage the shop and membership dues",
-  "asso_flag_manage_stripe_connect": "Manage the bank account",
+  "asso_flag_manage_payout_account": "Manage the bank account",
   "asso_flag_manage_partnerships": "Manage partnerships",
   "asso_flag_validate_events": "Validate events",
   "asso_flag_manage_asso": "Manage clubs",

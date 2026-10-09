@@ -38,10 +38,10 @@
     /** True once the payment account can collect payments (otherwise products are created inactive). */
     onlinePaymentsReady: boolean;
     /** Whether the caller can configure the payment account (tweaks the warning copy). */
-    canManageStripeConnect: boolean;
+    canManagePayoutAccount: boolean;
   }
 
-  let { asso, onlinePaymentsReady, canManageStripeConnect }: Props = $props();
+  let { asso, onlinePaymentsReady, canManagePayoutAccount }: Props = $props();
 
   /** Card accent color - the association's own, or a deterministic fallback when unset. */
   const cardAccentColor = $derived(associationAccent(asso));
@@ -308,7 +308,7 @@
       class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn rounded-xl border px-4 py-3 text-sm"
     >
       {m.asso_boutique_payments_not_configured()}
-      {#if canManageStripeConnect}
+      {#if canManagePayoutAccount}
         <span class="ml-1">{m.asso_boutique_payments_see_above()}</span>
       {:else}
         <span class="ml-1">{m.asso_boutique_payments_ask_manager()}</span>

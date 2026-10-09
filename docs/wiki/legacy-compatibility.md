@@ -59,6 +59,17 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## The diary
 
+### No date yet - the `fr.emse.canari://stripe/...` checkout return host, from a build older than 2026-10-09
+
+**Site:** `isAllowedCheckoutCallbackUrl` in `apps/social-service/src/common/checkout-callback-url.ts` and
+`LEGACY_CHECKOUT_RETURN_HOST` in `frontend/src/lib/utils/checkoutCallbacks.ts`, read by `hooks.client.ts`.
+**Shim:** the checkout return now uses the host `payment` (declared in `tauri.conf.json` and the
+Android manifest, pinned by `deepLinkHostsDeclared.test.ts`). A build older than that registered and
+sends `stripe`, so the server still ACCEPTS it and the client still ROUTES it. Nothing emits it any more.
+**Removal condition:** `minClientVersion` at or above the first release carrying the `payment` host,
+both stores serving it; then the server check, the client constant and the `stripe` entry of
+`tauri.conf.json` and the manifest go together ([stripe-archive](stripe-archive.md)).
+
 ### No date yet - a `paymentMethod` of `stripe`, from a client older than the Stripe removal
 
 **Site:** `@IsIn(['online', 'stripe', 'cash'])` in `apps/social-service/src/forms/dto/form.dto.ts`, and

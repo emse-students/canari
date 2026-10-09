@@ -188,7 +188,7 @@ export class UpdateAssociationDto {
 }
 
 export class RequestPaymentDelegationDto {
-  /** Parent association whose Stripe account should receive this association's payments. */
+  /** Parent association whose payout account should receive this association's payments. */
   @IsUUID()
   @IsNotEmpty()
   parentAssociationId: string;

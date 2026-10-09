@@ -12,7 +12,7 @@ import {
   type Association,
 } from './api';
 
-const { MANAGE_MEMBERS, MANAGE_ASSO, MANAGE_STRIPE_CONNECT, POST_AS_ASSO, VALIDATE_EVENTS } =
+const { MANAGE_MEMBERS, MANAGE_ASSO, MANAGE_PAYOUT_ACCOUNT, POST_AS_ASSO, VALIDATE_EVENTS } =
   AssociationPermissionFlag;
 
 /** Only the three fields the predicates read; the rest of `Association` is irrelevant here. */
@@ -22,7 +22,7 @@ function asso(id: string, isBDE: boolean, permissions?: number): Association {
 
 describe('mayActOnAssociation', () => {
   it('grants a platform administrator every flag, member or not', () => {
-    for (const flag of [MANAGE_MEMBERS, MANAGE_STRIPE_CONNECT, POST_AS_ASSO]) {
+    for (const flag of [MANAGE_MEMBERS, MANAGE_PAYOUT_ACCOUNT, POST_AS_ASSO]) {
       expect(
         mayActOnAssociation(flag, {
           isGlobalAdmin: true,
@@ -62,7 +62,7 @@ describe('mayActOnAssociation', () => {
   // These two are the whole point of sharing one predicate: the edit page used to spell the
   // Stripe exception out by hand, so the exception and the rule could drift apart.
   it.each([
-    ['MANAGE_STRIPE_CONNECT', MANAGE_STRIPE_CONNECT],
+    ['MANAGE_PAYOUT_ACCOUNT', MANAGE_PAYOUT_ACCOUNT],
     ['POST_AS_ASSO', POST_AS_ASSO],
   ])('withholds %s from a BDE super-admin', (_name, flag) => {
     expect(mayActOnAssociation(flag, { isGlobalAdmin: false, isSuperAdmin: true })).toBe(false);
@@ -97,12 +97,12 @@ describe('BDE-wide flag lookup', () => {
 
 describe('the constants the server also defines', () => {
   it('keeps the super-admin exclusion set to the two flags that are not administration', () => {
-    expect(SUPER_ADMIN_EXCLUDED_FLAGS).toBe(MANAGE_STRIPE_CONNECT | POST_AS_ASSO);
+    expect(SUPER_ADMIN_EXCLUDED_FLAGS).toBe(MANAGE_PAYOUT_ACCOUNT | POST_AS_ASSO);
   });
 
   it('mirrors the backend ALL_CORE_FLAGS value', () => {
     expect(ALL_CORE_FLAGS).toBe(1311);
-    expect(ASSOCIATION_ADMIN_PRESET).toBe(1311 | MANAGE_STRIPE_CONNECT);
+    expect(ASSOCIATION_ADMIN_PRESET).toBe(1311 | MANAGE_PAYOUT_ACCOUNT);
   });
 
   it('lists exactly the three flags the server gates on a.isBDE', () => {

@@ -34,9 +34,9 @@ not map onto it were removed rather than faked. The provider mapping and the cre
 
 **A provider's name is true in exactly one layer.** The message catalogue says "prestataire de
 paiement" / "payment provider"; the neutral contract (`ConnectAccountStatusResponse`) lives in the
-interface; log tags on shared paths are `[Payments]`. The names deliberately kept (columns,
-`MANAGE_STRIPE_CONNECT`, the `stripe-account` routes, the `stripe` deep-link host) are listed with
-their reasons in [stripe-archive](../../stripe-archive.md#the-names-that-outlived-the-processor-kept-on-purpose).
+interface; log tags on shared paths are `[Payments]`. The names deliberately kept (the unmapped columns,
+the `stripe` deep-link host) are listed with
+their reasons in [stripe-archive](../../stripe-archive.md#the-names-that-outlived-the-processor---what-2026-10-09-renamed-and-what-stays).
 `PayoutFeeHint.svelte` shows the Lydia fee (0,10 EUR + 1 %, `lydiaFees.ts`) only once
 `GET /api/payments/provider` has answered `lydia`.
 
@@ -119,7 +119,7 @@ Constraints (enforced server-side in `associations.service.ts`):
 that decides where a payment goes. Every payment path in social-service
 (`products.service` checkout/charge/`isActive`, `forms.service`, `posts.controller` paid posts)
 resolves its payment account through it, so routing stays consistent. core-service just executes the
-charge against whatever `stripeConnectAccountId` it is handed (a historic wire name now holding the Lydia account).
+charge against whatever `connectAccountId` it is handed (a historic wire name now holding the Lydia account).
 
 The purchase record still carries the **child's** `associationId`, so the Canari DB remains the
 accounting source of truth even though the money lands in the parent's account.
