@@ -22,7 +22,9 @@ import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import { recordEviction } from '$lib/utils/chat/eviction';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
-import { connectivity } from '$lib/stores/connectivity.svelte';
+import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
+import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
 import {
   getIsTabLeader,
   getTabLeadership,
@@ -205,6 +207,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * holds its successors, which the old loop did not - it attempted the later ones anyway, so a
    * failed message could be overtaken by the next one.
    */
+  /**
+   * Ids whose last attempt failed for want of an ANSWER (a transport failure or a deadline), as
+   * opposed to a refusal or a held group. Only those may skip their backoff when the link comes
+   * back (WP-OFF-6): the ladder exists to keep a dead link from being hammered, and a link that has
+   * just proven itself alive is no longer that. A refusal (`sender-not-active`, a group not yet
+   * sendable) is a fact about the GROUP and no reconnect changes it, so those keep their clock.
+   * In memory only, on purpose: after a reload the ladder is at most 60 s and the boot flush is
+   * the trigger.
+   */
+  const transportHeld = new Set<string>();
+  /** The subset armed by a reconnect: each id skips its backoff ONCE, then is forgotten. */
+  const resuming = new Set<string>();
   const lanes = new Map<string, Promise<void>>();
   /** Conversations whose running lane must look at the queue once more (an enqueue or wake-up arrived). */
   const laneRerun = new Set<string>();
@@ -299,6 +313,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') runFlush();
   };
   const unsubscribeReconnect = connectivity.onReconnect(() => {
+    // THE RESUME IS PROMPT, AND IDEMPOTENT BECAUSE OF DURABLE STATE, NEVER A CLOCK (WP-OFF-6): an
+    // entry leaves the queue only after the server answered 2xx, and one lane per conversation means
+    // no entry is ever on the wire twice at once, so skipping a backoff can at worst re-send a frame
+    // whose answer was lost - which the receiver deduplicates on the inner `messageId`, exactly as
+    // for any retry. Nothing here waits for a timer to expire.
+    for (const id of transportHeld) resuming.add(id);
+    transportHeld.clear();
     runFlush();
   });
   if (typeof window !== 'undefined') {
@@ -545,8 +566,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   async function holdForRetry(
     entry: OutboxEntry,
-    describe: (attempts: number) => string
+    describe: (attempts: number) => string,
+    opts: { transport?: boolean } = {}
   ): Promise<FlushOutcome> {
+    if (opts.transport) transportHeld.add(entry.id);
+    else transportHeld.delete(entry.id);
     patchStatus(entry.id, 'pending');
     const attempts = entry.attempts + 1;
     await storage
@@ -582,7 +606,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return 'gone';
     }
 
-    if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
+    // Consumed here, whether or not the backoff was still running, so a stale arming cannot outlive
+    // the reconnect it came from.
+    const resumed = resuming.delete(entry.id);
+    if (!resumed && entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… skipped, backing off for ${entry.nextAttemptAt - Date.now()}ms (attempt ${entry.attempts})`
       );
@@ -676,6 +703,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // The media envelope was installed immediately after upload, before the MLS send.
       await persistSent(terminalId, entry.id);
       patchStatus(entry.id, 'sent');
+      transportHeld.delete(entry.id);
       // The tab that composed this may be a follower, whose own echo is still showing `pending`.
       publishOutboxEntrySent(entry.id, mediaContent);
       // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
@@ -775,10 +803,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // as "transient failure (attempt 23)" is what let eight stuck messages read as ordinary
       // network noise for two and a half hours. What is retried here is the MESSAGE; what is being
       // waited on is the REPAIR, and the line says which.
-      return holdForRetry(entry, (attempts) =>
-        kind === 'sender-not-active'
-          ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
-          : `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`
+      return holdForRetry(
+        entry,
+        (attempts) =>
+          kind === 'sender-not-active'
+            ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
+            : `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`,
+        // Classified by TYPE: the delivery API raises `DeliveryUnreachableError` for a POST that got
+        // no answer (a deadline expiry included), never a sentence to match.
+        {
+          transport:
+            kind === 'unknown' && (e instanceof DeliveryUnreachableError || isTransportFailure(e)),
+        }
       );
     }
   }
@@ -1022,6 +1058,8 @@ let active: OutboxController | null = null;
 /** Register the session's outbox controller, replacing and disposing any previous one. */
 export function registerOutbox(deps: OutboxDeps): OutboxController {
   active?.dispose();
+  // The prompt resume needs the store to be able to ask the server whether it is back (WP-OFF-6).
+  installReachabilityProbe();
   active = createOutbox(deps);
   return active;
 }
