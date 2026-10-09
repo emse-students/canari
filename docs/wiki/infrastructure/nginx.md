@@ -333,3 +333,17 @@ beside the redacted one (measured). Gate: `.github/scripts/tests/access-log-reda
 **Not covered, and not in this repo:** the host-level nginx on the Portail-etu host
 (`sites-available/canari*.conf`) and the Cloudflare edge log see the same URL; their formats are the
 host's, to be checked by the user ([estate-migration](estate-migration.md)).
+
+## The origin compresses the assets a cold start is made of (2026-10-09)
+
+Production had no CDN in front of it since the move onto `emse.fr`, and the frontend server block
+named `gzip_types application/json` alone: a read of `canari.emse.fr` showed the 2 126 190-byte MLS WASM,
+the 240 kB stylesheet and every JS chunk with NO `Content-Encoding`. The block now lists JS, CSS, WASM,
+SVG, JSON and manifests, with `gzip_proxied any` (the host proxy adds `Via`, and nginx then refuses to
+compress with no log line) and `gzip_vary on`. WASM 2.09 MB -> 0.76 MB, JS 1.97 -> 0.73 MB, CSS 237 -> 37 kB;
+Slow 3G cold start 94 s -> 39 s, 2G 12 min -> 4.7 min ([offline-and-weak-network](../frontend/offline-and-weak-network.md#10-package-status-2026-10-09)).
+No brotli: the stock `nginx:stable-alpine` ships no such module. The cache headers were already right
+(`/_app/immutable/` is `max-age=31536000, immutable`). Production speaks h2, not h3. Gate:
+`.github/scripts/tests/static-compression.test.mjs`. It reaches users only with a pre-release or stable
+(an nginx image change), and the first thing to read afterwards is a `content-encoding: gzip` on a
+hashed `.wasm` through the host proxy.

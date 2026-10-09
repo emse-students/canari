@@ -16,6 +16,7 @@
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
   import { sendReadWatermark } from '$lib/utils/chat/messaging';
+  import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { isAppInForeground } from '$lib/utils/appForeground';
   import {
     watermarkAfterReading,
@@ -801,16 +802,34 @@
    * path to say anything sharper. The banner therefore carries the generic line, and the exception
    * goes to the log, where English is correct and where the cause is still recoverable.
    */
-  function sendText(text: string) {
-    void messaging.handleSendChat(msgCtx(), text).catch((e: unknown) => {
-      convs.sendError = m.chat_send_error_generic();
-      log(`[SEND] handleSendChat threw - the message was NOT queued: ${String(e)}`);
-    });
+  function sendText(text: string, onRefused?: () => void) {
+    void messaging
+      .handleSendChat(msgCtx(), text)
+      .then((delivered) => {
+        if (delivered === false) onRefused?.();
+      })
+      .catch((e: unknown) => {
+        convs.sendError = m.chat_send_error_generic();
+        log(`[SEND] handleSendChat threw - the message was NOT queued: ${String(e)}`);
+      });
   }
 
-  /** Sends the current messageText via MLS then clears the input. */
+  /**
+   * Sends the current messageText, then clears the input - and GIVES THE TEXT BACK if the send was
+   * refused with no bubble and no queue entry (a community salon, offline: WP-OFF-1). The restore
+   * only happens in the conversation the text was written in; the error banner stays.
+   */
   function handleSendChat() {
-    sendText(messageText);
+    const text = messageText;
+    const contact = convs.selectedContact;
+    sendText(text, () => {
+      if (convs.selectedContact !== contact) {
+        log(`[SEND] draft not restored: the conversation changed (${text.length} chars dropped)`);
+        return;
+      }
+      messageText = restoreFailedDraft(messageText, text);
+      log(`[SEND] refused: draft restored to the composer (${text.length} chars)`);
+    });
     messageText = '';
   }
 
