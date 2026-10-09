@@ -1,11 +1,13 @@
-# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, nothing built)
+# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09)
 
 **Decided by the user, 2026-10-09** (French, relayed): generalise CanaReels *like Snapchat*, so a
 member can SEND a reel in a group, a DM or a community salon. **The chosen form is an EPHEMERAL VIDEO
 MESSAGE filmed in the chat - end-to-end encrypted like any message, expiring like a reel (30 days) -
 and NOT a link to a published public reel.** This page is the study that precedes the build: it reads
 the code and wiki as of `main` at `13d633aec` (2026-10-09), decides what can be decided, and names what
-the user must rule on. **No product code was written.** The published reel (feed, public, post row)
+the user must rule on. **No product code was written by the study.** **The user's rulings of 2026-10-09 are recorded in
+section 9, and where the text below still says otherwise (it was written before them) section 9
+wins.** The published reel (feed, public, post row)
 stays exactly as [reels](reels.md) and [reels (server)](../../services/reels.md) describe it.
 
 **Not on `main` when this was written: `docs/wiki/frontend/offline-and-weak-network.md`** (searched on
@@ -479,21 +481,36 @@ and the testers.
 | **Hold-only shutter** | a motor-access regression, now repeated in a chat | the accessible toggle in RC-4, then given back to the tab |
 | **A branch no test mounts** | #1229 lost every photo to a video branch | the mounting test is a stated deliverable of RC-6 |
 
-## 9. Decisions owed to the user
+## 9. Decisions
 
-| # | Decision | Recommendation |
+### 9.1 Decided - the UI target is Snapchat (user, 2026-10-09)
+
+| # | Decision | Ruling | Decided by, when | Replaces in this page |
+| --- | --- | --- | --- | --- |
+| D-view | Replaying a received reel | **Replayable for the 30 days of its life**; the tile reads "Appuyer pour voir"; **NO view-once now** (RC-10 stays later) | the user, 2026-10-09 | 3.4: view once stays a later, separate mode |
+| D-size | Caps | **Chat cap 60 s**, profile **about 540p at 1.2 Mb/s** (about 9 MB at 60 s); published reels stay 90 s / 720p. The chat cap is a field of `reel-limits`, never a client constant | the user, 2026-10-09 | 1 (point 2) and 4 (point 1): "90 s" and "14 MB" now read 60 s and about 9 MB |
+| D-opened | An "Ouvert" signal | **None**; the existing read receipts only | the user, 2026-10-09 | 3.4 (D3 closed: no) |
+| D-save | Saving a received reel | **A SAVE button for ALL reels, public or not**, in the viewer bar NEXT TO THE VOLUME BUTTON (the existing `ReelSaveButton` and gallery plugin) | the user, 2026-10-09 | 3.2 ("no save"), 3.3 (the recipient row), D9 |
+| D4 | `FLAG_SECURE` / screenshot blocking | **NOT USED, dropped from the design.** A save button beside a blocked screenshot would contradict itself. **The UI never claims protection**: no "protected" badge, no "screenshots are blocked"; the sender's note says only that the SERVER copy goes after 30 days | follows D-save (the user), 2026-10-09 | 3.3 (the Android row), 5, 8 |
+| D5 | Poster on the tile | **Opaque tile from the ThumbHash**, no poster blob | the design's recommendation, taken on the user's instruction, 2026-10-09 | none |
+| D6 | Ephemeral photos | **None**: a tap sends an ordinary image | same | none |
+| D7 | Per-member daily cap | **500 MB per day for `chat-reel`**, from `ownerId`, answered `429` | same | none |
+| D8 | "Disclosed report" of a DM/group reel | **Not in v1** | same | none |
+| D11 | Expiry display | **Tombstone with the age only**, no "N days left" chip | same | none |
+
+**What the save button changes elsewhere.** Forwarding stays not offered (it copies the `MediaRef`,
+so the CEK). A save writes the DECRYPTED video to the gallery through the plugin that already saves a
+feed reel: the member's own act on a video they were sent, and the reason nothing here may be sold as
+unsaveable. The cache rule of 3.3 (drop the ciphertext at the expiry) is unchanged; a saved copy is
+the member's, outside the app.
+
+### 9.2 Still open
+
+| # | Question | State |
 | --- | --- | --- |
-| D1 | Cap in a conversation: the same 90 s, or shorter (Snapchat's chat clips are shorter and cost less) | 90 s as said; shorten in `reel-limits` later if the storage numbers ask |
-| D2 | The chat profile: ~540p / ~1.2 Mb/s (about 14 MB at 90 s), or the feed's 720p / 2.5 Mb/s (about 28-35 MB) | the chat profile; softer, but the weak network and the 88 %-full box say so |
-| D3 | An "Ouvert" signal, and in a group who can see who watched | none in v1 (the read watermark only); a DM-only "Ouvert" later if asked |
-| D4 | `FLAG_SECURE` on Android as a deterrent | no for v1 (a protection that works on one platform of three); never claim blocking |
-| D5 | A real poster frame on the tile, or the blurred opaque tile | opaque ThumbHash tile; a poster is a <= 24 KB field added later |
-| D6 | Ephemeral photos too (a different bubble and class) | not now; a tap sends an ordinary image |
-| D7 | A per-member daily byte cap for `chat-reel` | yes, 500 MB/day to start, from `ownerId` |
-| D8 | The "disclosed report" of a DM/group reel (the reporter hands the moderator the key) | build it only if moderators ask; a decision about what a reporter reveals |
-| D9 | Recipient may save to the gallery | no in v1; the sender's own copy is the memory path |
-| D10 | View once (DM-only, best-effort), and when | after the plain reel message has run for a release |
-| D11 | The expiry display: tombstone with an age only, as proposed | confirm no "N days left" chip, as ruled for the feed |
+| D10 | View once for DMs (best-effort), and when | later, after the plain reel message has run for a release; D-view rules it out for now |
+| - | The 60 s encode time and real sizes at the decided profile | unmeasured, owed to RC-0 on both phones |
+| - | The salon media-download access rule (2.3) | owed to RC-0 |
 
 **Not decided here, deliberately:** live streaming (C9, behind the calls revival); stories (C8:
 "not now"); and anything that would make the published reel a conversation attachment.
