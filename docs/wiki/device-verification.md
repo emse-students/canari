@@ -1071,6 +1071,22 @@ iOS.
 
 ## iPad and rotation - owed on an iPad\n\nSwitching into Canari from another app does not rotate the window on an iPad (reported 2026-08-28); it needs an iPad. The Android phone rotation is decided and shipped: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)).\n
 
+## X. The scroll after an edge swipe - owed on the Mi 9T
+
+**Proves or refutes** [the swallowed scroll](frontend/design-reference.md#41-the-system-back-gesture-takes-the-edge-touch-and-the-swipe-back-stayed-armed-mi-9t-2026-10-05):
+adb-injected edge gestures may not behave as a finger, so this is a REAL-FINGER reading. **Precondition:**
+a build carrying the `[swipeBack]` lines, gesture navigation on, a conversation with enough messages to scroll,
+the page inspectable over CDP (console) or `logcat`.
+
+1. Open the conversation, tap the text field, close the keyboard with the system back swipe from the
+   left edge. Expect `[swipeBack] armed at x=<small>` then `[swipeBack] touch cancelled (tracking=true...)`
+   and the conversation STILL open.
+2. Immediately scroll the list from mid-screen with one finger. Does it move on the FIRST stroke?
+3. Repeat the edge swipe, wait 3 s, then scroll. Then repeat with a scroll from the edge strip itself.
+4. If the first stroke is swallowed with a `cancelled` line before it: it is the engine after a cancelled
+   sequence, and the question moves to the WebView (record it, do not patch the page). If it is swallowed
+   with NO `cancelled` line: the edge touch was not seen by the page at all.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.

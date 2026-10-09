@@ -84,6 +84,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | What | The measurement that closes it |
 | --- | --- |
 | a post push tapped with the session dead lands on `/login?returnTo=` the post (2026-10-09) | check H step 4 on the Mi 9T, killed app AND backgrounded ([device-verification](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)); a bare `/login` with no `[hooks] Processing URL` means the intent never reached the JS |
+| after an edge swipe the next scroll is swallowed (Mi 9T, 2026-10-05; NOT a code defect anyone has seen: the page never holds the touch) | check X, ONE real-finger scroll on the Mi 9T with the `[swipeBack]` lines now logged ([device-verification](device-verification.md#x-the-scroll-after-an-edge-swipe---owed-on-the-mi-9t)) |
 | a salon carries read receipts (#1235, `v0.18.32`) | `READ-6` on the rig, then one look in a real community: a member who is not an admin sees the double check and "Lu par" under their own last message ([social-service](services/social-service.md#read-receipts-in-a-salon)) |
 | a salon's settings are offered only to who may change them (#1228, `v0.18.32`) | one look with a Membre account: the access tab reads only, rename and delete are absent; then grant `channel.manage` to Moderateur in the grid with a moderator's panel open - the controls must appear without a reload |
 | `/forms/success` no longer asks for a form called `success` | after a completed payment on production, social-service logs no `invalid input syntax for type uuid: "success"` (once per payment, so ONE payment settles it) |
@@ -234,12 +235,6 @@ count of real posts no push has claimed, consumed by a refused push) are on
 [readings](device-readings-2026-10.md#2026-10-07---mi-9t-v104-alpha5-debug-apk-from-tag-1be223001-versioncode-100000405).
 Not built. Rig: `bun archive/notif.mjs 10`; board row
 [NOTIF-10](cross-client-testing.md#14---notif---notifications).
-
-### P3 - after a swipe from the left edge, the next scroll is swallowed (Mi 9T, 2026-10-05)
-
-The conversation does not close (correct) but the scroll that follows does not move the list; the same
-scroll from mid-screen works. adb injects the gesture, so system gesture navigation may not react as
-under a finger: owed ONE real-finger scroll on the Mi 9T before any fix.
 
 ### P3 - on a fresh Feed the swipe to the camera did nothing three times (Mi 9T, 2026-10-06)
 

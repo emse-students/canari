@@ -64,6 +64,10 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
    * (user, 2026-10-05, read through the page's `history.back()` stack on the Mi 9T).
    */
   function reset() {
+    // The line that tells a SYSTEM-TAKEN touch (the OS back gesture sends `touchcancel`, never
+    // `touchend`) from a finger that simply lifted - the two read identically from outside, and the
+    // next scroll that did not move (Mi 9T, 2026-10-05) is the question this answers.
+    console.debug(`[swipeBack] touch cancelled (tracking=${tracking}, committed=${committed})`);
     tracking = false;
     committed = false;
     node.style.removeProperty('transform');
@@ -89,6 +93,7 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
     startY = t.clientY;
     tracking = true;
     committed = false;
+    console.debug(`[swipeBack] armed at x=${Math.round(startX)}`);
   }
 
   function onTouchMove(e: TouchEvent) {
@@ -130,6 +135,9 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
     tracking = false;
     const dx = e.changedTouches[0].clientX - startX;
     const threshold = opts.threshold ?? 90;
+    console.debug(
+      `[swipeBack] released dx=${Math.round(dx)} -> ${dx >= threshold ? 'back' : 'snap'}`
+    );
 
     if (dx >= threshold) {
       // Slide out to the right then invoke callback.
