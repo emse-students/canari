@@ -25,9 +25,32 @@ describe('HeaderAuthGuard', () => {
     guard = new HeaderAuthGuard();
   });
 
-  it('passes when x-user-logged-in is "true" and no secret is set', () => {
-    const ctx = makeContext({ 'x-user-logged-in': 'true' });
-    expect(guard.canActivate(ctx)).toBe(true);
+  it('REFUSES a bare x-user-logged-in "true" when no secret is configured, in EVERY environment (CodeQL 2547)', () => {
+    const previous = process.env.NODE_ENV;
+    try {
+      for (const env of [undefined, 'development', 'test', 'production']) {
+        if (env === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = env;
+        expect(() =>
+          guard.canActivate(makeContext({ 'x-user-logged-in': 'true', 'x-user-id': 'victim' }))
+        ).toThrow(UnauthorizedException);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
+    }
+  });
+
+  it('refuses a signed token when x-user-id is empty', () => {
+    process.env.INTERNAL_SHARED_SECRET = 'test-secret-32bytes-long-enough';
+    try {
+      const token = makeToken('', 'test-secret-32bytes-long-enough');
+      expect(() =>
+        guard.canActivate(makeContext({ 'x-user-logged-in': 'true', 'x-internal-token': token }))
+      ).toThrow(UnauthorizedException);
+    } finally {
+      delete process.env.INTERNAL_SHARED_SECRET;
+    }
   });
 
   it('throws when x-user-logged-in is absent', () => {
@@ -141,14 +164,12 @@ describe('HeaderAuthGuard', () => {
       expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
     });
 
-    it('uses empty string as userId when x-user-id is absent', () => {
-      // A token computed with empty userId must pass (nginx passes empty string when unauthenticated).
-      const token = makeToken('', SECRET);
+    it('refuses an absent x-user-id even with a token minted for the empty id', () => {
       const ctx = makeContext({
         'x-user-logged-in': 'true',
-        'x-internal-token': token,
+        'x-internal-token': makeToken('', SECRET),
       });
-      expect(guard.canActivate(ctx)).toBe(true);
+      expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
     });
   });
 });
