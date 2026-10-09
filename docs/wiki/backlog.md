@@ -597,7 +597,7 @@ NestJS services to `bun test` waits for the campaign ladder to reach the bottom
 ### P3 (blocked: calls held off) - the SFU runs SIX webrtc majors it has never placed a call on (2026-08-27)
 
 Calls are UNVERIFIED, not broken; it becomes P1 the day calling is revived. What settles it is one
-relay-path call, two peers, audio and video, TURN as production configures it, taken by hand
+relay-path call, two peers, audio and video, TURN as production configures it, taken by hand (the in-process half of it runs in CI since 2026-10-09: `apps/call-service/tests/relay_path.rs`)
 ([calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)).
 
 ### P2 - what made the profile fetches fail on that device at that moment
@@ -888,10 +888,6 @@ The principle is accepted (user, 2026-08-26) and the work is scheduled AFTER the
 ### P2 - a cargo bump in `mls-core` leaves two committed lockfiles Dependabot will never fix
 
 `mls-wasm` and `src-tauri` carry committed locks and depend on `mls-core` by path, so Dependabot's single pull request (against `mls-core/Cargo.toml`) is incomplete by construction and fails CI's lockfile step - the one dependency update that cannot merge unattended. **Remedy, not done:** one cargo workspace with ONE `Cargo.lock` for `frontend/`, which restructures a Tauri build this workstation can only compile. Until then such a bump is done by hand in one commit refreshing all three locks ([cicd](cicd.md#dependency-updates-and-the-auto-merge-that-ships-them)).
-
-### P1 - ONE CLASS OF DEPENDENCY UPDATE STILL CANNOT MERGE UNATTENDED, AND IT NAMES ITS MISSING TEST
-
-`webrtc` and the ICE crates are refused by `ci.yml`'s `Dependency ceiling` check: the SFU has ten tests and none touches the ICE stack. The test that retires it is one relay-path call (campaign rung 15 CALL, which has no runner), and the next version is a PORT onto the `rtc` crate (26 errors against this SFU, measured 2026-09-15), not a bump. See the SFU entry under "iOS, platform and runtime". Quote no refuse count: read `gh pr list --app dependabot`. **Recorded flake:** chat-delivery-service failed one test in one of five local runs on 2026-08-31 and was not reproduced; if it recurs, capture the suite name first. Do not widen the ceiling list to feel safe: name the failure, then the test that would have caught it.
 
 ### P3 - `submissions.formId` names a form nothing keeps, and 28 rows point at deleted ones
 

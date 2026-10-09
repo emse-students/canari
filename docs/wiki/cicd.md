@@ -1251,16 +1251,28 @@ retires it**:
 | Family | Why the suite is blind to it | The test that retires it |
 |---|---|---|
 | `aes-gcm` | it opens a channel push sealed by ANOTHER member's device, so both directions are cross-version, and `src-tauri` freezes neither | a channel-push fixture |
-| `webrtc*`, `str0m`, `sdp`, `ice`, `turn`, `stun` | the SFU's ten tests never touch the ICE stack | one relay-path call (campaign rung 15 CALL) |
 | `postgres`, `redis`, `garage` - **a major crossing only** | a datastore major is refused by the data ALREADY ON DISK, and every gate here creates its cluster from an EMPTY volume - the one case that always works | starting the new major against a data directory written by the old one, and proving the documented upgrade path carries it |
 
-**Five families have already LEFT this table, which is what a refusal is for** - it names a missing
+**Six families have already LEFT this table, which is what a refusal is for** - it names a missing
 gate, and it goes the day the gate arrives. `@nestjs/*` left because `boot-nest-apps` constructs the
 real `AppModule` on all four services, which alone moved the ceiling from 5 merge / 28 refuse to 26
 merge / 6 refuse. `chacha20poly1305`, `argon2` and `ciborium` left because `cross_version_state.rs`
 opens artefacts they sealed in v0.14.14, and for an AT-REST envelope - read only by the device that
 wrote it - that backward direction is the whole question. Bare `typeorm` left because
 `app-module.boot-spec.ts` now issues a real query through every entity the app registered.
+
+**`webrtc*`, `str0m`, `sdp`, `ice`, `turn` and `stun` left on 2026-10-09**, retired by the test the row
+named, taken in-process rather than by hand: `apps/call-service/tests/relay_path.rs` starts the
+library's own TURN server on loopback, builds two peers the way the SFU builds them (default codecs and
+interceptors, mDNS off, `RTCIceTransportPolicy::Relay`), and asserts that every candidate is `typ relay`,
+ICE reaches `Connected`, a data-channel message crosses (DTLS and SCTP) and an opus RTP packet arrives
+(SRTP). It runs in the `Call Service (SFU)` job of the Rust matrix whenever `apps/call-service/` changes,
+which is every Dependabot cargo bump of it, in about 2 s once compiled. **What it does not cover:** the
+SFU's forwarding logic (`main.rs` is a binary, so the test links the library directly), a browser peer,
+renegotiation, and any TURN provider but the library's own - so the by-hand call in
+[calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)
+stays owed before calling is revived. The `webrtc` 0.20 major is not refused by name any more: it does
+not compile against this SFU, which the suite sees on its own, and the port meets this test.
 
 **`openmls*`, `tls_codec*`, `hpke-rs*` and `libcrux*` left on 2026-09-15, and that one could not be
 closed by a fixture at all.** For an at-rest envelope the reader is the writer, so bytes frozen once
@@ -1282,9 +1294,7 @@ naming `mls-core/**` would have skipped every pull request it was written to jud
 have been green for the reason that nothing was asked. `.github/scripts/tests/mls-forward-compat.test.sh`
 feeds that filter the file list a real bump produces and requires it to fire. What the gate does NOT
 cover: one group, one epoch, one application frame each way - a change breaking only a removal, an
-external join or a PSK would pass it. The live
-list is in
-[backlog](backlog.md#p1---one-class-of-dependency-update-still-cannot-merge-unattended-and-it-names-its-missing-test).
+The live list is `Dependency ceiling` in `ci.yml`, which reads `.github/scripts/lib/ceiling.sh`: the table above is the whole of it.
 
 A refusal is **never** routed to a human queue. It is posted as a comment on the pull request naming
 the missing test, once, behind the marker `<!-- canari-auto-merge-ceiling -->`.
@@ -1745,6 +1755,7 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 - **A CONFLICTING PR PRODUCES NO `pull_request` RUN, AND THE CHECKS LIST STILL LOOKS BUSY.** The `pull_request` event is computed against the MERGE ref; with a conflict GitHub cannot build one, so `CI` is never queued - not red, not skipped, simply never created. `arm-auto-merge` is `pull_request_target`, evaluates against the base, and runs anyway, so one green row sits there while nothing tests the code. PR #525 waited twice and survived a close/reopen before the state was actually asked for. `gh run list` returning nothing is an ANSWER: read `gh pr view <n> --json mergeable,mergeStateStatus` (`CONFLICTING` / `DIRTY`), then rebase on a freshly fetched `main` and `git push --force-with-lease`.
 - **`CHANGELOG.md`'s `## [Unreleased]` heading WAS an anchor every fix wrote to, so two PRs opened the same day conflicted by construction** - #837 and #838 did exactly that (2026-09-18). The first answer, `CHANGELOG.md merge=union` in `.gitattributes`, was verified with `git merge-file --union` and **never worked where it mattered: GitHub ignores `.gitattributes` merge drivers when it computes mergeability and squash-merges a PR.** Measured 2026-09-24 on #1067: `git merge-tree origin/main HEAD` merged clean locally while GitHub reported `CONFLICTING`. The anchor is gone instead: each PR adds its entry as a file in `changelog.d/`, the stable bump folds them under `## [X.Y.Z]` and deletes them ([changelog.d/README.md](../../changelog.d/README.md)), and `docsMergeArtefacts.test.ts` fails a PR that writes under `[Unreleased]`. **A merge behaviour verified with local git is verified for local git** - the platform that performs the merge is the one to measure.
 - **A Tauri plugin's JS package and its Rust crate must agree on major.minor, and only a RELEASE used to discover when they did not.** The CLI refuses to build (`tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`), but nothing else in this pipeline compiles the Tauri app, so an ordinary `bun install` that re-resolves the JS half lands green and kills the next tag - it took out Android Release and AppImage Release on v0.14.6, while iOS Release passed because its path never runs the check. `frontend/scripts/check-tauri-plugin-versions.mjs` (step `Guard the Tauri JS/Rust version parity` in `code-analysis.yml`) now compares the two committed files on every run. Fix the Rust side with `cd frontend/src-tauri && cargo update -p <crate>`.
+- **Recorded flake, not reproduced:** `chat-delivery-service` failed one test in one of five local runs on 2026-08-31; if it recurs, capture the suite name first and do not widen the dependency ceiling to feel safe.
 - iOS `altool` can exit 0 while output says `UPLOAD FAILED` — the workflow greps for failure markers in the transcript.
 - Android Play API rejects `changesNotSentForReview` post-launch — never include this flag.
 - `workflow_run` triggered off a release-triggered workflow must NOT have a `branches` filter (GitHub silently drops them).
