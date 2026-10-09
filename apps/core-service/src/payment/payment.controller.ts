@@ -206,7 +206,7 @@ export class PaymentController {
   }
 
   /**
-   * Unlinks an association's Lydia Business from Canari (MANAGE_STRIPE_CONNECT).
+   * Unlinks an association's Lydia Business from Canari (MANAGE_PAYOUT_ACCOUNT).
    * Local unlink only - the Lydia Business itself is untouched and onboarding can be restarted.
    */
   @Post('disconnect-lydia-account/:associationId')
@@ -292,7 +292,7 @@ export class PaymentController {
       successUrl: string;
       cancelUrl: string;
       metadata?: Record<string, string>;
-      stripeConnectAccountId?: string;
+      connectAccountId?: string;
       /** Stable key for idempotency, carried to Lydia's request/do as its order_ref. */
       idempotencyKey?: string;
       /** The payer's address, which Lydia's request/do needs as its recipient. Never stored. */
@@ -324,7 +324,7 @@ export class PaymentController {
         successUrl: body.successUrl,
         cancelUrl: body.cancelUrl,
         metadata: body.metadata,
-        stripeConnectAccountId: body.stripeConnectAccountId,
+        connectAccountId: body.connectAccountId,
         idempotencyKey: body.idempotencyKey,
       });
       this.logger.debug(`[Payments] Checkout session created: ${session.id}`);

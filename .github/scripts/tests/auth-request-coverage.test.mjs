@@ -126,7 +126,7 @@ function isCommentLine(line) {
 }
 
 /** In-body authorization idioms. Authorization here is not always a decorator, and counting
- *  decorators counts decorators - `POST /associations/:id/stripe-account` has none and calls
+ *  decorators counts decorators - `POST /associations/:id/lydia-account` has none and calls
  *  `assertInternalSecret()` as its first statement. */
 const IN_BODY_AUTH = [
   'assertInternalSecret',

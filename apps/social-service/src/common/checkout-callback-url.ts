@@ -15,9 +15,12 @@ export function isAllowedCheckoutCallbackUrl(url: string, frontendUrl: string): 
   try {
     const u = new URL(url);
     if (u.protocol === 'fr.emse.canari:') {
-      // The host is still `stripe`: it is the deep-link host every shipped client registered and
-      // sends (docs/wiki/stripe-archive.md), so it outlives the processor it was named for.
-      return u.host === 'stripe' && (u.pathname === '/success' || u.pathname === '/cancel');
+      // `payment` is what clients emit now; `stripe` is what builds before 2026-10-09 registered and
+      // still send (docs/wiki/legacy-compatibility.md), so both are accepted until it is removed.
+      return (
+        (u.host === 'payment' || u.host === 'stripe') &&
+        (u.pathname === '/success' || u.pathname === '/cancel')
+      );
     }
     const base = new URL(frontendUrl.endsWith('/') ? frontendUrl : `${frontendUrl}/`);
     if (u.origin !== base.origin) return false;

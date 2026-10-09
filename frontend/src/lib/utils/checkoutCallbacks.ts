@@ -17,14 +17,25 @@ export function isMobileTauri(): boolean {
   return os === 'android' || os === 'ios';
 }
 
+/** The host of the checkout return deep link (`fr.emse.canari://payment/success`). */
+export const CHECKOUT_RETURN_HOST = 'payment';
+
 /**
- * The host of the checkout return deep link is still `stripe`: every shipped client registered it
- * (AndroidManifest, Info.plist, tauri.conf.json) and `hooks.client.ts` routes it, so renaming it
- * needs a native build first - see `docs/wiki/stripe-archive.md`.
+ * The host builds older than the payment host registered and send (`stripe`, named for the processor
+ * that left in 2026-10). Only READ, never emitted; its removal date is in
+ * `docs/wiki/legacy-compatibility.md`.
  */
+export const LEGACY_CHECKOUT_RETURN_HOST = 'stripe';
+
+/** Every host the checkout return handler accepts. */
+export const CHECKOUT_RETURN_HOSTS: ReadonlySet<string> = new Set([
+  CHECKOUT_RETURN_HOST,
+  LEGACY_CHECKOUT_RETURN_HOST,
+]);
+
 function checkoutDeepLink(path: 'success' | 'cancel', query: string): string {
   const q = query ? (query.startsWith('?') ? query : `?${query}`) : '';
-  return appDeepLink(`stripe/${path}${q}`);
+  return appDeepLink(`${CHECKOUT_RETURN_HOST}/${path}${q}`);
 }
 
 function webUrl(path: string): string {

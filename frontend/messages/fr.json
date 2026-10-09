@@ -1377,7 +1377,7 @@
   "asso_flag_manage_documents": "Gérer les documents",
   "asso_flag_manage_forms": "Gérer les formulaires",
   "asso_flag_manage_products": "Gérer la boutique et les cotisations",
-  "asso_flag_manage_stripe_connect": "Gérer le compte bancaire",
+  "asso_flag_manage_payout_account": "Gérer le compte bancaire",
   "asso_flag_manage_partnerships": "Gérer les partenariats",
   "asso_flag_validate_events": "Valider les événements",
   "asso_flag_manage_asso": "Gérer les associations",

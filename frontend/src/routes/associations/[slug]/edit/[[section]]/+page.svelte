@@ -132,14 +132,14 @@
    */
   let canHandleProposals = $derived(rights.proposals);
   /**
-   * The super-admin tier drops out on its own: `MANAGE_STRIPE_CONNECT` is in
+   * The super-admin tier drops out on its own: `MANAGE_PAYOUT_ACCOUNT` is in
    * `SUPER_ADMIN_EXCLUDED_FLAGS`, so the exception is read from the same data the server reads it
    * from instead of being an omission in this expression.
    */
-  let canManageStripeConnect = $derived(rights.stripeConnect);
+  let canManagePayoutAccount = $derived(rights.payoutAccount);
 
   /** Paiements tab: boutique and/or the payment account. */
-  let canManagePaymentsSection = $derived(canManageStripeConnect || canManageProducts);
+  let canManagePaymentsSection = $derived(canManagePayoutAccount || canManageProducts);
 
   /**
    * The Danger tab holds TWO controls the server rights DIFFERENTLY, and gating the tab on the
@@ -339,7 +339,7 @@
 
       {#if editSection === 'payments' && canManagePaymentsSection && asso}
         <div class="space-y-6">
-          {#if canManageStripeConnect && activePaymentProvider.current === null}
+          {#if canManagePayoutAccount && activePaymentProvider.current === null}
             <!-- Provider unknown: no provider-specific card until it is. -->
             <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
               <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
@@ -359,7 +359,7 @@
                 <p class="text-text-muted text-sm">{m.asso_payments_provider_loading()}</p>
               {/if}
             </div>
-          {:else if canManageStripeConnect && activePaymentProvider.current === 'lydia'}
+          {:else if canManagePayoutAccount && activePaymentProvider.current === 'lydia'}
             <LydiaBusinessOnboardingForm
               {asso}
               onAccountCreated={(accountId, dashboardUrl) => {
@@ -379,7 +379,7 @@
                   };
               }}
             />
-          {:else if canManageStripeConnect && activePaymentProvider.current === 'disabled'}
+          {:else if canManagePayoutAccount && activePaymentProvider.current === 'disabled'}
             <!-- Payments declared OFF platform-wide: the existing "not configured" state, never an
                  onboarding flow. -->
             <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
@@ -421,7 +421,7 @@
       {/if}
 
       {#if editSection === 'payments' && canManagePaymentsSection && asso && canManageProducts}
-        <EditBoutiqueTab {asso} {onlinePaymentsReady} {canManageStripeConnect} />
+        <EditBoutiqueTab {asso} {onlinePaymentsReady} {canManagePayoutAccount} />
       {/if}
 
       {#if editSection === 'delegation' && canManageProducts && asso}
@@ -432,7 +432,7 @@
         <EditFormsTab
           {asso}
           {onlinePaymentsReady}
-          {canManageStripeConnect}
+          {canManagePayoutAccount}
           onGoToPayments={() => goto(resolve(editSectionHref(slug, 'payments')))}
         />
       {/if}

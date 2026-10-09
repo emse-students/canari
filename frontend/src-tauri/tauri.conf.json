@@ -45,6 +45,12 @@
           "scheme": [
             "fr.emse.canari"
           ],
+          "host": "payment"
+        },
+        {
+          "scheme": [
+            "fr.emse.canari"
+          ],
           "host": "chat"
         },
         {

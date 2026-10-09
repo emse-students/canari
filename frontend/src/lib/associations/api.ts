@@ -27,7 +27,7 @@ export enum AssociationPermissionFlag {
   MANAGE_ASSO = 1 << 6,
   MODERATE = 1 << 7,
   MANAGE_PRODUCTS = 1 << 8,
-  MANAGE_STRIPE_CONNECT = 1 << 9,
+  MANAGE_PAYOUT_ACCOUNT = 1 << 9,
   MANAGE_PARTNERSHIPS = 1 << 10,
 }
 
@@ -46,7 +46,7 @@ export const ALL_CORE_FLAGS =
 
 /** Default admin preset when adding a member (core flags + Stripe Connect). */
 export const ASSOCIATION_ADMIN_PRESET =
-  ALL_CORE_FLAGS | AssociationPermissionFlag.MANAGE_STRIPE_CONNECT;
+  ALL_CORE_FLAGS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT;
 
 /**
  * A member who speaks for the association without administering it: publishes in its name and
@@ -68,7 +68,7 @@ export function hasPermissionFlag(permissions: number, flag: AssociationPermissi
  * account nor its voice is administration.
  */
 export const SUPER_ADMIN_EXCLUDED_FLAGS =
-  AssociationPermissionFlag.MANAGE_STRIPE_CONNECT | AssociationPermissionFlag.POST_AS_ASSO;
+  AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT | AssociationPermissionFlag.POST_AS_ASSO;
 
 /**
  * Flags that only mean anything inside a BDE association - the server enforces `a.isBDE = true`
@@ -150,9 +150,7 @@ export interface Association {
   description: string | null;
   bioMarkdown: string | null;
   logoUrl: string | null;
-  stripeAccountId: string | null;
-  stripeOnboardingComplete: boolean;
-  /** Lydia Business vendor_token - own column, independent from the Stripe pair above. */
+  /** Lydia Business vendor_token. */
   lydiaAccountId: string | null;
   lydiaOnboardingComplete: boolean;
   /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
@@ -1930,7 +1928,7 @@ export async function listProductPurchases(
 
 /**
  * A club association's payment-delegation state: whether it routes its online payments to a
- * parent association's Stripe Connect account and, if so, the lifecycle status and whether the
+ * parent association's payout account and, if so, the lifecycle status and whether the
  * chosen parent can currently receive payments.
  */
 export interface PaymentDelegationState {
@@ -1939,7 +1937,7 @@ export interface PaymentDelegationState {
   parentAssociationId: string | null;
   /** Display name of the chosen parent, resolved server-side. */
   parentName: string | null;
-  /** True when the parent has completed its own Stripe Connect onboarding (can receive payments). */
+  /** True when the parent has completed its own payout account onboarding (can receive payments). */
   parentReady: boolean;
 }
 
@@ -2101,8 +2099,8 @@ export async function deleteProductIcon(
 }
 
 /**
- * Creates a Stripe Checkout session for a product purchase.
- * Returns the Stripe-hosted checkout URL to redirect the user to.
+ * Creates a checkout session for a product purchase.
+ * Returns the payment-provider-hosted checkout URL to redirect the user to.
  */
 export async function createProductCheckout(
   associationId: string,
@@ -2206,7 +2204,7 @@ export async function listAssociationForms(associationId: string): Promise<Assoc
 /**
  * True when the association's Lydia account is ready. `null` is a provider not yet known, and
  * `disabled` is payments switched off platform-wide: neither is ever ready. The historic
- * `stripeOnboardingComplete` flag is never read: it described a processor that has left.
+ * `stripeOnboardingComplete` flag is no longer even on the type: the server stopped mapping it.
  */
 export function isPaymentAccountReady(
   asso: Pick<Association, 'lydiaOnboardingComplete'>,
@@ -2227,7 +2225,7 @@ export function canAssociationReceiveFormPayments(
 }
 
 /**
- * Unlinks the association's Lydia Business from Canari (MANAGE_STRIPE_CONNECT).
+ * Unlinks the association's Lydia Business from Canari (MANAGE_PAYOUT_ACCOUNT).
  * Local unlink only - the Lydia Business itself is untouched and onboarding can be restarted.
  */
 export async function disconnectLydiaConnect(associationId: string): Promise<void> {

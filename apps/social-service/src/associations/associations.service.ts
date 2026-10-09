@@ -216,7 +216,7 @@ function calendarDateRefusal(
   return new BadRequestException({ code, message });
 }
 
-/** CRUD, logo management, membership, and Stripe helpers for student associations. */
+/** CRUD, logo management, membership, and payment-account helpers for student associations. */
 
 /**
  * Who is asking for a list of events, which decides how far back that list goes.
@@ -933,7 +933,7 @@ export class AssociationsService {
     }
     // Guard: block demoting a member who holds MANAGE_MEMBERS if they are the last one.
     // We check specifically for MANAGE_MEMBERS loss, not just permissions===0, because a partial
-    // demotion (e.g. keeping MANAGE_STRIPE_CONNECT) would bypass the old permissions===0 check
+    // demotion (e.g. keeping MANAGE_PAYOUT_ACCOUNT) would bypass the old permissions===0 check
     // while still leaving the association without any member manager.
     const hadManageMembers =
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
@@ -975,7 +975,7 @@ export class AssociationsService {
   /**
    * Counts members holding MANAGE_MEMBERS - the flag required to manage the association.
    * Used to prevent locking an association out of member management.
-   * Using `permissions > 0` was insufficient: a member with only MANAGE_STRIPE_CONNECT
+   * Using `permissions > 0` was insufficient: a member with only MANAGE_PAYOUT_ACCOUNT
    * counts as non-zero but cannot unblock the association.
    */
   private async manageMembersCount(associationId: string): Promise<number> {
@@ -2814,35 +2814,9 @@ ${rejectionReason}`
     });
   }
 
-  // ── Stripe helpers ────────────────────────────────────────────────────────
-
-  /** Stores the Stripe connected-account ID for an association and invalidates post-list caches. */
-  async setStripeAccountId(id: string, stripeAccountId: string) {
-    const asso = await this.findById(id);
-    await this.assoRepo.update(id, { stripeAccountId });
-    await this.invalidatePostListCaches();
-    return { ...asso, stripeAccountId };
-  }
-
-  /** Flips stripeOnboardingComplete to true after the Stripe Connect onboarding webhook confirms the account is ready. */
-  async markStripeOnboardingComplete(id: string) {
-    await this.assoRepo.update(id, { stripeOnboardingComplete: true });
-    await this.invalidatePostListCaches();
-  }
-
-  /**
-   * Unlinks the association's Stripe Connect account from Canari, letting the treasurer restart
-   * onboarding from scratch. Local unlink only - the Stripe account itself (its dashboard, bank
-   * details, any balance) is left untouched.
-   */
-  async clearStripeAccount(id: string) {
-    await this.assoRepo.update(id, { stripeAccountId: null, stripeOnboardingComplete: false });
-    await this.invalidatePostListCaches();
-  }
-
   // ── Lydia helpers ────────────────────────────────────────────────────────
-  // Own columns, independent from the Stripe ones above - an association keeps both links
-  // regardless of which provider is currently active platform-wide (WP-LYDIA coexistence).
+  // The payout account columns: `lydiaAccountId` and `lydiaOnboardingComplete`. The historic
+  // `stripe*` pair is no longer mapped (docs/wiki/stripe-archive.md).
 
   /**
    * Stores the Lydia Business vendor_token (and its dashboard URL, handed out once by
@@ -2887,7 +2861,7 @@ ${rejectionReason}`
 
   /**
    * Resolves where an association's payments route, honoring an approved parent delegation AND
-   * the platform's currently active provider (Stripe/Lydia keep independent account ids - see
+   * the platform's currently active provider (the Lydia account id lives in its own column - see
    * payment-delegation.util.ts). Loads the parent only when the association delegates (approved).
    * Central resolver used by every payment path so delegation and provider selection are applied
    * uniformly. Lets a failure to reach core-service propagate - never guesses the active provider.
@@ -2903,7 +2877,7 @@ ${rejectionReason}`
   }
 
   /**
-   * Returns the connect-style account id (Stripe or Lydia, whichever is active) an association's
+   * Returns the connect-style account id (Lydia's `vendor_token`) an association's
    * payments route to, or null if none. Follows an approved parent delegation to the parent's account.
    */
   async getPaymentAccountId(id: string): Promise<string | null> {
@@ -2940,7 +2914,7 @@ ${rejectionReason}`
     );
   }
 
-  // ── Payment delegation (parent-association Stripe routing) ─────────────────
+  // ── Payment delegation (parent-association payment routing) ─────────────────
 
   /**
    * Returns this association's payment-delegation state for its own management UI: the chosen
@@ -2964,7 +2938,7 @@ ${rejectionReason}`
       status: asso.paymentDelegationStatus,
       parentAssociationId: asso.paymentParentAssociationId,
       parentName: parent?.name ?? null,
-      parentReady: !!parent?.stripeOnboardingComplete && !!parent?.stripeAccountId,
+      parentReady: !!parent?.lydiaOnboardingComplete && !!parent?.lydiaAccountId,
     };
   }
 
@@ -3051,7 +3025,7 @@ ${rejectionReason}`
 
   /**
    * Approves a pending delegation request from `childId` to `parentAssociationId`. Requires the
-   * parent to have completed its own Stripe Connect onboarding, since it becomes the receiver.
+   * parent to have completed its own payment account onboarding, since it becomes the receiver.
    */
   async approvePaymentDelegation(parentAssociationId: string, childId: string) {
     const [parent, child] = await Promise.all([
@@ -3066,9 +3040,9 @@ ${rejectionReason}`
     ) {
       throw new BadRequestException('No pending delegation request from this association');
     }
-    if (!parent.stripeOnboardingComplete || !parent.stripeAccountId) {
+    if (!parent.lydiaOnboardingComplete || !parent.lydiaAccountId) {
       throw new BadRequestException(
-        'Complete your Stripe Connect onboarding before accepting delegated payments'
+        'Complete your payment account onboarding before accepting delegated payments'
       );
     }
     await this.assoRepo.update(childId, { paymentDelegationStatus: 'approved' });
@@ -3137,20 +3111,20 @@ ${rejectionReason}`
   }
 
   /**
-   * Returns true if the user may manage Stripe Connect for the association.
+   * Returns true if the user may manage the payout account of the association.
    *
-   * `MANAGE_STRIPE_CONNECT` is in `SUPER_ADMIN_EXCLUDED_FLAGS`: it points payouts at a bank
+   * `MANAGE_PAYOUT_ACCOUNT` is in `SUPER_ADMIN_EXCLUDED_FLAGS`: it points payouts at a bank
    * account, so it stays with the association's own people and the platform administrator.
    *
    * Existence is checked for the same reason as `canPostAs`: core-service asks this before opening
    * a Connect account against the id, so a yes on an association nobody has must not be returned.
    */
-  async canManageStripeConnect(
+  async canManagePayoutAccount(
     userId: string,
     associationId: string,
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<boolean> {
-    const flag = AssociationPermissionFlag.MANAGE_STRIPE_CONNECT;
+    const flag = AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT;
     if (!(await this.mayAct(userId, associationId, flag, opts))) return false;
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     return !!asso;

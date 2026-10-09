@@ -8,7 +8,7 @@ import {
 } from '../entities/association-member.entity';
 
 /** The admin preset the frontend sends for the "Admin" role option (core flags + Stripe Connect). */
-const ASSOCIATION_ADMIN_PRESET = ALL_CORE_FLAGS | AssociationPermissionFlag.MANAGE_STRIPE_CONNECT;
+const ASSOCIATION_ADMIN_PRESET = ALL_CORE_FLAGS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT;
 
 /** Collects the failing property names, so an assertion says WHICH constraint rejected. */
 const failedProps = (dto: object): string[] => validateSync(dto).map((error) => error.property);

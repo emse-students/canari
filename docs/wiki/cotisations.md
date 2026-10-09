@@ -284,7 +284,7 @@ social-service never calls Stripe directly. Online sales require completed Strip
 
 1. User opens `/shop`, buys the membership product (`ProductPurchaseButton` -> Stripe Checkout).
 2. `products.service.ts#createProductCheckout` calls core-service with the association's
-   `stripeConnectAccountId`.
+   `connectAccountId`.
 3. On Stripe success the webhook reaches core-service, then social-service `fulfillProductPurchase`
    -> `resolveGrantTag` derives the current tag -> `userTagService.grantOrRenew(...)`.
 4. `assertCanPurchase` blocks re-buying while the tag is still active.

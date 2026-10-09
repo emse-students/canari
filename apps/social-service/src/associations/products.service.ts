@@ -954,7 +954,7 @@ export class ProductsService {
             successUrl,
             cancelUrl,
             metadata: { productId: product.id, userId },
-            stripeConnectAccountId: paymentTarget.connectAccountId,
+            connectAccountId: paymentTarget.connectAccountId,
             idempotencyKey,
             payerEmail,
           },

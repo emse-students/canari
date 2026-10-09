@@ -20,6 +20,7 @@ import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExter
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
 import { fetchInputUrl, shouldUseNativeFetch } from '$lib/utils/fetchRouting';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
+import { CHECKOUT_RETURN_HOSTS } from '$lib/utils/checkoutCallbacks';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones.
@@ -247,9 +248,9 @@ if (isTauriRuntime()) {
               continue;
             }
 
-            // Checkout return: fr.emse.canari://stripe/success|cancel?… (the host kept its old name,
-            // see docs/wiki/stripe-archive.md)
-            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'stripe') {
+            // Checkout return: fr.emse.canari://payment/success|cancel?… A build older than the
+            // payment host still sends `stripe` (docs/wiki/legacy-compatibility.md), so both are read.
+            if (u.protocol === MOBILE_APP_PROTOCOL && CHECKOUT_RETURN_HOSTS.has(u.host)) {
               const path = u.pathname.replace(/\/$/, '') || '/';
               const sessionId = u.searchParams.get('session_id');
               const submissionId = u.searchParams.get('submission_id');

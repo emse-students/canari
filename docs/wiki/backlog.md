@@ -48,12 +48,6 @@ NOT a Cloudflare rule: the 413 page body is nginx's, and both relay files on the
 **Owed: the gesture on `ssh canari` (the owed table).** Done when a 1.2 MB and a 20 MB upload reach
 `media-service` on both legacy names. Not an app change: chunking under 1 MiB is rejected there.
 
-### P3 - Stripe's leftover names: columns, permission flag, routes, deep-link host
-
-Stripe itself is gone (#1589, [stripe-archive](stripe-archive.md), which lists each name kept for
-rollback and old clients). Left: a drop/rename migration once `minClientVersion` passed the removal
-release; and an association whose delegation was onboarded on Stripe only is not payment-ready until it
-onboards on Lydia.
 
 ---
 

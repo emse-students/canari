@@ -99,7 +99,7 @@ function makeService(rows: Row[]) {
   return { service, memberRepo };
 }
 
-const { MANAGE_MEMBERS, MANAGE_ASSO, MANAGE_FORMS, MANAGE_STRIPE_CONNECT, POST_AS_ASSO } =
+const { MANAGE_MEMBERS, MANAGE_ASSO, MANAGE_FORMS, MANAGE_PAYOUT_ACCOUNT, POST_AS_ASSO } =
   AssociationPermissionFlag;
 
 describe('AssociationsService.mayAct', () => {
@@ -168,7 +168,7 @@ describe('AssociationsService.mayAct', () => {
   // The exclusion set is DATA with a reason, not an omission at a call site: a super-admin
   // administers an association, and neither its bank account nor its voice is administration.
   it.each([
-    ['MANAGE_STRIPE_CONNECT', MANAGE_STRIPE_CONNECT],
+    ['MANAGE_PAYOUT_ACCOUNT', MANAGE_PAYOUT_ACCOUNT],
     ['POST_AS_ASSO', POST_AS_ASSO],
   ])('withholds %s from a BDE super-admin', async (_name, flag) => {
     const { service } = makeService([
@@ -184,20 +184,20 @@ describe('AssociationsService.mayAct', () => {
 
   it('still grants an excluded flag to the association own member holding it', async () => {
     const { service } = makeService([
-      { userId: 'u1', associationId: 'asso1', permissions: MANAGE_STRIPE_CONNECT },
+      { userId: 'u1', associationId: 'asso1', permissions: MANAGE_PAYOUT_ACCOUNT },
     ]);
-    await expect(service.mayAct('u1', 'asso1', MANAGE_STRIPE_CONNECT)).resolves.toBe(true);
+    await expect(service.mayAct('u1', 'asso1', MANAGE_PAYOUT_ACCOUNT)).resolves.toBe(true);
   });
 
   it('still grants an excluded flag to the platform administrator', async () => {
     const { service } = makeService([]);
     await expect(
-      service.mayAct('admin', 'asso1', MANAGE_STRIPE_CONNECT, { isGlobalAdmin: true })
+      service.mayAct('admin', 'asso1', MANAGE_PAYOUT_ACCOUNT, { isGlobalAdmin: true })
     ).resolves.toBe(true);
   });
 
   it('keeps the exclusion set to the two flags that are not administration', () => {
-    expect(SUPER_ADMIN_EXCLUDED_FLAGS).toBe(MANAGE_STRIPE_CONNECT | POST_AS_ASSO);
+    expect(SUPER_ADMIN_EXCLUDED_FLAGS).toBe(MANAGE_PAYOUT_ACCOUNT | POST_AS_ASSO);
   });
 });
 
