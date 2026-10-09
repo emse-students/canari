@@ -26,13 +26,32 @@ import { DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
  * the key package round (mint, checkpoint, publish) runs beside it: the mint holds the MLS lock
  * only for its own span, so the join takes the lock the instant the mint lets go and commits one
  * checkpoint and one HTTP round trip before the publication. Ordering the two is the fix, and the
- * ordering is the existing in-flight round rather than a timer.
+ * ordering is the SERVER'S OWN STATEMENT that the device holds a static KeyPackage, never a timer.
+ *
+ * THE RESIDUAL OF THAT FIX, closed here: waiting on "the round already running" saw no round for a
+ * join that started BEFORE the round set its field, and held every join of a group behind a round
+ * whose request never answered. The wait is now on the published fact (the read of what the gate
+ * reads), and the round is only what makes it true.
  */
+type Server = { answer: () => unknown };
+const proto = BaseMlsService.prototype as unknown as Record<string, unknown>;
+
 function makeCtx(overrides: Record<string, unknown> = {}) {
+  // What the server says about this device's KeyPackage: published by default (the ordinary join).
+  const server: Server = {
+    answer: () => ({ kind: 'package', device: { deviceId: 'd' } }),
+  };
   return {
+    server,
+    keyPackagePublishedFor: null as string | null,
+    keyPackageRoundWaiters: [] as unknown[],
+    awaitOwnKeyPackagePublished: proto.awaitOwnKeyPackagePublished,
+    nextKeyPackageRound: proto.nextKeyPackageRound,
+    settleKeyPackageRoundWaiters: proto.settleKeyPackageRoundWaiters,
     userId: 'u',
     deviceId: 'd',
     delivery: {
+      fetchDeviceKeyPackage: vi.fn(async () => server.answer()),
       fetchGroupInfo: vi
         .fn()
         .mockResolvedValue({ groupInfo: 'AA==', baseEpoch: 5, activeEpoch: 5 }),
@@ -83,6 +102,7 @@ describe('a join waits for the key package round that is already running', () =>
       publish = resolve;
     });
     const ctx = makeCtx({ keyPackageRoundInFlight: round });
+    ctx.server.answer = () => ({ kind: 'none', reason: 'unregistered' });
 
     const joined = externalJoin(ctx, 'g');
     await settle();
@@ -91,9 +111,59 @@ describe('a join waits for the key package round that is already running', () =>
     expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
     expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
 
+    // The round publishes: the server's statement becomes true and the round's end wakes the join.
+    ctx.server.answer = () => ({ kind: 'package', device: { deviceId: 'd' } });
     publish();
+    (proto.settleKeyPackageRoundWaiters as () => void).call(ctx);
     expect(await joined).toEqual({ joined: true });
     expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for a round that has NOT STARTED YET (the join that begins before the round)', async () => {
+    // The residual of the in-flight-round wait: no round field is set, so there was nothing to wait
+    // on and the commit went out unpublished. The fact is false, so the join parks on the next
+    // round and proceeds only once the server says the device is published.
+    const ctx = makeCtx({
+      generateKeyPackageImpl: vi.fn(async function (this: { server: Server }) {
+        this.server.answer = () => ({ kind: 'package', device: { deviceId: 'd' } });
+        return { bytes: new Uint8Array(), notAfterSecs: 1 };
+      }),
+    });
+    ctx.server.answer = () => ({ kind: 'none', reason: 'unregistered' });
+
+    const joined = externalJoin(ctx, 'g');
+    await settle();
+    expect(ctx.keyPackageRoundInFlight).toBeNull();
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+
+    await generateKeyPackage(ctx, 'k');
+    expect(await joined).toEqual({ joined: true });
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads an ELAPSED package as published: the gate checks presence, not freshness', async () => {
+    const ctx = makeCtx();
+    ctx.server.answer = () => ({ kind: 'none', reason: 'expired' });
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+  });
+
+  it('does not attempt the join when the fact cannot be read and no round can change it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx();
+    ctx.server.answer = () => ({ kind: 'unanswered', detail: 'HTTP 502' });
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: false, reason: 'unreachable' });
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('reads the fact once, then trusts the published id (a re-enrolled id is read afresh)', async () => {
+    const ctx = makeCtx();
+    await externalJoin(ctx, 'g');
+    await externalJoin(ctx, 'g2');
+    expect(ctx.delivery.fetchDeviceKeyPackage).toHaveBeenCalledTimes(1);
+    ctx.deviceId = 'd-other';
+    await externalJoin(ctx, 'g3');
+    expect(ctx.delivery.fetchDeviceKeyPackage).toHaveBeenCalledTimes(2);
   });
 
   it('joins at once when no round is running', async () => {
@@ -112,8 +182,15 @@ describe('a join waits for the key package round that is already running', () =>
     );
     round.catch(() => {});
     const ctx = makeCtx({ keyPackageRoundInFlight: round });
+    ctx.server.answer = () => ({ kind: 'none', reason: 'unregistered' });
 
-    expect(await externalJoin(ctx, 'g')).toEqual({
+    const joinedP = externalJoin(ctx, 'g');
+    await settle();
+    (proto.settleKeyPackageRoundWaiters as (e: unknown) => void).call(
+      ctx,
+      new Error('register-device 502' + String.fromCharCode(10) + 'forged line')
+    );
+    expect(await joinedP).toEqual({
       joined: false,
       reason: 'key_package_round_failed',
     });
@@ -148,6 +225,7 @@ describe('a join waits for the key package round that is already running', () =>
         })
         .mockResolvedValue({ bytes: new Uint8Array(), notAfterSecs: 1 }),
     });
+    ctx.server.answer = () => ({ kind: 'none', reason: 'unregistered' });
 
     const round = generateKeyPackage(ctx, 'k');
     const joined = externalJoin(ctx, 'g');
@@ -169,10 +247,14 @@ describe('a join waits for the key package round that is already running', () =>
       publish = resolve;
     });
     const ctx = makeCtx({ keyPackageRoundInFlight: round });
+    ctx.server.answer = () => ({ kind: 'none', reason: 'unregistered' });
 
     const first = externalJoin(ctx, 'g');
     const second = externalJoin(ctx, 'g');
+    await settle();
+    ctx.server.answer = () => ({ kind: 'package', device: { deviceId: 'd' } });
     publish();
+    (proto.settleKeyPackageRoundWaiters as () => void).call(ctx);
 
     expect(await first).toEqual({ joined: true });
     expect(await second).toEqual({ joined: true });

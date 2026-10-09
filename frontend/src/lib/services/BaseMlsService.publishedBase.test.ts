@@ -94,6 +94,11 @@ function makeCtx(moveEpochDuringExport: boolean) {
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     clearPendingCommit: vi.fn().mockResolvedValue(undefined),
     forgetGroup: vi.fn(),
+    // Already published: the join's wait answers from this cache (exercised in joinAfterRegistration).
+    keyPackagePublishedFor: 'd' as string | null,
+    awaitOwnKeyPackagePublished: (
+      BaseMlsService.prototype as unknown as { awaitOwnKeyPackagePublished: () => Promise<string> }
+    ).awaitOwnKeyPackagePublished,
     getEpoch: vi.fn(() => tree.epoch),
     exportGroupInfo: vi.fn(async () => {
       const exportedAt = tree.epoch;

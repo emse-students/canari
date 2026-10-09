@@ -63,6 +63,14 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
     forgetGroup: vi.fn(),
+    // The device is already published (the ordinary join): the REAL wait answers from this cache
+    // without a read. The wait itself is exercised in `BaseMlsService.joinAfterRegistration.test.ts`.
+    keyPackagePublishedFor: 'd' as string | null,
+    awaitOwnKeyPackagePublished: (
+      BaseMlsService.prototype as unknown as {
+        awaitOwnKeyPackagePublished: (short: string) => Promise<string>;
+      }
+    ).awaitOwnKeyPackagePublished,
     ...overrides,
   };
 }

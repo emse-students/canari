@@ -43,7 +43,11 @@ import {
   setSenderMismatchReporter,
   type EnvelopeSender,
 } from '$lib/mls-client/verifiedSender';
-import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
+import {
+  keyPackagePublication,
+  type DeviceKeyPackageAnswer,
+  type DeviceSignatureKeys,
+} from '$lib/mls-client/deviceKeyPackage';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
   shouldAckAfterSuccess,
@@ -400,6 +404,20 @@ export abstract class BaseMlsService implements IMlsService {
    * one {@link generateKeyPackage} call, so it is a fact about NOW and never a "done" flag.
    */
   private keyPackageRoundInFlight: Promise<unknown> | null = null;
+
+  /**
+   * The device id whose static KeyPackage the SERVER has stated it holds - by a 200 from the
+   * round's own registration, or by the read the join makes of the very fact the commit gate reads
+   * (`deviceAddressability`). Keyed by id so a re-enrolment under a new id invalidates it by
+   * construction, and never cleared otherwise: a published static package stays published.
+   */
+  private keyPackagePublishedFor: string | null = null;
+
+  /**
+   * Joins parked until the NEXT key package round settles (see {@link awaitOwnKeyPackagePublished}).
+   * An EVENT, not a clock: the round that settles it is the only thing that can make the fact true.
+   */
+  private keyPackageRoundWaiters: Array<{ resolve: () => void; reject: (e: unknown) => void }> = [];
 
   // ── Timers & event handlers ───────────────────────────────────────────────
   protected heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -2232,9 +2250,84 @@ export abstract class BaseMlsService implements IMlsService {
     })();
     this.keyPackageRoundInFlight = round;
     try {
-      return await round;
+      const keyPackage = await round;
+      // The round's last act is the registration the server answered 200 to: its own statement
+      // that this device holds a static KeyPackage.
+      this.keyPackagePublishedFor = this.deviceId;
+      this.settleKeyPackageRoundWaiters();
+      return keyPackage;
+    } catch (e) {
+      this.settleKeyPackageRoundWaiters(e ?? new Error('key package round failed'));
+      throw e;
     } finally {
       if (this.keyPackageRoundInFlight === round) this.keyPackageRoundInFlight = null;
+    }
+  }
+
+  /** Wakes every join parked on a round: resolved when the round published, rejected when it failed. */
+  private settleKeyPackageRoundWaiters(error?: unknown): void {
+    const waiters = this.keyPackageRoundWaiters;
+    this.keyPackageRoundWaiters = [];
+    for (const w of waiters) {
+      if (error === undefined) w.resolve();
+      else w.reject(error);
+    }
+  }
+
+  /** Resolves when the next key package round publishes, rejects when it fails. No clock. */
+  private nextKeyPackageRound(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.keyPackageRoundWaiters.push({ resolve, reject });
+    });
+  }
+
+  /**
+   * Waits until THE SERVER HAS STATED that this device holds a static KeyPackage - the fact the
+   * commit gate reads before it activates a membership - and answers why it could not be proven
+   * otherwise. Replaces waiting for "the round that is running", which saw no round for a join that
+   * started before the round did and hung with a request that never answered.
+   *
+   * THE FACT IS THE CONDITION, THE ROUND IS ONLY WHAT MAKES IT TRUE. A round not started yet, one
+   * running and one that ended are the same case - the fact is false until it is true - so the loop
+   * is: read the fact; if false, park on the next round's settlement (an event) and read it again.
+   * No timer anywhere. A hung request of the round is bounded by its own typed deadline
+   * (`KEY_PACKAGE_REQUEST_DEADLINE_MS`), which fails the round and so wakes this with a refusal.
+   *
+   * - `published`: the gate will find the row; join.
+   * - `round_failed`: the round the wait depended on failed; the join is not attempted.
+   * - `unverified`: the read itself got no answer (or the id is revoked) with no round running to
+   *   change that, so nothing is claimed and nothing is attempted.
+   */
+  private async awaitOwnKeyPackagePublished(
+    short: string
+  ): Promise<'published' | 'round_failed' | 'unverified'> {
+    for (;;) {
+      if (this.keyPackagePublishedFor === this.deviceId) return 'published';
+      const answer = await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId);
+      const publication = keyPackagePublication(answer);
+      if (publication === 'published') {
+        this.keyPackagePublishedFor = this.deviceId;
+        return 'published';
+      }
+      const roundRunning = this.keyPackageRoundInFlight !== null;
+      if ((publication === 'unknown' || publication === 'revoked') && !roundRunning) {
+        console.warn(
+          `[MLS] externalJoin ${short}... not attempted - this device's KeyPackage publication could not be established (${publication}) and no round is running to change it`
+        );
+        return 'unverified';
+      }
+      console.log(
+        `[MLS] externalJoin ${short}... waits for the server to hold this device's KeyPackage (${publication}, round ${roundRunning ? 'running' : 'not started'}): the commit gate refuses an activation without one`
+      );
+      try {
+        await this.nextKeyPackageRound();
+      } catch (e) {
+        console.warn(
+          `[MLS] externalJoin ${short}... not attempted - the key package round FAILED, so the gate would answer no_key_package:`,
+          sanitizeForLog(String(e))
+        );
+        return 'round_failed';
+      }
     }
   }
 
@@ -3841,27 +3934,16 @@ export abstract class BaseMlsService implements IMlsService {
       // checkpoint and one round trip ahead of the publication. Three of the six healed 2 minutes to
       // 1 h 44 min later, an iPhone among them, and the other three devices no longer exist.
       //
-      // WAITS FOR A ROUND THAT IS RUNNING, never for one that might start: the wait ends when that
-      // round does. A round that FAILED has already told its own caller (the device cap has a toast),
-      // and the join is not attempted: it would earn the `no_key_package` refusal this wait exists to
-      // avoid, so the failure is carried to the caller as a typed outcome instead of being learned
-      // from the gate. KNOWN RESIDUAL: a join that starts BEFORE the round has set the field sees no
-      // round to wait for (docs/wiki/backlog.md).
-      const round = this.keyPackageRoundInFlight;
-      if (round) {
-        console.log(
-          `[MLS] externalJoin ${short}... waits for this device's key package round: the commit gate refuses an activation for a device with no KeyPackage`
-        );
-        try {
-          await round;
-        } catch (e) {
-          console.warn(
-            `[MLS] externalJoin ${short}... not attempted - the key package round FAILED, so the gate would answer no_key_package:`,
-            sanitizeForLog(String(e))
-          );
-          return { joined: false, reason: 'key_package_round_failed' };
-        }
+      // WAITS FOR THE PUBLISHED FACT, not for a round: the server's own statement that this device
+      // holds a static KeyPackage, read from what the gate reads. A round not started yet, running or
+      // ended is one case, and no timer decides it (see {@link awaitOwnKeyPackagePublished}). The
+      // earlier version waited on a round already running and left two holes this closes: a join that
+      // started BEFORE the round set its field, and a round whose request never answered.
+      const publication = await this.awaitOwnKeyPackagePublished(short);
+      if (publication === 'round_failed') {
+        return { joined: false, reason: 'key_package_round_failed' };
       }
+      if (publication === 'unverified') return { joined: false, reason: 'unreachable' };
       // READ AFTER THE WAIT: the round can re-enrol the device under a new id (a revoked id), and the
       // gate must exclude the id that actually joins.
       const excludeSelf = [`${this.userId}:${this.deviceId}`];

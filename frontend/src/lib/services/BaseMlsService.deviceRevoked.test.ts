@@ -25,6 +25,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     deleteDevice: vi.fn().mockResolvedValue(undefined),
     // Real rotation: the assertions below are about what it does.
     rotateDeviceIdentity: BaseMlsService.prototype['rotateDeviceIdentity'],
+    // The real wake-up of the joins parked on a round (none here), and the field it drains.
+    keyPackageRoundWaiters: [] as unknown[],
+    settleKeyPackageRoundWaiters: BaseMlsService.prototype['settleKeyPackageRoundWaiters'],
     ...overrides,
   };
 }
