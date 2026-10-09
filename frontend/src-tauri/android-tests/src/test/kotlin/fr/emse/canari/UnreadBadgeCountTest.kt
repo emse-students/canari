@@ -30,9 +30,9 @@ class UnreadBadgeCountTest {
     /** A record as `activeNotifications` reports it: an id and the channel it was filed under. */
     data class Posted(val id: Int, val channel: String)
 
-    private val messages = "canari_messages"
-    private val mentions = "canari_mentions"
-    private val reactions = "canari_reactions"
+    private val messages = "canari_messages_v2"
+    private val mentions = "canari_mentions_v2"
+    private val reactions = "canari_reactions_v2"
 
     /**
      * Mirror of `countUnreadConversations`: the set of message conversations in the shade,

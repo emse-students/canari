@@ -106,7 +106,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private val WELCOMES_ON_LANE = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
         /** High-priority channel: DMs and group messages (sound + vibration). */
-        const val CHANNEL_MESSAGES = "canari_messages"
+        const val CHANNEL_MESSAGES = "canari_messages_v2"
 
         /** Normal-priority channel: reactions/comments on posts (silent). */
         const val CHANNEL_SOCIAL   = "canari_social"
@@ -118,7 +118,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val CHANNEL_CALLS    = "canari_calls"
 
         /** High-priority channel: messages that @-mention the user (WP-XP-5, bypass-DND request). */
-        const val CHANNEL_MENTIONS = "canari_mentions"
+        const val CHANNEL_MENTIONS = "canari_mentions_v2"
 
         /**
          * Normal-priority channel: somebody reacted to a message YOU wrote (sound, no vibration,
@@ -135,7 +135,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * notified, so it must be heard, and a heads-up popping over what they are doing for an
          * emoji is not what they asked for. No vibration for the same reason.
          */
-        const val CHANNEL_REACTIONS = "canari_reactions"
+        const val CHANNEL_REACTIONS = "canari_reactions_v2"
 
         const val PREFS_NAME    = "canari_prefs"
         const val KEY_FCM_TOKEN = "fcm_token"

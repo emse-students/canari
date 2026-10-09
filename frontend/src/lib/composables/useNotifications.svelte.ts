@@ -9,6 +9,7 @@ import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { playTone } from '$lib/utils/toneOutput';
+import { scoreSound } from '$lib/utils/soundPalette';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 import {
   postNativeMessageNotification,
@@ -60,7 +61,13 @@ import {
  */
 export const NOTIFICATION_ICON = 'ic_notification';
 
-export const CHANNEL_MESSAGES = 'canari_messages';
+/**
+ * THE `_v2` CHANNELS CARRY THE PALETTE-A SOUNDS (2026-10-09). A channel's sound is IMMUTABLE once
+ * Android has created it, so changing the sound meant new ids; `CanariApplication` deletes the old
+ * `canari_messages` / `canari_mentions` / `canari_reactions` at startup. The ids are the same
+ * strings in Kotlin, the manifest and here, pinned by `notificationChannels.test.ts`.
+ */
+export const CHANNEL_MESSAGES = 'canari_messages_v2';
 export const CHANNEL_CALLS = 'canari_calls';
 /**
  * The channel a message that NAMES the reader is filed on - `CanariApplication.ensureChannels`.
@@ -77,7 +84,7 @@ export const CHANNEL_CALLS = 'canari_calls';
  * decided by nothing the reader can see. Measured as NOTIF-16 on 2026-09-08: a mention over the
  * WebSocket landed on `canari_messages`, the same mention pushed landed on `canari_mentions`.
  */
-export const CHANNEL_MENTIONS = 'canari_mentions';
+export const CHANNEL_MENTIONS = 'canari_mentions_v2';
 
 /** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
 function stableNotifId(conversationId: string): number {
@@ -246,29 +253,21 @@ export function useNotifications() {
   // The output itself - opened for a tone, suspended when the last one ends, closed when the app
   // leaves the screen - is `toneOutput`'s; every tone below only schedules its oscillators.
 
-  /** Plays a two-note descending chime (rate-limited to one every 600 ms) when an incoming message arrives. */
-  function playNotificationTone() {
+  /**
+   * Plays the "message" trill (palette A) when an incoming message arrives, rate-limited to one every
+   * 600 ms. A mention has its own sound and shares this limit, so a burst never stacks the two.
+   */
+  function playNotificationTone(sound: 'message' | 'mention' = 'message') {
     if (typeof window === 'undefined') return;
     if (!settings.soundsEnabled) return;
     const now = Date.now();
     if (now - lastNotificationAt < 600) return;
     lastNotificationAt = now;
 
-    playTone('notification', (ctx, startAt) => [
-      sweepVoice(ctx, startAt, {
-        type: 'sine',
-        from: 920,
-        to: 680,
-        glideEnd: 0.11,
-        peak: 0.08,
-        attackEnd: 0.02,
-        decayEnd: 0.14,
-        stopAt: 0.16,
-      }),
-    ]);
+    playTone(sound, (ctx, startAt) => scoreSound(sound, ctx, startAt));
   }
 
-  /** Plays a short ascending chirp when the user sends a message (rate-limited to one every 200 ms). */
+  /** Plays the "send" trill (palette A) when the user sends a message (rate-limited to one every 200 ms). */
   function playSendTone() {
     if (typeof window === 'undefined') return;
     if (!settings.soundsEnabled) return;
@@ -276,23 +275,12 @@ export function useNotifications() {
     if (now - lastSendToneAt < 200) return;
     lastSendToneAt = now;
 
-    playTone('send', (ctx, startAt) => [
-      sweepVoice(ctx, startAt, {
-        type: 'triangle',
-        from: 740,
-        to: 980,
-        glideEnd: 0.08,
-        peak: 0.05,
-        attackEnd: 0.015,
-        decayEnd: 0.11,
-        stopAt: 0.12,
-      }),
-    ]);
+    playTone('send', (ctx, startAt) => scoreSound('send', ctx, startAt));
   }
 
-  /** Alias for playNotificationTone - used when a message is received from another user. */
-  function playReceiveTone() {
-    playNotificationTone();
+  /** Plays the received-message trill: the "mention" one when the message names the reader. */
+  function playReceiveTone(mentionsMe = false) {
+    playNotificationTone(mentionsMe ? 'mention' : 'message');
   }
 
   /** Plays one cycle of a classic dual-tone ring (best-effort; respects soundsEnabled). */
@@ -525,7 +513,7 @@ export function useNotifications() {
     }
   }
 
-  /** Plays a subtle descending tick when messages are marked as read (rate-limited to one every 250 ms). */
+  /** Plays the "read" trill (palette A) when messages are marked as read (rate-limited to one every 250 ms). */
   function playReadTone() {
     if (typeof window === 'undefined') return;
     if (!settings.soundsEnabled) return;
@@ -533,18 +521,7 @@ export function useNotifications() {
     if (now - lastReadToneAt < 250) return;
     lastReadToneAt = now;
 
-    playTone('read', (ctx, startAt) => [
-      sweepVoice(ctx, startAt, {
-        type: 'sine',
-        from: 1080,
-        to: 820,
-        glideEnd: 0.07,
-        peak: 0.04,
-        attackEnd: 0.01,
-        decayEnd: 0.09,
-        stopAt: 0.1,
-      }),
-    ]);
+    playTone('read', (ctx, startAt) => scoreSound('read', ctx, startAt));
   }
 
   // ---------- System (OS-level) notifications ----------

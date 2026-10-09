@@ -77,7 +77,7 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
     // The ring CHANNELS stay declared: the Kotlin is untouched, only its entry point is gated, and
     // the channels must survive the hold so a revival needs no notification-settings migration.
     expect(fcmServiceKt).toMatch(/CHANNEL_CALLS\s*=\s*"canari_calls"/);
-    expect(fcmServiceKt).toMatch(/CHANNEL_MENTIONS\s*=\s*"canari_mentions"/);
+    expect(fcmServiceKt).toMatch(/CHANNEL_MENTIONS\s*=\s*"canari_mentions_v2"/);
   });
 
   it('gates the incoming-call ring on CALLS_ENABLED (WP-XP-5, held off)', () => {
