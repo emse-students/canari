@@ -69,6 +69,7 @@
 - [CanaReels in a conversation](frontend/modules/reels-in-chat.md) — Design study (2026-10-09): an ephemeral E2E video message in DMs, groups and salons, its model, retention, weak network, work packages
 - [Payments module](frontend/modules/payments.md) — Lydia, products, shop; [Stripe archive](stripe-archive.md) — what Stripe did and why it left
 - [Minesweeper](frontend/modules/minesweeper.md) — No-guess generation, seed + first click, ranked replay, generation cost
+- [School mail, IMAP on the device](frontend/modules/mail-imap.md) — Study only: feasibility, security design, work packages, risks for a native-only school-mail tab
 - [Admin module](frontend/modules/admin.md) — Dashboard, moderation, platform config
 
 ### Infrastructure
