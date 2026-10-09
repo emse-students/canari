@@ -120,6 +120,54 @@ export class DeliveryUnreachableError extends Error {
 export const KEY_PACKAGE_REQUEST_DEADLINE_MS = 60_000;
 
 /**
+ * How long a WHOLE key package round (mint, checkpoint, native `invoke`, re-enrolment, every
+ * request) may run before its caller stops waiting for it: {@link raceDeadline}.
+ *
+ * The per-request deadline bounds only HTTP. A native `invoke` cannot be aborted and a mint under
+ * the MLS lock can hang, and either kept `keyPackageRoundsActive` above zero for ever: every join
+ * parked and its group's flight never cleared. This bounds what the caller AWAITS, not the work:
+ * see `generateKeyPackage` for what an abandoned round may still do. Above the per-request
+ * deadline and above a slow PIN-unlock checkpoint (22 s measured), so it fires on a hang, never on
+ * a slow round.
+ */
+export const KEY_PACKAGE_ROUND_DEADLINE_MS = 180_000;
+
+/**
+ * Stops WAITING for `work` after `ms`: rejects with {@link DeliveryDeadlineError} and leaves the
+ * work running - it cannot be cancelled (a native `invoke`), only abandoned. No retry, no heal:
+ * the caller learns the round failed, typed, and the late outcome of `work` goes to `onLate`.
+ */
+export function raceDeadline<T>(
+  operation: string,
+  work: Promise<T>,
+  ms: number,
+  onLate: (outcome: { ok: true } | { ok: false; error: unknown }) => void
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let abandoned = false;
+    const timer = setTimeout(() => {
+      abandoned = true;
+      console.error(
+        `[DELIVERY] ${operation} abandoned after ${ms} ms - the work may still finish in the background`
+      );
+      reject(new DeliveryDeadlineError(operation, ms));
+    }, ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        if (abandoned) onLate({ ok: true });
+        else resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        if (abandoned) onLate({ ok: false, error });
+        else reject(error);
+      }
+    );
+  });
+}
+
+/**
  * A request of the key package round was ABANDONED because it exceeded its deadline. Not
  * {@link DeliveryUnreachableError} (the service WAS asked, it never answered) and not a status
  * code: nothing is established about the device, so the caller must not act on it.

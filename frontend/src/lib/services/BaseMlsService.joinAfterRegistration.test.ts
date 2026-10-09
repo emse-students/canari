@@ -8,7 +8,11 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 
 import { BaseMlsService } from './BaseMlsService';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
-import { DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  DeliveryDeadlineError,
+  DeviceRevokedError,
+  KEY_PACKAGE_ROUND_DEADLINE_MS,
+} from '$lib/mls-client/mlsDeliveryApi';
 
 /**
  * A NEW DEVICE'S EXTERNAL JOIN MUST NOT REACH THE COMMIT GATE BEFORE ITS KEYPACKAGE DOES.
@@ -399,5 +403,130 @@ describe('generateKeyPackage names the rounds it runs', () => {
     await b;
     expect(ctx.keyPackageRoundInFlight).toBeNull();
     expect(ctx.keyPackageRoundsActive).toBe(0);
+  });
+});
+
+describe('a round that HANGS, an empty biometric key, a bounded re-read, and the flights', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('a never-resolving mint fails the round typed: the count returns to 0 and the join refuses', async () => {
+    vi.useFakeTimers();
+    const ctx = makeCtx();
+    ctx.server.answer = ABSENT;
+    // A native `invoke` that never answers: it cannot be aborted, only abandoned.
+    ctx.generateKeyPackageImpl = vi.fn(() => new Promise(() => {}));
+
+    const running = ctx.generateKeyPackage('k').catch((e: unknown) => e);
+    const joined = externalJoin(ctx, 'g');
+    await vi.advanceTimersByTimeAsync(KEY_PACKAGE_ROUND_DEADLINE_MS);
+
+    expect(await running).toBeInstanceOf(DeliveryDeadlineError);
+    expect(await joined).toEqual({ joined: false, reason: 'key_package_round_failed' });
+    expect(ctx.keyPackageRoundsActive).toBe(0);
+    expect(ctx.keyPackageRoundInFlight).toBeNull();
+    expect(ctx.keyPackageRoundWaiters).toHaveLength(0);
+
+    // The flight is released: a later join of the same group is a NEW attempt, not the hung promise.
+    ctx.generateKeyPackageImpl = vi.fn(async () => {
+      ctx.server.answer = PUBLISHED;
+      return KP;
+    });
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+  });
+
+  it('a join that STARTED the hung round is released too', async () => {
+    vi.useFakeTimers();
+    const ctx = makeCtx();
+    ctx.server.answer = ABSENT;
+    ctx.generateKeyPackageImpl = vi.fn(() => new Promise(() => {}));
+
+    const joined = externalJoin(ctx, 'g');
+    await vi.advanceTimersByTimeAsync(KEY_PACKAGE_ROUND_DEADLINE_MS);
+    expect(await joined).toEqual({ joined: false, reason: 'key_package_round_failed' });
+    expect(ctx.keyPackageRoundsActive).toBe(0);
+  });
+
+  it('starts the round with the key boot passed, EMPTY in biometric mode (the native layer resolves it)', async () => {
+    const ctx = makeCtx({ currentDeviceKeyB64: '' });
+    ctx.server.answer = ABSENT;
+    ctx.generateKeyPackageImpl = vi.fn(async () => {
+      ctx.server.answer = PUBLISHED;
+      return KP;
+    });
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+    expect(ctx.generateKeyPackageImpl).toHaveBeenCalledWith('');
+  });
+
+  it('ends the re-read loop on a PASS COUNT when rounds keep settling and the fact stays absent', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchDeviceKeyPackage.mockImplementation(async () => {
+      ctx.keyPackageRoundsSettled++; // a round settles during every read, publishing nothing
+      return ABSENT;
+    });
+
+    expect(await externalJoin(ctx, 'g')).toEqual({
+      joined: false,
+      reason: 'own_key_package_unverified',
+    });
+    expect(ctx.delivery.fetchDeviceKeyPackage).toHaveBeenCalledTimes(6);
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+  });
+
+  it('warns ONCE per distinct reason and says what would change it; repeats are debug', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const ctx = makeCtx();
+    ctx.server.answer = { kind: 'unanswered', detail: 'HTTP 502' };
+
+    await externalJoin(ctx, 'g');
+    await externalJoin(ctx, 'g');
+    await externalJoin(ctx, 'g');
+
+    const notAttempted = warn.mock.calls.flat().filter((m) => String(m).includes('not attempted'));
+    expect(notAttempted).toHaveLength(1);
+    expect(String(notAttempted[0])).toContain('what changes it');
+    expect(
+      debug.mock.calls.flat().filter((m) => String(m).includes('still not attempted'))
+    ).toHaveLength(2);
+
+    // A published fact clears it: the next failure is news again.
+    ctx.server.answer = PUBLISHED;
+    await externalJoin(ctx, 'g');
+    ctx.server.answer = { kind: 'unanswered', detail: 'HTTP 502' };
+    await externalJoin(ctx, 'g');
+    expect(warn.mock.calls.flat().filter((m) => String(m).includes('not attempted:'))).toHaveLength(
+      2
+    );
+  });
+
+  it("a torn-down attempt's cleanup does not delete the flight of the join that replaced it", async () => {
+    const ctx = makeCtx({ destroyPlatformResources: vi.fn(), heldFrames: [] });
+    ctx.server.answer = ABSENT;
+    const round = controlledRound(ctx);
+    ctx.generateKeyPackageImpl = round.impl;
+    ctx.generateKeyPackage('k').catch(() => {});
+
+    const a = externalJoin(ctx, 'g');
+    await settle();
+    ctx.destroy();
+    const b = externalJoin(ctx, 'g'); // owns the map entry now; `a`'s cleanup has not run yet
+    await a;
+    await settle();
+    const c = externalJoin(ctx, 'g'); // must SHARE b, not start a third join
+
+    round.release();
+    expect(await b).toEqual({ joined: true });
+    expect(await c).toEqual({ joined: true });
+    expect(ctx.joinByExternalCommit).toHaveBeenCalledTimes(1);
   });
 });

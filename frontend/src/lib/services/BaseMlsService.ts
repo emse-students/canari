@@ -14,6 +14,8 @@ import {
 } from '$lib/mls-client/mlsDecryptSession';
 import {
   DeviceRevokedError,
+  KEY_PACKAGE_ROUND_DEADLINE_MS,
+  raceDeadline,
   NotAGroupMemberError,
   type MlsDeliveryFetch,
 } from '$lib/mls-client/mlsDeliveryApi';
@@ -112,6 +114,13 @@ import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
  * that is behind the group's epoch ends the loop on that fact, whatever this number is.
  */
 const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
+
+/**
+ * How many times one join may read the device's published-KeyPackage fact while rounds keep
+ * settling and it stays absent or revoked. A counter per attempt, not a clock: it is what ends the
+ * loop when every pass is woken by a round that did not make the fact true.
+ */
+const EXTERNAL_JOIN_FACT_PASSES = 6;
 
 /**
  * External joins running now, per service instance then per group. A WeakMap so the state is the
@@ -426,6 +435,8 @@ export abstract class BaseMlsService implements IMlsService {
    * Joins parked until a key package round settles (see {@link awaitOwnKeyPackagePublished}). An
    * EVENT, not a clock. Woken with `true` when the client is torn down, so none outlives it.
    */
+  private ownKeyPackageUnverifiedReported: string | null = null;
+
   private keyPackageRoundWaiters: Array<(tornDown: boolean) => void> = [];
 
   // ── Timers & event handlers ───────────────────────────────────────────────
@@ -2261,17 +2272,36 @@ export abstract class BaseMlsService implements IMlsService {
         return this.generateKeyPackageImpl(deviceKeyB64);
       }
     })();
-    this.keyPackageRoundInFlight = round;
+    // THE CALLER STOPS WAITING AFTER A DEADLINE, THE WORK IS NOT CANCELLED (a native `invoke` and a
+    // mint under the MLS lock cannot be aborted). Without this a hang anywhere in the round kept
+    // the active count above zero for ever, so every join parked and its flight never cleared.
+    // WHAT AN ABANDONED ROUND MAY STILL DO: finish its mint, persist up to 50 bundles, publish. The
+    // next round reads the server's pool count: if the late publish landed it mints nothing, and if
+    // the round stopped between persist and publish it mints a second batch whose first batch is
+    // orphaned locally until `prune_expired_key_packages` - the same cost any failed publish after
+    // a mint already has. It is logged when it ends.
+    const bounded = raceDeadline(
+      'key-package-round',
+      round,
+      KEY_PACKAGE_ROUND_DEADLINE_MS,
+      (late) =>
+        console.warn(
+          late.ok
+            ? '[MLS] an abandoned key package round FINISHED late (its bundles are persisted and published)'
+            : `[MLS] an abandoned key package round FAILED late: ${sanitizeForLog(String(late.error))}`
+        )
+    );
+    this.keyPackageRoundInFlight = bounded;
     this.keyPackageRoundsActive++;
     try {
-      const keyPackage = await round;
+      const keyPackage = await bounded;
       this.noteKeyPackageRoundSettled();
       return keyPackage;
     } catch (e) {
       this.noteKeyPackageRoundSettled(e ?? new Error('key package round failed'));
       throw e;
     } finally {
-      if (this.keyPackageRoundInFlight === round) this.keyPackageRoundInFlight = null;
+      if (this.keyPackageRoundInFlight === bounded) this.keyPackageRoundInFlight = null;
     }
   }
 
@@ -2309,17 +2339,32 @@ export abstract class BaseMlsService implements IMlsService {
    *   server STILL does not hold the package, that is unverified, never a second round.
    * - the read got no answer and no round is running: unverified; nothing is claimed.
    *
-   * A hung request of a round is bounded by its typed deadline, which fails the round.
+   * WHAT IS BOUNDED: the join's WAIT. Each HTTP call of a round has its own typed deadline, and the
+   * whole round is raced against `KEY_PACKAGE_ROUND_DEADLINE_MS` (the native `invoke`, the mint and a
+   * re-enrolment cannot be aborted, only abandoned), so a hang fails the round typed and wakes this
+   * with a refusal. WHAT IS NOT: the abandoned work itself - see `generateKeyPackage`.
    */
   private async awaitOwnKeyPackagePublished(
     short: string
   ): Promise<'published' | 'round_failed' | 'unverified'> {
     let startedOwnRound = false;
-    for (;;) {
+    for (let pass = 1; ; pass++) {
+      // A PASS COUNT IS THE PROOF OF TERMINATION when rounds keep settling while the fact stays
+      // absent or revoked: each pass is one read, and the count is per join attempt, not a clock.
+      if (pass > EXTERNAL_JOIN_FACT_PASSES) {
+        this.reportOwnKeyPackageUnverified(
+          short,
+          `the fact stayed unpublished across ${EXTERNAL_JOIN_FACT_PASSES} reads`
+        );
+        return 'unverified';
+      }
       const settledBefore = this.keyPackageRoundsSettled;
       const answer = await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId);
       const publication = keyPackagePublication(answer);
-      if (publication === 'published') return 'published';
+      if (publication === 'published') {
+        this.ownKeyPackageUnverifiedReported = null;
+        return 'published';
+      }
       if (answer.kind === 'unanswered') {
         console.warn(
           `[MLS] externalJoin ${short}... could not read this device's KeyPackage publication: ${sanitizeForLog(answer.detail)}`
@@ -2331,6 +2376,9 @@ export abstract class BaseMlsService implements IMlsService {
         this.keyPackageRoundsActive === 0;
       if (this.keyPackageRoundsSettled !== settledBefore) {
         if (failedSince()) return this.roundFailedForJoin(short);
+        console.log(
+          `[MLS] externalJoin ${short}... a key package round settled during the read (${publication}) - reading the fact again`
+        );
         continue;
       }
       if (this.keyPackageRoundsActive > 0) {
@@ -2340,13 +2388,24 @@ export abstract class BaseMlsService implements IMlsService {
         const tornDown = await new Promise<boolean>((resolve) => {
           this.keyPackageRoundWaiters.push(resolve);
         });
-        if (tornDown) return 'unverified';
+        if (tornDown) {
+          console.warn(
+            `[MLS] externalJoin ${short}... released: the client was torn down while it waited for a key package round`
+          );
+          return 'unverified';
+        }
         if (failedSince()) return this.roundFailedForJoin(short);
+        console.log(
+          `[MLS] externalJoin ${short}... woken by a settled key package round - reading the fact again`
+        );
         continue;
       }
-      if (publication === 'unknown' || startedOwnRound || !this.currentDeviceKeyB64) {
-        console.warn(
-          `[MLS] externalJoin ${short}... not attempted - this device's KeyPackage publication could not be established (${publication}) and no round can change it`
+      if (publication === 'unknown' || startedOwnRound) {
+        this.reportOwnKeyPackageUnverified(
+          short,
+          publication === 'unknown'
+            ? 'the server did not answer the read and no round is running'
+            : `our own round succeeded and the server still does not hold the package (${publication})`
         );
         return 'unverified';
       }
@@ -2355,6 +2414,8 @@ export abstract class BaseMlsService implements IMlsService {
       );
       startedOwnRound = true;
       try {
+        // THE KEY IS WHATEVER BOOT PASSED, INCLUDING '' IN BIOMETRIC MODE (the native layer resolves
+        // it from the keystore): an empty string is not "no key", so there is no guard on it.
         await this.generateKeyPackage(this.currentDeviceKeyB64);
       } catch (e) {
         console.warn(
@@ -2364,6 +2425,23 @@ export abstract class BaseMlsService implements IMlsService {
         return 'round_failed';
       }
     }
+  }
+
+  /**
+   * Says ONCE per distinct reason that a join could not be attempted for want of a published
+   * KeyPackage, and what would change it. The recovery cadence (about once a minute) asks again with
+   * no repair in between, so repeating the warning would be noise: a reader needs the state change,
+   * not the heartbeat. Cleared when the fact is next seen published.
+   */
+  private reportOwnKeyPackageUnverified(short: string, why: string): void {
+    if (this.ownKeyPackageUnverifiedReported === why) {
+      console.debug(`[MLS] externalJoin ${short}... still not attempted: ${why}`);
+      return;
+    }
+    this.ownKeyPackageUnverifiedReported = why;
+    console.warn(
+      `[MLS] externalJoin ${short}... not attempted: ${why}. Not repeated at this level until it changes - what changes it is a round publishing this device's KeyPackage or the server answering the read`
+    );
   }
 
   private roundFailedForJoin(short: string): 'round_failed' {
@@ -4162,7 +4240,10 @@ export abstract class BaseMlsService implements IMlsService {
       }
       // Unreachable - the last attempt returns above. Typed rather than asserted.
       return { joined: false, reason: 'refused', serverReason: 'unspecified' };
-    })().finally(() => flights.delete(groupId));
+    })().finally(() => {
+      // Identity-checked: a teardown cleared the map and a later join may own the entry by now.
+      if (flights.get(groupId) === attempt) flights.delete(groupId);
+    });
     flights.set(groupId, attempt);
     return attempt;
   }

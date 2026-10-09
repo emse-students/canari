@@ -686,6 +686,20 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     return;
   }
 
+  // THIS DEVICE'S OWN KEYPACKAGE IS NOT PUBLISHED, so no member can Welcome it either - a Welcome is
+  // built from that very package, and a request asking for one is hopeless until it exists. The
+  // join already started or awaited the round that publishes it; the watchdog's next pass reads
+  // the fact again. Typed, never message-matched.
+  if (
+    outcome.reason === 'own_key_package_unverified' ||
+    outcome.reason === 'key_package_round_failed'
+  ) {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... not asking a member to re-add us: this device's own KeyPackage is not published (${outcome.reason})`
+    );
+    return;
+  }
+
   // WHAT REACHES HERE IS THEREFORE BOUNDED BY SOMETHING: a group whose base is unpublished has a
   // member who will publish one, or a peer who can send a Welcome. Nothing that reaches this line
   // any longer has a server-side answer proving the request is hopeless.
