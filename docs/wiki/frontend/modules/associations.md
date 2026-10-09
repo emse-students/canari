@@ -79,6 +79,9 @@ Now:
 
 The edit page has an **Audience** tab (`EditAudienceTab.svelte`) for a global admin and a BDE star of the association: two presets (my campus; my campus and chosen formations), a third (everyone) for an institution only, the grid link for admins. The creation page shows `ProfileCampusPrompt` instead of the form when the creator's profile has no campus, and maps the five typed server refusals through `audienceRefusal.ts`. Mechanism, limits (a star cannot read the current audience) and tests: [profiles-and-access](../../profiles-and-access.md#audiences-client-presets-as-built-wp-b-2026-10-08).
 
+
+**What closed the institution creation gaps (2026-10-09).** (1) Members are NOT asked for on the creation form: the creator lands on the members tab, where `Publie en son nom` is already the default for an institution, and an institution with no member is a state of one click, not a defect. (2) An institution's reach IS editable on its own edit page: the Audience tab is drawn for a global admin (`editRights.audience`), with the `everyone` preset. (3) A union of several campuses or formations - which three presets cannot say - is the **Custom** choice: `CellPicker.svelte` (one block per campus, a parent box and one box per formation, built on the `/admin/spaces` helpers), offered on the creation form of an institution and, to a GLOBAL ADMIN only, as a fourth preset on the Audience tab of any entity (`offeredPresets(type, gridAllowed)`); the rules written are `toRules(cells)`, the smallest equivalent set, and an empty picker cannot be submitted. A union already stored opens the tab on Custom with its pairs ticked. Tests: `CellPicker.svelte.test.ts`, `reachChoiceToRules('custom', ...)` in `audienceRules.test.ts`, `offeredPresets` in `audiencePresets.test.ts`.
+
 ## Promo lists, and the second theme
 
 A list is NOT its own entity: it is a row in `associations` discriminated by `type = 'list'`, so the

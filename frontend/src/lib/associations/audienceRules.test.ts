@@ -76,6 +76,18 @@ describe('reachChoiceToRules', () => {
     ]);
   });
 
+  it('custom writes the ticked pairs as the grid would: a union across campuses', () => {
+    const cells = new Set([cellOf('ICM', 'gardanne'), cellOf('ISMIN', 'saint-etienne')]);
+    expect(reachChoiceToRules('custom', '', '', cells)).toEqual([
+      { formation: 'ISMIN', campus: 'saint-etienne' },
+      { formation: 'ICM', campus: 'gardanne' },
+    ]);
+    expect(reachChoiceToRules('custom', '', '', new Set(ALL_CELLS))).toEqual([
+      { formation: null, campus: null },
+    ]);
+    expect(reachChoiceToRules('custom', '', '')).toEqual([]);
+  });
+
   it('never widens a half-filled choice', () => {
     expect(reachChoiceToRules('campus', '', '')).toEqual([]);
     expect(reachChoiceToRules('cell', 'gardanne', '')).toEqual([]);
