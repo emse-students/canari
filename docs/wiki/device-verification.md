@@ -1098,6 +1098,19 @@ the page inspectable over CDP (console) or `logcat`.
    sequence, and the question moves to the WebView (record it, do not patch the page). If it is swallowed
    with NO `cancelled` line: the edge touch was not seen by the page at all.
 
+## W. The composer stands still while the keyboard rises - owed on BOTH phones
+
+**Proves** [the two stale numbers of a keyboard rise](frontend/modules/chat.md#every-keyboard-rise-moves-the-composer-for-a-moment-on-both-phones-measured-2026-10-02-fixed-2026-10-09-reading-owed).
+Method of the original reading (#1345): over CDP, sample the composer's top
+(`.chat-composer-footer`, `getBoundingClientRect().top`) every animation frame while tapping the
+text field of an open conversation.
+
+1. **Mi 9T**: the top goes from ~877 straight to ~532, with NO frame near 174 (it sat there 60-100 ms),
+   and `visualViewport.height` never reads below `innerHeight` by a keyboard's worth.
+2. **iPhone 12**: the top goes from 766 straight to ~487 pt, with NO ~400 ms plateau at 465, and the
+   closed composer is where it always was (the pin is released on close).
+3. Open and close the keyboard five times each: no frame outside the two resting positions.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.

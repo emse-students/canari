@@ -71,6 +71,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | NOTIF-10: a refused push after real banners leaves no generic line (2026-10-09, `GenericBannerLedger` unclaimed notes; JVM-tested, the service's two cancel hooks NOT compiled from here) | `bun archive/notif.mjs 10` on the Mi 9T against a build carrying it: five messages with the push channel cut, then the radios back; the shade ends with the summary and the real banners, NO `Nouveau message de ...` ([mobile](frontend/mobile.md), board row [NOTIF-10](cross-client-testing.md#14---notif---notifications)) |
 | the plugin's "Default" notification channel is gone (2026-10-09; Kotlin written, NOT compiled from here) | the release APK builds, then on a phone: Settings > Apps > Canari > Notifications lists no "Default" after one app resume ([mobile](frontend/mobile.md)); if it is back after a cold start, the plugin loads after the first resume and the call moves to `onWebViewCreate` |
 | the swipe to the camera after publishing a post (2026-10-09) | check V on the Mi 9T: publish, swipe right at once, three times ([device-verification](device-verification.md#v-the-camera-swipe-on-a-fresh-feed-after-publishing---owed-on-android)) |
+| the composer stands still while the keyboard rises (2026-10-09, Android double report and iOS stale inset, unit-proven only) | check W on BOTH phones, the original per-frame CDP sampling of the composer's top ([device-verification](device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)) |
 | a salon carries read receipts (#1235, `v0.18.32`) | `READ-6` on the rig, then one look in a real community: a member who is not an admin sees the double check and "Lu par" under their own last message ([social-service](services/social-service.md#read-receipts-in-a-salon)) |
 | a salon's settings are offered only to who may change them (#1228, `v0.18.32`) | one look with a Membre account: the access tab reads only, rename and delete are absent; then grant `channel.manage` to Moderateur in the grid with a moderator's panel open - the controls must appear without a reload |
 | `/forms/success` no longer asks for a form called `success` | after a completed payment on production, social-service logs no `invalid input syntax for type uuid: "success"` (once per payment, so ONE payment settles it) |
@@ -264,13 +265,6 @@ What v2 does not close: the server can still admit a device it controls or publi
 ### P1 - a returner's devices: one reading owed (shipped in `v0.18.26`)
 
 The election reads presence and waits for an online holder ([channel-encryption](protocols/channel-encryption.md#wp-33-and-the-answerer-nobody-elects)). **Owed:** a reading of the returner's devices (`[GRAINE] asked <online member>` or `wait for a holder to come online`, then the salon filling); the second community of 2026-09-24, member by member; an end-to-end harness row. **Residue, not fixed:** a backgrounded Android can hold its socket and look online while unable to answer - the elected member is then silent and the next start re-asks.
-
-### P3 - every keyboard rise moves the composer for a moment, on both phones (measured 2026-10-02)
-
-Two different stale numbers: Android's WebView takes the keyboard height off TWICE for one report (the
-composer jumps ~358 px up for 60-100 ms), iOS keeps `--safe-area-inset-bottom` at 34px for ~400 ms
-(the composer stands 22 pt too high). Not fixed; the readings and the cause of each are on
-[chat](frontend/modules/chat.md#every-keyboard-rise-moves-the-composer-for-a-moment-on-both-phones-measured-2026-10-02-open).
 
 ### P3 - MiConnect: one string left after the French pass
 
