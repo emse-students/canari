@@ -88,6 +88,30 @@ acceptance (`epochSendBarrier`)) are fixed and stop the NEXT loss; none recovers
   by the user's choice to stop exposing the machinery. Whether a device that dropped a frame should say
   so anywhere is NOT decided.
 
+**CLOSED 2026-10-09 as a defect; what remains is unrecoverable by construction.** The hourly
+`reportCommitLogHealth` read 11 groups and 18 missing epochs in every one of 11 reports over 32 h of
+production, the newest hole dated 2026-08-31 (before the four fixes shipped): no hole has appeared since
+and none has grown. The twelve plaintexts exist only on the peer's iPhone, and the arm that dropped the
+13:10 four cannot be established retroactively - a fix written against a suspected arm is exactly what the
+text above forbids. The standing ERROR line is the DESIGNED front of that report (a new hole lands first
+and the known ones age out with the retention floor), so it is not a second defect. The one question
+left, whether a device that dropped a frame should say so, is parked in
+[open-questions](../open-questions.md#should-a-device-that-dropped-a-frame-say-so).
+
+## A new device's join reaches the commit gate before its KeyPackage (2026-10-09)
+
+**The two sections below ("holds a distribution group the group holds no row for" and "refused for want of a KeyPackage") are ONE defect, and its cause was read from production on 2026-10-09 - the other end of the exchange included.**
+
+What the server logged in the previous 32 hours (`canari-prod-chat-delivery-service-1`): six `[MEMBERSHIP_ACTIVE] REFUSED ... reason=no_key_package`, on four groups, **all four COMMUNITY distribution groups (`distributionWorkspaceId` set) and no conversation**. For each of the six devices the sequence is the same, inside one or two seconds: `[PURGE_PREKEYS] deleted=0` (the first thing a fresh start's key package round does) -> `[COMMIT] START` for the community group -> `REFUSED no_key_package` -> the commit's own `[SEND] ... isCommit=true` accepted -> **`[REGISTER_DEVICE] START ... isNew=true`** -> `[SEND] sender has NO membership row` on the first application frame. The gate (`deviceAddressability`) answers an activation for a device with no static KeyPackage and writes no row; `REGISTER_DEVICE` then creates `pending` rows (`pendingGroups=N`) for a device that is already in the tree and will never be sent a Welcome.
+
+**Why the order inverts.** The community loader calls `ensureDistributionGroupFor` as soon as the page holds the community, and the device's key package round (mint, checkpoint, publish) runs beside it. The worker mint holds the MLS lock for its own span only, so the join takes the lock the instant the mint lets go and commits one checkpoint and one HTTP round trip ahead of the publication.
+
+**What it cost, measured.** Three of the six rows became `active` later (2 min, 35 min and 1 h 44 min after the refusal - the 1 h 44 one on an iPhone, which meant seeds unrouted for that long); the other three devices have no rows now (deleted devices). The stranded-membership report showed one pending row past its window for about eleven hours on the same day.
+
+**The fix** (DRAFT, `BaseMlsService.externalJoin`): when a key package round is running, the join awaits it. A round that failed has already reported itself and the join proceeds as before, logging that the gate will probably refuse. The wait ends when the round does - a proof of termination, not a clock. Test: `BaseMlsService.joinAfterRegistration.test.ts`, written red first (the commit was built while the round was pending). **Not covered:** a join that starts before any round has started - nothing in the six rows shows one, so nothing was written for it.
+
+**Owed after it ships:** the same read, `[MEMBERSHIP_ACTIVE] REFUSED` on a distribution group of an `isNew=true` device, should be zero.
+
 ## A device holds a distribution group the group holds no row for (2026-08-29)
 
 Handed back by HEAL-NEW-15's branch on `038c7e8d`, deliberately unacted on. Sixty seconds after
@@ -140,6 +164,12 @@ reproduction to take the measurement against. **Its blast radius is measured on 
 kicked leaf is elected as a history responder like any other member and is silently a dead end - the
 rotation fix was REFUTED 2026-09-08, not to be re-opened.**
 
+**CLOSED 2026-10-09 by the prod reading the entry owed.** `reportStaleExternalJoinBases` said *every
+published base names the current epoch of its group* in 33 of 33 hourly runs, and
+`reportStrandedDeviceMemberships` read `0 kicked with no re-add` in all 11 runs that found a pending row
+(the others found none); the table read zero pending rows of 1470 on 2026-10-09. The local `[KICK] Stale
+leaf` sighting stays as a reproduction pointer, not a defect.
+
 ## A roster seat without a Welcome - the typed reason (prod, 2026-09-01)
 
 The inviter carries a typed reason per skipped KeyPackage (`SkippedKeyPackageReason`; mechanism in
@@ -189,6 +219,12 @@ untouched deliberately.
   whose creator holds no state is still offered, whether an unservable group shows a tile at all. Never
   by widening a sweep: the P1 that destroyed `8868be1c` is what a destructive path does from an
   incomplete read.
+
+**CLOSED 2026-10-09 by the population.** The first decision already shipped: an invitation expires
+(`cleanupStalePendingInvitations`, keyed on `pendingSince`). Production read ZERO `pending` rows of 1470 on
+2026-10-09 (and none on a live group at epoch 0 or 1), the hourly `reportStrandedDeviceMemberships` found
+at most one in the last 32 h and it healed, and that report is the watcher if the shape comes back. The
+other two decisions have no population to decide about.
 
 ## A re-admitted device calls its own exclusion window a loss (2026-08-26)
 
