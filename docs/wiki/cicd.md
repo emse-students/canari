@@ -1708,6 +1708,18 @@ package owed an A1 deep-link run, so **all three stay held and their PRs open**.
 crate move together, in the PR that rebases `tao`. The latest versions the CURRENT tauri accepts
 are `tauri-plugin-store` 2.4.5, `-opener` 2.5.5, `-http` 2.7.0 (JS 2.4.x/2.5.x/2.7.x to match).
 
+**Closed the same day, by hand, and the recipe is the mechanism.** The rebase #1609 landed (tauri 2.12.1), so
+store/opener/http moved with it. The next three arrivals - `plugin-biometric` 2.4.1 (#1622),
+`plugin-websocket` 2.5.0 (#1623), `plugin-log` 2.10.0 (#1624) - stayed red for the reason above while
+being fully movable: measured 2026-10-09, `cargo update -p <crate> --precise <version>` moves ONLY the
+crate (websocket also moves `tokio-tungstenite`/`tungstenite` 0.28 -> 0.29, which only that plugin uses),
+and `cargo check --lib` in `frontend/src-tauri` compiles. **The recipe for a plugin PR that is red on
+`Guard the committed lockfiles` with `tauri-plugin-X (vA) : @tauri-apps/plugin-X (vB)`:** in ONE
+commit, `bun add @tauri-apps/plugin-X@B` in `frontend/`, `cargo update -p tauri-plugin-X --precise B` in
+`frontend/src-tauri`, `node frontend/scripts/check-tauri-plugin-versions.mjs`. First ask the dry run
+(`cargo update --dry-run -p ... --precise ...`) whether `tauri` itself would move: if it does, that is a
+runtime bump and stops being this recipe.
+
 ### Four audit advisories are suppressed on one edge of media-service, and why each is unreachable
 
 The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-because-they-cannot-be-reached-and-should-stop-being); the reasoning is here. The reachability argument for the `decode-uri-component` ignore and the assertion that keeps it honest are in `.github/workflows/code-analysis.yml`, the only copy of that half.
