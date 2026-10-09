@@ -12,22 +12,43 @@
   import { m } from '$lib/paraglide/messages';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
 
-  let { data }: { data: { post: PostEntity | null } } = $props();
+  let { data }: { data: { post: Promise<PostEntity | null> } } = $props();
+
+  /**
+   * The post once it has arrived: `undefined` while it is on its way, `null` when it is absent or
+   * refused. The route's load hands over a PROMISE so the page - header, back link - opens at once and
+   * a weak link shows a skeleton instead of a frozen feed (WP-NAV-1).
+   */
+  let post = $state<PostEntity | null | undefined>(undefined);
+  $effect(() => {
+    const pending = data.post;
+    post = undefined;
+    let live = true;
+    pending.then((value) => {
+      if (live) post = value;
+    });
+    return () => {
+      live = false;
+    };
+  });
 
   const userId = $derived(currentUserId() ?? '');
   let authToken = $state('');
   let copiedLink = $state(false);
 
   function copyPostLink() {
-    const id = data.post?.id;
+    const id = post?.id;
     if (!id) return;
     void copyPublicShareLink(`/posts/${id}`);
     copiedLink = true;
     setTimeout(() => (copiedLink = false), 2000);
   }
 
+  $effect(() => {
+    if (post) void postNotifStore.markPostRead(post.id);
+  });
+
   onMount(() => {
-    if (data.post) void postNotifStore.markPostRead(data.post.id);
     getToken()
       .then((t) => {
         authToken = t;
@@ -39,7 +60,7 @@
 <PageContainer>
   <PageHeader title={m.posts_page_title()} backHref="/posts" backLabel={m.post_back_to_feed()}>
     {#snippet actions()}
-      {#if data.post}
+      {#if post}
         <button
           type="button"
           onclick={copyPostLink}
@@ -57,13 +78,28 @@
     {/snippet}
   </PageHeader>
 
-  {#if data.post}
+  {#if post === undefined}
+    <!-- The page is already here; only the post is on its way. -->
+    <div
+      class="border-cn-border bg-cn-surface animate-pulse rounded-3xl border p-5"
+      role="status"
+      aria-label={m.common_loading_label()}
+    >
+      <div class="mb-4 flex items-center gap-3">
+        <div class="bg-cn-border/50 h-10 w-10 rounded-full"></div>
+        <div class="bg-cn-border/50 h-3 w-32 rounded-full"></div>
+      </div>
+      <div class="bg-cn-border/50 mb-2 h-3 w-full rounded-full"></div>
+      <div class="bg-cn-border/50 mb-2 h-3 w-5/6 rounded-full"></div>
+      <div class="bg-cn-border/50 h-3 w-2/3 rounded-full"></div>
+    </div>
+  {:else if post}
     <!--
       `commentsOpen` because this page IS the post: a reader who followed a link to it came for the
       thread, not to scroll past it. In the feed the section stays closed behind the comment button.
     -->
     <PostCard
-      post={data.post}
+      {post}
       currentUserId={userId}
       {authToken}
       commentsOpen
