@@ -1069,6 +1069,17 @@ and the English error became `auth_biometric_no_user`.
 Still owed: a real finger (the proof written by a success), the Settings radio (step 4), and all of
 iOS.
 
+## V. The camera swipe on a fresh Feed after publishing - owed on Android
+
+**Proves** [the modal that left the overlay stack](frontend/mobile.md#a-modal-closed-by-its-owners-state-left-the-overlay-stack-and-the-tab-swipe-stood-down-2026-10-09).
+**Precondition:** a build carrying it, the Mi 9T, a signed-in account that may publish.
+
+1. Open the Feed, publish a post from the composer (the modal closes by itself).
+2. Immediately, with no other navigation, swipe right from the Feed: the camera must open, first time.
+3. Repeat three times. The failure was 3 of 3 on the first load after publishing.
+
+A refusal here means some OTHER overlay is still registered: read `historyOverlayStackDepth()` over CDP.
+
 ## iPad and rotation - owed on an iPad\n\nSwitching into Canari from another app does not rotate the window on an iPad (reported 2026-08-28); it needs an iPad. The Android phone rotation is decided and shipped: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)).\n
 
 ## X. The scroll after an edge swipe - owed on the Mi 9T
