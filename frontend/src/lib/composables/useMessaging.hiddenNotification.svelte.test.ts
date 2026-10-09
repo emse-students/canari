@@ -91,6 +91,7 @@ function hideTheTab(hidden: boolean) {
 describe('a hidden tab is notified on both inbound paths', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.history.pushState({}, '', '/'); // each case states its own route
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
@@ -139,6 +140,8 @@ describe('a hidden tab is notified on both inbound paths', () => {
     // front: a focused window on another route sees this arrival nowhere and IS notified.
     const { ctx, sendSystemNotification } = makeContext(CONVO);
     hideTheTab(false);
+    // ...and on a route that DRAWS a conversation: a selection outlives a visit to /posts.
+    window.history.pushState({}, '', '/chat');
 
     await messaging.addMessageToChat(PEER, 'live message', CONVO, ctx, { messageId: 'live-2' });
     messaging.beginBulkMessageIngest(LIVE_DRAIN);

@@ -631,6 +631,20 @@
           if (channelReceipt) {
             // The mark was recorded durably when it was decided; this only delivers it.
             void flushOwedSalonMarks();
+            // THE BANNER SIGNAL FOLLOWS THE READING, NOT THE ARRIVAL. A message that landed while the
+            // reader was elsewhere (another route, a hidden tab) is deliberately NOT announced as
+            // read on arrival (`isReadingConversationNow`), so nothing has yet told this account's
+            // other devices to drop its banner. The marker is shared with the arrival path: a message
+            // already signalled is not signalled twice.
+            // The newest FOREIGN message, not `toSend`: the watermark also advances over this user's
+            // own sends, and signalling those would be a self-push after every message written.
+            const readUpTo = newestForeignMessageAt(
+              convs.conversations.get(currentContact)?.messages ?? [],
+              session.userId
+            );
+            if (claimChannelReadSignal(currentContact, readUpTo)) {
+              void channelService.markChannelRead(currentContact);
+            }
             return;
           }
           // THREE WAYS OUT OF HERE AND ALL THREE USED TO BE SILENT. The debounce has already zeroed

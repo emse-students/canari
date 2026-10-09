@@ -56,6 +56,7 @@
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { removalOutcome } from '$lib/utils/chat/memberRemoval';
+  import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { WorkspacePurgeContext } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
@@ -1192,7 +1193,7 @@
     // The leader counted this arrival against ITS selection. A follower tab that has the
     // conversation open is reading it, so taking the leader's count verbatim put a badge on an open
     // conversation that nothing cleared afterwards - the live path's `isConversationOpen` rule.
-    const isOpenHere = globalConvs.selectedContact === event.conversationId;
+    const isOpenHere = isReadingConversationNow(event.conversationId, globalConvs.selectedContact);
 
     if (event.type === 'message_added') {
       if (convo.messages.some((m) => m.id === event.message.id)) return;
