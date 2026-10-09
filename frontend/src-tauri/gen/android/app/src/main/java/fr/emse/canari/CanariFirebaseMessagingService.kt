@@ -1128,6 +1128,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setSmallIcon(R.drawable.ic_notification)
                 .setGroup(GROUP_KEY_MESSAGES)
                 .setGroupSummary(true)
+                // THE SUMMARY NEVER ALERTS. It is re-notified on every post and every cancel, and
+                // without these two it counted as a noisy post of its own: on a Pixel 6a a channel
+                // push followed 44 ms by a channel_read push re-alerted the conversation, and
+                // Android logged "Muting recently noisy" on this id (2026-10-09). Only a child
+                // (the message line) may make a sound.
+                .setOnlyAlertOnce(true)
+                .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
                 .setAutoCancel(true)
                 .setNumber(count)
                 .build()
