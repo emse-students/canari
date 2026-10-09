@@ -516,7 +516,7 @@ which runs no container).
 Four advisories (`GHSA-vcc3-ghjq-m6fr`, `GHSA-528h-pc64-c93x`, `GHSA-hqr4-qq8f-hg3x`,
 `GHSA-mjw6-4jj6-33hc`) are ignored on the `minio > ...` edge of media-service. **Retire the ignores and
 the premise assertion (`.github/scripts/stream-json-premise.sh`) the day minio publishes a release that
-moves either pin** (last checked 2026-10-06: minio still 8.0.7). The reasoning, the upstream-check log
+moves either pin** (last checked 2026-10-09: minio still 8.0.7). The reasoning, the upstream-check log
 and the dead retirement condition are in [cicd](cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
 
 ### P2 - THREE hosts take security updates that nothing reports on, and a library nothing restarts (the rest closed 2026-09-03)
