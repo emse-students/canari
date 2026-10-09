@@ -56,6 +56,15 @@ describe('the creation routes are one flow, parametrised by type', () => {
     expect(src).toContain('reachChoiceToRules');
     expect(src).toMatch(/kind === 'institution' && !isGlobalAdmin\(\)/);
   });
+
+  it('says a union of several campuses or formations through the grid picker, never a half-made rule', () => {
+    const src = read('lib/components/associations/AssociationCreatePage.svelte');
+    expect(src).toContain('<CellPicker bind:cells={reachCells} />');
+    expect(src).toContain("reach === 'custom' && reachCells.size === 0");
+    expect(read('lib/components/associations/edit/EditAudienceTab.svelte')).toContain(
+      'offeredPresets(asso.type, isGlobalAdmin)'
+    );
+  });
 });
 
 describe('the header separates navigation from the one creation', () => {

@@ -35,17 +35,6 @@ question (charter, app passwords, OAuth), not code.
 
 ---
 
-## Institutions: what the creation UI does not do yet (2026-10-07)
-
-[associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07)
-carries what shipped. Left, in order: (1) the members are added AFTER creation on the generic edit page
-(its title says "Gestion de l'institution" since #1569); (2) the reach of an existing institution is
-edited only on the `/admin/spaces` grid, its edit page has no reach control (the "Audience" tab of #1584
-is for associations and lists, institutions keep the grid); (3) the creation form picks ONE rule, a union
-of several (two campuses) goes through the grid; (4) no reading on a phone with a real global admin
-account yet (the local read used the sandbox admin). The audience policy, presets and read grants are
-BUILT (#1582, #1584, #1593, #1606, #1608, [profiles-and-access](profiles-and-access.md#audiences-policy-as-built-wp-a-2026-10-08)); owed there: one look at `/admin/read-access` signed in.
-
 ## Cloudflare, Stripe and the staff feed (2026-10-07/08)
 
 ### P1 - an upload over 1 MiB is refused by Cloudflare on `dev.canari-emse.fr` and `canari-emse.fr`
@@ -120,7 +109,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | Android fluidity (#1361-#1363) | a re-measure on the Mi 9T of `open_conversation` (662 ms on the first open before them); Lucide `Icon` costs ~1 ms per icon there, so 100-150 ms per heavy screen is the hardware |
 | "Seen by" heads in groups and salons (#1401) | one look in a group and a salon with four or more readers: each head under the last message its owner read, `+N` past three |
 | the signed calendar subscription's 503 path (#1551) | the signer cannot be stopped without touching the stack: only the 200 path was read on a phone |
-| the audiences chantier (#1582, #1584, #1606, #1608) | one look at `/admin/read-access` signed in; the Audience tab of an association read by a BDE star; a global admin's phone reading of the institution creation flow |
+| the audiences chantier (#1582, #1584, #1606, #1608) | one look at `/admin/read-access` signed in; the Audience tab of an association read by a BDE star; a global admin's phone reading of the institution creation flow; the institution creation form and the Audience tab's "Custom" grid (`CellPicker`) read on a phone with a real global-admin account (read at 390 and 1280 on the local estate with the sandbox admin only) |
 
 ---
 

@@ -16,7 +16,8 @@
     type Association,
   } from '$lib/associations/api';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
-  import { reachChoiceToRules, type ReachChoice } from '$lib/associations/audienceRules';
+  import { reachChoiceToRules, type Cell, type ReachChoice } from '$lib/associations/audienceRules';
+  import CellPicker from '$lib/components/associations/CellPicker.svelte';
   import {
     CAMPUSES,
     FORMATIONS,
@@ -55,6 +56,8 @@
   let reach = $state<ReachChoice>('none');
   let reachCampus = $state<Campus | ''>('');
   let reachFormation = $state<Formation | ''>('');
+  /** The `custom` choice: the pairs ticked on the grid. */
+  let reachCells = $state<Set<Cell>>(new Set());
   let submitting = $state(false);
   let error = $state('');
   /**
@@ -115,6 +118,7 @@
     { value: 'school', label: m.inst_new_reach_school() },
     { value: 'campus', label: m.inst_new_reach_campus() },
     { value: 'cell', label: m.inst_new_reach_cell() },
+    { value: 'custom', label: m.inst_new_reach_custom() },
   ]);
   const campusOptions = $derived<PickerOption[]>(
     CAMPUSES.map((c) => ({ value: c, label: campusLabel(c) }))
@@ -127,7 +131,8 @@
   const reachIncomplete = $derived(
     kind === 'institution' &&
       ((reach === 'campus' && !reachCampus) ||
-        (reach === 'cell' && (!reachCampus || !reachFormation)))
+        (reach === 'cell' && (!reachCampus || !reachFormation)) ||
+        (reach === 'custom' && reachCells.size === 0))
   );
 
   onMount(async () => {
@@ -206,7 +211,7 @@
    * invite a second creation of the same slug.
    */
   async function finishInstitution(created: Association) {
-    const rules = reachChoiceToRules(reach, reachCampus, reachFormation);
+    const rules = reachChoiceToRules(reach, reachCampus, reachFormation, reachCells);
     if (rules.length > 0) {
       try {
         await setAssociationAudiences(created.id, rules);
@@ -337,6 +342,9 @@
                 </div>
               {/if}
             </div>
+          {/if}
+          {#if reach === 'custom'}
+            <CellPicker bind:cells={reachCells} />
           {/if}
         </div>
       {/if}

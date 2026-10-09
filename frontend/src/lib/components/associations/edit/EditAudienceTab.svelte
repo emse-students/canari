@@ -17,6 +17,7 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import CheckboxGroup from '$lib/components/ui/CheckboxGroup.svelte';
+  import CellPicker from '$lib/components/associations/CellPicker.svelte';
   import ProfileCampusPrompt from '$lib/components/profile/ProfileCampusPrompt.svelte';
   import {
     getAssociationAudiences,
@@ -31,6 +32,7 @@
     type AudiencePreset,
   } from '$lib/associations/audiencePresets';
   import { audienceRefusalMessage } from '$lib/associations/audienceRefusal';
+  import { reachedCells, toRules, type Cell } from '$lib/associations/audienceRules';
   import {
     CAMPUSES,
     FORMATIONS,
@@ -62,15 +64,24 @@
   /** The CheckboxGroup binds plain strings; they are only ever `FORMATIONS` values. */
   let ticked = $state<string[]>([]);
   const formations = $derived(ticked as Formation[]);
+  /** The `custom` preset: the pairs ticked on the grid (a global admin's, any union). */
+  let cells = $state<Set<Cell>>(new Set());
 
-  const presets = $derived(offeredPresets(asso.type));
+  const presets = $derived(offeredPresets(asso.type, isGlobalAdmin));
   const reading = $derived(currentRules ? readPreset(currentRules) : null);
-  const customInForce = $derived(currentRules !== null && currentRules.length > 0 && !reading);
-  const needsCampus = $derived(preset !== 'everyone');
+  const customInForce = $derived(
+    currentRules !== null && currentRules.length > 0 && !reading && preset !== 'custom'
+  );
+  const needsCampus = $derived(preset !== 'everyone' && preset !== 'custom');
   const noCampusAnywhere = $derived(!loading && !profileCampus && !campus);
+  const customEmpty = $derived(preset === 'custom' && cells.size === 0);
   const formationsMissing = $derived(preset === 'formations' && formations.length === 0);
   const canSave = $derived(
-    !saving && preset !== null && (!needsCampus || campus !== '') && !formationsMissing
+    !saving &&
+      preset !== null &&
+      (!needsCampus || campus !== '') &&
+      !formationsMissing &&
+      !customEmpty
   );
 
   const presetCopy = $derived<Record<AudiencePreset, { label: string; desc: string }>>({
@@ -80,6 +91,7 @@
       desc: m.audience_preset_formations_desc(),
     },
     everyone: { label: m.audience_preset_everyone(), desc: m.audience_preset_everyone_desc() },
+    custom: { label: m.audience_preset_custom(), desc: m.audience_preset_custom_desc() },
   });
   const campusOptions = $derived<PickerOption[]>(
     CAMPUSES.map((c) => ({ value: c, label: campusLabel(c) }))
@@ -106,6 +118,10 @@
     if (read) {
       preset = read.preset;
       ticked = [...read.formations];
+    } else if (currentRules && currentRules.length > 0 && isGlobalAdmin) {
+      // A union the three presets cannot say (set on the grid): the admin opens on it, as it is.
+      preset = 'custom';
+      cells = reachedCells(currentRules);
     }
     loading = false;
   });
@@ -113,7 +129,7 @@
   async function save() {
     if (!canSave || preset === null) return;
     saving = true;
-    const rules = presetToRules(preset, campus, formations);
+    const rules = preset === 'custom' ? toRules(cells) : presetToRules(preset, campus, formations);
     Log.d('audience.save', { association: asso.id, preset, rules: rules.length });
     try {
       currentRules = await setAssociationAudiences(asso.id, rules);
@@ -131,7 +147,7 @@
   <div class="flex items-center justify-center py-12">
     <LoaderCircle class="animate-spin" size={24} />
   </div>
-{:else if noCampusAnywhere && preset !== 'everyone'}
+{:else if noCampusAnywhere && preset !== 'everyone' && preset !== 'custom'}
   <ProfileCampusPrompt />
 {:else}
   <div
@@ -184,6 +200,13 @@
         <p class="text-text-main text-sm font-bold" data-audience-campus>
           {m.audience_campus_label()} : {campusLabel(campus)}
         </p>
+      {/if}
+    {/if}
+
+    {#if preset === 'custom'}
+      <CellPicker bind:cells />
+      {#if customEmpty}
+        <p class="text-text-muted text-xs" role="status">{m.audience_custom_required()}</p>
       {/if}
     {/if}
 
