@@ -1,6 +1,6 @@
 # Media streaming upload and download - bounded memory, parts under 8 MiB
 
-**Status: DESIGN, nothing built (2026-10-10).** Trigger: the prod host's CrowdSec AppSec (school-managed
+**Status: DESIGN. WP-S1 (the server session routes) is BUILT, awaiting review (2026-10-10, [media-service](media-service.md#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10)); S2 onward and the streamed GET are not.** Decisions taken by delegation, overridable: parts 4 MiB plaintext (about 4 MiB + 64 B on the wire), hard server cap 8 MiB, the 50 MB ceiling stays, resume window 24 h, the CEK may persist in the outbox row later (client WP). Trigger: the prod host's CrowdSec AppSec (school-managed
 nginx, not ours) answers `403 CrowdSec Ban` to any request body over 10 MiB (10,485,760 bytes); a 13.4 MB
 PDF failed because `encryptAndUpload` sends one multipart POST. A quick fix (single-block threshold
 lowered, the existing append route for the rest, an explicit error state) is in flight elsewhere; this page

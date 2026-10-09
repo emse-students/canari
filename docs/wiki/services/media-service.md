@@ -74,6 +74,11 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | POST   | `/api/media/upload/chunk/init`         | JWT               | Initialize chunked upload session                                                                                                                                                |
 | POST   | `/api/media/upload/chunk/:id`          | JWT               | Append chunk (max 50 MB per chunk)                                                                                                                                               |
 | POST   | `/api/media/upload/chunk/:id/complete` | JWT               | Complete chunked upload, return `mediaId`                                                                                                                                        |
+| POST   | `/api/media/upload/session`            | JWT               | Open a resumable streamed upload: `{retentionClass?, totalBytes, partBytes, header}` -> `{uploadId, partBytes, totalParts, expiresAt}` ([sessions](#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10)) |
+| PUT    | `/api/media/upload/session/:id/parts/:index` | JWT         | One RAW part (`Content-Length` required, never over 8 MiB), piped to disk at its offset; re-sending is idempotent |
+| GET    | `/api/media/upload/session/:id`        | JWT               | `{received: [indexes], ...}` - the server's own fact, the resume point; carries `mediaId` once completed |
+| POST   | `/api/media/upload/session/:id/complete` | JWT             | Exact-size, every-part, header check, then store; idempotent (`uploadId -> mediaId` memo for 24 h) |
+| DELETE | `/api/media/upload/session/:id`        | JWT               | Cancel: aborts in-flight parts, removes the staging, releases the budget now |
 | GET    | `/api/media/public/:id`                | none              | Download public asset (cached 1 year, no auth)                                                                                                                                   |
 | GET    | `/api/media/:id`                       | JWT               | Download encrypted blob (no-cache, owner or group member); one `Range: bytes=a-b` answers `206` + `Content-Range`, `416` past the end ([ranges](#the-server-serves-byte-ranges)) |
 | DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion)                                                                                                                          |
@@ -344,6 +349,61 @@ sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on prod
   forecast re-read with a real send rate (RC-0). **Tested with unit specs over a stubbed store, NOT
   against a real media-service over HTTP**: that bench run (window shortened by env) is still owed.
 
+## Upload sessions: streamed, resumable, every body under 8 MiB (WP-S1, 2026-10-10)
+
+Server half of [media-streaming-upload](media-streaming-upload.md), **additive**: no client calls it yet
+(S2), and the single-block `POST /upload` and the `upload/chunk/*` routes are untouched. Code:
+`upload-session.service.ts` (the state), `upload-session.ts` (pure geometry, header check, mutex), the five
+routes in `media.controller.ts` (NO `FileInterceptor`: a spec reads the route metadata).
+
+- **`init`** declares `totalBytes`, `partBytes` (1 KiB to **8 MiB**, else `400`/`413`; at most 4096 parts) and
+  the 20 public `segmented-v1` header bytes as 40 hex digits. Keyless check: magic, version, and
+  `20 + plaintext + segments x 16 == totalBytes`. Then, in this order and each a typed answer: `413` over the
+  ceiling (`MEDIA_MAX_SIZE_MB`, 50 on both estates), `429` past **4 open sessions per member** or the staging
+  budget (2 GiB declared), `429` past the daily `chat-reel` budget - **reserved ONCE here** with
+  `reserveChatReelBudget`, the same machinery as the single POST. A sparse staging file of exactly
+  `totalBytes` is created. The part size travels in `init`; the server assumes none.
+- **`PUT parts/:index`**: raw `application/octet-stream`. `Content-Length` is REQUIRED (`411`), over **8 MiB is
+  `413` before a byte is read**, more than the part's exact length `413`, fewer `400`. The request stream
+  is piped through a byte counter into `createWriteStream(..., {flags: 'r+', start: index * partBytes})`
+  with 64 KiB buffers - heap is the buffer, not the part. Only a part whose every byte landed is recorded;
+  an interrupted one is `400` and absent from `status`. **A re-sent part rewrites the same bytes at the same
+  offset**: this is the defect of `appendChunk`, which appends and so doubled a chunk whose answer was lost.
+  Same-index PUTs are serialised, different indexes run in parallel.
+- **`GET :id`** is the resume fact: `{received: [...], totalParts, partBytes, expiresAt}`, plus `mediaId` once
+  completed. The list is in a sidecar `<id>.json` (atomic write-and-rename) beside `<id>.data`, so a PROCESS
+  restart forgets nothing; the restored reservation is put back with `restore` (not re-judged, so a day that
+  filled up meanwhile cannot strand a session the member was told they had).
+- **`complete`**: every part present and no PUT in flight (`409`), staged size exact, the first 20 bytes equal
+  to the declared header (`422`), `fPutObject` from the file, then the index entry and the reservation hand
+  over in one synchronous run (`registerUpload`'s `onRegistered`). A store failure leaves the session open,
+  reservation held, `complete` retryable. **Idempotent**: `uploadId -> mediaId` is the `completed` field of the
+  sidecar, kept a full window (24 h) after completion and surviving a restart.
+- **`DELETE :id`** aborts in-flight parts, removes the staging and releases the budget now.
+- **Ownership**: another member is `403` on every route, an unknown or expired id `404`.
+- **Expiry is absolute**: `MEDIA_UPLOAD_SESSION_TTL_MS` (24 h) from the opening, never extended by
+  activity. It is enforced when a session is addressed AND by the hourly sweep, which also removes staging no
+  session claims. The sweep takes the reservation with it; the client is told `404` and opens a new session.
+  The directory is deliberately not `chunks_temp`, whose sweep is by file age and would take a sidecar that did
+  not change for a day along with its data.
+- **Release in `finally`**: complete, cancel, expiry and a failed `init` each give the reservation back, and
+  the release is idempotent, so no ending can count it twice or leave it behind.
+
+**Proven** (`upload-session.service.spec.ts`, 36 cases, real staging directory and real budget; only the
+store is a stub): byte-for-byte assembly from parts sent concurrently and reversed; a part sent twice and
+twice at once; an interrupted part resent; `413` before reading; the 411/400/413 matrix; the last part's
+remainder; the open-session cap under 6 concurrent inits (exactly 4 pass); every ending releasing the
+budget; a restart keeping parts, reservation and memo; **50 MiB in 4 MiB parts growing `arrayBuffers` by
+under 16 MiB**; and a real HTTP server in front of the controller (a 9 MiB PUT is `413`, a raw part lands).
+
+**Residuals.** (1) The staging directory is in the container layer, not a volume: it survives a restart,
+not a recreate (every deploy), which ends the open sessions with `404` and a visible restart on the client.
+A volume would be backed up with `media_meta`'s siblings, so it needs its own decision. (2) `fPutObject`'s
+own buffering of a 50 MB object is still unmeasured (S0). (3) Streamed `GET` (design 3.5) is not in this
+package. (4) The edge (nginx buffers a request body by default, then forwards it) and the 10 MiB wall are
+exercised only by gate 3 of the design (S5), not by these specs. (5) Part size, 8 MiB cap, 4 sessions and
+24 h are the user-delegated defaults of 2026-10-10, overridable.
+
 ## Segmented media: play while downloading (CanaReels R2) - the READER release, 2026-10-01
 
 **Why.** A single-block blob ends with the one GCM tag that authenticates all of it, so no byte may
@@ -514,7 +574,11 @@ machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 | `MEDIA_MAX_SIZE_MB`        | no       | Max upload size in MB, measured on the CIPHERTEXT (default 100, capped at 100). **Both estates run `50`.** Published by `GET /api/media/limits` and the only copy of the number                              |
 | `MEDIA_CHAT_REEL_RETENTION_MS` | no   | The `chat-reel` age window (default 30 days); a bench shortens it to cross it in seconds |
 | `MEDIA_CHAT_REEL_DAILY_BYTES` | no    | Per-member `chat-reel` upload budget per rolling 24 h (default 500 MB) |
-| `MEDIA_RETENTION_SWEEP_MS` | no       | Retention sweep interval (default 1 h)                                                                                                                                                                       |
+| `MEDIA_RETENTION_SWEEP_MS` | no       | Retention sweep interval (default 1 h); also the upload-session sweep's                                                                                                                                      |
+| `MEDIA_UPLOAD_SESSION_DIR` | no       | Where sessions stage (default `./upload_sessions`, NOT a volume: see the residuals of [sessions](#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10)) |
+| `MEDIA_UPLOAD_SESSION_TTL_MS` | no    | The resume window, from the opening (default 24 h) |
+| `MEDIA_UPLOAD_SESSION_MAX_OPEN` | no  | Open sessions per member (default 4) |
+| `MEDIA_UPLOAD_SESSION_MAX_STAGED_BYTES` | no | Total declared size of open sessions (default 2 GiB) |
 
 **Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself
 stopped being MinIO. Renamed rather than kept: a name that lies about what it configures is read

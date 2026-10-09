@@ -6,6 +6,11 @@
  *   POST /media/upload  - Receive an encrypted blob, store it, return { mediaId }
  *   GET  /media/:id     - Return the encrypted blob (client decrypts it), or one byte range of it
  *                         (206 + Content-Range) - how a segmented video is read while it plays
+ *   POST   /media/upload/session            - open a resumable streamed upload (WP-S1)
+ *   PUT    /media/upload/session/:id/parts/:index - one raw part, streamed to disk, never over 8 MiB
+ *   GET    /media/upload/session/:id        - the parts the server holds (the resume fact)
+ *   POST   /media/upload/session/:id/complete - assemble; idempotent
+ *   DELETE /media/upload/session/:id        - cancel, release the budget now
  *   POST /media/touch   - Refresh the retention clock for media the client had cached locally
  *   DELETE /media/:id   - Remove a blob (server-to-server only: valid JWT + X-Internal-Secret)
  *   POST /media/internal/retention-class - set an object's retention class (X-Internal-Secret)
@@ -25,6 +30,7 @@ import {
   Controller,
   Post,
   Get,
+  Put,
   Delete,
   Param,
   Body,
@@ -53,6 +59,7 @@ import {
   type ReelPurgeOutcome,
   type RetentionClass,
 } from './media.service';
+import { UploadSessionService } from './upload-session.service';
 import { assertInternalSecret } from './internal-secret.util';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
@@ -85,7 +92,10 @@ const RETENTION_CLASS_MAX_IDS = 500;
 export class MediaController {
   private readonly logger = new Logger(MediaController.name);
 
-  constructor(private readonly mediaService: MediaService) {}
+  constructor(
+    private readonly mediaService: MediaService,
+    private readonly uploadSessions: UploadSessionService
+  ) {}
 
   // ---------------------------------------------------------------------------
   // Auth helper - validates the shared HS256 JWT (same secret as chat-gateway)
@@ -324,6 +334,70 @@ export class MediaController {
       `Completed chunked upload: ${id} -> ${mediaId} (retention=${retentionClass ?? 'unclassified'})`
     );
     return { mediaId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Upload sessions: streamed, resumable, every request body under 8 MiB.
+  // docs/wiki/services/media-streaming-upload.md. NONE of these routes declares a FileInterceptor:
+  // a part is the raw request stream, piped to disk, never a buffer of the body.
+  // ---------------------------------------------------------------------------
+  @Post('upload/session')
+  async initUploadSession(
+    @Body()
+    body:
+      | { retentionClass?: unknown; totalBytes?: unknown; partBytes?: unknown; header?: unknown }
+      | undefined,
+    @Req() req: Request
+  ) {
+    const ownerId = this.verifyToken(req);
+    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+    return this.uploadSessions.init(
+      ownerId,
+      {
+        retentionClass,
+        totalBytes: body?.totalBytes,
+        partBytes: body?.partBytes,
+        header: body?.header,
+      },
+      MAX_BYTES
+    );
+  }
+
+  @Put('upload/session/:id/parts/:index')
+  async putUploadPart(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @Req() req: Request
+  ): Promise<{ index: number; receivedCount: number }> {
+    const ownerId = this.verifyToken(req);
+    // Digits only: `Number('')` and `Number('0x10')` would otherwise pass for indexes.
+    if (!/^[0-9]{1,6}$/.test(index)) throw new BadRequestException('Invalid part index');
+    const header = req.headers['content-length'];
+    const contentLength =
+      typeof header === 'string' && /^[0-9]+$/.test(header) ? Number(header) : undefined;
+    return this.uploadSessions.putPart(ownerId, id, Number(index), req, contentLength);
+  }
+
+  @Get('upload/session/:id')
+  async uploadSessionStatus(@Param('id') id: string, @Req() req: Request) {
+    return this.uploadSessions.status(this.verifyToken(req), id);
+  }
+
+  @Post('upload/session/:id/complete')
+  async completeUploadSession(
+    @Param('id') id: string,
+    @Req() req: Request
+  ): Promise<{ mediaId: string }> {
+    return this.uploadSessions.complete(this.verifyToken(req), id);
+  }
+
+  @Delete('upload/session/:id')
+  async cancelUploadSession(
+    @Param('id') id: string,
+    @Req() req: Request
+  ): Promise<{ ok: boolean }> {
+    await this.uploadSessions.cancel(this.verifyToken(req), id);
+    return { ok: true };
   }
 
   // ---------------------------------------------------------------------------
