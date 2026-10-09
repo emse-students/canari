@@ -411,7 +411,14 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       // THIS DEVICE'S OWN ECHO of the message, if it is still showing one under the client UUID: it
       // takes the server's id here instead of being drawn a second time (WP-OFF-2). A no-op for every
       // message that is not an echo - only a row flagged `awaitingServerId` is ever touched.
-      if (innerMessageId && innerMessageId !== renderedId) {
+      // ONLY THE AUTHOR HAS ONE: the frame names its sender in the clear (and Graine v2 proves it),
+      // so another member sealing a message under the same client UUID cannot re-key this device's
+      // echo - `applySalonEchoChange` would otherwise swap any awaiting row for that id.
+      if (
+        innerMessageId &&
+        innerMessageId !== renderedId &&
+        String(sender || '').toLowerCase() === ctx.userId.toLowerCase()
+      ) {
         applySalonEchoChange(
           conversations,
           convoKey,

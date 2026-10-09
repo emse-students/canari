@@ -16,6 +16,7 @@ import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
 import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import type { SalonEchoChange } from './salonEcho';
+import { clearUnsentSalonText, recordUnsentSalonText } from './salonUnsent';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -49,9 +50,12 @@ export interface SendMessageDeps {
 /**
  * A salon message that has been shown but not (yet) accepted by the server, kept so the failed row's
  * "retry" re-sends EXACTLY what the first attempt carried: same bytes, same client id, same mentions.
- * Memory only: a reload loses it, and with it the row (the durable salon queue is WP-OFF-3).
+ * Memory only: a reload loses the row; the TEXT survives in the unsent ledger (`salonUnsent.ts`) and
+ * goes back to the composer. The durable salon queue is WP-OFF-3.
  */
 interface SalonSend {
+  /** The text as typed: what the unsent ledger keeps for a kill or reload (`salonUnsent.ts`). */
+  text: string;
   conversationKey: string;
   channelId: string;
   payload: Uint8Array;
@@ -59,9 +63,23 @@ interface SalonSend {
 }
 const salonSends = new Map<string, SalonSend>();
 
+/** The message ids this page life is still sending or can retry - what is NOT an orphan of a past life. */
+export function liveSalonSendIds(): ReadonlySet<string> {
+  return new Set(salonSends.keys());
+}
+
 /**
  * POSTs one salon send and moves its echo: `sending` while in flight, `settled` on the server's
  * answer, `error` on a refusal (the entry stays registered so the row can be retried).
+ *
+ * THE OUTCOME IS CLASSIFIED AT THE THROW. A status code is an ANSWER: the server saw the request and
+ * said no, so the row is `error`. A throw that carries NO status (the network dropped, the reply was
+ * lost) is an UNKNOWN outcome - the server may well have the message - so the row STAYS `sending` and
+ * nothing here decides: the broadcast frame or the next history load (both carry the client UUID) is
+ * the proof that settles it, and the unsent ledger keeps the text meanwhile. No clock is involved.
+ * Marking it `error` and offering a retry would post it twice whenever the first attempt had landed,
+ * because the server does not dedupe on the client id (`ChannelService.sendMessage` mints its own row
+ * id and never reads `messageId`) - that dedupe is WP-OFF-3.
  *
  * @returns `null` on success, else the member-facing refusal sentence.
  */
@@ -80,6 +98,7 @@ async function deliverSalonSend(
       send.mentionedUserIds
     );
     salonSends.delete(messageId);
+    clearUnsentSalonText(deps.userId, messageId);
     deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'settled', serverId });
     return null;
   } catch (error: unknown) {
@@ -111,8 +130,14 @@ async function deliverSalonSend(
       return sealUnavailableMessage(error.reason);
     }
     const status = refusalStatus(error);
+    if (status === null) {
+      deps.log(
+        `[SEND] channel send ${messageId.slice(0, 8)}… OUTCOME UNKNOWN (no status): the row stays sending until the frame or a history load settles it: ${String(error)}`
+      );
+      return m.chat_send_error_generic();
+    }
     deps.log(
-      `[SEND] channel send ${messageId.slice(0, 8)}… refused (status=${status ?? 'none'}): ${String(error)}`
+      `[SEND] channel send ${messageId.slice(0, 8)}… refused (status=${status}): ${String(error)}`
     );
     deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'error' });
     return (
@@ -143,8 +168,9 @@ export async function retrySalonSend(
 }
 
 /** Forgets a failed salon send the member discarded: its row is removed by the caller. */
-export function discardSalonSend(messageId: string): void {
+export function discardSalonSend(messageId: string, userId: string): void {
   salonSends.delete(messageId);
+  clearUnsentSalonText(userId, messageId);
 }
 
 /**
@@ -214,6 +240,7 @@ export async function sendChatMessage(
         })
       : encodeAppMessage({ ...mkText(text), messageId, sentAt });
     const send: SalonSend = {
+      text,
       conversationKey: contactName,
       channelId: contactName.replace(/^channel_/, ''),
       payload,
@@ -242,6 +269,8 @@ export async function sendChatMessage(
       return { success: false, error: m.chat_send_error_generic() };
     }
     salonSends.set(messageId, send);
+    // Before the POST leaves: a kill from here on hands the text back at the next start.
+    recordUnsentSalonText(userId, { messageId, conversationKey: contactName, text });
     const refusal = await deliverSalonSend(messageId, send, deps);
     // `echoed`: the text lives in a row now (failed, with its retry), so the composer keeps nothing.
     return refusal === null

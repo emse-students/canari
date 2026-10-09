@@ -28,6 +28,7 @@ await import('./useMessaging.svelte');
 
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
+import { ApiRefusalError } from '$lib/utils/apiRefusal';
 
 const CHANNEL = 'channel_12cf41f3-0000-0000-0000-000000000000';
 
@@ -55,6 +56,8 @@ const rows = (ctx: MessagingContext) => ctx.conversations.get(CHANNEL)!.messages
 describe('a salon text send', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sendMock.mockReset();
+    localStorage.clear();
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
@@ -85,7 +88,8 @@ describe('a salon text send', () => {
   });
 
   it('keeps the text in a failed row, raises the error, and retries the same message', async () => {
-    sendMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    // A STATUS IS AN ANSWER: the server saw the request and refused, so the row is failed.
+    sendMock.mockRejectedValueOnce(new ApiRefusalError(503, null, 'unavailable'));
     const { useMessaging } = await import('./useMessaging.svelte');
     const messaging = useMessaging();
     const ctx = makeContext();
@@ -106,8 +110,46 @@ describe('a salon text send', () => {
     expect(rows(ctx)[0]).toMatchObject({ id: 'server-row-2', status: 'sent' });
   });
 
-  it('a failed row can be discarded', async () => {
+  it('a transport failure is an UNKNOWN outcome: the row stays sending, never failed', async () => {
     sendMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+
+    await messaging.handleSendChat(ctx, 'unknown outcome');
+
+    expect(rows(ctx)).toHaveLength(1);
+    expect(rows(ctx)[0]).toMatchObject({ status: 'sending', awaitingServerId: true });
+    // ...and the text is still owed to the member should this page die before anything settles it.
+    const { takeOrphanedSalonTexts } = await import('$lib/utils/chat/salonUnsent');
+    expect(takeOrphanedSalonTexts('me', CHANNEL, new Set())).toEqual([
+      expect.objectContaining({ text: 'unknown outcome' }),
+    ]);
+  });
+
+  it('keeps the text in the unsent ledger until the server answers, then forgets it', async () => {
+    let answer: (id: string) => void = () => {};
+    sendMock.mockImplementation(() => new Promise<string>((resolve) => (answer = resolve)));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const { takeOrphanedSalonTexts } = await import('$lib/utils/chat/salonUnsent');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+
+    const done = messaging.handleSendChat(ctx, 'ledgered');
+    await vi.waitFor(() => expect(sendMock).toHaveBeenCalled());
+    // A reload now would find it: peek without consuming by treating it as an orphan, then put it back.
+    const orphans = takeOrphanedSalonTexts('me', CHANNEL, new Set());
+    expect(orphans.map((o) => o.text)).toEqual(['ledgered']);
+    const { recordUnsentSalonText } = await import('$lib/utils/chat/salonUnsent');
+    recordUnsentSalonText('me', orphans[0]);
+
+    answer('srv');
+    await done;
+    expect(takeOrphanedSalonTexts('me', CHANNEL, new Set())).toEqual([]);
+  });
+
+  it('a failed row can be discarded', async () => {
+    sendMock.mockRejectedValueOnce(new ApiRefusalError(500, null, 'boom'));
     const { useMessaging } = await import('./useMessaging.svelte');
     const messaging = useMessaging();
     const ctx = makeContext();
