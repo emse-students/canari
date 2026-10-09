@@ -35,7 +35,11 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
 }));
 
 import { createOutbox, buildOutboxProto, MAX_CONCURRENT_SENDS, type OutboxDeps } from './outbox';
-import { GroupDeletedError, SenderNotActiveError } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  DeliveryUnreachableError,
+  GroupDeletedError,
+  SenderNotActiveError,
+} from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind } from '$lib/proto/codec';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
@@ -1733,5 +1737,109 @@ describe('outbox lanes - a stalled send freezes its own conversation and nothing
     await outboxIdle();
     expect(g.started).toHaveLength(MAX_CONCURRENT_SENDS + 1);
     outbox.dispose();
+  });
+});
+
+// WP-OFF-6: a resume is prompt. Measured 2026-10-09: 3.8-5.3 s from "link back" to the first resent
+// frame, all of it spent waiting for some UNRELATED request to prove the server reachable, and then
+// for a backoff the dead link had earned and the live one had not.
+describe('outbox resume - prompt, and exactly once in effect', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+  });
+
+  it('a transport failure skips its backoff when the link comes back, a refusal does not', async () => {
+    const storage = makeStorage([textEntry('t1', 'gT', 100), textEntry('r1', 'gR', 200)]);
+    const sent: string[] = [];
+    let healed = false;
+    const mlsService = makeMls();
+    mlsService.sendMessage = vi.fn(async (g: string, _p: Uint8Array, id: string) => {
+      sent.push(id);
+      if (healed && g === 'gT') return;
+      if (g === 'gT') throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
+      throw new SenderNotActiveError(g, 'pending');
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    await outbox.flush();
+    expect(sent).toEqual(['t1', 'r1']);
+    // Both are now backing off 2 s. The link blips and returns, with no timer elapsed.
+    healed = true;
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+
+    // t1 (no answer) went at once; r1 (the server REFUSED it) kept its clock.
+    expect(sent).toEqual(['t1', 'r1', 't1']);
+    expect(storage._map.has('t1')).toBe(false);
+    expect(storage._map.get('r1')!.attempts).toBe(1);
+    outbox.dispose();
+  });
+
+  it('skips the backoff once: a second reconnect with nothing new held does not re-send', async () => {
+    const storage = makeStorage([textEntry('t1', 'gT', 100)]);
+    const mlsService = makeMls();
+    mlsService.sendMessage = vi.fn(async () => {
+      throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    await outbox.flush();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    // The resume attempt failed again and re-armed the ladder: one more attempt, not a loop.
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(2);
+    expect(storage._map.get('t1')!.attempts).toBe(2);
+    outbox.dispose();
+  });
+
+  it('a frame whose answer was lost is sent again with the SAME id after a reload, and is delivered once in effect', async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = makeStorage([textEntry('m1', 'gA', 100)]);
+      // The "server": a set keyed by the inner messageId, exactly what a receiver deduplicates on.
+      const received = new Set<string>();
+      const frames: string[] = [];
+      let lostAnswer = true;
+      const mkMls = () => {
+        const mls = makeMls();
+        mls.sendMessage = vi.fn(async (_g: string, _p: Uint8Array, id: string) => {
+          frames.push(id);
+          received.add(id);
+          if (lostAnswer) {
+            lostAnswer = false;
+            // The POST REACHED the server; the link died with the answer.
+            throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
+          }
+        });
+        return mls;
+      };
+
+      const first = createOutbox(makeDeps({ mlsService: mkMls(), storage }));
+      await first.flush();
+      expect(storage._map.has('m1')).toBe(true);
+      first.dispose();
+
+      // RELOAD: a new controller, no in-memory state, the same durable queue.
+      const second = createOutbox(makeDeps({ mlsService: mkMls(), storage }));
+      await vi.advanceTimersByTimeAsync(2_500);
+      second.flush();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(frames).toEqual(['m1', 'm1']);
+      expect(received.size).toBe(1);
+      expect(storage._map.size).toBe(0);
+
+      // And nothing is ever sent for it again.
+      await second.flush();
+      await vi.advanceTimersByTimeAsync(70_000);
+      expect(frames).toEqual(['m1', 'm1']);
+      second.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

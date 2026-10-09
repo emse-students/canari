@@ -896,6 +896,14 @@ drains its own entries oldest first. Rules that came with it:
 - The send POST is under a `write` deadline ([offline-and-weak-network](offline-and-weak-network.md#9-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)),
   so a stalled lane ends as `DeliveryUnreachableError` and takes the ordinary backoff.
 
+### A resume is prompt, bounded and idempotent (WP-OFF-6, 2026-10-09)
+
+`connectivity.onReconnect` arms every entry whose last failure was a missing ANSWER to skip its
+backoff once, and the store probes `/api/version` on `online` instead of waiting for an unrelated
+request to prove the server reachable: 2.4-2.9 s down to 5-13 ms on a good link, one probe round trip
+on a weak one. Refusals keep their clock. The reasoning, the bounds and the numbers are in
+[offline-and-weak-network](offline-and-weak-network.md#12-wp-off-6-shipped-a-prompt-bounded-resume-exactly-once-in-effect).
+
 ### Everything the outbox swallows, it logs
 
 The queue is deliberately best-effort at every step - a storage write that fails must not take the

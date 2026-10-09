@@ -53,6 +53,23 @@ const MIN_SAMPLES = 3;
  */
 export const STALLS_BEFORE_UNREACHABLE = 2;
 
+/**
+ * Asks the server whether it is there. Resolves true when ANY answer came back, false when none did.
+ * Supplied from outside (`reachabilityProbe.ts`) so this store imports no URL and no network code.
+ */
+export type ReachabilityProbe = () => Promise<boolean>;
+
+/**
+ * Pauses (ms) between the probes of one resume, and so also how many there are. BOUNDED ON PURPOSE:
+ * a resume sends at most four tiny GETs per event, doubling apart, each jittered by +-25 % so two
+ * devices coming back together do not probe in lockstep. After the last one the store stops asking
+ * and waits for the browser's next `online` event or any request that succeeds - it never polls.
+ * `online` probes at once; a transition to unreachable waits a second first, because the failure it
+ * follows is the best evidence the link is still down.
+ */
+export const PROBE_DELAYS_AFTER_ONLINE_MS = [0, 1_000, 2_000, 4_000];
+export const PROBE_DELAYS_AFTER_FAILURE_MS = [1_000, 2_000, 4_000, 8_000];
+
 /** A request counted by {@link ConnectivityStore.trackRequest}; settle it exactly once. */
 export interface TrackedRequest {
   /** The server answered (any status). `latencyMs` is excluded from the average when `measured` is false. */
@@ -91,6 +108,8 @@ class ConnectivityStore {
     return !this.isOnline || !this.serverReachable;
   }
 
+  private probe: ReachabilityProbe | null = null;
+  private probing = false;
   private listeners = new Set<ReconnectListener>();
   private listenersInstalled = false;
 
@@ -108,8 +127,10 @@ class ConnectivityStore {
       this.isOnline = true;
       // The browser regaining a link says nothing about the backend, so `serverReachable` is
       // deliberately left alone: the next successful call is what restores it. But listeners must
-      // run now - they are what performs that call.
+      // run now - they are what performs that call. And since waiting for SOME call to happen is
+      // what made a resume take 3.8-5.3 s, the probe below makes that call right away (WP-OFF-6).
       this.emitReconnect();
+      void this.probeUntilReachable(PROBE_DELAYS_AFTER_ONLINE_MS, 'online event');
     });
     window.addEventListener('offline', () => {
       console.log('[CONNECTIVITY] browser reports offline');
@@ -138,6 +159,47 @@ class ConnectivityStore {
     console.log('[CONNECTIVITY] server unreachable (transport failure)');
     this.serverReachable = false;
     this.recomputeSlow();
+    // The browser still believes it has a link, so no `online` event will ever announce its return:
+    // something has to ask. Only when the browser does not already say it is offline - then the
+    // `online` event is the trigger and this would be a probe into a known-dead link.
+    if (this.isOnline) {
+      void this.probeUntilReachable(PROBE_DELAYS_AFTER_FAILURE_MS, 'transport failure');
+    }
+  }
+
+  /** Registers the reachability probe. `null` removes it (tests). */
+  setReachabilityProbe(probe: ReachabilityProbe | null): void {
+    this.probe = probe;
+  }
+
+  /**
+   * Probes the server until it answers, over a bounded number of attempts (see
+   * {@link PROBE_DELAYS_AFTER_ONLINE_MS}). SINGLE-FLIGHT: a second trigger while one runs joins it
+   * rather than starting another, so a flapping link cannot multiply probes. The answer itself is
+   * recorded by the probe's own `trackedFetch` - `notifyServerReachable` fires reconnect listeners
+   * (the outbox flush) exactly as any successful request would, with no second path.
+   */
+  private async probeUntilReachable(delaysMs: readonly number[], reason: string): Promise<void> {
+    if (!this.probe || this.probing) return;
+    this.probing = true;
+    try {
+      for (let attempt = 0; attempt < delaysMs.length; attempt++) {
+        const pause = delaysMs[attempt] * (0.75 + Math.random() * 0.5);
+        if (pause > 0) await new Promise((resolve) => setTimeout(resolve, pause));
+        // Someone else answered, or the link left again: nothing left to find out.
+        if (this.serverReachable || !this.isOnline) return;
+        const answered = await this.probe().catch(() => false);
+        if (answered) {
+          console.log(`[CONNECTIVITY] probe answered (${reason}, attempt ${attempt + 1})`);
+          return;
+        }
+      }
+      console.warn(
+        `[CONNECTIVITY] ${delaysMs.length} probe(s) after ${reason} got no answer - waiting for the next online event or any successful request`
+      );
+    } finally {
+      this.probing = false;
+    }
   }
 
   /**
@@ -238,6 +300,8 @@ class ConnectivityStore {
     this.isOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
     this.serverReachable = true;
     this.listeners.clear();
+    this.probe = null;
+    this.probing = false;
     for (const timer of this.inFlight.values()) clearTimeout(timer);
     this.inFlight.clear();
     this.slow = false;
