@@ -87,6 +87,9 @@ const lastReAddAt = new Map<string, number>();
  */
 const noRepairerAt = new Map<string, string>();
 
+/** Groups whose "own KeyPackage not published" refusal was already logged, by the reason logged. */
+const ownKeyPackageLogged = new Map<string, string>();
+
 /** The pair of epochs a dead end is proved against, or `undefined` when the server did not say. */
 function epochPair(input: { baseEpoch?: number | null; activeEpoch?: number }): string | undefined {
   // A server too old to send them says nothing, and nothing is not a proof: without the pair there
@@ -584,6 +587,7 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     `[READD] ${groupId.slice(0, 8)}... externalJoin -> ${outcome.joined ? 'joined' : outcome.reason}`
   );
   if (outcome.joined) {
+    ownKeyPackageLogged.delete(groupId);
     deps.log(`[READD] ${groupId.slice(0, 8)}... rejoined via external commit (self-service)`);
     clearGroupNotReady(deps.userId, groupId);
     cancelReAdd(groupId);
@@ -694,9 +698,14 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     outcome.reason === 'own_key_package_unverified' ||
     outcome.reason === 'key_package_round_failed'
   ) {
-    deps.log(
-      `[READD] ${groupId.slice(0, 8)}... not asking a member to re-add us: this device's own KeyPackage is not published (${outcome.reason})`
-    );
+    // Logged when the (group, reason) pair CHANGES: this pass runs about once a minute with no
+    // repair in between, and a repeated line is a heartbeat, not news.
+    if (ownKeyPackageLogged.get(groupId) !== outcome.reason) {
+      ownKeyPackageLogged.set(groupId, outcome.reason);
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... not asking a member to re-add us: this device's own KeyPackage is not published (${outcome.reason}) - not repeated until the reason changes or the group joins`
+      );
+    }
     return;
   }
 

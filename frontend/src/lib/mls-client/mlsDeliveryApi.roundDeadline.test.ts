@@ -2,6 +2,7 @@ import {
   DeliveryDeadlineError,
   KEY_PACKAGE_REQUEST_DEADLINE_MS,
   MlsDeliveryApi,
+  raceDeadline,
 } from './mlsDeliveryApi';
 import { keyPackagePublication } from './deviceKeyPackage';
 
@@ -121,5 +122,59 @@ describe('keyPackagePublication reads the fact the commit gate reads', () => {
     [{ kind: 'unanswered', detail: 'x' }, 'unknown'],
   ] as const)('%j is %s', (answer, expected) => {
     expect(keyPackagePublication(answer as never)).toBe(expected);
+  });
+});
+
+describe('raceDeadline', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('resolves with the work when it finishes in time and arms nothing afterwards', async () => {
+    const late = vi.fn();
+    const raced = raceDeadline('op', Promise.resolve(7), 1000, late);
+    expect(await raced).toBe(7);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(late).not.toHaveBeenCalled();
+  });
+
+  it('rejects the work failure in time as itself, not as a deadline', async () => {
+    const boom = new Error('boom');
+    await expect(raceDeadline('op', Promise.reject(boom), 1000, vi.fn())).rejects.toBe(boom);
+  });
+
+  it('rejects DeliveryDeadlineError at the deadline and reports a late SUCCESS to onLate', async () => {
+    const late = vi.fn();
+    let finish!: (v: number) => void;
+    const raced = raceDeadline('op', new Promise<number>((r) => (finish = r)), 1000, late).catch(
+      (e: unknown) => e
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    const e = await raced;
+    expect(e).toBeInstanceOf(DeliveryDeadlineError);
+    expect((e as DeliveryDeadlineError).deadlineMs).toBe(1000);
+    expect(late).not.toHaveBeenCalled();
+
+    finish(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(late).toHaveBeenCalledExactlyOnceWith({ ok: true });
+  });
+
+  it('reports a late FAILURE to onLate with the error', async () => {
+    const late = vi.fn();
+    let fail!: (e: unknown) => void;
+    const raced = raceDeadline('op', new Promise<number>((_r, rej) => (fail = rej)), 1000, late);
+    raced.catch(() => {});
+    await vi.advanceTimersByTimeAsync(1000);
+    const err = new Error('late');
+    fail(err);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(late).toHaveBeenCalledExactlyOnceWith({ ok: false, error: err });
   });
 });

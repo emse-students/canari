@@ -530,3 +530,74 @@ describe('a round that HANGS, an empty biometric key, a bounded re-read, and the
     expect(ctx.joinByExternalCommit).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('an ABANDONED round must change nothing when it finishes late', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('a late revocation does NOT rotate the identity under the successor', async () => {
+    vi.useFakeTimers();
+    const rotate = vi.fn(async function (this: { deviceId: string }) {
+      this.deviceId = 'd-rotated';
+      return 'd';
+    });
+    let lateRevoke!: (e: unknown) => void;
+    const ctx = makeCtx({ rotateDeviceIdentity: rotate });
+    ctx.server.answer = ABSENT;
+    ctx.generateKeyPackageImpl = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => (lateRevoke = reject)))
+      .mockImplementation(async () => {
+        ctx.server.answer = PUBLISHED;
+        return KP;
+      });
+
+    const old = ctx.generateKeyPackage('k').catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(KEY_PACKAGE_ROUND_DEADLINE_MS);
+    expect(await old).toBeInstanceOf(DeliveryDeadlineError);
+
+    // The successor runs on the current id ...
+    await ctx.generateKeyPackage('k');
+    // ... and the abandoned round now meets its revocation, late.
+    lateRevoke(new DeviceRevokedError('d'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(rotate).not.toHaveBeenCalled();
+    expect(ctx.deviceId).toBe('d');
+    expect(ctx.generateKeyPackageImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('a late SUCCESS decrements nothing a second time and wakes nobody', async () => {
+    vi.useFakeTimers();
+    const ctx = makeCtx();
+    ctx.server.answer = ABSENT;
+    let lateResolve!: (v: unknown) => void;
+    ctx.generateKeyPackageImpl = vi.fn(() => new Promise((resolve) => (lateResolve = resolve)));
+
+    const old = ctx.generateKeyPackage('k').catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(KEY_PACKAGE_ROUND_DEADLINE_MS);
+    await old;
+    expect(ctx.keyPackageRoundsActive).toBe(0);
+    expect(ctx.keyPackageRoundsSettled).toBe(1);
+
+    // A join parks on a round that is genuinely running now.
+    ctx.generateKeyPackageImpl = vi.fn(() => new Promise(() => {}));
+    ctx.generateKeyPackage('k').catch(() => {});
+    const woken = vi.fn();
+    ctx.keyPackageRoundWaiters.push(woken);
+
+    lateResolve(KP); // the abandoned round finishes
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ctx.keyPackageRoundsActive).toBe(1); // only the live round is counted
+    expect(ctx.keyPackageRoundsSettled).toBe(1);
+    expect(woken).not.toHaveBeenCalled();
+  });
+});

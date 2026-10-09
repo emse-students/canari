@@ -13,6 +13,7 @@ import {
   createSequentialDecryptSession,
 } from '$lib/mls-client/mlsDecryptSession';
 import {
+  DeliveryDeadlineError,
   DeviceRevokedError,
   KEY_PACKAGE_ROUND_DEADLINE_MS,
   raceDeadline,
@@ -2258,17 +2259,35 @@ export abstract class BaseMlsService implements IMlsService {
     // NAMED FOR ITS SPAN, so an external join issued while it runs can wait for the publication it
     // depends on ({@link externalJoin}). The identity check keeps a later round from clearing its
     // successor, and `finally` means a throw leaves nothing for a join to wait on.
+    // SET WHEN THE CALLER GAVE UP ON THIS ROUND (the deadline below). A stale round that late hits a
+    // revocation must not rotate the identity: it would change `deviceId`, localStorage, the
+    // delivery client and delete a device while a later round or a join runs on the id it is
+    // abandoning - a later round could publish under an id rotated away, a join could exclude a
+    // stale id. The rotation is a logged no-op and the late round just ends.
+    let stale = false;
     const round = (async (): Promise<DatedKeyPackage> => {
       try {
         return await this.generateKeyPackageImpl(deviceKeyB64);
       } catch (e) {
         if (!(e instanceof DeviceRevokedError)) throw e;
+        if (stale) {
+          console.error(
+            `[MLS] an ABANDONED key package round met a revocation late - NOT rotating the identity (a later round owns it now); device ${sanitizeForLog(this.deviceId)}`
+          );
+          throw e;
+        }
         const abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
         console.warn(
           `[MLS] Device ${sanitizeForLog(abandoned)} was revoked - re-enrolled as ${sanitizeForLog(
             this.deviceId
           )}`
         );
+        if (stale) {
+          console.error(
+            '[MLS] an ABANDONED key package round was abandoned during its re-enrolment - not publishing under the new id from this stale round'
+          );
+          throw new Error('key package round abandoned during re-enrolment');
+        }
         return this.generateKeyPackageImpl(deviceKeyB64);
       }
     })();
@@ -2280,6 +2299,15 @@ export abstract class BaseMlsService implements IMlsService {
     // the round stopped between persist and publish it mints a second batch whose first batch is
     // orphaned locally until `prune_expired_key_packages` - the same cost any failed publish after
     // a mint already has. It is logged when it ends.
+    //
+    // TWO COSTS OF ABANDONING, stated: (1) the native promise stays pending, so a device whose
+    // native call hangs for good leaks ONE pending promise per deadline cycle (each later round
+    // that hangs adds one); (2) the abandoned round may still reach a late revocation, which would
+    // rotate the identity under a successor - `stale` turns that rotation into a logged no-op, and
+    // an abandoned round that is mid-rotation when the deadline fires refuses to publish afterwards.
+    // The persist and publish steps inside `generateKeyPackageImpl` are platform code and are NOT
+    // gated: a late publish under the CURRENT id is harmless (it is what the next round would do),
+    // and the id cannot have changed because only a non-stale round rotates.
     const bounded = raceDeadline(
       'key-package-round',
       round,
@@ -2298,6 +2326,7 @@ export abstract class BaseMlsService implements IMlsService {
       this.noteKeyPackageRoundSettled();
       return keyPackage;
     } catch (e) {
+      if (e instanceof DeliveryDeadlineError && e.operation === 'key-package-round') stale = true;
       this.noteKeyPackageRoundSettled(e ?? new Error('key package round failed'));
       throw e;
     } finally {
