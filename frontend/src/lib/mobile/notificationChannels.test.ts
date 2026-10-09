@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   CHANNEL_CALLS,
+  CHANNEL_MENTIONS,
   CHANNEL_MESSAGES,
   NOTIFICATION_ICON,
 } from '$lib/composables/useNotifications.svelte';
@@ -196,5 +197,42 @@ describe('notifications posted from the WebView (anti-régression)', () => {
     // Not in onCreate: that runs before the plugin creates the channel it would undo.
     const onCreate = applicationKt.slice(applicationKt.indexOf('override fun onCreate()'));
     expect(onCreate.slice(0, 1500)).not.toContain('removePluginDefaultChannel');
+  });
+});
+
+describe('the palette-A notification channels (2026-10-09)', () => {
+  const ktId = (constant: string) =>
+    fcmServiceKt.match(new RegExp(constant + ' *= *"([^"]+)"'))?.[1];
+
+  it('the three sounding channels moved to _v2 ids, in Kotlin, the manifest and TypeScript', () => {
+    // A channel's sound is immutable once created: only a NEW id carries a new sound.
+    expect(ktId('CHANNEL_MESSAGES')).toBe('canari_messages_v2');
+    expect(ktId('CHANNEL_MENTIONS')).toBe('canari_mentions_v2');
+    expect(ktId('CHANNEL_REACTIONS')).toBe('canari_reactions_v2');
+    expect(CHANNEL_MESSAGES).toBe('canari_messages_v2');
+    expect(CHANNEL_MENTIONS).toBe('canari_mentions_v2');
+  });
+
+  it('the old ids are deleted at startup, and never equal a current id', () => {
+    const list = applicationKt.match(/SUPERSEDED_CHANNELS = listOf\(([^)]*)\)/)?.[1] ?? '';
+    const old = [...list.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(old.sort()).toEqual(['canari_mentions', 'canari_messages', 'canari_reactions']);
+    for (const c of ['CHANNEL_MESSAGES', 'CHANNEL_MENTIONS', 'CHANNEL_REACTIONS']) {
+      expect(old).not.toContain(ktId(c));
+    }
+    expect(applicationKt).toContain('deleteSupersededChannels(manager)');
+  });
+
+  it.each(['message', 'reaction', 'mention'])(
+    'the %s channel plays its bundled res/raw file, which exists',
+    (name) => {
+      expect(applicationKt).toContain(`R.raw.canari_gazouillis_${name}`);
+      expect(existsSync(resolve(ANDROID_MAIN, `res/raw/canari_gazouillis_${name}.wav`))).toBe(true);
+    }
+  );
+
+  it('the group summary stays silent: alert only on children, only once', () => {
+    expect(fcmServiceKt).toContain('GROUP_ALERT_CHILDREN');
+    expect(fcmServiceKt).toMatch(/\.setOnlyAlertOnce\(true\)/);
   });
 });

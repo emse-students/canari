@@ -187,6 +187,10 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 DMs and groups already have an optimistic row and a durable outbox; **salon writes have neither** (offline send: text lost) and **nothing has a deadline**. Cold start on Slow 3G: first paint 23 s, list usable 103 s (JS 57 s, then the 2 MB WASM 45 s, then the list); warm 2.1 s. Fourteen ordered work packages, each with its test, and the measured table: [offline-and-weak-network](frontend/offline-and-weak-network.md). Start with WP-OFF-1 (keep the salon draft on failure), WP-W1/W2 (compression, WASM preload), WP-W3. Owed: peer-side delivery, Android and iOS runs (the page lists them).
 
+## P3 - iOS notification sounds still play the default tone (palette A is Android and in-app only, 2026-10-09)
+
+The palette-A trills reach the app's tones and the three Android channels ([sounds](frontend/sounds.md)). On iOS the banner sound comes from the APNs payload's `sound` field (the NSE sets `content.sound = .default`), so it needs: the three files as `.caf`/`.wav` bundled in the app AND `canari_NSE` targets (`project.yml` resources), the push server naming one per message / mention / reaction, and the NSE honouring it. Do it as one change across the three, then listen on the iPhone.
+
 ## Seen on the 2026-10-09 bench runs (around `v1.2.1`)
 
 ### P1 - a tab or app open across a production deploy sees the outage as "Échec de l'envoi"

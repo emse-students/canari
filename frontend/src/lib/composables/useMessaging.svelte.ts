@@ -113,7 +113,8 @@ export interface MessagingContext {
   verifyCurrentUserMembership: (contactName: string) => Promise<boolean>;
   playNotificationTone: () => void;
   playSendTone?: () => void;
-  playReceiveTone?: () => void;
+  /** `mentionsMe` selects the mention trill over the message one. */
+  playReceiveTone?: (mentionsMe?: boolean) => void;
   playReadTone?: () => void;
   sendSystemNotification: (
     title: string,
@@ -761,7 +762,13 @@ export function useMessaging() {
       !isStaleInboundMessage(resolvedTimestamp) &&
       canSeeArrival(ctx, normalized)
     ) {
-      (ctx.playReceiveTone ?? ctx.playNotificationTone)();
+      if (ctx.playReceiveTone) {
+        ctx.playReceiveTone(
+          extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId))
+        );
+      } else {
+        ctx.playNotificationTone();
+      }
     }
 
     // ONE DECISION, ASKED BY BOTH INBOUND PATHS - see `notifyInbound`.

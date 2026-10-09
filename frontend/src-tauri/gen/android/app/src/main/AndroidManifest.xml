@@ -276,7 +276,7 @@
             android:resource="@drawable/ic_notification" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="canari_messages" />
+            android:value="canari_messages_v2" />
 
         <!-- Notification quick actions (WP-XP-1): inline reply / mark as read from the shade. -->
         <receiver
