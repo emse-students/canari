@@ -11,7 +11,13 @@
  *    at a feed photo, a vault document or somebody else's reel;
  *  - the per-member daily budget is counted from live entries and refused as a 429.
  */
-import { HttpException, HttpStatus } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  InternalServerErrorException,
+  PayloadTooLargeException,
+} from '@nestjs/common';
 import { MediaService, isRetentionClass } from './media.service';
 
 const UUID_REEL_OLD = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -38,10 +44,15 @@ type Entry = {
 type ServiceInternals = {
   meta: { items: Record<string, Entry> };
   storage: Record<string, unknown>;
-  logger: { log: (msg: string) => void; warn: (msg: string) => void };
+  logger: {
+    log: (msg: string) => void;
+    warn: (msg: string) => void;
+    error: (msg: string) => void;
+  };
   persistMetadata: () => Promise<void>;
   purgeExpiredMedia: () => Promise<void>;
   sweepIntervalMs: number;
+  uploadLocks: Map<string, Promise<void>>;
 };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -61,6 +72,7 @@ function serviceWith(items: Record<string, Entry>, failDeleteOf: string[] = []) 
   const service = Object.create(MediaService.prototype) as MediaService;
   const deleted: string[] = [];
   const put: Array<{ id: string; bytes: number }> = [];
+  const failPut = { value: false };
   const internals = service as unknown as ServiceInternals;
   internals.meta = { items };
   internals.storage = {
@@ -73,9 +85,16 @@ function serviceWith(items: Record<string, Entry>, failDeleteOf: string[] = []) 
       Promise.resolve(
         id in items && !deleted.includes(id) ? streamOf(Buffer.from('ciphertext')) : null
       ),
-    put: (id: string, _data: Buffer, size: number) => {
+    // Yields to the event loop first: the real store write is an await, and THAT gap is the one a
+    // concurrent upload slips through when the budget is checked but not reserved.
+    put: async (id: string, _data: Buffer, size: number) => {
+      await new Promise((resolve) => setImmediate(resolve));
+      if (failPut.value) throw new Error('store down');
       put.push({ id, bytes: size });
-      return Promise.resolve();
+    },
+    putFileStream: async (id: string, _file: string, size: number) => {
+      await new Promise((resolve) => setImmediate(resolve));
+      put.push({ id, bytes: size });
     },
     listObjects: () =>
       Promise.resolve(
@@ -84,10 +103,11 @@ function serviceWith(items: Record<string, Entry>, failDeleteOf: string[] = []) 
           .map((id) => ({ id, size: 10, lastModifiedMs: Date.now() }))
       ),
   };
-  internals.logger = { log: () => {}, warn: () => {} };
+  internals.logger = { log: () => {}, warn: () => {}, error: () => {} };
+  internals.uploadLocks = new Map();
   internals.persistMetadata = () => Promise.resolve();
   internals.sweepIntervalMs = 60_000;
-  return { service, deleted, put };
+  return { service, deleted, put, failPut };
 }
 
 const purge = (service: MediaService) =>
@@ -380,5 +400,136 @@ describe('chat-reel: the per-member daily budget (500 MB)', () => {
     await service.upload(Buffer.alloc(2 * MB), 'sender', undefined);
 
     expect(put).toHaveLength(2);
+  });
+});
+
+describe('chat-reel: the budget is RESERVED, not just checked', () => {
+  const MB = 1024 * 1024;
+  const planted = (mb: number): Entry => ({
+    createdAt: Date.now() - 60_000,
+    lastAccessAt: Date.now(),
+    retentionClass: 'chat-reel',
+    ownerId: 'sender',
+    size: mb * MB,
+  });
+
+  it('lets exactly the uploads that fit through when they run CONCURRENTLY', async () => {
+    // 498 MB used: two more 1 MB reels fit (500), the third must not. Checked then registered across
+    // an await, all three used to read 498 and all three passed.
+    const items: Record<string, Entry> = { [UUID_REEL_NEW]: planted(498) };
+    const { service, put } = serviceWith(items);
+
+    const results = await Promise.allSettled([
+      service.upload(Buffer.alloc(MB), 'sender', 'chat-reel'),
+      service.upload(Buffer.alloc(MB), 'sender', 'chat-reel'),
+      service.upload(Buffer.alloc(MB), 'sender', 'chat-reel'),
+    ]);
+
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
+    const refused = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+    expect(refused).toHaveLength(1);
+    expect(refused[0].reason).toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+    expect(put).toHaveLength(2);
+  });
+
+  it('rolls the reservation back when the store write fails, so the bytes are not lost to the member', async () => {
+    const items: Record<string, Entry> = { [UUID_REEL_NEW]: planted(498) };
+    const { service, put, failPut } = serviceWith(items);
+
+    failPut.value = true;
+    await expect(service.upload(Buffer.alloc(2 * MB), 'sender', 'chat-reel')).rejects.toThrow(
+      'store down'
+    );
+    failPut.value = false;
+    await service.upload(Buffer.alloc(2 * MB), 'sender', 'chat-reel');
+
+    expect(put).toHaveLength(1);
+  });
+
+  it('REFUSES (and logs) a chat-reel with no owner instead of skipping the cap', async () => {
+    const { service, put } = serviceWith({});
+    const errors: string[] = [];
+    (service as unknown as ServiceInternals).logger.error = (m) => errors.push(m);
+
+    await expect(service.upload(Buffer.alloc(10), undefined, 'chat-reel')).rejects.toBeInstanceOf(
+      InternalServerErrorException
+    );
+
+    expect(put).toEqual([]);
+    expect(errors).toHaveLength(1);
+  });
+});
+
+describe('chat-reel: a chunked upload reserves its declared total at INIT', () => {
+  const MB = 1024 * 1024;
+  const planted = (mb: number): Entry => ({
+    createdAt: Date.now() - 60_000,
+    lastAccessAt: Date.now(),
+    retentionClass: 'chat-reel',
+    ownerId: 'sender',
+    size: mb * MB,
+  });
+  const CAP = 100 * MB;
+
+  it('refuses at init, before staging a byte, when the declared total is over budget', async () => {
+    const { service } = serviceWith({ [UUID_REEL_NEW]: planted(499) });
+
+    const refused = service.initChunkedUpload('sender', 'chat-reel', 2 * MB, CAP);
+
+    await expect(refused).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+  });
+
+  it('requires a chat-reel to declare its total, and honours the size policy', async () => {
+    const { service } = serviceWith({});
+
+    await expect(service.initChunkedUpload('sender', 'chat-reel', undefined, CAP)).rejects.toThrow(
+      BadRequestException
+    );
+    await expect(
+      service.initChunkedUpload('sender', 'chat-reel', CAP + 1, CAP)
+    ).rejects.toBeInstanceOf(PayloadTooLargeException);
+  });
+
+  it('holds the reservation against a concurrent init, and gives it back when the session ends', async () => {
+    const { service } = serviceWith({ [UUID_REEL_NEW]: planted(300) });
+
+    const first = await service.initChunkedUpload('sender', 'chat-reel', 150 * MB, 200 * MB);
+    // 300 + 150 reserved: a second 100 MB session does not fit...
+    await expect(
+      service.initChunkedUpload('sender', 'chat-reel', 100 * MB, 200 * MB)
+    ).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+
+    // ...completing the first frees its reservation, and the finished entry counts as 10 bytes.
+    await service.appendChunk(first, Buffer.alloc(10), 200 * MB);
+    const mediaId = await service.completeChunkedUpload(first, 200 * MB, 'sender', 'chat-reel');
+    expect(mediaId).toMatch(/^[0-9a-f-]{36}$/);
+    const second = await service.initChunkedUpload('sender', 'chat-reel', 100 * MB, 200 * MB);
+    expect(second).toMatch(/^[0-9a-f-]{36}$/);
+    await service.completeChunkedUpload(second, 200 * MB, 'sender', undefined).catch(() => {});
+  });
+
+  it('refuses a chunk past the declared total and releases the session', async () => {
+    const { service } = serviceWith({ [UUID_REEL_NEW]: planted(490) });
+
+    const id = await service.initChunkedUpload('sender', 'chat-reel', 5 * MB, 200 * MB);
+    await expect(service.appendChunk(id, Buffer.alloc(6 * MB), 200 * MB)).rejects.toBeInstanceOf(
+      PayloadTooLargeException
+    );
+
+    // Its 5 MB went back: 490 + 10 fits.
+    const next = await service.initChunkedUpload('sender', 'chat-reel', 10 * MB, 200 * MB);
+    expect(next).toBeTruthy();
+    await service.completeChunkedUpload(next, 200 * MB, 'sender', undefined).catch(() => {});
+  });
+
+  it('refuses completion by a member other than the one who opened the session', async () => {
+    const { service } = serviceWith({});
+
+    const id = await service.initChunkedUpload('sender', 'chat-reel', MB, 200 * MB);
+
+    await expect(
+      service.completeChunkedUpload(id, 200 * MB, 'intruder', 'chat-reel')
+    ).rejects.toThrow('Not your upload session');
+    await service.completeChunkedUpload(id, 200 * MB, 'sender', undefined).catch(() => {});
   });
 });

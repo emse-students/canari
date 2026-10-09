@@ -305,11 +305,30 @@ sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on prod
   `isGoneTombstone` answers both (and `retention_expired`) as `purged`. `manual_delete` keeps its older
   `404`.
 - **The client names the class, which is safe** where `association` is not: a client labelling something
-  `chat-reel` gains only a SHORTER life and pays the budget. It cannot be applied to an existing id.
+  `chat-reel` gains only a SHORTER life (the class can only shorten a life, never extend one) and pays the
+  budget. It is CLIENT-NAMED, so nothing here proves a blob is a reel. It cannot be applied to an existing id.
 - **Daily budget, 500 MB per member per rolling 24 h** (user, 2026-10-09), counted from the live
-  `chat-reel` entries of the caller (`size` is recorded for this class only), refused `429` BEFORE the
-  bytes are stored (a chunked upload drops its staged file). A swept or deleted reel gives its bytes
-  back; that is accepted, the loop costs the member's own bandwidth.
+  `chat-reel` entries of the caller (`size` is recorded for this class only) PLUS the bytes reserved by
+  uploads still in flight, refused `429` BEFORE the bytes are stored. **The check and the reservation share
+  one synchronous run** (`reserveChatReelBudget`), released in a `finally` in the run that registers the
+  entry: the first version checked, then awaited the store write, then registered, so N concurrent uploads
+  all passed (found by review). A failed write rolls the reservation back. A `chat-reel` with no `ownerId`
+  is an error (logged, 500), never a free pass. A swept or deleted reel gives its bytes back; that is
+  accepted, the loop costs the member's own bandwidth.
+- **A chunked upload declares `{retentionClass: 'chat-reel', totalBytes}` at `upload/chunk/init`**: the
+  budget is reserved there (so an over-budget member stages nothing), a chunk past the declared total is a
+  `413`, completion by another member is `403`, and the reservation is released on completion, on error and
+  when the orphan sweep finds the staged file gone. The reservations make a per-owner session cap
+  unnecessary (500 MB / 100 MB = five sessions at most). A session that declares nothing and names
+  `chat-reel` only at completion is still checked there (assembly), after staging: the RC-5 client must
+  declare at init.
+- **ROLLBACK HAZARD.** The index holds no schema version. A build older than this one that boots on the
+  same `media_metadata.json` does not know `chat-reel`: `isSweepable` is an allowlist, so it never sweeps
+  these entries (they live on, size unbounded by age), and a `reel_expired`/`reel_deleted` tombstone is not
+  a `410` there but a `404` (only `retention_expired` is). Both are the safe direction (nothing deleted
+  early) and heal on the roll-forward; the cost is a wrong status while rolled back. A meta version was
+  considered and not added: an old build rewrites the file without the field, so it could not protect
+  against the very build it is meant to warn about.
 - **The sender's delete is an ownership allowlist**: `DELETE /api/media/chat-reel/:id` removes an object
   only when its class is `chat-reel` AND its `ownerId` is the caller. A feed photo, a vault document, a
   feed reel, an unclassified blob, an object with no recorded owner or somebody else's reel are `403`.

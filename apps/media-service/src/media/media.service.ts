@@ -2,8 +2,10 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
+  InternalServerErrorException,
   PayloadTooLargeException,
 } from '@nestjs/common';
 import { StorageService } from './storage.service';
@@ -264,6 +266,15 @@ type PublicDownloadResult =
   | { status: 'ok'; data: Buffer; contentType: string }
   | { status: 'not_found' };
 
+/** A chunked upload that declared itself a `chat-reel` at init and so holds budget until it ends. */
+interface ChunkSession {
+  ownerId: string;
+  /** The total the client declared; appends beyond it are refused. */
+  declaredBytes: number;
+  /** Gives the reserved bytes back; idempotent. */
+  release: () => void;
+}
+
 @Injectable()
 export class MediaService {
   private readonly logger = new Logger(MediaService.name);
@@ -271,6 +282,14 @@ export class MediaService {
   private readonly meta: MediaMetadataStore = { items: Object.create(null) };
   /** Per-uploadId locks that serialize concurrent chunk writes to prevent TOCTOU races. */
   private readonly uploadLocks = new Map<string, Promise<void>>();
+  /**
+   * Bytes of `chat-reel` uploads that passed the budget check and are not yet in the index, per
+   * owner. Lazily created (specs build the service without its constructor). See
+   * {@link reserveChatReelBudget}.
+   */
+  private chatReelReservations?: Map<string, number>;
+  /** Chunked sessions that hold a reservation, by uploadId. Lazily created, same reason. */
+  private chunkSessions?: Map<string, ChunkSession>;
   private readonly sweepIntervalMs = Number.parseInt(
     process.env.MEDIA_RETENTION_SWEEP_MS ?? `${DEFAULT_SWEEP_MS}`,
     10
@@ -297,10 +316,16 @@ export class MediaService {
     ownerId?: string,
     retentionClass?: RetentionClass
   ): Promise<string> {
-    this.assertChatReelBudget(retentionClass, ownerId, encryptedBytes.length);
+    const release = this.reserveChatReelBudget(retentionClass, ownerId, encryptedBytes.length);
     const mediaId = uuidv4();
-    await this.storage.put(mediaId, encryptedBytes, encryptedBytes.length);
-    this.setAccess(mediaId, Date.now(), ownerId, retentionClass, encryptedBytes.length);
+    try {
+      await this.storage.put(mediaId, encryptedBytes, encryptedBytes.length);
+      // Registered in the same synchronous run that releases the reservation (`finally`), so the
+      // bytes are never invisible to a concurrent check: counted as reserved, then as an entry.
+      this.setAccess(mediaId, Date.now(), ownerId, retentionClass, encryptedBytes.length);
+    } finally {
+      release();
+    }
     await this.persistMetadata();
     return mediaId;
   }
@@ -759,20 +784,35 @@ export class MediaService {
   }
 
   /**
-   * Refuses (429) an upload that would take a member past the daily `chat-reel` budget.
+   * Refuses (429) an upload that would take a member past the daily `chat-reel` budget, and RESERVES
+   * the bytes in the same synchronous run, returning the function that gives them back.
    *
-   * Only a `chat-reel` upload with a known owner is counted; the sum is over the owner's LIVE
-   * `chat-reel` entries created in the last 24 hours, so a deleted or swept reel gives its bytes back
-   * and nothing is stored beyond the metadata the service already keeps.
+   * WHY A RESERVATION. The check used to be followed by an `await` (the store write) before the
+   * entry was registered, so N concurrent uploads all read the same `used` and all passed: the cap
+   * was per-request, not per-member. Here the check and the reservation share one tick, and the sum
+   * counts live entries of the last 24 hours PLUS what is reserved and not yet registered. The
+   * caller releases in a `finally`, in the same run that registers the entry, so a failed store write
+   * rolls the reservation back and a successful one is never counted twice or not at all.
+   *
+   * Only a `chat-reel` is metered; any other class returns a no-op. A `chat-reel` with NO owner is an
+   * error, not a free pass: the controller always has one (the JWT), so its absence is a caller bug
+   * that would otherwise bypass the cap silently.
    */
-  private assertChatReelBudget(
+  private reserveChatReelBudget(
     retentionClass: RetentionClass | undefined,
     ownerId: string | undefined,
     incomingBytes: number
-  ): void {
-    if (retentionClass !== 'chat-reel' || !ownerId) return;
+  ): () => void {
+    if (retentionClass !== 'chat-reel') return () => {};
+    if (!ownerId) {
+      this.logger.error(
+        'Chat-reel upload without an owner: the daily budget cannot be applied, refusing'
+      );
+      throw new InternalServerErrorException('A chat-reel upload needs an authenticated owner');
+    }
+    const reservations = (this.chatReelReservations ??= new Map<string, number>());
     const since = Date.now() - DAY_MS;
-    let used = 0;
+    let used = reservations.get(ownerId) ?? 0;
     for (const entry of Object.values(this.meta.items)) {
       if (entry.purgedAt || entry.retentionClass !== 'chat-reel' || entry.ownerId !== ownerId) {
         continue;
@@ -781,13 +821,22 @@ export class MediaService {
     }
     if (used + incomingBytes > CHAT_REEL_DAILY_BYTES) {
       this.logger.warn(
-        `Chat-reel upload refused for ${ownerId}: ${used} bytes already today, ${incomingBytes} more over the ${CHAT_REEL_DAILY_BYTES} cap`
+        `Chat-reel upload refused for ${ownerId}: ${used} bytes already today or in flight, ${incomingBytes} more over the ${CHAT_REEL_DAILY_BYTES} cap`
       );
       throw new HttpException(
         'Daily chat-reel upload budget reached. Try again tomorrow.',
         HttpStatus.TOO_MANY_REQUESTS
       );
     }
+    reservations.set(ownerId, (reservations.get(ownerId) ?? 0) + incomingBytes);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (reservations.get(ownerId) ?? 0) - incomingBytes;
+      if (left > 0) reservations.set(ownerId, left);
+      else reservations.delete(ownerId);
+    };
   }
 
   async remove(mediaId: string): Promise<void> {
@@ -1004,11 +1053,49 @@ export class MediaService {
 
   // --- Chunked upload ---
 
-  async initChunkedUpload(): Promise<string> {
+  /**
+   * Opens a staged upload. A `chat-reel` MUST declare its `totalBytes` here: the daily budget is
+   * checked and reserved NOW, so a member over budget is refused before staging anything, and the
+   * staged file cannot grow past what was reserved. (The budget used to be checked only at assembly,
+   * after up to 100 MB had already been staged.) A session that declares nothing keeps the older
+   * behaviour and, if it then names `chat-reel` at completion, is checked there.
+   */
+  async initChunkedUpload(
+    ownerId?: string,
+    retentionClass?: RetentionClass,
+    totalBytes?: number,
+    maxBytes?: number
+  ): Promise<string> {
     const uploadId = uuidv4();
-    const tempFile = this.chunkTempPath(uploadId);
-    await fs.ensureFile(tempFile);
+    if (retentionClass === 'chat-reel') {
+      if (!Number.isInteger(totalBytes) || (totalBytes as number) <= 0) {
+        throw new BadRequestException("A 'chat-reel' chunked upload declares totalBytes at init");
+      }
+      if (maxBytes !== undefined && (totalBytes as number) > maxBytes) {
+        throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
+      }
+      const release = this.reserveChatReelBudget(retentionClass, ownerId, totalBytes as number);
+      (this.chunkSessions ??= new Map()).set(uploadId, {
+        ownerId: ownerId as string,
+        declaredBytes: totalBytes as number,
+        release,
+      });
+    }
+    try {
+      await fs.ensureFile(this.chunkTempPath(uploadId));
+    } catch (err) {
+      this.dropChunkSession(uploadId);
+      throw err;
+    }
     return uploadId;
+  }
+
+  /** Gives a session's reservation back and forgets it; a no-op for a session that held none. */
+  private dropChunkSession(uploadId: string): void {
+    const session = this.chunkSessions?.get(uploadId);
+    if (!session) return;
+    session.release();
+    this.chunkSessions?.delete(uploadId);
   }
 
   async appendChunk(uploadId: string, chunk: Buffer, maxBytes: number): Promise<void> {
@@ -1044,7 +1131,12 @@ export class MediaService {
       let overCap = false;
       try {
         const { size } = await handle.stat();
-        overCap = size + chunk.length > maxBytes;
+        // A session that declared its total may not stage more than it reserved.
+        const cap = Math.min(
+          maxBytes,
+          this.chunkSessions?.get(uploadId)?.declaredBytes ?? maxBytes
+        );
+        overCap = size + chunk.length > cap;
         if (!overCap) await handle.write(chunk, 0, chunk.length, size);
       } finally {
         await handle.close();
@@ -1056,6 +1148,7 @@ export class MediaService {
       // and acted on outside.
       if (overCap) {
         await fs.remove(tempFile);
+        this.dropChunkSession(uploadId);
         throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
       }
     });
@@ -1072,33 +1165,53 @@ export class MediaService {
       throw new BadRequestException('Invalid uploadId');
     }
     return this.withUploadLock(uploadId, async () => {
-      const tempFile = this.chunkTempPath(uploadId);
-      if (!(await fs.pathExists(tempFile))) {
-        throw new Error('Upload session not found or expired');
+      const session = this.chunkSessions?.get(uploadId);
+      if (session && session.ownerId !== ownerId) {
+        // Not the member who opened (and reserved for) this session.
+        this.logger.warn(`Chunked upload ${uploadId} completed by another member than its opener`);
+        throw new ForbiddenException('Not your upload session');
       }
-
-      const stat = await fs.stat(tempFile);
-      if (stat.size > maxBytes) {
-        await fs.remove(tempFile);
-        throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
-      }
+      // THE RESERVATION IS HELD UNTIL THE ENTRY IS REGISTERED, whichever way this ends.
+      let release: () => void = () => {};
       try {
-        this.assertChatReelBudget(retentionClass, ownerId, stat.size);
-      } catch (err) {
-        // The member is over their daily budget: the staged bytes are of no use to anyone.
+        const tempFile = this.chunkTempPath(uploadId);
+        if (!(await fs.pathExists(tempFile))) {
+          throw new Error('Upload session not found or expired');
+        }
+
+        const stat = await fs.stat(tempFile);
+        if (stat.size > maxBytes) {
+          await fs.remove(tempFile);
+          throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
+        }
+        if (!(session && retentionClass === 'chat-reel')) {
+          // No declaration at init (or another class): checked here, at assembly. A declared
+          // session is already covered by its own reservation, appends being capped to it.
+          try {
+            release = this.reserveChatReelBudget(retentionClass, ownerId, stat.size);
+          } catch (err) {
+            // The member is over their daily budget: the staged bytes are of no use to anyone.
+            await fs.remove(tempFile);
+            throw err;
+          }
+        }
+        const mediaId = uuidv4();
+
+        await this.storage.putFileStream(mediaId, tempFile, stat.size);
+
         await fs.remove(tempFile);
-        throw err;
+
+        this.setAccess(mediaId, Date.now(), ownerId, retentionClass, stat.size);
+        // Entry registered: the reservation hands over to it in this same synchronous run.
+        release();
+        this.dropChunkSession(uploadId);
+        await this.persistMetadata();
+
+        return mediaId;
+      } finally {
+        release();
+        this.dropChunkSession(uploadId);
       }
-      const mediaId = uuidv4();
-
-      await this.storage.putFileStream(mediaId, tempFile, stat.size);
-
-      await fs.remove(tempFile);
-
-      this.setAccess(mediaId, Date.now(), ownerId, retentionClass, stat.size);
-      await this.persistMetadata();
-
-      return mediaId;
     });
   }
 
@@ -1360,6 +1473,10 @@ export class MediaService {
       }
     } catch {
       // CHUNK_DIR may not exist yet on first run - ignore.
+    }
+    // A reservation must not outlive its staged file (swept above, or lost with the volume).
+    for (const uploadId of this.chunkSessions?.keys() ?? []) {
+      if (!(await fs.pathExists(this.chunkTempPath(uploadId)))) this.dropChunkSession(uploadId);
     }
     if (removed > 0) {
       this.logger.log(`Purged ${removed} orphaned chunked upload temp file(s) (>24h)`);

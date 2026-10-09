@@ -259,10 +259,24 @@ export class MediaController {
   // ---------------------------------------------------------------------------  // POST /media/upload/chunk/init
   // ---------------------------------------------------------------------------
   @Post('upload/chunk/init')
-  async initChunkedUpload(@Req() req: Request): Promise<{ uploadId: string }> {
-    this.verifyToken(req);
-    const uploadId = await this.mediaService.initChunkedUpload();
-    this.logger.log(`Initialized chunked upload: ${uploadId}`);
+  async initChunkedUpload(
+    @Body() body: { retentionClass?: unknown; totalBytes?: unknown } | undefined,
+    @Req() req: Request
+  ): Promise<{ uploadId: string }> {
+    const ownerId = this.verifyToken(req);
+    // A `chat-reel` declares its class and total HERE so the daily budget is reserved before any
+    // byte is staged; every other caller sends no body and is unchanged.
+    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+    const totalBytes = typeof body?.totalBytes === 'number' ? body.totalBytes : undefined;
+    const uploadId = await this.mediaService.initChunkedUpload(
+      ownerId,
+      retentionClass,
+      totalBytes,
+      MAX_BYTES
+    );
+    this.logger.log(
+      `Initialized chunked upload: ${uploadId} (retention=${retentionClass ?? 'unclassified'})`
+    );
     return { uploadId };
   }
 
