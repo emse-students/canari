@@ -499,13 +499,6 @@ The two questions of the audit are answered (2026-10-08): a follow keeps its mea
 
 ## CI and the chain that runs unattended
 
-### P3 - EVERY `.swift` IN THE iOS TREE IS UNGUARDED, AND NOTHING HAS MEASURED WHETHER A SUITE EVEN EXISTS
-
-The Android half closed on 2026-09-22 (one pure function compiled twice, [mobile](frontend/mobile.md#the-android-half-of-it-is-one-function-compiled-twice-2026-09-22)).
-iOS is untouched: two Swift test targets exist under the vendored plugins (`tauri-plugin-keystore`,
-`tauri-plugin-customtabs`), and nothing has measured whether the NSE/app Swift is in the position the
-Android ladder was (needing no platform), nor whether those targets run anywhere.
-
 ### P1 - production goes dark in the 22h band, and the only thing both boxes share is the School's firewall (measured 2026-09-11)
 
 The measurement (175 `cloudflared` edge-dial timeouts in seven days, all at 22h-23h CEST, the School's
