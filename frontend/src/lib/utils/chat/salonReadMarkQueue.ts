@@ -14,7 +14,9 @@
  *
  * The merge is `max` per salon, so a replay or an out-of-order write never moves a mark backwards.
  */
+import type { ReadWatermarks } from '$lib/types';
 import { appendLog } from '$lib/utils/sessionLog';
+import { mergeReadWatermarks, watermarkFor } from './readState';
 
 /** One owed mark: `at` is the read point, `serverAt` the server clock of the newest row it covers. */
 export interface OwedSalonMark {
@@ -69,6 +71,51 @@ export function recordSalonReadMark(
       : {}),
   };
   store(userId, owed);
+}
+
+/**
+ * The read marks a salon holds once the server has answered a load: everyone's, with the READER'S
+ * OWN taken from the server and from what this device still owes it - never from what the device
+ * believed before.
+ *
+ * WHY. The receipt effect posts a mark only when reading moves the reader's own watermark, and that
+ * watermark used to be restored from the device's conversation row and then merged with the
+ * server's as `max`. A mark the device had advanced locally but never delivered (a POST lost before
+ * the owed queue existed, a reload inside the debounce) therefore stayed AHEAD of the server's for
+ * ever: opening the salon moved nothing, so nothing was posted, and every reload counted the same
+ * messages unread on the server's mark (reported 2026-10-09, `#infos`: zero `POST /read-mark`
+ * across a whole afternoon). The only local belief allowed above the server's is one that is OWED,
+ * because the queue is what delivers it.
+ *
+ * @param serverMarks the server's marks, already parsed; `undefined` when they could not be loaded,
+ *                    in which case nothing can be corrected and `current` is kept.
+ * @param owedAt the mark this device still owes for the salon, from {@link owedSalonReadMarks}.
+ */
+export function salonMarksAfterLoad(
+  current: ReadWatermarks | undefined,
+  serverMarks: ReadWatermarks | undefined,
+  userId: string,
+  owedAt: number | undefined,
+  salonId: string
+): ReadWatermarks | undefined {
+  if (!serverMarks) return current;
+  const me = userId.toLowerCase();
+  const believed = watermarkFor(current, me);
+  const own = Math.max(watermarkFor(serverMarks, me), owedAt ?? 0);
+  const others = Object.fromEntries(
+    Object.entries(mergeReadWatermarks(current, serverMarks) ?? current ?? {}).filter(
+      ([userNorm]) => userNorm !== me
+    )
+  ) as ReadWatermarks;
+  if (believed > own) {
+    appendLog(
+      `[READ] ${salonId.slice(0, 16)}: own mark ${believed} held here is ahead of the server's` +
+        ` ${watermarkFor(serverMarks, me)} and owed ${owedAt ?? 0} - the server's is kept, so` +
+        ' reading the salon posts the mark again'
+    );
+  }
+  const next: ReadWatermarks = own > 0 ? { ...others, [me]: own } : others;
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 /** The marks still owed, for tests and diagnostics. */
