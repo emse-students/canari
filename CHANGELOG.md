@@ -14,6 +14,248 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-09
+
+### Fixed - a calendar, agenda-validation or proposal notification tap did nothing on Android
+
+The deep-link plugin drops any `fr.emse.canari://<host>` the config does not list, running or killed, and only `callback`, `stripe`, `chat`, `post` and `form` were listed: the tap opened the app and left it where it was. `posts`, `calendar`, `admin-agenda` and `proposals` are declared now, read on a Mi 9T ([device readings](docs/wiki/device-readings-2026-10.md)).
+
+### Added - mute one association's push notifications
+
+A member can silence the push of ONE association from its page or from the notification settings; the post stays in the feed and "Suivre" keeps its meaning. Applied server-side, managers keep their operational notifications. See [social-service](docs/wiki/services/social-service.md#follow-mute-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08).
+
+### Added - the audience of an association or list is chosen among presets
+
+A BDE or global admin picks "my whole campus" or "my campus and some formations" (an institution may also pick everyone), a creator with no campus is asked to complete the profile, and a BDE creating outside its own campus is refused. See [profiles-and-access](docs/wiki/profiles-and-access.md#audiences-client-presets-as-built-wp-b-2026-10-08).
+
+### Changed - a BDE star reads the audience of its own campus's entities
+
+`GET /api/associations/:id/audiences` is open to a BDE star for entities within the campuses it governs (never an institution), and the audience editor now preselects the preset in force. See [profiles-and-access](docs/wiki/profiles-and-access.md#audiences-client-presets-as-built-wp-b-2026-10-08).
+
+### Changed - the four media-service audit ignores re-checked, all premises still hold
+
+minio is still 8.0.7 and pins `stream-json ^1.8.0` and `query-string ^7.1.3`, so nothing can be retired; the check date is recorded ([cicd](docs/wiki/cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable)).
+
+### Fixed - a changed profile photo shows at once instead of up to 24 h later
+
+The avatar proxy answers `no-cache` with MiGallery's ETag and a `304` on a matching validator ([core-service](docs/wiki/services/core-service.md#no-cache--the-upstream-etag-and-the-busted-url-it-did-not-need-2026-10-08)).
+
+### Changed - backlog sections trimmed to open work
+
+The backlog's MLS healing, mentions, harness and graphical-pass sections keep only open work; their measurements and refuted readings moved to [campaign-measured-defects](docs/wiki/protocols/campaign-measured-defects.md) and [cross-client-harness-findings](docs/wiki/cross-client-harness-findings.md).
+
+### Changed - the "one CAS return in six fails" reading was half probes, not people
+
+Read-only on the MiConnect log: 52 % of the bare-callback failures are Java and okhttp calls, the flow heals a browser once, and the log is unreadable since the 2026-10-07 restart ([authentik](docs/wiki/infrastructure/authentik.md#the-hand-built-configuration-audited-2026-09-29)). The DSI answer is still owed.
+
+### Fixed - chat-delivery-service no longer trusts the `x-user-logged-in` header alone outside production
+
+With `INTERNAL_SHARED_SECRET` unset and `NODE_ENV` not `production`, the guard accepted any caller sending `x-user-logged-in: true` (CodeQL alert 2547). The signed `X-Internal-Token` and a non-empty `x-user-id` are now required in every environment, failing closed and loudly. Production and dev were already pinned to `production` with a secret, so nothing changed there. See [core-service](docs/wiki/services/core-service.md#three-services-refuse-an-unsigned-caller-three-different-ways).
+
+### Fixed - a client goodbye was logged as an unclassifiable ERROR again
+
+A lone dependency bump had split `tokio-tungstenite` from axum's, blinding the classifier; it is pinned back, guarded by a test and a Dependabot ignore ([chat-gateway](docs/wiki/services/chat-gateway.md)).
+
+### A tap no longer reaches the component that appears under it
+
+Opening a salon could also open a profile or the read receipts of the message now under the finger, and a long "Lu par" list ran off the screen. A click now reaches only the element its press began on (`pressedClickGuard`), and the list wraps: see [design-reference](docs/wiki/frontend/design-reference.md).
+
+### "Voir plus" on a comment only appears when the text is really cut
+
+It used to appear past 280 characters while the box clamps at five lines, so a short comment showed a control that did nothing. It is now measured: see [design-reference](docs/wiki/frontend/design-reference.md).
+
+### Fixed - container logs are bounded and survive the deploy that recreates the container
+
+Every service now rotates its log (3 x 10 MB) and the deploy archives each container log before replacing it ([logging](docs/wiki/infrastructure/logging.md)). Takes effect at the next deploy of each estate.
+
+### Fixed - a post notification tapped with the session already dead no longer lands on a bare sign-in page
+
+The session-expired handler went to `/login` while the deep link's navigation was still in flight, so the target was dropped; it now carries the page being navigated to as `returnTo` ([sessions](docs/wiki/sessions.md#a-dead-session-sends-the-user-to-login-carrying-where-they-were-going-2026-10-09)). Owed one reading on the Mi 9T.
+
+### Changed - docker-prune installation on the Portail-etu host is four commands and a cron line
+
+The README now carries the host's real paths, user and compose files, checked read-only, and the backlog lists the one-off for the user or Master ([README](infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet)).
+
+### Added - docker-prune can remove unused release images, by allowlist
+
+`prune.py --remove-releases` removes `ghcr.io/emse-students/canari/*:v*` images beyond the newest N that no container references; dry-run prints the plan ([README](infrastructure/docker-prune/README.md#release-images---an-allowlist-by-name-and-three-guards)).
+
+### Fixed - the read-receipt popover says "Lu par Jolan", not "Lu par Jolan BOUDIN"
+
+A person whose name was seeded without a first name never got one; the profile is now fetched once for it, and the cache redraws the popover. See [architecture](docs/wiki/frontend/architecture.md#the-first-name-has-its-own-cache-and-every-door-that-knows-it-must-fill-it-2026-10-09).
+
+### Fixed - the web app downloaded its 2 MB of engine, scripts and styles uncompressed, so a weak link waited twice as long
+
+The frontend nginx compressed JSON only: production served the MLS WASM at 2 126 190 bytes and every script and the stylesheet raw. JS, CSS, WASM and SVG are gzipped now (WASM 2.09 -> 0.76 MB); a Slow 3G cold start goes from 94 s to 39 s and a 2G one from 12 to 4.7 minutes ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#10-package-status-2026-10-09)). Reaches users with the next pre-release or stable.
+
+### Changed - reactions to one post are ONE notification, with the faces of who reacted
+
+Six reactions used to be six faceless notifications saying `a réagi Marteau`. Android now keeps one per post ("A, B et 4 autres ont réagi"), shows the face or up to three faces, and the push carries the emoji, not the label; iOS stacks them per post ([mobile](docs/wiki/frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)).
+
+### Fixed - the dependency audit is green again: handlebars 4.7.10 in the four NestJS lockfiles
+
+Three Handlebars advisories (two critical) failed `Dependency audit` on every pull request from 2026-10-09. `handlebars` reaches the four services only through the dev dependency `ts-jest` (`^4.7.9`), so the fix is a lockfile bump to the fixed 4.7.10 within that range: no override and no ignore. See [cicd](docs/wiki/cicd.md).
+
+### Fixed - the composer avatar no longer carries the previous account's name, and the PIN reset button is reachable on a phone
+
+A user switch left the saved display name of the previous account in storage, which the avatar label cache then adopted; and the "PIN oublie" box now scrolls above the fixed unlock footer. See [auth](docs/wiki/frontend/modules/auth.md#two-iphone-12-findings-of-2026-10-07-a-name-saved-for-the-previous-account-and-a-reset-button-under-the-footer).
+
+### Added - "Ouvrir dans l'application" on the phone login page
+
+A phone on the web login now gets a link into the app beside the (already French) store badges ([auth](docs/wiki/frontend/modules/auth.md#open-in-the-app-from-the-login-page-2026-10-08)).
+
+### Added - a study of a school-mail tab on the device
+
+Docs only: feasibility, security design and work packages for IMAP/SMTP on the device ([mail-imap](docs/wiki/frontend/modules/mail-imap.md)).
+
+### Fixed - a purged or absent media is already two typed answers; the open entry is closed
+
+Measured on prod: 0 404 and 1 410 in 612 `/api/media/:id` requests, so no change to the answers; the server case is now pinned by a test ([media-service](docs/wiki/services/media-service.md#a-purged-object-reads-as-410-an-absent-one-as-404---and-both-were-already-typed-measured-2026-10-08)).
+
+### Fixed - notification taps: a proposal opens its queue, a salon click opens the communities
+
+Tapping a republication or co-organisation proposal now opens the receiving association's queue instead of the feed, those notices obey the posts and events switches, and a browser notification for a salon opens `/communities` rather than `/chat` ([mobile](docs/wiki/frontend/mobile.md#what-every-notification-opens-and-what-was-measured-2026-10-08)).
+
+### The Messenger/Facebook/Instagram in-app browser now shows a large "open in the app" card
+
+The thin blue strip became a full card with one big button, because nobody should stay in that browser ([OpenInAppBanner](frontend/src/lib/components/shared/OpenInAppBanner.svelte)).
+
+### Fixed - an upload the edge refuses with 413 is no longer retried for ever
+
+The outbox now ends the entry after one attempt and tells the author in the thread ([outbox](docs/wiki/frontend/modules/chat.md#a-413-ends-the-entry-2026-10-08)). The 1 MiB edge limit itself is still open in the [backlog](docs/wiki/backlog.md).
+
+### Fixed - no warning on every background, and the scheduled-posts strip empties on time
+
+The paused native socket is released only when its disconnect frame was accepted, and `/posts` arms one timer on the earliest scheduled time. See [mobile](docs/wiki/frontend/mobile.md) and [posts](docs/wiki/frontend/modules/posts.md#scheduled-posts-where-they-show-and-the-event-picker-order-2026-10-06).
+
+### Changed - the pre-release tag race is measured (1 refusal in 108 alphas) and its backlog entry closed
+
+The refusal is clean and names its remedy, so nothing is re-architected; the reopen rule and the measurement are in [cicd](docs/wiki/cicd.md#a-pre-release-tag-can-still-race-a-merge-between-the-head-read-and-the-tag).
+
+### The reactors list no longer shows twice
+
+The browser's own tooltip drew the same names on top of the app's reactors panel; it is gone. See [design-reference](docs/wiki/frontend/design-reference.md).
+
+### Added - named readers: a global admin grants read access to the associations of a campus or formation
+
+A named account reads, reacts to and comments on the posts of the associations, lists and institutions of the ticked campuses and formations, and sees their events - never a student's personal post, never notified, and it cannot vote, republish or publish through the grant. See [profiles-and-access](docs/wiki/profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08).
+
+### Fixed - CanaReels recorded 19 frames a second and a hot, clipped sound; the review had black bars
+
+Android recorded VP9 in software and lost a third of the frames; it records hardware H.264 now (30 fps, no gaps), the microphone is asked with no echo cancellation, noise suppression or gain control, and the post-capture screen is a full-bleed loop with no seek bar ([device readings](docs/wiki/device-readings-2026-10.md), [reels](docs/wiki/frontend/modules/reels.md)).
+
+### CanaReels discoverability noted in the backlog
+
+The camera swipe has no visible hint; ideas parked ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - the camera no longer asks "Discard this capture?" over the page you went to
+
+Leaving the camera (a reel published, a tab tapped) drained the history stack with the same call as Back, so the review asked its discard question over the feed. A close handler now learns why it runs, and a navigation drops the take without asking. See [reels](docs/wiki/frontend/modules/reels.md#a-take-is-never-asked-about-once-the-screen-is-left-2026-10-09).
+
+### Docs - CanaReels in a conversation: the user's decisions of 2026-10-09 are recorded
+
+Replayable for 30 days, a 60 s chat cap at about 540p, no "Ouvert" signal, a save button for every reel and no screenshot blocking. See [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#9-decisions).
+
+### Added - a design study for CanaReels sent in conversations
+
+An ephemeral end-to-end video message for DMs, groups and salons: its model, retention, weak-network behaviour, work packages and the decisions owed. See [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md).
+
+### Changed - the SFU's relay path is tested in CI, so WebRTC dependency updates no longer wait for a human
+
+`apps/call-service/tests/relay_path.rs` puts two relay-only peers through an in-process TURN server and carries a data-channel message and an SRTP packet across, so the dependency ceiling stops refusing `webrtc`, `ice`, `turn`, `stun` and `sdp` updates ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - a partial restore now says so
+
+A device whose restore brings back conversations without their MLS group used to look complete; it now logs the shortfall as an error and shows a dismissible notice. See [auth](docs/wiki/frontend/modules/auth.md#a-restore-that-comes-back-partial-says-so-2026-10-08).
+
+### Fixed - a salon message the server refused is no longer lost
+
+The text (and the reply target) comes back into the composer and the error stays ([chat](docs/wiki/frontend/modules/chat.md#a-refused-salon-send-gives-the-draft-back-wp-off-1-2026-10-09)).
+
+### Fixed - a salon's unread badge no longer vanishes at every reload
+
+Nothing marked a salon read that was not opened (measured on ten communities), but the badge was a live tally that a reload, a cold start or a down socket reset to zero. The server now counts per salon against the member's read mark and the app merges that count. See [chat](docs/wiki/frontend/modules/chat.md#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08).
+
+### Changed - the administration area is a hub of pages under a path, not a strip of links
+
+`/admin` lists its pages as rows by group (moderation, community, platform), each page shows `Admin > Group > Page` with every crumb a link, and the layout now refuses a page the reader's tier cannot open. The moderation and legacy-dues tabs stay fixed equal-width controls and keep their choice in `?tab=` ([section-navigation](docs/wiki/frontend/section-navigation.md)).
+
+### Changed - the association management area is a hub of sections, each its own page
+
+Twelve sections no longer wrap into a block of buttons: `/associations/<slug>/edit` lists them as rows, each opens at `/edit/<section>` under a path where every crumb is a link, and a section its reader holds no right for is refused. Old `?section=` links redirect ([section-navigation](docs/wiki/frontend/section-navigation.md)).
+
+### Changed - an association's page and a list's management area are hubs of sections, not tab strips
+
+Every section is its own address with a clickable path (`Associations > BDE > Agenda`), Back goes up one level, and the section pages stay out of the search index ([section-navigation](docs/wiki/frontend/section-navigation.md)).
+
+### Design for navigating sections in depth instead of tabs
+
+Written down before any code: [section-navigation](docs/wiki/frontend/section-navigation.md).
+
+### Fixed - the seen-ciphertext ledger evicts row keys before fingerprints, and its ledgers are bounded
+
+Fingerprints and row keys each have their own cap and a user keeps at most 256 ledgers ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#the-seen-ciphertext-ledger-has-two-namespaces-and-two-bounds-2026-10-08)).
+
+### Fixed - the channel, community, media and new-chat tabs show every entry
+
+The side panels' tabs were a horizontal scrolling strip that could hide an entry; they are now one fixed, equal-width segmented control (keyboard-navigable, nothing clipped at 320 px), shared with the moderation and legacy-cotisations pages. See [section-navigation](docs/wiki/frontend/section-navigation.md).
+
+### Session state of 2026-10-08
+
+The queue records that v1.1.2 is in production, that the next stable is held (read-grant checks on a second campus, the CGU review, the tauri 2.12 pre-release) and that the backlog was cut to open work: see [backlog](docs/wiki/backlog.md).
+
+### Session state: CGU approved, test account created, two chantiers opened
+
+See [section-navigation](docs/wiki/frontend/section-navigation.md) and [backlog](docs/wiki/backlog.md).
+
+### Docs - the staff-reads-campus-posts question is written as three options, one line owed
+
+The question left the backlog for [open-questions](docs/wiki/open-questions.md#may-emseme-staff-no-cursus-read-the-association-posts-of-their-campus) with what each option costs and a recommendation; nothing was built.
+
+### Removed - Stripe, Lydia and cash are the only payments left
+
+The Stripe provider, saved cards, Connect panels, webhook, secrets and dependency are gone; what it did and the names kept for rollback are in [stripe-archive](docs/wiki/stripe-archive.md).
+
+### Added - every Swift file is parsed on each pull request
+
+`swiftc -parse` runs over all tracked `.swift` files in the always-on CI script job, so a syntax error in the iOS tree is found at the pull request and no longer by an App Store build; the two Swift test targets are measured to be the Xcode template ([mobile](docs/wiki/frontend/mobile.md#cicd)).
+
+### Changed - the chat edge-swipe logs what it did with a touch
+
+`swipeBack` now says when it armed, when the system cancelled the touch and how it was released, so the swallowed scroll after an edge swipe is one device-log read away ([design reference](docs/wiki/frontend/design-reference.md#41-the-system-back-gesture-takes-the-edge-touch-and-the-swipe-back-stayed-armed-mi-9t-2026-10-05)). The real-finger reading on the Mi 9T is still owed.
+
+### Changed - tauri 2.12 (wry 0.57, tao 0.37) with the store, opener and http plugins; the vendored tao fork is gone
+
+wry no longer aborts the process on an unparsable URL, and tao 0.37 carries the Android `getType()` null guard the fork existed for, so `frontend/src-tauri/patches/tao` is deleted. See [backlog](docs/wiki/backlog.md) and [mobile](docs/wiki/frontend/mobile.md#the-app-owns-which-urls-its-own-webview-may-load).
+
+### Changed - the three red Tauri plugin bumps are held until the tauri 2.12 / tao 0.37 rebase
+
+`plugin-http` 2.8, `plugin-opener` 2.7 and `plugin-store` 2.5 each need crates that pull `tauri 2.12` and `wry 0.57`, which drop the vendored `tao` patch; the guard was right to refuse them ([cicd](docs/wiki/cicd.md#a-tauri-plugin-bump-is-two-halves-and-the-crate-half-can-be-a-runtime-bump-2026-10-08)).
+
+### Changed - the Tauri biometric, websocket and log plugins move to 2.4.1, 2.5.0 and 2.10.0, JS and Rust together
+
+Dependabot moves only the JS half, so these three arrived red on the parity guard; the crates are updated in the same change and `cargo check` compiles. The recipe is in [cicd](docs/wiki/cicd.md#a-tauri-plugin-bump-is-two-halves-and-the-crate-half-can-be-a-runtime-bump-2026-10-08).
+
+### Fixed - the tooltips are audited: no raw reaction key, no French literal, no title doubling a label
+
+The reaction picker named reactions by their stored key (`Marteau`, in every language), the avatars, the modal close button and the admin project rename carried French literals, and one dashboard card had a `title` identical to its visible label. The convention is in [design-reference](docs/wiki/frontend/design-reference.md#tooltips-one-convention-audited-2026-10-08).
+
+### Found - the 1 MiB upload refusal on the legacy names is the relay's nginx default, not Cloudflare
+
+The `413` page's own body is nginx's, and both relay files on the old VM carry no `client_max_body_size`. The two-line fix and its check are in [cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names---it-is-the-relays-nginx-not-cloudflare-measured-2026-10-07-cause-found-2026-10-09); the gesture is on the owed table of the [backlog](docs/wiki/backlog.md).
+
+### Added - a plain-French guide to message encryption, the PIN and history on a new device
+
+[chiffrement-et-historique](docs/user-guide/chiffrement-et-historique.md), linked from the [user guide index](docs/user-guide/index.md).
+
+### Fixed - a first-contact Welcome is carried by reference, as a typed outcome
+
+A Welcome (4608 B against a 3716 B budget) is never inlined in the push: the device fetches it by id, and the decision is now a typed `decideProtoCarriage` outcome, with an over-budget MESSAGE logged at warn level. See [chat-delivery](docs/wiki/services/chat-delivery.md#a-welcome-is-carried-by-reference-never-inlined-2026-10-08).
+
+### Store notes for 1.2.0
+
+The text the stores and the GitHub release carry ([whats-new](store/whats-new.txt)).
+
 ## [1.1.2] - 2026-10-07
 
 ### Changed - the admin "Espaces & audiences" page shows logos and splits into associations, lists and institutions
