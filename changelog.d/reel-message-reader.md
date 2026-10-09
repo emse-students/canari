@@ -1,0 +1,3 @@
+### Added - a CanaReel received in a conversation is drawn as a tile and played in the reel viewer; every reel can be saved
+
+`MediaMsg` gains `intent`, `duration_ms` and `expires_at_ms` (older clients read a plain video), the chat draws a "Appuyer pour voir" tile that fetches nothing before the tap and a tombstone after expiry, and the reel viewer's bar carries a save button beside the volume for every reel, public or not. Reader only: nothing sends a reel message yet. See [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#8b-what-the-reader-package-rc-1-built-and-what-it-did-not-2026-10-09).

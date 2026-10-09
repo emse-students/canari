@@ -103,7 +103,26 @@ export interface MediaRef {
    * string and not just the one value this client writes.
    */
   encoding?: string;
+  /**
+   * What the media is FOR, DECLARED BY THE SENDER (`MediaMsg.intent`): `'reel-message'` is a CanaReel
+   * sent in a conversation - drawn as a tile and played in the reel viewer, never as a chat video.
+   * Absent is an ordinary attachment, and so is any proto value this client does not know: a newer
+   * intent must degrade to "a video", never to an error
+   * ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md)).
+   */
+  intent?: MediaIntent;
+  /** Declared length in milliseconds (`MediaMsg.duration_ms`), drawn on the tile before a fetch. */
+  durationMs?: number;
+  /**
+   * When the blob is expected to be gone, epoch milliseconds (`MediaMsg.expires_at_ms`). A DISPLAY
+   * HINT that lets the tile draw its tombstone without a request: the server's clock is the
+   * authority and a 410 is the truth.
+   */
+  expiresAtMs?: number;
 }
+
+/** The intents a client can name; see {@link MediaRef.intent}. */
+export type MediaIntent = 'reel-message';
 
 export interface ImageDimensions {
   width: number;

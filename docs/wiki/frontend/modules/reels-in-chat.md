@@ -1,4 +1,4 @@
-# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09)
+# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09; RC-1 reader in review)
 
 **Decided by the user, 2026-10-09** (French, relayed): generalise CanaReels *like Snapchat*, so a
 member can SEND a reel in a group, a DM or a community salon. **The chosen form is an EPHEMERAL VIDEO
@@ -480,6 +480,36 @@ and the testers.
 | **Salon access rule unverified** | who may fetch the blob | WP-RC-0 audit; consistent with every salon attachment until proven otherwise |
 | **Hold-only shutter** | a motor-access regression, now repeated in a chat | the accessible toggle in RC-4, then given back to the tab |
 | **A branch no test mounts** | #1229 lost every photo to a video branch | the mounting test is a stated deliverable of RC-6 |
+
+## 8b. What the reader package (RC-1) built, and what it did not (2026-10-09)
+
+**Draft pull request, waiting for review after the 1.2.0 stable: it changes the wire format.** READER
+ONLY - nothing in the app can send a reel message yet (no RC-4 camera entry, no RC-5 upload), so a
+`REEL_MESSAGE` only ever arrives from a client built later.
+
+- **Wire** (`libs/proto/canari.proto`): `MediaMsg.intent = 14` (`MediaIntent`: `NONE = 0`,
+  `REEL_MESSAGE = 1`, 2 reserved for view-once), `duration_ms = 15`, `expires_at_ms = 16`. Written ONLY
+  when set. An OLD client skips the three fields and plays the blob as a plain video (pinned by
+  `codec.reelMessage.test.ts` against the schema as it stood); a client that knows the field but not the
+  VALUE reads an ordinary attachment, never an error. The native push readers (Rust `proto_fields.rs`,
+  Kotlin, Swift/NSE) read `MediaMsg` by field number and ignore the three, so a push still says "video"
+  until RC-7: **compile-checked and unit-tested in Rust only, NOT run on a device.**
+- **Model**: `MediaRef.intent / durationMs / expiresAtMs`, the stored JSON envelope, the outbox payload
+  (`prepareMedia` writes the declaration; nothing sets it yet), `mediaReelProtoFields` /
+  `mediaReelFromProto` in `proto/codec.ts`, the ONE place that spells the mapping.
+- **Tile** (`ChatReelTile.svelte`, drawn by `MessageMediaRenderer` BEFORE the video branch): 9:16 box
+  from `width`/`height`, ThumbHash fill, a play glyph, "Appuyer pour voir", the length. **Nothing is
+  fetched before the tap**: `MessageBubble`'s download effect returns early for a reel message and the
+  viewer downloads and streams. **Tombstone** once `expiresAtMs` has passed: same box, no ThumbHash, "CanaReel
+  expire" and the age only. A `410` met INSIDE the viewer shows the player's own expired state; the tile
+  behind it is only told by the hint (a tile that learned from the `410` would need the viewer to report
+  back - left for RC-9 to measure).
+- **Viewer**: the feed's `ReelViewer` on ONE post-shaped entity (`reelMessageAsPost`), `loadPage` empty
+  (a conversation's reels are not the feed's; the chain through the conversation's other reels of 3.2 is
+  not built). **The save button is in the bar next to the volume, for every reel** (D-save), so the feed
+  viewer changed too. A reel message is NOT forwardable (the bubble drops the action).
+- **Not built**: the sender, the retention class beyond the RC-2 draft, the resumable upload, push text,
+  salons' moderator purge, the 60 s cap field in `reel-limits`, the chat encoding profile.
 
 ## 9. Decisions
 

@@ -25,13 +25,6 @@ vi.mock('$lib/reels/reelPreload', () => ({
     }
   },
 }));
-const ownReels = new Map<string, unknown>();
-vi.mock('$lib/reels/myReels.svelte', () => ({
-  myReels: {
-    find: (id: string) => ownReels.get(id),
-    ensure: () => {},
-  },
-}));
 vi.mock('$lib/components/posts/PostMedia.svelte', async () => ({
   default: (await import('./PostMediaStub.test-helper.svelte')).default,
 }));
@@ -94,7 +87,6 @@ async function render(loadPage = vi.fn(async () => [reel('a'), reel('b'), reel('
 }
 
 beforeEach(() => {
-  ownReels.clear();
   preloads.length = 0;
   stopped.length = 0;
   vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce') }));
@@ -140,9 +132,9 @@ describe('ReelViewer', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("offers the save on the author's own reel only", async () => {
-    ownReels.set('b', { id: 'b', expiresAt: '', expiringSoon: true, media: [] });
+  it('offers the save on the reel being played, whoever published it', async () => {
     await render();
+    // Only the current reel mounts a player, so only its bar carries the button.
     expect(document.querySelectorAll('[data-reel-save]').length).toBe(1);
     expect(document.querySelector('[data-reel-slide="b"] [data-reel-save]')).not.toBeNull();
   });

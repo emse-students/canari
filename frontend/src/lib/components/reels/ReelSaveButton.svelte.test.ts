@@ -5,18 +5,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelSaveButton from './ReelSaveButton.svelte';
-import type { MyReel } from '$lib/posts/api';
+import type { SaveableReel } from '$lib/reels/saveReel';
 
 const saveReel = vi.fn();
 const openAppSettings = vi.fn(async () => {});
 const showToast = vi.fn();
-vi.mock('$lib/reels/saveReel', () => ({ saveReel: (r: MyReel) => saveReel(r) }));
+vi.mock('$lib/reels/saveReel', () => ({ saveReel: (r: SaveableReel) => saveReel(r) }));
 vi.mock('$lib/reels/gallery', () => ({ openAppSettings: () => openAppSettings() }));
 vi.mock('$lib/stores/toast.svelte', () => ({
   showToast: (...a: unknown[]) => showToast(...a),
 }));
 
-const reel = { id: 'r1' } as MyReel;
+const reel = { id: 'r1' } as SaveableReel;
 const mounted: Record<string, unknown>[] = [];
 
 async function render() {
