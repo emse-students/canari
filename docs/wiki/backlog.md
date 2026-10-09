@@ -204,8 +204,6 @@ Firebase is not initialized in `canari-dev-chat-delivery-service`, so no notific
 
 Neither the tab nor the salon showed one. Not reproduced.
 
-### P3 - iPhone: the sticky "AUJOURD'HUI" date chip overlaps a sender name while a salon scrolls
-
 ### P3 - switching accounts on one iPhone install makes the local store unreadable
 
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.

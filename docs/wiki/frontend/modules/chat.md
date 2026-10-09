@@ -2906,8 +2906,12 @@ already does. `--z-page-sticky` had no other user and is gone.
 separator that had just come into view under the floating header, and drew the same day twice, one
 pill over the other. It now measures from the top of the VISIBLE thread (the banner column's top),
 treats a separator behind the catch-up banner as hidden, and stays hidden while the one it would
-name is still on screen. Where it does float over a bubble, a halo in the page colour (`--cn-bg`)
-fades the letters either side of it instead of leaving them cut hard against its edge.
+name is still on screen. Where it does float over a bubble or a sender name it is GLASS (`.glass-chrome`'s blur and
+tokens, 2026-10-09): the first answer, an opaque chip with a page-colour halo, was read on the iPhone
+as a sender name cut to "Canari Test De" and then the chip. The pill floats over moving content by
+design, so layout cannot avoid the overlap - the surface blurs what passes under it instead. The
+gate (`stickyDatePillGlass.test.ts`) reads the rule, since no rendering test sees a backdrop. **The
+after-state is owed one look on the iPhone**; the pill is visible only while scrolling and 1.4 s after.
 
 Audited at 390 and 1280 (a preview of the thread's real structure, headless Chrome): nothing else
 draws text over text while scrolling - the scroll-to-bottom button and the send-error alert sit at
