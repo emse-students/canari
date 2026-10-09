@@ -470,7 +470,7 @@ and the testers.
 
 | Risk | Why it matters | Mitigation |
 | --- | --- | --- |
-| **Storage growth** | 30-day, ~14-35 MB each, any member, any conversation; the box is already 88 % full on the shared host ([backlog](../../backlog.md)) | RC-0 forecast, chat profile, the per-member daily cap (D7), the `/admin/storage` line and an `overdue` figure |
+| **Storage growth** | 30-day, ~14-35 MB each, any member, any conversation; the shared host measured 60 % used on 2026-10-09 ([backlog](../../backlog.md)) | RC-0 forecast, chat profile, the per-member daily cap (D7), the `/admin/storage` line and an `overdue` figure |
 | **A 90 s preparation on a phone** | unmeasured; may be minutes on the iPhone 12 | RC-0 first; the raw-take store (a kill loses nothing); the review-time prepare (RC-11) |
 | **The outbox holding the file** | a 37 MB row is the wrong shape | the file outside the row (RC-5) |
 | **Single-request upload** | 90 % lost on a cut | the resumable part upload; depends on the weak-network work |
