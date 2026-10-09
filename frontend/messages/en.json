@@ -389,6 +389,7 @@
   "chat_channel_access_description": "Define whether the channel is open to all members or restricted to certain users.",
   "chat_channel_settings_read_only_hint": "Only members allowed to manage channels can change these settings.",
   "common_loading_label": "Loading…",
+  "reactors_more_label": "+{count} more",
   "common_saving_label": "Saving…",
   "common_delete_button": "Delete",
   "chat_channel_private_label": "Private channel",

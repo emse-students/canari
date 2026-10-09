@@ -421,6 +421,7 @@
   "chat_channel_access_description": "Définissez si le canal est ouvert à tous les membres ou restreint à certains utilisateurs.",
   "chat_channel_settings_read_only_hint": "Seuls les membres ayant la permission de gérer les canaux peuvent modifier ces réglages.",
   "common_loading_label": "Chargement…",
+  "reactors_more_label": "+{count} autres",
   "common_saving_label": "Sauvegarde…",
   "common_delete_button": "Supprimer",
   "chat_channel_private_label": "Canal privé",
