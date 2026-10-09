@@ -260,7 +260,7 @@ G2-0 to G2-4 and the writer G2-5 are SHIPPED (#1221; the writer in the stable `v
 | --- | --- |
 | G2-5 | **v1 ends (user, 2026-09-28)**: a v1 seed that ARRIVES is refused, v1 seeds already held stay readable until their rows age out (365 days), the v1 reader is deleted. **BLOCKED on the floor**: clients `1.0.0`-`1.0.2` still mint v1 seeds. Unblock = raise `minClientVersion` to >= `1.0.3` once BOTH stores serve it (`bun tools/play-vitals/vitals.mjs` + App Store), then touch `utils/graine/{sessionManager,wireSeed}.ts`, `crypto/graine.ts` and the native `merge_graine_seed` |
 | G2-6b | a salon edit from a v1 session has an unsigned, server-supplied `senderId` (a deliberate level, no code owed, [§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05)); closes with the v1 reader. **Only if a channel ever gets an older-page load:** `listMessages` with a `before` cursor omits edit and reaction rows made after the cursor |
-| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **owed: a run of GRAINE-AUTH-1..3 on the local estate, and NOTIF-19/20 on the Mi 9T against a G2-5 build**; the iPhone reading ([device-verification](device-verification.md)) |
+| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **GRAINE-AUTH-1..3 are `PASS` since 2026-10-05 on the local estate** ([board](cross-client-testing.md#20---graine---an-author-that-is-proven), the claim that they were owed was stale); **owed: NOTIF-19/20 on the Mi 9T against a G2-5 build** (needs adb), **GRAINE-AUTH-4** (no runner can exist without a decision on a mutating dev hook, see the board row) and the iPhone reading ([device-verification](device-verification.md)) |
 
 What v2 does not close: the server can still admit a device it controls or publish a false device key
 (BasicCredential's limit, §21).
@@ -317,16 +317,6 @@ garantir la disponibilite"*, scoped to availability rather than deliberate refus
 | `R-E9`, `R-E11` | peer-unresolved; `readWelcomeOwed() === null` | retried for ever, no counter |
 | `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
 | `G-E10` | `forgetCommunityGraine` with no runtime | warns, returns 0; seeds and joined groups stay |
-
-### P3 - one seat on production has no client behind it, and removing it is not the server's to do (measured 2026-09-22)
-
-Estate-wide, **two** seats belong to users with no `key_package` anywhere: one real member of a real
-two-person conversation (taken 2026-08-10, while `userHasMlsDevices` was a constant `true`, broken until
-2026-08-19) and one brand-new one-member group at epoch 0. The sweep finds no real case after the fix
-([state machine](protocols/mls-graine-state-machine.md#a-seat-with-no-client-behind-it---the-first-real-one-and-the-population-is-two-2026-09-22)).
-**Open, and may close as "leave it"**: whether the MLS tree still carries a leaf for that member is a
-question only a holder's CLIENT can answer, and removing it is a client action inside a real student's
-conversation. The decision is whether one residual seat is worth any mechanism.
 
 ### P1 - a damaged local MLS state is reported as a PIN rotation, and the PIN the user actually holds does not get them back in (measured 2026-09-08)
 
@@ -618,8 +608,13 @@ group's log (the fourth `DELIVERY` combination) - a wire-level change that waits
 HEAL-repair heals 3 times in 10 because the server elects a random online member, one of three holds
 the messages, and the walk stops on a peer's AGREEMENT. Open: specify the state the fix remembers
 (WHAT, for HOW LONG, what discharges it - the repair landing) and exclude an agreeing peer while the
-asker holds frames it cannot read. The measurement, the root cause and the two refuted causes (not to
-be re-opened) are in [history-reconciliation](protocols/history-reconciliation.md#heal-repair-lands-on-a-coin-flip-the-measurement-and-the-root-cause-2026-09-08).
+asker holds frames it cannot read. **Re-read 2026-10-09, STILL OPEN and NOT changed: the fix is a design
+whose state is not specified (WHAT is remembered, for HOW LONG, what discharges it), the cause is measured
+only on the local rig (ten runs), and production's half cannot be read from the server** - 32 h of
+`[HISTORY_REQ]` held 423 `NO_PEER_ONLINE` against 54 `FORWARDED`, which is a population of askers with no
+peer online, not the coin flip. What would settle it: a harness `HEAL-repair` batch with the asker's
+election log beside it, then the exclusion-on-agreement change with its state written first. The
+measurement, the root cause and the two refuted causes (not to be re-opened) are in [history-reconciliation](protocols/history-reconciliation.md#heal-repair-lands-on-a-coin-flip-the-measurement-and-the-root-cause-2026-09-08).
 
 ### P3 - the pull and the socket hand the SAME row in, and the queue notices afterwards instead of the overlap not existing (measured 2026-09-08)
 
@@ -687,36 +682,14 @@ Open: the rung needs a fixture that puts the subject in "owed a Welcome" rather 
 window that returned once on 2026-09-08 is unexplained, so the entry stands
 ([measurements](protocols/campaign-measured-defects.md#five-rows-watch-a-responder-heal-a-device-that-no-longer-needs-one-2026-09-06-2026-09-07)).
 
-### P1 - twelve of sixteen messages were FETCHED AND DROPPED (prod 2026-09-02) - the residue
-
-Four causes fixed. Open: the twelve are recoverable only by diffing the peer's iPhone; **which arm of
-`process_message` dropped them is not established - do not write a fix against a suspected arm**; whether a
-device that dropped a frame should say so is not decided
-([detail](protocols/campaign-measured-defects.md#twelve-of-sixteen-messages-fetched-and-dropped-the-hole-at-epoch-121-prod-2026-09-02)).
-
 ### P3 - the phone polls presence every ten seconds over a live WebSocket (2026-09-02)
 
 Still so (`presenceStore.ts`). A push first needs the decision of who may watch whose presence
 ([detail](protocols/campaign-measured-defects.md#the-presence-poll-logcat-2026-09-02)).
 
-### P2 - a device holds a distribution group the group holds no row for, and heals by rejoining (2026-08-29)
+### P2 - a new device's join of a community's key group reaches the commit gate BEFORE its KeyPackage (2026-08-29, cause measured on production 2026-10-09)
 
-A race that heals is still a defect. First question: is it ONE defect with the `no_key_package` refusal
-below (same group `315b8a1d`, a second apart, recurred on every fresh device)?
-([detail and recurrences](protocols/campaign-measured-defects.md#a-device-holds-a-distribution-group-the-group-holds-no-row-for-2026-08-29))
-
-### P2 - a membership is REFUSED for want of a KeyPackage one second after the device external-joined that group (2026-08-29)
-
-Open: the KeyPackage publication's timestamp against the refusal's names which ordering is real; HEAL-NEW
-verdicts are "clean on the web client", never on the server
-([detail](protocols/campaign-measured-defects.md#a-membership-refused-for-want-of-a-keypackage-one-second-after-the-external-join-2026-08-29)).
-
-### P1 - a device asks for a Welcome for ever and the member that answers resets the row (prod 2026-09-01) - the residue
-
-Six causes fixed (`CHANGELOG.md`). Open: one prod measurement (stale bases at `activeEpoch`, one reading
-of the hourly *kicked with no re-add* ERROR arm) and the local `[KICK] Stale leaf` sighting. The rotation
-fix for the dead-end responder was REFUTED 2026-09-08, not to be re-opened
-([detail](protocols/campaign-measured-defects.md#the-welcome-livelock---the-residue-prod-2026-09-01)).
+**ONE defect, and the two entries that stood here were it.** All six `[MEMBERSHIP_ACTIVE] REFUSED ... no_key_package` of 32 hours of production were on four COMMUNITY distribution groups and no conversation; each device's first run logged `[PURGE_PREKEYS]` (its key package round starting), then the join's commit and its refusal in the same second, then `[REGISTER_DEVICE] START` - the join committed between the mint and the publication, so the gate wrote no membership row and the device held a tree that routed nothing to it ("holds the group, the group holds no row", the rejoin, the extra epoch). Three of the six healed 2 min to 1 h 44 min later (an iPhone among them: seeds unrouted for that long), the other three devices are gone. **A fix is in a DRAFT pull request** (`externalJoin` waits for the key package round already running; failing test first, [detail](protocols/campaign-measured-defects.md#a-new-devices-join-reaches-the-commit-gate-before-its-keypackage-2026-10-09)). **Owed after it ships:** the same read of the server log (REFUSED lines on a distribution group of a `isNew=true` device should be zero), and HEAL-NEW verdicts remain "clean on the web client", never on the server. **Not covered by the fix, and not measured:** a join that starts BEFORE any round has started (no evidence of one in the six)..
 
 ### P2 - a roster seat without a Welcome: the reason is typed on the client, the server report cannot partition on it yet (prod 2026-09-01)
 
@@ -729,13 +702,6 @@ the first real `skipped` lines before designing it
 The server estate is clean; whether a leaf survives in `7da231f8-119c-4ce2-884f-55f5c94c903f` (epoch 118) is
 answered only from a member's own client, which reads the tree
 ([detail](protocols/campaign-measured-defects.md#the-placeholder-and-the-mls-tree)).
-
-### P2 - a group that never leaves its creation epoch keeps collecting device invitations nobody can honour (prod 2026-08-30)
-
-Open decision, three parts together: should an invitation expire, should a group whose creator holds no
-state still be offered, should an unservable group show a tile. Never by widening a sweep; `activeEpoch
-<= 1` is NOT the predicate, a duration measured against the population is
-([population and SQL shape](protocols/campaign-measured-defects.md#a-group-that-never-leaves-its-creation-epoch-keeps-collecting-invitations-prod-2026-08-30)).
 
 ### P2 - a re-admitted device calls its own exclusion window a loss, and reconciles for it (2026-08-26, widened 2026-08-30)
 
@@ -846,9 +812,9 @@ The JS-side `sendNotification` path posts no reply/mark-read actions; only the K
 
 Population, refuted causes and rules are on [key-package-pool](protocols/key-package-pool.md), the only copy. **Owed, in order:** (1) one CDP console read (not logcat) of the reload path across a background/resume on a real handset, looking for `[RESUME]` and the `publishedThisSession` refusal counter; (2) a device-side state census (groups, members, one-time bundles, last-resort); (3) the per-connection fallback reuse. The shipped guard closes the observed case, not the class: `publishedThisSession` is per-process, so a keystore emptied and then RESTARTED would run the loop again.
 
-### P2 - NOTHING REPUBLISHES A LAST-RESORT PACKAGE'S EXPIRY, SO THE UNDATED ROWS DRAIN ONLY AS THEIR OWNERS UPGRADE (production, re-measured 2026-09-22)
+### P2 - NOTHING REPUBLISHES A LAST-RESORT PACKAGE'S EXPIRY, SO THE UNDATED ROWS DRAIN ONLY AS THEIR OWNERS UPGRADE (production, re-measured 2026-10-09)
 
-Undated rows are exactly the clients below `0.18.10`, draining about 20 a day; both client repairs are REFUTED. Measurements and mechanism: [key-package-pool](protocols/key-package-pool.md). **Owed:** re-measure the undated count; only if it stops falling, decide on a server-side KeyPackage lifetime decoder in `chat-delivery-service` (which today never interprets MLS bytes).
+**Re-measured 2026-10-09: 457 undated of 1016 rows (291 users, 116 of them with NO dated row), down from 597 on 2026-09-22 - about 8 a day, the 20 a day of 2026-09-18 slowing.** The split is STILL a client version with no exception (559 of 559 dated rows are `>= 0.18.10`; no undated row is, 393 carry no version at all and 29 are below it), and the newest undated row was created 2026-09-25: the population is frozen and only drains. Both client repairs are REFUTED; mechanism in [key-package-pool](protocols/key-package-pool.md). **The server-side lifetime decoder (an MLS reader in `chat-delivery-service`, which never interprets MLS bytes) is NOT justified while the count falls**; a count that stops falling is what would justify it, so re-measure after the floor moves (`minClientVersion`, the user's gesture) - which is also what empties it.
 
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
 

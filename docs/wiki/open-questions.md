@@ -317,3 +317,13 @@ binding text. Only the first costs nothing.
 
 **What must NOT happen is a session "fixing the lint" by machine-translating them.** That is the
 failure mode this entry exists to prevent.
+
+## Should a device that dropped a frame say so?
+
+Parked 2026-10-09 when the "twelve of sixteen messages fetched and dropped" entry was closed as a defect
+([campaign-measured-defects](protocols/campaign-measured-defects.md#twelve-of-sixteen-messages-fetched-and-dropped-the-hole-at-epoch-121-prod-2026-09-02)).
+Every cause that dropped frames silently is fixed, and the loss that remains is reported where it can be
+acted on (the hourly commit-log hole report on the server, the shortfall report on a partial restore on the
+client). The question is whether the USER should ever see that a frame was dropped on their device: the
+"SECURISE & SYNC" shield that did so lied, and was removed by the user's choice to stop exposing the
+machinery. **Nothing is blocked on it**, and it is a product decision, not a measurement.
