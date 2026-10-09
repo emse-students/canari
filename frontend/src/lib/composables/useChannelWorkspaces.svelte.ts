@@ -1,6 +1,7 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { slugify } from '$lib/utils/textFold';
 import { reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
+import { flushSalonReadMarks } from '$lib/utils/chat/salonReadMarkQueue';
 import { ChannelApiError, ChannelService } from '$lib/services/ChannelService';
 import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
@@ -768,6 +769,10 @@ export function useChannelWorkspaces() {
             selectedId: ctx.getSelectedConversationId?.() ?? null,
             userId: currentUserId() ?? '',
             fetchCounts: () => service.listUnreadCounts(),
+            settleOwedMarks: () =>
+              flushSalonReadMarks(currentUserId() ?? '', (id, at, serverAt) =>
+                service.advanceReadMark(id, at, serverAt)
+              ),
             log: ctx.log,
             reason: 'communities loaded',
           });
