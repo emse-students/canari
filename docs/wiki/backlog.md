@@ -135,6 +135,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **create an Authentik test user `canari-test-epsilon` (campus gardanne), or allow a scoped permission rule for it** - the read-grants dev checks need a second campus and Authentik is one instance for dev and prod, so no agent may touch it. No stable ships the read grants before they run | 1 account | [Audiences](#audiences-of-associations-lists-and-institutions---built-on-dev-in-v120-alpha1) |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala` (the repository answers `404`). Nothing runs from it; it is somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
 | **install docker-prune on the Portail-etu host (88 % full)**: four copy-paste commands and one `crontab -e` line, ready in the README | 4 commands, 1 cron line | [the P3](#p3---docker-prune-is-built-for-the-portail-etu-host-but-not-installed-there) |
+| **decide two privileges for the host-update report**: a sudoers rule letting the runner account run `needrestart -b` (without it the check is blind), and/or a runner key on `mitv`, `cercle`, `miconnect` | 1 decision | [the P2](#p2---three-hosts-take-security-updates-that-nothing-reports-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **may staff read the association posts of their campus?** one line: keep (1), institution posts of the campus (2), or the whole campus (3) | 1 decision | [open-questions](open-questions.md#may-emseme-staff-no-cursus-read-the-association-posts-of-their-campus) |
 
@@ -526,10 +527,10 @@ The mechanism and report exist since 2026-09-03 ([host-updates](infrastructure/h
 open items, each with its retirement condition in
 [host-updates](infrastructure/host-updates.md#what-stays-open-the-reports-reach-the-raid-channel-and-libraries-nothing-restarts):
 
-1. the report points at the OLD production origin and reaches no other host (`mitv`, `cercle`,
+1. the report reaches the Portail-etu host (where the runner lives, checked 2026-10-09) and no other host (`mitv`, `cercle`,
    `miconnect` unreported) - a runner key on them is the user's decision;
 2. `mitv`'s 7.3 TB RAID1 has a sensor (`mdmonitor`) and no channel - `/proc/mdstat` into the daily report;
-3. a library fix is installed, not in effect - `needrestart -b` into the same report.
+3. a library fix is installed, not in effect - `needrestart -b` as the runner's unprivileged account is BLIND (prints only its version, measured 2026-10-09), so it waits on a sudoers rule for that one command, the user's decision.
 
 ## iOS, platform and runtime - the residue that fits no other section
 
