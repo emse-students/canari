@@ -5,6 +5,7 @@ import {
   onPlaybackIdle,
 } from '$lib/actions/playbackArbiter';
 import { videoSound } from '$lib/stores/videoSound.svelte';
+import { isAppOnScreen } from '$lib/utils/appForeground';
 import { Log } from '$lib/utils/Log';
 
 /**
@@ -67,7 +68,9 @@ export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisi
         visibleInline.add(video);
         // Not while a viewer or another media of the reader's is playing: the background never
         // takes playback back from what was chosen. `resumeVisible` brings it back afterwards.
-        if (openViewers === 0 && !isForegroundPlaying(video)) tryPlay(video);
+        // Nor off screen: Android reports intersections in the background, and the arbiter paused
+        // the feed on leaving; coming back resumes it through `onPlaybackIdle`.
+        if (openViewers === 0 && !isForegroundPlaying(video) && isAppOnScreen()) tryPlay(video);
       } else {
         visibleInline.delete(video);
         if (!video.paused) video.pause();

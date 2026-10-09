@@ -212,6 +212,13 @@
     if (anyRemoteStream && remoteAudioSink && (compact || !remoteHasVideo)) {
       remoteAudioSink.srcObject = anyRemoteStream;
       void remoteAudioSink.play().catch(() => {});
+      // Released when the sink stops carrying the stream - the call ended or a video tile took
+      // over: a sink left bound to an old stream keeps an audio output for nothing (`toneOutput.ts`).
+      const sink = remoteAudioSink;
+      return () => {
+        sink.pause();
+        sink.srcObject = null;
+      };
     }
   });
 

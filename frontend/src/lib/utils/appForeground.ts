@@ -60,3 +60,33 @@ export function onAppForegroundChange(onChange: (foreground: boolean) => void): 
   window.addEventListener(APP_FOREGROUND_EVENT, handler);
   return () => window.removeEventListener(APP_FOREGROUND_EVENT, handler);
 }
+
+/**
+ * True when the app is on screen by EVERY signal the runtime gives: the native foreground flag (the
+ * only one Android tells the truth through) and the page's own visibility (the only one web and
+ * desktop have). Either one saying "off screen" is enough.
+ */
+export function isAppOnScreen(): boolean {
+  if (typeof document === 'undefined') return true;
+  return isAppInForeground() && document.visibilityState !== 'hidden';
+}
+
+/**
+ * Calls `onChange(onScreen)` on every transition either signal reports - `visibilitychange` on web
+ * and desktop, `canari:foreground` on Android, where the visibility API never changes. ONE
+ * subscription for the question "did the app just leave the screen", so a caller cannot listen to
+ * the half that lies on its platform. Returns the unsubscribe.
+ */
+export function onAppScreenChange(onChange: (onScreen: boolean) => void): () => void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+  const onVisibility = () => onChange(isAppOnScreen());
+  document.addEventListener('visibilitychange', onVisibility);
+  // The event's own value, not a re-read of the flag: it is the transition being announced.
+  const offForeground = onAppForegroundChange((foreground) =>
+    onChange(foreground && document.visibilityState !== 'hidden')
+  );
+  return () => {
+    document.removeEventListener('visibilitychange', onVisibility);
+    offForeground();
+  };
+}

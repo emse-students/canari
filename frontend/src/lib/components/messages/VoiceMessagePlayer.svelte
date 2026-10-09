@@ -112,27 +112,26 @@
     try {
       const response = await fetch(source);
       const buffer = await response.arrayBuffer();
-      const AudioContextCtor =
-        window.AudioContext ||
-        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextCtor) {
-        console.warn('[voice] no AudioContext - duration comes from the container, no waveform');
+      // AN OFFLINE CONTEXT, BECAUSE DECODING NEEDS NO SPEAKER. A realtime `AudioContext` opens a
+      // platform output stream the moment it is built - one per voice note on screen, held until
+      // `close()` - and the app holds no audio output while it is not playing something
+      // (`toneOutput.ts`). An `OfflineAudioContext` renders to memory and never touches the device;
+      // its 1-frame length is irrelevant, `decodeAudioData` returns the whole file at any length.
+      if (typeof OfflineAudioContext === 'undefined') {
+        console.warn(
+          '[voice] no OfflineAudioContext - duration comes from the container, no waveform'
+        );
         return;
       }
-
-      const audioContext = new AudioContextCtor();
-      try {
-        const decoded = await audioContext.decodeAudioData(buffer.slice(0));
-        // A newer source has been requested while this decode ran; its own call owns the state.
-        if (token !== lastDurationToken) return;
-        if (Number.isFinite(decoded.duration) && decoded.duration > 0) {
-          duration = decoded.duration;
-          currentTime = Math.min(currentTime, decoded.duration);
-        }
-        peaks = computeWaveformPeaks(mixToMono(decoded), PEAK_RESOLUTION);
-      } finally {
-        void audioContext.close();
+      const decoder = new OfflineAudioContext(1, 1, 48_000);
+      const decoded = await decoder.decodeAudioData(buffer.slice(0));
+      // A newer source has been requested while this decode ran; its own call owns the state.
+      if (token !== lastDurationToken) return;
+      if (Number.isFinite(decoded.duration) && decoded.duration > 0) {
+        duration = decoded.duration;
+        currentTime = Math.min(currentTime, decoded.duration);
       }
+      peaks = computeWaveformPeaks(mixToMono(decoded), PEAK_RESOLUTION);
     } catch (e) {
       // NOT A FALLBACK, A CAPABILITY. Safari cannot decode opus-in-webm at all, so this branch is
       // the ordinary case on iOS rather than a failure to repair - the container's own duration

@@ -15,6 +15,12 @@ import {
 } from '$lib/actions/playbackArbiter';
 import { followVideoSound, playWhileVisible } from '$lib/actions/playWhileVisible';
 
+const runtime = vi.hoisted(() => ({ mobile: false }));
+vi.mock('$lib/utils/appVersion', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/appVersion')>()),
+  isMobileTauriRuntime: () => runtime.mobile,
+}));
+
 type Fake<T extends HTMLMediaElement> = T & { startPlaying(): void; position: number };
 const teardown: (() => void)[] = [];
 let observed: ((entries: { isIntersecting: boolean }[]) => void)[] = [];
@@ -67,6 +73,9 @@ beforeEach(() => {
 afterEach(() => {
   while (teardown.length) teardown.pop()!();
   vi.unstubAllGlobals();
+  runtime.mobile = false;
+  Reflect.deleteProperty(document, 'visibilityState');
+  Reflect.deleteProperty(window, '__canariForeground');
 });
 
 it('video <-> video: starting one pauses the other, which keeps its position and ends nothing', () => {
@@ -207,9 +216,41 @@ it('the recorder silences every playing media, and the media can play again afte
   expect(a.paused).toBe(false);
 });
 
-it('a page going to the background pauses nothing', () => {
-  const a = voice();
-  a.startPlaying();
+/** Moves the page's visibility and announces it, as a tab switch does. */
+function setPageVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
   document.dispatchEvent(new Event('visibilitychange'));
-  expect(a.paused).toBe(false);
+}
+
+/** What `MainActivity` does on `onPause`/`onResume`: the flag, then the event. */
+function setForeground(foreground: boolean) {
+  Reflect.set(window, '__canariForeground', foreground);
+  window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground } }));
+}
+
+it('a web page leaving the screen pauses the ambient video, keeps the voice note, and the feed returns with it', () => {
+  const feed = fake(document.createElement('video'));
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  observed.at(-1)!([{ isIntersecting: true }]);
+  const note = voice();
+  expect(feed.paused).toBe(false);
+  setPageVisibility('hidden');
+  expect(feed.paused, 'nobody watches a muted feed behind another tab').toBe(true);
+  note.startPlaying();
+  expect(note.paused, 'what the reader started keeps playing on web').toBe(false);
+  note.pause();
+  expect(feed.paused, 'idle off screen brings nothing back').toBe(true);
+  setPageVisibility('visible');
+  expect(feed.paused, 'back on screen: the ambient video resumes').toBe(false);
+});
+
+it('on Android, the app leaving the screen pauses every media, the voice note included', () => {
+  runtime.mobile = true;
+  const note = voice();
+  note.startPlaying();
+  setForeground(false);
+  expect(note.paused).toBe(true);
+  setForeground(true);
+  expect(note.paused, 'coming back resumes nothing the reader chose').toBe(true);
 });
