@@ -15,6 +15,8 @@
 import { readFileSync } from 'node:fs';
 import { handleError } from '$lib/server/handleError';
 import { preloadableAsset } from '$lib/server/preload';
+import { WASM_PRELOAD_MARKER, renderWasmPreloadScript } from '$lib/server/wasmPreload';
+import { MLS_DEVICE_ID_PREFIX } from '$lib/mls-client/wasmPrefetch';
 import { SITE } from '$lib/seo/site';
 
 // Read from the project root rather than from `import.meta.url`: under Vitest's transform that URL
@@ -124,5 +126,61 @@ describe('a stylesheet the document already declares earns no preload header', (
   it('does not START preloading anything the default left alone', () => {
     expect(preloadableAsset({ type: 'font', path: '/_app/immutable/assets/x.woff2' })).toBe(false);
     expect(preloadableAsset({ type: 'asset', path: '/_app/immutable/assets/x.png' })).toBe(false);
+  });
+});
+
+describe('the WASM preload (wasmPreload.ts) starts the download beside the JS', () => {
+  const URL_HASHED = '/_app/immutable/assets/mls_wasm_bg.AbCd1234.wasm';
+
+  /** Runs the generated script against a fake browser and returns the links it appended. */
+  function run(opts: { keys: string[]; tauri?: boolean; throwsOnStorage?: boolean }) {
+    const appended: Record<string, unknown>[] = [];
+    const script = renderWasmPreloadScript(URL_HASHED).replace(/^<script>|<\/script>$/g, '');
+    const win: Record<string, unknown> = opts.tauri ? { __TAURI_INTERNALS__: {} } : {};
+    const storage = opts.throwsOnStorage
+      ? new Proxy(
+          {},
+          {
+            get: () => {
+              throw new Error('blocked');
+            },
+          }
+        )
+      : { length: opts.keys.length, key: (i: number) => opts.keys[i] ?? null };
+    const doc = {
+      createElement: () => ({}) as Record<string, unknown>,
+      head: { appendChild: (l: Record<string, unknown>) => appended.push(l) },
+    };
+    new Function('window', 'localStorage', 'document', script)(win, storage, doc);
+    return appended;
+  }
+
+  it('is substituted for a marker app.html really carries', () => {
+    expect(appHtml).toContain(WASM_PRELOAD_MARKER);
+    // A node, never a comment: the SEO marker's reason (hydration warning on a dropped comment).
+    expect(WASM_PRELOAD_MARKER.startsWith('<!--')).toBe(false);
+  });
+
+  it('appends a preload link for the hashed URL when a device was enrolled', () => {
+    const links = run({ keys: ['theme', `${MLS_DEVICE_ID_PREFIX}u1`] });
+    expect(links).toHaveLength(1);
+    // as=fetch + anonymous CORS is the request the loader's fetch(url, {credentials:'same-origin'})
+    // makes; any other pair downloads the 2 MB twice.
+    expect(links[0]).toMatchObject({
+      rel: 'preload',
+      as: 'fetch',
+      crossOrigin: 'anonymous',
+      href: URL_HASHED,
+    });
+  });
+
+  it('adds nothing for an anonymous profile, under Tauri, or when storage is refused', () => {
+    expect(run({ keys: ['theme', 'other'] })).toHaveLength(0);
+    expect(run({ keys: [`${MLS_DEVICE_ID_PREFIX}u1`], tauri: true })).toHaveLength(0);
+    expect(run({ keys: [], throwsOnStorage: true })).toHaveLength(0);
+  });
+
+  it('uses the prefix the in-bundle prefetch uses: one predicate, two places', () => {
+    expect(renderWasmPreloadScript(URL_HASHED)).toContain(JSON.stringify(MLS_DEVICE_ID_PREFIX));
   });
 });
