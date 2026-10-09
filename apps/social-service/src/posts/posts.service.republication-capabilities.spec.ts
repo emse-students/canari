@@ -25,9 +25,15 @@ describe('PostsService republication fields', () => {
     republishers?: string[];
     /** Associations where the reader holds POST_AS_ASSO among the page's. */
     publisherOf?: string[];
+    /** The reader sees the post ONLY through a nominative read grant. */
+    grantOnly?: boolean;
   }) {
     const query = jest.fn((sql: string) => {
       if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
+      if (sql.startsWith('SELECT posts.id FROM posts')) {
+        // The grant-free predicate: a grant-only post is absent from the answer.
+        return Promise.resolve(opts.grantOnly ? [] : [{ id: opts.post.id }]);
+      }
       if (sql.includes('FROM post_republications pr')) {
         return Promise.resolve(
           (opts.republishers ?? []).map((id) => ({
@@ -114,6 +120,24 @@ describe('PostsService republication fields', () => {
     expect((await service.getById('p1', { viewerId: 'officer' })).canProposeRepublication).toBe(
       true
     );
+  });
+
+  it('offers neither "Republier" nor a vote on a post only a read grant shows', async () => {
+    const service = makeService({ post: assoPost, republishAs: [A2], grantOnly: true });
+    expect(await service.getById('p1', { viewerId: 'grantee' })).toMatchObject({
+      canRepublish: false,
+      canVote: false,
+    });
+  });
+
+  it('offers the vote to a reader who sees the post without a grant', async () => {
+    const service = makeService({ post: assoPost });
+    expect((await service.getById('p1', { viewerId: 'reader' })).canVote).toBe(true);
+  });
+
+  it('offers no vote to an anonymous reader', async () => {
+    const service = makeService({ post: assoPost });
+    expect((await service.getById('p1', {})).canVote).toBe(false);
   });
 
   it('offers neither on a personal post, which is never republished', async () => {

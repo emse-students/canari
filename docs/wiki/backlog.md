@@ -894,8 +894,6 @@ WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominativ
 
 - **The on-device look** at the Audience tab, the profile campus prompt and the `/admin/read-access` grid.
 - **The 8 dev checks of the read grants PASSED on 2026-10-09** ([verdicts](profiles-and-access.md#the-eight-dev-checks-2026-10-09-devcanari-emsefr-on-121-alpha1-same-code-as-v121)). Check 2 (no personal post) passed on the predicate only; an end-to-end reading needs a personal post by a gardanne account, and `canari-test-epsilon`'s credentials are NOT in `F:/Programmation/canari-harness/test-accounts.json`. **User:** add them there (never on a command line).
-- **P3 - a grantee is offered "Republier" on a post only the grant shows.** Observed: `GET /api/posts/:id` answers `canRepublish: true` to a grantee who is `POST_AS` of another association; the republish itself is a 404. Expected: `false`. Cause: `PostsService.viewerMayRepublish` (`apps/social-service/src/posts/posts.service.ts`) reads only `republishAsIds`, not whether the post is visible WITHOUT the grant.
-- **P3 - a grantee is shown a votable poll.** Observed: the poll of a grant-only post renders its options as radio buttons, while `POST /polls/:pollId/vote` is a 404. Expected: the options read-only, or no vote offered. No capability says "may vote", so the client cannot know.
 - **User decision:** let the directory be widened for grantees? (not widened now; only posts, comments, reactions and events are).
 - **Ambiguity to answer:** what "an institution of another campus" means for a reader (the grant reaches it today).
 - The document-reviewer rows were NOT moved into the grants table (a separate capability on the same page).

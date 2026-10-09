@@ -247,6 +247,8 @@
     // A closed poll is a fact this card holds. Sending the vote to find out would be answered with
     // a 400 since 2026-09-23, and before that it was RECORDED - which is why the buttons say so.
     if (pollIsOver(poll)) return;
+    // The server said this reader may not vote (a read grant opens the post, never its poll).
+    if (localPost.canVote === false) return;
     // An anonymous vote is final, so there is nothing left to select once it has been cast.
     if (poll.anonymous && poll.voted) return;
     const mine = selectionIn(poll);
@@ -737,6 +739,7 @@
       onVoteClick={handleVoteClick}
       onSubmitVote={submitVote}
       isOver={pollIsOver}
+      canVote={localPost.canVote !== false}
     />
 
     {#if pendingAttachedFormIds.length > 0}
