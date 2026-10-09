@@ -154,10 +154,6 @@ A user switch left the saved display name of the previous account in storage, wh
 
 A phone on the web login now gets a link into the app beside the (already French) store badges ([auth](docs/wiki/frontend/modules/auth.md#open-in-the-app-from-the-login-page-2026-10-08)).
 
-### Added - a study of a school-mail tab on the device
-
-Docs only: feasibility, security design and work packages for IMAP/SMTP on the device ([mail-imap](docs/wiki/frontend/modules/mail-imap.md)).
-
 ### Fixed - a purged or absent media is already two typed answers; the open entry is closed
 
 Measured on prod: 0 404 and 1 410 in 612 `/api/media/:id` requests, so no change to the answers; the server case is now pinned by a test ([media-service](docs/wiki/services/media-service.md#a-purged-object-reads-as-410-an-absent-one-as-404---and-both-were-already-typed-measured-2026-10-08)).
