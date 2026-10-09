@@ -76,6 +76,11 @@ export type ExternalJoinOutcome =
   | { joined: false; reason: 'stale_base'; baseEpoch: number; serverEpoch: number }
   /** The external commit could not be built locally (e.g. the group is already held). */
   | { joined: false; reason: 'build_failed' }
+  /**
+   * The join was NOT attempted: this device's own key package round was running and failed, so the
+   * commit gate would refuse the activation (`no_key_package`). The round reported its own cause.
+   */
+  | { joined: false; reason: 'key_package_round_failed' }
   /** The commit gate was never reached. Nothing is claimed about membership. */
   | { joined: false; reason: 'unreachable' }
   /** The gate refused every bounded attempt; `serverReason` is its own classification. */

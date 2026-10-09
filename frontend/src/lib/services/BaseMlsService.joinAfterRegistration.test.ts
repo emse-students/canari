@@ -8,6 +8,7 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 
 import { BaseMlsService } from './BaseMlsService';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
+import { DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
 
 /**
  * A NEW DEVICE'S EXTERNAL JOIN MUST NOT REACH THE COMMIT GATE BEFORE ITS KEYPACKAGE DOES.
@@ -101,22 +102,86 @@ describe('a join waits for the key package round that is already running', () =>
     expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
   });
 
-  it('joins anyway, and says so, when the round FAILED - the join is no worse than it was', async () => {
-    // A failed round already reported itself to its own caller (the device cap has a toast), and
-    // the sync skips the welcome_request for it. Holding the join for ever behind a round that
-    // cannot succeed would be a dead end with no exit; proceeding is the behaviour it had, and the
-    // refusal it then earns is the visible end of the failed round, named in the log below.
+  it('does not attempt the join, and says why as a type, when the round FAILED', async () => {
+    // A failed round already reported itself to its own caller (the device cap has a toast). The
+    // join would earn the `no_key_package` refusal this wait exists to avoid, so it is not made:
+    // the caller gets a typed outcome, not a doomed commit and a log line.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const round = Promise.reject(new Error('register-device 502'));
+    const round = Promise.reject(
+      new Error('register-device 502' + String.fromCharCode(10) + 'forged line')
+    );
     round.catch(() => {});
     const ctx = makeCtx({ keyPackageRoundInFlight: round });
 
-    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('key package round FAILED'),
-      expect.anything()
-    );
+    expect(await externalJoin(ctx, 'g')).toEqual({
+      joined: false,
+      reason: 'key_package_round_failed',
+    });
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+    // The logged error is sanitised: no line break survives to forge a second log line.
+    const logged = warn.mock.calls.flat().map(String).join(' ');
+    expect(logged).toContain('key package round FAILED');
+    expect(logged).not.toContain(String.fromCharCode(10));
     warn.mockRestore();
+  });
+
+  it('excludes the device id the round LEFT it with, not the one it started with', async () => {
+    // The round's DeviceRevokedError path re-enrols the device under a new id mid-wait; the gate
+    // must be told to skip the id that actually joined, or it fans the commit out to ourselves.
+    const rotate = vi.fn(async function (this: { deviceId: string }) {
+      this.deviceId = 'd-new';
+      return 'd';
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ctx = makeCtx({
+      deviceId: 'd',
+      rotateDeviceIdentity: rotate,
+      generateKeyPackageImpl: vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          await gate;
+          throw new DeviceRevokedError('d');
+        })
+        .mockResolvedValue({ bytes: new Uint8Array(), notAfterSecs: 1 }),
+    });
+
+    const round = generateKeyPackage(ctx, 'k');
+    const joined = externalJoin(ctx, 'g');
+    await settle();
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+
+    release();
+    await round;
+    expect(await joined).toEqual({ joined: true });
+    expect(rotate).toHaveBeenCalledTimes(1);
+    expect(ctx.delivery.submitCommit.mock.calls[0][3]).toEqual(['u:d-new']);
+  });
+
+  it('shares ONE join between two callers of the same group', async () => {
+    // The recovery seam's cooldown is 60 s and the wait has no clock: a second caller must not
+    // start a second external commit for a group the first is about to hold.
+    let publish!: () => void;
+    const round = new Promise<void>((resolve) => {
+      publish = resolve;
+    });
+    const ctx = makeCtx({ keyPackageRoundInFlight: round });
+
+    const first = externalJoin(ctx, 'g');
+    const second = externalJoin(ctx, 'g');
+    publish();
+
+    expect(await first).toEqual({ joined: true });
+    expect(await second).toEqual({ joined: true });
+    expect(ctx.joinByExternalCommit).toHaveBeenCalledTimes(1);
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
+
+    // Nothing outlives the call: a later join of the same group is a new attempt.
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+    expect(ctx.joinByExternalCommit).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -144,5 +209,30 @@ describe('generateKeyPackage names the round it runs', () => {
     });
     await expect(generateKeyPackage(failing, 'k')).rejects.toThrow('boom');
     expect(failing.keyPackageRoundInFlight).toBeNull();
+  });
+  it('keeps the newer round when an older one settles first (identity check)', async () => {
+    const releases: Array<() => void> = [];
+    const ctx = makeCtx({
+      generateKeyPackageImpl: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            releases.push(() => resolve({ bytes: new Uint8Array(), notAfterSecs: 1 }));
+          })
+      ),
+    });
+
+    const a = generateKeyPackage(ctx, 'k');
+    const b = generateKeyPackage(ctx, 'k');
+    const newer = ctx.keyPackageRoundInFlight;
+    expect(newer).toBeInstanceOf(Promise);
+
+    releases[0]();
+    await a;
+    // The older round settling must not clear the newer one a join may be waiting on.
+    expect(ctx.keyPackageRoundInFlight).toBe(newer);
+
+    releases[1]();
+    await b;
+    expect(ctx.keyPackageRoundInFlight).toBeNull();
   });
 });
