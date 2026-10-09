@@ -136,6 +136,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala` (the repository answers `404`). Nothing runs from it; it is somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
 | **install docker-prune on the Portail-etu host (88 % full)**: four copy-paste commands and one `crontab -e` line, ready in the README | 4 commands, 1 cron line | [the P3](#p3---docker-prune-is-built-for-the-portail-etu-host-but-not-installed-there) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
+| **raise `minClientVersion` once both stores serve at least 1.0.3** (the stable after 1.1.2 is its natural moment); Graine v2's G3 waits for it | 1 gesture | [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
+| **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **may staff read the association posts of their campus?** one line: keep (1), institution posts of the campus (2), or the whole campus (3) | 1 decision | [open-questions](open-questions.md#may-emseme-staff-no-cursus-read-the-association-posts-of-their-campus) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
@@ -161,13 +163,6 @@ the editor is [reel-editor](frontend/modules/reel-editor.md). **Owed, readings o
   Instagram screenshots for E3/E5 ([reel-editor](frontend/modules/reel-editor.md));
 - the front-lens default and full-bleed preview on the iPhone, and the live-mic echo fix (#1368);
 - R4 (live, C9) waits for the calls revival.
-
-## After the 1.0.2 release - what the user asked for on 2026-10-02, and what is owed a reading
-
-The readings of the alpha passes (what passed, with evidence) are on
-[device-readings-2026-10](device-readings-2026-10.md); the readings still owed are in the verification
-table above. **What is OPEN from those passes** is in the defects section below: the edge-back-then-scroll
-swallow, the fresh-Feed swipe to the camera, and NOTIF-10.
 
 ## The Liquid Glass conversation chrome - decided 2026-09-30, WP-G1 then WP-G2
 
@@ -769,7 +764,7 @@ it was Chrome with a device-metrics override and three of three iOS defects were
 ([device-verification](device-verification.md)). The instrument is `tools/cross-client-harness/sweep.mjs`;
 CLAUDE.md queue item 16 carries it.
 
-- **Suspended, not filed**: the "Nouvelle discussion" dialog showed no result list on A1 against `dev`, where the harness directory does not exist. One re-run against the LOCAL estate settles it ([detail](cross-client-harness-findings.md#the-2026-09-14-hardware-session-one-suspended-measurement)).
+- **Suspended, not filed**: the "Nouvelle discussion" dialog showed no result list on A1 against `dev`, where the harness directory does not exist. One re-run against the LOCAL estate settles it ([detail](cross-client-harness-findings.md#the-2026-09-14-hardware-session-one-suspended-measurement)). **Why no agent re-ran it (2026-10-09):** the local estate is up, but every signed-in client of the rig reaches its session through Authentik's login, which an agent may not drive, and the app keeps no other session path (tokens live in memory only); the re-run is one `bun sweep.mjs --device W2 --route /chat` plus the dialog by a session holder.
 - **Done 2026-10-08 - the wry bump** (tauri 2.12.1, wry 0.57.0, tao 0.37.1; the vendored `tao` fork DELETED, upstream already carries its guard): one re-check left, none owed ([detail](cross-client-harness-findings.md#the-wry-bump-that-removes-the-abort-a1-2026-09-14)).
 
 ## Composer and reactions
@@ -895,10 +890,7 @@ WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominativ
 - **Ambiguity to answer:** what "an institution of another campus" means for a reader (the grant reaches it today).
 - The document-reviewer rows were NOT moved into the grants table (a separate capability on the same page).
 
-## Answers of 2026-10-07 that are not done
-
-- **`minClientVersion` rises after 1.1.2, once both stores serve at least 1.0.3** - the user's gesture; G3 of Graine v2 waits for it.
-- **Staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton) get `posts=["ME"]` in Authentik BY THE USER, from a table Master hands over.
+## Navigation, tooltips and the camera (2026-10-08)
 
 ### P2 - Sections are navigated in depth, not shown as tabs (user, 2026-10-08)
 
