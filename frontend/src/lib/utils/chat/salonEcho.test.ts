@@ -87,3 +87,20 @@ describe('applySalonEchoChange', () => {
     expect(publishTabMessageUpdate).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('an echo is settled by a history load too', () => {
+  it('re-keys an echo whose reply carried no id, whatever its state', () => {
+    for (const status of ['sending', 'sent'] as const) {
+      const next = nextEchoMessages([echo('local', status)], 'local', {
+        kind: 'settled',
+        serverId: 'srv',
+      });
+      expect(next?.map((m) => m.id)).toEqual(['srv']);
+    }
+  });
+
+  it('a null id (typed: the reply carried none) keeps the row addressable by its client id', () => {
+    const next = nextEchoMessages([echo()], 'local', { kind: 'settled', serverId: null });
+    expect(next?.[0]).toMatchObject({ id: 'local', status: 'sent', awaitingServerId: true });
+  });
+});

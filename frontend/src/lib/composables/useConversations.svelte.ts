@@ -74,6 +74,7 @@ import {
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
+import { nextEchoMessages } from '$lib/utils/chat/salonEcho';
 import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
 import {
   flushSalonReadMarks,
@@ -525,6 +526,8 @@ export function useConversations() {
         }),
       ]);
       const loaded: ChatMessage[] = [];
+      // Server row id -> the client UUID its author sealed inside it (own rows only, see below).
+      const clientIdOf = new SvelteMap<string, string>();
       const edits: DecodedChannelEdit[] = [];
       const meLower = ctx.userId.toLowerCase();
 
@@ -552,6 +555,9 @@ export function useConversations() {
           // Seed the live poll tally from the server row, keyed by the server id.
           if (msg.poll) setPollMeta(String(msg.id), msg.poll);
 
+          if (decoded.message.isOwn && decoded.message.clientMessageId) {
+            clientIdOf.set(decoded.message.id, decoded.message.clientMessageId);
+          }
           loaded.push({
             id: decoded.message.id,
             senderId: decoded.message.senderId,
@@ -568,8 +574,23 @@ export function useConversations() {
       loaded.sort(compareMessageOrder);
       const loadedEdited = applyChannelEdits(loaded, edits, ctx.log);
 
-      const current = conversations.get(channelConversationId);
+      let current = conversations.get(channelConversationId);
       if (current) {
+        // THIS DEVICE'S OWN ECHOES THE PAGE ALREADY HOLDS are re-keyed to the server's row first, so the
+        // merge below sees ONE row. It is the proof that settles an echo whose POST reply was lost or
+        // carried no id and whose frame never came (WP-OFF-2) - no clock involved. Only the author's
+        // own rows can match: `isOwn` is the row's proven sender.
+        let reKeyed = current.messages;
+        for (const row of loadedEdited) {
+          const clientId = clientIdOf.get(row.id);
+          if (!row.isOwn || !clientId) continue;
+          reKeyed =
+            nextEchoMessages(reKeyed, clientId, { kind: 'settled', serverId: row.id }) ?? reKeyed;
+        }
+        if (reKeyed !== current.messages) {
+          ctx.log(`[SALON-ECHO] history load settled echo(es) of ${channelConversationId}`);
+          current = { ...current, messages: reKeyed };
+        }
         // Same race as the DM path, and worse: decrypting 200 channel rows takes seconds, and every
         // live message posted meanwhile used to be discarded when this resolved.
         // The reader's OWN mark comes from the server and the owed queue, never from a belief the

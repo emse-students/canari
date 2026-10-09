@@ -18,7 +18,7 @@ export type SalonEchoChange =
   /** The send is in flight, or the server refused it: the row says so, nothing else moves. */
   | { kind: 'state'; status: 'sending' | 'error' | 'pending' }
   /** The server has the message. `serverId` is its row id when this answer carries it. */
-  | { kind: 'settled'; serverId?: string };
+  | { kind: 'settled'; serverId?: string | null };
 
 /**
  * The messages after `change`, or `null` when nothing changed (no flagged row under `localId`, or

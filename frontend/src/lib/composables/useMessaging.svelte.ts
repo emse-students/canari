@@ -550,7 +550,7 @@ export function useMessaging() {
     const key = ctx.selectedContact;
     const convo = key ? ctx.conversations.get(key) : undefined;
     if (!key || !convo) return;
-    discardSalonSend(messageId);
+    discardSalonSend(messageId, ctx.userId);
     ctx.conversations.set(key, {
       ...convo,
       messages: convo.messages.filter((m) => !(m.id === messageId && m.awaitingServerId)),
