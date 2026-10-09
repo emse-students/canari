@@ -17,6 +17,14 @@ package fr.emse.canari.push
  *    race, nothing was ever pushed) leaves no credit, so it can never swallow a later generic banner.
  *  - ONE REAL POST CAN STAND FOR N MESSAGES (a catch-up flush raises one banner for the last of N),
  *    so it answers up to N pushes - generic lines and credits alike - not one.
+ *  - A REAL POST NO PUSH WAS WAITING FOR IS REMEMBERED, BOUNDED (2026-10-09). With the push channel
+ *    cut, five messages each got their own real banner and the pushes arrived ~9 minutes later,
+ *    all refused: no push was in flight when the real posts landed, so they left no credit and the
+ *    refused pushes posted a generic line nothing replaced (NOTIF-10 `FAIL` on #1550, Mi 9T,
+ *    2026-10-07). A refusal PROVES the other engine held that generation, so a real banner for the
+ *    group exists or is being posted; the refused push therefore consumes one UNCLAIMED real post
+ *    when it has no credit. Capped at [MAX_UNCLAIMED] per group, and forgotten when the group's
+ *    notification is cancelled ([groupCleared]) - never by a clock.
  *
  * Nothing Android may be imported here (see [PushRecoveryLadder]). The caller serialises the
  * check-and-post sections with one lock; this class only holds the arithmetic.
@@ -24,7 +32,17 @@ package fr.emse.canari.push
 class GenericBannerLedger {
     private val inFlight = HashMap<String, Int>()
     private val credits = HashMap<String, Int>()
+    private val unclaimed = HashMap<String, Int>()
     private val generics = HashMap<String, ArrayDeque<Long>>()
+
+    companion object {
+        /**
+         * Most real posts remembered per group for a later refused push. A notification stack of one
+         * conversation never usefully holds more, and a bound is what keeps a group whose pushes
+         * never come (every real post an ACK-won race) from remembering for ever.
+         */
+        const val MAX_UNCLAIMED = 8
+    }
 
     /** A visible push for [groupId] was received and is queued or running. */
     @Synchronized
@@ -50,9 +68,32 @@ class GenericBannerLedger {
     @Synchronized
     fun refusedCoveredByRealPost(groupId: String): Boolean {
         val credit = credits[groupId] ?: 0
-        if (credit <= 0) return false
-        if (credit == 1) credits.remove(groupId) else credits[groupId] = credit - 1
+        if (credit > 0) {
+            if (credit == 1) credits.remove(groupId) else credits[groupId] = credit - 1
+            return true
+        }
+        val orphan = unclaimed[groupId] ?: 0
+        if (orphan <= 0) return false
+        if (orphan == 1) unclaimed.remove(groupId) else unclaimed[groupId] = orphan - 1
         return true
+    }
+
+    /**
+     * The group's notification was cancelled (read, answered, or the app opened): the real posts it
+     * stood for are gone, so none may cover a later refused push. Clears credits and unclaimed
+     * posts; generic stamps stay, they are replaced by identity and a cancelled one is a no-op.
+     */
+    @Synchronized
+    fun groupCleared(groupId: String) {
+        credits.remove(groupId)
+        unclaimed.remove(groupId)
+    }
+
+    /** Every notification was cancelled (the app came to the foreground): see [groupCleared]. */
+    @Synchronized
+    fun allCleared() {
+        credits.clear()
+        unclaimed.clear()
     }
 
     /** The generic banner reached the shade with MessagingStyle instant [stamp]. */
@@ -87,6 +128,12 @@ class GenericBannerLedger {
             val credit = credits[groupId] ?: 0
             val granted = minOf(unmatched, maxOf(waiting - credit, 0))
             if (granted > 0) credits[groupId] = credit + granted
+            // What no push claimed is not dropped: a push that comes LATER and is refused for good
+            // proves this banner exists (see the class comment).
+            val orphaned = unmatched - granted
+            if (orphaned > 0) {
+                unclaimed[groupId] = minOf((unclaimed[groupId] ?: 0) + orphaned, MAX_UNCLAIMED)
+            }
         }
         return taken
     }

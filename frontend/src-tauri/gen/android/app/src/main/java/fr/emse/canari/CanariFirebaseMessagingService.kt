@@ -370,6 +370,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 // Ring dedupe entries die with their notifications, so a re-ring can post again.
                 activeCallRings.clear()
+                // So do the real posts the generic-banner ledger remembered for refused pushes.
+                synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
             } catch (e: Exception) {
                 Log.w(TAG, "cancelAllMessageNotifications: ${e.message}")
             }
@@ -753,6 +755,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(notifId)
+            // The real posts this notification stood for are gone: none may cover a later refused
+            // push (see [GenericBannerLedger.groupCleared]).
+            synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
             Log.d(TAG, "cancelConversationNotification: notif removed group=${groupId.take(8)} id=$notifId")
 
             // A reaction to one of your messages in THIS conversation stops being news the moment
