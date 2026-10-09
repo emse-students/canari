@@ -177,6 +177,27 @@ export function abandonHistoryOverlay(close: () => void): void {
 }
 
 /**
+ * Takes an overlay off the JS stack when its OWNER closed it by state (a publish that sets
+ * `open = false`), without touching the browser history.
+ *
+ * AN OVERLAY CLOSED THAT WAY USED TO STAY ON THE STACK FOR EVER, and `historyOverlayStackDepth() > 0`
+ * is what stands the tab swipe down: on a fresh Feed after publishing a post, the swipe to the
+ * camera did nothing three times, and worked after one round trip through another tab - the
+ * `beforeNavigate` drain that finally emptied the stack (Mi 9T, 2026-10-06).
+ *
+ * No `history.back()` here, unlike {@link abandonHistoryOverlay}: the owner is typically about to
+ * navigate, and an asynchronous traversal landing after the router's own push would walk the
+ * pointer back off the new route (the bug the drain's comment names). The entry becomes the same
+ * ghost the drain leaves, which `onPopState` already skips transparently. A no-op when the overlay
+ * is already gone, which is the case on every dismissal that went through the stack itself.
+ */
+export function releaseHistoryOverlay(close: () => void): void {
+  if (!isBrowser) return;
+  const idx = stack.findIndex((e) => e.close === close);
+  if (idx >= 0) stack.splice(idx, 1);
+}
+
+/**
  * Close every overlay and call their close handlers.
  *
  * Called by `beforeNavigate` in the root layout before every SvelteKit

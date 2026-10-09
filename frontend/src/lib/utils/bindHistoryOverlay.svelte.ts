@@ -1,4 +1,8 @@
-import { pushHistoryOverlay, closeHistoryOverlayFromUi } from './historyOverlayStack';
+import {
+  pushHistoryOverlay,
+  closeHistoryOverlayFromUi,
+  releaseHistoryOverlay,
+} from './historyOverlayStack';
 
 /**
  * Syncs a boolean overlay open state with the browser history stack.
@@ -12,6 +16,8 @@ export function bindHistoryOverlay(getOpen: () => boolean, onClose: () => void) 
       closeRef = () => onClose();
       pushHistoryOverlay(closeRef);
     } else if (!getOpen()) {
+      // Closed by its owner's state: leave the stack too (see `releaseHistoryOverlay`).
+      if (closeRef) releaseHistoryOverlay(closeRef);
       closeRef = null;
     }
   }

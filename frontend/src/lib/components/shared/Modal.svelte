@@ -6,7 +6,11 @@
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
+  import {
+    pushHistoryOverlay,
+    closeHistoryOverlayFromUi,
+    releaseHistoryOverlay,
+  } from '$lib/utils/historyOverlayStack';
 
   interface Props {
     open?: boolean;
@@ -150,6 +154,9 @@
       historyClose = () => onClose();
       pushHistoryOverlay(historyClose);
     } else if (!open && historyClose) {
+      // Closed by its owner's state (a publish, a save): the entry must leave the stack too, or
+      // the tab swipe stays stood down until some navigation drains it.
+      releaseHistoryOverlay(historyClose);
       historyClose = null;
     }
   });
