@@ -217,6 +217,36 @@ class CanariApplication : Application() {
         private const val TAG = "CanariApp"
 
         /**
+         * The id of the channel `tauri-plugin-notification` creates when it loads
+         * (`DEFAULT_NOTIFICATION_CHANNEL_ID` in its `TauriNotificationManager.kt`, 2.4.0), named
+         * and described with the hardcoded English literal "Default" - a resource Paraglide and
+         * `strings.xml` cannot reach, so a French app's notification settings listed six French
+         * channels and one called "Default" (measured 2026-09-23).
+         */
+        private const val PLUGIN_DEFAULT_CHANNEL_ID = "default"
+
+        /**
+         * Deletes the plugin's empty "Default" channel. NOTHING POSTS TO IT: every builder in this app
+         * names a `canari_*` channel, so the row is empty in BOTH build types and deleting it
+         * loses no user setting.
+         *
+         * Called from `MainActivity.onResume`, not from [onCreate]: the plugin creates the channel
+         * when it LOADS, which is after the Application exists, so a deletion at process start would
+         * run before the creation it is meant to undo. It runs on every resume because the plugin
+         * re-creates the channel at every load; the call is idempotent and cheap.
+         */
+        internal fun removePluginDefaultChannel(context: Context) {
+            try {
+                val manager = context.getSystemService(NotificationManager::class.java) ?: return
+                if (manager.getNotificationChannel(PLUGIN_DEFAULT_CHANNEL_ID) == null) return
+                manager.deleteNotificationChannel(PLUGIN_DEFAULT_CHANNEL_ID)
+                Log.d(TAG, "removePluginDefaultChannel: deleted the plugin's \"Default\" channel")
+            } catch (e: Exception) {
+                Log.e(TAG, "removePluginDefaultChannel: exception: ${e.message}", e)
+            }
+        }
+
+        /**
          * The process-wide Application context, or null before [onCreate] has run.
          *
          * `@Volatile` because it is written on the main thread and read from whatever thread the

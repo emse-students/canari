@@ -77,6 +77,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | a post push tapped with the session dead lands on `/login?returnTo=` the post (2026-10-09) | check H step 4 on the Mi 9T, killed app AND backgrounded ([device-verification](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)); a bare `/login` with no `[hooks] Processing URL` means the intent never reached the JS |
 | after an edge swipe the next scroll is swallowed (Mi 9T, 2026-10-05; NOT a code defect anyone has seen: the page never holds the touch) | check X, ONE real-finger scroll on the Mi 9T with the `[swipeBack]` lines now logged ([device-verification](device-verification.md#x-the-scroll-after-an-edge-swipe---owed-on-the-mi-9t)) |
 | NOTIF-10: a refused push after real banners leaves no generic line (2026-10-09, `GenericBannerLedger` unclaimed notes; JVM-tested, the service's two cancel hooks NOT compiled from here) | `bun archive/notif.mjs 10` on the Mi 9T against a build carrying it: five messages with the push channel cut, then the radios back; the shade ends with the summary and the real banners, NO `Nouveau message de ...` ([mobile](frontend/mobile.md), board row [NOTIF-10](cross-client-testing.md#14---notif---notifications)) |
+| the plugin's "Default" notification channel is gone (2026-10-09; Kotlin written, NOT compiled from here) | the release APK builds, then on a phone: Settings > Apps > Canari > Notifications lists no "Default" after one app resume ([mobile](frontend/mobile.md)); if it is back after a cold start, the plugin loads after the first resume and the call moves to `onWebViewCreate` |
 | a salon carries read receipts (#1235, `v0.18.32`) | `READ-6` on the rig, then one look in a real community: a member who is not an admin sees the double check and "Lu par" under their own last message ([social-service](services/social-service.md#read-receipts-in-a-salon)) |
 | a salon's settings are offered only to who may change them (#1228, `v0.18.32`) | one look with a Membre account: the access tab reads only, rename and delete are absent; then grant `channel.manage` to Moderateur in the grid with a moderator's panel open - the controls must appear without a reload |
 | `/forms/success` no longer asks for a form called `success` | after a completed payment on production, social-service logs no `invalid input syntax for type uuid: "success"` (once per payment, so ONE payment settles it) |
@@ -266,14 +267,6 @@ ban earned on Canari traffic shuts `gala`, `mep` and `portail-etu-new` to that a
 and `/etc/crowdsec/acquis.yaml` is the DSI's file. A conversation with the machine's owner, recorded so
 nobody re-derives it a third time. `canari-dev.access.log` stays deliberately unparsed (dev shows one
 address for every visitor).
-
-### P3 - a French app's notification settings show six French channels and one called "Default" (measured 2026-09-23)
-
-`tauri-plugin-notification` creates a channel on plugin load whose name and description are the
-hardcoded literal `"Default"` (`TauriNotificationManager.kt:96`, version 2.4.0): not a resource, so
-Paraglide cannot reach it. **Nothing posts to it** (every builder names a `canari_*` channel), so it is
-an empty row, in BOTH build types. Closing it means deleting the channel after the plugin registers it,
-or carrying a patch upstream.
 
 ### The MLS audit items that are still real, with their verified counts (swept 2026-09-12)
 

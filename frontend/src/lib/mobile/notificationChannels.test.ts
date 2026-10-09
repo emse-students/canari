@@ -178,4 +178,23 @@ describe('notifications posted from the WebView (anti-régression)', () => {
       );
     }
   });
+
+  it('le canal vide "Default" du plugin est supprimé a chaque reprise, jamais au demarrage', () => {
+    // The plugin creates it when it LOADS (after the Application exists) with the English literal
+    // "Default", so a French app listed six French channels and one called "Default" (2026-09-23).
+    // Nothing posts to it (the test above), so deleting it loses no user setting.
+    expect(applicationKt).toMatch(/PLUGIN_DEFAULT_CHANNEL_ID = "default"/);
+    expect(applicationKt).toMatch(/deleteNotificationChannel\(PLUGIN_DEFAULT_CHANNEL_ID\)/);
+    const mainActivityKt = readFileSync(
+      resolve(ANDROID_MAIN, 'java/fr/emse/canari/MainActivity.kt'),
+      'utf8'
+    );
+    const onResume = mainActivityKt.slice(mainActivityKt.indexOf('override fun onResume()'));
+    expect(onResume.slice(0, onResume.indexOf('override fun onPause()'))).toContain(
+      'CanariApplication.removePluginDefaultChannel(this)'
+    );
+    // Not in onCreate: that runs before the plugin creates the channel it would undo.
+    const onCreate = applicationKt.slice(applicationKt.indexOf('override fun onCreate()'));
+    expect(onCreate.slice(0, 1500)).not.toContain('removePluginDefaultChannel');
+  });
 });
