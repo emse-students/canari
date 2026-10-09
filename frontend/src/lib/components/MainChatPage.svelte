@@ -31,6 +31,7 @@
     type ChannelPollDraft,
   } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
+  import { flushSalonReadMarks, recordSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { mayPinMessage } from '$lib/utils/chat/pinPermission';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
@@ -542,6 +543,13 @@
   let pendingReadServerAt = 0;
   let readReceiptTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /** Delivers every owed salon read mark; a refusal keeps it owed (see `salonReadMarkQueue.ts`). */
+  function flushOwedSalonMarks(): Promise<number> {
+    return flushSalonReadMarks(session.userId, (id, at, serverAt) =>
+      channelService.advanceReadMark(id, at, serverAt)
+    );
+  }
+
   $effect(() => {
     if (!convs.selectedContact || !session.isLoggedIn) return;
     // THE THIRD TERM IS THE ONLY ONE A PHONE ANSWERS HONESTLY. `hasFocus()` and `visibilityState`
@@ -591,6 +599,19 @@
     // transport differs - `advanceReadMark`, which the server stores and fans out as `channel.read`.
     const channelReceipt = isSelectedChannel;
 
+    // A SALON'S MARK IS WRITTEN DOWN BEFORE ANY NETWORK. The debounce below can be cut short (the
+    // reader leaves, the page reloads) and the POST can fail (a deploy, a dead link); the owed mark
+    // survives both and is delivered by the next flush. See `salonReadMarkQueue.ts`.
+    if (channelReceipt) {
+      let newestServerAt = 0;
+      for (const msg of convo.messages) {
+        if (!msg.isSystem && msg.serverTimestamp !== undefined) {
+          newestServerAt = Math.max(newestServerAt, msg.serverTimestamp);
+        }
+      }
+      recordSalonReadMark(session.userId, currentContact, target, newestServerAt || undefined);
+    }
+
     pendingReadWatermark = Math.max(pendingReadWatermark, target);
     for (const msg of convo.messages) {
       if (!msg.isSystem && msg.serverTimestamp !== undefined) {
@@ -608,15 +629,8 @@
           readReceiptTimer = null;
           if (toSend <= 0) return;
           if (channelReceipt) {
-            channelService
-              .advanceReadMark(currentContact, toSend, toSendServerAt || undefined)
-              .catch((e) =>
-                console.warn(
-                  `[READ] salon mark ${toSend} for ${currentContact} was not sent - its senders keep` +
-                    ' seeing it unread by this user until they read again:',
-                  e
-                )
-              );
+            // The mark was recorded durably when it was decided; this only delivers it.
+            void flushOwedSalonMarks();
             return;
           }
           // THREE WAYS OUT OF HERE AND ALL THREE USED TO BE SILENT. The debounce has already zeroed
@@ -664,6 +678,8 @@
     // not cancel the pending timer - that was the root cause of receipts never firing.
     return () => {
       if (convs.selectedContact !== currentContact) {
+        // Leaving inside the debounce window must not cost the mark: it is already owed, so deliver now.
+        if (channelReceipt) void flushOwedSalonMarks();
         if (readReceiptTimer) {
           clearTimeout(readReceiptTimer);
           readReceiptTimer = null;

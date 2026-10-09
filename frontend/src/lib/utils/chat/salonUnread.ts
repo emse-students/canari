@@ -126,10 +126,23 @@ export async function reconcileSalonUnreadFromServer(opts: {
   selectedId: string | null;
   userId: string;
   fetchCounts: () => Promise<unknown>;
+  /**
+   * Runs BEFORE the counts are asked for: the server counts against the marks it holds, so marks
+   * this device still owes must reach it first or the answer re-raises the badge just cleared.
+   * Its own failure is already reported by the flush and never blocks the counts.
+   */
+  settleOwedMarks?: () => Promise<unknown>;
   log: (message: string) => void;
   /** Where the counts were asked for, for the one line this leaves. */
   reason: string;
 }): Promise<void> {
+  if (opts.settleOwedMarks) {
+    try {
+      await opts.settleOwedMarks();
+    } catch (e) {
+      console.warn(`[UNREAD] ${opts.reason}: owed read marks not settled: ${String(e)}`);
+    }
+  }
   const token = beginUnreadReconcile();
   const startedIn = generation;
   try {

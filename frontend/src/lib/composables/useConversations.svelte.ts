@@ -75,6 +75,7 @@ import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { mergeReadWatermarks, parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
 import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
+import { flushSalonReadMarks } from '$lib/utils/chat/salonReadMarkQueue';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -236,6 +237,10 @@ export function useConversations() {
       selectedId: selectedContact,
       userId: ctx.userId,
       fetchCounts: () => channelService.listUnreadCounts(),
+      settleOwedMarks: () =>
+        flushSalonReadMarks(ctx.userId, (id, at, serverAt) =>
+          channelService.advanceReadMark(id, at, serverAt)
+        ),
       log: ctx.log,
       reason: 'live stream back',
     });
