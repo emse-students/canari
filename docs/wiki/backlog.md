@@ -523,11 +523,6 @@ The two questions of the audit are answered (2026-10-08): a follow keeps its mea
 
 ## CI and the chain that runs unattended
 
-### P3 - a PRE-RELEASE tag still races a merge between the head read and the tag
-
-The stable half closed with #1367. Open only if it recurs on an alpha; the direction is in
-[cicd](cicd.md#a-pre-release-tag-can-still-race-a-merge-between-the-head-read-and-the-tag).
-
 ### P3 - EVERY `.swift` IN THE iOS TREE IS UNGUARDED, AND NOTHING HAS MEASURED WHETHER A SUITE EVEN EXISTS
 
 The Android half closed on 2026-09-22 (one pure function compiled twice, [mobile](frontend/mobile.md#the-android-half-of-it-is-one-function-compiled-twice-2026-09-22)).
