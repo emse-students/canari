@@ -1,4 +1,10 @@
-import { connectivity, isTransportFailure } from './connectivity.svelte';
+import {
+  SLOW_ENTER_MS,
+  SLOW_IN_FLIGHT_MS,
+  connectivity,
+  isTransportFailure,
+} from './connectivity.svelte';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 
 describe('connectivity store', () => {
   beforeEach(() => {
@@ -80,5 +86,77 @@ describe('isTransportFailure', () => {
     expect(isTransportFailure(new Error('Token refresh failed (HTTP 502)'))).toBe(false);
     expect(isTransportFailure(new Error('Unauthorized'))).toBe(false);
     expect(isTransportFailure('not an error')).toBe(false);
+  });
+});
+
+describe('the slow state is derived from observed answers, and never stacks on offline', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    connectivity.reset();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  /** One request that takes `ms` to answer. */
+  async function answerAfter(ms: number): Promise<void> {
+    const r = connectivity.trackRequest();
+    await vi.advanceTimersByTimeAsync(ms);
+    r.answered();
+  }
+
+  it('is not slow on a good link', async () => {
+    for (let i = 0; i < 6; i++) await answerAfter(100);
+    expect(connectivity.slow).toBe(false);
+  });
+
+  it('enters slow once smoothed answers pass the threshold, not on one outlier', async () => {
+    await answerAfter(100);
+    await answerAfter(100);
+    await answerAfter(3000);
+    expect(connectivity.slow).toBe(false);
+    for (let i = 0; i < 4; i++) await answerAfter(SLOW_ENTER_MS + 500);
+    expect(connectivity.slow).toBe(true);
+  });
+
+  it('clears when answers come back quickly (hysteresis: not at the entry threshold)', async () => {
+    for (let i = 0; i < 6; i++) await answerAfter(2500);
+    expect(connectivity.slow).toBe(true);
+    for (let i = 0; i < 12; i++) await answerAfter(100);
+    expect(connectivity.slow).toBe(false);
+  });
+
+  it('a request unanswered past the in-flight threshold flags slow before any answer, and clears when it settles', async () => {
+    const r = connectivity.trackRequest();
+    await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
+    expect(connectivity.slow).toBe(true);
+    r.answered(false);
+    expect(connectivity.slow).toBe(false);
+  });
+
+  it('is never slow while offline: the two hints do not stack', async () => {
+    const r = connectivity.trackRequest();
+    await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
+    expect(connectivity.slow).toBe(true);
+    connectivity.notifyServerUnreachable();
+    expect(connectivity.slow).toBe(false);
+    r.failed(new TypeError('Failed to fetch'));
+    expect(connectivity.slow).toBe(false);
+  });
+
+  it('one deadline expiry is a stall, two in a row are unreachable, an answer resets the count', () => {
+    const stall = () =>
+      connectivity.trackRequest().failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+    stall();
+    expect(connectivity.isOffline).toBe(false);
+    connectivity.trackRequest().answered();
+    stall();
+    expect(connectivity.isOffline).toBe(false);
+    stall();
+    expect(connectivity.isOffline).toBe(true);
+  });
+
+  it('a cancellation is neither a stall nor a transport failure', () => {
+    for (let i = 0; i < 4; i++)
+      connectivity.trackRequest().failed(new DOMException('aborted', 'AbortError'));
+    expect(connectivity.isOffline).toBe(false);
   });
 });

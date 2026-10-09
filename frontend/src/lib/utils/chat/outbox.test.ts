@@ -34,7 +34,7 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
   ...tabOutboxMock,
 }));
 
-import { createOutbox, buildOutboxProto, type OutboxDeps } from './outbox';
+import { createOutbox, buildOutboxProto, MAX_CONCURRENT_SENDS, type OutboxDeps } from './outbox';
 import { GroupDeletedError, SenderNotActiveError } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind } from '$lib/proto/codec';
@@ -146,7 +146,9 @@ function makeDeps(over: Partial<OutboxDeps> & { mlsService: any; storage: any })
  * `sendMessage` is promises, no timers.
  */
 async function outboxIdle(): Promise<void> {
-  for (let i = 0; i < 10; i++) await Promise.resolve();
+  // Microtask turns, not a clock: a flush is read-queue -> claim a lane -> barrier -> read-queue ->
+  // send -> delete, each an await. 10 sufficed for the single loop; the lanes add a few more.
+  for (let i = 0; i < 60; i++) await Promise.resolve();
 }
 
 describe('outboxCodec', () => {
@@ -1601,5 +1603,135 @@ describe('outbox flusher - the device key is read at each access', () => {
     const keys = storage.getOutboxEntries.mock.calls.map((c: unknown[]) => c[0]);
     expect(keys.length).toBeGreaterThan(0);
     expect(keys.every((k: unknown) => k === 'new-key')).toBe(true);
+  });
+});
+
+// WP-OFF-5: one lane per conversation. Measured 2026-10-09: no deadline on the send POST and one
+// flush loop awaiting its entries one by one, so a single stalled POST held every queued message
+// behind it, in every conversation.
+describe('outbox lanes - a stalled send freezes its own conversation and nothing else', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+  });
+
+  /** A send whose promise the test settles by hand, per message id. */
+  function gatedSend() {
+    const gates = new Map<string, { resolve: () => void; reject: (e: Error) => void }>();
+    const started: string[] = [];
+    const send = vi.fn(async (_g: string, _p: Uint8Array, id: string) => {
+      started.push(id);
+      await new Promise<void>((resolve, reject) => gates.set(id, { resolve, reject }));
+    });
+    return { gates, started, send };
+  }
+
+  it('a stalled first entry does not delay an entry of another conversation', async () => {
+    const storage = makeStorage([textEntry('a1', 'gA', 100), textEntry('b1', 'gB', 200)]);
+    const g = gatedSend();
+    const mlsService = makeMls();
+    mlsService.sendMessage = g.send;
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    // BOTH are on the wire at once: a1 is stalled, and b1 did not wait for it.
+    expect(g.started).toEqual(['a1', 'b1']);
+    g.gates.get('b1')!.resolve();
+    await outboxIdle();
+    expect(storage._map.has('b1')).toBe(false);
+    expect(storage._map.has('a1')).toBe(true);
+
+    g.gates.get('a1')!.resolve();
+    await outboxIdle();
+    expect(storage._map.size).toBe(0);
+    outbox.dispose();
+  });
+
+  it('an entry enqueued WHILE another conversation is stalled goes out at once', async () => {
+    const storage = makeStorage([textEntry('a1', 'gA', 100)]);
+    const g = gatedSend();
+    const mlsService = makeMls();
+    mlsService.sendMessage = g.send;
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(g.started).toEqual(['a1']);
+
+    await outbox.enqueue(textEntry('b1', 'gB', 300));
+    await outboxIdle();
+    expect(g.started).toEqual(['a1', 'b1']);
+    outbox.dispose();
+  });
+
+  it('inside one conversation the order is kept: a failed head holds its successors', async () => {
+    const storage = makeStorage([textEntry('a1', 'gA', 100), textEntry('a2', 'gA', 200)]);
+    const sent: string[] = [];
+    const mlsService = makeMls();
+    mlsService.sendMessage = vi.fn(async (_g: string, _p: Uint8Array, id: string) => {
+      sent.push(id);
+      throw new Error('transient');
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    await outbox.flush();
+    // a2 was never attempted: it would have overtaken a1.
+    expect(sent).toEqual(['a1']);
+    expect(storage._map.get('a2')!.attempts).toBe(0);
+    outbox.dispose();
+  });
+
+  it('a conversation drains its queue in order when every send succeeds', async () => {
+    const storage = makeStorage([
+      textEntry('a2', 'gA', 200),
+      textEntry('a1', 'gA', 100),
+      textEntry('a3', 'gA', 300),
+    ]);
+    const sent: string[] = [];
+    const mlsService = makeMls();
+    mlsService.sendMessage = vi.fn(async (_g: string, _p: Uint8Array, id: string) => {
+      sent.push(id);
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+    await outbox.flush();
+    expect(sent).toEqual(['a1', 'a2', 'a3']);
+    expect(storage._map.size).toBe(0);
+    outbox.dispose();
+  });
+
+  it('two wake-ups landing together start ONE lane, so an entry is sent once', async () => {
+    const storage = makeStorage([textEntry('a1', 'gA', 100)]);
+    const g = gatedSend();
+    const mlsService = makeMls();
+    mlsService.sendMessage = g.send;
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    void outbox.flush();
+    void outbox.flush();
+    await outboxIdle();
+    expect(g.started).toEqual(['a1']);
+    g.gates.get('a1')!.resolve();
+    await outboxIdle();
+    expect(g.started).toEqual(['a1']);
+    outbox.dispose();
+  });
+
+  it('never has more than MAX_CONCURRENT_SENDS frames on the wire', async () => {
+    const entries = ['a', 'b', 'c', 'd', 'e'].map((c, i) => textEntry(`${c}1`, `g${c}`, 100 + i));
+    const storage = makeStorage(entries);
+    const g = gatedSend();
+    const mlsService = makeMls();
+    mlsService.sendMessage = g.send;
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(g.started).toHaveLength(MAX_CONCURRENT_SENDS);
+    g.gates.get(g.started[0])!.resolve();
+    await outboxIdle();
+    expect(g.started).toHaveLength(MAX_CONCURRENT_SENDS + 1);
+    outbox.dispose();
   });
 });
