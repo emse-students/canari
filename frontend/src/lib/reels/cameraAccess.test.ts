@@ -60,7 +60,8 @@ describe('openReelCamera', () => {
         height: { ideal: 590 },
         frameRate: { ideal: 30 },
       },
-      audio: true,
+      // No voice-call processing: a reel records the room (framedCapture.ts REEL_AUDIO_CONSTRAINTS).
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
   });
 

@@ -93,7 +93,13 @@ describe('pickReelRecorderMime', () => {
   const everything = () => true;
   it('records MP4 on iOS and WebM elsewhere (read on the phones 2026-10-01)', () => {
     expect(pickReelRecorderMime(true, everything)).toBe('video/mp4;codecs=avc1,mp4a');
-    expect(pickReelRecorderMime(false, everything)).toBe('video/webm;codecs=vp9,opus');
+    expect(pickReelRecorderMime(false, everything)).toBe('video/webm;codecs=h264,opus');
+  });
+
+  it('prefers hardware H.264 over software VP9 on Android, VP9 only without it (2026-10-09)', () => {
+    expect(pickReelRecorderMime(false, (t) => t !== 'video/webm;codecs=h264,opus')).toBe(
+      'video/webm;codecs=vp9,opus'
+    );
   });
 
   it('takes the first the engine records, and none is null', () => {

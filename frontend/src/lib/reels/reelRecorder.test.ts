@@ -20,8 +20,9 @@ describe('ReelRecorder', () => {
     ReelRecorder.start(stream, false);
     ReelRecorder.start(stream, true, 1_500_000);
     expect(Fake.instances[0].options).toEqual({
-      mimeType: 'video/webm;codecs=vp9,opus',
+      mimeType: 'video/webm;codecs=h264,opus',
       videoBitsPerSecond: REEL_RECORD_BITRATE_MAX,
+      audioBitsPerSecond: 128_000,
     });
     expect(Fake.instances[1].mimeType).toBe('video/mp4;codecs=avc1,mp4a');
     expect(Fake.instances[1].options.videoBitsPerSecond).toBe(1_500_000);
@@ -33,7 +34,7 @@ describe('ReelRecorder', () => {
     const take = ReelRecorder.start(stream, false);
     Fake.instances[0].ondataavailable?.({ data: new Blob(['first']) });
     const blob = await take.stop();
-    expect(blob.type).toBe('video/webm;codecs=vp9,opus');
+    expect(blob.type).toBe('video/webm;codecs=h264,opus');
     expect(await blob.text()).toBe('firsttake');
   });
 

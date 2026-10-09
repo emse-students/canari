@@ -203,7 +203,7 @@ bench log shows a `500` (Postgres refusing "reel-limits" as a UUID), and a serve
 
 The deadline that ends a full take IS the product rule (C4), not a timer standing in for a fact.
 
-**The take is the platform's container** (`reels/reelRecorder.ts`): MP4 on iOS, VP9 WebM elsewhere,
+**The take is the platform's container** (`reels/reelRecorder.ts`): MP4 on iOS, hardware H.264 in WebM on Android (VP9 only without it: software, it kept 19 of 30 fps, [device readings 2026-10-09](../../device-readings-2026-10.md)), the microphone with echo cancellation, noise suppression and gain control OFF (`REEL_AUDIO_CONSTRAINTS`), the review a full-bleed looping `object-cover` media with no player controls,
 at up to 4 Mb/s (`REEL_RECORD_BITRATE_MAX`, scaled DOWN with the pixels of a smaller screen) - above
 the 2.5 Mb/s target on purpose, since the preparation re-encodes once and recording at the target
 would compress twice. Its bytes are handed over at the recorder's `stop`
