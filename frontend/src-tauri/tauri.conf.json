@@ -61,6 +61,30 @@
         },
         {
           "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "posts"
+        },
+        {
+          "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "calendar"
+        },
+        {
+          "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "admin-agenda"
+        },
+        {
+          "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "proposals"
+        },
+        {
+          "scheme": [
             "https"
           ],
           "host": "canari-emse.fr",

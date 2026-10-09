@@ -187,6 +187,14 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **Reply and mark-as-read from a salon notification** - absent on Android AND iOS by design; a salon send is server-authoritative, so it needs its own native send path. iOS actions never run in this repo's gates: owed a hand on an iPhone for a DM and a group.
 
+## Asked by the USER on 2026-10-09 - CanaReels in a conversation, a design study, not built
+
+**An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
+
+## P1 - Offline and weak network: salon sends are lost offline, the cold start is 103 s on Slow 3G (user, 2026-10-09; measured, not built)
+
+DMs and groups already have an optimistic row and a durable outbox; **salon writes have neither** (offline send: text lost) and **nothing has a deadline**. Cold start on Slow 3G: first paint 23 s, list usable 103 s (JS 57 s, then the 2 MB WASM 45 s, then the list); warm 2.1 s. Fourteen ordered work packages, each with its test, and the measured table: [offline-and-weak-network](frontend/offline-and-weak-network.md). Start with WP-OFF-1 (keep the salon draft on failure), WP-W1/W2 (compression, WASM preload), WP-W3. Owed: peer-side delivery, Android and iOS runs (the page lists them).
+
 ## Open defects, in severity order
 
 ### P1 - a member who joins a community in-session sees ONE salon, and every message in the others is dropped until a reload (measured 2026-10-08)
@@ -954,3 +962,7 @@ Two menu patterns, both bad on a phone: a scrolling row hides tabs, a wrapped gr
 ## Tooltips: one remaining inconsistency (audit 2026-10-08)
 
 The app still has THREE hover/tap systems (native `title`, the `PostPolls` voters bubble, `MessageInfoTooltip`) and no shared `Tooltip` component. Redesign only if a fourth appears; the 38 icon buttons whose `title` and `aria-label` are two different keys for the same hint could share one key ([convention](frontend/design-reference.md#tooltips-one-convention-audited-2026-10-08)). `ReactionsDisplay`'s native reactor `title` is removed in its own PR.
+
+### P2 - A post push tapped with the session already dead lands on a bare /login (Mi 9T, 2026-10-08)
+
+Killed app, session deleted server-side, tap a post push: refresh 401, the app lands on `/login` with no `returnTo`, and the log has no `[hooks] Processing URL`, so the deep link is lost before the login can carry it. Warm-app expiry was not measured. Substance: [device-readings-2026-10](device-readings-2026-10.md).
