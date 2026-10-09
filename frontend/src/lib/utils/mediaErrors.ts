@@ -163,7 +163,12 @@ export class MediaUploadError extends ApiRefusalError {
      * which the application never produces (its refusals are JSON) - the host's WAF or a proxy
      * speaking, e.g. the CrowdSec ban page a body over 10 MiB earns. `app`: our own service.
      */
-    readonly origin: 'app' | 'gateway' = 'app'
+    readonly origin: 'app' | 'gateway' = 'app',
+    /**
+     * The refusal says the STAGED SESSION is gone (a chunk route answering 404 after a restart or a
+     * sweep). Not a verdict on the file: a fresh session mends it, so it is retried.
+     */
+    readonly sessionLost = false
   ) {
     super(status, null, message);
     this.name = 'MediaUploadError';
@@ -175,7 +180,11 @@ export class MediaUploadError extends ApiRefusalError {
  * the status and, for the application's own JSON answers only, a short excerpt - NEVER the HTML of
  * a gateway page (it was 5.75 KB of ban page in every retry line). Nothing reads it back.
  */
-export async function uploadRefusalFrom(res: Response, what: string): Promise<MediaUploadError> {
+export async function uploadRefusalFrom(
+  res: Response,
+  what: string,
+  opts: { sessionLost?: boolean } = {}
+): Promise<MediaUploadError> {
   const contentType = res.headers?.get('Content-Type') ?? '';
   const origin = /text\/html/i.test(contentType) ? 'gateway' : 'app';
   const text = origin === 'app' ? await res.text().catch(() => '') : '';
@@ -183,9 +192,13 @@ export async function uploadRefusalFrom(res: Response, what: string): Promise<Me
   return new MediaUploadError(
     res.status,
     `${what} (${res.status}${origin === 'gateway' ? ', answered by the gateway, not the app' : ''})${excerpt}`,
-    origin
+    origin,
+    opts.sessionLost === true
   );
 }
+
+/** The application's own statuses that say no to THIS upload and that no retry changes. */
+const REFUSED_BY_THE_APP = [400, 403, 404, 422];
 
 /**
  * Why an upload was REFUSED for good, or `null` when trying again could change the answer.
@@ -195,19 +208,21 @@ export async function uploadRefusalFrom(res: Response, what: string): Promise<Me
  * carried (status and origin), never from its message.
  *
  * - `too-large`: 413.
- * - `blocked`: a 4xx from the GATEWAY (the host WAF's ban page): the body or the sender was refused
- *   before the application saw it (a 429 from it is still "later", not a ban).
- * - `refused`: any other 4xx from the application, except the ones a retry can mend: 401 (the token
- *   is renewed once by `fetchUpload`), 408, 425 and 429 (the server says "later").
+ * - `blocked`: a **403 HTML** answer from the GATEWAY (the host WAF's CrowdSec ban page): the body or
+ *   the sender was refused before the application saw it. ONLY that one: an HTML 400/404/409/502
+ *   from nginx or Cloudflare during a deploy is the infrastructure being briefly wrong, and stays
+ *   retried.
+ * - `refused`: the application's own 400, 403, 404 or 422, which a retry cannot mend - except a 404
+ *   that says the staged chunk session is gone (`sessionLost`): a new session mends that.
  *
- * A 5xx, a deadline, a network error: `null`, retried with backoff as before.
+ * Everything else - 401 (renewed once by `fetchUpload`), 408, 425, 429, 5xx, a deadline, a network
+ * error - is `null`, retried with backoff.
  */
 export function uploadRefusalCause(err: unknown): 'too-large' | 'blocked' | 'refused' | null {
   if (!(err instanceof MediaUploadError)) return null;
   const { status } = err;
   if (status === 413) return 'too-large';
-  if (status < 400 || status >= 500) return null;
-  if ([408, 425, 429].includes(status)) return null;
-  if (err.origin === 'gateway') return 'blocked';
-  return status === 401 ? null : 'refused';
+  if (err.origin === 'gateway') return status === 403 ? 'blocked' : null;
+  if (err.sessionLost) return null;
+  return REFUSED_BY_THE_APP.includes(status) ? 'refused' : null;
 }

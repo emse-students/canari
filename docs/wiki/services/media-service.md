@@ -292,7 +292,7 @@ breakdown was split to fix on 2026-08-18. At the rate measured on the day it shi
 
 ## One request body is at most 8 MiB (2026-10-10)
 
-The host's WAF drops any body over 10 MiB ([host-waf-body-limit](../infrastructure/host-waf-body-limit.md)), so the client sends a single-request upload only up to 8 MiB of ciphertext and uses `upload/chunk/init` + 8 MiB chunks + `complete` above it. The server needed no change (chunks append in order, 100 MB policy). A chunk that fails restarts the whole upload under a new session: there is no offset route yet (reels-in-chat RC-5).
+The host's WAF drops any body over 10 MiB ([host-waf-body-limit](../infrastructure/host-waf-body-limit.md)), so the client sends a single-request upload only up to 8 MiB of ciphertext and uses `upload/chunk/init` + 8 MiB chunks + `complete` above it. The server needed no change (chunks append in order, 100 MB policy). A chunk that fails restarts the whole upload under a new session: there is no offset route yet (reels-in-chat RC-5). The abandoned session is released by `DELETE /media/upload/chunk/:id` (204, owner-checked, idempotent, logged), and `POST .../complete` is idempotent: a repeat for a finished session answers the same mediaId from a bounded in-memory memo (the sweep of 24 h stays the backstop after a restart).
 
 ## The `chat-reel` class: a reel sent in a conversation (RC-2, 2026-10-09)
 

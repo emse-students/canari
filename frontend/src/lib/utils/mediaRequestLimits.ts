@@ -23,19 +23,26 @@ export const GATEWAY_MAX_BODY_BYTES = 10 * 1024 * 1024;
  */
 export const MEDIA_REQUEST_BODY_BUDGET_BYTES = 8 * 1024 * 1024;
 
-/** Best-effort size of a request body in bytes (a `FormData` is the sum of its parts). */
+/**
+ * Size of a request body in bytes (a `FormData` is the sum of its parts), or `Infinity` for a body
+ * whose size cannot be known (a stream): unknown is treated as over budget, never as zero.
+ */
 export function requestBodyBytes(body: BodyInit | null | undefined): number {
   if (body == null) return 0;
   if (typeof body === 'string') return new Blob([body]).size;
   if (body instanceof Blob) return body.size;
   if (body instanceof ArrayBuffer) return body.byteLength;
   if (ArrayBuffer.isView(body)) return body.byteLength;
+  if (body instanceof URLSearchParams) return new Blob([body.toString()]).size;
   if (body instanceof FormData) {
     let total = 0;
     for (const [name, value] of body.entries()) {
-      total += name.length + (typeof value === 'string' ? value.length : value.size);
+      total +=
+        new Blob([name]).size + (typeof value === 'string' ? new Blob([value]).size : value.size);
     }
     return total;
   }
-  return 0;
+  // A stream, or any shape this cannot measure, FAILS CLOSED: infinitely large is over every budget,
+  // so the guard refuses it rather than waving through a body nobody counted.
+  return Number.POSITIVE_INFINITY;
 }

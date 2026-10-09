@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isTransportFailure } from '$lib/stores/connectivity.svelte';
-import { UploadAbortedError, UploadStalledError, xhrUpload } from './uploadXhr';
+import {
+  UploadAbortedError,
+  UploadAnswerTimeoutError,
+  UploadStalledError,
+  xhrUpload,
+} from './uploadXhr';
 
 /** The slice of XMLHttpRequest the transport uses, drivable from a test. */
 class FakeXhr {
@@ -120,6 +125,30 @@ describe('xhrUpload', () => {
     expect(err).toBeInstanceOf(UploadStalledError);
     expect(isTransportFailure(err)).toBe(true);
     expect(xhr.aborted).toBe(true);
+  });
+
+  it('server processing after the body is out is NOT silence: a slow answer outlives the idle window', async () => {
+    const p = xhrUpload('https://x.test/u', { body: 'abc' }, { idleMs: 1_000, answerMs: 60_000 });
+    const xhr = FakeXhr.last;
+    xhr.progress(3, 3);
+    xhr.upload.onload?.();
+    vi.advanceTimersByTime(30_000);
+    expect(xhr.aborted).toBe(false);
+    xhr.answer(200, '{"mediaId":"m1"}');
+    await expect(p).resolves.toBeInstanceOf(Response);
+  });
+
+  it('a server that never answers is bounded by its OWN typed timeout, a transport failure', async () => {
+    const p = xhrUpload('https://x.test/u', { body: 'abc' }, { idleMs: 1_000, answerMs: 5_000 });
+    const xhr = FakeXhr.last;
+    xhr.upload.onload?.();
+    vi.advanceTimersByTime(4_999);
+    expect(xhr.aborted).toBe(false);
+    vi.advanceTimersByTime(2);
+    const err = await p.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UploadAnswerTimeoutError);
+    expect(err).not.toBeInstanceOf(UploadStalledError);
+    expect(isTransportFailure(err)).toBe(true);
   });
 
   it('a caller cancel aborts the request and is NOT a transport failure', async () => {

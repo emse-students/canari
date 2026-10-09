@@ -9,8 +9,12 @@
  * same engine and the same cookie/CORS rules on every shell this app ships in (browsers, WKWebView,
  * Android WebView), so it is not a second path: it is the one that can be measured.
  *
- * WHAT BOUNDS IT. {@link DEFAULT_UPLOAD_IDLE_MS} without a single byte moving, whether the bytes are
- * leaving or the server is answering. NEVER A TOTAL: a 50 MB file on a 50 kbit/s link legitimately
+ * WHAT BOUNDS IT, in two parts that must not be confused. WHILE THE BODY LEAVES: {@link
+ * DEFAULT_UPLOAD_IDLE_MS} without a single byte moving. ONCE IT HAS LEFT: the server's processing is
+ * NOT silence - a `complete` streams up to 100 MB to storage with nothing moving on the wire, and
+ * abandoning it at 45 s made the client retry while the server finished - so the wait for the answer
+ * has its own, much longer bound ({@link DEFAULT_UPLOAD_ANSWER_MS}), and its expiry is a typed
+ * transport failure, never a signal that anything was NOT stored. NEVER A TOTAL: a 50 MB file on a 50 kbit/s link legitimately
  * takes seven minutes, and a total deadline would abandon it for being big - the failure that
  * `mls-client/progressDeadline.ts` and `requestDeadline.ts` already refuse. A stall is typed
  * ({@link UploadStalledError}, a `RequestDeadlineError`, so `isTransportFailure` reads it by TYPE
@@ -34,6 +38,22 @@ export interface UploadProgress {
  * 45 s leaves a long margin for a radio handover and still ends a dead socket in under a minute.
  */
 export const DEFAULT_UPLOAD_IDLE_MS = 45_000;
+
+/**
+ * How long the server may take to ANSWER once the whole body has been sent. Five minutes: a chunked
+ * `complete` of 100 MB to object storage is the slowest thing the media service does. The route is
+ * idempotent (a repeated `complete` returns the same mediaId), so a client that does give up and
+ * asks again cannot duplicate the object.
+ */
+export const DEFAULT_UPLOAD_ANSWER_MS = 300_000;
+
+/** The server took longer than {@link DEFAULT_UPLOAD_ANSWER_MS} to answer a fully sent body. */
+export class UploadAnswerTimeoutError extends RequestDeadlineError {
+  constructor(answerMs: number, path: string, bodyBytes: number) {
+    super('write', answerMs, 'POST', path, bodyBytes);
+    this.name = 'UploadAnswerTimeoutError';
+  }
+}
 
 /** An upload that moved no byte for its idle window. A transport failure, never an answer. */
 export class UploadStalledError extends RequestDeadlineError {
@@ -61,6 +81,8 @@ export interface XhrUploadOptions {
   onProgress?: (progress: UploadProgress) => void;
   /** Overrides {@link DEFAULT_UPLOAD_IDLE_MS}; `0` disables the stall guard. */
   idleMs?: number;
+  /** Overrides {@link DEFAULT_UPLOAD_ANSWER_MS}; `0` waits for the answer without a bound. */
+  answerMs?: number;
 }
 
 /** What the transport needs of a request: no `RequestInit` fields it cannot honour. */
@@ -92,7 +114,12 @@ export function xhrUpload(
   init: XhrUploadInit,
   opts: XhrUploadOptions = {}
 ): Promise<Response> {
-  const { signal, onProgress, idleMs = DEFAULT_UPLOAD_IDLE_MS } = opts;
+  const {
+    signal,
+    onProgress,
+    idleMs = DEFAULT_UPLOAD_IDLE_MS,
+    answerMs = DEFAULT_UPLOAD_ANSWER_MS,
+  } = opts;
   const where = url.replace(/^https?:\/\/[^/]+/, '');
   return new Promise<Response>((resolve, reject) => {
     if (signal?.aborted) {
@@ -102,6 +129,8 @@ export function xhrUpload(
     const xhr = new XMLHttpRequest();
     let idle: ReturnType<typeof setTimeout> | null = null;
     let settled = false;
+    /** True once the whole body has left: from then on silence is the server working, not a stall. */
+    let bodySent = false;
 
     const finish = (settle: () => void) => {
       if (settled) return;
@@ -110,9 +139,23 @@ export function xhrUpload(
       signal?.removeEventListener('abort', onAbort);
       settle();
     };
-    /** Every sign of life pushes the stall deadline out. */
+    /** The body is out; wait for the answer under its own, longer bound. */
+    const awaitAnswer = () => {
+      bodySent = true;
+      if (idle) clearTimeout(idle);
+      idle = null;
+      if (answerMs <= 0 || settled) return;
+      idle = setTimeout(() => {
+        console.warn(`[upload] ${where}: no answer ${answerMs} ms after the body was sent`);
+        finish(() => {
+          xhr.abort();
+          reject(new UploadAnswerTimeoutError(answerMs, where, sizeOf(init.body)));
+        });
+      }, answerMs);
+    };
+    /** Every sign of life while the body leaves pushes the stall deadline out. */
     const touch = () => {
-      if (idleMs <= 0 || settled) return;
+      if (bodySent || idleMs <= 0 || settled) return;
       if (idle) clearTimeout(idle);
       idle = setTimeout(() => {
         console.warn(`[upload] ${where}: no byte moved for ${idleMs} ms - abandoning as stalled`);
@@ -139,8 +182,8 @@ export function xhrUpload(
       touch();
       onProgress?.({ loaded: e.loaded, total: e.lengthComputable ? e.total : 0 });
     };
-    // The body is fully handed over: what remains is the server's answer, still guarded by silence.
-    xhr.upload.onload = () => touch();
+    // The body is fully handed over: what remains is the server's work, not silence.
+    xhr.upload.onload = () => awaitAnswer();
     xhr.onload = () =>
       finish(() => {
         // `Response` refuses a body for a null-body status; an upload never gets one, but a 204
@@ -165,7 +208,9 @@ export function xhrUpload(
     xhr.ontimeout = xhr.onerror;
     signal?.addEventListener('abort', onAbort, { once: true });
 
-    touch();
+    // A request with no body has nothing to send: it is already waiting for the answer.
+    if (sizeOf(init.body) === 0) awaitAnswer();
+    else touch();
     xhr.send(init.body ?? null);
   });
 }

@@ -600,6 +600,23 @@ export class MediaService {
   // -------------------------------------------------------------------------
 
   /**
+   * Gives a staged legacy chunk session back to the server (`DELETE /media/upload/chunk/:id`).
+   * Best effort by design: the caller is already failing and must not wait on, or be changed by,
+   * this call; the server's 24 h sweep remains the backstop. Every outcome is logged.
+   */
+  private releaseChunkSession(uploadId: string, authToken: string): void {
+    fetch(`${this.baseUrl}/api/media/upload/chunk/${uploadId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${authToken}` },
+      keepalive: true,
+    })
+      .then((res) =>
+        console.debug(`[media] released chunk session ${uploadId}: HTTP ${res.status}`)
+      )
+      .catch((e) => console.warn(`[media] could not release chunk session ${uploadId}`, e));
+  }
+
+  /**
    * Encrypt `file` client-side and upload the ciphertext to the media service.
    *
    * @param file           The raw File object selected by the user.
@@ -654,61 +671,72 @@ export class MediaService {
       }
       const { uploadId } = await initRes.json();
 
-      // 3.2 Upload chunks
-      const totalChunks = Math.ceil(ciphertext.byteLength / CHUNK_SIZE);
-      for (let i = 0; i < totalChunks; i++) {
-        const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, ciphertext.byteLength);
-        const chunk = ciphertext.slice(start, end);
-        const chunkFormData = new FormData();
-        chunkFormData.append(
-          'chunk',
-          new Blob([chunk], { type: 'application/octet-stream' }),
-          'chunk'
-        );
+      // Whatever ends this attempt before the object exists (a cancel, a refusal, a stall, a lost
+      // session) leaves staged bytes that the NEXT attempt, under a new uploadId, never reuses:
+      // release them, best effort, without delaying the failure.
+      try {
+        // 3.2 Upload chunks
+        const totalChunks = Math.ceil(ciphertext.byteLength / CHUNK_SIZE);
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, ciphertext.byteLength);
+          const chunk = ciphertext.slice(start, end);
+          const chunkFormData = new FormData();
+          chunkFormData.append(
+            'chunk',
+            new Blob([chunk], { type: 'application/octet-stream' }),
+            'chunk'
+          );
 
-        const chunkRes = await fetchUpload(
-          `${this.baseUrl}/api/media/upload/chunk/${uploadId}`,
+          const chunkRes = await fetchUpload(
+            `${this.baseUrl}/api/media/upload/chunk/${uploadId}`,
+            (t) => ({
+              method: 'POST',
+              headers: { Authorization: `Bearer ${t}` },
+              body: chunkFormData,
+            }),
+            authToken,
+            // Progress is the WHOLE blob's, so a chunk reports from where the previous one ended.
+            transport && {
+              ...transport,
+              onProgress: (p: UploadProgress) =>
+                transport.onProgress?.({ loaded: start + p.loaded, total: ciphertext.byteLength }),
+            }
+          );
+          if (!chunkRes.ok) {
+            throw await uploadRefusalFrom(
+              chunkRes,
+              `chunk upload failed at chunk ${i + 1}/${totalChunks}`,
+              { sessionLost: chunkRes.status === 404 }
+            );
+          }
+        }
+
+        // 3.3 Complete chunked upload
+        const completeRes = await fetchUpload(
+          `${this.baseUrl}/api/media/upload/chunk/${uploadId}/complete`,
           (t) => ({
             method: 'POST',
-            headers: { Authorization: `Bearer ${t}` },
-            body: chunkFormData,
+            headers: {
+              Authorization: `Bearer ${t}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ retentionClass }),
           }),
           authToken,
-          // Progress is the WHOLE blob's, so a chunk reports from where the previous one ended.
-          transport && {
-            ...transport,
-            onProgress: (p: UploadProgress) =>
-              transport.onProgress?.({ loaded: start + p.loaded, total: ciphertext.byteLength }),
-          }
+          transport && { ...transport, onProgress: undefined }
         );
-        if (!chunkRes.ok) {
-          throw await uploadRefusalFrom(
-            chunkRes,
-            `chunk upload failed at chunk ${i + 1}/${totalChunks}`
-          );
+        if (!completeRes.ok) {
+          throw await uploadRefusalFrom(completeRes, 'chunked upload complete failed', {
+            sessionLost: completeRes.status === 404,
+          });
         }
+        const completeData = await completeRes.json();
+        mediaId = completeData.mediaId;
+      } catch (err) {
+        this.releaseChunkSession(uploadId, authToken);
+        throw err;
       }
-
-      // 3.3 Complete chunked upload
-      const completeRes = await fetchUpload(
-        `${this.baseUrl}/api/media/upload/chunk/${uploadId}/complete`,
-        (t) => ({
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${t}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ retentionClass }),
-        }),
-        authToken,
-        transport && { ...transport, onProgress: undefined }
-      );
-      if (!completeRes.ok) {
-        throw await uploadRefusalFrom(completeRes, 'chunked upload complete failed');
-      }
-      const completeData = await completeRes.json();
-      mediaId = completeData.mediaId;
     } else {
       // Standard single-request upload
       const formData = new FormData();

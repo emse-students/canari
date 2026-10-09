@@ -658,7 +658,11 @@ WKWebView, Android WebView), a real `Response` back, so the 401 renew-and-retry 
 the one path for both. It reports `{loaded, total}`, honours an `AbortSignal` (a typed
 `UploadAbortedError`), and **gives up on silence, never on a total**: 45 s without one byte moving
 (`DEFAULT_UPLOAD_IDLE_MS`) raises `UploadStalledError`, a `RequestDeadlineError`, so `isTransportFailure`
-reads it by type and it can never log anyone out. A 50 MB file on a 50 kbit/s link takes seven minutes
+reads it by type and it can never log anyone out. **The guard stops when the body has left**
+(`upload.onload`): a chunked `complete` streams up to 100 MB to storage with nothing on the wire, and
+abandoning it at 45 s made the client restart while the server finished. The wait for the answer has its
+own bound, `DEFAULT_UPLOAD_ANSWER_MS` (5 min), whose expiry is the typed `UploadAnswerTimeoutError`, also a
+transport failure. A 50 MB file on a 50 kbit/s link takes seven minutes
 and must not be abandoned for being big. Chunked uploads report the WHOLE blob's progress.
 
 **The outbox owns the transfer** (`utils/chat/outbox.ts`, `uploadProgress.svelte.ts`). `prepareMedia`
@@ -689,8 +693,17 @@ entry runs it) and `MessageMediaRenderer.upload.svelte.test.ts` (figure, buttons
 **A refusal is an answer, never transient.** `MediaUploadError` carries its status and its ORIGIN, read
 from the response's Content-Type at the throw (`gateway` = an HTML page, which the application never
 produces; `app` = our JSON). `uploadRefusalCause` classifies by that type: 413 -> `too-large`; a 4xx from
-the gateway -> `blocked`; any other 4xx except 401/408/425/429 -> `refused`; 5xx, 429, a deadline and a
-network error stay retried. The outbox ends the entry at once (`failPermanently`: bubble `error`, entry
+the gateway **403 HTML** only -> `blocked` (an HTML 400/404/502 from nginx or Cloudflare during a deploy is
+retried); the application own 400/403/404/422 -> `refused`, except a 404 that means the staged chunk session
+is gone (`sessionLost`: a new session mends it); 401, 408, 425, 429, 5xx, a deadline and a network error stay
+retried. `requestBodyBytes` fails closed: a body of unknown size (a stream) counts as over budget.
+
+**A failed chunked attempt gives its session back.** Every restart uses a new uploadId, so the staged bytes
+would wait for the 24 h sweep. `MediaService` calls `DELETE /api/media/upload/chunk/:id` (best effort, logged,
+never delaying the failure) on a cancel, a refusal, a stall or a lost chunk, and the server route is owner-checked
+and idempotent. `complete` is idempotent too: a repeated call for a finished session returns the same mediaId.
+Pinned by `media.chunkLifecycle.test.ts` (failure at chunk N, refusal, cancel, slow complete) and
+`media.service.chunk-lifecycle.spec.ts`. The outbox ends the entry at once (`failPermanently`: bubble `error`, entry
 deleted, a notice in the thread, metric cause), and the bubble shows *Envoi refuse par le serveur* with the
 delete action instead of the spinner a missing `mediaId` used to draw for ever. There is no retry button
 on a refused entry: it is deleted from the queue, and the same bytes would be refused again. The page of a

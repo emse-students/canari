@@ -34,6 +34,12 @@ describe('uploadRefusalCause', () => {
   it.each([
     [new MediaUploadError(413, 'x'), 'too-large'],
     [new MediaUploadError(403, 'x', 'gateway'), 'blocked'],
+    [new MediaUploadError(404, 'x', 'gateway'), null],
+    [new MediaUploadError(400, 'x', 'gateway'), null],
+    [new MediaUploadError(502, 'x', 'gateway'), null],
+    [new MediaUploadError(409, 'x'), null],
+    [new MediaUploadError(400, 'x'), 'refused'],
+    [new MediaUploadError(404, 'x', 'app', true), null],
     [new MediaUploadError(403, 'x'), 'refused'],
     [new MediaUploadError(404, 'x'), 'refused'],
     [new MediaUploadError(422, 'x'), 'refused'],
