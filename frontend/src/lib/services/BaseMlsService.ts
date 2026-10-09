@@ -385,6 +385,15 @@ export abstract class BaseMlsService implements IMlsService {
   private readonly publishedThisSession = new Set<string>();
   /** Epoch ms of the last {@link republishKeyMaterial} run, used to debounce it. */
   private lastKeyMaterialRepublish = 0;
+  /**
+   * The key package round that is running RIGHT NOW (mint, checkpoint, publish), or `null`.
+   *
+   * It exists so an external join can wait for the one thing the commit gate demands of a device
+   * before it will activate a membership: a static KeyPackage on the server. See
+   * {@link externalJoin} for the production measurement. Per-process, and held only for the span of
+   * one {@link generateKeyPackage} call, so it is a fact about NOW and never a "done" flag.
+   */
+  private keyPackageRoundInFlight: Promise<unknown> | null = null;
 
   // ── Timers & event handlers ───────────────────────────────────────────────
   protected heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -2198,17 +2207,28 @@ export abstract class BaseMlsService implements IMlsService {
    * Retried exactly once - a second refusal is a server bug, not a state to keep rotating through.
    */
   async generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage> {
+    // NAMED FOR ITS SPAN, so an external join issued while it runs can wait for the publication it
+    // depends on ({@link externalJoin}). The identity check keeps a later round from clearing its
+    // successor, and `finally` means a throw leaves nothing for a join to wait on.
+    const round = (async (): Promise<DatedKeyPackage> => {
+      try {
+        return await this.generateKeyPackageImpl(deviceKeyB64);
+      } catch (e) {
+        if (!(e instanceof DeviceRevokedError)) throw e;
+        const abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
+        console.warn(
+          `[MLS] Device ${sanitizeForLog(abandoned)} was revoked - re-enrolled as ${sanitizeForLog(
+            this.deviceId
+          )}`
+        );
+        return this.generateKeyPackageImpl(deviceKeyB64);
+      }
+    })();
+    this.keyPackageRoundInFlight = round;
     try {
-      return await this.generateKeyPackageImpl(deviceKeyB64);
-    } catch (e) {
-      if (!(e instanceof DeviceRevokedError)) throw e;
-      const abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
-      console.warn(
-        `[MLS] Device ${sanitizeForLog(abandoned)} was revoked - re-enrolled as ${sanitizeForLog(
-          this.deviceId
-        )}`
-      );
-      return this.generateKeyPackageImpl(deviceKeyB64);
+      return await round;
+    } finally {
+      if (this.keyPackageRoundInFlight === round) this.keyPackageRoundInFlight = null;
     }
   }
 
@@ -3789,6 +3809,39 @@ export abstract class BaseMlsService implements IMlsService {
   async externalJoin(groupId: string): Promise<ExternalJoinOutcome> {
     const excludeSelf = [`${this.userId}:${this.deviceId}`];
     const short = groupId.slice(0, 8);
+
+    // A DEVICE IS ADDRESSABLE ONLY ONCE ITS KEYPACKAGE IS PUBLISHED, and the commit below is the
+    // request that asks the gate to make it so. The gate answers an activation for a device with no
+    // static KeyPackage `no_key_package` and writes NO membership row, so a commit that wins the
+    // race against the publication leaves a device holding the tree of a group that routes nothing
+    // to it - the "holds the group, the group holds no row" repair, and its extra epoch.
+    //
+    // Measured on production 2026-10-09: all six `[MEMBERSHIP_ACTIVE] REFUSED ... no_key_package`
+    // lines of 32 hours, on four community distribution groups and no conversation. Each device's
+    // first run logged `[PURGE_PREKEYS]` (the start of its key package round), then this commit and
+    // its refusal in the same second, then `[REGISTER_DEVICE] START`. The mint holds the MLS lock
+    // only for its own span, so the join took the lock the moment the mint let go and committed one
+    // checkpoint and one round trip ahead of the publication. Three of the six healed 2 minutes to
+    // 1 h 44 min later, an iPhone among them, and the other three devices no longer exist.
+    //
+    // WAITS FOR A ROUND THAT IS RUNNING, never for one that might start: the wait ends when that
+    // round does, so it is a proof of termination and not a clock. A round that FAILED has already
+    // told its own caller (the device cap has a toast) and the join proceeds as it always did, with
+    // the refusal it then earns named here rather than learned.
+    const round = this.keyPackageRoundInFlight;
+    if (round) {
+      console.log(
+        `[MLS] externalJoin ${short}... waits for this device's key package round: the commit gate refuses an activation for a device with no KeyPackage`
+      );
+      try {
+        await round;
+      } catch (e) {
+        console.warn(
+          `[MLS] externalJoin ${short}... proceeding although the key package round FAILED - the gate will probably answer no_key_package:`,
+          String(e).slice(0, 120)
+        );
+      }
+    }
     for (let attempt = 0; attempt < EXTERNAL_JOIN_MAX_ATTEMPTS; attempt++) {
       // THE REFUSAL HAS TO SURVIVE THIS CATCH, which flattened every outcome into `null` and cost
       // the caller the only discriminator it needed. `NotAGroupMemberError` is the server answering
