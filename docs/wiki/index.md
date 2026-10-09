@@ -35,6 +35,7 @@
 - [chat-delivery-service](services/chat-delivery.md) — NestJS MLS API, message queue, sync engine, push
 - [core-service](services/core-service.md) — OIDC auth (Authentik), users, Stripe payments
 - [media-service](services/media-service.md) — Encrypted blob storage (Garage)
+- [media-streaming-upload](services/media-streaming-upload.md) — Design: parts under 8 MiB, bounded-memory upload and download (CrowdSec 10 MiB wall)
 - [social-service](services/social-service.md) — Posts, channels, associations, forms
 - [reels](services/reels.md) — CanaReels server half: the `reel` post kind, its 30-day deletion, the API contract
 - [Community rework](services/community-rework.md) — the master plan for the community subsystem: what triggered it, the three axes, and the crypto axis still to do
