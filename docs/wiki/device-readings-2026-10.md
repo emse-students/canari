@@ -230,3 +230,25 @@ hot and clipped; audio 7.36 s against video 6.92 s.
   at 320x640, 390x844 and 1280x800: the media box equals the viewport at all three (0,0,w,h), no range
   input, "Next" over the bottom edge. A portrait clip on a 1280 wide window is cropped hard by `cover`.
 - OPEN: the prepared file has ~4 % fewer frames than the recording (287 of 299); the cause was not found.
+
+## Readings of `v1.2.3-alpha.1` on the bench Mi 9T (2026-10-10)
+
+Run 38041978095, release APK (`versionName` 1.2.3, `versionCode` 100200301: Android drops the
+pre-release suffix, the store band carries it). Signed in as the campaign account `fourth` on
+`dev.canari-emse.fr` after `pm clear` (a stale vault from the earlier install made `pin.mjs` refuse
+before it). Contacts of the dev directory had never signed in, so the bench used a one-member group
+room. Screenshots stay in the session scratchpad.
+
+| Reading | Verdict | Evidence |
+| --- | --- | --- |
+| R1 2.2 MB attachment, dev relay refuses above 1 MiB | **FAIL** | The bubble reads "Plus rien ne passe - 1,4 Mo sur 2,1 Mo envoyes" with a retry and a cancel button after about 25 s, but the header stays "Envoi..." with a spinner ring and never turned into a refused / too-large state in the 150 s watched. The 413 is not surfaced as a cause. Cancel (x) removed the bubble cleanly. |
+| R2 300 KB attachment | **FAIL (unresolved)** | Right after the cancelled upload it showed "En attente de connexion - nouvel essai automatique" for over a minute, while `navigator.onLine` was true; a text sent just after read "En attente..." too, then both left that state on the next page load ("Message envoye" for the text). The 293 Ko bubble then stayed dimmed with a spinning ring for 5+ minutes: no progress, no success. logcat shows `SELECT * FROM outbox` once a second with 6 rows returned for that whole time. |
+| R3 settings hub (`/profile` itself is the profile page; the hub is `/settings`, reached by the sliders icon) | **PASS** | 7 rows; "Securite & appareils" opens `/settings/security` with breadcrumb "Parametres > Securite & appareils"; Back returns to `/settings`; reload on `/settings/security` stays there; clicking the first crumb returns to `/settings`. |
+| R4 sticky date pill, glass | **NOT-DONE** | The room held two items, so nothing scrolled behind the "AUJOURD'HUI" pill; its look cannot be judged. The pill and composer rendered normally. |
+| R5 keyboard rise, composer | **PARTIAL** | A per-frame log of the composer's top (CDP, 2 attempts) reads 877 -> 889 -> 800 px in both: a 12 px dip DOWN for 1-2 frames (`innerHeight` still 945 while `visualViewport` is already 856) before it settles above the keyboard. The final position is right; the dip is a small visible jump. No screenrecord frames. |
+| R6 edge swipe then scroll | **PARTIAL** | An edge swipe from x=2 inside the room returned to the conversation list (`/chat`). The list held one row, so the scroll after it could not be judged. |
+
+Needs a code look: R1 (a refused upload must end in an explicit state, the stall message is the
+only signal) and R2 (a 293 KB file never completes while text goes through; check whether the
+cancel of the earlier upload leaves the outbox stuck, and why the outbox is polled every second).
+The sticky pill, R4, wants a conversation with a few screens of messages.
