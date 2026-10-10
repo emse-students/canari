@@ -177,7 +177,7 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 ## Asked by the USER on 2026-10-05 - one request, not built
 
-**Reply and mark-as-read from a salon notification** - absent on Android AND iOS by design; a salon send is server-authoritative, so it needs its own native send path. iOS actions never run in this repo's gates: owed a hand on an iPhone for a DM and a group.
+**Reply and mark-as-read from a salon notification** - Android MARK AS READ is built (a PushSecret call to the salon's read receipt, [mobile](frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android)); owed one tap on the Mi 9T against a pushing estate. **Not built:** Android Reply on a salon (needs a native Graine sealing path plus a PushSecret send route, a package of its own) and BOTH iOS actions (no gate here runs them; owed a hand on an iPhone for a DM, a group and a salon).
 
 ## Asked by the USER on 2026-10-09 - CanaReels in a conversation, a design study, not built
 

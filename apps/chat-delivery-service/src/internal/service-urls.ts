@@ -61,3 +61,15 @@ export function mediaUrl(path: string): string {
 export function coreUrl(path: string): string {
   return join(process.env.CORE_SERVICE_INTERNAL_URL ?? 'http://core-service:3012', path);
 }
+
+/**
+ * A route on social-service, reachable only over the Docker network. The salon's read receipt lives
+ * there, and a shut phone's "mark as read" reaches it through this service's PushSecret route.
+ *
+ * `SOCIAL_SERVICE_URL` is the name this repo's other services already give social-service.
+ *
+ * @param path the route as its controller declares it, e.g. `internal/channels/<id>/read`
+ */
+export function socialUrl(path: string): string {
+  return join(process.env.SOCIAL_SERVICE_URL ?? 'http://social-service:3014', path);
+}

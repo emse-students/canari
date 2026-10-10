@@ -34,7 +34,7 @@ import {
 } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 import { MessagingService } from '../services/messaging.service';
-import { coreUrl, mediaUrl } from '../internal/service-urls';
+import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
 /**
  * Max size of an encrypted media blob the push proxy will relay for a notification thumbnail
@@ -224,6 +224,64 @@ export class PushController {
         `channel=${sanitizeLogValue(body.channelId)} missing=${missing} held=${body.held === true}`
     );
     return { recorded: true };
+  }
+
+  /**
+   * "Mark as read" on a SALON notification, answered by a shut phone (Android quick action).
+   *
+   * A DM's read state is an MLS watermark frame the phone sends itself; a salon's is a row held by
+   * social-service, which only a signed-in caller can reach, and a shut app has no session. This is
+   * the bridge, in the shape of {@link getMediaForPush}: PushSecret proves the caller is a device of
+   * `userId`, then the shared internal secret carries the call to social-service, which still checks
+   * the user can read the salon. `at` is the notification's own message instant, never the phone's
+   * clock (see `sendReadWatermark` on the phone).
+   *
+   * Every refusal is an ANSWER the phone logs, and none is retried: the banner has already been
+   * cleared locally, and the next time the app opens the salon the receipt rises anyway.
+   */
+  @UseGuards(ThrottlerGuard)
+  @Post('mls/push/channel-read')
+  async markChannelReadForPush(
+    @Headers('authorization') authHeader: string,
+    @Body() body: { userId?: string; deviceId?: string; channelId?: unknown; at?: unknown }
+  ): Promise<{ at: number | null }> {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+    const channelId = sanitizeQueryValue(String(body.channelId ?? ''), 'channelId');
+    const at = body.at;
+    if (typeof at !== 'number' || !Number.isSafeInteger(at) || at <= 0) {
+      throw new BadRequestException('at must be a positive integer (epoch ms)');
+    }
+    const internalSecret = process.env.INTERNAL_SECRET ?? '';
+    if (!internalSecret) {
+      this.logger.warn('[CHANNEL_READ_PUSH] INTERNAL_SECRET unset - refusing');
+      throw new HttpException('internal secret unset', 503);
+    }
+    let upstream: globalThis.Response;
+    try {
+      upstream = await fetch(socialUrl(`internal/channels/${encodeURIComponent(channelId)}/read`), {
+        method: 'POST',
+        headers: { 'x-internal-secret': internalSecret, 'content-type': 'application/json' },
+        body: JSON.stringify({ userId, at }),
+        signal: AbortSignal.timeout(5_000),
+      });
+    } catch (e) {
+      this.logger.warn(
+        `[CHANNEL_READ_PUSH] social-service unreachable user=${userId} channel=${channelId.slice(0, 8)}: ${
+          e instanceof Error ? `${e.name} ${e.message}` : String(e)
+        }`
+      );
+      throw new HttpException('social-service unreachable', 503);
+    }
+    if (!upstream.ok) {
+      this.logger.warn(
+        `[CHANNEL_READ_PUSH] refused status=${upstream.status} user=${userId} channel=${channelId.slice(0, 8)}`
+      );
+      throw new HttpException('channel read refused', upstream.status === 403 ? 403 : 502);
+    }
+    const answer = (await upstream.json()) as { at?: number | null };
+    return { at: answer.at ?? null };
   }
 
   /**

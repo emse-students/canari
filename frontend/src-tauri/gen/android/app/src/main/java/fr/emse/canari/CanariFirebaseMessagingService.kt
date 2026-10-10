@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.PostReactionGroup
@@ -1368,6 +1369,58 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
+        /**
+         * Tells the server this user has read a SALON up to [at] (`POST /api/mls/push/channel-read`,
+         * PushSecret - a shut app has no session). The server-authoritative twin of a DM's read
+         * watermark frame: it raises the salon's read receipt and clears the user's other devices'
+         * banners. Returns true when the server took it.
+         *
+         * NO RETRY AND NO QUEUE, deliberately. The banner was cleared on this phone before the call,
+         * so a failure costs a read receipt that rises anyway the next time the app opens the salon;
+         * a durable queue would be a second store for a fact the server recomputes. The failure is
+         * logged at warn, with the status the server answered.
+         */
+        internal fun postChannelRead(context: Context, channelId: String, at: Long): Boolean {
+            val ctx = MlsContextLoader.loadPushContext(context)
+            val secret = retrievePushSecret(context)
+            if (ctx == null || secret == null) {
+                Log.w(TAG, "postChannelRead: no push context or secret - the salon read mark is not sent channel=${channelId.take(8)}")
+                return false
+            }
+            return try {
+                val body = JSONObject().apply {
+                    put("userId", ctx.userId)
+                    put("deviceId", ctx.deviceId)
+                    put("channelId", channelId)
+                    put("at", at)
+                }.toString()
+                val conn = (URL("${ctx.baseUrl}/api/mls/push/channel-read").openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10_000
+                    readTimeout    = 10_000
+                    requestMethod  = "POST"
+                    doOutput       = true
+                    setRequestProperty("Authorization", "PushSecret $secret")
+                    setRequestProperty("Content-Type", "application/json")
+                }
+                try {
+                    conn.outputStream.use { it.write(body.toByteArray()) }
+                    val code = conn.responseCode
+                    if (code == 200 || code == 201) {
+                        Log.d(TAG, "postChannelRead: HTTP $code channel=${channelId.take(8)} at=$at")
+                        true
+                    } else {
+                        Log.w(TAG, "postChannelRead: HTTP $code channel=${channelId.take(8)} at=$at - the read mark did not move")
+                        false
+                    }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "postChannelRead: exception: ${e.message}")
+                false
+            }
+        }
+
         /** Reads the cleartext outbox mirror written by the TS. Returns [] if absent/unreadable. */
         internal fun readOutboxMirror(context: Context): List<OutboxMirrorEntry> {
             return try {
@@ -2127,6 +2180,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
             if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
                 notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt))
+                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
+            } else if (quickActions && ChannelReadMark.offered(groupId, sentAt)) {
+                // A SALON offers "Mark as read" ONLY: its read state is a server row the receiver
+                // reaches with one PushSecret call. Reply stays off - the send is end-to-end
+                // encrypted under a Graine session the broadcast receiver cannot seal.
                 notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
             }
 

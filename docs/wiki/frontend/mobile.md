@@ -2356,6 +2356,10 @@ conversation has read it (product decision, 2026-08-31). Both call one function 
 (`sendReadWatermark` in `CanariNotificationActionReceiver.kt`, `CanariSendReadWatermark` in
 `canari_push.mm`), so neither can drift into its own idea of what reading means.
 
+### A salon: Mark as read only, and why Reply is not offered (decided 2026-10-10, Android)
+
+A salon notification (`channel_<id>`) carries **Mark as read** and no Reply. Marking read is server-authoritative, so it is one PushSecret call (`CanariFirebaseMessagingService.postChannelRead` -> chat-delivery `POST /api/mls/push/channel-read` -> social-service, mechanism on [social-service](../services/social-service.md)); the local banner is cleared first, and the action is offered only when the notification holds the message's server instant (`ChannelReadMark.offered`, JVM-tested). **Reply is not built, by decision**: a salon send is not a plain POST but an end-to-end encrypted message sealed under a Graine session (a signed v2 frame, [channel-encryption](../protocols/channel-encryption.md)), and the broadcast receiver holds neither the signing key nor the session. Building it means a native Graine sealing path in the JNI layer plus a PushSecret send route in the delivery service - a package of its own. **iOS has neither half**: the NSE category actions run in no gate of this repo, so they wait for a hand on an iPhone ([backlog](../backlog.md)).
+
 ### The instant is carried, never looked up
 
 The frame is `AppMessage{ system: SystemMsg{ event: "read_watermark", data: {"at"} } }`, built by
