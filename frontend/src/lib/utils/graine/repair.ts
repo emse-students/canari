@@ -142,6 +142,16 @@ const historyParked = new Map<string, () => void>();
 const askedOn = new Map<string, { groupId: string; epoch: number }>();
 
 /**
+ * Per session, the id of the request currently outstanding for it.
+ *
+ * A decline is durable (it travels as key material), so it can be replayed from the distribution
+ * group's log - possibly after the ask it answered was superseded by a newer one for the same
+ * session. Counting it against the newer ask would strike a member who was never asked in this walk.
+ * The request id is the durable fact that says WHICH ask a decline belongs to; no clock is involved.
+ */
+const askedRequest = new Map<string, string>();
+
+/**
  * Requests not sent because their key group was behind its epoch, by group, then channel.
  *
  * Held rather than dropped: the wants are real, only the epoch is wrong. Released by the event that
@@ -372,6 +382,7 @@ async function requestSeedsForChannel(
   for (const sessionId of beyondReach) {
     sessions.delete(sessionId);
     wants.delete(sessionId);
+    askedRequest.delete(sessionId);
     declined.delete(sessionId);
   }
   if (beyondReach.length > 0) {
@@ -413,6 +424,7 @@ async function requestSeedsForChannel(
           (ownOtherDevices ? ', our own other device(s) included' : ' (we have no other device)')
       );
       wants.delete(sessionId);
+      askedRequest.delete(sessionId);
       declined.delete(sessionId);
       continue;
     }
@@ -422,15 +434,18 @@ async function requestSeedsForChannel(
   if (waiting.size > 0) parkUntilOnline(channelId, waiting);
 
   for (const [answerer, sessionIds] of byAnswerer) {
+    const requestId = crypto.randomUUID();
     const frame = encodeAppMessage(
       mkGraineRequest({
         workspaceId,
         kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
         sessionIds,
         answererUserId: answerer,
-        requestId: crypto.randomUUID(),
+        requestId,
       })
     );
+    // Recorded BEFORE the send: the answer may land before `sendMessage` resolves.
+    sessionIds.forEach((id) => askedRequest.set(id, requestId));
     // Transport, never durable: a request restates state held elsewhere, so replaying it from the
     // shared log would be circular - and that log is capped per group, so writing requests into it
     // would evict the seeds it exists to carry.
@@ -770,6 +785,7 @@ function parkHistoryUntilOnline(workspaceId: string, offline: string[]): void {
 export function forgetAskedSession(sessionId: string): void {
   asked.delete(sessionId);
   askedOn.delete(sessionId);
+  askedRequest.delete(sessionId);
   wants.delete(sessionId);
   declined.delete(sessionId);
 }
@@ -788,12 +804,22 @@ export function forgetAskedSession(sessionId: string): void {
  *
  * @param sessionId Session the answerer turned out not to hold.
  * @param answerer Who declined, lower-cased by the caller or here.
+ * @param requestId The request the declining bundle answers. A decline of any OTHER request (replayed
+ *   from the log, or answering an ask since superseded) is ignored: the walk counts answers to the
+ *   ask in flight, not every "no" ever said.
  */
-export function noteSeedUnavailable(sessionId: string, answerer: string): void {
+export function noteSeedUnavailable(sessionId: string, answerer: string, requestId: string): void {
   const want = wants.get(sessionId);
   if (!want) {
     // Nothing is waiting on it: the seed landed by another path between the ask and this answer, or
     // the community has since left this device. Either way there is nobody to ask on behalf of.
+    return;
+  }
+
+  if (askedRequest.get(sessionId) !== requestId) {
+    console.debug(
+      `[GRAINE] ignoring a decline of session ${sessionId} from ${answerer}: it answers request ${requestId || '(none)'}, not the one in flight`
+    );
     return;
   }
 
@@ -881,6 +907,9 @@ export function releaseRequestsHeldForKeyGroup(groupId: string, rejoinedWorkspac
     if (at.groupId !== groupId || at.epoch >= now) continue;
     asked.delete(sessionId);
     askedOn.delete(sessionId);
+    // The ask sealed at the epoch this device has left is SUPERSEDED: a late decline of it must not
+    // be counted against the ask that replaces it.
+    askedRequest.delete(sessionId);
     const want = wants.get(sessionId);
     if (!want) continue;
     const perChannel = outstanding.get(want.channelId) ?? new Map<string, MissingSeed>();
@@ -916,6 +945,7 @@ export function releaseRequestsHeldForKeyGroup(groupId: string, rejoinedWorkspac
 export function resetGraineRepairState(): void {
   asked.clear();
   askedOn.clear();
+  askedRequest.clear();
   heldForKeyGroup.clear();
   historyHeldForKeyGroup.clear();
   wants.clear();

@@ -616,10 +616,13 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.keyMaterial);
   });
 
-  it('sends an answer that carries only declines as transport, keeping the capped log for seeds', async () => {
-    // The other half of the same rule. A decline restates a fact the requester can derive and holds
-    // no key material, so it must not spend a distribution group's log - the argument that makes
-    // the seed above durable is the argument that keeps this one transport.
+  it('sends an answer that carries only declines as KEY MATERIAL too, so a decline is never dropped for an offline requester', async () => {
+    // THE STRANDING (user decision, 2026-10-10). A pure decline used to go out as `DELIVERY.transport`,
+    // which the server delivers only to recipients presence reports online and never appends to the
+    // log. A requester that asked from a cold start has no socket yet, so the decline was dropped
+    // for good - and a decline is the one fact that sends the requester to the NEXT member, so
+    // nothing re-asked and the session stayed unreadable. An answer is ONE message whatever it
+    // carries: same delivery, same retry, same heal.
     const { storage } = fakeStorage();
     const sendMessage = wireWithMls(storage);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -634,7 +637,8 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       })
     );
 
-    expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.transport);
+    expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.keyMaterial);
+    expect(sendMessage.mock.calls[0][3].durable).toBe(true);
     warn.mockRestore();
   });
 
