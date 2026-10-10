@@ -21,6 +21,7 @@ import MessageBubble from './MessageBubble.svelte';
 import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import type { MediaRef } from '$lib/media';
 import { m } from '$lib/paraglide/messages';
+import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 
 const mounted: (() => void)[] = [];
 beforeEach(() => queued.mockReset());
@@ -60,6 +61,15 @@ async function render(props: { isOwn: boolean; status?: 'pending' | 'sent' }) {
   await Promise.resolve();
   flushSync();
 }
+
+const settle = async () => {
+  for (let i = 0; i < 4; i++) {
+    flushSync();
+    await Promise.resolve();
+  }
+  await new Promise((r) => setTimeout(r, 0));
+  flushSync();
+};
 
 const orphanShown = () => document.body.textContent?.includes(m.media_orphan_label()) ?? false;
 
@@ -106,5 +116,29 @@ describe('MessageBubble - the upload label of an entry the outbox has not starte
     await render({ isOwn: true, status: 'pending' });
     connectivity.reset();
     expect(document.body.textContent).toContain(m.upload_waiting());
+  });
+});
+
+describe('MessageBubble - a normal send never flashes the orphan card', () => {
+  it('in flight: never asked, never red; the row lands: asked again, still not red', async () => {
+    queued.mockResolvedValue(false);
+    const end = beginOutboxEnqueue('m1');
+    await render({ isOwn: true, status: 'sent' });
+    expect(queued).not.toHaveBeenCalled();
+    expect(orphanShown()).toBe(false);
+    queued.mockResolvedValue(true);
+    end();
+    await settle();
+    expect(queued).toHaveBeenCalledWith('m1');
+    expect(orphanShown()).toBe(false);
+  });
+  it('enqueue cleared with no row (rejected, not withdrawn): the re-ask shows the orphan', async () => {
+    queued.mockResolvedValue(false);
+    const end = beginOutboxEnqueue('m1');
+    await render({ isOwn: true, status: 'sent' });
+    expect(orphanShown()).toBe(false);
+    end();
+    await settle();
+    expect(orphanShown()).toBe(true);
   });
 });

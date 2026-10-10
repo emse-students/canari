@@ -1,4 +1,5 @@
 import type { SvelteMap } from 'svelte/reactivity';
+import { bumpOutboxQueueVersion } from './outboxActivity.svelte';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
@@ -1615,7 +1616,8 @@ export function isOutboxEntryQueued(messageId: string): Promise<boolean | null> 
  * reads as "not cancelled" - the safe answer, since it sends the delete as an event instead.
  */
 export function cancelOutboxMessage(messageId: string): Promise<boolean> {
-  return active ? active.cancelPending(messageId) : Promise.resolve(false);
+  if (!active) return Promise.resolve(false);
+  return active.cancelPending(messageId).finally(bumpOutboxQueueVersion);
 }
 
 /** Mark loaded messages still queued as `pending` (no-op when none). */
