@@ -51,7 +51,7 @@
     }}
     aria-label={m.upload_cancel_label()}
     title={m.upload_cancel_label()}
-    class="relative flex h-9 w-9 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-current"
+    class="ui-icon-button relative rounded-full outline-none focus-visible:ring-2 focus-visible:ring-current"
   >
     <svg
       viewBox="0 0 36 36"
