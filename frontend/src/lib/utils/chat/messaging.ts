@@ -1,7 +1,7 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
 import type { OutboxEntry } from '$lib/db';
-import { cancelOutboxMessage, enqueueOutboxMessage } from './outbox';
+import { cancelOutboxMessage, enqueueOutboxMessage, OutboxEnqueueError } from './outbox';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import {
@@ -221,18 +221,32 @@ interface MessageActionDeps {
  * events converge across peers even if the group was momentarily unsendable, or the app reloaded
  * or was killed before the original direct send could go through.
  */
-async function enqueueControlEvent(conversationId: string, proto: Uint8Array): Promise<void> {
+async function enqueueControlEvent(
+  kind: string,
+  conversationId: string,
+  proto: Uint8Array
+): Promise<void> {
   const now = Date.now();
-  await enqueueOutboxMessage({
-    id: crypto.randomUUID(),
-    conversationId,
-    sentAt: now,
-    kind: 'control',
-    controlProto: proto,
-    status: 'pending',
-    attempts: 0,
-    createdAt: now,
-  });
+  try {
+    await enqueueOutboxMessage({
+      id: crypto.randomUUID(),
+      conversationId,
+      sentAt: now,
+      kind: 'control',
+      controlProto: proto,
+      status: 'pending',
+      attempts: 0,
+      createdAt: now,
+    });
+  } catch (e) {
+    // A control event is best-effort by nature (it converges on the next one), so a queue that cannot
+    // take it must not throw into the reaction/edit/pin/read UI - but it is NEVER silent: the peers
+    // will not hear of this event. Only the typed refusal is absorbed; anything else still throws.
+    if (!(e instanceof OutboxEnqueueError)) throw e;
+    console.error(
+      `[OUTBOX] control event "${kind}" not queued, peers will not receive it: ${e.message}`
+    );
+  }
 }
 
 /**
@@ -248,7 +262,11 @@ export async function addReaction(
 ): Promise<void> {
   const { userId, conversation, currentUserDisplayName } = deps;
 
-  await enqueueControlEvent(conversation.id, encodeAppMessage(mkReaction(messageId, emoji, at)));
+  await enqueueControlEvent(
+    'reaction',
+    conversation.id,
+    encodeAppMessage(mkReaction(messageId, emoji, at))
+  );
 
   // Notify the message author (fire-and-forget, non-fatal). The message's CONTENT is deliberately
   // not read here - see notifyReaction: the author's own devices hold it already.
@@ -279,6 +297,7 @@ export async function removeReaction(
   deps: MessageActionDeps
 ): Promise<void> {
   await enqueueControlEvent(
+    'reaction_remove',
     deps.conversation.id,
     encodeAppMessage(mkReaction(messageId, emoji, at, true))
   );
@@ -300,6 +319,7 @@ export async function editMessage(
   deps: MessageActionDeps
 ): Promise<void> {
   await enqueueControlEvent(
+    'edit_message',
     deps.conversation.id,
     encodeAppMessage(mkSystem('edit_message', JSON.stringify({ messageId, newContent, editedAt })))
   );
@@ -339,6 +359,7 @@ export async function deleteMessage(
 ): Promise<DeleteOutcome> {
   if (await cancelOutboxMessage(messageId)) return 'withdrawn';
   await enqueueControlEvent(
+    'delete_message',
     deps.conversation.id,
     encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })))
   );
@@ -361,6 +382,7 @@ export async function setMessagePinned(
   deps: MessageActionDeps
 ): Promise<void> {
   await enqueueControlEvent(
+    pinned ? 'pin' : 'unpin',
     deps.conversation.id,
     encodeAppMessage(mkSystem(pinned ? 'pin' : 'unpin', JSON.stringify({ messageId, at })))
   );
@@ -380,6 +402,7 @@ export async function setMessagePinned(
 export async function sendReadWatermark(at: number, deps: MessageActionDeps): Promise<boolean> {
   if (!Number.isFinite(at) || at <= 0) return false;
   await enqueueControlEvent(
+    'read_watermark',
     deps.conversation.id,
     encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at })))
   );
