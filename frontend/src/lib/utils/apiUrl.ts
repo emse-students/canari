@@ -15,8 +15,12 @@ import { isTauriRuntime } from '$lib/utils/tauriRuntime';
  * Exported for its own test: Vite inlines `import.meta.env.VITE_*` at transform time, so no test
  * can make the callers below see a different baked value per case.
  */
-export function resolveServiceUrl(envValue: string | undefined, devFallback: string): string {
-  if (typeof window !== 'undefined' && !isTauriRuntime()) return window.location.origin;
+export function resolveServiceUrl(
+  envValue: string | undefined,
+  devFallback: string,
+  tauri: boolean = isTauriRuntime()
+): string {
+  if (typeof window !== 'undefined' && !tauri) return window.location.origin;
   const url = envValue?.trim();
   if (url) return url.replace(/\/$/, '');
   return typeof window !== 'undefined' ? window.location.origin : devFallback;
@@ -64,14 +68,39 @@ export function mediaUrl(): string {
   return resolveServiceUrl((import.meta as any).env?.VITE_MEDIA_URL, 'http://localhost:3011');
 }
 
+/** The five services whose origins the Tauri fetch routing treats as first-party. */
+export type ApiServiceName = 'core' | 'social' | 'gateway' | 'delivery' | 'media';
+
+/** What `apiServiceOrigins` reads, each part injectable because Vite freezes the real ones. */
+export interface ApiServiceSources {
+  /** Whether the Tauri runtime is the one asking; defaults to the real check. */
+  tauri?: boolean;
+  /** The baked `VITE_*_URL` per service; a key left out reads the real `import.meta.env`. */
+  baked?: Partial<Record<ApiServiceName, string | undefined>>;
+}
+
 /**
  * The distinct origins of Canari's five services, as `fetch` sees them - what the Tauri fetch
  * routing calls first-party (`shouldUseNativeFetch`). Read per call, never cached: the base URLs
- * come from `VITE_*` values and `window.location`, and a test changes them between cases.
+ * come from `VITE_*` values and `window.location`.
+ *
+ * @param sources Test seam: the runtime check and the baked values (see {@link ApiServiceSources}),
+ *                since `import.meta.env.VITE_*` is inlined at transform time and cannot be varied.
  */
-export function apiServiceOrigins(): string[] {
+export function apiServiceOrigins(sources: ApiServiceSources = {}): string[] {
+  const env = (import.meta as any).env ?? {};
+  const tauri = sources.tauri ?? isTauriRuntime();
+  const baked = (name: ApiServiceName, key: string): string | undefined =>
+    sources.baked && name in sources.baked ? sources.baked[name] : env[key];
+  const bases = [
+    resolveServiceUrl(baked('core', 'VITE_CORE_URL'), 'http://localhost:3012', tauri),
+    resolveServiceUrl(baked('social', 'VITE_SOCIAL_URL'), '', tauri),
+    resolveServiceUrl(baked('gateway', 'VITE_GATEWAY_URL'), 'http://localhost:3000', tauri),
+    resolveServiceUrl(baked('delivery', 'VITE_DELIVERY_URL'), 'http://localhost:3010', tauri),
+    resolveServiceUrl(baked('media', 'VITE_MEDIA_URL'), 'http://localhost:3011', tauri),
+  ];
   const origins = new Set<string>();
-  for (const base of [coreUrl(), socialUrl(), gatewayUrl(), deliveryUrl(), mediaUrl()]) {
+  for (const base of bases) {
     try {
       origins.add(new URL(base).origin);
     } catch {

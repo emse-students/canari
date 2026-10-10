@@ -57,15 +57,47 @@ function isDevServerOrInternalUrl(url: string): boolean {
  * as JSON, one JS number per body byte. Measured on the Mi 9T (2026-10-10) that is ~85x the body in
  * the Rust process and ~45-50x in the renderer: 13.4 MB cost +1185 MiB / +487 MiB, and 50 MB killed
  * the render process and the whole app. A JSON string body is a few KB and costs nothing visible,
- * so it stays where it was. When the first argument is a `Request` its body cannot be inspected
- * without consuming it, so a non-null `body` counts as binary.
+ * so it stays where it was.
+ *
+ * A STREAM IS NEVER BINARY HERE: a `ReadableStream` or an async iterable cannot be streamed as a
+ * request body by WKWebView at all, and the plugin buffers it anyway (`request.arrayBuffer()`), so
+ * sending it native would only trade the plugin's behaviour for a failure.
+ *
+ * A `Request` as the first argument has a body that is ALWAYS a `ReadableStream` and cannot be
+ * inspected without consuming it, so what it carries is read from its `Content-Type`, which the
+ * constructor derived from the original body: text (`text/*`, JSON, urlencoded, XML) is the plugin's,
+ * everything else with a body (`multipart/form-data`, `application/octet-stream`, a typed `Blob`,
+ * no type at all) is binary. A `Request` built from a stream is indistinguishable from one built
+ * from a `Blob` without a type, and counts as binary: that single case is not detectable.
  */
 export function hasBinaryBody(input: RequestInfo | URL, init?: RequestInit): boolean {
   const body = init?.body;
-  if (body !== undefined && body !== null) {
-    return typeof body !== 'string' && !(body instanceof URLSearchParams);
+  if (body !== undefined && body !== null) return isBinaryInitBody(body);
+  if (typeof Request === 'undefined' || !(input instanceof Request) || input.body === null) {
+    return false;
   }
-  return typeof Request !== 'undefined' && input instanceof Request && input.body !== null;
+  return !isTextContentType(input.headers.get('content-type'));
+}
+
+function isBinaryInitBody(body: BodyInit | AsyncIterable<unknown>): boolean {
+  if (typeof body === 'string' || body instanceof URLSearchParams) return false;
+  if (typeof ReadableStream !== 'undefined' && body instanceof ReadableStream) return false;
+  if (Symbol.asyncIterator in (body as object)) return false;
+  return true;
+}
+
+/** Whether a `Content-Type` names a textual body, which the plugin carries at no visible cost. */
+function isTextContentType(contentType: string | null): boolean {
+  if (!contentType) return false;
+  const type = contentType.split(';')[0].trim().toLowerCase();
+  return (
+    type.startsWith('text/') ||
+    type === 'application/x-www-form-urlencoded' ||
+    type === 'application/json' ||
+    type === 'application/xml' ||
+    type.endsWith('+json') ||
+    type.endsWith('+xml')
+  );
 }
 
 /** Whether `url` is on one of Canari's own API origins (`origins` are bare `scheme://host[:port]`). */
@@ -117,6 +149,29 @@ export function shouldUseNativeFetch(
   if (init?.credentials === 'include') return true;
 
   return isFirstPartyUrl(url, firstPartyOrigins) && hasBinaryBody(input ?? url, init);
+}
+
+/**
+ * The `window.fetch` replacement `hooks.client.ts` installs in Tauri: the WebView's own `fetch` for
+ * what {@link shouldUseNativeFetch} keeps native, the HTTP plugin's for the rest.
+ *
+ * Extracted so the hook's real call (URL resolved from the first argument, `init` and `input`
+ * passed as the 2nd and 3rd, origins as the 4th) is a function a test can drive; the hook itself
+ * runs asynchronously at startup and nothing else can reach it.
+ *
+ * @param native        The WebView's original `fetch`, already bound to `window`.
+ * @param plugin        The HTTP plugin's `fetch`.
+ * @param firstPartyOrigins Read PER CALL (`apiServiceOrigins`), never captured once.
+ */
+export function createRoutedFetch(
+  native: typeof fetch,
+  plugin: typeof fetch,
+  firstPartyOrigins: () => readonly string[]
+): typeof fetch {
+  return ((input: RequestInfo | URL, init?: RequestInit) =>
+    shouldUseNativeFetch(fetchInputUrl(input), init, input, firstPartyOrigins())
+      ? native(input, init)
+      : plugin(input, init)) as typeof fetch;
 }
 
 /** Resolves the URL string of any `fetch` first argument, or `null` when it has none. */

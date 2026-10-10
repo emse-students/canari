@@ -89,4 +89,44 @@ describe('apiServiceOrigins', () => {
     // In a browser every service resolves to the page's own origin, so five bases collapse to one.
     expect(apiServiceOrigins()).toEqual([window.location.origin]);
   });
+
+  it('under Tauri, names each baked origin and drops a trailing slash and any path', () => {
+    expect(
+      apiServiceOrigins({
+        tauri: true,
+        baked: {
+          core: 'https://canari.emse.fr/',
+          social: 'https://social.example:8443/api',
+          gateway: 'https://canari.emse.fr',
+          delivery: 'https://canari.emse.fr',
+          media: 'https://media.example',
+        },
+      })
+    ).toEqual(['https://canari.emse.fr', 'https://social.example:8443', 'https://media.example']);
+  });
+
+  it('under Tauri, dedupes five services baked with one origin', () => {
+    const one = 'https://canari.emse.fr';
+    expect(
+      apiServiceOrigins({
+        tauri: true,
+        baked: { core: one, social: one, gateway: one, delivery: one, media: one },
+      })
+    ).toEqual([one]);
+  });
+
+  it('under Tauri, an empty or blank base falls to the shell origin, never an invented API one', () => {
+    const one = 'https://canari.emse.fr';
+    const origins = apiServiceOrigins({
+      tauri: true,
+      baked: { core: one, social: '', gateway: '  ', delivery: one, media: one },
+    });
+    expect(origins).toEqual([one, window.location.origin]);
+  });
+
+  it('outside Tauri, ignores the baked values exactly as resolveServiceUrl does', () => {
+    expect(apiServiceOrigins({ tauri: false, baked: { core: BAKED } })).toEqual([
+      window.location.origin,
+    ]);
+  });
 });
