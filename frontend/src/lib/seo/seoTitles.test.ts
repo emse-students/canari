@@ -94,6 +94,22 @@ describe('a page is private to one list or to neither', () => {
   });
 });
 
+describe('a route group is not part of the URL', () => {
+  it('/profile is a static route although its page sits in the (me) group', () => {
+    expect(STATIC_PAGE_ROUTES.has('/profile')).toBe(true);
+    expect([...STATIC_PAGE_ROUTES].some((route) => route.includes('('))).toBe(false);
+  });
+});
+
+describe('a profile section is named for what it holds', () => {
+  it('resolves its own title and noindex, and an unknown segment keeps the generic one', () => {
+    const meta = resolveSeoForPath('/profile/me/notepad');
+    expect(meta.title).not.toBe(SITE.defaultTitle);
+    expect(meta.noindex).toBe(true);
+    expect(resolveSeoForPath('/profile/me/nope').title).toBeTruthy();
+  });
+});
+
 describe('a settings section is named for what it holds', () => {
   it('resolves its own title, noindex, and an unknown segment keeps the generic one', () => {
     const meta = resolveSeoForPath('/settings/security');

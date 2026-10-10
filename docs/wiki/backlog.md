@@ -890,9 +890,9 @@ WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominativ
 
 ## Navigation, tooltips and the camera (2026-10-08)
 
-### P2 - Sections are navigated in depth, not shown as tabs (user, 2026-10-08)
+### Sections in depth: built for every menu (lots 1-6, 2026-10-10); owed ONE look on both phones
 
-Two menu patterns, both bad on a phone: a scrolling row hides tabs, a wrapped grid takes half the screen. Replace them with a hub, route-segment sections, a breadcrumb and a rail on wide screens. Design, order, traps and the two open choices: [section-navigation](frontend/section-navigation.md). Start with the permission gap on the edit page, then the edit page itself.
+Hub, one section, Back (and the Android hardware back), reload on a section, on each hub ([section-navigation](frontend/section-navigation.md)); the profile hub (lot 6) was not read in a signed-in browser.
 
 ## Tooltips: one remaining inconsistency (audit 2026-10-08)
 

@@ -103,7 +103,7 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     why: 'the 80px shutter and its ring, the one target of the capture screen',
   },
   'lib/components/sidebar/Sidebar.svelte': { count: 2, why: 'the 48px community rail tiles' },
-  'routes/profile/+page.svelte': { count: 1, why: 'the camera badge pinned to the avatar' },
+  'routes/profile/(me)/+page.svelte': { count: 1, why: 'the camera badge pinned to the avatar' },
 };
 
 /** Classes that declare a box in `app.css` under their own name. */
