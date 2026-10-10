@@ -148,6 +148,10 @@
     status?: 'pending' | 'sending' | 'sent' | 'error';
     /** When true, enables mobile-specific interactions: long press toolbar, double-tap heart. */
     isMobile?: boolean;
+    /** Re-sends this message after a failed send; shown on the `error` status. */
+    onRetry?: () => void;
+    /** Gives this failed message up; shown beside `onRetry`. */
+    onDiscard?: () => void;
   }
 
   let {
@@ -185,6 +189,8 @@
     searchTerm = '',
     status,
     isMobile = false,
+    onRetry,
+    onDiscard,
   }: Props = $props();
 
   let bubbleAnchor = $state<HTMLElement | null>(null);
@@ -893,6 +899,8 @@
               isReadReceiptAnchor={false}
               {status}
               {readBy}
+              {onRetry}
+              {onDiscard}
             />
           </div>
 

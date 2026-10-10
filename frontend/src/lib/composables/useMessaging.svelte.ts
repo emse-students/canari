@@ -15,12 +15,16 @@ import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotific
 import { extractMentionUserIds, normalizeMentionUserId } from '$lib/utils/mentions';
 import {
   sendChatMessage,
+  retrySalonSend,
+  discardSalonSend,
+  type SendMessageDeps,
   addReaction,
   removeReaction,
   editMessage,
   deleteMessage,
   setMessagePinned,
 } from '$lib/utils/chat/messaging';
+import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { applyPin, isMessagePinned } from '$lib/stores/pinStore.svelte';
 import {
@@ -502,6 +506,48 @@ export function useMessaging() {
     });
   }
 
+  /**
+   * What `sendChatMessage` needs from this composable: the echo writer and the one that moves a salon
+   * echo along. One place, so the composer, a forward and a retry cannot disagree on either.
+   */
+  function makeSendDeps(ctx: MessagingContext, convo: Conversation): SendMessageDeps {
+    return {
+      userId: ctx.userId,
+      conversation: convo,
+      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
+        addMessageToChat(sid, content, contactName, ctx, options),
+      patchSalonEcho: (key, id, change) =>
+        void applySalonEchoChange(ctx.conversations, key, id, change, ctx.log),
+      log: ctx.log,
+    };
+  }
+
+  /**
+   * Retries a salon message whose send was refused (the "Reessayer" of its row). The refusal is
+   * shown on the same banner the first attempt used; the row itself carries the state.
+   */
+  async function retrySend(ctx: MessagingContext, messageId: string): Promise<void> {
+    const key = ctx.selectedContact;
+    const convo = key ? ctx.conversations.get(key) : undefined;
+    if (!key || !convo) return;
+    ctx.setSendError('');
+    const refusal = await retrySalonSend(messageId, makeSendDeps(ctx, convo));
+    if (refusal) ctx.setSendError(refusal);
+  }
+
+  /** Drops a failed salon message the member gave up on: its registration and its row. */
+  function discardSend(ctx: MessagingContext, messageId: string): void {
+    const key = ctx.selectedContact;
+    const convo = key ? ctx.conversations.get(key) : undefined;
+    if (!key || !convo) return;
+    discardSalonSend(messageId, ctx.userId);
+    ctx.conversations.set(key, {
+      ...convo,
+      messages: convo.messages.filter((m) => !(m.id === messageId && m.awaitingServerId)),
+    });
+    ctx.log(`[SEND] salon message ${messageId.slice(0, 8)}... discarded by its author`);
+  }
+
   async function addMessageToChat(
     senderId: string,
     content: string,
@@ -627,6 +673,7 @@ export function useMessaging() {
       status: options.status,
       isFcmPreview: options.isFcmPreview,
       serverTimestamp: options.serverTimestamp,
+      ...(options.salonEcho ? { awaitingServerId: true } : {}),
     };
 
     const dupIdx = convo.messages.findIndex((m) => m.id === newMsg.id);
@@ -709,20 +756,24 @@ export function useMessaging() {
     });
     console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id}…`);
 
-    publishTabMessageUpdate({
-      type: 'message_added',
-      conversationId: normalized,
-      message: newMsg,
-      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
-      unreadCount: nextUnreadCount,
-    });
+    // A salon echo has no server id yet: announced to the sibling tabs now, it would be a row they
+    // can never reconcile. `applySalonEchoChange` announces it once it is re-keyed.
+    if (!options.salonEcho) {
+      publishTabMessageUpdate({
+        type: 'message_added',
+        conversationId: normalized,
+        message: newMsg,
+        lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+        unreadCount: nextUnreadCount,
+      });
+    }
 
     // AND THE ONE ANNOUNCEMENT THAT TRAVELS THE OTHER WAY. The call above is leader-only, because
     // only the leader receives inbound frames and only it can speak for the conversation's counts.
     // A message composed HERE is the exception: whichever tab composed it is the only one that
     // knows, and a follower composing one used to tell nobody - TAB-4b, 2026-09-05. `isOwn` is the
     // discriminator and it is already computed above.
-    if (isOwn) {
+    if (isOwn && !options.salonEcho) {
       publishComposedMessage({
         type: 'own_message_composed',
         conversationId: normalized,
@@ -1275,13 +1326,12 @@ export function useMessaging() {
 
     if (sentMediaMessageCount > 0 || !text) return;
 
-    const result = await sendChatMessage(text, ctx.selectedContact!, currentReplyingTo, {
-      userId: ctx.userId,
-      conversation: convo,
-      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
-        addMessageToChat(sid, content, contactName, ctx, options),
-      log: ctx.log,
-    });
+    const result = await sendChatMessage(
+      text,
+      ctx.selectedContact!,
+      currentReplyingTo,
+      makeSendDeps(ctx, convo)
+    );
 
     // Text/reply now always succeed (captured into the outbox); only a hard block
     // (deleted group) or a channel error surfaces a message to the user.
@@ -1290,8 +1340,11 @@ export function useMessaging() {
         ctx.setSendError(result.error);
         ctx.log(`[SEND] Failed: ${result.error}`);
       }
-      // A refused SALON send left no bubble and no queue entry: the reply target goes back too, so
-      // the caller can restore the draft and lose nothing (WP-OFF-1).
+      // THE TEXT LIVES IN A ROW (failed, with its retry) when the send was echoed: the composer has
+      // nothing to take back, and restoring it would put the message in the thread twice (WP-OFF-2).
+      if (result.echoed) return true;
+      // Nothing was drawn: the reply target goes back too, so the caller can restore the draft and
+      // lose nothing (WP-OFF-1).
       if (isChannel && currentReplyingTo) {
         replyByConversation.set(ctx.selectedContact, currentReplyingTo);
       }
@@ -1768,13 +1821,7 @@ export function useMessaging() {
         const channelText = env.kind === 'text' ? env.text.trim() : '';
         if (!channelText)
           return { success: false, error: m.chat_forward_error_nothing_to_forward() };
-        return await sendChatMessage(channelText, targetName, null, {
-          userId: ctx.userId,
-          conversation: convo,
-          addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
-            addMessageToChat(sid, content, contactName, ctx, options),
-          log: ctx.log,
-        });
+        return await sendChatMessage(channelText, targetName, null, makeSendDeps(ctx, convo));
       } catch (e) {
         // `sendChatMessage` RETURNS its refusal, already localized, rather than throwing it - so
         // anything reaching this catch is unexpected and has nothing to add beyond "it failed".
@@ -1817,13 +1864,7 @@ export function useMessaging() {
 
       const text = env.kind === 'text' ? env.text.trim() : '';
       if (!text) return { success: false, error: m.chat_forward_error_nothing_to_forward() };
-      return await sendChatMessage(text, targetName, null, {
-        userId: ctx.userId,
-        conversation: convo,
-        addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
-          addMessageToChat(sid, content, contactName, ctx, options),
-        log: ctx.log,
-      });
+      return await sendChatMessage(text, targetName, null, makeSendDeps(ctx, convo));
     } catch (e) {
       // Same as the channel branch above, and for the same reason.
       ctx.log(`[FORWARD] MLS forward failed for "${targetName}": ${String(e)}`);
@@ -1883,6 +1924,8 @@ export function useMessaging() {
     batchAddMessages,
     /** Main send handler: uploads pending media then sends a text message. */
     handleSendChat,
+    retrySend,
+    discardSend,
     forwardMessage,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,

@@ -18,6 +18,10 @@
     readBy: string[];
     /** When true, renders outside the bubble (delivery/read indicators). */
     outsideBubble?: boolean;
+    /** Offered on a FAILED send that can be re-sent (a salon message, WP-OFF-2). */
+    onRetry?: () => void;
+    /** Offered beside `onRetry`: gives the failed message up. */
+    onDiscard?: () => void;
   }
 
   let {
@@ -28,6 +32,8 @@
     status,
     readBy,
     outsideBubble = false,
+    onRetry,
+    onDiscard,
   }: Props = $props();
 
   /*
@@ -38,11 +44,12 @@
    * either. `formatTime24` is still used by the tooltip; only this row is gone.
    */
   const showEdited = $derived(isEdited && !outsideBubble);
+  // A FAILURE IS SHOWN WHEREVER IT IS, not only on the last own message: a salon message that was
+  // refused and then followed by another one must not look delivered.
   const showSendStatus = $derived(
     isOwn &&
-      isLastOwn &&
       !outsideBubble &&
-      (status === 'sending' || status === 'error' || status === 'pending')
+      (status === 'error' || (isLastOwn && (status === 'sending' || status === 'pending')))
   );
   const showSent = $derived(
     isOwn &&
@@ -81,6 +88,28 @@
         <span class="text-2xs inline-flex items-center gap-1 font-semibold text-red-500">
           <TriangleAlert size={12} />
           {m.msg_echec()}
+          {#if onRetry}
+            <button
+              type="button"
+              class="font-semibold underline"
+              data-testid="message-retry"
+              onclick={(e) => {
+                e.stopPropagation();
+                onRetry?.();
+              }}>{m.common_retry_button()}</button
+            >
+          {/if}
+          {#if onDiscard}
+            <button
+              type="button"
+              class="font-semibold underline"
+              data-testid="message-discard"
+              onclick={(e) => {
+                e.stopPropagation();
+                onDiscard?.();
+              }}>{m.common_delete_button()}</button
+            >
+          {/if}
         </span>
       {/if}
     {:else if showSent}

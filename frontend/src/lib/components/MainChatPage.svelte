@@ -15,7 +15,8 @@
   import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
-  import { sendReadWatermark } from '$lib/utils/chat/messaging';
+  import { sendReadWatermark, liveSalonSendIds } from '$lib/utils/chat/messaging';
+  import { takeOrphanedSalonTexts } from '$lib/utils/chat/salonUnsent';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { isAppInForeground } from '$lib/utils/appForeground';
   import {
@@ -504,6 +505,24 @@
       canRefresh: () => !session.isWsConnected,
     };
   }
+
+  // ─── A salon message left unanswered by a PREVIOUS page life goes back to the composer ─────────
+  // The echo is memory only and the composer was cleared at the click, so a kill or reload while it
+  // was sending would have lost the text. It is handed back, never re-sent (WP-OFF-2).
+  $effect(() => {
+    const contact = convs.selectedContact;
+    const userId = session.userId;
+    if (!contact || !userId || !isChannelConversationId(contact)) return;
+    untrack(() => {
+      const orphans = takeOrphanedSalonTexts(userId, contact, liveSalonSendIds());
+      for (const o of orphans) {
+        messageText = restoreFailedDraft(messageText, o.text);
+        log(
+          `[SEND] unanswered salon message ${o.messageId.slice(0, 8)}... of a past session restored to the composer`
+        );
+      }
+    });
+  });
 
   // ─── Load group members when selected conversation changes ────────────────
   $effect(() => {
@@ -1215,6 +1234,8 @@
                 )
             : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
           canModerate={canModerateSelectedChannel}
+          onRetrySend={(msgId) => void messaging.retrySend(msgCtx(), msgId)}
+          onDiscardSend={(msgId) => messaging.discardSend(msgCtx(), msgId)}
           onDelete={isSelectedChannel
             ? (msgId) =>
                 void channels.deleteChannelMessage(

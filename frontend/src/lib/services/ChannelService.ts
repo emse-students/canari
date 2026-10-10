@@ -706,7 +706,7 @@ export class ChannelService {
     return res.json();
   }
 
-  async sendMessage(channelId: string, dto: SendChannelMessageDto) {
+  async sendMessage(channelId: string, dto: SendChannelMessageDto): Promise<{ id?: string }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/messages`, {
       method: 'POST',
