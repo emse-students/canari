@@ -926,7 +926,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // due costs a row of numbers - and a due one is decoded exactly once.
     if (entry.kind === 'media' && !entry.media) {
       try {
+        // TIMED, because this read is where a 13 MB attachment's 'waiting' bubble was spent and no
+        // line said how long it took (Mi 9T, alpha.4: ~60 s before the first progress).
+        const readFrom = Date.now();
         const full = await storage?.getOutboxEntry(entry.id, deviceKey());
+        if (full) {
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… payload read in ${Date.now() - readFrom} ms (${full.media?.fileBytes?.length ?? 0} file bytes)`
+          );
+        }
         if (!full) {
           // Withdrawn between the `cancelled` check above and this read: consume it, like that check.
           cancelled.delete(entry.id);
@@ -1411,7 +1419,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // impossible to reach.
       if (!opts.alreadyDurable) {
         try {
+          const writeFrom = Date.now();
           await storage.saveOutboxEntry(entry, deviceKey());
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… durable write took ${Date.now() - writeFrom} ms (${entry.media?.fileBytes?.length ?? 0} file bytes)`
+          );
         } catch (e) {
           log(`[OUTBOX] Enqueue failed for ${entry.id.slice(0, 8)}…: ${String(e)}`);
           throw new OutboxEnqueueError('the durable write failed', e);

@@ -1,3 +1,4 @@
+import { fromBase64, toBase64 } from '$lib/utils/hex';
 import type { OutboxEntry } from './types';
 
 // ---------------------------------------------------------------------------
@@ -38,18 +39,11 @@ export class OutboxPayloadUnreadableError extends Error {
   }
 }
 
-/** Encode a binary buffer as a base64 string for JSON-safe storage in the encrypted payload. */
-function uint8ToBase64(arr: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-  return btoa(binary);
-}
-
 /** Decode a base64 string back to a Uint8Array; returns an empty array on failure. */
 function base64ToUint8(val: unknown): Uint8Array {
   if (typeof val !== 'string') return new Uint8Array(0);
   try {
-    return Uint8Array.from(atob(val), (c) => c.charCodeAt(0));
+    return fromBase64(val);
   } catch {
     return new Uint8Array(0);
   }
@@ -79,11 +73,11 @@ export function encodeOutboxSensitive(entry: OutboxEntry): Record<string, unknow
     const { fileBytes, ...rest } = entry.media;
     payload.media = {
       ...rest,
-      ...(fileBytes && fileBytes.length > 0 ? { fileBytesB64: uint8ToBase64(fileBytes) } : {}),
+      ...(fileBytes && fileBytes.length > 0 ? { fileBytesB64: toBase64(fileBytes) } : {}),
     };
   }
   if (entry.controlProto && entry.controlProto.length > 0) {
-    payload.controlProtoB64 = uint8ToBase64(entry.controlProto);
+    payload.controlProtoB64 = toBase64(entry.controlProto);
   }
   return payload;
 }

@@ -197,6 +197,57 @@ The cause of the user's "endless spinner" on a 13.4 MB PDF: the school-managed C
 
 Prioritised list and numbers: [offline-and-weak-network section 13](frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for). Built: the upload bubble (progress, cancel, retry, refusal) and the 8 MiB body budget (WP-OFF-8), navigation never waiting on the profile call or a post (WP-NAV-1). **Open**: every failed upload restarts at byte 0 (resumable chunks need a server offset route, RC-5); **WP-OFF-9**, an upload holds its conversation's lane and a send slot so text sent behind a big file waits for it (start the upload at enqueue, outside the lane); a salon attachment blocks the composer with no progress (needs the salon row of WP-OFF-2/3); the file sits in the outbox row and three times in memory per attempt. **Owed ONE look on the iPhone** with a real file on a bad link.
 
+## P1 - A 13 MB attachment costs 1.2 GB of renderer memory and a wait before the first byte (Mi 9T, `1.2.3-alpha.4`, read 2026-10-11)
+
+**Reading (user, dev):** 13 MB send ~100 s end to end: ~60 s with the bubble on `waiting` while online, then the ring, then sent; renderer RSS 234 MB -> 1.26 GB ~20 s after the tap (956 MB for 14 MB); alpha.3 ~27 s, 1.1 GB. **Where it goes was read from the code and micro-benchmarked in Chrome (V8), not measured on the phone.** `waiting` is also the DEFAULT view of a bubble with no upload state (`MessageBubble.svelte:587`), so it does not prove a backoff hold.
+
+### The copies of the file, per phase (13 MiB = 13 631 488 B)
+
+| Phase | Where | Copy | Size / measured (desktop Chrome) |
+| --- | --- | --- | --- |
+| pick | `useMessaging.svelte.ts:1201` | `file.arrayBuffer()` | 13.6 MB |
+| write | `outboxCodec.ts` `uint8ToBase64` | `binary += fromCharCode` per byte: one cons node per byte | **+260 MB heap, 411 ms**, then flat base64 17.3 MiB |
+| write | `encryption.ts:49-52` | `JSON.stringify` string, `TextEncoder`, AES-GCM output | 3 x 17.3 MiB, 52 ms |
+| write | `sqlite.ts:60` `uint8ToBase64` | the same per-byte loop on the CIPHERTEXT | **+370 MB heap, 816 ms**, row string **23.1 MiB** |
+| write IPC | `sqlite.ts:752` -> plugin-sql | **Android never uses the fetch IPC** (`ipc-protocol.js:20`), so the 23 MiB string goes `JSON.stringify` -> `window.ipc.postMessage` (Java UTF-16) -> JNI -> serde `Value::String` -> `to_owned()` for the bind (`tauri-plugin-sql wrapper.rs:159`) | 4-5 copies native-side, NOT measured |
+| read | `outbox.ts:912` `getOutboxEntry` -> `SELECT *` | an answer over 10 KiB becomes `JSON.parse('<escaped>')` evaluated by `webview.eval` (`format_callback.rs:64`, `protocol.rs:335`) | 23 MiB x several, NOT measured, **prime suspect for the 60 s** |
+| read | `sqlite.ts:72`, `outboxCodec.ts:52` | `Uint8Array.from(atob(s), cb)` twice (outer ciphertext, inner file) | **+266 MB / 1114 ms** and +182 MB / 672 ms |
+| read | `encryption.ts:70` | plaintext, `TextDecoder` string, `JSON.parse` string | 3 x 17 MiB |
+| upload | `sessionAuth.ts:245`, `media.ts:739,746` | `new File([bytes.buffer])`, `arrayBuffer()`, ciphertext, 8 MiB chunk slices + Blob + FormData | 3 x 13.6 MB + 8 MiB per chunk |
+| after upload | `outbox.ts:629` | `updateOutboxEntry` with a media patch is NOT a clear patch: a SECOND full `SELECT *`, decode, merge, re-encrypt (small), INSERT | the whole read cost again |
+
+Peak is linear: **~95 MB of renderer per MB of file**. The server ceiling is 50 MB, so a 50 MB file asks for ~4.7 GB: a certain renderer kill today.
+
+### Where the 60 s is, ranked (the phone log decides)
+
+1. **The 23 MiB `SELECT` of `getOutboxEntry`** and **the 23 MiB `INSERT`** through the Android postMessage + `eval` bridge: native copies, a script of tens of MB to parse. Unmeasured; the JS side alone is ~2.3 s per direction on a desktop (table above), perhaps 10-20 s on a Mi 9T, which is NOT 60 s.
+2. **GC thrash near the WebView heap ceiling** (1.2 GB of cons strings and iterables alive at once): would explain the alpha.3 27 s -> alpha.4 100 s spread, since no code on this path changed between the two tags (only #1730's light `hasEntry` read and a throw on enqueue).
+3. **The backoff ladder**, which would be `2+5+15+30 = 52 s` if four holds preceded the first upload (`outbox.ts:57`, `holdForRetry`). Ruled IN or OUT by one log line: `held: group ... not sendable` or `transient failure (attempt N)` versus none. A first-attempt hold after a failed payload read re-pays the 23 MiB read on every retry.
+4. Not the cause, by reading: a lane waiting behind an earlier entry (one entry), the idle barrier (`waitForMessageQueueIdle`, instant when nothing drains), the mirror (media is never mirrored: `outboxMirror.ts` `toMirrorEntry` is null for media), and the clear-patch path (alpha.4 has it).
+
+**Instrumentation shipped with the PR:** `[OUTBOX] <id> durable write took N ms` (enqueue) and `[OUTBOX] <id> payload read in N ms` (flush). The next phone reading answers 1 vs 2 vs 3 from the session log.
+
+### Design, cheapest first
+
+**Tier 0 - shipped by `fix/outbox-media-peak`: chunked base64** (`utils/hex.ts` `toBase64`/`fromBase64`, used by `outboxCodec.ts` and `sqlite.ts`; byte-identical to `btoa`, tested across the 32 KiB slice). Desktop numbers, 13 MiB: encode 411 + 816 ms -> ~85 ms each; decode 1114 + 672 ms -> ~60 ms and ~15 ms; ~1.0 GB of transient heap gone. It does NOT touch the three 23 MiB IPC crossings.
+
+**Tier 1 - the file leaves the row (removes the IPC and most of the peak).** Binary over IPC is hopeless on Android (`process-ipc-message-fn.js`: a `Uint8Array` inside the message becomes a JSON number array, ~4x worse than base64), so the bytes must not cross it: keep them in **IndexedDB** (the webview's own store, structured clone of an `ArrayBuffer`, no base64, no JSON), in a store `outbox_media` `{ id, iv, cipher }`.
+- Encrypt the RAW bytes under a **random per-entry AES key** kept in the small encrypted SQLite payload (`blobId`, `blobKeyB64`): AES-GCM of 13 MB is ~9 ms and the row stays under 1 KB, so `getOutboxEntry`, every retry and the post-upload patch cost milliseconds and no longer move 23 MiB.
+- Order: **blob first, row second** (the opposite reasoning of the message/entry pair: a row with no blob is a VISIBLE typed failure - `LocalAttachmentError`, the #1730 orphan verdict, parked with a delete - while a blob with no row is invisible garbage a boot sweep deletes).
+- `prepareMedia` reads the blob from IDB only when it uploads. After upload: delete the blob, patch the small row (a clear-class patch).
+- Web build: `indexeddb.ts` already holds the outbox, so the blob store joins the same transaction (atomic there).
+- Expected peak: ~3 x 13.6 MB for the pick/encrypt/upload instead of 1.2 GB; the write and read waits become the IDB put/get (to be measured on the phone).
+
+**Tier 2 - a client cap is NOT recommended once Tier 1 lands.** Until it does, a native cap near 20 MB would stop the 50 MB OOM; it needs a Paraglide message and is offered as a decision, not a default.
+
+### Risks, to decide before building Tier 1
+
+- **iOS WKWebView IndexedDB eviction** under storage pressure: unmeasured. The row survives in SQLite and a lost blob becomes the typed orphan, but that is a lost attachment. Needs one iPhone check (kill the app with a queued 13 MB file, relaunch).
+- **Crash survival:** the IDB put commits before the row; a kill between the two leaves swept garbage, never a ghost send. Test: kill after the put.
+- **PIN change:** `pinChange.ts` re-encrypts messages and seeds and shows no outbox rows, so a queued row looks already unreadable after a PIN change (`OutboxPayloadUnreadableError`, parked). A per-entry blob key inside the row neither worsens nor fixes that; verify and file separately.
+- **Native mirror:** unaffected, media entries are never mirrored.
+- **Side finding:** between `addMessageToChat` (placeholder) and the end of the 23 MiB INSERT the bubble has no upload view and `hasEntry` can answer `false`, so #1730's orphan red state can flash on a slow phone and is not re-asked when the row lands. Tier 1 shrinks the window to milliseconds, Tier 0 by the encode time.
+
 ## P3 - iOS notification sounds still play the default tone (palette A is Android and in-app only, 2026-10-09)
 
 The palette-A trills reach the app's tones and the three Android channels ([sounds](frontend/sounds.md)). On iOS the banner sound is the APNs payload's `sound` field (`'default'` at three sites of `push-payload.ts` and `calls.service.ts`), so it needs ONE change across: the three files as `.wav` in the app AND `canari_NSE` targets, the server naming one per message / reaction (a mention is known only to the NSE after decryption, which would set `content.sound` itself), and a listen on the iPhone. **Why it is not built from a workstation:** `project.yml` is NOT the build source ([project.yml header](../../frontend/src-tauri/gen/apple/project.yml)); the tracked `canari.xcodeproj/project.pbxproj` is hand-maintained, so bundling a resource in two targets is a hand edit of a file no gate here compiles. A server that names a file the bundle lacks is harmless (iOS plays the default), so the order is bundle first, server second.
