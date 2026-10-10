@@ -63,7 +63,7 @@ export type MlsMetricEvent =
        * from a REFUSED SEND, which means the fact-based path missed it. A rate on the second is a
        * measurement of that miss, and it is the reason the two are not one bucket.
        */
-      cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large';
+      cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large' | 'blocked' | 'refused';
     };
 
 function isMetricsVerbose(): boolean {

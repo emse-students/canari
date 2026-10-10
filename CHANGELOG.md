@@ -14,6 +14,104 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-10
+
+### Fixed - the notification plugin's empty "Default" channel no longer shows in a French app's settings
+
+The Android app deletes `tauri-plugin-notification`'s hardcoded English "Default" channel at each resume; nothing ever posted to it ([mobile](docs/wiki/frontend/mobile.md)). Owed one reading on a phone.
+
+### Added - media-service `chat-reel`: a reel sent in a conversation is deleted 30 days after upload
+
+Swept by age (never by idleness), answered `410` afterwards, capped at 500 MB per member per day (`429`), and deletable by its sender only (`DELETE /api/media/chat-reel/:id`). Nothing sends the class yet. See [media-service](docs/wiki/services/media-service.md#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09).
+
+### Fixed - the floating day pill is glass, so a sender name passing under it is blurred on the iPhone
+
+It used to be cut at the pill's edge ([chat](docs/wiki/frontend/modules/chat.md#the-day-label-and-its-floating-pill-2026-10-01)).
+
+### Fixed - a member who joins a community by invitation link now sees every salon at once
+
+The join published one event for one salon, so the sidebar listed only that salon and messages in the others were dropped until a reload; the community is now loaded through the same listing a reload runs ([chat](docs/wiki/frontend/modules/chat.md#a-community-joined-in-session-is-listed-whole-2026-10-08)).
+
+### Fixed - a new device's join of a community key group no longer races its own KeyPackage publication
+
+On a new device the community join could reach the commit gate before the KeyPackage did, so the gate refused the activation (`no_key_package`) and the device held a tree that routed nothing to it for up to hours; the join now waits for the key package round already running. Cause read from production and test in [campaign-measured-defects](docs/wiki/protocols/campaign-measured-defects.md#a-new-devices-join-reaches-the-commit-gate-before-its-keypackage-2026-10-09).
+
+### Fixed - the composer no longer jumps for a moment when the keyboard rises
+
+Android's WebView reported the keyboard's height twice for 60-100 ms and iOS kept its home-indicator inset for ~400 ms; the first is now read as the layout viewport, the second is pinned to 0 while the keyboard is open ([chat](docs/wiki/frontend/modules/chat.md#every-keyboard-rise-moves-the-composer-for-a-moment-on-both-phones-measured-2026-10-02-fixed-2026-10-09-reading-owed)). Owed one reading on both phones.
+
+### Changed - design of a streamed, resumable media upload with every request under 8 MiB
+
+Docs only: how attachments, reels and camera takes can upload and download in bounded memory, each part independently sealed in the existing `segmented-v1` format and never over 8 MiB, so the school host's 10 MiB request-body wall stops mattering ([media-streaming-upload](docs/wiki/services/media-streaming-upload.md)).
+
+### Fixed - the swipe to the camera did nothing on a fresh Feed after publishing a post
+
+A modal closed by its owner's state (a publish) stayed on the history overlay stack, which stands the tab swipe down until a navigation drains it; it now leaves the stack when it closes ([mobile](docs/wiki/frontend/mobile.md#a-modal-closed-by-its-owners-state-left-the-overlay-stack-and-the-tab-swipe-stood-down-2026-10-09)). Owed one reading on the Mi 9T.
+
+### Changed - the account settings are a hub of pages under a breadcrumb, not one long scroll
+
+`/settings` lists eight sections as rows and each opens at `/settings/<section>` with Back one level up ([section-navigation](docs/wiki/frontend/section-navigation.md)). Owed one look on both phones.
+
+### Fixed - a reader who sees a post only through a read grant is no longer offered "Republier" or a poll vote
+
+The server now computes `canRepublish` and the new `canVote` with the same grant-free predicate the republish and vote endpoints enforce ([profiles-and-access](docs/wiki/profiles-and-access.md)); the poll shows read-only.
+
+### Verified - the nominative read grants pass their eight dev checks
+
+Read, react and comment through a grant; no vote, no republication, no personal post; a revoke restores the baseline; a star reads its own campus only. Two P3 client defects were found ([profiles-and-access](docs/wiki/profiles-and-access.md#the-eight-dev-checks-2026-10-09-devcanari-emsefr-on-121-alpha1-same-code-as-v121), [backlog](docs/wiki/backlog.md#audiences-of-associations-lists-and-institutions---built-in-production-since-v120)).
+
+### Added - a CanaReel received in a conversation is drawn as a tile and played in the reel viewer; every reel can be saved
+
+`MediaMsg` gains `intent`, `duration_ms` and `expires_at_ms` (older clients read a plain video), the chat draws a "Appuyer pour voir" tile that fetches nothing before the tap and a tombstone after expiry, and the reel viewer's bar carries a save button beside the volume for every reel, public or not. Reader only: nothing sends a reel message yet. See [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#8b-what-the-reader-package-rc-1-built-and-what-it-did-not-2026-10-09).
+
+### Fixed - a salon's unread badge came back after every reload, its read mark never posted
+
+A load restored the reader's own salon mark from disk and kept it over the server's lower one, so reading moved nothing and no `read-mark` was ever posted; a load now takes the server's mark, or one still owed ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
+### Fixed - a salon left selected on another page or a hidden tab no longer counts new messages as read
+
+A message arriving while the reader was on another page (or the tab was hidden) with a salon still selected was counted read: no badge, no notification, and a read signal that cleared the banner on their other devices ([chat](docs/wiki/frontend/modules/chat.md#a-selection-is-not-a-screen-2026-10-10)). Owed one reading on dev.
+
+### The session state names `v1.2.1` in production, and the 2026-10-09 bench defects are queued
+
+What `v1.2.1` still owes (the external-join re-measure, the `minClientVersion` floor, the Android summary sound) and seven bench defects are in [backlog](docs/wiki/backlog.md).
+
+### Changed - the app's sounds are one canary trill per event (palette "Gazouillis")
+
+In-app tones (message, mention, send, read) and the Android notification channels (messages, mentions, reactions, now `_v2` ids) share ONE palette definition ([sounds](docs/wiki/frontend/sounds.md)). Owed a listen on both phones; iOS notification sounds are not done.
+
+### Docs - the staff-reads-campus-posts question is closed, and the host disk figure corrected
+
+The user chose option 1 (nothing by default, a named read grant per person, [profiles-and-access](docs/wiki/profiles-and-access.md)); the Portail-etu host measures 60 % used, and the docker-prune is a standing authorisation at 80 % ([backlog](docs/wiki/backlog.md)).
+
+### Added - a design page for refreshing the store listings with fictional demo data
+
+Play and App Store texts and screenshots ([store-listings](docs/wiki/store-listings.md)).
+
+### Added - reviewed fr/en store listing texts and a dry-run-by-default Play uploader
+
+Texts under `store/listings/` (no removed feature named, canari.emse.fr), with a test ([store-listings](docs/wiki/store-listings.md)).
+
+### Changed - the MLS engine starts downloading with the page instead of after its scripts
+
+A browser that already holds an MLS device now requests the hashed WASM from the first bytes of the document (a low-priority preload that the later `fetch` reuses), instead of after the 200 scripts that used to precede it: on Slow 3G the request starts at 0.8 s rather than 46 s ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#10-package-status-2026-10-09)). Web build only.
+
+### Fixed - on a weak link a stalled request no longer hangs for ever, and one stalled send no longer freezes every other message
+
+Every REST call and the MLS send POST now give up when no answer arrives (20 s reads, 30 s writes plus the time the body needs to leave), as a typed transport failure that never logs anyone out. A calm "Connexion lente" strip shows when answers are measurably slow, and the outbox drains one lane per conversation so one dead POST holds only its own conversation, in order ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
+### Fixed - messages queued offline leave within a round trip of the link coming back
+
+After the link returned a queued message waited 2.4-2.9 s for some unrelated request to prove the server reachable and then for its backoff. The app now probes the server itself on `online` (a bounded, jittered, single-flight handful of tiny GETs, never a poll) and an entry that failed for want of an answer skips its backoff once; refusals keep theirs, and a frame whose answer was lost is still delivered once in effect ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#12-wp-off-6-shipped-a-prompt-bounded-resume-exactly-once-in-effect)).
+
+### Changed - the store notes for 1.2.2
+
+`store/whats-new.txt` carries the 1.2.2 text (sounds, keyboard, weak network, settings hub); see [store listings](docs/wiki/store-listings.md).
+
+### Changed - an unbuilt study page is withdrawn
+
+A study page that led to no code was removed from the wiki and the backlog at the user's decision.
+
 ## [1.2.1] - 2026-10-09
 
 ### Android - the notification group summary never alerts, so a read push right after a message no longer re-sounds the conversation
@@ -2331,7 +2429,7 @@ Re-checked every deliberate Cloudflare zone setting against the live host: TLS f
 "DDoS absorption" row turned out to be answered by CrowdSec, already running on every vhost and
 banning for real - but its log-parsing half reads one shared `access.log`, so Authentik's own log,
 where a password is actually tried, is parsed by nothing
-([backlog](docs/wiki/backlog.md#p3---a-crowdsec-ban-on-this-host-closes-the-co-tenant-sites-too-measured-2026-09-25)).
+([backlog](docs/wiki/infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)).
 Full audit: [estate-migration](docs/wiki/infrastructure/estate-migration.md#what-the-edge-did-that-the-origin-must-now-do).
 
 ### Fixed - deux fichiers supprimes par accident sont revenus, et le gate qui aurait du le dire

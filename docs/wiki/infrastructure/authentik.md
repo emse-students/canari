@@ -541,7 +541,7 @@ printed in full (the rollback):**
   browser to the callback without answering the authorization request. The same user agent fails
   three times in a row (a Linux desktop and an Android phone on 2026-09-29), so people retry and stay
   out. The deny text of the unreferenced `miconnect-auth-fallback` flow describes exactly this, so
-  somebody met it before and it was never measured. Open: [backlog](../backlog.md#p2---some-cas-returns-reach-miconnect-with-no-code-and-no-state-and-a-client-can-stay-out-diagnosed-2026-10-09-dsi-answer-owed).
+  somebody met it before and it was never measured. Open: [backlog](../backlog.md#p2---some-cas-returns-reach-miconnect-with-no-code-and-no-state-and-a-client-can-stay-out-diagnosed-2026-10-09).
 - **The failing sequence read end to end (read-only, 2026-10-09; `docker logs` and a `SELECT` on
   `authentik_events_event`, nothing changed).** Over the only readable window (2026-10-05 to 10-06 22:40)
   **121 requests failed the state check, and 63 of them (52 %) are not browsers**: `Apache-HttpClient/5.5.1

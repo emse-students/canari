@@ -107,6 +107,82 @@ export class DeliveryUnreachableError extends Error {
 }
 
 /**
+ * How long one request of this device's key package round may stay unanswered before it is
+ * reported as failed: {@link DeliveryDeadlineError}.
+ *
+ * A DEADLINE THAT TURNS A HANG INTO A TYPED ERROR, AND NOTHING ELSE. Nothing is retried, healed or
+ * assumed when it fires: the round fails, tells its caller, and the join that was waiting for the
+ * round refuses with a type. Without it, one request that never answers held the round - and every
+ * external join queued behind it - for as long as the transport chose to hang. Generous on purpose
+ * (a 50-package batch on a poor mobile link is slow, not dead): it bounds a hang, it does not time
+ * a transfer.
+ */
+export const KEY_PACKAGE_REQUEST_DEADLINE_MS = 60_000;
+
+/**
+ * How long a WHOLE key package round (mint, checkpoint, native `invoke`, re-enrolment, every
+ * request) may run before its caller stops waiting for it: {@link raceDeadline}.
+ *
+ * The per-request deadline bounds only HTTP. A native `invoke` cannot be aborted and a mint under
+ * the MLS lock can hang, and either kept `keyPackageRoundsActive` above zero for ever: every join
+ * parked and its group's flight never cleared. This bounds what the caller AWAITS, not the work:
+ * see `generateKeyPackage` for what an abandoned round may still do. Above the per-request
+ * deadline and above a slow PIN-unlock checkpoint (22 s measured), so it fires on a hang, never on
+ * a slow round.
+ */
+export const KEY_PACKAGE_ROUND_DEADLINE_MS = 180_000;
+
+/**
+ * Stops WAITING for `work` after `ms`: rejects with {@link DeliveryDeadlineError} and leaves the
+ * work running - it cannot be cancelled (a native `invoke`), only abandoned. No retry, no heal:
+ * the caller learns the round failed, typed, and the late outcome of `work` goes to `onLate`.
+ */
+export function raceDeadline<T>(
+  operation: string,
+  work: Promise<T>,
+  ms: number,
+  onLate: (outcome: { ok: true } | { ok: false; error: unknown }) => void
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let abandoned = false;
+    const timer = setTimeout(() => {
+      abandoned = true;
+      console.error(
+        `[DELIVERY] ${operation} abandoned after ${ms} ms - the work may still finish in the background`
+      );
+      reject(new DeliveryDeadlineError(operation, ms));
+    }, ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        if (abandoned) onLate({ ok: true });
+        else resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        if (abandoned) onLate({ ok: false, error });
+        else reject(error);
+      }
+    );
+  });
+}
+
+/**
+ * A request of the key package round was ABANDONED because it exceeded its deadline. Not
+ * {@link DeliveryUnreachableError} (the service WAS asked, it never answered) and not a status
+ * code: nothing is established about the device, so the caller must not act on it.
+ */
+export class DeliveryDeadlineError extends Error {
+  constructor(
+    readonly operation: string,
+    readonly deadlineMs: number
+  ) {
+    super(`[DELIVERY] ${operation} stayed unanswered for ${deadlineMs} ms`);
+    this.name = 'DeliveryDeadlineError';
+  }
+}
+
+/**
  * The delivery service refused an application frame because THIS DEVICE holds no leaf in the group.
  *
  * A membership row that is not `active` means the device is not in the ratchet tree, so whatever it
@@ -222,6 +298,37 @@ export class MlsDeliveryApi {
     this.historyUrl = opts.historyUrl;
     this.getToken = opts.getToken;
     this.f = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  }
+
+  /**
+   * Runs one request - the call AND the reading of its body - under
+   * {@link KEY_PACKAGE_REQUEST_DEADLINE_MS}, aborting it and throwing {@link DeliveryDeadlineError}
+   * when the deadline passes. `AbortController` and not `AbortSignal.timeout`, which the oldest
+   * WKWebView this ships to lacks (see `ackRetry.ts`).
+   */
+  private async underDeadline<T>(
+    operation: string,
+    run: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> {
+    const abort = new AbortController();
+    let expired = false;
+    const timer = setTimeout(() => {
+      expired = true;
+      abort.abort();
+    }, KEY_PACKAGE_REQUEST_DEADLINE_MS);
+    try {
+      return await run(abort.signal);
+    } catch (e) {
+      if (expired) {
+        console.warn(
+          `[DELIVERY] ${operation} abandoned after ${KEY_PACKAGE_REQUEST_DEADLINE_MS} ms - a hang is reported as a failure, never healed`
+        );
+        throw new DeliveryDeadlineError(operation, KEY_PACKAGE_REQUEST_DEADLINE_MS);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -437,11 +544,28 @@ export class MlsDeliveryApi {
    * is `unanswered`, which establishes nothing about the device and must not be acted on.
    */
   async fetchDeviceKeyPackage(userId: string, deviceId: string): Promise<DeviceKeyPackageAnswer> {
+    // UNDER THE DEADLINE, because the wait of an external join reads this to learn whether its own
+    // device is published: a hang here must be an `unanswered`, not a join that never ends.
+    try {
+      return await this.underDeadline('device-key-package', (signal) =>
+        this.fetchDeviceKeyPackageOnce(userId, deviceId, signal)
+      );
+    } catch (e) {
+      if (e instanceof DeliveryDeadlineError) return { kind: 'unanswered', detail: e.message };
+      throw e;
+    }
+  }
+
+  private async fetchDeviceKeyPackageOnce(
+    userId: string,
+    deviceId: string,
+    signal: AbortSignal
+  ): Promise<DeviceKeyPackageAnswer> {
     let res: Response;
     try {
       res = await this.f(
         `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/key-package`,
-        { headers: await this.auth() }
+        { headers: await this.auth(), signal }
       );
     } catch (e) {
       return { kind: 'unanswered', detail: `unreachable: ${String(e).slice(0, 120)}` };
@@ -571,39 +695,42 @@ export class MlsDeliveryApi {
     deviceOs: string;
     deviceAppVersion?: string;
   }): Promise<void> {
-    const response = await this.f(`${this.historyUrl}/api/mls/register-device`, {
-      method: 'POST',
-      headers: await this.auth({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        userId: this.userId,
-        deviceId: this.deviceId,
-        keyPackage: params.keyPackageBase64,
-        notAfter: new Date(params.notAfterSecs * 1000).toISOString(),
-        ...(params.deviceName ? { deviceName: params.deviceName } : {}),
-        deviceOs: params.deviceOs,
-        ...(params.deviceAppVersion ? { deviceAppVersion: params.deviceAppVersion } : {}),
-      }),
-    });
+    await this.underDeadline('register-device', async (signal) => {
+      const response = await this.f(`${this.historyUrl}/api/mls/register-device`, {
+        method: 'POST',
+        signal,
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          userId: this.userId,
+          deviceId: this.deviceId,
+          keyPackage: params.keyPackageBase64,
+          notAfter: new Date(params.notAfterSecs * 1000).toISOString(),
+          ...(params.deviceName ? { deviceName: params.deviceName } : {}),
+          deviceOs: params.deviceOs,
+          ...(params.deviceAppVersion ? { deviceAppVersion: params.deviceAppVersion } : {}),
+        }),
+      });
 
-    if (!response.ok) {
-      // TWO REFUSALS NO RETRY CAN FIX, both classified HERE because downstream they are one sentence.
-      // 403 + DEVICE_REVOKED: the id itself is banned, and the cure is a fresh id.
-      // 400 + DEVICE_LIMIT_REACHED: the ACCOUNT is full, and the cure is a person deleting a device.
-      if (response.status === 403 || response.status === 400) {
-        const body = await response
-          .clone()
-          .json()
-          .then((b) => b as { code?: string; max?: number })
-          .catch(() => undefined);
-        if (response.status === 403 && body?.code === 'DEVICE_REVOKED') {
-          throw new DeviceRevokedError(this.deviceId);
+      if (!response.ok) {
+        // TWO REFUSALS NO RETRY CAN FIX, both classified HERE because downstream they are one sentence.
+        // 403 + DEVICE_REVOKED: the id itself is banned, and the cure is a fresh id.
+        // 400 + DEVICE_LIMIT_REACHED: the ACCOUNT is full, and the cure is a person deleting a device.
+        if (response.status === 403 || response.status === 400) {
+          const body = await response
+            .clone()
+            .json()
+            .then((b) => b as { code?: string; max?: number })
+            .catch(() => undefined);
+          if (response.status === 403 && body?.code === 'DEVICE_REVOKED') {
+            throw new DeviceRevokedError(this.deviceId);
+          }
+          if (response.status === 400 && body?.code === 'DEVICE_LIMIT_REACHED') {
+            throw new DeviceLimitReachedError(typeof body.max === 'number' ? body.max : null);
+          }
         }
-        if (response.status === 400 && body?.code === 'DEVICE_LIMIT_REACHED') {
-          throw new DeviceLimitReachedError(typeof body.max === 'number' ? body.max : null);
-        }
+        throw new Error(`Failed to publish KeyPackage: ${response.status} ${response.statusText}`);
       }
-      throw new Error(`Failed to publish KeyPackage: ${response.status} ${response.statusText}`);
-    }
+    });
   }
 
   /**
@@ -621,18 +748,23 @@ export class MlsDeliveryApi {
       keyPackage: this.uint8ToB64(kp.bytes),
       notAfter: new Date(kp.notAfterSecs * 1000).toISOString(),
     }));
-    const response = await this.f(`${this.historyUrl}/api/mls/register-device/prekeys`, {
-      method: 'POST',
-      headers: await this.auth({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        userId: this.userId,
-        deviceId: this.deviceId,
-        keyPackages,
-      }),
+    await this.underDeadline('publish-key-packages', async (signal) => {
+      const response = await this.f(`${this.historyUrl}/api/mls/register-device/prekeys`, {
+        method: 'POST',
+        signal,
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          userId: this.userId,
+          deviceId: this.deviceId,
+          keyPackages,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(
+          `Failed to publish key packages: ${response.status} ${response.statusText}`
+        );
+      }
     });
-    if (!response.ok) {
-      throw new Error(`Failed to publish key packages: ${response.status} ${response.statusText}`);
-    }
   }
 
   /** Updates display metadata (name, OS, app version) for a device. */
@@ -915,17 +1047,27 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Returns the number of one-time prekeys still available for this device on the server. */
+  /**
+   * Returns the number of one-time prekeys still available for this device on the server.
+   *
+   * A request that EXCEEDED ITS DEADLINE IS NOT A ZERO: it throws {@link DeliveryDeadlineError} and
+   * fails the round, because reading it as `0` made both platforms mint and publish a full pool of
+   * fifty against a server that never answered - the deadline would have become a heal.
+   */
   async fetchPrekeyCount(): Promise<number> {
     try {
-      const res = await this.f(
-        `${this.historyUrl}/api/mls/devices/${this.userId}/${this.deviceId}/prekeys/count`,
-        { headers: await this.auth() }
-      );
-      if (!res.ok) return 0;
-      const data = await res.json();
-      return typeof data.count === 'number' ? data.count : 0;
-    } catch {
+      return await this.underDeadline('prekey-count', async (signal) => {
+        const res = await this.f(
+          `${this.historyUrl}/api/mls/devices/${this.userId}/${this.deviceId}/prekeys/count`,
+          { headers: await this.auth(), signal }
+        );
+        if (!res.ok) return 0;
+        const data = await res.json();
+        return typeof data.count === 'number' ? data.count : 0;
+      });
+    } catch (e) {
+      if (e instanceof DeliveryDeadlineError) throw e;
+      console.warn('[MLS] prekey count unreadable - read as 0:', String(e).slice(0, 200));
       return 0;
     }
   }
@@ -949,19 +1091,24 @@ export class MlsDeliveryApi {
    */
   async deleteAllOneTimePrekeys(): Promise<string[]> {
     try {
-      const res = await this.f(
-        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
-        { method: 'DELETE', headers: await this.auth() }
-      );
-      if (!res.ok) {
-        console.warn(`[MLS] prekey purge refused with ${res.status}; nothing may be forgotten`);
-        return [];
-      }
-      const data = await res.json();
-      const list = Array.isArray(data?.keyPackages) ? data.keyPackages : [];
-      return list.filter((k: unknown): k is string => typeof k === 'string' && k.length > 0);
+      return await this.underDeadline('prekey-purge', async (signal) => {
+        const res = await this.f(
+          `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
+          { method: 'DELETE', headers: await this.auth(), signal }
+        );
+        if (!res.ok) {
+          console.warn(`[MLS] prekey purge refused with ${res.status}; nothing may be forgotten`);
+          return [];
+        }
+        const data = await res.json();
+        const list = Array.isArray(data?.keyPackages) ? data.keyPackages : [];
+        return list.filter((k: unknown): k is string => typeof k === 'string' && k.length > 0);
+      });
     } catch (e) {
-      console.warn('[MLS] prekey purge did not reach the server:', String(e).slice(0, 200));
+      // A DEADLINE IS ACCUSED, not demoted to the warning an unreachable server earns: the caller
+      // goes on to mint against a pool this call did not clear, and a hang is the cause to find.
+      const log = e instanceof DeliveryDeadlineError ? console.error : console.warn;
+      log('[MLS] prekey purge did not reach the server:', String(e).slice(0, 200));
       return [];
     }
   }

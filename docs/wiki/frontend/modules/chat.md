@@ -175,6 +175,66 @@ right after it was read.
   made on another device.
 - *The server marks anything.* `readMarks` is written in one place, `advanceChannelReadMark`, on request.
 
+### A selection is not a screen (2026-10-10)
+
+The 2026-10-08 section above refuted "the app marks a salon read it never opened" for the SERVER's
+mark and found none. The user's decision of 2026-10-08 (*"communities may mark messages read without
+the salon being opened - measure on a ten-community bench, then fix what is proven"*) was re-run on
+the local estate (build of 2026-10-08, ten communities `C99 a`..`j`, owner W1, reader W2) with the
+selection placed where the first run never put it: **on a page that does not draw a conversation.**
+
+**What marks what, from the code, before the bench.**
+
+| Action | Local count | Server read mark | `POST /read` (banner signal) |
+|---|---|---|---|
+| click a salon (`onSelectChannelConversation`) | cleared | after 2 s debounce, only if focused + visible + foreground | once, if the newest foreign message is new |
+| message arrives, salon selected | stays 0 | via the receipt effect, same guard | at arrival, once per message |
+| message arrives, salon NOT selected | +1 | none | none |
+| open via a notification tap (read in the code, not re-measured) | the tap selects it, which is a real open | only on a select | only on a select |
+| community overview, a notification preview | select nothing (read in the code) | none | none |
+
+**Measured** (reader selects `C99 a` / general, walks to `/posts` by the nav rail; owner posts one
+message in each of the ten communities):
+
+| Situation | Badge | `POST /read` | `read-mark` |
+|---|---|---|---|
+| salon selected, on `/communities`, window in front (control) | cleared | 1 | 1 |
+| **salon still selected, reader on `/posts`** | **title unchanged**; ten bench: `(40)` -> `(49)`, nine counted of ten | **1, for the salon nobody saw** | none |
+| back on `/communities` | the message counted `1 message non lu` | - | - |
+| **salon selected, tab hidden (visibility + blur simulated)** | **title unchanged** - the one signal a hidden tab has | **1** | held until the tab is visible again (correct) |
+| other salon selected (control) | `+1` on the salon row | none | none |
+| ten bench, reload on `/communities` | `(50)`: the server's count restored the missing one | 2 `unread-counts`, 33 and 29 ms | - |
+
+**Cause.** `selectedContact` lives in a global singleton and `beforeNavigate` clears it only between
+`/chat` and `/communities`, so a salon stays "selected" across every other page. The unread count and the
+read signal asked `ctx.selectedContact === key`; the tone and the notification asked
+`readerCanSeeArrival`, which also let a selection stand on any route. "Selected" is a fact about the
+store, "open" about the screen. The server mark was never wrong (the receipt effect lives in
+`MainChatPage`, unmounted off the messaging routes, and is focus-guarded), so the cost was: a badge
+missing for as long as the session lived, no OS notification on a page elsewhere, and a banner
+cancelled on the account's other devices for a message nobody read. The cost of the count itself is
+what the 2026-10-08 section says: two requests per load, ~30 ms, independent of the number of
+communities.
+
+**Fix.** ONE predicate, `readerIsReadingConversation` (`utils/chat/arrivalVisibility.ts`): selected,
+app in front, and a route that draws a conversation (`isMessagingRoute`: `/chat` and `/communities`
+and their children). `utils/chat/arrivalRuntime.ts` gathers the runtime facts once; the live arrival
+path, the batch path and the follower-tab mirror all ask it, and `readerCanSeeArrival` reuses it, so
+the tone and notification follow the same rule. The banner signal now also follows the READING: when
+the receipt effect marks a salon read it signals the account's other devices if the newest foreign
+message was not already signalled (the shared `claimChannelReadSignal` marker, keyed on the newest
+FOREIGN message so an own send never signals). Tests: `arrivalVisibility.test.ts`,
+`useMessaging.staleSelection.svelte.test.ts` (mutation-checked: three of five fail against the old
+predicate).
+
+**Not changed, and why.** The hidden-tab case was simulated (overridden `visibilityState` and a `blur`
+event), not a real background tab. `isChatRoute` (the list-beside-the-conversation rule) still names
+`/chat` only, so on `/communities` a message for an unselected salon plays no tone; that is a separate
+question about the communities sidebar and was not measured. **Owed:** one reading on dev after the
+next pre-release - reader on `/posts` with a salon selected, owner posts: the title count rises, an OS
+notification is raised, no `POST /read` leaves; reader returns: count cleared, one `read` and one
+`read-mark`.
+
 ### A community joined in-session is listed whole (2026-10-08)
 
 Measured on the local estate (`UNR-11`: three public salons, the joiner a workspace member of all):

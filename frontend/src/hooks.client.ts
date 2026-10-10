@@ -18,7 +18,8 @@ import { prefetchMlsWasmAtBoot } from '$lib/mls-client/wasmPrefetch';
 import { openClaimedAppLink } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
-import { fetchInputUrl, shouldUseNativeFetch } from '$lib/utils/fetchRouting';
+import { apiServiceOrigins } from '$lib/utils/apiUrl';
+import { createRoutedFetch } from '$lib/utils/fetchRouting';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
@@ -452,14 +453,15 @@ if (isTauriRuntime()) {
   import('@tauri-apps/plugin-http')
     .then(({ fetch: tauriFetch }) => {
       const originalFetch = window.fetch;
-      window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
-        // The plugin is a network client and answers `http(s)` alone; everything else is the
-        // WebView's own. `shouldUseNativeFetch` carries the reasoning and its tests.
-        if (shouldUseNativeFetch(fetchInputUrl(input), init)) {
-          return originalFetch.call(window, input, init);
-        }
-        return tauriFetch(input, init) as ReturnType<typeof window.fetch>;
-      } as typeof window.fetch;
+      // The plugin is a network client and answers `http(s)` alone; everything else is the
+      // WebView's own, and so is a BINARY BODY to Canari's own API (the plugin inflates every body
+      // byte ~85x in Rust and ~45-50x in the renderer; 50 MB crashed the app on the Mi 9T).
+      // `createRoutedFetch` carries the reasoning and its tests.
+      window.fetch = createRoutedFetch(
+        (input, init) => originalFetch.call(window, input, init),
+        tauriFetch as typeof window.fetch,
+        () => apiServiceOrigins()
+      );
     })
     .catch(() => {
       // May fail during an in-flight page reload; the next load will retry.

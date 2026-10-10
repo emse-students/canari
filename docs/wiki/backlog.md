@@ -187,6 +187,14 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 DMs and groups already have an optimistic row and a durable outbox; **salon writes have neither** (offline send: text lost) and **nothing has a deadline**. Cold start on Slow 3G: first paint 23 s, list usable 103 s (JS 57 s, then the 2 MB WASM 45 s, then the list); warm 2.1 s. Fourteen ordered work packages, each with its test, and the measured table: [offline-and-weak-network](frontend/offline-and-weak-network.md). Start with WP-OFF-1 (keep the salon draft on failure), WP-W1/W2 (compression, WASM preload), WP-W3. Owed: peer-side delivery, Android and iOS runs (the page lists them).
 
+## P2 - The host WAF drops any request body over 10 MiB (found 2026-10-10)
+
+The cause of the user's "endless spinner" on a 13.4 MB PDF: the school-managed CrowdSec AppSec in the host nginx drops any body over 10 MiB and answers a 403 HTML ban page, for every user ([host-waf-body-limit](infrastructure/host-waf-body-limit.md)). **Fixed for every `encryptAndUpload` surface by WP-OFF-8** (8 MiB per request, chunk route above it, a refusal ends the entry). **Still open, same cause**: the association document vault (`AssociationDocumentManager.svelte`, ONE `/api/media/upload` of the packed document through `apiFetch`, no cap) and the raw image uploads (`uploadRaw`, `associations/api.ts` logos/icons/event images, `forms/api.ts` banners): each needs the chunk route or a client cap with a Paraglide message. **Owed to the user**: ask the host admins to raise the AppSec body limit for `/api/media/upload` (not in our hands); the 2026-10-10 probe left a CrowdSec alert on IP 90.38.224.160.
+
+## P2 - Weak network, the attachment path after WP-OFF-8 (audit 2026-10-10)
+
+Prioritised list and numbers: [offline-and-weak-network section 13](frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for). Built: the upload bubble (progress, cancel, retry, refusal) and the 8 MiB body budget (WP-OFF-8), navigation never waiting on the profile call or a post (WP-NAV-1). **Open**: every failed upload restarts at byte 0 (resumable chunks need a server offset route, RC-5); **WP-OFF-9**, an upload holds its conversation's lane and a send slot so text sent behind a big file waits for it (start the upload at enqueue, outside the lane); a salon attachment blocks the composer with no progress (needs the salon row of WP-OFF-2/3); the file sits in the outbox row and three times in memory per attempt. **Owed ONE look on the iPhone** with a real file on a bad link.
+
 ## P3 - iOS notification sounds still play the default tone (palette A is Android and in-app only, 2026-10-09)
 
 The palette-A trills reach the app's tones and the three Android channels ([sounds](frontend/sounds.md)). On iOS the banner sound comes from the APNs payload's `sound` field (the NSE sets `content.sound = .default`), so it needs: the three files as `.caf`/`.wav` bundled in the app AND `canari_NSE` targets (`project.yml` resources), the push server naming one per message / mention / reaction, and the NSE honouring it. Do it as one change across the three, then listen on the iPhone.
@@ -225,16 +233,15 @@ The fix is built ([chat](frontend/modules/chat.md#a-community-joined-in-session-
 
 `UNREAD_TRACKED_SINCE_MS` (`channel.service.ts`) floors the server's count for a salon the member has no read mark in, so history from before marks existed (2026-09-29) is not called unread. Messages posted between that date and the deploy of `unread-counts` count for a never-opened salon, which is true. Open: a membership notice that is not `silent` counts as unread until the salon is opened (the client cannot be asked, the row is encrypted); mute levels are ignored, as the badges already did; and the in-session mark of a phone with the app asleep still depends on the 2 s receipt debounce.
 
-### P2 - some CAS returns reach MiConnect with no code and no state, and a client can stay out (diagnosed 2026-10-09, DSI answer owed)
+### P2 - some CAS returns reach MiConnect with no code and no state, and a client can stay out (diagnosed 2026-10-09)
 
 Read end to end on 2026-10-09 ([authentik](infrastructure/authentik.md#the-hand-built-configuration-audited-2026-09-29),
 last bullet): **52 % of the failing requests are server-side probes, not people**, the flow heals itself
-once for a browser, and one Android client failed three times in a row. Nothing can be changed from here
-(the CAS is the DSI's, MiConnect is shared production). **Owed**: (1) the DSI's answer on the request of
-2026-09-29, now with the two facts they can use: a Java HttpClient calls the bare callback, and
-`-cas1`/`-cas2` bridge nodes; (2) **`docker logs miconnect-server-1` is unreadable since the 2026-10-07
-restart (NUL bytes in the json log)**: a recreate of the container by whoever owns the box restores it, and
-only then can the browser failure rate be re-counted without the probes.
+once for a browser, and one Android client failed three times in a row. The CAS is not ours and no request
+goes to its owner (user, 2026-10-10): the remedy is on our side, a MiConnect flow that restarts the
+authorization instead of failing. **Owed**: **`docker logs miconnect-server-1` is unreadable since the
+2026-10-07 restart (NUL bytes in the json log)**; a recreate of the container restores it, and only then
+can the browser failure rate be re-counted without the probes.
 
 ### P3 - in the SWIPE-CHECK conversation both media show "Format non supporte" on the Mi 9T (2026-10-06)
 
@@ -270,15 +277,6 @@ The layout, flat pass, French prompts, redirect to Canari and signed-in `continu
 ([authentik](infrastructure/authentik.md#one-language-french-in-the-ecosystems-tu-2026-09-25)). Left:
 authentik's own untranslated "Go back". **One observation owed**: `miconnect-auth` opened while signed
 in, on the Mi 9T, should go straight through.
-
-### P3 - a CrowdSec ban on this host closes the co-tenant sites too (measured 2026-09-25)
-
-The two actionable halves shipped ([estate-migration](infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)).
-**What is left is not ours to close**: a CrowdSec decision is GLOBAL per address on this machine, so a
-ban earned on Canari traffic shuts `gala`, `mep` and `portail-etu-new` to that address and the reverse,
-and `/etc/crowdsec/acquis.yaml` is the DSI's file. A conversation with the machine's owner, recorded so
-nobody re-derives it a third time. `canari-dev.access.log` stays deliberately unparsed (dev shows one
-address for every visitor).
 
 ### The MLS audit items that are still real, with their verified counts (swept 2026-09-12)
 
@@ -662,7 +660,7 @@ Still so (`presenceStore.ts`). A push first needs the decision of who may watch 
 
 ### P2 - a new device's join of a community's key group reaches the commit gate BEFORE its KeyPackage (2026-08-29, cause measured on production 2026-10-09)
 
-**ONE defect, and the two entries that stood here were it.** All six `[MEMBERSHIP_ACTIVE] REFUSED ... no_key_package` of 32 hours of production were on four COMMUNITY distribution groups and no conversation; each device's first run logged `[PURGE_PREKEYS]` (its key package round starting), then the join's commit and its refusal in the same second, then `[REGISTER_DEVICE] START` - the join committed between the mint and the publication, so the gate wrote no membership row and the device held a tree that routed nothing to it ("holds the group, the group holds no row", the rejoin, the extra epoch). Three of the six healed 2 min to 1 h 44 min later (an iPhone among them: seeds unrouted for that long), the other three devices are gone. **A fix is in a DRAFT pull request** (`externalJoin` waits for the key package round already running; failing test first, [detail](protocols/campaign-measured-defects.md#a-new-devices-join-reaches-the-commit-gate-before-its-keypackage-2026-10-09)). **Owed after it ships:** the same read of the server log (REFUSED lines on a distribution group of a `isNew=true` device should be zero), and HEAL-NEW verdicts remain "clean on the web client", never on the server. **KNOWN RESIDUAL, not covered and not measured (no evidence of one in the six):** a join that starts BEFORE the round has set `keyPackageRoundInFlight` sees no round and commits as before; and the round's own HTTP calls (`fetchPrekeyCount`, `registerDeviceKeyPackage`, `publishKeyPackages`, `deleteAllOneTimePrekeys`, the native `invoke`) carry NO per-request deadline, so a request that never answers holds the wait - and every join of a group queued behind it - for as long as the transport lets it hang. **The design that closes both is proof-based:** the join waits on a PUBLISHED FACT, not on a running round - read the server's own statement that this device has a static KeyPackage (the same `deviceAddressability` the gate reads) and join when it is true, so a round that has not started yet, a round that ended, and a round that hung are one case (the fact is false until it is true) and the wait ends on the fact with no clock. Needs a read route for it; do not add a timer on the field instead. A failed round no longer proceeds to a doomed commit: `externalJoin` answers `{ joined: false, reason: 'key_package_round_failed' }` and its callers treat it like any other refusal.
+**ONE defect, and the two entries that stood here were it.** All six `[MEMBERSHIP_ACTIVE] REFUSED ... no_key_package` of 32 hours of production were on four COMMUNITY distribution groups and no conversation; each device's first run logged `[PURGE_PREKEYS]` (its key package round starting), then the join's commit and its refusal in the same second, then `[REGISTER_DEVICE] START` - the join committed between the mint and the publication, so the gate wrote no membership row and the device held a tree that routed nothing to it ("holds the group, the group holds no row", the rejoin, the extra epoch). Three of the six healed 2 min to 1 h 44 min later (an iPhone among them: seeds unrouted for that long), the other three devices are gone. **Fixed in two steps, neither in prod yet (2026-10-10):** #1666 (`externalJoin` waits for the round running) is in `v1.2.2-alpha.1` only, NOT in `v1.2.1`; the pull request `fix/join-waits-for-published-keypackage` replaces that wait by a wait on the PUBLISHED FACT (the server's own "this device has a static KeyPackage", the row `deviceAddressability` reads) - a round settling during the read is re-read, absent with no round STARTS one, overlapping rounds refuse nobody, destroy releases the parked joins; no timer, no cache - and gives every HTTP call of the round a 60 s per-request deadline that turns a hang into a typed `DeliveryDeadlineError` (the one clock, and it only reports; the prekey count propagates it and fails the round). Not covered: the native `invoke` half of the Tauri round (cannot be aborted from JS). **Measured on prod since the `v1.2.1` deploy (13:13 UTC 2026-10-09):** key-group external joins about 77/day pace, unchanged from ~70/day (the release does not carry the fix); `REFUSED no_key_package` 2 in 9.7 h, both new devices on community key groups (web 1.2.1, iOS 1.1.0), `[SENDER_MISMATCH]` 0 ([detail](protocols/campaign-measured-defects.md#a-new-devices-join-reaches-the-commit-gate-before-its-keypackage-2026-10-09)). **Owed:** the same read once a stable carries the fix; raising `minClientVersion` for it is the user's gesture and needs a stable carrying it live in BOTH stores (Play serves `1.2.1` in production, read 2026-10-10; the App Store was not readable here).
 
 ### P2 - a roster seat without a Welcome: the reason is typed on the client, the server report cannot partition on it yet (prod 2026-09-01)
 

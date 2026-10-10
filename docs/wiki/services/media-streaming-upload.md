@@ -1,6 +1,6 @@
 # Media streaming upload and download - bounded memory, parts under 8 MiB
 
-**Status: DESIGN. WP-S1 (the server session routes) is BUILT, awaiting review (2026-10-10, [media-service](media-service.md#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10)); S2 onward and the streamed GET are not.** Decisions taken by delegation, overridable: parts 4 MiB plaintext (about 4 MiB + 64 B on the wire), hard server cap 8 MiB, the 50 MB ceiling stays, resume window 24 h, the CEK may persist in the outbox row later (client WP). Trigger: the prod host's CrowdSec AppSec (school-managed
+**Status: DESIGN; WP-S0 DONE 2026-10-10 (results in section 9, which CHANGES the design: the Tauri transport, 9.2). WP-S1 (the server session routes) is BUILT, awaiting review ([media-service](media-service.md#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10)); S2 onward and the streamed GET are not.** Decisions taken by delegation, overridable: parts 4 MiB plaintext (about 4 MiB + 64 B on the wire), hard server cap 8 MiB, the 50 MB ceiling stays, resume window 24 h, the CEK may persist in the outbox row later (client WP). Trigger: the prod host's CrowdSec AppSec (school-managed
 nginx, not ours) answers `403 CrowdSec Ban` to any request body over 10 MiB (10,485,760 bytes); a 13.4 MB
 PDF failed because `encryptAndUpload` sends one multipart POST. A quick fix (single-block threshold
 lowered, the existing append route for the rest, an explicit error state) is in flight elsewhere; this page
@@ -23,8 +23,8 @@ is the general solution it is a stopgap for. Every figure is tagged **read** (fr
 **Computed, a 13.4 MB PDF on the phone:** about 3 whole copies at upload (plaintext, ciphertext, Blob)
 plus the outbox copy, i.e. 40-55 MB resident; at the 50 MB ceiling 150-250 MB, on a Mi 9T (a 4 GB phone
 whose WebView is killed well below that) a real risk. Server: ~2x the body per concurrent upload, so ten
-concurrent 50 MB uploads hold up to 1 GB in a container (limit not read). **Owed (WP-S0):** heap
-measurements on the Mi 9T and iPhone 12 for 13, 28 and 50 MB; the figures above are arithmetic.
+concurrent 50 MB uploads hold up to 1 GB in a container (limit not read). **Measured (WP-S0, 9.2):** the crypto copies are as computed (+66 MiB renderer at 13.4 MB); the real
+cost on the phone is the HTTP plugin, 45-85x the body, and a 50 MB upload KILLS the app.
 
 Two defects found on the way, independent of CrowdSec: the append route is **not idempotent** (a response
 lost after a successful write duplicates the chunk and corrupts the blob), and `complete` is not
@@ -125,7 +125,7 @@ Progress is `received / totalParts`; cancel is `AbortController` plus the `DELET
 | Client download | 2 ciphertext parts + the plaintext Blob list (+ 8 MiB) | the plaintext, not the ciphertext, is held |
 | Server upload | 64 KiB stream buffers per open PUT; the staging file is on disk; no `Buffer` of a body | yes (was 1-2x the body) |
 | Server download | the stream high-water mark per request (64 KiB) | yes (was 1x the object) |
-| Server `complete` | `fPutObject` reads the file as a stream; **owed**: confirm the minio client does not buffer a 64 MiB part for a 50 MB object | to measure |
+| Server `complete` | **`fPutObject` does NOT stream below 64 MiB** (9.3): `partSize` defaults to 64 MiB, so any object up to the 50 MB ceiling is read whole into a `Buffer` (~2x). Bounded only with `partSize` set (>= 5 MiB) on the client | no, until S1 sets it |
 
 ## 4. Compatibility, retention, quotas
 
@@ -134,8 +134,8 @@ segmented reader landed in `1.0.0`, `minClientVersion` is `1.0.0`, both stores s
 has been on since 2026-10-05 (user's go). Streaming therefore needs NO new reader and NO floor raise for
 VIDEO. For other types above the single-POST size (PDF, audio, files) the writer now emits `segmented-v1`
 where it emitted single-block: acceptable only if every surface that persists a ref CARRIES `encoding`.
-`MediaRef` (chat, proto field 12) and a post's `images[].encoding` do; **comments, the association vault,
-channel files and the outbox's `uploadMedia` must be audited (WP-S0)** - a ref that forgets the field is a
+`MediaRef` (chat, proto field 12) and a post's `images[].encoding` do; **the audit is DONE (9.1): comments, channel files and the outbox DO carry it; the association
+vault is a separate format and must stay single-block** - a ref that forgets the field is a
 segmented blob decrypted as one block, a "corrupt" file. Until the audit is green the writer stays behind
 a constant in the style of `mediaSegmentedWriterFlag.ts`, and a legacy-compatibility entry names the shim.
 
@@ -180,9 +180,9 @@ daily budget, hence the open-session cap.
 
 | WP | What | Risk | Needs |
 | --- | --- | --- | --- |
-| **S0** | Measure (heap on Mi 9T and iPhone 12 at 13/28/50 MB), audit every ref-persisting surface for `encoding`, confirm the CrowdSec threshold from a real 10 MiB+1 probe, read the minio `fPutObject` buffering | none (docs) | - |
+| **S0 DONE 2026-10-10 (section 9)** | Measure (heap on Mi 9T and iPhone 12 at 13/28/50 MB), audit every ref-persisting surface for `encoding`, confirm the CrowdSec threshold from a real 10 MiB+1 probe, read the minio `fPutObject` buffering | none (docs) | - |
 | **S1** | Server session routes, positional streamed PUT, sidecar, idempotent complete, cancel, open-session cap, streamed GET; tests 2, 4 (server), 6 | medium (new staging state; budget accounting) | S0 |
-| **S2** | Client streaming writer, resume with persisted state, progress and cancel; tests 1, 4 (client), 5; behind a flag | medium (the one the user sees) | S1 in prod |
+| **S2** | Client streaming writer, resume with persisted state, progress and cancel; tests 1, 4 (client), 5; behind a flag. **Its part transport on Tauri is DECIDED: the WebView's own `fetch`, not the HTTP plugin** (which inflates a body ~85x and crashes at 50 MB), already routed by `shouldUseNativeFetch` for any binary body to Canari's API (**pre-release builds bake `dev.canari-emse.fr`, whose old-VM relay answers 413 above 1 MiB: a part over 1 MiB cannot be proven there until the relay sets `client_max_body_size`; an unanswered part now ends in `UploadAnswerTimeoutError` (`uploadXhr.ts`, the same typed transport failure as the XHR path)**) - numbers in [mobile](../frontend/mobile.md#a-binary-body-through-the-http-plugin-costs-85-times-its-size-and-50-mb-crashes-the-app) | medium (the one the user sees) | S1 in prod |
 | **S3** | Streamed download and decrypt for files, cache fed from the stream, MSE eviction | medium | S2 |
 | **S4** | The outbox holds a `Blob`/OPFS handle instead of `fileBytes`; `BufferTarget` replaced by a file-backed target in video prep | **high** (outbox is the delivery path; RC-5 territory) | S2, measured need |
 | **S5** | Gate 3 (the 10 MiB wall bench) in the cross-client harness | low | S1 |
@@ -200,9 +200,8 @@ The AppSec layer belongs to the school's host ([estate-migration](../infrastruct
 From our account `cscli` answers permission denied and `/etc/crowdsec/appsec-configs` is unreadable, so we
 can neither read the rule that drops bodies over 10 MiB nor exempt a path, nor test a change. This design
 works WITHOUT any change on their side (every body under 8 MiB, the only claim we can make about a rule we
-cannot read). As defence in depth, ask the school administrators to raise the body limit or exempt
-`/api/media/upload` (and the session routes) for authenticated traffic - an ask, not a dependency.
-Cloudflare's own request-body limit (100 MB on the plans seen here, not re-measured) is also far above 8 MiB.
+cannot read). No request goes to the school administrators (user, 2026-10-10): the rule is theirs and stays as it is.
+Cloudflare's own request-body limit is 100 MB on Free and Pro, 200 MB Business (Cloudflare docs, read 2026-10-10, not probed): far above 8 MiB.
 
 ## 8. Questions only the user can answer
 
@@ -213,4 +212,112 @@ Cloudflare's own request-body limit (100 MB on the plans seen here, not re-measu
 4. **Resume window**: 24 h (today's sweep) or 48 h (MiGallery)?
 5. **Persisting the CEK in the outbox row** so a killed app resumes: acceptable given the row holds the file
    in the clear today?
-6. **Who asks the school administrators** for the AppSec exemption, and is a reply worth waiting for?
+6. ~~Who asks the school administrators for the AppSec exemption~~ - dropped (user, 2026-10-10): no request is made.
+7. **The Tauri part transport (9.4, S2)**: the WebView's native fetch with CORS for the Tauri origins, or a Rust command that streams a file part? Measured: `window.fetch` through the HTTP plugin costs about 85x the body and crashes the app at 50 MB.
+
+## 9. WP-S0 results (2026-10-10) - what the audit, the phone and the code say
+
+### 9.1 Audit: does every surface that persists or reads a media ref carry `encoding`?
+
+The writer sets `ref.encoding` in ONE place (`media.ts`, end of `encryptAndUpload`); every row below is what
+happens to that ref afterwards. Paths are `frontend/src/lib/` unless noted.
+
+| Surface | Persists / forwards `encoding` | Reader gets it | Action |
+| --- | --- | --- | --- |
+| Chat ref, MLS DM and group (outbox) | Yes: `utils/chat/outbox.ts:427` (stored `uploadedRef`, type `db/types.ts:116`), `:460` (envelope), `:476` (proto field 12) | `utils/chat/messageUtils.ts:222` (proto to envelope), `envelope.ts:245` (JSON), `utils/mediaBlobCache.ts:261` (`decryptByEncoding`) | none |
+| Outbox `uploadMedia` | Yes: `composables/session/sessionAuth.ts:244` returns the WHOLE ref, `outbox.ts:427` copies `encoding` | n/a | none (it holds `fileBytes` whole: S4) |
+| Channel files (server-authoritative) | Yes: `composables/useMessaging.svelte.ts:1169` | same readers | none |
+| Forward (DM and channel) | Yes: `useMessaging.svelte.ts:1740`, `:1787` | same readers | none |
+| Voice notes | Same chat path (`voiceNote` + `encoding`); far under the single-POST size, so single-block | same | none |
+| Post media (create / edit) | Yes: `components/posts/CreatePostForm.svelte:388`, `EditPostForm.svelte:270` spread the ref; server `apps/social-service/src/posts/dto/post.dto.ts:94-102` declares `encoding` with `@IsIn(['segmented-v1'])`, stored as JSON | `components/posts/PostMedia.svelte:148` rebuilds the ref WITH `encoding` | none |
+| Reels (post and chat message) | Yes: `reels/publishReel.ts:45,64`; chat reels use the chat path | `PostMedia.svelte`, `reels/saveReel.ts:67`, `reels/reelPreload.ts:46` pass the stored ref | none (video is already segmented) |
+| Post comments | Stored, but UNDECLARED: `AddCommentDto.media` (`post.dto.ts`, ~379) is a bare `@IsObject()` with no nested type, so `whitelist` keeps `encoding` by accident and nothing validates it. Client spreads the ref: `PostComments.svelte:138-146` | `PostComments.svelte:453` gives the object to `PostImage`, which forwards it to `PostMedia` (its TS `Props` omits `encoding`; runtime is fine) | **declare `encoding` (same `@IsIn`) on the comment media type, add it to `PostImage` Props, add a DTO spec like `post-media.dto.spec.ts`** |
+| Post link preview | Server skips any entry with `encoding` (`post-preview.service.ts:133`), decrypts single-block only | n/a | none: images only, and a compressed image never reaches the threshold |
+| Native push thumbnails (Android FCM service, iOS NSE) | n/a | the shared Rust parse `src-tauri/src/mobile/proto_fields.rs:445-458` WITHHOLDS key and IV when `encoding != 0`; Kotlin and Swift read that JSON | none: a segmented image would lose its banner thumbnail (section 3.2 keeps images single-block) |
+| Association vault | NO, and cannot: its own format (`associations/vaultCrypto.ts:136-170`, packed `iv + ct`, per-document key), no `encoding` column in `association_documents`, uploaded by `components/associations/AssociationDocumentManager.svelte:213-233` with its OWN single multipart POST (not `encryptAndUpload`) | `associations/vaultDownload.ts:27` + `decryptDocument`, whole blob | **keep single-block for ever. It hits the same 10 MiB wall (a 13 MB vault PDF fails today) and needs the session transport in an OPAQUE mode (size only, no segmented header check), see 9.4** |
+| Avatars, logos, icons, form images | n/a: unencrypted public blobs (`uploadRaw`, `associations/api.ts` multiparts) | n/a | none (one small POST each) |
+| `media-service` itself | Never reads it (opaque bytes) | n/a | S1's header check must be skippable for the vault mode |
+
+Verdict: **for chat, channels, posts, reels and forwards a non-video file written `segmented-v1` is read
+correctly today** (`decryptByEncoding` decides by the ref, never by the bytes). Open before the flag may
+cover non-video: the comment DTO/typing hardening, and one test that a PDF ref survives outbox persist, send,
+receive and `acquireDecryptedMediaBlobUrl` (non-A/V segmented goes to the whole-blob path,
+`utils/segmentedMediaStream.ts:71-72`). The vault is outside the `encoding` question and inside 9.4.
+
+### 9.2 Measured: today's single-block path on the Mi 9T (Tauri WebView, Android 16, 5.6 GB RAM)
+
+Method: the real `encryptMediaBuffer` / `encryptSegmentedMedia` bundled with the exact `encryptAndUpload`
+steps 1-3 (`file.arrayBuffer()`, encrypt, `Blob` in `FormData`, ONE `fetch` POST), injected into the running
+app 1.2.2 over CDP; resident memory polled from `/proc/<pid>/statm` every ~20 ms for the app process and the
+WebView renderer; target `https://dev.canari-emse.fr/api/media/upload` with a deliberately invalid token
+(stores nothing; dev's legacy relay answers `413` over 1 MiB, the known
+[P1](../infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names---it-is-the-relays-nginx-not-cloudflare-measured-2026-10-07-cause-found-2026-10-09),
+which does not matter here: every client-side cost is paid before the response). Peaks are resident MiB above
+the pre-run baseline; the renderer does not hand memory back between runs, so later deltas are lower bounds.
+The throwaway harness is not in the repo; this paragraph is enough to rebuild it. `performance.memory` stayed
+flat (ArrayBuffers are external to the JS heap) and was discarded.
+
+| Body | Path | Renderer peak (delta) | App (Rust) process peak (delta) | Result |
+| --- | --- | --- | --- | --- |
+| 13.4 MB | crypto only, no POST (clean restart) | +66 | +36 | matches the computed 40-55 |
+| 50 MB | crypto only, no POST | +240 | +33 | about 5x the file, as computed |
+| 13.4 MB | segmented writer, no POST | same as single-block | - | segmenting does not change the copy count |
+| 4.2 MB | through the app's `fetch` | +176 | +331 | 3 s |
+| 8 MB | through the app's `fetch` | +200 (lower bound) | +679 | 5 s |
+| 13.4 MB | through the app's `fetch`, picker file | +650 (peak 791) | +1176 (peak 1488) | 7.6 s |
+| 13.4 MB | same, outbox path (bytes in RAM, new `File`), and segmented | +585 to +610 | +1141 to +1153 | same as picker |
+| 28 MB | through the app's `fetch` | +1156 (peak 1463) | +2209 (peak 2517) | 21.6 s |
+| 50 MB | through the app's `fetch` | **render process killed, the whole app crashes** (`Render process's crash wasn't handled ... triggering application crash`) | - | what a 50 MB upload does today on this phone |
+
+**The computed 40-55 MB / 150-250 MB were the SMALL part of the cost.** The large one is absent from section 1:
+on Tauri (Android, iOS, desktop) `hooks.client.ts` replaces `window.fetch` with `@tauri-apps/plugin-http`, whose
+JS (`dist-js/index.js`, installed 2.6.1) does
+`const buffer = await req.arrayBuffer(); const data = Array.from(new Uint8Array(buffer))` and ships `data`
+through `invoke` as JSON: one JS number per body byte, then a JSON string of the whole array, then a Rust
+`Vec<u8>`. Measured: **about 85x the body in the Rust process and 45-50x in the renderer**. The WebView's own
+fetch has none of it (a native POST of the same body added nothing over the crypto copies). iOS runs the same
+code (not measured, 9.5).
+
+Consequences: (a) the 2026-10-10 failure is not only CrowdSec: nothing above ~25 MB can be uploaded from a
+phone at all; (b) even the design's 4 MiB part costs ~340 MiB (app) + ~190 MiB (renderer) through the plugin,
+two in flight double it, so the streaming writer MUST NOT send parts through `window.fetch` on Tauri; (c) gate
+4 of section 5 would pass in a desktop browser and still crash the phone, so it needs a Tauri-transport leg.
+
+### 9.3 Read: minio `fPutObject`, and the Cloudflare figure
+
+- `apps/media-service/src/media/storage.service.ts` builds `new Minio.Client({...})` with NO `partSize`.
+  minio 8.0.7 (`src/internal/client.ts`): `partSize` defaults to 64 MiB, and `putObject` does
+  `if (size <= partSize) { buf = await readAsBuffer(stream); uploadBuffer(...) }` where `readAsBuffer` is a
+  `Buffer.concat` of every chunk. So `fPutObject` (the chunked `complete` today, and S1's `complete`) holds the
+  WHOLE object, about 2x transiently, for every object up to the 50 MB ceiling; `put()` (single POST) does the
+  same through `Readable.from(data)`. Dev's media-service container is capped at 768 MiB
+  (`docker-compose.dev.yml`); no cap was found for prod. **S1 fix: construct the client with
+  `partSize: 5 * 1024 * 1024` (the minimum), which sends objects over 5 MiB through `uploadStream` (multipart,
+  one part buffered).** Verify on dev with a 50 MB object and a `process.memoryUsage()` probe.
+- Cloudflare request body: 100 MB on Free and Pro, 200 MB Business, Enterprise up to 5 GB (Cloudflare docs,
+  cache / default-cache-behavior, read 2026-10-10, not probed). 8 MiB parts are 12x under it.
+- Met on the way: dev's legacy name still answers `413` above 1 MiB (the relay's nginx), so no upload over
+  1 MiB can be tested end to end on `dev.canari-emse.fr` until that owed gesture is done; `canari.emse.fr` has
+  no such limit.
+
+### 9.4 What S0 changes in the work packages
+
+| WP | Change |
+| --- | --- |
+| S1 | Set `partSize` on the minio client (9.3). Add an OPAQUE session mode (no segmented header; size and part count only) so the vault can use it. Declare `encoding` on the comment DTO (9.1). |
+| S2 | **The part transport on Tauri cannot be `fetch`.** Candidates, to decide with the user (question 7): (i) the WebView's native fetch for `/api/media/*` (needs CORS for the Tauri origins, which is why the plugin was introduced; measure); (ii) a Rust command taking a RAW `invoke` payload, or better a file path and offset, and streaming the part itself; (iii) a newer plugin-http if it drops `Array.from` (the Rust crate is 2.8, the JS 2.6.1, re-read). (ii) also unlocks S4. The flag stays off for non-video until the 9.1 open items are done. |
+| S3 | The download side was not measured (the plugin returns bodies in chunks through `fetch_read_body`, a different path); measure before promising numbers. |
+| S4 | The crypto copies (about 5x the file) remain even with a perfect transport, but the transport is what hits first, so S4 follows it. |
+| S5 | The 10 MiB-wall bench must run through the Tauri transport on a phone, not only in Chrome. |
+| New | A vault upload through the session API in opaque mode (9.1), or the quick fix's append route: a vault PDF over 10 MiB fails today. |
+
+### 9.5 Not measured, and why
+
+- **iPhone 12**: the installed app is a store build; `pymobiledevice3 webinspector cdp` lists NO inspectable
+  page (the harness notes a bench build with `tauri/devtools` is needed), so the bench cannot be injected, and
+  an in-app upload would go to production, which was forbidden above 10 MiB. What WORKS:
+  `python -m pymobiledevice3 developer dvt sysmon process single` over the no-root userspace tunnel returns
+  `physFootprint` per process, `Canari` and `com.apple.WebKit.WebContent` included. With a bench build the same
+  bundle plus a sysmon poll gives the iOS numbers. The plugin code path is identical.
+- **Desktop Chrome**: not run; the native-fetch leg on the phone already isolates the browser cost.
+- **Server heap**: read (9.3), not measured; the figures in 3.5b stay computed.
