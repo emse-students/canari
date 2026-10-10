@@ -832,7 +832,7 @@ The English-on-a-French-screen sweep is finished ([durable-rules](durable-rules.
 
 ### P3 - docker-prune is built for the Portail-etu host but not installed there
 
-Measured 2026-10-09: the Portail-etu host is 60 % used (26 G of 45 G, 18 G free, 2.8 GB of images reclaimable, no build cache) and the old VM 18 %. **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"):** an agent installs and runs the prune when the host passes 80 %, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
+Measured 2026-10-10: the Portail-etu host is 70 % used (30 G of 45 G, 13 G free; 6.3 GB of 12 GB of images reclaimable, no build cache, 0 reclaimable volume) and it grew 4 G in a day, so 80 % is about two days away at that rate. (The old VM was 18 % on 2026-10-09.) **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"):** an agent installs and runs the prune when the host passes 80 %, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 
