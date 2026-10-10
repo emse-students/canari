@@ -2548,6 +2548,7 @@
   "calendar_deposit_button": "Déposer un événement",
   "calendar_event_pending_notice": "Cet événement est en attente de validation : il n'est pas encore confirmé.",
   "calendar_event_pending_title": "{title} - en attente de validation",
+  "calendar_owners_and_others": "{first} + {count} autres",
   "calendar_moderate_label": "Modérer les événements en attente",
   "calendar_moderate_open": "Ouvrir la file",
   "calendar_prev_month": "Mois précédent",
