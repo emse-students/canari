@@ -1195,12 +1195,15 @@ export function useMessaging() {
                 captionForFile
               )
             );
+            // READ BEFORE THE PLACEHOLDER IS WRITTEN: a read that throws (revoked file, no memory)
+            // after it left a `mediaId: ''` row with no outbox entry - an orphan the bubble could only
+            // draw as a spinner for ever. The catch below re-stages the file when this throws.
+            const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
             await addMessageToChat(ctx.userId, placeholder, ctx.selectedContact!, ctx, {
               messageId,
               status: 'pending',
               timestamp: new SvelteDate(sentAt),
             });
-            const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
             const outboxEntry: OutboxEntry = {
               id: messageId,
               conversationId: convo.id,

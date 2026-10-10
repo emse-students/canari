@@ -26,6 +26,7 @@
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
   import MessageReactions from './MessageReactions.svelte';
   import type { MessageReaction } from '$lib/types';
+  import { isOrphanMediaRef } from '$lib/utils/chat/orphanMedia';
   import { activeReactions } from '$lib/utils/chat/messageReactions';
   import type { MessagePickerOrigin } from '$lib/utils/chat/reactionPicker';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
@@ -585,6 +586,13 @@
     return uploadViewOf(messageId) ?? { phase: 'waiting', loaded: 0, total: 0, attempt: 0 };
   });
 
+  /**
+   * A media reference that never got its `mediaId` and that no upload is advancing: nothing will
+   * ever arrive. Decided from the bubble's own facts, so no outbox lookup is needed - `upload` is
+   * non-null exactly while the outbox owns the entry.
+   */
+  const orphanMedia = $derived(!uploadFailed && !upload && isOrphanMediaRef(mediaRef));
+
   $effect(() => {
     // Empty mediaId = media still queued in the outbox (upload pending): leave blobUrl null
     // so MessageMediaRenderer shows its skeleton/spinner. Don't attempt a download (would 404).
@@ -827,6 +835,8 @@
                 onRetry={() => (mediaAttempt += 1)}
                 {textContent}
                 {isOwn}
+                onBubble={!isMediaOnly}
+                orphan={orphanMedia}
                 {textSegments}
                 bleed={bleedsMedia}
                 {senderId}

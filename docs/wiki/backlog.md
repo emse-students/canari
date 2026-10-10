@@ -27,6 +27,10 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Orphan media rows: the outbox enqueue can still lose an attachment silently (2026-10-10)
+
+P2. A media message whose ref has `mediaId: ''` and no outbox entry (seen on the Mi 9T, alpha.3) now draws a failure with a delete ([media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)). The send path that made it: `useMessaging.svelte.ts` `handleSendChat` writes the placeholder with `addMessageToChat` BEFORE `enqueueOutboxMessage`; the file read between them is moved before it, but `outbox.ts` `enqueue` (`if (!storage) return;`, and `saveOutboxEntry(...).catch(log)`) and `enqueueOutboxMessage` (`active ? ... : Promise.resolve()`) still swallow a failed or impossible save, so the placeholder stays with nothing to upload it. OWED: make enqueue REJECT a failed save so the caller's catch re-stages the file and removes the placeholder (needs a pass over the text callers), and a test that drives a failing `saveOutboxEntry`. A pending orphan (status `pending`, outbox row gone) shows the queued ring with a cancel, not the failure.
+
 ## Four organisers per event: what is left after the cap (user, 2026-10-10)
 
 P3. The cap (#1721), the stacked faces in the list and day rows, the detail modal's chips with the quiet "n pending" line and the picker's `n / 4` are built ([calendar](frontend/modules/calendar.md), [profiles-and-access](profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)). OWED, unbuilt: (a) the month grid's tooltip and a `+N` tag above four bands, and the admin agenda rows; (b) the ICS summary and the share title naming every organiser (`title - A + B` up to two names, `A + N autres` beyond); (c) whether an ACCEPTED co-organisation notifies the organiser (`CoorganisationService.apply` writes the row and announces nothing; if it should, a push content in the Android, iOS and NSE tables like `coorganise_proposed`). OWED, a reading: nothing here was rendered on a phone (ring and overlap of the stack, the chips' wrap, the counter).

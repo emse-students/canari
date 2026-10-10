@@ -206,6 +206,12 @@ ratio - **one shift, once per old message per device** - then files it in the me
 every later render of that row, in this session or after a restart, opens at the right size. A new
 message never shifts.
 
+## 7. An orphan media row, and a card with no bubble
+
+**An own file card assumed an amber bubble** (`text-cn-ink`, `bg-black/10`), but a media-only message has none (`MessageBubble` `isMediaOnly`): in dark theme the navy ink sat on the black page. `MessageMediaRenderer` takes `onBubble` (`!isMediaOnly`); amber tones apply only when `isOwn && onBubble`, otherwise the theme pair (`bg-black/5 dark:bg-white/10`, `text-text-main`). The ring and buttons use `currentColor`, so they follow.
+
+**An orphan** is a ref with an empty `mediaId` that no upload view advances (`isOrphanMediaRef`, `utils/chat/orphanMedia.ts`; `upload` is non-null exactly while the outbox owns the entry). It shows `media_orphan_label` and the delete instead of the queued spinner, for received rows too. Origin and what is still open: [backlog](../backlog.md).
+
 ## 6. Where it stands
 
 | Half | Pull request | State |
