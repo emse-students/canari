@@ -135,7 +135,10 @@ describe('the WASM preload (wasmPreload.ts) starts the download beside the JS', 
   /** Runs the generated script against a fake browser and returns the links it appended. */
   function run(opts: { keys: string[]; tauri?: boolean; throwsOnStorage?: boolean }) {
     const appended: Record<string, unknown>[] = [];
-    const script = renderWasmPreloadScript(URL_HASHED).replace(/^<script>|<\/script>$/g, '');
+    // Sliced, not regex-stripped: the wrapper is the generator's own fixed pair of tags.
+    const html = renderWasmPreloadScript(URL_HASHED);
+    expect(html.startsWith('<script>') && html.endsWith('</script>')).toBe(true);
+    const script = html.slice('<script>'.length, -'</script>'.length);
     const win: Record<string, unknown> = opts.tauri ? { __TAURI_INTERNALS__: {} } : {};
     const storage = opts.throwsOnStorage
       ? new Proxy(

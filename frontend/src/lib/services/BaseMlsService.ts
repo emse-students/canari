@@ -2264,13 +2264,15 @@ export abstract class BaseMlsService implements IMlsService {
     // delivery client and delete a device while a later round or a join runs on the id it is
     // abandoning - a later round could publish under an id rotated away, a join could exclude a
     // stale id. The rotation is a logged no-op and the late round just ends.
-    let stale = false;
+    // A property of a shared object, not a bare `let`: the deadline handler below flips it while the
+    // round is suspended at an `await`, a write control-flow analysis (CodeQL 2552) cannot see.
+    const roundState = { stale: false };
     const round = (async (): Promise<DatedKeyPackage> => {
       try {
         return await this.generateKeyPackageImpl(deviceKeyB64);
       } catch (e) {
         if (!(e instanceof DeviceRevokedError)) throw e;
-        if (stale) {
+        if (roundState.stale) {
           console.error(
             `[MLS] an ABANDONED key package round met a revocation late - NOT rotating the identity (a later round owns it now); device ${sanitizeForLog(this.deviceId)}`
           );
@@ -2282,7 +2284,7 @@ export abstract class BaseMlsService implements IMlsService {
             this.deviceId
           )}`
         );
-        if (stale) {
+        if (roundState.stale) {
           console.error(
             '[MLS] an ABANDONED key package round was abandoned during its re-enrolment - not publishing under the new id from this stale round'
           );
@@ -2326,7 +2328,9 @@ export abstract class BaseMlsService implements IMlsService {
       this.noteKeyPackageRoundSettled();
       return keyPackage;
     } catch (e) {
-      if (e instanceof DeliveryDeadlineError && e.operation === 'key-package-round') stale = true;
+      if (e instanceof DeliveryDeadlineError && e.operation === 'key-package-round') {
+        roundState.stale = true;
+      }
       this.noteKeyPackageRoundSettled(e ?? new Error('key package round failed'));
       throw e;
     } finally {
