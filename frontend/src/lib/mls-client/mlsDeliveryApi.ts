@@ -7,7 +7,7 @@ import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
-import { ApiRefusalError } from '$lib/utils/apiRefusal';
+import { ApiRefusalError, responseOrigin } from '$lib/utils/apiRefusal';
 
 export type MlsDeliveryFetch = typeof fetch;
 
@@ -224,6 +224,22 @@ export class SendForbiddenError extends ApiRefusalError {
   constructor(readonly groupId: string) {
     super(403, null, `Message send refused with 403 for group ${groupId}`);
     this.name = 'SendForbiddenError';
+  }
+}
+
+/**
+ * A send was answered 403 by something IN FRONT of the gateway (the host's CrowdSec WAF 'Ban' page
+ * is HTML): a verdict on the network path, none on the caller. NOT an {@link ApiRefusalError} on
+ * purpose, so no reader mistakes it for an identity refusal and parks the entry; the outbox retries
+ * it on the ladder and tells the user. Lifted by the ban expiring, never by signing in again.
+ */
+export class SendEdgeRefusedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly status: number
+  ) {
+    super(`Message send refused with ${status} by the edge (not the gateway) for group ${groupId}`);
+    this.name = 'SendEdgeRefusedError';
   }
 }
 
@@ -1216,6 +1232,10 @@ export class MlsDeliveryApi {
       // that cannot be said about any other failure here: no retry lifts it. See
       // {@link SenderNotActiveError}.
       if (res.status === 403) {
+        // ORIGIN FIRST: an HTML/non-JSON 403 is the edge, not an answer about the caller.
+        if (responseOrigin(res) === 'edge') {
+          throw new SendEdgeRefusedError(groupId, res.status);
+        }
         const body = (await res.json().catch(() => ({}))) as {
           error?: string;
           status?: string;

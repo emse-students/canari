@@ -310,6 +310,7 @@
   "chat_send_error_seal_key_group_catching_up": "Nothing was sent: this device is catching up with the community's keys. Try again in a moment.",
   "chat_media_action_send": "Sending the media",
   "chat_media_send_error_generic": "The media could not be sent. Try again in a moment.",
+  "outbox_edge_blocked": "Your messages are not getting through: the network is being blocked on the way to the server (security filter). They are kept and will be sent automatically; if this lasts, try another connection.",
   "outbox_upload_too_large": "This file could not be sent: it is too large for the server to accept in one upload (limit about 1 MB). Send a smaller or compressed version.",
   "chat_media_too_large": "File too large ({size} MB). Limit: {limit} MB.",
   "video_prepare_progress": "Preparing the video… {percent}%",

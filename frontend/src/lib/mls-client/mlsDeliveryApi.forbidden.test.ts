@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MlsDeliveryApi, SendForbiddenError, SenderNotActiveError } from './mlsDeliveryApi';
+import {
+  MlsDeliveryApi,
+  SendEdgeRefusedError,
+  SendForbiddenError,
+  SenderNotActiveError,
+} from './mlsDeliveryApi';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 
 /**
@@ -17,7 +22,10 @@ describe('postApplicationMessage on a 403', () => {
 
   it('raises SendForbiddenError carrying status 403 for an authorization refusal', async () => {
     const failure = await api(
-      new Response(JSON.stringify({ message: 'requesterUserId does not match' }), { status: 403 })
+      new Response(JSON.stringify({ message: 'requesterUserId does not match' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      })
     )
       .postApplicationMessage('g1', 'AAAA')
       .catch((e: unknown) => e);
@@ -30,6 +38,7 @@ describe('postApplicationMessage on a 403', () => {
     const failure = await api(
       new Response(JSON.stringify({ error: 'sender_not_active', status: 'pending' }), {
         status: 403,
+        headers: { 'content-type': 'application/json' },
       })
     )
       .postApplicationMessage('g1', 'AAAA')
@@ -37,5 +46,20 @@ describe('postApplicationMessage on a 403', () => {
 
     expect(failure).toBeInstanceOf(SenderNotActiveError);
     expect(failure).not.toBeInstanceOf(SendForbiddenError);
+  });
+
+  it('classifies an HTML 403 (CrowdSec ban page) as an edge refusal, not an identity one', async () => {
+    const failure = await api(
+      new Response('<html><title>CrowdSec Ban</title></html>', {
+        status: 403,
+        headers: { 'content-type': 'text/html' },
+      })
+    )
+      .postApplicationMessage('g1', 'AAAA')
+      .catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(SendEdgeRefusedError);
+    expect(failure).not.toBeInstanceOf(SendForbiddenError);
+    expect(refusalStatus(failure)).toBeNull();
   });
 });

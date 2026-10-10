@@ -40,6 +40,7 @@ import {
   GroupDeletedError,
   SenderNotActiveError,
   SendForbiddenError,
+  SendEdgeRefusedError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind, decodeAppMessage, mediaReelFromProto } from '$lib/proto/codec';
@@ -1060,6 +1061,31 @@ describe('outbox flusher', () => {
     expect(storage._map.has('m1')).toBe(true);
     expect(storage._map.get('m1')?.status).toBe('pending');
     expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('REFUSED with 403'))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it('does not park an edge 403: it retries on the ladder, accuses and tells the user once', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 101)]);
+    const send = vi.fn(async () => {
+      throw new SendEdgeRefusedError('g1', 403);
+    });
+    const addMessageToChat = vi.fn(async () => undefined);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls({ send }),
+        storage,
+        isGroupHealthy: () => true,
+        addMessageToChat,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(storage._map.get('m1')?.attempts).toBe(1);
+    expect(storage._map.get('m1')?.nextAttemptAt).toBeGreaterThan(Date.now());
+    expect(addMessageToChat).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('by the EDGE'))).toBe(true);
     errorSpy.mockRestore();
   });
 
