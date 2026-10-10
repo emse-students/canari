@@ -81,6 +81,12 @@ export type ExternalJoinOutcome =
    * commit gate would refuse the activation (`no_key_package`). The round reported its own cause.
    */
   | { joined: false; reason: 'key_package_round_failed' }
+  /**
+   * The join was NOT attempted: the server's statement about this device's KeyPackage could not be
+   * established (unreadable, or still absent after a round of ours) and no round can change it.
+   * Nothing is claimed about membership; the caller's cadence retries.
+   */
+  | { joined: false; reason: 'own_key_package_unverified' }
   /** The commit gate was never reached. Nothing is claimed about membership. */
   | { joined: false; reason: 'unreachable' }
   /** The gate refused every bounded attempt; `serverReason` is its own classification. */

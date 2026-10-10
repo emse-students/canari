@@ -4,6 +4,7 @@ vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
 import { BaseMlsService } from './BaseMlsService';
+import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
 import { DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
 
 /**
@@ -25,6 +26,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     deleteDevice: vi.fn().mockResolvedValue(undefined),
     // Real rotation: the assertions below are about what it does.
     rotateDeviceIdentity: BaseMlsService.prototype['rotateDeviceIdentity'],
+    ...keyPackageWaitFields(),
     ...overrides,
   };
 }

@@ -93,3 +93,12 @@ describe('a page is private to one list or to neither', () => {
     }
   });
 });
+
+describe('a settings section is named for what it holds', () => {
+  it('resolves its own title, noindex, and an unknown segment keeps the generic one', () => {
+    const meta = resolveSeoForPath('/settings/security');
+    expect(meta.title).not.toBe(SITE.defaultTitle);
+    expect(meta.noindex).toBe(true);
+    expect(resolveSeoForPath('/settings/nope').title).toBeTruthy();
+  });
+});

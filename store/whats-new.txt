@@ -1,3 +1,3 @@
-version: 1.2.1
+version: 1.2.2
 
-Les salons des communautés acceptent de nouveau vos messages dès l'ouverture de l'application : un défaut pouvait bloquer l'envoi pendant de longues minutes. Fini les sons étranges à l'arrivée des notifications, et un message ne sonne plus qu'une fois. Les messages que vous avez lus dans les communautés restent lus après un redémarrage, et un échec d'envoi dit enfin pourquoi.
+Un nouveau jeu de sons, plus léger et plus gai : un gazouillis distinct pour les messages, les mentions et les réactions. Le clavier ne fait plus sauter la zone de saisie, la pastille de date reste lisible quand on fait défiler, et l'application tient mieux sur une mauvaise connexion avec un état « réseau lent ». Les réglages s'ouvrent comme un explorateur, avec un fil d'Ariane cliquable, et les droits de lecture des associations sont plus précis.

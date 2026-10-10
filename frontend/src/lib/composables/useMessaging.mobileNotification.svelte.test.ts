@@ -111,6 +111,7 @@ function screen(visibility: 'hidden' | 'visible', focused: boolean, foreground?:
 describe('native mobile notifies for the message no push will ever carry', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.history.pushState({}, '', '/'); // each case states its own route
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     MOBILE = true;
@@ -150,6 +151,7 @@ describe('native mobile notifies for the message no push will ever carry', () =>
     const { ctx, sendSystemNotification } = makeContext(CONVO);
     screen('visible', true, true);
 
+    window.history.pushState({}, '', '/chat'); // a route that draws a conversation
     await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'm-3' });
 
     expect(sendSystemNotification).not.toHaveBeenCalled();
@@ -189,6 +191,7 @@ describe('native mobile notifies for the message no push will ever carry', () =>
     const { ctx, sendSystemNotification } = makeContext(CONVO);
     screen('visible', true, undefined);
 
+    window.history.pushState({}, '', '/chat'); // a route that draws a conversation
     await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'm-6' });
 
     // The default is the quiet one deliberately: an older APK that does not push the flag keeps the

@@ -12,6 +12,10 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 }));
 
 import { BaseMlsService } from './BaseMlsService';
+import {
+  keyPackageWaitFields,
+  publishedKeyPackageAnswer,
+} from './BaseMlsService.keyPackageFixture';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
@@ -31,6 +35,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     userId: 'u',
     deviceId: 'd',
     delivery: {
+      fetchDeviceKeyPackage: vi.fn(async () => publishedKeyPackageAnswer()),
       fetchGroupInfo: vi.fn(),
       submitCommit: vi.fn(),
       storeGroupInfo: vi.fn().mockResolvedValue(undefined),
@@ -63,6 +68,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
     forgetGroup: vi.fn(),
+    ...keyPackageWaitFields(),
     ...overrides,
   };
 }
