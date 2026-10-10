@@ -7,6 +7,7 @@ import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
+import { ApiRefusalError, responseOrigin } from '$lib/utils/apiRefusal';
 
 export type MlsDeliveryFetch = typeof fetch;
 
@@ -206,6 +207,39 @@ export class SenderNotActiveError extends Error {
       `This device holds no leaf in group ${groupId}${status ? ` (membership ${status})` : ''}`
     );
     this.name = 'SenderNotActiveError';
+  }
+}
+
+/**
+ * The delivery service refused an application frame with a 403 that is NOT `sender_not_active`:
+ * the AUTHENTICATED caller is not allowed to send what this request claims (the gateway's
+ * `AUTHZ FAIL caller != requester`, a token whose `sub` is not the frame's sender).
+ *
+ * **A STATUS CODE IS AN ANSWER, and this one is not lifted by asking again.** The outbox used to
+ * treat it as a blip and re-post the same entries every minute (23 attempts on one bench phone,
+ * 2026-10-10). It is an {@link ApiRefusalError} so the outbox reads the status from the TYPE, as it
+ * already does for the 413; the dedicated class names WHICH endpoint refused.
+ */
+export class SendForbiddenError extends ApiRefusalError {
+  constructor(readonly groupId: string) {
+    super(403, null, `Message send refused with 403 for group ${groupId}`);
+    this.name = 'SendForbiddenError';
+  }
+}
+
+/**
+ * A send was answered 403 by something IN FRONT of the gateway (the host's CrowdSec WAF 'Ban' page
+ * is HTML): a verdict on the network path, none on the caller. NOT an {@link ApiRefusalError} on
+ * purpose, so no reader mistakes it for an identity refusal and parks the entry; the outbox retries
+ * it on the ladder and tells the user. Lifted by the ban expiring, never by signing in again.
+ */
+export class SendEdgeRefusedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly status: number
+  ) {
+    super(`Message send refused with ${status} by the edge (not the gateway) for group ${groupId}`);
+    this.name = 'SendEdgeRefusedError';
   }
 }
 
@@ -1198,6 +1232,10 @@ export class MlsDeliveryApi {
       // that cannot be said about any other failure here: no retry lifts it. See
       // {@link SenderNotActiveError}.
       if (res.status === 403) {
+        // ORIGIN FIRST: an HTML/non-JSON 403 is the edge, not an answer about the caller.
+        if (responseOrigin(res) === 'edge') {
+          throw new SendEdgeRefusedError(groupId, res.status);
+        }
         const body = (await res.json().catch(() => ({}))) as {
           error?: string;
           status?: string;
@@ -1205,6 +1243,8 @@ export class MlsDeliveryApi {
         if (body.error === 'sender_not_active') {
           throw new SenderNotActiveError(groupId, body.status ?? null);
         }
+        // ANY OTHER 403 is the caller refused outright - see {@link SendForbiddenError}.
+        throw new SendForbiddenError(groupId);
       }
       // AND THE OTHER REFUSAL NO RETRY LIFTS, for the opposite reason: not "this device is not in
       // the group" but "there is no group". 410 is the delivery service refusing to queue rows for

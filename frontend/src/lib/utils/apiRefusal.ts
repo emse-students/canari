@@ -34,6 +34,22 @@ export class ApiRefusalError extends Error {
 }
 
 /**
+ * WHO ANSWERED: our gateway (`gateway`, a JSON body) or something in front of it (`edge`: the host's
+ * CrowdSec WAF 'Ban' page, a CDN or proxy error page - HTML or any non-JSON body).
+ *
+ * Read from the `Content-Type` HEADER, never from the body's words. The same status means opposite
+ * things by origin: a gateway 403 is a verdict on the caller, an edge 403 is a verdict on the
+ * network path and says nothing about the caller. Classify it at the THROW with this one helper.
+ */
+export type ResponseOrigin = 'gateway' | 'edge';
+
+/** See {@link ResponseOrigin}. A response with no JSON content type was not written by the gateway. */
+export function responseOrigin(res: Pick<Response, 'headers'>): ResponseOrigin {
+  const type = res.headers.get('content-type') ?? '';
+  return /json/i.test(type) ? 'gateway' : 'edge';
+}
+
+/**
  * The HTTP status an error carries, or `null` when it carries none.
  *
  * `null` is not a default and never a 0: it means NOBODY ANSWERED. A `TypeError` from a `fetch`

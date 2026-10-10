@@ -39,6 +39,8 @@ import {
   DeliveryUnreachableError,
   GroupDeletedError,
   SenderNotActiveError,
+  SendForbiddenError,
+  SendEdgeRefusedError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind, decodeAppMessage, mediaReelFromProto } from '$lib/proto/codec';
@@ -1037,6 +1039,77 @@ describe('outbox flusher', () => {
       errorSpy.mock.calls.some((c) => String(c[0]).includes('upload REFUSED (too-large'))
     ).toBe(true);
     errorSpy.mockRestore();
+  });
+
+  /**
+   * A 403 is an ANSWER about the caller (a token naming another account than the frame's sender):
+   * the same six entries were re-posted 23 times on a bench phone. Classified from the TYPE, the
+   * entry is KEPT but parked after ONE attempt, and the log accuses.
+   */
+  it('parks an entry after a 403 instead of re-posting it for ever', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const send = vi.fn(async () => {
+      throw new SendForbiddenError('g1');
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls({ send }), storage, isGroupHealthy: () => true })
+    );
+
+    await outbox.flush();
+    await outbox.flush();
+    await outbox.flush();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    // Nothing the user wrote is lost: the row stays, pending, for after a sign-in.
+    expect(storage._map.has('m1')).toBe(true);
+    expect(storage._map.get('m1')?.status).toBe('pending');
+    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('REFUSED with 403'))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it('does not park an edge 403: it retries on the ladder, accuses and tells the user once', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 101)]);
+    const send = vi.fn(async () => {
+      throw new SendEdgeRefusedError('g1', 403);
+    });
+    const addMessageToChat = vi.fn(async () => undefined);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls({ send }),
+        storage,
+        isGroupHealthy: () => true,
+        addMessageToChat,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(storage._map.get('m1')?.attempts).toBe(1);
+    expect(storage._map.get('m1')?.nextAttemptAt).toBeGreaterThan(Date.now());
+    expect(addMessageToChat).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('by the EDGE'))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it('does not treat a 5xx as the 403 answer: it still climbs the ladder', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls({
+          send: async () => {
+            throw new Error('Message send HTTP error: 503');
+          },
+        }),
+        storage,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(storage._map.get('m1')?.attempts).toBe(1);
   });
 
   it('still retries a 5xx upload refusal: only a 4xx answer is permanent', async () => {
@@ -2093,7 +2166,7 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
     const storage = makeStorage([mediaEntry('k1')]);
     const uploadMedia = vi
       .fn()
-      .mockRejectedValueOnce(new MediaUploadError(403, 'ban', 'gateway'))
+      .mockRejectedValueOnce(new MediaUploadError(403, 'ban', 'edge'))
       .mockResolvedValue(REF);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['k1'])]]);
@@ -2123,7 +2196,7 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
 
   it('a parked entry can still be deleted', async () => {
     const storage = makeStorage([mediaEntry('k2')]);
-    const uploadMedia = vi.fn().mockRejectedValue(new MediaUploadError(403, 'ban', 'gateway'));
+    const uploadMedia = vi.fn().mockRejectedValue(new MediaUploadError(403, 'ban', 'edge'));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['k2'])]]);
     const outbox = createOutbox(

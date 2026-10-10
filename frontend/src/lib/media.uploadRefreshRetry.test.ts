@@ -23,13 +23,10 @@ vi.mock('$lib/utils/mediaTouch', () => ({ noteMediaCacheHit: () => {} }));
 const { MediaService } = await import('$lib/media');
 
 function reply(status: number, body: unknown = {}): Response {
-  return {
+  return new Response(JSON.stringify(body), {
     status,
-    ok: status >= 200 && status < 300,
-    statusText: '',
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  } as unknown as Response;
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 const file = () => new File([new Uint8Array(64)], 'p.bin', { type: 'application/octet-stream' });

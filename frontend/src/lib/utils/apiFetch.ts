@@ -11,6 +11,7 @@
  */
 
 import { getToken, refresh, SessionExpiredError } from '$lib/stores/auth';
+import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
@@ -71,6 +72,12 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
     // some routes answer without a token, and offline startup depends on that.
     if (e instanceof SessionExpiredError) {
       console.warn(`[API] session expired on ${method} ${logUrl} - no anonymous retry`);
+      throw e;
+    }
+    // The same for a split identity: the token exists but is for ANOTHER account than the local
+    // one, so the request is refused here rather than sent as somebody it does not name.
+    if (e instanceof IdentitySplitError) {
+      console.warn(`[API] identity split on ${method} ${logUrl} - request not sent`);
       throw e;
     }
     // The CAUSE is the whole point of this line. A container restarting mid-deploy needs nothing

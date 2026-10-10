@@ -27,6 +27,7 @@ import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
 import { LoginFailure, isExpectedLoginOutcome, loginErrorCode } from './loginErrors';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE, isKeystoreKeyUnavailable } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
+import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
@@ -221,7 +222,7 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     isGroupHealthy: (groupId: string) => canSendInGroup(ctx.ensureMls(), groupId),
     // A session unlocked offline holds no token: hold the queue until promoteOfflineSession has
     // one and has reopened the socket, then it flushes explicitly.
-    canFlush: () => !ctx.isOfflineSession(),
+    canFlush: () => !ctx.isOfflineSession() && !isIdentitySplit(),
     markDeletedRemotely: (groupId: string) =>
       markConversationDeletedRemotely(
         cb.conversations,
@@ -558,6 +559,19 @@ export async function loginImpl(
         ctx.setIsLoginInProgress(false);
         if (cb.onSessionExpired) cb.onSessionExpired();
         else void goto(resolve('/login'), { replaceState: true });
+        return;
+      }
+      // THE TOKEN IS FOR SOMEBODY ELSE THAN THIS DEVICE'S MLS IDENTITY. Not a transport failure
+      // (the server answered) and not an expiry (the credential is alive): continuing would run
+      // every send and seed request under the wrong account, and an offline unlock would do the
+      // same once the network returned. The blocking notice offers the sign-out; the PIN modal has
+      // nothing to add, and the MLS state is left untouched.
+      if (err instanceof IdentitySplitError) {
+        ctx.setIsLoginInProgress(false);
+        cb.log(
+          `[LOGIN] IDENTITY SPLIT (token ${err.split.tokenSub} vs local ${err.split.localId}) - login stopped, sign-out required.`
+        );
+        cb.onLoginFailed?.(m.identity_split_title());
         return;
       }
       // Anything else is a transport failure (no network, backend restarting): the server was

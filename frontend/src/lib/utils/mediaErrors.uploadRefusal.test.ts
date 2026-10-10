@@ -15,9 +15,9 @@ const json = (status: number) =>
   new Response('{"message":"no"}', { status, headers: { 'Content-Type': 'application/json' } });
 
 describe('uploadRefusalFrom', () => {
-  it('marks an HTML answer as the gateway and keeps its page out of the message', async () => {
+  it('marks an HTML answer as the edge and keeps its page out of the message', async () => {
     const err = await uploadRefusalFrom(html(403), 'media upload failed');
-    expect(err.origin).toBe('gateway');
+    expect(err.origin).toBe('edge');
     expect(err.status).toBe(403);
     expect(err.message.length).toBeLessThan(200);
     expect(err.message).not.toContain('CrowdSec');
@@ -25,7 +25,7 @@ describe('uploadRefusalFrom', () => {
 
   it('keeps a short excerpt of the application own JSON answer', async () => {
     const err = await uploadRefusalFrom(json(422), 'media upload failed');
-    expect(err.origin).toBe('app');
+    expect(err.origin).toBe('gateway');
     expect(err.message).toContain('"message":"no"');
   });
 });
@@ -33,22 +33,22 @@ describe('uploadRefusalFrom', () => {
 describe('uploadRefusalCause', () => {
   it.each([
     [new MediaUploadError(413, 'x'), 'too-large'],
-    [new MediaUploadError(403, 'x', 'gateway'), 'blocked'],
-    [new MediaUploadError(404, 'x', 'gateway'), null],
-    [new MediaUploadError(400, 'x', 'gateway'), null],
-    [new MediaUploadError(502, 'x', 'gateway'), null],
+    [new MediaUploadError(403, 'x', 'edge'), 'blocked'],
+    [new MediaUploadError(404, 'x', 'edge'), null],
+    [new MediaUploadError(400, 'x', 'edge'), null],
+    [new MediaUploadError(502, 'x', 'edge'), null],
     [new MediaUploadError(409, 'x'), null],
     [new MediaUploadError(400, 'x'), 'refused'],
-    [new MediaUploadError(404, 'x', 'app', true), null],
+    [new MediaUploadError(404, 'x', 'gateway', true), null],
     [new MediaUploadError(403, 'x'), 'refused'],
     [new MediaUploadError(404, 'x'), 'refused'],
     [new MediaUploadError(422, 'x'), 'refused'],
     [new MediaUploadError(429, 'x'), null],
-    [new MediaUploadError(429, 'x', 'gateway'), null],
+    [new MediaUploadError(429, 'x', 'edge'), null],
     [new MediaUploadError(408, 'x'), null],
     [new MediaUploadError(401, 'x'), null],
     [new MediaUploadError(500, 'x'), null],
-    [new MediaUploadError(503, 'x', 'gateway'), null],
+    [new MediaUploadError(503, 'x', 'edge'), null],
     [new TypeError('Network request failed'), null],
     [new Error('403 Forbidden'), null],
   ])('%#', (err, cause) => {

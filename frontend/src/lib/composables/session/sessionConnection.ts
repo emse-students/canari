@@ -22,6 +22,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps, processDeviceInvitationsLocally } from './sessionAuth';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
+import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 
 /** Connection watchdog duration - same value as RECOVERY_TIMEOUT_MS. */
 const CONNECTION_WATCHDOG_MS = RECOVERY_TIMEOUT_MS;
@@ -183,6 +184,15 @@ export async function attemptReconnectImpl(
       cb.log('[AUTH] Session expired - redirecting to /login.');
       console.warn('[WS] Session expired, stopping reconnect loop');
       void goto(resolve('/login'), { replaceState: true });
+      return;
+    }
+    if (err instanceof IdentitySplitError) {
+      // NOT A FAILURE TO RETRY: the verdict stands until sign-out, so the ladder would knock on the
+      // gateway for ever with the same refusal. The blocking notice is the way out.
+      cb.log(
+        `[AUTH] IDENTITY SPLIT (token ${err.split.tokenSub} vs local ${err.split.localId}) - reconnect loop stopped until sign-out.`
+      );
+      console.error('[WS] Reconnect stopped: identity split');
       return;
     }
     cb.log(`Reconnection failed: ${String(err)}`);

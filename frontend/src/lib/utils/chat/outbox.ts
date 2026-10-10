@@ -18,6 +18,7 @@ import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { m } from '$lib/paraglide/messages';
+import { refusalStatus } from '$lib/utils/apiRefusal';
 import { uploadRefusalCause } from '$lib/utils/mediaErrors';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
@@ -25,7 +26,7 @@ import { recordEviction } from '$lib/utils/chat/eviction';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
-import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
+import { DeliveryUnreachableError, SendEdgeRefusedError } from '$lib/mls-client/mlsDeliveryApi';
 import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { clearAllUploads, clearUpload, patchUpload, setUploadRetry } from './uploadProgress.svelte';
 import {
@@ -236,6 +237,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * the trigger.
    */
   const transportHeld = new Set<string>();
+  /**
+   * Ids that were answered 403: parked, never re-posted by this controller. In memory on purpose -
+   * a restart earns ONE more attempt per entry (bounded), and a sign-in builds a new controller.
+   */
+  const forbiddenParked = new Set<string>();
+  /** Conversations already told (once) that the edge is blocking their sends. */
+  const edgeNoticed = new Set<string>();
   /** The subset armed by a reconnect: each id skips its backoff ONCE, then is forgotten. */
   const resuming = new Set<string>();
   /**
@@ -687,6 +695,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
     // Consumed here, whether or not the backoff was still running, so a stale arming cannot outlive
     // the reconnect it came from.
+    if (forbiddenParked.has(entry.id)) return 'skip';
     const resumed = resuming.delete(entry.id);
     if (!resumed && parked.has(entry.id)) return 'skip';
     parked.delete(entry.id);
@@ -897,6 +906,39 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         console.error(line);
         log(line);
         return failPermanently(entry, terminalId, refusal);
+      }
+      // A 403 IS AN ANSWER ABOUT THE CALLER, read from the TYPE (`SendForbiddenError` is an
+      // `ApiRefusalError`), and re-posting the same frame cannot change who the caller is. The
+      // ladder re-posted six entries 23 times on a bench phone whose token named another account
+      // (2026-10-10). The entry is KEPT - nothing the user wrote is lost, and it goes out after a
+      // sign-in - but it is PARKED for this controller's life (a new sign-in builds a new one), and
+      // the line accuses: the 403 is the visible end of an identity or authorization defect upstream.
+      // A 403 FROM THE EDGE (CrowdSec ban page, not the gateway's JSON) is about the NETWORK PATH,
+      // so it is not parked: a sign-in cannot lift it, the ban expiring does. It climbs the ladder
+      // on the backoff ladder (a reconnect does not lift it, so it is not `transport`), accuses, and tells the user ONCE per conversation.
+      if (e instanceof SendEdgeRefusedError) {
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with ${e.status} by the EDGE (not the gateway) in ${terminalId.slice(0, 8)}… - a WAF/proxy block on this network path; retrying on the ladder`;
+        console.error(line);
+        if (edgeNoticed.add(terminalId) && entry.kind !== 'control') {
+          await deps
+            .addMessageToChat?.('system', m.outbox_edge_blocked(), entry.conversationId, {
+              isSystem: true,
+            })
+            .catch((err: unknown) => log(`[OUTBOX] edge notice not posted: ${String(err)}`));
+        }
+        return holdForRetry(
+          entry,
+          (attempts) =>
+            `[OUTBOX] ${entry.id.slice(0, 8)}… held on an edge refusal (attempt ${attempts})`
+        );
+      }
+      if (refusalStatus(e) === 403) {
+        forbiddenParked.add(entry.id);
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with 403 in ${terminalId.slice(0, 8)}… - the caller is not allowed to send this; parked, no retry until the next sign-in`;
+        console.error(line);
+        log(line);
+        patchStatus(entry.id, 'pending');
+        return 'skip';
       }
       if (kind === 'evicted') {
         log(

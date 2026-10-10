@@ -12,6 +12,13 @@
 
 import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
+import {
+  IdentitySplitError,
+  checkTokenIdentity,
+  clearIdentitySplit,
+  getIdentitySplit,
+} from '$lib/stores/tokenIdentity.svelte';
+import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { OIDC_MOBILE_REDIRECT_URI } from '$lib/mobile/appSiteAssociation';
@@ -380,6 +387,9 @@ export async function handleOidcCallback(
   };
 
   console.debug('[auth] got access_token, saving user:', data.user?.id);
+  // A NEW SIGN-IN NAMES ITS OWN USER (saved just below), so a split latched for the previous
+  // identity is about somebody who is no longer here.
+  clearIdentitySplit();
   _accessToken = data.access_token;
   // The first credential of this session. On a cookie platform it arrived as a `Set-Cookie` and
   // there is nothing to do; where the cookie cannot live, this response body is the ONLY copy that
@@ -436,6 +446,14 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> 
     notifySessionExpired();
     throw new SessionExpiredError();
   }
+  // A STANDING IDENTITY SPLIT ANSWERS THIS TOO: the credential is alive but belongs to somebody
+  // else than the local state, and asking again would rotate it for the same verdict. Only a
+  // sign-out changes the answer.
+  const split = getIdentitySplit();
+  if (split) {
+    alog('refresh✗identity split (not asking again until sign-out)');
+    throw new IdentitySplitError(split);
+  }
   if (_pendingRefresh) return _pendingRefresh;
   _pendingRefresh = _doRefresh(fetchImpl).finally(() => {
     _pendingRefresh = null;
@@ -455,6 +473,9 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     `${coreUrl()}/api/auth/refresh` + `?clientVersion=${encodeURIComponent(getClientAppVersion())}`;
   alog(`refresh→ ${endpoint}`);
   const t0 = Date.now();
+  // WHO WAS SIGNED IN WHEN THIS ASKED: a sign-in completing while the request is in flight changes
+  // the local identity under it, and the answer is then about the PREVIOUS credential, not a split.
+  const localAtStart = currentUserId();
 
   // On a platform whose WebView can refuse the cookie, the credential is ours to carry. An EMPTY
   // store is not proof of no session though: `tauri://` is also the desktop origin, where the
@@ -508,8 +529,25 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   }
 
   const data = (await res.json()) as { access_token: string; refresh_token?: string };
-  _accessToken = data.access_token;
-  setWsSessionCookie(data.access_token);
+  // SUPERSEDED BY A SIGN-IN: the local identity changed while this was in flight (handleOidcCallback
+  // saved a different user). The response belongs to the old credential - comparing it to the NEW
+  // identity would latch a false split and lock out the person who just signed in, and persisting its
+  // rotation would overwrite the new session's credential. It is dropped, and the new token stands.
+  if (localAtStart && currentUserId() !== localAtStart && _accessToken) {
+    alog('refresh✗superseded by a sign-in as another account - stale answer dropped');
+    return _accessToken;
+  }
+  // WHOSE TOKEN IS THIS? Compared with the local/MLS identity BEFORE it is published anywhere: a
+  // token for another account must never reach the socket cookie, or the gateway registers this
+  // device's id under it (measured 2026-10-10, see `tokenIdentity.svelte.ts`).
+  const identityOk = checkTokenIdentity(data.access_token, currentUserId());
+  if (identityOk) {
+    _accessToken = data.access_token;
+    setWsSessionCookie(data.access_token);
+  } else {
+    _accessToken = null;
+    clearWsSessionCookie();
+  }
   // The credential ROTATED. Where we carry it ourselves, the new value must be on disk before this
   // function returns: the server will refuse the old one from now on, and 60 s later will read it as
   // a REPLAY and delete the session row. A server that answered 200 without one would leave this
@@ -536,25 +574,21 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   // The session answered AND rotated, so both the verdict and the latch are void.
   noteRefreshCredentialAlive();
 
+  // The rotation above is persisted whatever the verdict, so the sign-out that follows a split can
+  // still revoke the session. Nothing else of a foreign token is applied.
+  const split = getIdentitySplit();
+  if (!identityOk && split) throw new IdentitySplitError(split);
+
   // Decode claims from the new JWT and keep reactive state in sync.
   let tokenExp: number | null = null;
-  try {
-    const payload = data.access_token.split('.')[1];
-    if (payload) {
-      const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as {
-        sub?: string;
-        admin?: boolean;
-        exp?: number;
-      };
-      setGlobalAdmin(!!decoded.admin);
-      tokenExp = decoded.exp ?? null;
-      // Restore userId if localStorage was cleared (e.g., Android process kill).
-      if (decoded.sub && !currentUserId()) {
-        saveUserLocally({ id: decoded.sub, admin: !!decoded.admin });
-      }
+  const decoded = decodeTokenClaims(data.access_token);
+  if (decoded) {
+    setGlobalAdmin(!!decoded.admin);
+    tokenExp = decoded.exp ?? null;
+    // Restore userId if localStorage was cleared (e.g., Android process kill).
+    if (decoded.sub && !currentUserId()) {
+      saveUserLocally({ id: decoded.sub, admin: !!decoded.admin });
     }
-  } catch {
-    /* ignore malformed token */
   }
 
   const expIn = tokenExp ? tokenExp - Math.floor(Date.now() / 1000) : null;
@@ -564,15 +598,8 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
 
 /** Decode the `exp` claim from a JWT without verifying the signature. */
 function jwtExpiresAt(token: string): number | null {
-  try {
-    const payload = token.split('.')[1];
-    if (!payload) return null;
-    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
-    const { exp } = JSON.parse(json) as { exp?: number };
-    return typeof exp === 'number' ? exp : null;
-  } catch {
-    return null;
-  }
+  const exp = decodeTokenClaims(token)?.exp;
+  return typeof exp === 'number' ? exp : null;
 }
 
 /**
@@ -610,6 +637,7 @@ export async function clearAuth(): Promise<void> {
   alog('clear');
   _accessToken = null;
   clearWsSessionCookie();
+  clearIdentitySplit();
   // Drop persisted message ACKs so a next user on this tab can't ACK the previous user's ids.
   clearPersistedPendingAcks();
   // Tell the backend to REVOKE the session row - the cookie is the least of it. The credential has
