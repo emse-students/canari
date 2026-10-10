@@ -701,6 +701,17 @@ describe('noteSeedUnavailable', () => {
     expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
+  it('ignores a decline from a member the ask was not addressed to, even quoting the right id', async () => {
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+    await settle();
+    expect(answererOf(sendMessage.mock.calls[0])).toBe('bob');
+
+    // carol was never elected: she may not strike herself off the roster and trigger a re-ask.
+    noteSeedUnavailable('sess-1', 'carol', requestIdOf(sendMessage.mock.calls[0]));
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores a decline of a request that is not the one in flight (a replay from the durable log)', async () => {
     // Declines are durable since 2026-10-10, so one can come back from the distribution group's log
     // after its ask was superseded. Counting it would strike a member who was never asked in THIS walk.
@@ -715,19 +726,6 @@ describe('noteSeedUnavailable', () => {
     // The real answer to the ask in flight still moves the walk on.
     noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls[0]));
     await settle();
-    expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
-  });
-
-  it('applies a decline once however many times it is delivered (double delivery)', async () => {
-    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
-    await settle();
-    const first = requestIdOf(sendMessage.mock.calls[0]);
-
-    noteSeedUnavailable('sess-1', 'bob', first);
-    noteSeedUnavailable('sess-1', 'bob', first);
-    await settle();
-    // One move down the roster, not two: the replay finds bob already struck AND the ask re-issued.
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
   });

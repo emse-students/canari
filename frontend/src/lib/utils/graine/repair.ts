@@ -142,14 +142,14 @@ const historyParked = new Map<string, () => void>();
 const askedOn = new Map<string, { groupId: string; epoch: number }>();
 
 /**
- * Per session, the id of the request currently outstanding for it.
+ * Per session, the id of the request currently outstanding for it AND the member it was addressed to.
  *
  * A decline is durable (it travels as key material), so it can be replayed from the distribution
  * group's log - possibly after the ask it answered was superseded by a newer one for the same
  * session. Counting it against the newer ask would strike a member who was never asked in this walk.
  * The request id is the durable fact that says WHICH ask a decline belongs to; no clock is involved.
  */
-const askedRequest = new Map<string, string>();
+const askedRequest = new Map<string, { requestId: string; answerer: string }>();
 
 /**
  * Requests not sent because their key group was behind its epoch, by group, then channel.
@@ -445,7 +445,9 @@ async function requestSeedsForChannel(
       })
     );
     // Recorded BEFORE the send: the answer may land before `sendMessage` resolves.
-    sessionIds.forEach((id) => askedRequest.set(id, requestId));
+    sessionIds.forEach((id) =>
+      askedRequest.set(id, { requestId, answerer: answerer.toLowerCase() })
+    );
     // Transport, never durable: a request restates state held elsewhere, so replaying it from the
     // shared log would be circular - and that log is capped per group, so writing requests into it
     // would evict the seeds it exists to carry.
@@ -804,7 +806,8 @@ export function forgetAskedSession(sessionId: string): void {
  *
  * @param sessionId Session the answerer turned out not to hold.
  * @param answerer Who declined, lower-cased by the caller or here.
- * @param requestId The request the declining bundle answers. A decline of any OTHER request (replayed
+ * @param requestId The request the declining bundle answers, which must also have been ADDRESSED to
+ *   `answerer`. A decline of any OTHER request (replayed
  *   from the log, or answering an ask since superseded) is ignored: the walk counts answers to the
  *   ask in flight, not every "no" ever said.
  */
@@ -816,9 +819,16 @@ export function noteSeedUnavailable(sessionId: string, answerer: string, request
     return;
   }
 
-  if (askedRequest.get(sessionId) !== requestId) {
+  const inFlight = askedRequest.get(sessionId);
+  // The id AND the elected member: a member the ask was not addressed to has no standing to strike
+  // itself off the roster, whatever id it quotes.
+  if (
+    !inFlight ||
+    inFlight.requestId !== requestId ||
+    inFlight.answerer !== answerer.toLowerCase()
+  ) {
     console.debug(
-      `[GRAINE] ignoring a decline of session ${sessionId} from ${answerer}: it answers request ${requestId || '(none)'}, not the one in flight`
+      `[GRAINE] ignoring a decline of session ${sessionId} from ${answerer}: it answers request ${requestId || '(none)'}, not the one in flight${inFlight ? ` (addressed to ${inFlight.answerer})` : ''}`
     );
     return;
   }

@@ -29,6 +29,19 @@ import {
  * `sentCount` that decides the next message index and the 100-message rotation.
  */
 
+// The real walk, observed: the id the bundle quotes must reach it, or a decline never advances it.
+const noteSeedUnavailableSpy = vi.fn();
+vi.mock('./repair', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./repair')>();
+  return {
+    ...actual,
+    noteSeedUnavailable: (...args: Parameters<typeof actual.noteSeedUnavailable>) => {
+      noteSeedUnavailableSpy(...args);
+      return actual.noteSeedUnavailable(...args);
+    },
+  };
+});
+
 vi.mock('./graineMirror', () => ({ mirrorGraineSeed: vi.fn().mockResolvedValue(undefined) }));
 
 /** Where each session becomes readable for the asker - computed by the server, never here. */
@@ -640,6 +653,31 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.keyMaterial);
     expect(sendMessage.mock.calls[0][3].durable).toBe(true);
     warn.mockRestore();
+  });
+
+  it('hands the request id of an inbound decline to the repair walk', async () => {
+    const { storage } = fakeStorage();
+    wireWithMls(storage);
+    noteSeedUnavailableSpy.mockClear();
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'bob',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({
+          workspaceId: 'ws-1',
+          requestId: 'r-7',
+          seeds: [],
+          missingSessionIds: ['sess-9'],
+          truncated: false,
+        })
+      ),
+    });
+
+    // Dropping or emptying the id here would make every decline a no-op in the walk.
+    expect(noteSeedUnavailableSpy).toHaveBeenCalledWith('sess-9', 'bob', 'r-7');
   });
 
   it('says which sessions it does not hold, rather than answering an empty hand with silence', async () => {
