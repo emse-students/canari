@@ -252,3 +252,28 @@ Needs a code look: R1 (a refused upload must end in an explicit state, the stall
 only signal) and R2 (a 293 KB file never completes while text goes through; check whether the
 cancel of the earlier upload leaves the outbox stuck, and why the outbox is polled every second).
 The sticky pill, R4, wants a conversation with a few screens of messages.
+
+## Readings of `v1.2.3-alpha.2` on the bench Mi 9T (2026-10-10)
+
+Run 38050133374, release APK (`versionName` 1.2.3), `pm clear`, then `login.mjs` / `pin.mjs` as `fourth`
+on `dev.canari-emse.fr`, one-member group room `BenchR1` (it survived the clear: the server still held it).
+
+| Reading | Verdict | Evidence |
+| --- | --- | --- |
+| R1 2.2 MB attachment, 413 then terminal FAILED | **NOT-DONE** (harness) | The file never reached the network. `DOM.setFileInputFiles` on the phone answers `NotReadableError` for `/sdcard/Download` files (mode `rw-rw----`, owner shell) and for world-readable files under `/sdcard/Android/data/fr.emse.canari/files/` alike; granting `READ_MEDIA_*` and the all-files appop changed nothing (the grant also kills the app process, so the CDP forward must be re-pointed). The 413 path was therefore not exercised. Console: `[MEDIA] send failed (status=none), 1 file(s) re-staged: NotReadableError`. |
+| R2 300 KB then text | **NOT-DONE** (same cause) | Same `NotReadableError`. The text, typed apart from the file, went through (`[OUTBOX] ... sent`); the outbox was NOT polled once a second (a handful of `SELECT * FROM outbox` per send, 14 in 5 minutes). |
+| R3 reply to a failed attachment | **NOT-DONE** | Needs R1/R2 staging. |
+
+Incidental, from the failed staging (a real product signal, not the harness): when the file cannot
+be READ, the bubble reads "En attente de connexion - nouvel essai automatique" and the composer says
+"Echec de l'envoi du media. Reessayez dans un instant." while the file is re-staged. That is a
+local read error shown as a connectivity wait: no network request is made, the retry button
+("Reessayer maintenant") does nothing visible (two presses, 20 s and 60 s watched, no
+`reqwest` connection in logcat), and nothing ever turns terminal. After a re-send, earlier bubbles
+stay (one `b2m.bin` showed a spinner with "0 o"). A staging read failure should end in a terminal
+state with its own message.
+
+Rig lessons: `login.mjs` against a stale `adb forward` on 9334 (Jelly, the phone's browser, not
+Chrome, owns the Custom Tab) fails with "never rendered a credential form" or "no submit button";
+`adb forward --remove-all`, `pm clear org.lineageos.jelly`, then login works. Git Bash rewrites
+`/sdcard` paths: use `MSYS_NO_PATHCONV=1`.
