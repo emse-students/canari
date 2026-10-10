@@ -373,6 +373,8 @@ jobs:
       # premise does not grant the ignore.
       - name: The premises behind media-service's ignores
         if: ${{ !cancelled() && matrix.tree == 'apps/media-service' }}
+        env:
+          AUDIT_FLAGS: ${{ matrix.audit }}
         run: |
           set -uo pipefail
           failed=""
@@ -420,6 +422,23 @@ jobs:
             else
               echo "    media-service calls no minio notification API; leg two holds."
             fi
+          fi
+
+          # THE RETIREMENT, ASSERTED INSTEAD OF POLLED. The audit run WITHOUT the ignores must still
+          # report every id the matrix suppresses (read from `matrix.audit`, so the list is never
+          # copied here); one that it does not report has retired itself - minio moved - and the
+          # ignore is dead weight to delete. It replaces a dated hand re-check of the registry.
+          echo "--- every ignored advisory is still reported"
+          ignored=$(printf '%s\n' "$AUDIT_FLAGS" | grep -oE -- '--ignore=GHSA-[a-z0-9-]+' | sed 's/^--ignore=//' || true)
+          unignored=$(mktemp)
+          # Through the same script as the audit above, so a registry that did not answer is told
+          # apart from one that answered "nothing": only the second can retire an ignore.
+          .github/scripts/audit-dependencies.sh apps/media-service --audit-level=moderate >"$unignored" 2>&1 || true
+          if grep -q 'was NOT audited' "$unignored"; then
+            echo "    the advisory endpoint did not answer; the audit step above carries that verdict, and nothing is concluded about the ignores."
+          # shellcheck disable=SC2086
+          elif ! bash .github/scripts/ignored-advisories-still-reported.sh "$unignored" $ignored; then
+            failed="$failed media-service(ignores-retired)"
           fi
 
           if [ -n "$failed" ]; then

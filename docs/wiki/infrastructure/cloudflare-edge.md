@@ -463,18 +463,22 @@ disk, no backup job and no host event can be common to both. What IS common: `10
 `00:0d:b4` is Stormshield. It is the School's border firewall, and it is the only element both
 paths cross.
 
-**So the cause is upstream of this repository and the remediation is a conversation, not a commit**:
-what is scheduled on `fw-ste.emse.fr` between 22h and 23h. That firewall is outside the documented
-access scope here, no attempt was made to authenticate against it, and that decision stands.
+**So the cause is upstream of this repository and not a commit.** The firewall is outside the documented
+access scope here, no attempt was made to authenticate against it, and nobody is asked (user,
+2026-10-10: no request goes to the School's services).
 
-What is still open - and the two instruments left running to settle it - is in
-[backlog](../backlog.md#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11).
+**Re-measured 2026-10-10, after the cutover: the band did not recur.** The tunnel connector is on the OLD
+VM (`ssh canari`, `systemctl is-active cloudflared` = active; the Portail-etu host runs none, so the
+question "does that host see the drop" has no object). `journalctl -u cloudflared --since "7 days ago"`
+holds 122 timeout lines, none at 22h-23h CEST: they cluster in two short episodes, 2026-10-07 08:31 and
+2026-10-08 19:14-19:18 (`Failed to dial a quic connection ... timeout`), against 175 lines all in the 22h
+band in the seven days of 2026-09-11. Re-read the same two commands if a 1033 is reported at night.
 
 ### Two refuted explanations, and the egress probe
 
 **Do not re-open either refuted hypothesis.** (1) A Proxmox `vzdump` freezing the container: both journals carried entries for every minute of the window, and the ledger gap was the probe's own `AbortSignal.timeout` - a gap in a ledger is evidence about its WRITER before it is evidence about the world ([durable-rules](../durable-rules.md)). (2) "The whole campus loses the network every evening": zero events on 09-05, 09-06 and 09-07.
 
-**The egress half.** `UpstreamUnreachableError` and `OUTBOUND_BUDGET_MS` are shipped; whether such stalls are CORRELATED across boxes is read from [`infrastructure/egress-probe/`](../../../infrastructure/egress-probe/README.md), armed in the `canari` crontab - which since the 2026-09-24 cutover is the old VM, running no container. The two netwatch witnesses stopped themselves on 2026-09-12 and nothing records that their ledgers were read. The open measurement (whether the Portail-etu host sees the same 22h-23h drop) is in [backlog](../backlog.md#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11).
+**The egress half.** `UpstreamUnreachableError` and `OUTBOUND_BUDGET_MS` are shipped; whether such stalls are CORRELATED across boxes is read from [`infrastructure/egress-probe/`](../../../infrastructure/egress-probe/README.md), armed in the `canari` crontab - which since the 2026-09-24 cutover is the old VM, running no container. The two netwatch witnesses stopped themselves on 2026-09-12 and nothing records that their ledgers were read.
 
 ## A request body over 1 MiB is refused with a 413 on the legacy names - IT IS THE RELAY'S NGINX, NOT CLOUDFLARE (measured 2026-10-07, cause found 2026-10-09)
 

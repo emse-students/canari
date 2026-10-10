@@ -235,6 +235,27 @@ else
   fail "only $n of 4 findings were reported - a run that stops at the first sends you back tomorrow"
 fi
 
+printf '\na box whose apt policy belongs to ITS ADMINISTRATORS is judged on our questions only\n'
+# ═════════════════════════════════════════════════════════════════════════════
+# The Portail-etu host (2026-10-10): the School's policy allows full stable and packagecloud, and
+# its log is unreadable to the runner. Both were red for ever, on facts nobody here may change.
+# shellcheck disable=SC2016  # APT's own placeholder, literal on purpose
+WIDE='origin=Debian,codename=${distro_codename},label=Debian|site=packagecloud.io'
+f="$(facts_for "origins=$WIDE" 'last_outcome=unreadable' 'last_run_epoch=0')"
+if [ "$(POLICY_OWNER=canari verdict "$f")" = "1" ] && [ "$(POLICY_OWNER=host-admins verdict "$f")" = "0" ]; then
+  pass "a wide origin list and an unreadable log accuse OUR box and are only reported on a host-admins one"
+else
+  fail "POLICY_OWNER did not separate the two policies"
+fi
+
+# What stays OUR question under host-admins: a security update that is pending, a timer that never ran.
+f="$(facts_for "origins=$WIDE" 'last_outcome=unreadable' 'last_run_epoch=0' 'pending_security=3' 'trigger_epoch=0')"
+if [ "$(POLICY_OWNER=host-admins verdict "$f")" = "1" ]; then
+  pass "a host-admins box with a pending security update and a timer that never ran is still a finding"
+else
+  fail "POLICY_OWNER=host-admins silenced a finding that is not about the policy"
+fi
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

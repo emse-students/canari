@@ -106,7 +106,13 @@ jobs:
       # on 2026-09-03 - it grants nothing an account already in `sudo` and `docker` did not have,
       # and without it the script's ERROR arm is blind. Losing the group again is itself reported,
       # rather than making the check quietly stop working.
+      # THIS RUNNER'S HOST IS THE SHARED ONE, whose unattended-upgrades policy is its
+      # administrators' (full stable, packagecloud, an automatic 02:00 reboot, a log the runner
+      # cannot read) and is not ours to change: the report judges what is OUR question there
+      # (timer ran, nothing security pending, no reboot owed) and only prints the policy.
       - name: Read the host and judge it
+        env:
+          POLICY_OWNER: host-admins
         run: bash infrastructure/deploy/host-update-report.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
