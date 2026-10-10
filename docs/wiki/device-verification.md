@@ -570,12 +570,7 @@ been run. To re-arm the precondition - it is NOT ambient, and a run made without
    which is the whole reason this re-measurement sat unmade for a week. It performs steps 1-3 itself
    and asserts each, so the only human part is the reply.
 
-   **AND THE BACKGROUNDED CASE CANNOT BE ANSWERED YET, for a reason found on 2026-09-06**: the JS
-   layer posts the notification when the app is alive, and it attaches NO quick actions - only
-   `CanariFirebaseMessagingService` does, and that runs when the app is dead. So the shade offers no
-   `Repondre` in the state this check is about. Filed as a P2 in [backlog](backlog.md); `k.mjs`
-   records `SKIPPED` rather than `FAIL` when no reply is made, so a run cannot be mistaken for a
-   product verdict.
+   **The backgrounded case CAN be answered since 2026-09-18**: the WebSocket trigger posts through the same Kotlin builder, so the shade carries `Repondre` there too ([mobile](frontend/mobile.md#notification-quick-actions-are-on-every-android-message-notification-whoever-posts-it-resolved-2026-09-18-audited-2026-10-10)). `k.mjs` still records `SKIPPED` rather than `FAIL` when no reply is made, so a run cannot be mistaken for a product verdict.
 5. **Verdict lines:** `retrievePushSecret: newer secret adopted from pending_push_secret.txt -> Keystore`,
    then `sendQueuedMessagePush: HTTP 201`, then `1 sent, 0 remaining`. A `403` means the fix is
    wrong, not that the rig is.
