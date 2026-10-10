@@ -814,7 +814,17 @@ The Canari half is done; `../MiGallery/oxvelte.config.json` still disables `svel
 
 ### P2 - NO REFUSAL CAN BE TOLD FROM ANOTHER, BECAUSE ONLY SOME ENDPOINTS CLASSIFY AT THE THROW
 
-The English-on-a-French-screen sweep is finished ([durable-rules](durable-rules.md), [social-service](services/social-service.md)). **Owed:** a code at the THROW, per endpoint, most-used screens first, for the refusals a user can act on (model: `DEVICE_REVOKED`, `PARTNERSHIP_NO_CODES_LEFT`). One site cannot close alone: `sessionAuth.ts` compares against `MLS_LOCAL_STATE_UNDECRYPTABLE`, which collapses `sealed` and `unknown`; it closes with the damaged-MLS-state P1, and its allowlist entry in `serverProse.test.ts` fails the day the site stops offending.
+The English-on-a-French-screen sweep is finished ([durable-rules](durable-rules.md), [social-service](services/social-service.md)).
+**Done 2026-10-10:** `SocialApiError` extends `ApiRefusalError` (so `refusalStatus`/`refusalCode` read it),
+and every refused call of `forms/api.ts` and every bare-`fetch` upload, export and provider lookup of
+`associations/api.ts` throws it with the status and the code (`refusal`, `socialRefusal`).
+**Still owed, per endpoint, most-used screens first:** the plain `throw new Error('... failed')` sites of
+`minesweeper/api.ts`, `mls/groupInvites.ts`, `mls-client/mlsDeliveryApi.ts` (key package publish, device
+update, commit submission), `adminerSession.ts`, `vaultDownload.ts`, then the codes themselves (a stable
+name per refusal a user can act on; model: `DEVICE_REVOKED`, `PARTNERSHIP_NO_CODES_LEFT`). One site cannot
+close alone: `sessionAuth.ts` compares against `MLS_LOCAL_STATE_UNDECRYPTABLE`, which collapses `sealed`
+and `unknown`; it closes with the damaged-MLS-state P1, and its allowlist entry in `serverProse.test.ts`
+fails the day the site stops offending.
 
 ## Infrastructure
 

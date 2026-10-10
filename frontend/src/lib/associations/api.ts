@@ -7,6 +7,7 @@ import {
   setEventValidator,
 } from '$lib/stores/userState.svelte';
 import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
@@ -395,58 +396,62 @@ export function associationLogoSrc(logoUrl: string | null | undefined): string |
  * therefore treat an unknown or absent code as "something went wrong" in its own language, never
  * by falling back to printing `message`.
  */
-export class SocialApiError extends Error {
-  constructor(
-    message: string,
-    readonly code: string | null,
-    /**
-     * The HTTP status the refusal carried.
-     *
-     * IT IS REQUIRED, BECAUSE IT WAS THROWN AWAY AND THAT COST A SCREEN ITS ONLY DISCRIMINATOR.
-     * `code` is null for most refusals - a guard's bare `ForbiddenException` carries none - so a
-     * caller holding one of these could not tell "you are not allowed" from "the server broke"
-     * from "the date is wrong", and every one of them read as the same generic line. The status is
-     * the coarse answer that is always present; the code is the precise one that usually is not.
-     * See {@link describeApiRefusal} for the sentence each becomes.
-     */
-    readonly status: number
-  ) {
-    super(message);
+export class SocialApiError extends ApiRefusalError {
+  /**
+   * `status` IS REQUIRED, BECAUSE IT WAS THROWN AWAY AND THAT COST A SCREEN ITS ONLY DISCRIMINATOR.
+   * `code` is null for most refusals - a guard's bare `ForbiddenException` carries none - so a
+   * caller holding one of these could not tell "you are not allowed" from "the server broke"
+   * from "the date is wrong", and every one of them read as the same generic line. The status is
+   * the coarse answer that is always present; the code is the precise one that usually is not.
+   * See {@link describeApiRefusal} for the sentence each becomes. Extending {@link ApiRefusalError}
+   * is what lets `refusalStatus` / `refusalCode` read it without importing this module.
+   */
+  constructor(message: string, code: string | null, status: number) {
+    super(status, code, message);
     this.name = 'SocialApiError';
   }
+}
+
+/**
+ * Types a refused response at the THROW: the status always, the server's `code` when its JSON body
+ * carries one. Every non-`request` call here (multipart uploads through a bare `fetch`, the xlsx
+ * export, the provider lookup) threw `new Error('... ' + res.status)` instead, which spelt the
+ * number into a sentence nobody could read back - so a refused logo upload and a refused card icon
+ * were indistinguishable from a dead network. Use it as `throw await socialRefusal(res)`.
+ */
+export async function socialRefusal(res: Response): Promise<SocialApiError> {
+  const raw = await res.text().catch(() => '');
+  let message = raw || res.statusText;
+  let code: string | null = null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'message' in parsed &&
+      typeof (parsed as Record<string, unknown>).message === 'string'
+    ) {
+      message = (parsed as Record<string, string>).message;
+    }
+    // Nest serialises `throw new XException({ code, message })` as the body itself, so the code
+    // sits beside the message rather than under an envelope.
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof (parsed as Record<string, unknown>).code === 'string'
+    ) {
+      code = (parsed as Record<string, string>).code;
+    }
+  } catch {
+    // Ignore JSON parse failure: message is the raw error text and there is no code to read
+  }
+  return new SocialApiError(message, code, res.status);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const base = socialUrl();
   const res = await apiFetch(`${base}${path}`, init as any);
-  if (!res.ok) {
-    const raw = await res.text().catch(() => '');
-    let message = raw || res.statusText;
-    let code: string | null = null;
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        'message' in parsed &&
-        typeof (parsed as Record<string, unknown>).message === 'string'
-      ) {
-        message = (parsed as Record<string, string>).message;
-      }
-      // Nest serialises `throw new XException({ code, message })` as the body itself, so the code
-      // sits beside the message rather than under an envelope.
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        typeof (parsed as Record<string, unknown>).code === 'string'
-      ) {
-        code = (parsed as Record<string, string>).code;
-      }
-    } catch {
-      // Ignore JSON parse failure: message is the raw error text and there is no code to read
-    }
-    throw new SocialApiError(message, code, res.status);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   // A successful response is not always JSON: DELETEs and void POSTs answer 204, or 200 with an
   // empty body. `res.json()` on those throws "unexpected end of data", turning a call that WORKED
   // into a visible error - and, worse, skipping whatever the caller does after it (a revoked
@@ -762,10 +767,7 @@ export async function uploadCalendarEventImage(
     `${base}/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/image`,
     { method: 'POST', headers, body: fd }
   );
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`upload ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   return (await res.json()) as AssociationCalendarEvent;
 }
 
@@ -1107,10 +1109,7 @@ export async function uploadAssociationLogo(
       body: fd,
     }
   );
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`associations ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   invalidateAssociationDirectory();
   return (await res.json()) as Association;
 }
@@ -1642,9 +1641,7 @@ export async function grantCotisant(
  */
 async function downloadXlsxFromApi(path: string, fallbackName: string): Promise<void> {
   const res = await apiFetch(`${socialUrl()}${path}`);
-  if (!res.ok) {
-    throw new Error(`Failed to export (${res.status})`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   const blob = await res.blob();
   const disposition = res.headers.get('Content-Disposition') ?? '';
   const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
@@ -2082,10 +2079,7 @@ export async function uploadProductIcon(
     `${base}/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/icon`,
     { method: 'POST', headers, body: fd }
   );
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`associations ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   return (await res.json()) as AssociationProduct;
 }
 
@@ -2271,10 +2265,7 @@ export type PaymentProviderId = 'lydia' | 'disabled';
 export async function fetchActivePaymentProvider(): Promise<PaymentProviderId> {
   const base = coreUrl();
   const res = await apiFetch(`${base}/api/payments/provider`);
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`provider ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   const data = (await res.json()) as { provider: PaymentProviderId };
   return data.provider;
 }
@@ -2685,10 +2676,7 @@ export async function uploadPartnershipIcon(
     `${base}/api/associations/${encodeURIComponent(associationId)}/partnerships/${encodeURIComponent(cardId)}/icon`,
     { method: 'POST', headers, body: fd }
   );
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`associations ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   return (await res.json()) as PartnershipCard;
 }
 
