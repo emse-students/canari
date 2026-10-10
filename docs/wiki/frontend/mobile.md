@@ -1543,8 +1543,8 @@ listed six French channels and one called "Default" (measured 2026-09-23). Nothi
 `sendNotification` goes through `androidNotificationOptions`, asserted by `notificationChannels.test.ts`
 - so `CanariApplication.removePluginDefaultChannel`, called from `MainActivity.onResume`, deletes it:
 not from `Application.onCreate`, which runs BEFORE the plugin's load creates the channel. This was
-written and checked by the test, NOT compiled or run on a device from here; the reading owed is on
-[the backlog](../backlog.md#owed-a-verification-and-nothing-else).
+written and checked by the test; **READ on the Mi 9T on `v1.2.2` (2026-10-10, `dumpsys notification`): `default`
+is `mDeleted=true` under `fr.emse.canari`, the six Canari channels remain, the APK carrying it compiled in CI.**
 
 **iOS's quick-action titles are the one native string that CAN follow a language change**, and they
 do. `setNotificationCategories` REPLACES the whole category set, where an Android channel is written

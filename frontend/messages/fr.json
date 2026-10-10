@@ -3448,5 +3448,26 @@
         "countPlural=other": "{count} membres"
       }
     }
+  ],
+  "profile_hub_label": "Sections du profil",
+  "profile_hub_associations_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} association",
+        "countPlural=other": "{count} associations"
+      }
+    }
+  ],
+  "profile_hub_career_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} rôle",
+        "countPlural=other": "{count} rôles"
+      }
+    }
   ]
 }

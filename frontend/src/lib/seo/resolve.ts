@@ -1,4 +1,9 @@
 import { parseSettingsSection, settingsSectionLabel } from '$lib/settings/settingsSections';
+import {
+  PROFILE_SELF_SEGMENT,
+  parseProfileSection,
+  profileSectionLabel,
+} from '$lib/profile/profileSections';
 import { m } from '$lib/paraglide/messages';
 import { wordingFor } from '$lib/associations/kindWording';
 import { PUBLIC_SECTIONS } from '$lib/associations/publicSections';
@@ -206,6 +211,15 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
     : null;
   if (settingsSection) {
     return appPageSeo(path, settingsSectionLabel(settingsSection));
+  }
+
+  // A profile section (`/profile/me/<section>`) is a page of its own, named for what it holds.
+  const profilePrefix = `/profile/${PROFILE_SELF_SEGMENT}/`;
+  const profileSection = path.startsWith(profilePrefix)
+    ? parseProfileSection(path.slice(profilePrefix.length))
+    : null;
+  if (profileSection) {
+    return appPageSeo(path, profileSectionLabel(profileSection));
   }
 
   const pageTitle = PAGE_TITLES[path];
