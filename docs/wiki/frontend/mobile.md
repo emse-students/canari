@@ -284,7 +284,7 @@ so keeps nginx's 1 MiB default. **So stable builds are unaffected; every pre-rel
 through the cap.** The secret values themselves cannot be read; this is inferred from the classifier and the
 measured answers. Removing the cap is a relay edit and not done here. In the meantime
 `fetchWithAnswerDeadline` (`utils/uploadDeadline.ts`, used by `fetchUpload`) aborts an upload nobody answers
-after `30 s + bytes / 16 KiB/s` and throws `UploadAnswerTimeoutError` (`mediaErrors.ts`), classified by type.
+after `30 s + bytes / 16 KiB/s` and throws the ONE `UploadAnswerTimeoutError` (`uploadXhr.ts`, a `RequestDeadlineError`, the same type the XHR path raises), so `isTransportFailure` reads it by type and the UI shows the existing unreachable text (`auth_server_unreachable`); no second error type exists.
 
 **Not verified, and why.** (1) The iPhone: nothing was run (the installed build has no inspectable page, see
 [section 9.5](../services/media-streaming-upload.md)). The WKWebView sends `Origin: tauri://localhost`, which
