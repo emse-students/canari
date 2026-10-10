@@ -40,14 +40,6 @@ BUILT (#1582, #1584, #1593, #1606, #1608, [profiles-and-access](profiles-and-acc
 
 ## Cloudflare, Stripe and the staff feed (2026-10-07/08)
 
-### P1 - an upload over 1 MiB is refused with a 413 on `dev.canari-emse.fr` and `canari-emse.fr` - the relay's nginx, one line (cause found 2026-10-09)
-
-NOT a Cloudflare rule: the 413 page body is nginx's, and both relay files on the old VM lack
-`client_max_body_size` (default 1m). Measurement, the two lines to add and the verification are on
-[cloudflare-edge](infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names---it-is-the-relays-nginx-not-cloudflare-measured-2026-10-07-cause-found-2026-10-09).
-**Owed: the gesture on `ssh canari` (the owed table).** Done when a 1.2 MB and a 20 MB upload reach
-`media-service` on both legacy names. Not an app change: chunking under 1 MiB is rejected there.
-
 ### P3 - Stripe's leftover names: columns, permission flag, routes, deep-link host
 
 Stripe itself is gone (#1589, [stripe-archive](stripe-archive.md), which lists each name kept for
@@ -121,11 +113,10 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **add `client_max_body_size 100m;` and `proxy_request_buffering off;` to the `server` block of `/etc/nginx/sites-enabled/canari-relay-prod.conf` and `canari-relay-dev.conf` on `ssh canari`, then `sudo nginx -t && sudo systemctl reload nginx`** (the 1 MiB 413 is the relay's nginx default, not Cloudflare) | 1 ssh gesture, 2 lines | [the P1 above](#p1---an-upload-over-1-mib-is-refused-with-a-413-on-devcanari-emsefr-and-canari-emsefr---the-relays-nginx-one-line-cause-found-2026-10-09) |
+| **add `client_max_body_size 100m;` and `proxy_request_buffering off;` to the `server` block of `/etc/nginx/sites-enabled/canari-relay-prod.conf` and `canari-relay-dev.conf` on `ssh canari`, then `sudo nginx -t && sudo systemctl reload nginx`** (the 413 over 1 MiB on `dev.canari-emse.fr` and `canari-emse.fr` is the relay's nginx default, NOT Cloudflare, whose body limit is 100 MB; the app already sends under 8 MiB per request since #1706/#1708/#1710 and chunking under 1 MiB is not an option). Done when a 1.2 MB and a 20 MB upload reach `media-service` on both legacy names | 1 ssh gesture, 2 lines | [cloudflare-edge](infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names---it-is-the-relays-nginx-not-cloudflare-measured-2026-10-07-cause-found-2026-10-09) |
 | **upload the APNs authentication key in the DEVELOPMENT slot of Firebase** (2 minutes): Firebase Console > Project settings > Cloud Messaging > the iOS app `fr.emse.canari` > APNs authentication key - the same `.p8` (Key ID + Team ID) already in the Production slot. The agent then resends the test DM | click | [the iOS push rows](#owed-a-verification-and-nothing-else) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** The Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so no agent can create a project. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [the second package id](#p3---a-second-package-id-so-a-pre-release-can-be-measured-against-production-decided-2026-09-15) |
-| **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together, always in that band; the firewall is outside the access scope here | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
 | **create the new Cloudflare tunnel on the `rootz-emse.fr` zone.** The project's token answers 200 with an EMPTY list on `cfd_tunnel` and 403 on Access groups, so tunnels are out of its scope. (verify: phase 1 completed for all three estates on 2026-09-24 without it - whether this tunnel is still wanted at all) | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
 | **the spaces release order (WP6b), three gestures in THIS order**: (1) go for the WP3 profile backfill on production once 6a/6d's release ran migration 071 (`backfill-canari-profiles.sh apply`); (2) set every association's real reach and the BDEs at `/admin/spaces` - the seed gave all of them (ICM, saint-etienne) only; (3) only then cut the release carrying 6b. Out of order, ISMIN/Gardanne/FSSS/Autre readers see no existing association post, and anyone not backfilled loses the feed | 1 go, 1 grid, 1 release | [profiles-and-access](profiles-and-access.md), "WP6b as built" |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala` (the repository answers `404`). Nothing runs from it; it is somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
@@ -189,7 +180,7 @@ DMs and groups already have an optimistic row and a durable outbox; **salon writ
 
 ## P2 - The host WAF drops any request body over 10 MiB (found 2026-10-10)
 
-The cause of the user's "endless spinner" on a 13.4 MB PDF: the school-managed CrowdSec AppSec in the host nginx drops any body over 10 MiB and answers a 403 HTML ban page, for every user ([host-waf-body-limit](infrastructure/host-waf-body-limit.md)). **Fixed for every `encryptAndUpload` surface by WP-OFF-8** (8 MiB per request, chunk route above it, a refusal ends the entry). **Still open, same cause**: the association document vault (`AssociationDocumentManager.svelte`, ONE `/api/media/upload` of the packed document through `apiFetch`, no cap) and the raw image uploads (`uploadRaw`, `associations/api.ts` logos/icons/event images, `forms/api.ts` banners): each needs the chunk route or a client cap with a Paraglide message. **Owed to the user**: ask the host admins to raise the AppSec body limit for `/api/media/upload` (not in our hands); the 2026-10-10 probe left a CrowdSec alert on IP 90.38.224.160.
+The cause of the user's "endless spinner" on a 13.4 MB PDF: the school-managed CrowdSec AppSec in the host nginx drops any body over 10 MiB and answers a 403 HTML ban page, for every user ([host-waf-body-limit](infrastructure/host-waf-body-limit.md)). **Fixed for every `encryptAndUpload` surface by WP-OFF-8** (8 MiB per request, chunk route above it, a refusal ends the entry). **Still open, same cause**: the association document vault (`AssociationDocumentManager.svelte`, ONE `/api/media/upload` of the packed document through `apiFetch`, no cap) and the raw image uploads (`uploadRaw`, `associations/api.ts` logos/icons/event images, `forms/api.ts` banners): each needs the chunk route or a client cap with a Paraglide message. The host's AppSec limit is not ours to change and nothing is asked of anyone: the client stays under it.
 
 ## P2 - Weak network, the attachment path after WP-OFF-8 (audit 2026-10-10)
 
@@ -491,25 +482,15 @@ The two questions of the audit are answered (2026-10-08): a follow keeps its mea
 
 ## CI and the chain that runs unattended
 
-### P1 - production goes dark in the 22h band, and the only thing both boxes share is the School's firewall (measured 2026-09-11)
-
-The measurement (175 `cloudflared` edge-dial timeouts in seven days, all at 22h-23h CEST, the School's
-`fw-ste.emse.fr` the only element both egress paths cross), the two refuted hypotheses and the egress
-probe are on [cloudflare-edge](infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it).
-
-**Open since the 2026-09-24 cutover:** whether the Portail-etu host sees the same drop is UNMEASURED.
-Read `journalctl -u cloudflared` on `portail-etu-direct` for 1033 and edge-dial timeouts at hours 22-23
-over seven days; ask the School's network service what is scheduled on `fw-ste.emse.fr` only if it
-does. **Re-arm the egress probe on the Portail-etu host or retire it** (its crontab is on the old VM,
-which runs no container).
-
-### P3 - audit advisories are suppressed because they cannot be reached, and should stop being
+### P3 - audit advisories are suppressed because they cannot be reached, and retire themselves
 
 Four advisories (`GHSA-vcc3-ghjq-m6fr`, `GHSA-528h-pc64-c93x`, `GHSA-hqr4-qq8f-hg3x`,
-`GHSA-mjw6-4jj6-33hc`) are ignored on the `minio > ...` edge of media-service. **Retire the ignores and
-the premise assertion (`.github/scripts/stream-json-premise.sh`) the day minio publishes a release that
-moves either pin** (last checked 2026-10-09: minio still 8.0.7). The reasoning, the upstream-check log
-and the dead retirement condition are in [cicd](cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
+`GHSA-mjw6-4jj6-33hc`) are ignored on the `minio > ...` edge of media-service; minio 8.0.7 is still the
+latest (2026-10-10). **Nothing is polled by hand any more (2026-10-10):** the premises step of
+`code-analysis.yml` audits the tree WITHOUT the ignores (`ignored-advisories-still-reported.sh`, self-tested)
+and FAILS the day an ignored id is no longer reported, naming the ignore, its premise assertion
+(`.github/scripts/stream-json-premise.sh`) and this entry as what to delete. The reasoning is in
+[cicd](cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
 
 ### P2 - THREE hosts take security updates that nothing reports on, and a library nothing restarts (the rest closed 2026-09-03)
 

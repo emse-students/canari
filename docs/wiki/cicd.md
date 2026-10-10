@@ -1732,7 +1732,7 @@ runtime bump and stops being this recipe.
 
 ### Four audit advisories are suppressed on one edge of media-service, and why each is unreachable
 
-The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-because-they-cannot-be-reached-and-should-stop-being); the reasoning is here. The reachability argument for the `decode-uri-component` ignore and the assertion that keeps it honest are in `.github/workflows/code-analysis.yml`, the only copy of that half.
+The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-because-they-cannot-be-reached-and-retire-themselves); the reasoning is here. The reachability argument for the `decode-uri-component` ignore and the assertion that keeps it honest are in `.github/workflows/code-analysis.yml`, the only copy of that half.
 
 - `GHSA-vcc3-ghjq-m6fr` (moderate, denial of service) covers every `decode-uri-component` at or below 0.4.2 and reaches media-service as `minio > query-string > decode-uri-component`. It is ignored for that one service only: nothing in the chain can move (minio 8.0.7 is the latest release and pins `query-string: ^7.1.3`, which pins `decode-uri-component: ^0.2.2`), and the fixed 0.5.0 is ESM-only where `query-string@7` is CommonJS, so an override would fail at boot instead of at audit.
 - `GHSA-528h-pc64-c93x` (moderate, denial of service; added 2026-09-03 when it turned every pull request red) covers every `stream-json` at or below 3.4.0, whose `pick`/`ignore`/`filter`/`replace` filters are O(depth^2) on nested input, and arrives as `minio > stream-json`. minio requires `stream-json: ^1.8.0` and the fix is 3.5.0, two majors outside it. It is unreachable twice over: minio imports exactly one thing from the package (`stream-json/jsonl/Parser.js`, in its bucket-notification module) and none of the four filters, and media-service never calls that API (its whole use of the client is `bucketExists`, `fPutObject`, `getObject`, `makeBucket`, `putObject`, `removeObject`).
@@ -1742,7 +1742,7 @@ The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-be
 
 **The third retirement condition originally listed is dead, not pending**: `query-string` DOES now depend on a fixed `decode-uri-component` (latest 9.5.1, on `^0.5.0`), but minio's pin is `^7.1.3` and cannot reach a 9.x, so only minio moving retires either suppression.
 
-**Upstream re-check log**: 2026-09-15, 2026-09-22, 2026-09-24, 2026-10-06, 2026-10-09 - `minio` still 8.0.7 (published 2026-02-27), `query-string: ^7.1.3` and `stream-json: ^1.8.0` unchanged. The registry answers in one request; record the date of the next check here.
+**Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
 
 ### A merged branch that is still there was pushed back, not left behind (measured 2026-09-22)
 
