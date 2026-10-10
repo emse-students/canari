@@ -78,6 +78,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import { enqueueOutboxMessage } from '$lib/utils/chat/outbox';
+import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { ChannelService } from '$lib/services/ChannelService';
 import {
   isChannelConversationId,
@@ -1198,50 +1199,57 @@ export function useMessaging() {
             // READ BEFORE THE PLACEHOLDER IS WRITTEN: a read that throws (revoked file, no memory)
             // after it left a `mediaId: ''` row with no outbox entry - an orphan the bubble could only
             // draw as a spinner for ever. The catch below re-stages the file when this throws.
-            const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
-            await addMessageToChat(ctx.userId, placeholder, ctx.selectedContact!, ctx, {
-              messageId,
-              status: 'pending',
-              timestamp: new SvelteDate(sentAt),
-            });
-            const outboxEntry: OutboxEntry = {
-              id: messageId,
-              conversationId: convo.id,
-              sentAt,
-              kind: 'media',
-              media: {
-                kind: mediaKindFromEnvelope(type),
-                mimeType: entry.file.type,
-                size: entry.file.size,
-                fileName: entry.file.name,
-                width: entry.width,
-                height: entry.height,
-                ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
-                caption: captionForFile,
-                ...(entry.voiceNote ? { voiceNote: true } : {}),
-                fileBytes,
-              },
-              status: 'pending',
-              attempts: 0,
-              createdAt: sentAt,
-            };
+            // IN FLIGHT FROM BEFORE THE PLACEHOLDER: the bubble must not read the outbox's "absent"
+            // during the durable INSERT as an orphan (outboxActivity).
+            const endInflight = beginOutboxEnqueue(messageId);
             try {
-              await enqueueOutboxMessage(outboxEntry);
-            } catch (enqueueError) {
-              // The placeholder is on screen and in the store, and the catch below re-stages the
-              // file: leaving the row would be an orphan that a second Send then duplicates.
-              ctx.log(
-                `[MEDIA] ${messageId.slice(0, 8)}… not queued, withdrawing its placeholder: ${String(enqueueError)}`
-              );
-              const current = ctx.conversations.get(ctx.selectedContact!);
-              if (current) {
-                ctx.conversations.set(ctx.selectedContact!, {
-                  ...current,
-                  messages: current.messages.filter((m) => m.id !== messageId),
-                });
+              const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
+              await addMessageToChat(ctx.userId, placeholder, ctx.selectedContact!, ctx, {
+                messageId,
+                status: 'pending',
+                timestamp: new SvelteDate(sentAt),
+              });
+              const outboxEntry: OutboxEntry = {
+                id: messageId,
+                conversationId: convo.id,
+                sentAt,
+                kind: 'media',
+                media: {
+                  kind: mediaKindFromEnvelope(type),
+                  mimeType: entry.file.type,
+                  size: entry.file.size,
+                  fileName: entry.file.name,
+                  width: entry.width,
+                  height: entry.height,
+                  ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
+                  caption: captionForFile,
+                  ...(entry.voiceNote ? { voiceNote: true } : {}),
+                  fileBytes,
+                },
+                status: 'pending',
+                attempts: 0,
+                createdAt: sentAt,
+              };
+              try {
+                await enqueueOutboxMessage(outboxEntry);
+              } catch (enqueueError) {
+                // The placeholder is on screen and in the store, and the catch below re-stages the
+                // file: leaving the row would be an orphan that a second Send then duplicates.
+                ctx.log(
+                  `[MEDIA] ${messageId.slice(0, 8)}… not queued, withdrawing its placeholder: ${String(enqueueError)}`
+                );
+                const current = ctx.conversations.get(ctx.selectedContact!);
+                if (current) {
+                  ctx.conversations.set(ctx.selectedContact!, {
+                    ...current,
+                    messages: current.messages.filter((m) => m.id !== messageId),
+                  });
+                }
+                await forgetLocalMessage(messageId, convo.id, ctx);
+                throw enqueueError;
               }
-              await forgetLocalMessage(messageId, convo.id, ctx);
-              throw enqueueError;
+            } finally {
+              endInflight();
             }
           }
           sentMediaMessageCount++;

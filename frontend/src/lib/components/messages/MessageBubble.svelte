@@ -29,6 +29,10 @@
   import type { MessageReaction } from '$lib/types';
   import { isOrphanMediaCandidate } from '$lib/utils/chat/orphanMedia';
   import { isOutboxEntryQueued } from '$lib/utils/chat/outbox';
+  import {
+    isOutboxEnqueueInflight,
+    outboxQueueVersion,
+  } from '$lib/utils/chat/outboxActivity.svelte';
   import { activeReactions } from '$lib/utils/chat/messageReactions';
   import type { MessagePickerOrigin } from '$lib/utils/chat/reactionPicker';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
@@ -606,9 +610,13 @@
    */
   let outboxHasEntry = $state<boolean | null>(null);
   const orphanCandidate = $derived(
-    isOrphanMediaCandidate({ mediaRef, isOwn, hasUpload: !!upload, uploadFailed })
+    isOrphanMediaCandidate({ mediaRef, isOwn, hasUpload: !!upload, uploadFailed }) &&
+      // The sender's own enqueue is still writing the row: "absent" is not yet an answer.
+      !isOutboxEnqueueInflight(messageId)
   );
   $effect(() => {
+    // Re-asked whenever the queue changed (an enqueue settled, an entry cancelled) - never polled.
+    void outboxQueueVersion();
     if (!orphanCandidate) {
       outboxHasEntry = null;
       return;
