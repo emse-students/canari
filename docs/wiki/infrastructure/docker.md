@@ -344,6 +344,7 @@ chat-delivery-service, Garage and Redis have health checks. Other services depen
 | `garage_meta` | Garage cluster/bucket/key metadata (LMDB) |
 | `garage_data` | Garage object storage (media blobs) |
 | `media_meta` | media-service metadata sidecar |
+| `media_upload_sessions` | media-service staging of resumable upload sessions; transient, NOT backed up |
 
 ## The deploy account is root on the host, by way of the `docker` group
 

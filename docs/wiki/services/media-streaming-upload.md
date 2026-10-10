@@ -1,6 +1,6 @@
 # Media streaming upload and download - bounded memory, parts under 8 MiB
 
-**Status: DESIGN, nothing built (2026-10-10); WP-S0 DONE the same day, results in section 9, which CHANGES the design (the Tauri transport, 9.2).** Trigger: the prod host's CrowdSec AppSec (school-managed
+**Status: DESIGN; WP-S0 DONE 2026-10-10 (results in section 9, which CHANGES the design: the Tauri transport, 9.2). WP-S1 (the server session routes) is BUILT, awaiting review ([media-service](media-service.md#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10)); S2 onward and the streamed GET are not.** Decisions taken by delegation, overridable: parts 4 MiB plaintext (about 4 MiB + 64 B on the wire), hard server cap 8 MiB, the 50 MB ceiling stays, resume window 24 h, the CEK may persist in the outbox row later (client WP). Trigger: the prod host's CrowdSec AppSec (school-managed
 nginx, not ours) answers `403 CrowdSec Ban` to any request body over 10 MiB (10,485,760 bytes); a 13.4 MB
 PDF failed because `encryptAndUpload` sends one multipart POST. A quick fix (single-block threshold
 lowered, the existing append route for the rest, an explicit error state) is in flight elsewhere; this page
@@ -125,7 +125,7 @@ Progress is `received / totalParts`; cancel is `AbortController` plus the `DELET
 | Client download | 2 ciphertext parts + the plaintext Blob list (+ 8 MiB) | the plaintext, not the ciphertext, is held |
 | Server upload | 64 KiB stream buffers per open PUT; the staging file is on disk; no `Buffer` of a body | yes (was 1-2x the body) |
 | Server download | the stream high-water mark per request (64 KiB) | yes (was 1x the object) |
-| Server `complete` | **`fPutObject` does NOT stream below 64 MiB** (9.3): `partSize` defaults to 64 MiB, so any object up to the 50 MB ceiling is read whole into a `Buffer` (~2x). Bounded only with `partSize` set (>= 5 MiB) on the client | no, until S1 sets it |
+| Server `complete` | **`fPutObject` does NOT stream below 64 MiB** (9.3): `partSize` defaults to 64 MiB, so any object up to the 50 MB ceiling is read whole into a `Buffer` (~2x). Bounded only with `partSize` set (>= 5 MiB) on the client | S1 sets it on a streaming-only client; unproven on Garage |
 
 ## 4. Compatibility, retention, quotas
 
@@ -291,9 +291,12 @@ two in flight double it, so the streaming writer MUST NOT send parts through `wi
   `Buffer.concat` of every chunk. So `fPutObject` (the chunked `complete` today, and S1's `complete`) holds the
   WHOLE object, about 2x transiently, for every object up to the 50 MB ceiling; `put()` (single POST) does the
   same through `Readable.from(data)`. Dev's media-service container is capped at 768 MiB
-  (`docker-compose.dev.yml`); no cap was found for prod. **S1 fix: construct the client with
-  `partSize: 5 * 1024 * 1024` (the minimum), which sends objects over 5 MiB through `uploadStream` (multipart,
-  one part buffered).** Verify on dev with a 50 MB object and a `process.memoryUsage()` probe.
+  (`docker-compose.dev.yml`); no cap was found for prod. **S1 fix: a SECOND client with
+  `partSize: 5 * 1024 * 1024` (the minimum), used ONLY by `putFileStream`, which sends objects over 5 MiB
+  through `uploadStream` (multipart, one part buffered).** DONE in S1 (`STORE_PART_BYTES`); `put()` keeps the
+  default client (a Buffer already in memory gains nothing) and a failed streamed upload is aborted with
+  `removeIncompleteUpload`. **Owed, the first reading: a real 6 MB and a real 50 MB upload through dev Garage**
+  (multipart path, abort, `process.memoryUsage()` probe).
 - Cloudflare request body: 100 MB on Free and Pro, 200 MB Business, Enterprise up to 5 GB (Cloudflare docs,
   cache / default-cache-behavior, read 2026-10-10, not probed). 8 MiB parts are 12x under it.
 - Met on the way: dev's legacy name still answers `413` above 1 MiB (the relay's nginx), so no upload over

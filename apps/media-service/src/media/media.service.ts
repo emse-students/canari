@@ -199,7 +199,7 @@ function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason }
  */
 export type RetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel' | 'chat-reel';
 
-const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
+export const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
   'ephemeral',
   'archive',
   'association',
@@ -811,7 +811,8 @@ export class MediaService {
   private reserveChatReelBudget(
     retentionClass: RetentionClass | undefined,
     ownerId: string | undefined,
-    incomingBytes: number
+    incomingBytes: number,
+    restore = false
   ): () => void {
     if (retentionClass !== 'chat-reel') return () => {};
     if (!ownerId) {
@@ -829,7 +830,10 @@ export class MediaService {
       }
       if (entry.createdAt >= since) used += entry.size ?? 0;
     }
-    if (used + incomingBytes > CHAT_REEL_DAILY_BYTES) {
+    // `restore`: a reservation granted before a restart is being put back, not requested - it was
+    // already within the cap when granted, and refusing it now would strand a session the member
+    // was told they had.
+    if (!restore && used + incomingBytes > CHAT_REEL_DAILY_BYTES) {
       this.logger.warn(
         `Chat-reel upload refused for ${ownerId}: ${used} bytes already today or in flight, ${incomingBytes} more over the ${CHAT_REEL_DAILY_BYTES} cap`
       );
@@ -847,6 +851,37 @@ export class MediaService {
       if (left > 0) reservations.set(ownerId, left);
       else reservations.delete(ownerId);
     };
+  }
+
+  /**
+   * The daily `chat-reel` budget for the session routes, which reserve ONCE at init and release at
+   * complete, cancel or expiry. Same machinery as {@link upload}; see {@link reserveChatReelBudget}.
+   * `restore` puts back a reservation granted before a restart without re-judging it.
+   */
+  reserveUploadBudget(
+    retentionClass: RetentionClass | undefined,
+    ownerId: string,
+    bytes: number,
+    restore = false
+  ): () => void {
+    return this.reserveChatReelBudget(retentionClass, ownerId, bytes, restore);
+  }
+
+  /**
+   * Registers an object a session upload has already stored. `onRegistered` runs in the SAME
+   * synchronous run as the index entry, so the reservation hands over to it with no tick in which the
+   * bytes count for neither (the invariant {@link reserveChatReelBudget} documents).
+   */
+  async registerUpload(
+    mediaId: string,
+    ownerId: string,
+    retentionClass: RetentionClass | undefined,
+    size: number,
+    onRegistered: () => void
+  ): Promise<void> {
+    this.setAccess(mediaId, Date.now(), ownerId, retentionClass, size);
+    onRegistered();
+    await this.persistMetadata();
   }
 
   async remove(mediaId: string): Promise<void> {
