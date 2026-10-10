@@ -75,7 +75,7 @@ it('the cancel is there while it moves and reaches the sender, the retry is not 
   expect(button(m.upload_retry_label())).toBeUndefined();
 });
 
-it.each(['stalled', 'waiting', 'blocked'] as const)(
+it.each(['stalled', 'waiting', 'repairing', 'retrying', 'blocked'] as const)(
   '%s offers a retry beside the cancel',
   (phase) => {
     const { button, onRetryUpload } = render({ ...uploading, phase });

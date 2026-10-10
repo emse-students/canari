@@ -2124,6 +2124,63 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
     expect(uploadViewOf('w1')).toMatchObject({ phase: 'waiting', loaded: 0, attempt: 1 });
   });
 
+  it('a group that is not sendable says it is repairing, never that the connection is down', async () => {
+    const storage = makeStorage([mediaEntry('r1')]);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['r1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia: vi.fn(),
+        isGroupHealthy: () => false,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(uploadViewOf('r1')).toMatchObject({ phase: 'repairing', loaded: 0, attempt: 1 });
+  });
+
+  it('a failure that is not the network says retrying, not waiting for a connection', async () => {
+    const storage = makeStorage([mediaEntry('t1')]);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['t1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia: vi.fn().mockRejectedValue(new Error('unreadable')),
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(uploadViewOf('t1')).toMatchObject({ phase: 'retrying', loaded: 0, attempt: 1 });
+  });
+
+  it('the return of the link clears the stale waiting view at once', async () => {
+    const storage = makeStorage([mediaEntry('q1')]);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['q1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia: vi.fn().mockRejectedValue(new TypeError('Network request failed')),
+        isGroupHealthy: () => true,
+      })
+    );
+    await outbox.flush();
+    expect(uploadViewOf('q1')?.phase).toBe('waiting');
+
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+
+    expect(uploadViewOf('q1')?.phase).toBe('queued');
+  });
+
   it('a withdrawn message ABORTS its transfer and is never sent', async () => {
     const storage = makeStorage([mediaEntry('c1')]);
     const mls = makeMls();

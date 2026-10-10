@@ -16,8 +16,14 @@ export function uploadCaption(view: UploadView, declaredSize: number): string {
   switch (view.phase) {
     case 'preparing':
       return m.upload_preparing();
+    case 'queued':
+      return m.upload_queued();
     case 'waiting':
       return m.upload_waiting();
+    case 'repairing':
+      return m.upload_repairing();
+    case 'retrying':
+      return m.upload_retrying();
     case 'blocked':
       return m.upload_blocked();
     case 'error':

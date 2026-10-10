@@ -37,7 +37,13 @@ import {
   UploadStalledError,
   type XhrUploadOptions,
 } from '$lib/utils/uploadXhr';
-import { clearAllUploads, clearUpload, patchUpload, setUploadRetry } from './uploadProgress.svelte';
+import {
+  clearAllUploads,
+  clearUpload,
+  patchUpload,
+  setUploadRetry,
+  uploadViewOf as viewOfUpload,
+} from './uploadProgress.svelte';
 import {
   getIsTabLeader,
   getTabLeadership,
@@ -460,7 +466,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // no entry is ever on the wire twice at once, so skipping a backoff can at worst re-send a frame
     // whose answer was lost - which the receiver deduplicates on the inner `messageId`, exactly as
     // for any retry. Nothing here waits for a timer to expire.
-    for (const id of transportHeld) resuming.add(id);
+    for (const id of transportHeld) {
+      resuming.add(id);
+      // The link is back: the stale "waiting for the connection" is false from now on, the entry is
+      // simply next in line until its attempt starts and says `preparing`.
+      if (viewOfUpload(id)?.phase === 'waiting') patchUpload(id, { phase: 'queued' });
+    }
     transportHeld.clear();
     runFlush();
   });
@@ -780,7 +791,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function holdForRetry(
     entry: OutboxEntry,
     describe: (attempts: number) => string,
-    opts: { transport?: boolean; local?: boolean; quiet?: boolean } = {}
+    opts: { transport?: boolean; repair?: boolean; local?: boolean; quiet?: boolean } = {}
   ): Promise<FlushOutcome> {
     if (opts.transport) transportHeld.add(entry.id);
     else transportHeld.delete(entry.id);
@@ -790,7 +801,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // An attachment still to upload shows that its next attempt is queued (and starts from zero).
     // `quiet` when the payload was not read, so whether the upload already happened is not known.
     if (!opts.quiet && entry.kind === 'media' && !entry.media?.uploadedRef) {
-      patchUpload(entry.id, { phase: 'waiting', loaded: 0, attempt: entry.attempts + 1 });
+      // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
+      // network; a group repair and any other failure each say what they are.
+      patchUpload(entry.id, {
+        phase: opts.transport ? 'waiting' : opts.repair ? 'repairing' : 'retrying',
+        loaded: 0,
+        attempt: entry.attempts + 1,
+      });
     }
     const attempts = entry.attempts + 1;
     await storage
@@ -842,7 +859,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     entry: OutboxEntry,
     e: unknown,
     describe?: (attempts: number) => string,
-    opts: { transport?: boolean; quiet?: boolean } = {}
+    opts: { transport?: boolean; repair?: boolean; quiet?: boolean } = {}
   ): Promise<FlushOutcome> | FlushOutcome {
     const local = entry.kind === 'media' && isLocalAttachmentFailure(e);
     if (local) {
@@ -961,7 +978,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return holdForRetry(
         entry,
         (attempts) =>
-          `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… not sendable, re-add requested (attempt ${attempts})`
+          `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… not sendable, re-add requested (attempt ${attempts})`,
+        { repair: true }
       );
     }
 
@@ -1208,6 +1226,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         {
           transport:
             kind === 'unknown' && (e instanceof DeliveryUnreachableError || isTransportFailure(e)),
+          repair: kind === 'sender-not-active',
         }
       );
     }

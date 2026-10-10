@@ -669,8 +669,12 @@ and must not be abandoned for being big. Chunked uploads report the WHOLE blob's
 creates an `AbortController` per entry and mirrors `{phase, loaded, total, attempt}` into an in-memory
 store the bubble reads (never IndexedDB: the numbers change several times a second and mean nothing
 after a crash). Phases: `preparing` (reading and encrypting), `uploading` (real bytes), `stalled` (no
-byte for 10 s, display only; the transport's guard abandons it later), `waiting` (the last attempt
-failed, the next is queued, and it starts from zero). **Cancel is the ordinary delete of an unsent
+byte for 10 s, display only; the transport's guard abandons it later), `queued` (in the queue, not started: no network claim), `waiting` (the last attempt
+ended with NO ANSWER, or the link is known down; it starts from zero), `repairing` (held until the group is
+sendable: roster repair, re-add) and `retrying` (any other failure, on the backoff ladder). **The label is
+the typed reason of the hold** (`holdForRetry` opts `transport` / `repair`), never inferred: a bubble with
+no view yet reads `connectivity.isOffline` (waiting) or else `queued`, and a reconnect turns a stale
+`waiting` into `queued` at once (2026-10-11, the Mi 9T said "waiting for a connection" while online). **Cancel is the ordinary delete of an unsent
 message**: `cancelPending` withdraws the row and now also aborts the body already on the wire, so a
 13 MB transfer does not keep leaving a weak uplink for a message nobody wants. **Retry** skips the
 backoff for that entry (the `resuming` set WP-OFF-6 already had) and, when a transfer is stalled on the
@@ -681,7 +685,7 @@ wire, aborts it and lets the lane re-run at once, not counted as a failure.
 beside it only while nothing is moving, and one line: *Envoi 40 % - 5,4 Mo sur 12,8 Mo*, *Plus rien ne
 passe - ...*, *En attente de connexion - nouvel essai automatique*. The percentage is clamped to 99 until
 the server answers (100 is the answer, not the last byte leaving), and a state with no honest figure
-turns instead of filling. After a reload the queued row shows `waiting` until the flush runs again.
+turns instead of filling. After a reload the queued row shows `queued` until the flush runs again.
 Strings are Paraglide (`upload_*`).
 
 **Pinned by** `utils/uploadXhr.test.ts` (progress, a refusal as a status, network error as `TypeError`,

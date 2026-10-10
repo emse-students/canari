@@ -22,6 +22,7 @@
   } from '$lib/utils/chat/uploadProgress.svelte';
   import { isReelMessage } from '$lib/reels/chatReel';
   import ChannelPoll from '../channels/ChannelPoll.svelte';
+  import { connectivity } from '$lib/stores/connectivity.svelte';
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
   import MessageReactions from './MessageReactions.svelte';
@@ -572,8 +573,8 @@
 
   /**
    * An attachment of mine that has not finished uploading: its ref has no `mediaId` yet and the
-   * outbox still owns it. The outbox's own view while it runs; `waiting` when it has none (a reload
-   * brought the queued row back and nothing is advancing it yet). A message that FAILED for good
+   * outbox still owns it. The outbox's own view while it runs; `queued` (`waiting` only when the link is
+   * known down) when it has none (a reload brought the queued row back, or its turn has not come). A message that FAILED for good
    * (`error`) or was sent has no upload to show, so the bubble falls back to its plain state.
    */
   /**
@@ -584,7 +585,16 @@
   const upload = $derived.by((): UploadView | null => {
     if (!isOwn || !mediaRef || mediaRef.mediaId) return null;
     if (status !== 'pending' && status !== 'sending') return null;
-    return uploadViewOf(messageId) ?? { phase: 'waiting', loaded: 0, total: 0, attempt: 0 };
+    // No view yet = the outbox has not started this entry (its turn, or the file is about to be
+    // read). Only a KNOWN offline link may say "waiting for the connection"; otherwise it is queued.
+    return (
+      uploadViewOf(messageId) ?? {
+        phase: connectivity.isOffline ? 'waiting' : 'queued',
+        loaded: 0,
+        total: 0,
+        attempt: 0,
+      }
+    );
   });
 
   /**
