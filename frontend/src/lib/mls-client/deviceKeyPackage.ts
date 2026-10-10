@@ -59,3 +59,26 @@ export function refusalIsTemporary(reason: DeviceKeyPackageRefusal): boolean {
 export type DeviceSignatureKeys =
   | { kind: 'keys'; keys: Uint8Array[] }
   | { kind: 'unanswered'; detail: string };
+
+/**
+ * What the server's answer says about THE ONE FACT the commit gate reads: does this device have a
+ * static KeyPackage row (`deviceAddressability` in the delivery service answers `no_key_package`
+ * when it has none).
+ *
+ * - `published`: a row exists. An ELAPSED package counts, because the gate checks presence and an
+ *   elapsed row is exactly the one the device replaces on its own next connection.
+ * - `absent`: the server says there is no row (`unregistered`, or a 404 from a server older than
+ *   the reason field) - the fact is false until the device's round publishes.
+ * - `revoked`: the id is denylisted; no round of THIS id will ever make it true.
+ * - `unknown`: nothing was established (`unanswered`).
+ */
+export type KeyPackagePublication = 'published' | 'absent' | 'revoked' | 'unknown';
+
+/** Classifies a {@link DeviceKeyPackageAnswer} as a {@link KeyPackagePublication}. */
+export function keyPackagePublication(answer: DeviceKeyPackageAnswer): KeyPackagePublication {
+  if (answer.kind === 'package') return 'published';
+  if (answer.kind === 'unanswered') return 'unknown';
+  if (answer.reason === 'expired') return 'published';
+  if (answer.reason === 'revoked') return 'revoked';
+  return 'absent';
+}

@@ -13,7 +13,10 @@ import {
   createSequentialDecryptSession,
 } from '$lib/mls-client/mlsDecryptSession';
 import {
+  DeliveryDeadlineError,
   DeviceRevokedError,
+  KEY_PACKAGE_ROUND_DEADLINE_MS,
+  raceDeadline,
   NotAGroupMemberError,
   type MlsDeliveryFetch,
 } from '$lib/mls-client/mlsDeliveryApi';
@@ -43,7 +46,11 @@ import {
   setSenderMismatchReporter,
   type EnvelopeSender,
 } from '$lib/mls-client/verifiedSender';
-import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
+import {
+  keyPackagePublication,
+  type DeviceKeyPackageAnswer,
+  type DeviceSignatureKeys,
+} from '$lib/mls-client/deviceKeyPackage';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
   shouldAckAfterSuccess,
@@ -108,6 +115,13 @@ import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
  * that is behind the group's epoch ends the loop on that fact, whatever this number is.
  */
 const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
+
+/**
+ * How many times one join may read the device's published-KeyPackage fact while rounds keep
+ * settling and it stays absent or revoked. A counter per attempt, not a clock: it is what ends the
+ * loop when every pass is woken by a round that did not make the fact true.
+ */
+const EXTERNAL_JOIN_FACT_PASSES = 6;
 
 /**
  * External joins running now, per service instance then per group. A WeakMap so the state is the
@@ -401,6 +415,31 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private keyPackageRoundInFlight: Promise<unknown> | null = null;
 
+  /**
+   * How many key package rounds are running RIGHT NOW. A count, not the field above: rounds overlap
+   * (boot, `republishKeyMaterial`, a join starting one) and the older one settling must not make
+   * the newer one invisible.
+   */
+  private keyPackageRoundsActive = 0;
+
+  /**
+   * Monotonic count of rounds that have SETTLED, success or failure. A reader captures it BEFORE
+   * asking the server and compares it before parking: a round that settled during the read is
+   * the wake-up the reader would otherwise have missed (the answer in hand predates it).
+   */
+  private keyPackageRoundsSettled = 0;
+
+  /** The most recent failed round and the settle count it ended at, for the joins it concerns. */
+  private lastKeyPackageRoundFailure: { settled: number; error: unknown } | null = null;
+
+  /**
+   * Joins parked until a key package round settles (see {@link awaitOwnKeyPackagePublished}). An
+   * EVENT, not a clock. Woken with `true` when the client is torn down, so none outlives it.
+   */
+  private ownKeyPackageUnverifiedReported: string | null = null;
+
+  private keyPackageRoundWaiters: Array<(tornDown: boolean) => void> = [];
+
   // ── Timers & event handlers ───────────────────────────────────────────────
   protected heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   protected _visibilityHandler: (() => void) | null = null;
@@ -640,6 +679,10 @@ export abstract class BaseMlsService implements IMlsService {
    * Calls {@link destroyPlatformResources} for subclass-specific teardown.
    */
   destroy(): void {
+    // NOTHING PARKED OUTLIVES THE CLIENT: a join waiting on a round that will never settle here
+    // would hold its group's flight for ever and hand every later caller the same hung promise.
+    this.wakeKeyPackageRoundWaiters(true);
+    externalJoinFlights.get(this)?.clear();
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -2216,26 +2259,226 @@ export abstract class BaseMlsService implements IMlsService {
     // NAMED FOR ITS SPAN, so an external join issued while it runs can wait for the publication it
     // depends on ({@link externalJoin}). The identity check keeps a later round from clearing its
     // successor, and `finally` means a throw leaves nothing for a join to wait on.
+    // SET WHEN THE CALLER GAVE UP ON THIS ROUND (the deadline below). A stale round that late hits a
+    // revocation must not rotate the identity: it would change `deviceId`, localStorage, the
+    // delivery client and delete a device while a later round or a join runs on the id it is
+    // abandoning - a later round could publish under an id rotated away, a join could exclude a
+    // stale id. The rotation is a logged no-op and the late round just ends.
+    let stale = false;
     const round = (async (): Promise<DatedKeyPackage> => {
       try {
         return await this.generateKeyPackageImpl(deviceKeyB64);
       } catch (e) {
         if (!(e instanceof DeviceRevokedError)) throw e;
+        if (stale) {
+          console.error(
+            `[MLS] an ABANDONED key package round met a revocation late - NOT rotating the identity (a later round owns it now); device ${sanitizeForLog(this.deviceId)}`
+          );
+          throw e;
+        }
         const abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
         console.warn(
           `[MLS] Device ${sanitizeForLog(abandoned)} was revoked - re-enrolled as ${sanitizeForLog(
             this.deviceId
           )}`
         );
+        if (stale) {
+          console.error(
+            '[MLS] an ABANDONED key package round was abandoned during its re-enrolment - not publishing under the new id from this stale round'
+          );
+          throw new Error('key package round abandoned during re-enrolment');
+        }
         return this.generateKeyPackageImpl(deviceKeyB64);
       }
     })();
-    this.keyPackageRoundInFlight = round;
+    // THE CALLER STOPS WAITING AFTER A DEADLINE, THE WORK IS NOT CANCELLED (a native `invoke` and a
+    // mint under the MLS lock cannot be aborted). Without this a hang anywhere in the round kept
+    // the active count above zero for ever, so every join parked and its flight never cleared.
+    // WHAT AN ABANDONED ROUND MAY STILL DO: finish its mint, persist up to 50 bundles, publish. The
+    // next round reads the server's pool count: if the late publish landed it mints nothing, and if
+    // the round stopped between persist and publish it mints a second batch whose first batch is
+    // orphaned locally until `prune_expired_key_packages` - the same cost any failed publish after
+    // a mint already has. It is logged when it ends.
+    //
+    // TWO COSTS OF ABANDONING, stated: (1) the native promise stays pending, so a device whose
+    // native call hangs for good leaks ONE pending promise per deadline cycle (each later round
+    // that hangs adds one); (2) the abandoned round may still reach a late revocation, which would
+    // rotate the identity under a successor - `stale` turns that rotation into a logged no-op, and
+    // an abandoned round that is mid-rotation when the deadline fires refuses to publish afterwards.
+    // The persist and publish steps inside `generateKeyPackageImpl` are platform code and are NOT
+    // gated: a late publish under the CURRENT id is harmless (it is what the next round would do),
+    // and the id cannot have changed because only a non-stale round rotates.
+    const bounded = raceDeadline(
+      'key-package-round',
+      round,
+      KEY_PACKAGE_ROUND_DEADLINE_MS,
+      (late) =>
+        console.warn(
+          late.ok
+            ? '[MLS] an abandoned key package round FINISHED late (its bundles are persisted and published)'
+            : `[MLS] an abandoned key package round FAILED late: ${sanitizeForLog(String(late.error))}`
+        )
+    );
+    this.keyPackageRoundInFlight = bounded;
+    this.keyPackageRoundsActive++;
     try {
-      return await round;
+      const keyPackage = await bounded;
+      this.noteKeyPackageRoundSettled();
+      return keyPackage;
+    } catch (e) {
+      if (e instanceof DeliveryDeadlineError && e.operation === 'key-package-round') stale = true;
+      this.noteKeyPackageRoundSettled(e ?? new Error('key package round failed'));
+      throw e;
     } finally {
-      if (this.keyPackageRoundInFlight === round) this.keyPackageRoundInFlight = null;
+      if (this.keyPackageRoundInFlight === bounded) this.keyPackageRoundInFlight = null;
     }
+  }
+
+  /** Records a settled round and wakes every parked join, which re-reads the fact itself. */
+  private noteKeyPackageRoundSettled(error?: unknown): void {
+    this.keyPackageRoundsActive--;
+    this.keyPackageRoundsSettled++;
+    if (error !== undefined) {
+      this.lastKeyPackageRoundFailure = { settled: this.keyPackageRoundsSettled, error };
+    }
+    this.wakeKeyPackageRoundWaiters(false);
+  }
+
+  private wakeKeyPackageRoundWaiters(tornDown: boolean): void {
+    const waiters = this.keyPackageRoundWaiters;
+    this.keyPackageRoundWaiters = [];
+    for (const wake of waiters) wake(tornDown);
+  }
+
+  /**
+   * Waits until THE SERVER HAS STATED that this device holds a static KeyPackage - the fact the
+   * commit gate reads before it activates a membership - and answers why it could not be proven
+   * otherwise.
+   *
+   * THE FACT IS THE CONDITION, THE ROUND IS ONLY WHAT MAKES IT TRUE, and nothing here is a clock.
+   * Each pass: capture the settle count, READ the fact, then decide.
+   * - published: join.
+   * - a round settled while the read was in flight: the answer predates it, so read again (the lost
+   *   wake-up of parking on a stale answer for a round that already came and went). If that round
+   *   failed and nothing else is running, the failure is the answer.
+   * - a round is running: park until one settles, then read again. A round failing while an
+   *   overlapping one still runs refuses nobody - the survivor may yet publish.
+   * - no round is running and the fact is absent (or the id revoked, which a round re-enrols):
+   *   START one, the only thing that can make it true, and wait for it. If it succeeded and the
+   *   server STILL does not hold the package, that is unverified, never a second round.
+   * - the read got no answer and no round is running: unverified; nothing is claimed.
+   *
+   * WHAT IS BOUNDED: the join's WAIT. Each HTTP call of a round has its own typed deadline, and the
+   * whole round is raced against `KEY_PACKAGE_ROUND_DEADLINE_MS` (the native `invoke`, the mint and a
+   * re-enrolment cannot be aborted, only abandoned), so a hang fails the round typed and wakes this
+   * with a refusal. WHAT IS NOT: the abandoned work itself - see `generateKeyPackage`.
+   */
+  private async awaitOwnKeyPackagePublished(
+    short: string
+  ): Promise<'published' | 'round_failed' | 'unverified'> {
+    let startedOwnRound = false;
+    for (let pass = 1; ; pass++) {
+      // A PASS COUNT IS THE PROOF OF TERMINATION when rounds keep settling while the fact stays
+      // absent or revoked: each pass is one read, and the count is per join attempt, not a clock.
+      if (pass > EXTERNAL_JOIN_FACT_PASSES) {
+        this.reportOwnKeyPackageUnverified(
+          short,
+          `the fact stayed unpublished across ${EXTERNAL_JOIN_FACT_PASSES} reads`
+        );
+        return 'unverified';
+      }
+      const settledBefore = this.keyPackageRoundsSettled;
+      const answer = await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId);
+      const publication = keyPackagePublication(answer);
+      if (publication === 'published') {
+        this.ownKeyPackageUnverifiedReported = null;
+        return 'published';
+      }
+      if (answer.kind === 'unanswered') {
+        console.warn(
+          `[MLS] externalJoin ${short}... could not read this device's KeyPackage publication: ${sanitizeForLog(answer.detail)}`
+        );
+      }
+      const failedSince = (): boolean =>
+        this.lastKeyPackageRoundFailure !== null &&
+        this.lastKeyPackageRoundFailure.settled > settledBefore &&
+        this.keyPackageRoundsActive === 0;
+      if (this.keyPackageRoundsSettled !== settledBefore) {
+        if (failedSince()) return this.roundFailedForJoin(short);
+        console.log(
+          `[MLS] externalJoin ${short}... a key package round settled during the read (${publication}) - reading the fact again`
+        );
+        continue;
+      }
+      if (this.keyPackageRoundsActive > 0) {
+        console.log(
+          `[MLS] externalJoin ${short}... waits for the server to hold this device's KeyPackage (${publication}, a round is running): the commit gate refuses an activation without one`
+        );
+        const tornDown = await new Promise<boolean>((resolve) => {
+          this.keyPackageRoundWaiters.push(resolve);
+        });
+        if (tornDown) {
+          console.warn(
+            `[MLS] externalJoin ${short}... released: the client was torn down while it waited for a key package round`
+          );
+          return 'unverified';
+        }
+        if (failedSince()) return this.roundFailedForJoin(short);
+        console.log(
+          `[MLS] externalJoin ${short}... woken by a settled key package round - reading the fact again`
+        );
+        continue;
+      }
+      if (publication === 'unknown' || startedOwnRound) {
+        this.reportOwnKeyPackageUnverified(
+          short,
+          publication === 'unknown'
+            ? 'the server did not answer the read and no round is running'
+            : `our own round succeeded and the server still does not hold the package (${publication})`
+        );
+        return 'unverified';
+      }
+      console.warn(
+        `[MLS] externalJoin ${short}... finds NO KeyPackage published for this device (${publication}) and no round running - starting the round, the only thing that can make it true`
+      );
+      startedOwnRound = true;
+      try {
+        // THE KEY IS WHATEVER BOOT PASSED, INCLUDING '' IN BIOMETRIC MODE (the native layer resolves
+        // it from the keystore): an empty string is not "no key", so there is no guard on it.
+        await this.generateKeyPackage(this.currentDeviceKeyB64);
+      } catch (e) {
+        console.warn(
+          `[MLS] externalJoin ${short}... not attempted - the key package round FAILED:`,
+          sanitizeForLog(String(e))
+        );
+        return 'round_failed';
+      }
+    }
+  }
+
+  /**
+   * Says ONCE per distinct reason that a join could not be attempted for want of a published
+   * KeyPackage, and what would change it. The recovery cadence (about once a minute) asks again with
+   * no repair in between, so repeating the warning would be noise: a reader needs the state change,
+   * not the heartbeat. Cleared when the fact is next seen published.
+   */
+  private reportOwnKeyPackageUnverified(short: string, why: string): void {
+    if (this.ownKeyPackageUnverifiedReported === why) {
+      console.debug(`[MLS] externalJoin ${short}... still not attempted: ${why}`);
+      return;
+    }
+    this.ownKeyPackageUnverifiedReported = why;
+    console.warn(
+      `[MLS] externalJoin ${short}... not attempted: ${why}. Not repeated at this level until it changes - what changes it is a round publishing this device's KeyPackage or the server answering the read`
+    );
+  }
+
+  private roundFailedForJoin(short: string): 'round_failed' {
+    console.warn(
+      `[MLS] externalJoin ${short}... not attempted - the key package round FAILED, so the gate would answer no_key_package:`,
+      sanitizeForLog(String(this.lastKeyPackageRoundFailure?.error))
+    );
+    return 'round_failed';
   }
 
   /**
@@ -3841,26 +4084,17 @@ export abstract class BaseMlsService implements IMlsService {
       // checkpoint and one round trip ahead of the publication. Three of the six healed 2 minutes to
       // 1 h 44 min later, an iPhone among them, and the other three devices no longer exist.
       //
-      // WAITS FOR A ROUND THAT IS RUNNING, never for one that might start: the wait ends when that
-      // round does. A round that FAILED has already told its own caller (the device cap has a toast),
-      // and the join is not attempted: it would earn the `no_key_package` refusal this wait exists to
-      // avoid, so the failure is carried to the caller as a typed outcome instead of being learned
-      // from the gate. KNOWN RESIDUAL: a join that starts BEFORE the round has set the field sees no
-      // round to wait for (docs/wiki/backlog.md).
-      const round = this.keyPackageRoundInFlight;
-      if (round) {
-        console.log(
-          `[MLS] externalJoin ${short}... waits for this device's key package round: the commit gate refuses an activation for a device with no KeyPackage`
-        );
-        try {
-          await round;
-        } catch (e) {
-          console.warn(
-            `[MLS] externalJoin ${short}... not attempted - the key package round FAILED, so the gate would answer no_key_package:`,
-            sanitizeForLog(String(e))
-          );
-          return { joined: false, reason: 'key_package_round_failed' };
-        }
+      // WAITS FOR THE PUBLISHED FACT, not for a round: the server's own statement that this device
+      // holds a static KeyPackage, read from what the gate reads. A round not started yet, running or
+      // ended is one case, and no timer decides it (see {@link awaitOwnKeyPackagePublished}). The
+      // earlier version waited on a round already running and left two holes this closes: a join that
+      // started BEFORE the round set its field, and a round whose request never answered.
+      const publication = await this.awaitOwnKeyPackagePublished(short);
+      if (publication === 'round_failed') {
+        return { joined: false, reason: 'key_package_round_failed' };
+      }
+      if (publication === 'unverified') {
+        return { joined: false, reason: 'own_key_package_unverified' };
       }
       // READ AFTER THE WAIT: the round can re-enrol the device under a new id (a revoked id), and the
       // gate must exclude the id that actually joins.
@@ -4035,7 +4269,10 @@ export abstract class BaseMlsService implements IMlsService {
       }
       // Unreachable - the last attempt returns above. Typed rather than asserted.
       return { joined: false, reason: 'refused', serverReason: 'unspecified' };
-    })().finally(() => flights.delete(groupId));
+    })().finally(() => {
+      // Identity-checked: a teardown cleared the map and a later join may own the entry by now.
+      if (flights.get(groupId) === attempt) flights.delete(groupId);
+    });
     flights.set(groupId, attempt);
     return attempt;
   }
