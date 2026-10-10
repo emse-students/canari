@@ -45,7 +45,12 @@ import {
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind, decodeAppMessage, mediaReelFromProto } from '$lib/proto/codec';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
-import { UploadAbortedError } from '$lib/utils/uploadXhr';
+import {
+  UploadAbortedError,
+  UploadAnswerTimeoutError,
+  UploadNetworkError,
+  UploadStalledError,
+} from '$lib/utils/uploadXhr';
 import { clearAllUploads, uploadPercent, uploadViewOf } from './uploadProgress.svelte';
 import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -2161,6 +2166,201 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
       errorSpy.mockRestore();
     }
   );
+
+  it('an upload that stalls on three attempts in a row ENDS as failed: kept, parked, retry offered', async () => {
+    const storage = makeStorage([mediaEntry('s1')]);
+    const uploadMedia = vi
+      .fn()
+      .mockRejectedValue(new UploadStalledError(45_000, '/api/media/upload', 2_100_000));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['s1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    for (let i = 0; i < 3; i++) {
+      // The ladder's own clock is not under test: let the backoff pass.
+      const row = storage._map.get('s1');
+      if (row) row.nextAttemptAt = 0;
+      await outbox.flush();
+    }
+    expect(uploadMedia).toHaveBeenCalledTimes(3);
+    expect(storage._map.has('s1')).toBe(true); // nothing the member wrote is lost
+    expect(uploadViewOf('s1')?.phase).toBe('failed');
+
+    // Terminal: the ladder no longer touches it.
+    await outbox.flush();
+    await outbox.flush();
+    expect(uploadMedia).toHaveBeenCalledTimes(3);
+
+    // A manual retry starts a NEW count, and a success clears the entry.
+    uploadMedia.mockResolvedValue(REF);
+    outbox.retryUpload('s1');
+    await vi.waitFor(() => expect(storage._map.has('s1')).toBe(false));
+    expect(uploadMedia).toHaveBeenCalledTimes(4);
+    errorSpy.mockRestore();
+  });
+
+  it('a success between two stalls resets the count: two stalls, a success, two stalls is not terminal', async () => {
+    const storage = makeStorage([mediaEntry('s2'), mediaEntry('s3', { sentAt: 200 })]);
+    const stall = () => new UploadStalledError(45_000, '/api/media/upload', 1);
+    const uploadMedia = vi
+      .fn()
+      .mockRejectedValueOnce(stall())
+      .mockRejectedValueOnce(stall())
+      .mockResolvedValueOnce(REF)
+      .mockRejectedValueOnce(stall())
+      .mockRejectedValueOnce(stall());
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['s2', 's3'])],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+    for (let i = 0; i < 6; i++) {
+      for (const row of storage._map.values()) row.nextAttemptAt = 0;
+      await outbox.flush();
+    }
+    expect(storage._map.has('s2')).toBe(false);
+    expect(uploadViewOf('s3')?.phase).not.toBe('failed');
+  });
+
+  /** Runs `n` flushes of one media entry whose attempts each report `loaded` then throw `fail()`. */
+  async function runAttempts(id: string, loadedPerAttempt: number[], fail: () => Error) {
+    const storage = makeStorage([mediaEntry(id)]);
+    let call = 0;
+    const uploadMedia = vi.fn(async (_m: unknown, transport?: Transport) => {
+      const loaded = loadedPerAttempt[Math.min(call++, loadedPerAttempt.length - 1)];
+      if (loaded > 0) transport?.onProgress?.({ loaded, total: 2_000_000 });
+      throw fail();
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', [id])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage,
+        conversations,
+        uploadMedia: uploadMedia as never,
+        isGroupHealthy: () => true,
+      })
+    );
+    for (let i = 0; i < loadedPerAttempt.length; i++) {
+      const row = storage._map.get(id);
+      if (row) row.nextAttemptAt = 0;
+      await outbox.flush();
+    }
+    return { storage, uploadMedia, outbox, errorSpy };
+  }
+
+  it('attempts that each get further than the last are progress, never a verdict', async () => {
+    const r = await runAttempts(
+      'p1',
+      [400_000, 900_000, 1_400_000, 1_900_000],
+      () => new UploadStalledError(45_000, '/x', 1)
+    );
+    expect(uploadViewOf('p1')?.phase).not.toBe('failed');
+    r.errorSpy.mockRestore();
+  });
+
+  it('attempts that fail at the same point (a relay body limit) end as failed after three', async () => {
+    const r = await runAttempts(
+      'p2',
+      [1_400_000, 1_400_000, 1_400_000, 1_400_000],
+      () => new UploadStalledError(45_000, '/x', 1)
+    );
+    expect(r.uploadMedia).toHaveBeenCalledTimes(4);
+    expect(uploadViewOf('p2')?.phase).toBe('failed');
+    r.errorSpy.mockRestore();
+  });
+
+  it('a failed upload stays failed across a reconnect: only the member restarts it', async () => {
+    const r = await runAttempts('p3', [0, 0, 0], () => new UploadNetworkError('/x'));
+    expect(uploadViewOf('p3')?.phase).toBe('failed');
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await r.outbox.flush();
+    expect(r.uploadMedia).toHaveBeenCalledTimes(3);
+    expect(uploadViewOf('p3')?.phase).toBe('failed');
+    r.errorSpy.mockRestore();
+  });
+
+  it('a TypeError from preparation or an unanswered-but-delivered body is not a give-up', async () => {
+    const a = await runAttempts('p4', [0, 0, 0, 0], () => new TypeError('bad bytes'));
+    expect(uploadViewOf('p4')?.phase).not.toBe('failed');
+    a.errorSpy.mockRestore();
+    const b = await runAttempts(
+      'p5',
+      [0, 0, 0, 0],
+      () => new UploadAnswerTimeoutError(300_000, '/x', 1)
+    );
+    expect(uploadViewOf('p5')?.phase).not.toBe('failed');
+    b.errorSpy.mockRestore();
+  });
+
+  it('a reply to a parked attachment waits behind it, an independent text passes', async () => {
+    const reply: OutboxEntry = {
+      id: 'r1',
+      conversationId: 'g1',
+      sentAt: 150,
+      kind: 'reply',
+      text: 'about it',
+      replyTo: { id: 'h1', senderId: 'u', preview: 'x' },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 150,
+    };
+    const storage = makeStorage([mediaEntry('h1'), reply, textEntry('h2', 'g1', 200)]);
+    const mls = makeMls();
+    const uploadMedia = vi.fn().mockRejectedValue(new MediaUploadError(403, 'ban', 'edge'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['h1', 'r1', 'h2'])],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: mls, storage, conversations, uploadMedia, isGroupHealthy: () => true })
+    );
+    await outbox.flush();
+    await outbox.flush();
+    expect(storage._map.has('r1')).toBe(true); // the reply waits
+    expect(storage._map.has('h2')).toBe(false); // the independent text went
+    errorSpy.mockRestore();
+  });
+
+  it('a parked upload does not hold back the messages written after it', async () => {
+    const storage = makeStorage([mediaEntry('h1'), textEntry('h2', 'g1', 200)]);
+    const mls = makeMls();
+    const uploadMedia = vi.fn().mockRejectedValue(new MediaUploadError(403, 'ban', 'edge'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['h1', 'h2'])],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: mls, storage, conversations, uploadMedia, isGroupHealthy: () => true })
+    );
+
+    await outbox.flush();
+    await outbox.flush();
+
+    expect(uploadViewOf('h1')?.phase).toBe('blocked');
+    expect(storage._map.has('h1')).toBe(true);
+    expect(storage._map.has('h2')).toBe(false); // the text went out
+    expect(mls.sendMessage).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+  });
 
   it('a gateway 403 PARKS the entry: kept, no auto-retry, retry offered, then it goes up', async () => {
     const storage = makeStorage([mediaEntry('k1')]);
