@@ -36,6 +36,7 @@ import {
   graineClearColumns,
   toEncryptedGraineRow,
 } from './graineCodec';
+import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { SCHEMA_VERSION, isFreshDatabase, legacyBlobPurgeStatement } from './sqliteMigrations';
 import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
 import { MESSAGE_ROWS_PER_STATEMENT, chunk, messageInsertSql } from './sqliteBatch';
@@ -57,11 +58,7 @@ function rowTimestampMs(raw: unknown): number {
 // ---------------------------------------------------------------------------
 
 /** Encode a binary buffer as a base64 string for safe storage in SQLite TEXT columns. */
-function uint8ToBase64(arr: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-  return btoa(binary);
-}
+const uint8ToBase64 = toBase64;
 
 /** Decode a base64 string (or legacy number array) back to a Uint8Array; returns an empty array on failure. */
 function base64ToUint8(val: unknown): Uint8Array {
@@ -69,7 +66,7 @@ function base64ToUint8(val: unknown): Uint8Array {
   // New format: base64-encoded string
   if (typeof val === 'string') {
     try {
-      return Uint8Array.from(atob(val), (c) => c.charCodeAt(0));
+      return fromBase64(val);
     } catch {
       return new Uint8Array(0);
     }
