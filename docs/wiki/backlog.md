@@ -27,9 +27,9 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
-## Orphan media rows: the outbox enqueue can still lose an attachment silently (2026-10-10)
+## Orphan media rows: source fixed, one reading owed (2026-10-10)
 
-P2. A media message whose ref has `mediaId: ''` and no outbox entry (seen on the Mi 9T, alpha.3) now draws a failure with a delete ([media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)). The send path that made it: `useMessaging.svelte.ts` `handleSendChat` writes the placeholder with `addMessageToChat` BEFORE `enqueueOutboxMessage`; the file read between them is moved before it, but `outbox.ts` `enqueue` (`if (!storage) return;`, and `saveOutboxEntry(...).catch(log)`) and `enqueueOutboxMessage` (`active ? ... : Promise.resolve()`) still swallow a failed or impossible save, so the placeholder stays with nothing to upload it. OWED: make enqueue REJECT a failed save so the caller's catch re-stages the file and removes the placeholder (needs a pass over the text callers), and a test that drives a failing `saveOutboxEntry`. A pending orphan (status `pending`, outbox row gone) shows the queued ring with a cancel, not the failure.
+P3. A `mediaId: ''` placeholder with no outbox entry (Mi 9T, alpha.3) is closed at the source and on screen ([media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)): `enqueue` and `enqueueOutboxMessage` now REJECT (`OutboxEnqueueError`) with no storage, no controller or a failed durable write, `handleSendChat` withdraws the placeholder before re-staging, and the bubble asks the durable queue (`isOutboxEntryQueued`). OWED: (a) the control-event callers (`enqueueControlEvent`: reactions, edits, pins, read receipts) now see that rejection where they used to see a silent no-op - none catches it, so a reaction sent with no controller surfaces as an unhandled rejection rather than vanishing; decide per caller whether it logs or tells the member; (b) the row already stored on the Mi 9T is only cleared by its Delete; (c) a reading of the dark card on the phone.
 
 ## Four organisers per event: what is left after the cap (user, 2026-10-10)
 

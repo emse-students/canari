@@ -1225,7 +1225,24 @@ export function useMessaging() {
               attempts: 0,
               createdAt: sentAt,
             };
-            await enqueueOutboxMessage(outboxEntry);
+            try {
+              await enqueueOutboxMessage(outboxEntry);
+            } catch (enqueueError) {
+              // The placeholder is on screen and in the store, and the catch below re-stages the
+              // file: leaving the row would be an orphan that a second Send then duplicates.
+              ctx.log(
+                `[MEDIA] ${messageId.slice(0, 8)}… not queued, withdrawing its placeholder: ${String(enqueueError)}`
+              );
+              const current = ctx.conversations.get(ctx.selectedContact!);
+              if (current) {
+                ctx.conversations.set(ctx.selectedContact!, {
+                  ...current,
+                  messages: current.messages.filter((m) => m.id !== messageId),
+                });
+              }
+              await forgetLocalMessage(messageId, convo.id, ctx);
+              throw enqueueError;
+            }
           }
           sentMediaMessageCount++;
         }

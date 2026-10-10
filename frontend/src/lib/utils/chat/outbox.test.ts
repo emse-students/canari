@@ -39,6 +39,9 @@ import {
   buildOutboxProto,
   MAX_CONCURRENT_SENDS,
   MAX_UNEXPECTED_ATTEMPTS,
+  enqueueOutboxMessage,
+  isOutboxEntryQueued,
+  unregisterOutbox,
   type OutboxDeps,
 } from './outbox';
 import {
@@ -1248,6 +1251,38 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     expect(storage._map.has('m1')).toBe(true);
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
     expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalled();
+  });
+
+  it('REJECTS an enqueue whose durable write failed, so the caller can withdraw its placeholder', async () => {
+    const storage = makeStorage();
+    storage.saveOutboxEntry.mockRejectedValueOnce(new Error('quota'));
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    await expect(outbox.enqueue(textEntry('m1', 'g1', 100))).rejects.toMatchObject({
+      name: 'OutboxEnqueueError',
+    });
+    expect(storage._map.has('m1')).toBe(false);
+  });
+
+  it('REJECTS an enqueue with no storage layer, and the module entry point with no controller', async () => {
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage: null }));
+    await expect(outbox.enqueue(textEntry('m1', 'g1', 100))).rejects.toMatchObject({
+      name: 'OutboxEnqueueError',
+    });
+    unregisterOutbox();
+    await expect(enqueueOutboxMessage(textEntry('m2', 'g1', 100))).rejects.toMatchObject({
+      name: 'OutboxEnqueueError',
+    });
+    await expect(isOutboxEntryQueued('m2')).resolves.toBeNull();
+  });
+
+  it('answers hasEntry from the durable queue: true, false, and null when it cannot be read', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+    await expect(outbox.hasEntry('m1')).resolves.toBe(true);
+    await expect(outbox.hasEntry('nope')).resolves.toBe(false);
+    storage.getOutboxQueue.mockRejectedValueOnce(new Error('locked'));
+    await expect(outbox.hasEntry('m1')).resolves.toBeNull();
   });
 
   it('tells the other tabs when an entry has gone out, so a follower can settle its echo', async () => {
