@@ -90,3 +90,21 @@ describe('MessageBubble - the orphan verdict', () => {
     expect(orphanShown()).toBe(false);
   });
 });
+
+describe('MessageBubble - the upload label of an entry the outbox has not started', () => {
+  it('online it is QUEUED, never an accusation of the connection', async () => {
+    queued.mockResolvedValue(true);
+    await render({ isOwn: true, status: 'pending' });
+    expect(document.body.textContent).toContain(m.upload_queued());
+    expect(document.body.textContent).not.toContain(m.upload_waiting());
+  });
+  it('known offline it says waiting for a connection', async () => {
+    const { connectivity } = await import('$lib/stores/connectivity.svelte');
+    connectivity.notifyServerUnreachable();
+    expect(connectivity.isOffline).toBe(true);
+    queued.mockResolvedValue(true);
+    await render({ isOwn: true, status: 'pending' });
+    connectivity.reset();
+    expect(document.body.textContent).toContain(m.upload_waiting());
+  });
+});

@@ -26,14 +26,24 @@ import { SvelteMap } from 'svelte/reactivity';
  *   front of it, never replied). Terminal until the member retries or deletes; nothing runs on its own.
  * - `error`: the attempts kept failing for a reason that is not the network (an unreadable file, an
  *   unexpected error) - terminal until the member retries or deletes; nothing runs on its own.
- * - `waiting`: the last attempt failed (or the link is down) and the next one is queued. The bytes
- *   already sent are gone: the media route has no offset, so an attempt always restarts at zero.
+ * - `queued`: the entry is in the queue and has not started (its turn has not come, or the file is
+ *   about to be read). A statement about the queue only, never about the network.
+ * - `waiting`: the last attempt ended with NO ANSWER (a transport failure) or the link is known to be
+ *   down, and the next one is queued. The bytes already sent are gone: the media route has no offset,
+ *   so an attempt always restarts at zero.
+ * - `repairing`: the entry is held until the conversation's group is sendable again (roster repair,
+ *   re-add requested); the connection is fine.
+ * - `retrying`: the last attempt failed for another reason (a server error, a local one) and the
+ *   next is scheduled on the backoff ladder.
  */
 export type UploadPhase =
   | 'preparing'
   | 'uploading'
   | 'stalled'
+  | 'queued'
   | 'waiting'
+  | 'repairing'
+  | 'retrying'
   | 'blocked'
   | 'failed'
   | 'error';
@@ -94,7 +104,10 @@ export function uploadPercent(view: UploadView): number | null {
   if (
     view.total <= 0 ||
     view.phase === 'preparing' ||
+    view.phase === 'queued' ||
     view.phase === 'waiting' ||
+    view.phase === 'repairing' ||
+    view.phase === 'retrying' ||
     view.phase === 'blocked' ||
     view.phase === 'failed' ||
     view.phase === 'error'
