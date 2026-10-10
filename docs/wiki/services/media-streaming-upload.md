@@ -293,7 +293,8 @@ two in flight double it, so the streaming writer MUST NOT send parts through `wi
   same through `Readable.from(data)`. Dev's media-service container is capped at 768 MiB
   (`docker-compose.dev.yml`); no cap was found for prod. **S1 fix: construct the client with
   `partSize: 5 * 1024 * 1024` (the minimum), which sends objects over 5 MiB through `uploadStream` (multipart,
-  one part buffered).** Verify on dev with a 50 MB object and a `process.memoryUsage()` probe.
+  one part buffered).** DONE in S1 (`STORE_PART_BYTES`); note `fPutObject` itself takes no part size, only
+  the client does, and the setting also covers `put()`'s buffers. Verify on dev with a 50 MB object and a `process.memoryUsage()` probe.
 - Cloudflare request body: 100 MB on Free and Pro, 200 MB Business, Enterprise up to 5 GB (Cloudflare docs,
   cache / default-cache-behavior, read 2026-10-10, not probed). 8 MiB parts are 12x under it.
 - Met on the way: dev's legacy name still answers `413` above 1 MiB (the relay's nginx), so no upload over

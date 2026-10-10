@@ -27,7 +27,7 @@ const req = (sub: string) =>
 function build() {
   const svc = Object.create(MediaService.prototype) as MediaService;
   Object.assign(svc, { uploadLocks: new Map(), logger: { log: jest.fn(), warn: jest.fn() } });
-  return { svc, controller: new MediaController(svc) };
+  return { svc, controller: new MediaController(svc, {} as never) };
 }
 
 let staged = '';

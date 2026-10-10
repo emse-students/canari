@@ -34,6 +34,9 @@ export interface StoredObject {
   lastModifiedMs: number | null;
 }
 
+/** S3 multipart part size; 5 MiB is the smallest minio-js accepts (the S3 minimum too). */
+export const STORE_PART_BYTES = 5 * 1024 * 1024;
+
 @Injectable()
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
@@ -49,6 +52,11 @@ export class StorageService implements OnModuleInit {
       // Garage's S3 API signs with the region declared in garage.toml; the client otherwise
       // defaults to us-east-1 and every request is refused. Not optional here.
       region: process.env.GARAGE_REGION,
+      // minio-js reads a whole object into ONE buffer when it is no larger than this (default 64 MiB,
+      // so every blob under the 50 MB ceiling), and only streams multipart above it. 5 MiB is the
+      // client's own minimum, and bounds the heap of `putFileStream` to one part. It is a CLIENT
+      // option: `fPutObject` takes no part size of its own (its 4th argument is metadata).
+      partSize: STORE_PART_BYTES,
       accessKey: (() => {
         const v = process.env.GARAGE_ACCESS_KEY_ID;
         if (!v) throw new Error('GARAGE_ACCESS_KEY_ID is required');

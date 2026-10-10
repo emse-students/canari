@@ -35,7 +35,7 @@ import * as path from 'path';
 import { Readable, Transform, type TransformCallback } from 'stream';
 import { pipeline } from 'stream/promises';
 import { v4 as uuidv4 } from 'uuid';
-import { MediaService, type RetentionClass } from './media.service';
+import { MediaService, RETENTION_CLASSES, type RetentionClass } from './media.service';
 import { StorageService } from './storage.service';
 import {
   KeyedMutex,
@@ -70,6 +70,12 @@ interface SessionRecord {
   /** Absolute: the resume window runs from the opening, never extended by activity. */
   expiresAt: number;
   received: number[];
+  /**
+   * The id `complete` will register, persisted BEFORE the store is written: a crash anywhere after
+   * that point retries into the same object key (the store overwrites it), so no orphan and no
+   * second id for one upload.
+   */
+  intendedMediaId?: string;
   /** Set by `complete`; the memo that makes a repeated `complete` answer the same id. */
   completed?: { mediaId: string; at: number };
 }
@@ -83,6 +89,65 @@ interface Session extends SessionRecord {
   aborts: Set<AbortController>;
   /** Settles when each in-flight PUT has finished unwinding. */
   active: Set<Promise<unknown>>;
+  /** True from the moment `complete` starts reading the staging file; a PUT is then refused (409). Memory only. */
+  completing: boolean;
+}
+
+/** A sidecar that is unreadable as a session, as opposed to one the disk could not be read for. */
+class InvalidRecordError extends Error {}
+
+function isUuid(v: unknown): v is string {
+  return typeof v === 'string' && UUID_REGEX.test(v);
+}
+
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+/**
+ * Validates a parsed sidecar field by field. Throws {@link InvalidRecordError} - and only that - so
+ * `load` can tell a record that is WRONG (safe to delete) from a read that FAILED (never deleted).
+ */
+function validateRecord(raw: unknown, id: string): SessionRecord {
+  const bad = (why: string): never => {
+    throw new InvalidRecordError(why);
+  };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return bad('not an object');
+  const r = raw as Record<string, unknown>;
+  if (r.id !== id) bad('id differs from the file name');
+  if (typeof r.ownerId !== 'string' || r.ownerId.length === 0) bad('ownerId');
+  if (!Number.isSafeInteger(r.totalBytes) || (r.totalBytes as number) <= 0) bad('totalBytes');
+  if (
+    !Number.isSafeInteger(r.partBytes) ||
+    (r.partBytes as number) < PART_MIN_BYTES ||
+    (r.partBytes as number) > PART_MAX_BYTES
+  ) {
+    bad('partBytes');
+  }
+  const parts = partCount(r.totalBytes as number, r.partBytes as number);
+  if (parts > MAX_PARTS) bad('too many parts');
+  if (typeof r.headerHex !== 'string' || !/^[0-9a-f]{40}$/.test(r.headerHex)) bad('headerHex');
+  if (!isFiniteNumber(r.createdAt) || !isFiniteNumber(r.expiresAt)) bad('timestamps');
+  if (
+    r.retentionClass !== undefined &&
+    !(typeof r.retentionClass === 'string' && RETENTION_CLASSES.has(r.retentionClass))
+  ) {
+    bad('retentionClass');
+  }
+  if (
+    !Array.isArray(r.received) ||
+    !r.received.every((i) => Number.isInteger(i) && i >= 0 && i < parts)
+  ) {
+    bad('received');
+  }
+  if (r.intendedMediaId !== undefined && !isUuid(r.intendedMediaId)) bad('intendedMediaId');
+  if (r.completed !== undefined) {
+    const c = r.completed as Record<string, unknown> | null;
+    if (typeof c !== 'object' || c === null || !isUuid(c.mediaId) || !isFiniteNumber(c.at)) {
+      bad('completed');
+    }
+  }
+  return r as unknown as SessionRecord;
 }
 
 /** Counts bytes through the pipe and refuses the one past the declared length. */
@@ -116,7 +181,20 @@ export class UploadSessionService {
     'MEDIA_UPLOAD_SESSION_MAX_STAGED_BYTES',
     2 * 1024 * 1024 * 1024
   );
+  /** What one member may hold staged at once, summed over their open sessions' declared sizes. */
+  private readonly maxOwnerStagedBytes = positiveIntEnv(
+    'MEDIA_UPLOAD_SESSION_MAX_OWNER_BYTES',
+    256 * 1024 * 1024
+  );
+  /**
+   * A session that has received NOT ONE part is held this long, not 24 h: it costs a sparse file's
+   * declared size against the staging cap and a daily-budget reservation, and an opener who never
+   * sends anything must not hold either for a day.
+   */
+  private readonly emptyTtlMs = positiveIntEnv('MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS', 15 * 60 * 1000);
   private loaded?: Promise<void>;
+  /** Sessions whose sidecar could not be READ (disk error): kept on disk, never swept as orphans. */
+  private readonly unreadable = new Set<string>();
 
   constructor(
     private readonly media: MediaService,
@@ -176,12 +254,27 @@ export class UploadSessionService {
       );
     }
 
+    // Sessions past their window free their staging and reservation now, not at the next sweep.
+    await this.disposeExpired();
     let open = 0;
     let staged = 0;
+    let ownerStaged = 0;
     for (const s of this.sessions.values()) {
       if (s.completed) continue;
       staged += s.totalBytes;
-      if (s.ownerId === ownerId) open += 1;
+      if (s.ownerId === ownerId) {
+        open += 1;
+        ownerStaged += s.totalBytes;
+      }
+    }
+    if (ownerStaged + total > this.maxOwnerStagedBytes) {
+      this.logger.warn(
+        `Upload session refused for ${ownerId}: ${ownerStaged} bytes already declared, ${total} more over ${this.maxOwnerStagedBytes}`
+      );
+      throw new HttpException(
+        'Too many bytes in open upload sessions, finish or cancel one first',
+        HttpStatus.TOO_MANY_REQUESTS
+      );
     }
     if (open >= this.maxOpenPerOwner) {
       this.logger.warn(`Upload session refused for ${ownerId}: ${open} sessions already open`);
@@ -216,6 +309,7 @@ export class UploadSessionService {
       release,
       aborts: new Set(),
       active: new Set(),
+      completing: false,
     };
     // Registered BEFORE the awaits below: the open-session cap above was judged on this map, and two
     // concurrent inits from one member must not both pass it. The client has no id until we answer.
@@ -239,7 +333,7 @@ export class UploadSessionService {
     this.logger.log(
       `Upload session ${id} opened by ${ownerId}: ${total} bytes in ${totalParts} part(s) of ${part} (class=${input.retentionClass ?? 'unclassified'})`
     );
-    return { uploadId: id, partBytes: part, totalParts, expiresAt: session.expiresAt };
+    return { uploadId: id, partBytes: part, totalParts, expiresAt: this.effectiveExpiry(session) };
   }
 
   /**
@@ -257,6 +351,7 @@ export class UploadSessionService {
   ): Promise<{ index: number; receivedCount: number }> {
     await this.ensureLoaded();
     const session = await this.requireOpen(ownerId, id);
+    if (session.completing) throw new ConflictException('Upload is being completed');
     const idx = Number(index);
     const parts = partCount(session.totalBytes, session.partBytes);
     if (!Number.isInteger(idx) || idx < 0 || idx >= parts) {
@@ -282,6 +377,18 @@ export class UploadSessionService {
       // Re-checked under the lock: a cancel may have arrived while this waited behind a retry.
       if (!this.sessions.has(id))
         throw new NotFoundException('Upload session not found or expired');
+      if (session.completing || session.completed) {
+        throw new ConflictException('Upload is being completed');
+      }
+      // A re-sent part is REWRITTEN, and a rewrite interrupted midway leaves torn bytes at that
+      // offset. So the index stops counting as received - durably - BEFORE the first byte moves,
+      // and is added back only once the whole body has landed. Without this a crash or a dropped
+      // retry left a "received" part that was half old, half new, and `complete` stored it.
+      if (session.receivedSet.delete(idx)) {
+        session.received = [...session.receivedSet].sort((a, b) => a - b);
+        this.logger.log(`Part ${idx} of session ${id} re-sent: unmarked while it is rewritten`);
+        await this.mutex.run(`${id}:meta`, () => this.persist(session));
+      }
       const guard = new PartGuard(expected);
       const out = fs.createWriteStream(this.dataPath(id), {
         flags: 'r+',
@@ -299,6 +406,18 @@ export class UploadSessionService {
           throw new ConflictException('Upload session was closed');
         }
         const code = (err as NodeJS.ErrnoException)?.code;
+        if (code === 'ENOENT') {
+          // The staging file is gone: the session was closed (cancel, expiry) under this write.
+          this.logger.warn(`Part ${idx} of session ${id}: staging file gone, session closed`);
+          throw new ConflictException('Upload session was closed');
+        }
+        if (code === 'ENOSPC') {
+          this.logger.error(`Part ${idx} of session ${id}: the staging disk is full (ENOSPC)`);
+          throw new HttpException(
+            'Upload staging has no space left, try again later',
+            HttpStatus.INSUFFICIENT_STORAGE
+          );
+        }
         if (code === 'ERR_STREAM_PREMATURE_CLOSE' || code === 'ECONNRESET') {
           this.logger.warn(`Part ${idx} of session ${id} interrupted after ${guard.bytes} bytes`);
           throw new BadRequestException('Part body was interrupted; send it again');
@@ -316,12 +435,8 @@ export class UploadSessionService {
         // Closed while the last bytes landed: the staging is gone or going, nothing to record.
         throw new ConflictException('Upload session was closed');
       }
-      if (!session.receivedSet.has(idx)) {
-        session.receivedSet.add(idx);
-        session.received = [...session.receivedSet].sort((a, b) => a - b);
-      } else {
-        this.logger.log(`Part ${idx} of session ${id} re-sent: rewritten in place`);
-      }
+      session.receivedSet.add(idx);
+      session.received = [...session.receivedSet].sort((a, b) => a - b);
       await this.mutex.run(`${id}:meta`, () => this.persist(session));
     });
     session.aborts.add(abort);
@@ -354,7 +469,7 @@ export class UploadSessionService {
       partBytes: session.partBytes,
       totalParts: partCount(session.totalBytes, session.partBytes),
       received: [...session.received],
-      expiresAt: session.expiresAt,
+      expiresAt: this.effectiveExpiry(session),
       ...(session.completed ? { mediaId: session.completed.mediaId } : {}),
     };
   }
@@ -377,6 +492,21 @@ export class UploadSessionService {
       if (session.active.size > 0) {
         throw new ConflictException('Parts are still being received');
       }
+      // Set in the same synchronous run as the check above: a PUT arriving from here on is refused
+      // (409) instead of writing into, or racing the removal of, the file being stored.
+      session.completing = true;
+      try {
+        return await this.assemble(ownerId, session);
+      } finally {
+        session.completing = false;
+      }
+    });
+  }
+
+  /** The body of `complete`, run under its lock with `completing` set. */
+  private async assemble(ownerId: string, session: Session): Promise<{ mediaId: string }> {
+    const id = session.id;
+    {
       const parts = partCount(session.totalBytes, session.partBytes);
       if (session.receivedSet.size !== parts) {
         const missing = parts - session.receivedSet.size;
@@ -405,7 +535,12 @@ export class UploadSessionService {
         throw new UnprocessableEntityException('Staged header differs from the declared header');
       }
 
-      const mediaId = uuidv4();
+      // Durable BEFORE the store is touched, so a crash from here on retries into the same key.
+      if (!session.intendedMediaId) {
+        session.intendedMediaId = uuidv4();
+        await this.mutex.run(`${id}:meta`, () => this.persist(session));
+      }
+      const mediaId = session.intendedMediaId;
       try {
         await this.storage.putFileStream(mediaId, dataPath, session.totalBytes);
       } catch (err) {
@@ -424,24 +559,38 @@ export class UploadSessionService {
       session.completed = { mediaId, at: Date.now() };
       // The memo lives a full window from now, so a client whose answer was lost can still ask.
       session.expiresAt = Math.max(session.expiresAt, session.completed.at + this.ttlMs);
-      await this.mutex.run(`${id}:meta`, () => this.persist(session));
+      try {
+        await this.mutex.run(`${id}:meta`, () => this.persist(session));
+      } catch (err) {
+        // The object is stored and registered: the member is told so. Only the memo is not durable,
+        // and the staging file is KEPT so a restart retries `complete` into the same media id.
+        this.logger.error(
+          `Upload session ${id}: media ${mediaId} registered but its memo was not persisted: ${String(err)}`
+        );
+        return { mediaId };
+      }
       await fs.remove(dataPath).catch((err) => {
         this.logger.warn(`Upload session ${id}: staged file not removed: ${String(err)}`);
       });
       this.logger.log(`Upload session ${id} completed -> ${mediaId} (${session.totalBytes} bytes)`);
       return { mediaId };
-    });
+    }
   }
 
   /** Cancels now: aborts in-flight parts, deletes the staging, releases the reservation. */
   async cancel(ownerId: string, id: string): Promise<void> {
     await this.ensureLoaded();
     const session = await this.require(ownerId, id);
-    if (session.completed) {
-      throw new ConflictException('Upload already completed');
-    }
     // Under the same lock as `complete`: a staging file is never removed while the store reads it.
-    await this.mutex.run(`${id}:complete`, () => this.dispose(session, 'cancelled'));
+    // Both facts are re-read INSIDE it: a `complete` that held the lock may have finished (a
+    // completed upload is not cancellable) and an expiry may have disposed the session meanwhile.
+    await this.mutex.run(`${id}:complete`, async () => {
+      if (session.completed) throw new ConflictException('Upload already completed');
+      if (!this.sessions.has(id)) {
+        throw new NotFoundException('Upload session not found or expired');
+      }
+      await this.dispose(session, 'cancelled');
+    });
   }
 
   /** Removes every expired session (and the memo of an expired completion). */
@@ -450,8 +599,8 @@ export class UploadSessionService {
     const now = Date.now();
     let swept = 0;
     for (const session of this.sessions.values()) {
-      if (session.expiresAt <= now) {
-        await this.mutex.run(`${session.id}:complete`, () => this.dispose(session, 'expired'));
+      if (this.effectiveExpiry(session) <= now) {
+        await this.expire(session);
         swept += 1;
       }
     }
@@ -459,7 +608,7 @@ export class UploadSessionService {
     try {
       for (const name of await fs.readdir(this.dir)) {
         const id = name.replace(/\.(data|json\.tmp|json)$/, '');
-        if (!this.sessions.has(id) && UUID_REGEX.test(id)) {
+        if (!this.sessions.has(id) && !this.unreadable.has(id) && UUID_REGEX.test(id)) {
           await this.removeFiles(id);
           swept += 1;
           this.logger.warn(`Upload staging for unknown session ${id} removed`);
@@ -492,33 +641,50 @@ export class UploadSessionService {
       if (!name.endsWith('.json')) continue;
       const id = name.slice(0, -'.json'.length);
       if (!UUID_REGEX.test(id)) continue;
+      let record: SessionRecord;
       try {
-        const record = (await fs.readJson(path.join(this.dir, name))) as SessionRecord;
-        if (record.id !== id || !Array.isArray(record.received)) throw new Error('malformed');
-        const set = new Set(record.received.filter((i) => Number.isInteger(i) && i >= 0));
-        const session: Session = {
-          ...record,
-          received: [...set].sort((a, b) => a - b),
-          receivedSet: set,
-          release: () => {},
-          aborts: new Set(),
-          active: new Set(),
-        };
-        if (!session.completed) {
-          if (!(await fs.pathExists(this.dataPath(id)))) throw new Error('staging file missing');
-          session.release = this.media.reserveUploadBudget(
-            session.retentionClass,
-            session.ownerId,
-            session.totalBytes,
-            true
-          );
+        record = validateRecord(await fs.readJson(path.join(this.dir, name)), id);
+        if (!record.completed) {
+          const stat = await fs.stat(this.dataPath(id));
+          if (stat.size !== record.totalBytes) throw new InvalidRecordError('staging size differs');
         }
-        this.sessions.set(id, session);
-        restored += 1;
       } catch (err) {
-        this.logger.warn(`Upload session ${id} could not be restored, removed: ${String(err)}`);
+        const wrong =
+          err instanceof InvalidRecordError ||
+          err instanceof SyntaxError ||
+          (err as NodeJS.ErrnoException)?.code === 'ENOENT';
+        if (!wrong) {
+          // The DISK failed (EIO, EACCES, EMFILE...), not the record: deleting here would destroy a
+          // member's upload for a fault that may be gone in a minute. Keep it, shield it from the
+          // orphan sweep, and say so.
+          this.unreadable.add(id);
+          this.logger.error(`Upload session ${id} could not be read, kept on disk: ${String(err)}`);
+          continue;
+        }
+        this.logger.warn(`Upload session ${id} is not a valid session, removed: ${String(err)}`);
         await this.removeFiles(id);
+        continue;
       }
+      const set = new Set(record.received);
+      const session: Session = {
+        ...record,
+        received: [...set].sort((a, b) => a - b),
+        receivedSet: set,
+        release: () => {},
+        aborts: new Set(),
+        active: new Set(),
+        completing: false,
+      };
+      if (!session.completed) {
+        session.release = this.media.reserveUploadBudget(
+          session.retentionClass,
+          session.ownerId,
+          session.totalBytes,
+          true
+        );
+      }
+      this.sessions.set(id, session);
+      restored += 1;
     }
     if (restored > 0) this.logger.log(`Restored ${restored} upload session(s) after a restart`);
   }
@@ -532,14 +698,33 @@ export class UploadSessionService {
       this.logger.warn(`Upload session ${id} addressed by another member than its opener`);
       throw new ForbiddenException('Not your upload session');
     }
-    if (session.expiresAt <= Date.now()) {
+    if (this.effectiveExpiry(session) <= Date.now()) {
       // Not awaited: this may be running inside the lock the disposal needs.
-      void this.mutex
-        .run(`${id}:complete`, () => this.dispose(session, 'expired'))
-        .catch((err) => this.logger.error(`Expiry of session ${id} failed: ${String(err)}`));
+      void this.expire(session).catch((err) =>
+        this.logger.error(`Expiry of session ${id} failed: ${String(err)}`)
+      );
       throw new NotFoundException('Upload session not found or expired');
     }
     return session;
+  }
+
+  /** When the session stops being served: the 24 h window, or the short one while it holds no part. */
+  private effectiveExpiry(session: Session): number {
+    if (session.completed || session.receivedSet.size > 0) return session.expiresAt;
+    return Math.min(session.expiresAt, session.createdAt + this.emptyTtlMs);
+  }
+
+  private expire(session: Session): Promise<void> {
+    return this.mutex.run(`${session.id}:complete`, async () => {
+      if (this.sessions.get(session.id) === session) await this.dispose(session, 'expired');
+    });
+  }
+
+  private async disposeExpired(): Promise<void> {
+    const now = Date.now();
+    for (const session of this.sessions.values()) {
+      if (this.effectiveExpiry(session) <= now) await this.expire(session);
+    }
   }
 
   private async requireOpen(ownerId: string, id: string): Promise<Session> {
@@ -581,6 +766,7 @@ export class UploadSessionService {
       createdAt: session.createdAt,
       expiresAt: session.expiresAt,
       received: session.received,
+      ...(session.intendedMediaId ? { intendedMediaId: session.intendedMediaId } : {}),
       ...(session.completed ? { completed: session.completed } : {}),
     };
     const tmp = `${this.metaPath(session.id)}.tmp`;

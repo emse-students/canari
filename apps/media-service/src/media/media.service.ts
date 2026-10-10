@@ -199,7 +199,7 @@ function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason }
  */
 export type RetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel' | 'chat-reel';
 
-const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
+export const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
   'ephemeral',
   'archive',
   'association',

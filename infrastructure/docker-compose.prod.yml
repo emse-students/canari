@@ -330,6 +330,8 @@ services:
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     volumes:
       - media_meta:/app/media_meta
+      # Staging of resumable upload sessions (parts land here before the object store takes the blob).
+      - media_upload_sessions:/app/upload_sessions
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3011/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -534,3 +536,5 @@ volumes:
   garage_meta:
   garage_data:
   media_meta:
+  # Transient staging, DELIBERATELY not backed up: a session is a day of resumable work at most.
+  media_upload_sessions:

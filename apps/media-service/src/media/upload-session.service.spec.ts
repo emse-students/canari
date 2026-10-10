@@ -603,3 +603,272 @@ describe('over real HTTP: the controller reads Content-Length and pipes the requ
     }
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// The review of #1708: abuse caps, a torn retry, complete racing a PUT, crash windows, the sidecar.
+// ---------------------------------------------------------------------------------------------
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+/** Holds the store open until `release()`, so a test can act while `complete` is inside it. */
+function gateStore(r: Rig) {
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const inside = new Promise<void>((resolve) => (entered = resolve));
+  const storage = (r.svc as unknown as { storage: { putFileStream: (...a: never[]) => unknown } })
+    .storage;
+  const original = storage.putFileStream.bind(storage);
+  storage.putFileStream = (async (...args: never[]) => {
+    entered();
+    await gate;
+    return original(...args);
+  }) as never;
+  return { release, inside };
+}
+
+async function fillAll(r: Rig, s: Awaited<ReturnType<typeof open>>) {
+  for (const i of Array(s.totalParts).keys()) {
+    await put(r, 'alice', s.uploadId, i, sliceOf(s.blob, 1024, i));
+  }
+}
+
+describe('abuse: a session costs something even when no byte is sent', () => {
+  afterEach(() => {
+    delete process.env.MEDIA_UPLOAD_SESSION_MAX_OWNER_BYTES;
+    delete process.env.MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS;
+  });
+
+  it('caps the bytes one member may declare across open sessions (429), without touching another member', async () => {
+    const { blob } = blobFor(3000);
+    process.env.MEDIA_UPLOAD_SESSION_MAX_OWNER_BYTES = String(blob.length * 2 + 1);
+    const r = rig();
+    await open(r, 'alice', 3000);
+    await open(r, 'alice', 3000);
+    const third = await open(r, 'alice', 3000).catch((e: HttpException) => e);
+    expect((third as HttpException).getStatus()).toBe(429);
+    await expect(open(r, 'bob', 3000)).resolves.toBeDefined();
+  });
+
+  it('expires a session that received no part after the short window, releasing its reservation', async () => {
+    process.env.MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS = '1000';
+    const r = rig();
+    const empty = await open(r, 'alice', 3000, 1024, 'chat-reel');
+    const started = await open(r, 'alice', 3000, 1024, 'chat-reel');
+    await put(r, 'alice', started.uploadId, 0, sliceOf(started.blob, 1024, 0));
+    const sessions = (r.svc as unknown as { sessions: Map<string, { createdAt: number }> })
+      .sessions;
+    for (const s of sessions.values()) s.createdAt = Date.now() - 5000;
+
+    // Disposed by the NEXT init, not by the hourly sweep.
+    await open(r, 'bob', 3000);
+    await expect(r.svc.status('alice', empty.uploadId)).rejects.toThrow(NotFoundException);
+    expect(await fs.pathExists(path.join(r.dir, `${empty.uploadId}.data`))).toBe(false);
+    // The one that holds a part keeps the full window and its reservation.
+    await expect(r.svc.status('alice', started.uploadId)).resolves.toBeDefined();
+    expect(reserved(r)).toBe(started.blob.length);
+  });
+});
+
+describe('a retried part is unmarked while it is rewritten', () => {
+  it('a retry cut midway is NOT reported received, on disk either, and complete refuses until it is resent', async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000);
+    await fillAll(r, s);
+    const broken = new Readable({
+      read() {
+        this.push(Buffer.alloc(300, 0xee));
+        this.destroy(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }));
+      },
+    });
+    await expect(r.svc.putPart('alice', s.uploadId, 1, broken, 1024)).rejects.toThrow(
+      BadRequestException
+    );
+    const status = await r.svc.status('alice', s.uploadId);
+    expect(status.received).not.toContain(1);
+    const sidecar = await fs.readJson(path.join(r.dir, `${s.uploadId}.json`));
+    expect(sidecar.received).not.toContain(1);
+    await expect(r.svc.complete('alice', s.uploadId)).rejects.toThrow(ConflictException);
+    await put(r, 'alice', s.uploadId, 1, sliceOf(s.blob, 1024, 1));
+    await r.svc.complete('alice', s.uploadId);
+    expect(r.stored[0].bytes.equals(s.blob)).toBe(true);
+  });
+});
+
+describe('complete and a PUT never overlap', () => {
+  it('a PUT that arrives while complete is in the store is 409, and the blob stored is intact', async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000);
+    await fillAll(r, s);
+    const g = gateStore(r);
+    const done = r.svc.complete('alice', s.uploadId);
+    await g.inside;
+    await expect(put(r, 'alice', s.uploadId, 0, sliceOf(s.blob, 1024, 0))).rejects.toThrow(
+      ConflictException
+    );
+    g.release();
+    await done;
+    expect(r.stored[0].bytes.equals(s.blob)).toBe(true);
+  });
+
+  it('a PUT after completion is 409, never a 500 from the removed staging file', async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000);
+    await fillAll(r, s);
+    await r.svc.complete('alice', s.uploadId);
+    const err = await put(r, 'alice', s.uploadId, 0, sliceOf(s.blob, 1024, 0)).catch(
+      (e: HttpException) => e
+    );
+    expect(err).toBeInstanceOf(ConflictException);
+  });
+
+  it('a complete that finds a PUT in flight is 409 and leaves the session completable', async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000);
+    await fillAll(r, s);
+    const stuck = new Readable({ read() {} });
+    const inflight = r.svc.putPart('alice', s.uploadId, 1, stuck, 1024);
+    await tick();
+    await expect(r.svc.complete('alice', s.uploadId)).rejects.toThrow(ConflictException);
+    stuck.push(sliceOf(s.blob, 1024, 1));
+    stuck.push(null);
+    await inflight;
+    await expect(r.svc.complete('alice', s.uploadId)).resolves.toBeDefined();
+  });
+
+  it('a cancel that waits behind complete finds it completed (409) and removes nothing', async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000, 1024, 'chat-reel');
+    await fillAll(r, s);
+    const g = gateStore(r);
+    const done = r.svc.complete('alice', s.uploadId);
+    await g.inside;
+    const cancelled = r.svc.cancel('alice', s.uploadId).catch((e: HttpException) => e);
+    await tick();
+    g.release();
+    const { mediaId } = await done;
+    expect(await cancelled).toBeInstanceOf(ConflictException);
+    expect(await r.svc.status('alice', s.uploadId)).toMatchObject({ mediaId });
+    expect(reserved(r)).toBe(0);
+  });
+});
+
+describe('crash windows inside complete', () => {
+  it('the media id is persisted BEFORE the store, so a failed store retries into the same key', async () => {
+    const first = rig();
+    const s = await open(first, 'alice', 3000);
+    await fillAll(first, s);
+    first.failStore.value = true;
+    await expect(first.svc.complete('alice', s.uploadId)).rejects.toThrow(HttpException);
+    const intended = (await fs.readJson(path.join(first.dir, `${s.uploadId}.json`)))
+      .intendedMediaId;
+    expect(intended).toMatch(/^[0-9a-f-]{36}$/);
+
+    const second = rig(first.dir); // the process died after the failed store
+    const { mediaId } = await second.svc.complete('alice', s.uploadId);
+    expect(mediaId).toBe(intended);
+    expect(second.stored.map((x) => x.id)).toEqual([intended]);
+  });
+
+  it('a crash between the register and the memo answers the SAME id after the restart', async () => {
+    const first = rig();
+    const s = await open(first, 'alice', 3000, 1024, 'chat-reel');
+    await fillAll(first, s);
+    const svc = first.svc as unknown as { persist: (x: { completed?: unknown }) => Promise<void> };
+    const real = svc.persist.bind(svc);
+    svc.persist = async (x) => {
+      if (x.completed) throw new Error('disk gone');
+      return real(x);
+    };
+    const { mediaId } = await first.svc.complete('alice', s.uploadId);
+    // The member was answered, and the staging was KEPT because the memo is not durable.
+    expect(await fs.pathExists(path.join(first.dir, `${s.uploadId}.data`))).toBe(true);
+
+    const second = rig(first.dir);
+    expect(await second.svc.complete('alice', s.uploadId)).toEqual({ mediaId });
+    expect(second.stored.map((x) => x.id)).toEqual([mediaId]);
+    expect(reserved(second)).toBe(0);
+  });
+});
+
+describe('the sidecar at load', () => {
+  const ID = {
+    junk: '33333333-3333-4333-8333-333333333333',
+    types: '44444444-4444-4444-8444-444444444444',
+  };
+
+  it('deletes a record that is WRONG: unparseable, or with a field of the wrong type', async () => {
+    const first = rig();
+    const s = await open(first, 'alice', 3000);
+    await fs.writeFile(path.join(first.dir, `${ID.junk}.json`), '{ not json');
+    await fs.writeFile(path.join(first.dir, `${ID.junk}.data`), 'x');
+    const good = await fs.readJson(path.join(first.dir, `${s.uploadId}.json`));
+    await fs.writeJson(path.join(first.dir, `${ID.types}.json`), {
+      ...good,
+      id: ID.types,
+      totalBytes: '3000',
+      received: 'all',
+    });
+    await fs.writeFile(path.join(first.dir, `${ID.types}.data`), 'x');
+
+    const second = rig(first.dir);
+    await expect(second.svc.status('alice', s.uploadId)).resolves.toBeDefined();
+    expect((await fs.readdir(first.dir)).sort()).toEqual(
+      [`${s.uploadId}.data`, `${s.uploadId}.json`].sort()
+    );
+  });
+
+  it('does NOT delete a session whose sidecar could not be read (EIO), and the sweep spares it', async () => {
+    const first = rig();
+    const s = await open(first, 'alice', 3000);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fsx = require('fs-extra') as typeof import('fs-extra');
+    const spy = jest
+      .spyOn(fsx, 'readJson')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('input/output error'), { code: 'EIO' }) as never
+      );
+    try {
+      const second = rig(first.dir);
+      await expect(second.svc.status('alice', s.uploadId)).rejects.toThrow(NotFoundException);
+      expect(await second.svc.sweep()).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await fs.pathExists(path.join(first.dir, `${s.uploadId}.json`))).toBe(true);
+    expect(await fs.pathExists(path.join(first.dir, `${s.uploadId}.data`))).toBe(true);
+    // The disk is back: the next process restores it.
+    const third = rig(first.dir);
+    await expect(third.svc.status('alice', s.uploadId)).resolves.toBeDefined();
+  });
+});
+
+describe('a full staging disk', () => {
+  it('answers 507 (retryable), leaves the part unreceived and the session usable', async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fsx = require('fs-extra') as typeof import('fs-extra');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Writable } = require('stream') as typeof import('stream');
+    const spy = jest.spyOn(fsx, 'createWriteStream').mockImplementationOnce(
+      (() =>
+        new Writable({
+          write(_c, _e, cb) {
+            cb(Object.assign(new Error('no space left on device'), { code: 'ENOSPC' }));
+          },
+        })) as never
+    );
+    try {
+      const err = await put(r, 'alice', s.uploadId, 0, sliceOf(s.blob, 1024, 0)).catch(
+        (e: HttpException) => e
+      );
+      expect((err as HttpException).getStatus()).toBe(507);
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await r.svc.status('alice', s.uploadId)).received).toEqual([]);
+    await fillAll(r, s);
+    await expect(r.svc.complete('alice', s.uploadId)).resolves.toBeDefined();
+  });
+});

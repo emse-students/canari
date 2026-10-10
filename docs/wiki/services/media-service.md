@@ -367,23 +367,39 @@ routes in `media.controller.ts` (NO `FileInterceptor`: a spec reads the route me
   budget (2 GiB declared), `429` past the daily `chat-reel` budget - **reserved ONCE here** with
   `reserveChatReelBudget`, the same machinery as the single POST. A sparse staging file of exactly
   `totalBytes` is created. The part size travels in `init`; the server assumes none.
+- **A session that received NOTHING lives 15 min, not 24 h** (`MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS`), and one
+  member may declare at most **256 MiB** across open sessions (`MEDIA_UPLOAD_SESSION_MAX_OWNER_BYTES`, `429`).
+  Both exist because `init` is cheap (a sparse file plus a reservation) and the 2 GiB staging cap was
+  otherwise fillable by anyone, for a day, with no part sent. Expired sessions are disposed at `init` too,
+  so a full cap does not wait for the hourly sweep. Their reservation goes with them.
 - **`PUT parts/:index`**: raw `application/octet-stream`. `Content-Length` is REQUIRED (`411`), over **8 MiB is
   `413` before a byte is read**, more than the part's exact length `413`, fewer `400`. The request stream
   is piped through a byte counter into `createWriteStream(..., {flags: 'r+', start: index * partBytes})`
   with 64 KiB buffers - heap is the buffer, not the part. Only a part whose every byte landed is recorded;
   an interrupted one is `400` and absent from `status`. **A re-sent part rewrites the same bytes at the same
   offset**: this is the defect of `appendChunk`, which appends and so doubled a chunk whose answer was lost.
-  Same-index PUTs are serialised, different indexes run in parallel.
+  Same-index PUTs are serialised, different indexes run in parallel. **A re-sent part is UNMARKED
+  (durably) before its first byte is rewritten and re-marked when the whole body landed**, so a retry cut
+  midway cannot leave a half-old, half-new part that `status` reports as received. A PUT after `complete`
+  started or finished is `409` (the `completing` flag is set in the same synchronous run as the in-flight
+  check), a PUT whose staging vanished under it (cancel, expiry) is `409`, and `ENOSPC` is `507`.
 - **`GET :id`** is the resume fact: `{received: [...], totalParts, partBytes, expiresAt}`, plus `mediaId` once
   completed. The list is in a sidecar `<id>.json` (atomic write-and-rename) beside `<id>.data`, so a PROCESS
   restart forgets nothing; the restored reservation is put back with `restore` (not re-judged, so a day that
   filled up meanwhile cannot strand a session the member was told they had).
 - **`complete`**: every part present and no PUT in flight (`409`), staged size exact, the first 20 bytes equal
   to the declared header (`422`), `fPutObject` from the file, then the index entry and the reservation hand
-  over in one synchronous run (`registerUpload`'s `onRegistered`). A store failure leaves the session open,
+  over in one synchronous run (`registerUpload`'s `onRegistered`). **The `mediaId` is chosen and persisted BEFORE
+  the store is written**, so a crash between the store, the register and the memo retries into the same key
+  (the store overwrites; `registerUpload` is a set); if only the memo write fails the member still gets
+  the id and the staging file is kept for that retry. A store failure leaves the session open,
   reservation held, `complete` retryable. **Idempotent**: `uploadId -> mediaId` is the `completed` field of the
   sidecar, kept a full window (24 h) after completion and surviving a restart.
-- **`DELETE :id`** aborts in-flight parts, removes the staging and releases the budget now.
+- **`DELETE :id`** aborts in-flight parts, removes the staging and releases the budget now. Under the
+  `complete` lock it re-reads whether the upload completed (`409`) or was disposed (`404`) meanwhile.
+- **Loading after a restart** validates every sidecar field (types, ranges, uuid shapes, staging size). A
+  record that is WRONG (bad JSON, bad field, staging missing or of another size) is deleted; a read that
+  FAILED (EIO, EACCES) is not: it is kept, logged as an error and shielded from the orphan sweep.
 - **Ownership**: another member is `403` on every route, an unknown or expired id `404`.
 - **Expiry is absolute**: `MEDIA_UPLOAD_SESSION_TTL_MS` (24 h) from the opening, never extended by
   activity. It is enforced when a session is addressed AND by the hourly sweep, which also removes staging no
@@ -393,17 +409,30 @@ routes in `media.controller.ts` (NO `FileInterceptor`: a spec reads the route me
 - **Release in `finally`**: complete, cancel, expiry and a failed `init` each give the reservation back, and
   the release is idempotent, so no ending can count it twice or leave it behind.
 
-**Proven** (`upload-session.service.spec.ts`, 36 cases, real staging directory and real budget; only the
+**Proven** (`upload-session.service.spec.ts`, 36 cases before the review fixes, which added the ones listed
+under them below, real staging directory and real budget; only the
 store is a stub): byte-for-byte assembly from parts sent concurrently and reversed; a part sent twice and
 twice at once; an interrupted part resent; `413` before reading; the 411/400/413 matrix; the last part's
 remainder; the open-session cap under 6 concurrent inits (exactly 4 pass); every ending releasing the
 budget; a restart keeping parts, reservation and memo; **50 MiB in 4 MiB parts growing `arrayBuffers` by
 under 16 MiB**; and a real HTTP server in front of the controller (a 9 MiB PUT is `413`, a raw part lands).
 
-**Residuals.** (1) The staging directory is in the container layer, not a volume: it survives a restart,
-not a recreate (every deploy), which ends the open sessions with `404` and a visible restart on the client.
-A volume would be backed up with `media_meta`'s siblings, so it needs its own decision. (2) `fPutObject`'s
-own buffering of a 50 MB object is still unmeasured (S0). (3) Streamed `GET` (design 3.5) is not in this
+Added by the review: the per-owner byte cap; the 15-minute expiry of an empty session and the release of its
+reservation; a retried part torn midway not counting as received; `complete` racing a PUT (either order);
+a crash between the register and the memo; a malformed sidecar and an unreadable one at load; cancel
+racing `complete`; `ENOSPC`.
+
+**Residuals.** (1) The staging directory is now its own volume, `media_upload_sessions` at
+`/app/upload_sessions` (prod and dev compose; the local bench compose keeps the container layer), so it
+survives a recreate. It is DELIBERATELY not in the backup (transient by design; no bootstrap step, Docker
+creates the volume on the next deploy). An existing sparse file's declared size still counts against
+the disk of the volume's filesystem, not the object store. (2) `fPutObject` had no part size of its own (its
+4th argument is metadata): `partSize` is a CLIENT option and is now `5 MiB` in `StorageService`
+(minio 8.0.7 `client.js` read: default 64 MiB means `size <= partSize` is read whole into a buffer;
+the minimum accepted is 5 MiB). **Unproven against Garage**: no multipart upload through Garage and no
+`process.memoryUsage()` probe on a 50 MB object has been run. (2b) **The vault/opaque mode is NOT in S1**
+(the header check is mandatory here, `init` refuses a non-`segmented-v1` blob): a vault document over 10 MiB
+still has no session route; it is a later package, see the design's 9.1/9.4. (3) Streamed `GET` (design 3.5) is not in this
 package. (4) The edge (nginx buffers a request body by default, then forwards it) and the 10 MiB wall are
 exercised only by gate 3 of the design (S5), not by these specs. (5) Part size, 8 MiB cap, 4 sessions and
 24 h are the user-delegated defaults of 2026-10-10, overridable.
