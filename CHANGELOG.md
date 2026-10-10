@@ -2429,7 +2429,7 @@ Re-checked every deliberate Cloudflare zone setting against the live host: TLS f
 "DDoS absorption" row turned out to be answered by CrowdSec, already running on every vhost and
 banning for real - but its log-parsing half reads one shared `access.log`, so Authentik's own log,
 where a password is actually tried, is parsed by nothing
-([backlog](docs/wiki/backlog.md#p3---a-crowdsec-ban-on-this-host-closes-the-co-tenant-sites-too-measured-2026-09-25)).
+([backlog](docs/wiki/infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)).
 Full audit: [estate-migration](docs/wiki/infrastructure/estate-migration.md#what-the-edge-did-that-the-origin-must-now-do).
 
 ### Fixed - deux fichiers supprimes par accident sont revenus, et le gate qui aurait du le dire

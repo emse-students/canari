@@ -200,8 +200,7 @@ The AppSec layer belongs to the school's host ([estate-migration](../infrastruct
 From our account `cscli` answers permission denied and `/etc/crowdsec/appsec-configs` is unreadable, so we
 can neither read the rule that drops bodies over 10 MiB nor exempt a path, nor test a change. This design
 works WITHOUT any change on their side (every body under 8 MiB, the only claim we can make about a rule we
-cannot read). As defence in depth, ask the school administrators to raise the body limit or exempt
-`/api/media/upload` (and the session routes) for authenticated traffic - an ask, not a dependency.
+cannot read). No request goes to the school administrators (user, 2026-10-10): the rule is theirs and stays as it is.
 Cloudflare's own request-body limit is 100 MB on Free and Pro, 200 MB Business (Cloudflare docs, read 2026-10-10, not probed): far above 8 MiB.
 
 ## 8. Questions only the user can answer
@@ -213,7 +212,7 @@ Cloudflare's own request-body limit is 100 MB on Free and Pro, 200 MB Business (
 4. **Resume window**: 24 h (today's sweep) or 48 h (MiGallery)?
 5. **Persisting the CEK in the outbox row** so a killed app resumes: acceptable given the row holds the file
    in the clear today?
-6. **Who asks the school administrators** for the AppSec exemption, and is a reply worth waiting for?
+6. ~~Who asks the school administrators for the AppSec exemption~~ - dropped (user, 2026-10-10): no request is made.
 7. **The Tauri part transport (9.4, S2)**: the WebView's native fetch with CORS for the Tauri origins, or a Rust command that streams a file part? Measured: `window.fetch` through the HTTP plugin costs about 85x the body and crashes the app at 50 MB.
 
 ## 9. WP-S0 results (2026-10-10) - what the audit, the phone and the code say

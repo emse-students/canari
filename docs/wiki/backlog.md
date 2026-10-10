@@ -225,16 +225,15 @@ The fix is built ([chat](frontend/modules/chat.md#a-community-joined-in-session-
 
 `UNREAD_TRACKED_SINCE_MS` (`channel.service.ts`) floors the server's count for a salon the member has no read mark in, so history from before marks existed (2026-09-29) is not called unread. Messages posted between that date and the deploy of `unread-counts` count for a never-opened salon, which is true. Open: a membership notice that is not `silent` counts as unread until the salon is opened (the client cannot be asked, the row is encrypted); mute levels are ignored, as the badges already did; and the in-session mark of a phone with the app asleep still depends on the 2 s receipt debounce.
 
-### P2 - some CAS returns reach MiConnect with no code and no state, and a client can stay out (diagnosed 2026-10-09, DSI answer owed)
+### P2 - some CAS returns reach MiConnect with no code and no state, and a client can stay out (diagnosed 2026-10-09)
 
 Read end to end on 2026-10-09 ([authentik](infrastructure/authentik.md#the-hand-built-configuration-audited-2026-09-29),
 last bullet): **52 % of the failing requests are server-side probes, not people**, the flow heals itself
-once for a browser, and one Android client failed three times in a row. Nothing can be changed from here
-(the CAS is the DSI's, MiConnect is shared production). **Owed**: (1) the DSI's answer on the request of
-2026-09-29, now with the two facts they can use: a Java HttpClient calls the bare callback, and
-`-cas1`/`-cas2` bridge nodes; (2) **`docker logs miconnect-server-1` is unreadable since the 2026-10-07
-restart (NUL bytes in the json log)**: a recreate of the container by whoever owns the box restores it, and
-only then can the browser failure rate be re-counted without the probes.
+once for a browser, and one Android client failed three times in a row. The CAS is not ours and no request
+goes to its owner (user, 2026-10-10): the remedy is on our side, a MiConnect flow that restarts the
+authorization instead of failing. **Owed**: **`docker logs miconnect-server-1` is unreadable since the
+2026-10-07 restart (NUL bytes in the json log)**; a recreate of the container restores it, and only then
+can the browser failure rate be re-counted without the probes.
 
 ### P3 - in the SWIPE-CHECK conversation both media show "Format non supporte" on the Mi 9T (2026-10-06)
 
@@ -270,15 +269,6 @@ The layout, flat pass, French prompts, redirect to Canari and signed-in `continu
 ([authentik](infrastructure/authentik.md#one-language-french-in-the-ecosystems-tu-2026-09-25)). Left:
 authentik's own untranslated "Go back". **One observation owed**: `miconnect-auth` opened while signed
 in, on the Mi 9T, should go straight through.
-
-### P3 - a CrowdSec ban on this host closes the co-tenant sites too (measured 2026-09-25)
-
-The two actionable halves shipped ([estate-migration](infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)).
-**What is left is not ours to close**: a CrowdSec decision is GLOBAL per address on this machine, so a
-ban earned on Canari traffic shuts `gala`, `mep` and `portail-etu-new` to that address and the reverse,
-and `/etc/crowdsec/acquis.yaml` is the DSI's file. A conversation with the machine's owner, recorded so
-nobody re-derives it a third time. `canari-dev.access.log` stays deliberately unparsed (dev shows one
-address for every visitor).
 
 ### The MLS audit items that are still real, with their verified counts (swept 2026-09-12)
 
