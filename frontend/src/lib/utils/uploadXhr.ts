@@ -66,6 +66,27 @@ export class UploadStalledError extends RequestDeadlineError {
 }
 
 /**
+ * An attachment whose last {@link UPLOAD_NO_ANSWER_ATTEMPTS} attempts each ended with NO ANSWER (a
+ * stall, an unanswered body, a dropped connection) while the app was online. Thrown by the outbox
+ * itself so the flush classifies it by TYPE: it is the visible end of a path that does not work
+ * (measured 2026-10-10: a relay answering 413 above 1 MiB and closing the socket mid-body never
+ * delivers its status, so the upload looked like a bad link for ever), and the entry is parked in a
+ * terminal, member-visible state instead of climbing the retry ladder without end.
+ */
+export class UploadGaveUpError extends Error {
+  constructor(
+    readonly attempts: number,
+    cause: unknown
+  ) {
+    super(`Upload gave up after ${attempts} attempts with no answer`, { cause });
+    this.name = 'UploadGaveUpError';
+  }
+}
+
+/** Consecutive no-answer attempts after which an attachment is parked as failed. */
+export const UPLOAD_NO_ANSWER_ATTEMPTS = 3;
+
+/**
  * The caller cancelled this upload ({@link XhrUploadOptions.signal}). Typed so the outbox can tell
  * "the member pressed cancel" from "the link broke" without reading a sentence.
  */

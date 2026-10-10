@@ -723,6 +723,7 @@
   "upload_stalled": "Plus rien ne passe - {sent} sur {total} envoyés",
   "upload_waiting": "En attente de connexion - nouvel essai automatique",
   "upload_blocked": "Envoi bloqué par le serveur - réessayez plus tard",
+  "upload_failed": "Envoi impossible : aucune réponse du serveur après plusieurs essais ({sent} sur {total} envoyés). Réessayez ou supprimez ce message.",
   "upload_cancel_label": "Annuler l'envoi",
   "upload_retry_label": "Réessayer maintenant",
   "post_comment_gif_fetch_error": "Impossible de récupérer ce GIF.",

@@ -22,10 +22,12 @@ import { SvelteMap } from 'svelte/reactivity';
  * - `stalled`: bytes were leaving and none has moved for a while (the guard will abandon it).
  * - `blocked`: the gateway refused the request (a time-limited ban). Nothing is retried on its own;
  *   the member retries or deletes.
+ * - `failed`: the last attempts each ended with no answer at all while online (the server, or a relay in
+ *   front of it, never replied). Terminal until the member retries or deletes; nothing runs on its own.
  * - `waiting`: the last attempt failed (or the link is down) and the next one is queued. The bytes
  *   already sent are gone: the media route has no offset, so an attempt always restarts at zero.
  */
-export type UploadPhase = 'preparing' | 'uploading' | 'stalled' | 'waiting' | 'blocked';
+export type UploadPhase = 'preparing' | 'uploading' | 'stalled' | 'waiting' | 'blocked' | 'failed';
 
 export interface UploadView {
   phase: UploadPhase;
@@ -84,7 +86,8 @@ export function uploadPercent(view: UploadView): number | null {
     view.total <= 0 ||
     view.phase === 'preparing' ||
     view.phase === 'waiting' ||
-    view.phase === 'blocked'
+    view.phase === 'blocked' ||
+    view.phase === 'failed'
   )
     return null;
   return Math.min(99, Math.floor((view.loaded / view.total) * 100));

@@ -27,7 +27,13 @@ import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
 import { DeliveryUnreachableError, SendEdgeRefusedError } from '$lib/mls-client/mlsDeliveryApi';
-import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
+import {
+  UPLOAD_NO_ANSWER_ATTEMPTS,
+  UploadAbortedError,
+  UploadGaveUpError,
+  type XhrUploadOptions,
+} from '$lib/utils/uploadXhr';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { clearAllUploads, clearUpload, patchUpload, setUploadRetry } from './uploadProgress.svelte';
 import {
   getIsTabLeader,
@@ -186,7 +192,7 @@ export interface OutboxController {
 }
 
 /** Result of attempting to flush a single entry. */
-type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip' | 'gone';
+type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip' | 'gone' | 'parked';
 
 /**
  * How many conversations may have a frame on the wire at once. Lanes (below) remove head-of-line
@@ -253,6 +259,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * which re-parks it if the ban still stands.
    */
   const parked = new Set<string>();
+  /**
+   * Consecutive upload attempts per entry that ended with NO ANSWER (typed: a stall, an unanswered
+   * body, a rejected `fetch`). At {@link UPLOAD_NO_ANSWER_ATTEMPTS} the entry is parked as `failed`.
+   * In memory by design, like `parked`: a reload earns one more bounded round, and a manual retry,
+   * a success or a cancel starts the count again.
+   */
+  const noAnswer = new Map<string, number>();
   const lanes = new Map<string, Promise<void>>();
   /** Conversations whose running lane must look at the queue once more (an enqueue or wake-up arrived). */
   const laneRerun = new Set<string>();
@@ -483,10 +496,24 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             patchUpload(entry.id, { phase: 'uploading', loaded, total });
           },
         });
+      } catch (e) {
+        // NO ANSWER, read from the TYPE the transport threw (a deadline, or the `TypeError` a
+        // rejected request carries) - never from a message. A status is an answer and is handled
+        // by `uploadRefusalCause` in the flush; a cancel is the member's own act.
+        if (
+          !(e instanceof UploadAbortedError) &&
+          (e instanceof RequestDeadlineError || e instanceof TypeError)
+        ) {
+          const count = (noAnswer.get(entry.id) ?? 0) + 1;
+          noAnswer.set(entry.id, count);
+          if (count >= UPLOAD_NO_ANSWER_ATTEMPTS) throw new UploadGaveUpError(count, e);
+        }
+        throw e;
       } finally {
         clearInterval(hint);
         uploads.delete(entry.id);
       }
+      noAnswer.delete(entry.id);
       clearUpload(entry.id);
       ref = {
         mediaId: uploaded.mediaId,
@@ -697,7 +724,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // the reconnect it came from.
     if (forbiddenParked.has(entry.id)) return 'skip';
     const resumed = resuming.delete(entry.id);
-    if (!resumed && parked.has(entry.id)) return 'skip';
+    // A manual retry (or a reconnect's resume) is a fresh start for the no-answer count.
+    if (resumed) noAnswer.delete(entry.id);
+    // PARKED IS NOT BLOCKING: the entry waits for the member, and what was written after it goes.
+    if (!resumed && parked.has(entry.id)) return 'parked';
     parked.delete(entry.id);
     if (!resumed && entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
       log(
@@ -898,7 +928,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         parked.add(entry.id);
         patchStatus(entry.id, 'pending');
         patchUpload(entry.id, { phase: 'blocked' });
-        return 'skip';
+        return 'parked';
+      }
+      // THE UPLOAD NEVER GOT AN ANSWER, THREE TIMES RUNNING, ONLINE: not a link to wait out but a
+      // path that does not work (a relay refusing early and closing mid-body delivers no status).
+      // Terminal and member-visible - kept, parked, retry and delete offered - never an endless
+      // "sending". It accuses, because it is the visible end of something upstream.
+      if (e instanceof UploadGaveUpError) {
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… upload FAILED: no answer on ${e.attempts} attempts in a row (${String(e.cause).slice(0, 120)}) - parked for a manual retry, entry kept`;
+        console.error(line);
+        log(line);
+        parked.add(entry.id);
+        patchStatus(entry.id, 'pending');
+        patchUpload(entry.id, { phase: 'failed' });
+        return 'parked';
       }
       if (refusal) {
         const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;
@@ -1111,6 +1154,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         if (outcome === 'sent') anySent = true;
         // Withdrawn or permanently failed: the entry is out of the queue, so what follows it may go.
         else if (outcome === 'gone' || outcome === 'error') continue;
+        // Parked for the member (blocked, failed): waiting on a human, not on the network, so what
+        // was written after it must not wait too. Only an entry that RETRIES holds its successors.
+        else if (outcome === 'parked') continue;
         // Retry or backing off: the successors wait, which is what keeps the conversation in order.
         else break;
       }
@@ -1150,6 +1196,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // the other tabs' snapshots (a leader draining on our behalf).
       cancelled.add(messageId);
       parked.delete(messageId);
+      noAnswer.delete(messageId);
       publishOutboxEntryCancelled(messageId);
       await storage
         .deleteOutboxEntry(messageId)

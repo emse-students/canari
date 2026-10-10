@@ -692,6 +692,7 @@
   "upload_stalled": "Nothing is getting through - {sent} of {total} sent",
   "upload_waiting": "Waiting for a connection - retrying automatically",
   "upload_blocked": "Blocked by the server - try again later",
+  "upload_failed": "Could not send: no answer from the server after several tries ({sent} of {total} sent). Try again or delete this message.",
   "upload_cancel_label": "Cancel sending",
   "upload_retry_label": "Try again now",
   "post_comment_gif_fetch_error": "Could not fetch that GIF.",

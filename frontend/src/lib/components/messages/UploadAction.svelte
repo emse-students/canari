@@ -20,7 +20,10 @@
   const percent = $derived(uploadPercent(view));
   const moving = $derived(view.phase === 'uploading' || view.phase === 'preparing');
   const retryable = $derived(
-    view.phase === 'stalled' || view.phase === 'waiting' || view.phase === 'blocked'
+    view.phase === 'stalled' ||
+      view.phase === 'waiting' ||
+      view.phase === 'blocked' ||
+      view.phase === 'failed'
   );
 </script>
 
