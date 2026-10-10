@@ -3,7 +3,8 @@
 // See: https://svelte.dev/docs/kit/single-page-apps
 
 import type { LoadEvent } from '@sveltejs/kit';
-import { currentUserId, fetchUserProfile, UserProfileFetchError } from '$lib/stores/user';
+import { currentUserId } from '$lib/stores/user';
+import { checkSessionUserInBackground } from '$lib/utils/sessionProfileCheck';
 import { refresh } from '$lib/stores/auth';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
@@ -52,28 +53,20 @@ export const load = async (event: LoadEvent) => {
     }
   }
 
-  // Keep the strict "unknown user => login" behavior, but avoid false redirects
-  // on transient mobile startup/network errors: redirect only on confirmed 404.
   // Skip when MLS login is in progress to avoid racing with the biometric/PIN flow.
   if (globalSession.isLoginInProgress) return;
 
-  try {
-    await fetchUserProfile(userId);
-  } catch (error) {
-    // A status code is an ANSWER; a transport failure is not. Only a 404 - the server stating that
-    // this user does not exist - may send the session to the login page, and it is read from the
-    // typed error rather than parsed back out of its sentence.
-    if (error instanceof UserProfileFetchError && error.status === 404) {
-      return goto(
-        resolve(
-          internalPath(loginReturningTo(event.url.pathname, event.url.search, window.location.hash))
-        ),
-        { replaceState: true }
-      ).catch(() => {});
-    }
-    // Anything else is deliberately survived - a captive portal or a cold mobile start must not
-    // log anyone out - but surviving it silently is how a permanently broken profile endpoint
-    // looks exactly like a healthy one.
-    console.warn(`[LAYOUT] Profile check did not answer, staying on the page: ${String(error)}`);
-  }
+  // THE PROFILE CHECK NEVER HOLDS THE NAVIGATION (WP-NAV-1). It decides one thing - "redirect to
+  // login on a confirmed 404, survive everything else" - and nothing it learns is needed to draw the
+  // page, so it runs beside it. Awaited here it put a profile round trip (20 s deadline) in front of
+  // EVERY navigation while the session was not yet unlocked, which on a weak link is the whole
+  // cold-start window.
+  void checkSessionUserInBackground(userId, () =>
+    goto(
+      resolve(
+        internalPath(loginReturningTo(event.url.pathname, event.url.search, window.location.hash))
+      ),
+      { replaceState: true }
+    )
+  );
 };

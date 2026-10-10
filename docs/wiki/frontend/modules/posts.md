@@ -1304,3 +1304,24 @@ preview and republication cards read it; the client shows `post.publishedAt` (`P
 `COALESCE(scheduledAt, createdAt)`, so an immediate post's order is unchanged. Reels cannot be
 scheduled and keep `createdAt`. Notifications carry their own `createdAt` (written at announce time,
 which is already publication time).
+
+## A navigation never waits on data: the post page and the root layout (WP-NAV-1, 2026-10-10)
+
+Audit in [offline-and-weak-network](../offline-and-weak-network.md) (section 13.2, on the upload PR): in this
+SPA (`ssr = false`) a `load` that awaits holds the navigation, and two did. **`routes/posts/[postId]/+page.ts`
+awaited the post**, so a tap on a post in the feed did nothing visible until the GET answered (up to the 20 s
+read deadline on a weak link). It now returns the post as a PROMISE (`data.post`), the page resolves it in an
+effect and draws the header, the back link and a skeleton (`role="status"`) at once; `undefined` = on its way,
+`null` = absent or refused (the existing "not found" state). The title and path of the page's SEO are
+static: the description used to be cut from the post's text, and this route is behind sign-in and never
+server-rendered, so no crawler read it. The audience gate is still awaited, but only when no verdict is
+remembered (the first ever visit): a remembered one answers from memory.
+
+**`routes/+layout.ts` awaited `fetchUserProfile` on every navigation while the MLS session was not unlocked**
+(boot, a resume, the whole unlock window): a profile round trip in front of every page, to decide one thing,
+"redirect to login on a confirmed 404". It is now `checkSessionUserInBackground` (`utils/sessionProfileCheck.ts`),
+launched beside the navigation: only a typed 404 redirects, a status or transport failure is survived and
+logged, exactly as before. What stays awaited on purpose: `refresh()` when NO user id is known (the layout
+cannot tell who this is, nor whether to send them to login). Pinned by `routes/navigationNeverWaits.test.ts`
+(each `load` resolves while its network call is pending) and `sessionProfileCheck.test.ts`. Reaches users with
+the next pre-release.
