@@ -537,14 +537,6 @@ Owed: the DENOMINATOR (the `(failed/attempted lookups failed this session, X%)` 
 
 ---
 
-## Communities and permissions
-
-### P2 - a bundle of pure DECLINES still goes out as transport, and a dropped decline strands a requester
-
-Never observed. Fixing it needs a frame delivered to an offline device WITHOUT appending it to the
-group's log (the fourth `DELIVERY` combination) - a wire-level change that waits for a measurement
-([mls-graine-state-machine](protocols/mls-graine-state-machine.md#a-bundle-of-pure-declines-goes-out-as-transport-open-never-observed)).
-
 ## Messaging convergence
 
 ### P1 - the repair of a rewound sender lands on a coin flip, the ask cadence is identical either way, and a peer 21 messages behind was told "same state - nothing to do" (measured 2026-09-08, ten runs across three builds)

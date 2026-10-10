@@ -283,16 +283,18 @@ async function answerSeedRequest(
   // would be circular - true of a REQUEST, and false of the seed itself. `DELIVERY.keyMaterial`
   // exists for exactly this payload on exactly this group, and `seedDistribution` already sends
   // the ordinary distribution of it that way; only the answer to an ask did not.
-  // A bundle of pure declines stays transport: it carries no seed, it does restate a fact both
-  // sides can derive, and the capped log of a distribution group is spent on seeds alone.
-  const delivery = seeds.length > 0 ? DELIVERY.keyMaterial : DELIVERY.transport;
-  await mlsService.sendMessage(frame.groupId, bundle, undefined, delivery);
+  // A bundle of pure declines travels as key material TOO (user decision, 2026-10-10). It stayed
+  // transport on the argument that it restates a fact the requester can derive, and that argument
+  // is false for the one fact it carries: "I do not hold it" is what sends the requester to the
+  // NEXT member, and a decline dropped for a recipient presence reports offline (a cold start asks
+  // before it has a socket - the COMM-18 shape) strands the session for good, nothing re-asks. An
+  // answer is ONE message whatever it carries, with one delivery. The cost is a few bytes in the
+  // capped log; a decline replayed from it is idempotent (`noteSeedUnavailable` binds it to the
+  // request it answers).
+  await mlsService.sendMessage(frame.groupId, bundle, undefined, DELIVERY.keyMaterial);
   console.info(
     `[GRAINE] answered ${frame.sender} with ${seeds.length} seed(s)` +
-      (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '') +
-      // Named in the line because it decides whether this answer survives a requester with no
-      // socket, and a run log that omits it cannot tell a drop from a silence.
-      ` as ${delivery.durable ? 'key material' : 'transport'}`
+      (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '')
   );
 }
 
@@ -473,7 +475,8 @@ async function absorbSeedBundle(
   // What the answerer turned out not to hold. Each one re-elects the next member of the roster, so
   // an unlucky election costs a round trip instead of costing the session for the whole app session.
   for (const sessionId of bundle.missingSessionIds ?? []) {
-    if (sessionId) noteSeedUnavailable(String(sessionId), frame.sender);
+    if (sessionId)
+      noteSeedUnavailable(String(sessionId), frame.sender, String(bundle.requestId ?? ''));
   }
 
   // The rows this repairs were rendered unreadable and dropped minutes ago; nothing else would go

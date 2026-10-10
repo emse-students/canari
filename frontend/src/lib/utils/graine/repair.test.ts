@@ -617,6 +617,10 @@ describe('a community that closes its past (WP-34)', () => {
 
 describe('noteSeedUnavailable', () => {
   /** Reads the user id a request frame was addressed to. */
+  function requestIdOf(call: unknown[]): string {
+    return String(decodeAppMessage(call[1] as Uint8Array)?.graineRequest?.requestId ?? '');
+  }
+
   function answererOf(call: unknown[]): string {
     return String(decodeAppMessage(call[1] as Uint8Array)?.graineRequest?.answererUserId ?? '');
   }
@@ -630,7 +634,7 @@ describe('noteSeedUnavailable', () => {
 
     // Without this the session was unreadable for the WHOLE app session: bob is elected by every
     // device alike, so a silent "I don't have it" stranded it for good.
-    noteSeedUnavailable('sess-1', 'bob');
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!));
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
@@ -641,9 +645,9 @@ describe('noteSeedUnavailable', () => {
     noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
 
-    noteSeedUnavailable('sess-1', 'bob');
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!));
     await settle();
-    noteSeedUnavailable('sess-1', 'carol');
+    noteSeedUnavailable('sess-1', 'carol', requestIdOf(sendMessage.mock.calls.at(-1)!));
     await settle();
 
     // Two members, two asks, then nothing: the walk ends on a PROOF that nobody holds it - not on a
@@ -658,9 +662,9 @@ describe('noteSeedUnavailable', () => {
     noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
 
-    noteSeedUnavailable('sess-1', 'bob');
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!));
     await settle();
-    noteSeedUnavailable('sess-1', 'BOB');
+    noteSeedUnavailable('sess-1', 'BOB', requestIdOf(sendMessage.mock.calls.at(-1)!));
     await settle();
 
     // bob's laptop and phone both said no: one line, one move down the roster to carol.
@@ -678,7 +682,7 @@ describe('noteSeedUnavailable', () => {
     await settle();
     forgetAskedSession('sess-1');
 
-    noteSeedUnavailable('sess-1', 'bob');
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!));
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
@@ -695,6 +699,35 @@ describe('noteSeedUnavailable', () => {
     noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a decline from a member the ask was not addressed to, even quoting the right id', async () => {
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+    await settle();
+    expect(answererOf(sendMessage.mock.calls[0])).toBe('bob');
+
+    // carol was never elected: she may not strike herself off the roster and trigger a re-ask.
+    noteSeedUnavailable('sess-1', 'carol', requestIdOf(sendMessage.mock.calls[0]));
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a decline of a request that is not the one in flight (a replay from the durable log)', async () => {
+    // Declines are durable since 2026-10-10, so one can come back from the distribution group's log
+    // after its ask was superseded. Counting it would strike a member who was never asked in THIS walk.
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+    await settle();
+    expect(answererOf(sendMessage.mock.calls[0])).toBe('bob');
+
+    noteSeedUnavailable('sess-1', 'bob', 'a-request-from-a-past-walk');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    // The real answer to the ask in flight still moves the walk on.
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls[0]));
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
   });
 });
 
