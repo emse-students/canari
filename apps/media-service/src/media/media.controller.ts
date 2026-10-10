@@ -296,9 +296,9 @@ export class MediaController {
     @UploadedFile() file: unknown,
     @Req() req: Request
   ): Promise<{ ok: boolean }> {
-    this.verifyToken(req);
+    const ownerId = this.verifyToken(req);
     const buffer = uploadedFileBuffer(file);
-    await this.mediaService.appendChunk(id, buffer, MAX_BYTES);
+    await this.mediaService.appendChunk(id, buffer, MAX_BYTES, ownerId);
     return { ok: true };
   }
 

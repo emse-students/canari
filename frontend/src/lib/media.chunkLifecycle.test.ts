@@ -15,6 +15,11 @@ vi.mock('$lib/stores/auth', () => ({
   SessionExpiredError: class extends Error {},
 }));
 vi.mock('$lib/utils/mediaTouch', () => ({ noteMediaCacheHit: () => {} }));
+/** Every pause the re-ask loop asked for, answered at once: the schedule is asserted, never waited. */
+const pauses: number[] = [];
+const instant = async (ms: number) => {
+  pauses.push(ms);
+};
 
 type Plan = { status: number; contentType?: string; failNetwork?: boolean; delayMs?: number };
 let plan: (url: string, index: number) => Plan;
@@ -71,6 +76,7 @@ const fileOf = (bytes: number) =>
 describe('a chunked upload that ends without an object', () => {
   beforeEach(() => {
     calls.length = 0;
+    pauses.length = 0;
     deletes.length = 0;
     chunkIndex = 0;
     plan = () => ({ status: 200 });
@@ -83,7 +89,7 @@ describe('a chunked upload that ends without an object', () => {
 
   it('releases the session when the transport fails at chunk 2 of 3, and the failure still surfaces', async () => {
     plan = (_u, i) => (i === 1 ? { status: 0, failNetwork: true } : { status: 200 });
-    const err = await new MediaService()
+    const err = await new MediaService(undefined, instant)
       .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {})
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TypeError);
@@ -95,7 +101,7 @@ describe('a chunked upload that ends without an object', () => {
 
   it('releases the session on a refusal, which is final', async () => {
     plan = (_u, i) => (i === 0 ? { status: 422 } : { status: 200 });
-    const err = await new MediaService()
+    const err = await new MediaService(undefined, instant)
       .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {})
       .catch((e: unknown) => e);
     expect(uploadRefusalCause(err)).toBe('refused');
@@ -104,7 +110,7 @@ describe('a chunked upload that ends without an object', () => {
 
   it('a session the server lost (404 on a chunk) is retried, not refused', async () => {
     plan = (_u, i) => (i === 1 ? { status: 404 } : { status: 200 });
-    const err = await new MediaService()
+    const err = await new MediaService(undefined, instant)
       .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {})
       .catch((e: unknown) => e);
     expect(uploadRefusalCause(err)).toBeNull();
@@ -116,7 +122,7 @@ describe('a chunked upload that ends without an object', () => {
       if (i === 0) queueMicrotask(() => control.abort('cancel'));
       return { status: 200, delayMs: 5 };
     };
-    const err = await new MediaService()
+    const err = await new MediaService(undefined, instant)
       .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {
         signal: control.signal,
       })
@@ -127,7 +133,7 @@ describe('a chunked upload that ends without an object', () => {
 
   it('a slow server-side complete is not abandoned as silence, and nothing is released', async () => {
     plan = (url) => (url.endsWith('/complete') ? { status: 200, delayMs: 300 } : { status: 200 });
-    const ref = await new MediaService().encryptAndUpload(
+    const ref = await new MediaService(undefined, instant).encryptAndUpload(
       fileOf(THREE_CHUNKS),
       't',
       undefined,
@@ -145,7 +151,7 @@ describe('a chunked upload that ends without an object', () => {
       url.endsWith('/complete') && completes++ === 0
         ? { status: 0, failNetwork: true }
         : { status: 200 };
-    const ref = await new MediaService().encryptAndUpload(
+    const ref = await new MediaService(undefined, instant).encryptAndUpload(
       fileOf(THREE_CHUNKS),
       't',
       undefined,
@@ -163,7 +169,7 @@ describe('a chunked upload that ends without an object', () => {
     let completes = 0;
     plan = (url) =>
       url.endsWith('/complete') && completes++ === 0 ? { status: 503 } : { status: 200 };
-    const ref = await new MediaService().encryptAndUpload(
+    const ref = await new MediaService(undefined, instant).encryptAndUpload(
       fileOf(THREE_CHUNKS),
       't',
       undefined,
@@ -177,17 +183,49 @@ describe('a chunked upload that ends without an object', () => {
   it('gives up after a COUNTED number of re-asks, then releases the session', async () => {
     plan = (url) =>
       url.endsWith('/complete') ? { status: 0, failNetwork: true } : { status: 200 };
-    const err = await new MediaService()
+    const err = await new MediaService(undefined, instant)
       .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {})
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TypeError);
     expect(calls.filter((c) => c.endsWith('/complete'))).toHaveLength(3);
+    // BACKOFF IS A FUNCTION OF THE COUNTER: one pause before each re-ask, none before the first ask.
+    expect(pauses).toEqual([2_000, 4_000]);
     await vi.waitFor(() => expect(deletes).toEqual(['/upload/chunk/u1']));
+  });
+
+  it('a first-try complete pauses never', async () => {
+    await new MediaService(undefined, instant).encryptAndUpload(
+      fileOf(THREE_CHUNKS),
+      't',
+      undefined,
+      'ephemeral',
+      {}
+    );
+    expect(pauses).toEqual([]);
+  });
+
+  it('a cancel DURING the pause ends the upload as a cancel, with no further ask', async () => {
+    const control = new AbortController();
+    plan = (url) =>
+      url.endsWith('/complete') ? { status: 0, failNetwork: true } : { status: 200 };
+    const aborting = async (ms: number) => {
+      pauses.push(ms);
+      control.abort('cancel');
+      throw new UploadAbortedError('cancel');
+    };
+    const err = await new MediaService(undefined, aborting)
+      .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {
+        signal: control.signal,
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UploadAbortedError);
+    expect(calls.filter((c) => c.endsWith('/complete'))).toHaveLength(1);
+    expect(pauses).toEqual([2_000]);
   });
 
   it('a refusal of complete is NOT re-asked', async () => {
     plan = (url) => (url.endsWith('/complete') ? { status: 422 } : { status: 200 });
-    const err = await new MediaService()
+    const err = await new MediaService(undefined, instant)
       .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {})
       .catch((e: unknown) => e);
     expect(uploadRefusalCause(err)).toBe('refused');
@@ -201,7 +239,7 @@ describe('a chunked upload that ends without an object', () => {
       if (url.endsWith('/complete')) queueMicrotask(() => control.abort('cancel'));
       return { status: 200, delayMs: 20 };
     };
-    await new MediaService()
+    await new MediaService(undefined, instant)
       .encryptAndUpload(fileOf(THREE_CHUNKS), 't', undefined, 'ephemeral', {
         signal: control.signal,
       })
@@ -213,7 +251,7 @@ describe('a chunked upload that ends without an object', () => {
   });
 
   it('a success releases nothing', async () => {
-    await new MediaService().encryptAndUpload(
+    await new MediaService(undefined, instant).encryptAndUpload(
       fileOf(THREE_CHUNKS),
       't',
       undefined,

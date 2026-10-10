@@ -88,9 +88,9 @@ describe('MediaService.appendChunk - the premises that make an untrusted write s
       // either copy being removed and fails when both are. Measured: removing one leaves all
       // eight cases green, removing both fails these five. That is defence in depth doing its
       // job, and it is worth knowing which is which before anybody deletes "the redundant one".
-      await expect(service().appendChunk(uploadId, Buffer.from('x'), 1_000)).rejects.toThrow(
-        'Invalid uploadId'
-      );
+      await expect(
+        service().appendChunk(uploadId, Buffer.from('x'), 1_000, undefined)
+      ).rejects.toThrow('Invalid uploadId');
 
       // NOT TOUCHING THE FILESYSTEM IS PART OF THE ASSERTION. A refusal that happens after the
       // attacker's path has already been opened is a refusal that leaked the path.
@@ -103,9 +103,9 @@ describe('MediaService.appendChunk - the premises that make an untrusted write s
       const h = handle(900);
       mocked.promises.open.mockResolvedValue(h);
 
-      await expect(service().appendChunk(UUID, Buffer.alloc(200), 1_000)).rejects.toThrow(
-        PayloadTooLargeException
-      );
+      await expect(
+        service().appendChunk(UUID, Buffer.alloc(200), 1_000, undefined)
+      ).rejects.toThrow(PayloadTooLargeException);
 
       // The partial upload is deleted rather than left occupying the volume until the sweeper
       // runs - and the handle is closed FIRST, because a Windows runner refuses to unlink a file
@@ -119,7 +119,9 @@ describe('MediaService.appendChunk - the premises that make an untrusted write s
       const h = handle(900);
       mocked.promises.open.mockResolvedValue(h);
 
-      await expect(service().appendChunk(UUID, Buffer.alloc(100), 1_000)).resolves.toBeUndefined();
+      await expect(
+        service().appendChunk(UUID, Buffer.alloc(100), 1_000, undefined)
+      ).resolves.toBeUndefined();
       // WRITTEN AT THE OFFSET THE SIZE WAS READ AT, on the same handle. That is what makes the
       // measurement and the write one decision instead of two.
       expect(h.write).toHaveBeenCalledWith(expect.any(Buffer), 0, 100, 900);
@@ -136,7 +138,7 @@ describe('MediaService.appendChunk - the premises that make an untrusted write s
         Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
       );
 
-      await expect(service().appendChunk(UUID, Buffer.from('x'), 1_000)).rejects.toThrow(
+      await expect(service().appendChunk(UUID, Buffer.from('x'), 1_000, undefined)).rejects.toThrow(
         'Upload session not found or expired'
       );
       expect(mocked.promises.open).toHaveBeenCalledWith(expect.any(String), 'r+');

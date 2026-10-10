@@ -500,7 +500,7 @@ describe('chat-reel: a chunked upload reserves its declared total at INIT', () =
     ).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
 
     // ...completing the first frees its reservation, and the finished entry counts as 10 bytes.
-    await service.appendChunk(first, Buffer.alloc(10), 200 * MB);
+    await service.appendChunk(first, Buffer.alloc(10), 200 * MB, 'sender');
     const mediaId = await service.completeChunkedUpload(first, 200 * MB, 'sender', 'chat-reel');
     expect(mediaId).toMatch(/^[0-9a-f-]{36}$/);
     const second = await service.initChunkedUpload('sender', 'chat-reel', 100 * MB, 200 * MB);
@@ -512,9 +512,9 @@ describe('chat-reel: a chunked upload reserves its declared total at INIT', () =
     const { service } = serviceWith({ [UUID_REEL_NEW]: planted(490) });
 
     const id = await service.initChunkedUpload('sender', 'chat-reel', 5 * MB, 200 * MB);
-    await expect(service.appendChunk(id, Buffer.alloc(6 * MB), 200 * MB)).rejects.toBeInstanceOf(
-      PayloadTooLargeException
-    );
+    await expect(
+      service.appendChunk(id, Buffer.alloc(6 * MB), 200 * MB, 'sender')
+    ).rejects.toBeInstanceOf(PayloadTooLargeException);
 
     // Its 5 MB went back: 490 + 10 fits.
     const next = await service.initChunkedUpload('sender', 'chat-reel', 10 * MB, 200 * MB);

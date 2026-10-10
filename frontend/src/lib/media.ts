@@ -193,6 +193,32 @@ import { isTransportFailure } from '$lib/stores/connectivity.svelte';
 /** How many times `complete` is asked for ONE uploadId when its answer is lost. */
 const COMPLETE_ATTEMPTS = 3;
 
+/**
+ * The pause before the Nth re-ask is `N * COMPLETE_BACKOFF_STEP_MS` (2 s, then 4 s): a function of
+ * the attempt COUNTER, so it is deterministic and bounded by {@link COMPLETE_ATTEMPTS}. Without it
+ * the re-asks fire back to back against a server that just failed to answer, which is the moment a
+ * restart or an overload most needs room.
+ */
+const COMPLETE_BACKOFF_STEP_MS = 2_000;
+
+/** Waits `ms` between two attempts; injectable so a test asserts the schedule without a clock. */
+export type ReaskPause = (ms: number, signal?: AbortSignal) => Promise<void>;
+
+/** The real pause: a timer a cancel interrupts at once (rejecting as an {@link UploadAbortedError}). */
+const pauseUnlessAborted: ReaskPause = (ms, signal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(new UploadAbortedError(signal.reason));
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new UploadAbortedError(signal?.reason));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -558,7 +584,10 @@ export class MediaService {
   /**
    * @param baseUrl Optional override for the media service base URL. Defaults to {@link mediaUrl}.
    */
-  constructor(baseUrl?: string) {
+  constructor(
+    baseUrl?: string,
+    private readonly pause: ReaskPause = pauseUnlessAborted
+  ) {
     this.baseUrl = (baseUrl ?? mediaUrl()).replace(/\/$/, '');
   }
 
@@ -624,6 +653,11 @@ export class MediaService {
     transport?: XhrUploadOptions
   ): Promise<string> {
     for (let attempt = 1; ; attempt++) {
+      // A re-ask waits for room first; the pause is outside the `try` so a cancel during it ends the
+      // upload as a cancel and is never mistaken for a lost answer.
+      if (attempt > 1) {
+        await this.pause((attempt - 1) * COMPLETE_BACKOFF_STEP_MS, transport?.signal);
+      }
       try {
         const res = await fetchUpload(
           `${this.baseUrl}/api/media/upload/chunk/${uploadId}/complete`,

@@ -51,7 +51,7 @@ async function openAndStage(svc: MediaService, internals: Internals, owner = OWN
   const uploadId = await svc.initChunkedUpload(owner, undefined, undefined, 100 * 1024 * 1024);
   const file = internals.chunkTempPath(uploadId);
   staged.push(file);
-  await svc.appendChunk(uploadId, SECOND_FILE, 100 * 1024 * 1024);
+  await svc.appendChunk(uploadId, SECOND_FILE, 100 * 1024 * 1024, owner);
   return { uploadId, file };
 }
 
@@ -162,7 +162,7 @@ describe('the opener map does not leak', () => {
     const { svc, internals } = service();
     const uploadId = await svc.initChunkedUpload(OWNER, undefined, undefined, 100);
     staged.push(internals.chunkTempPath(uploadId));
-    await expect(svc.appendChunk(uploadId, Buffer.alloc(200), 100)).rejects.toThrow(
+    await expect(svc.appendChunk(uploadId, Buffer.alloc(200), 100, OWNER)).rejects.toThrow(
       'Chunked upload exceeds'
     );
     expect(owners(internals)?.has(uploadId)).toBe(false);
@@ -236,7 +236,124 @@ describe('the completion record is crash-safe and a lost session is a 404', () =
   it('an append to a session that is gone is a 404 as well', async () => {
     const { svc } = service();
     await expect(
-      svc.appendChunk('22222222-2222-4222-8222-222222222222', SECOND_FILE, 1e8)
+      svc.appendChunk('22222222-2222-4222-8222-222222222222', SECOND_FILE, 1e8, OWNER)
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('the completion memo cannot be written (a full disk)', () => {
+  it('KEEPS the staging and the opener, so a re-ask re-assembles under the opener check', async () => {
+    const { svc, internals } = service();
+    const { uploadId, file } = await openAndStage(svc, internals);
+    const done = file + '.done';
+    staged.push(done);
+    // A DIRECTORY where the temp record goes makes the real write fail (EISDIR), like a full disk.
+    await fs.ensureDir(done + '.tmp');
+    const first = await svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
+    await fs.remove(done + '.tmp');
+    expect(typeof first).toBe('string');
+    expect(await fs.pathExists(file)).toBe(true);
+    expect(await fs.pathExists(done)).toBe(false);
+    expect(internals.logger.warn).toHaveBeenCalledWith(expect.stringContaining('unrecorded'));
+
+    // Another member is still refused; the opener's re-ask is answered, not a 404.
+    await expect(
+      svc.completeChunkedUpload(uploadId, 1e8, 'someone-else', 'ephemeral')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    const again = await svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
+    expect(typeof again).toBe('string');
+    expect(await fs.pathExists(file)).toBe(false);
+  });
+});
+
+describe('append is owner-checked', () => {
+  it('refuses another member and writes nothing', async () => {
+    const { svc, internals } = service();
+    const { uploadId, file } = await openAndStage(svc, internals);
+    const before = (await fs.stat(file)).size;
+    await expect(
+      svc.appendChunk(uploadId, SECOND_FILE, 1e8, 'someone-else')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect((await fs.stat(file)).size).toBe(before);
+    await expect(svc.appendChunk(uploadId, SECOND_FILE, 1e8, OWNER)).resolves.toBeUndefined();
+    expect((await fs.stat(file)).size).toBe(before + SECOND_FILE.length);
+  });
+});
+
+describe('an init that fails registers no opener', () => {
+  it('a refused chat-reel init and a failed staging leave nothing for the sweeper to race', async () => {
+    const { svc, internals } = service();
+    const owners = () =>
+      (internals as unknown as { chunkOwners?: Map<string, string> }).chunkOwners;
+    await expect(svc.initChunkedUpload(OWNER, 'chat-reel', undefined, 1e8)).rejects.toThrow();
+    expect(owners()?.size ?? 0).toBe(0);
+
+    // A staging path under a FILE cannot be created (ENOTDIR): the real `ensureFile` fails.
+    const blocker = 'chunks_temp/blocker-file';
+    await fs.outputFile(blocker, 'x');
+    staged.push(blocker);
+    (internals as unknown as { chunkTempPath: (id: string) => string }).chunkTempPath = (id) =>
+      `${blocker}/${id}`;
+    await expect(svc.initChunkedUpload(OWNER, undefined, undefined, 1e8)).rejects.toThrow();
+    expect(owners()?.size ?? 0).toBe(0);
+  });
+});
+
+describe('abort and complete racing, in either order', () => {
+  it('a DELETE during an in-flight complete waits for it: the object survives and the re-ask answers', async () => {
+    const { svc, internals } = service(150);
+    const { uploadId } = await openAndStage(svc, internals);
+    staged.push(internals.chunkTempPath(uploadId) + '.done');
+
+    const completing = svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
+    // Let the complete take the lock and reach the slow putFileStream.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(internals.storage.putFileStream).toHaveBeenCalledTimes(1);
+    const aborting = svc.abortChunkedUpload(uploadId, OWNER);
+
+    const [mediaId, outcome] = await Promise.all([completing, aborting]);
+    expect(outcome).toBe('absent');
+    await expect(svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral')).resolves.toBe(
+      mediaId
+    );
+    expect(internals.storage.putFileStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('an abort after a finished complete is a success and leaves the memo answering', async () => {
+    const { svc, internals } = service();
+    const { uploadId } = await openAndStage(svc, internals);
+    const mediaId = await svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
+    staged.push(internals.chunkTempPath(uploadId) + '.done');
+
+    await expect(svc.abortChunkedUpload(uploadId, OWNER)).resolves.toBe('absent');
+    await expect(svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral')).resolves.toBe(
+      mediaId
+    );
+  });
+});
+
+describe('the sweeper takes a stale completion record', () => {
+  it('removes an aged .done and .done.tmp, and keeps a fresh one', async () => {
+    const { svc, internals } = service();
+    const old = '33333333-3333-4333-8333-333333333333';
+    const fresh = '44444444-4444-4444-8444-444444444444';
+    const files = [
+      internals.chunkTempPath(old) + '.done',
+      internals.chunkTempPath(old) + '.done.tmp',
+      internals.chunkTempPath(fresh) + '.done',
+    ];
+    for (const f of files) {
+      await fs.outputFile(f, '{}');
+      staged.push(f);
+    }
+    const aged = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    await fs.utimes(files[0], aged, aged);
+    await fs.utimes(files[1], aged, aged);
+
+    await (svc as unknown as { purgeOrphanedChunks: () => Promise<void> }).purgeOrphanedChunks();
+
+    expect(await fs.pathExists(files[0])).toBe(false);
+    expect(await fs.pathExists(files[1])).toBe(false);
+    expect(await fs.pathExists(files[2])).toBe(true);
   });
 });

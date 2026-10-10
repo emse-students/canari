@@ -1077,7 +1077,6 @@ export class MediaService {
     maxBytes?: number
   ): Promise<string> {
     const uploadId = uuidv4();
-    if (ownerId) (this.chunkOwners ??= new Map()).set(uploadId, ownerId);
     if (retentionClass === 'chat-reel') {
       if (!Number.isInteger(totalBytes) || (totalBytes as number) <= 0) {
         throw new BadRequestException("A 'chat-reel' chunked upload declares totalBytes at init");
@@ -1096,9 +1095,12 @@ export class MediaService {
       await fs.ensureFile(this.chunkTempPath(uploadId));
     } catch (err) {
       this.dropChunkSession(uploadId);
-      this.chunkOwners?.delete(uploadId);
       throw err;
     }
+    // THE OPENER IS RECORDED ONLY ONCE THE STAGING EXISTS: an init refused earlier (a budget, a
+    // size, a disk error) never registers an entry, so the sweeper - which forgets an opener whose
+    // file is absent - can neither race the registration nor be left a stray one.
+    if (ownerId) (this.chunkOwners ??= new Map()).set(uploadId, ownerId);
     return uploadId;
   }
 
@@ -1142,13 +1144,28 @@ export class MediaService {
     this.chunkSessions?.delete(uploadId);
   }
 
-  async appendChunk(uploadId: string, chunk: Buffer, maxBytes: number): Promise<void> {
+  /**
+   * Appends one chunk to a staged session. OWNER-CHECKED like abort and complete: when the opener
+   * is known and is somebody else, `ForbiddenException` and nothing is written (an unknown opener,
+   * after a restart, is allowed - the uploadId is an unguessable UUID only its opener was given).
+   */
+  async appendChunk(
+    uploadId: string,
+    chunk: Buffer,
+    maxBytes: number,
+    ownerId: string | undefined
+  ): Promise<void> {
     // Validate uploadId is a UUID to prevent path traversal (uncontrolled data in path).
     if (!UUID_REGEX.test(uploadId)) {
       throw new BadRequestException('Invalid uploadId');
     }
     // Serialize concurrent chunk writes for the same uploadId to prevent TOCTOU race conditions.
     await this.withUploadLock(uploadId, async () => {
+      const opener = this.chunkOwners?.get(uploadId) ?? this.chunkSessions?.get(uploadId)?.ownerId;
+      if (opener && opener !== ownerId) {
+        this.logger.warn(`Chunked upload ${uploadId} append refused: not its opener`);
+        throw new ForbiddenException('Not your upload session');
+      }
       const tempFile = this.chunkTempPath(uploadId);
 
       // ONE DESCRIPTOR, OPENED ONCE, AND THAT IS WHAT REMOVES THE RACE RATHER THAN HIDING IT.
@@ -1264,12 +1281,21 @@ export class MediaService {
         this.setAccess(mediaId, Date.now(), ownerId, retentionClass, stat.size);
         // THE RECORD IS WRITTEN BEFORE THE STAGING IS REMOVED: a crash between the two leaves the
         // record (a re-ask answers from it) and the staging (swept at 24 h), never neither.
-        await this.writeCompletedChunkUpload(uploadId, { mediaId, ownerId });
-        await fs.remove(tempFile);
+        const recorded = await this.writeCompletedChunkUpload(uploadId, { mediaId, ownerId });
         // Entry registered: the reservation hands over to it in this same synchronous run.
         release();
         this.dropChunkSession(uploadId);
-        this.chunkOwners?.delete(uploadId);
+        if (recorded) {
+          await fs.remove(tempFile);
+          this.chunkOwners?.delete(uploadId);
+        } else {
+          // NO RECORD, SO THE STAGING IS THE ONLY THING A RE-ASK CAN ANSWER FROM: it stays, with
+          // its opener, so the re-ask re-assembles under the opener check (never a 404 for a
+          // member whose answer was lost). The 24 h sweep takes both if nobody comes back.
+          this.logger.warn(
+            `Chunked upload ${uploadId}: completed as ${mediaId} but unrecorded, staging kept for a re-ask`
+          );
+        }
         await this.persistMetadata();
 
         return mediaId;
@@ -1285,22 +1311,24 @@ export class MediaService {
    * (`<uploadId>.done`) so a `complete` whose answer was lost, and is asked again, gets the SAME
    * mediaId instead of storing the object twice. On disk, not in memory, so it survives a restart or
    * a redeploy (the common moment for a lost answer); it ages out with the 24 h orphan sweep, which
-   * is also the lifetime of the session it answers for. Failures are logged, never thrown: a memo
-   * that cannot be written costs only the idempotence of a retry.
+   * is also the lifetime of the session it answers for. A failure is logged and reported as
+   * `false`, never thrown: the caller then KEEPS the staging, which is what a re-ask answers from.
    */
   private async writeCompletedChunkUpload(
     uploadId: string,
     done: { mediaId: string; ownerId?: string }
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       // Temp + rename: a reader sees the whole record or none, never a truncated one.
       const target = `${this.chunkTempPath(uploadId)}.done`;
       await fs.writeFile(`${target}.tmp`, JSON.stringify(done));
       await fs.rename(`${target}.tmp`, target);
+      return true;
     } catch (err) {
       this.logger.warn(
         `Chunked upload ${uploadId}: could not record its completion: ${String(err)}`
       );
+      return false;
     }
   }
 
