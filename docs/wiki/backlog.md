@@ -197,7 +197,7 @@ Prioritised list and numbers: [offline-and-weak-network section 13](frontend/off
 
 ## P3 - iOS notification sounds still play the default tone (palette A is Android and in-app only, 2026-10-09)
 
-The palette-A trills reach the app's tones and the three Android channels ([sounds](frontend/sounds.md)). On iOS the banner sound comes from the APNs payload's `sound` field (the NSE sets `content.sound = .default`), so it needs: the three files as `.caf`/`.wav` bundled in the app AND `canari_NSE` targets (`project.yml` resources), the push server naming one per message / mention / reaction, and the NSE honouring it. Do it as one change across the three, then listen on the iPhone.
+The palette-A trills reach the app's tones and the three Android channels ([sounds](frontend/sounds.md)). On iOS the banner sound is the APNs payload's `sound` field (`'default'` at three sites of `push-payload.ts` and `calls.service.ts`), so it needs ONE change across: the three files as `.wav` in the app AND `canari_NSE` targets, the server naming one per message / reaction (a mention is known only to the NSE after decryption, which would set `content.sound` itself), and a listen on the iPhone. **Why it is not built from a workstation:** `project.yml` is NOT the build source ([project.yml header](../../frontend/src-tauri/gen/apple/project.yml)); the tracked `canari.xcodeproj/project.pbxproj` is hand-maintained, so bundling a resource in two targets is a hand edit of a file no gate here compiles. A server that names a file the bundle lacks is harmless (iOS plays the default), so the order is bundle first, server second.
 
 ## Seen on the 2026-10-09 bench runs (around `v1.2.1`)
 
@@ -323,9 +323,9 @@ is missing is a single observed claim: the next sign-in should move `/admin/lega
 in the claimed tab, and until it does an empty screen and a broken claim look identical. The service
 log line and that page have never been read against a real claim.
 
-### P3 - message notifications share one group key across conversations (measured against Messenger, 2026-09-09)
+### P3 - message notifications share one group key across conversations (measured against Messenger, 2026-09-09) - a DECISION owed to the user
 
-The conversation shortcut shipped (#1448; [mobile](frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)). **What remains:** `setGroup(GROUP_KEY_MESSAGES)` is still ONE constant at three call sites of `CanariFirebaseMessagingService.kt` with one summary, while Messenger keys per THREAD, so four messages across two conversations stack as one here and two there. A placement difference only; measure on the Mi 9T after any change, since nothing in CI sees which section of the shade a notification lands in.
+The conversation shortcut shipped (#1448). **What remains:** `GROUP_KEY_MESSAGES` is ONE constant at three call sites of `CanariFirebaseMessagingService.kt` with one summary (id 9999), while Messenger keys per THREAD. A placement difference only, and **not built on purpose**: per-thread keys mean one summary per conversation, and that single summary also carries the launcher badge count (`refreshBadgeSummary`, WP-XP-2) and already shipped one defect where cancelling it took its children with it (NOTIF-18, 2026-09-21). Say so if the placement is worth that rewrite; the measurement is the shade on the Mi 9T, which nothing in CI sees.
 
 ### P3 - iOS stacks the reactions to a post but does not merge them into one banner (2026-10-08)
 
