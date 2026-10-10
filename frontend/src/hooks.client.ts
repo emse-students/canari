@@ -18,6 +18,7 @@ import { prefetchMlsWasmAtBoot } from '$lib/mls-client/wasmPrefetch';
 import { openClaimedAppLink } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
+import { apiServiceOrigins } from '$lib/utils/apiUrl';
 import { fetchInputUrl, shouldUseNativeFetch } from '$lib/utils/fetchRouting';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 
@@ -454,8 +455,10 @@ if (isTauriRuntime()) {
       const originalFetch = window.fetch;
       window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
         // The plugin is a network client and answers `http(s)` alone; everything else is the
-        // WebView's own. `shouldUseNativeFetch` carries the reasoning and its tests.
-        if (shouldUseNativeFetch(fetchInputUrl(input), init)) {
+        // WebView's own, and so is a BINARY BODY to Canari's own API (the plugin inflates every body
+        // byte ~85x in Rust and ~45-50x in the renderer; 50 MB crashed the app on the Mi 9T).
+        // `shouldUseNativeFetch` carries the reasoning and its tests.
+        if (shouldUseNativeFetch(fetchInputUrl(input), init, input, apiServiceOrigins())) {
           return originalFetch.call(window, input, init);
         }
         return tauriFetch(input, init) as ReturnType<typeof window.fetch>;

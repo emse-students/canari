@@ -1,4 +1,4 @@
-import { fetchInputUrl, shouldUseNativeFetch } from './fetchRouting';
+import { fetchInputUrl, hasBinaryBody, shouldUseNativeFetch } from './fetchRouting';
 
 describe('shouldUseNativeFetch', () => {
   it('keeps a blob: URL native - the defect that broke every download on mobile', () => {
@@ -64,5 +64,59 @@ describe('fetchInputUrl', () => {
     expect(fetchInputUrl('https://a.test/x')).toBe('https://a.test/x');
     expect(fetchInputUrl(new URL('https://a.test/y'))).toBe('https://a.test/y');
     expect(fetchInputUrl(new Request('https://a.test/z'))).toBe('https://a.test/z');
+  });
+});
+
+describe('a binary body to the Canari API (the upload transport)', () => {
+  const API = ['https://canari.emse.fr', 'https://canari-emse.fr'];
+  const upload = 'https://canari.emse.fr/api/media/upload';
+
+  it.each([
+    ['a FormData', () => new FormData()],
+    ['a Blob', () => new Blob([new Uint8Array(4)])],
+    ['an ArrayBuffer', () => new ArrayBuffer(4)],
+    ['a typed array', () => new Uint8Array(4)],
+  ])('keeps %s native - the plugin inflates every byte ~85x in Rust', (_label, make) => {
+    expect(shouldUseNativeFetch(upload, { method: 'POST', body: make() }, upload, API)).toBe(true);
+  });
+
+  it('keeps a JSON string body on the plugin - a few KB cost nothing', () => {
+    expect(shouldUseNativeFetch(upload, { method: 'POST', body: '{"a":1}' }, upload, API)).toBe(
+      false
+    );
+  });
+
+  it('keeps a GET on the plugin, whose response body is streamed in raw binary chunks', () => {
+    expect(shouldUseNativeFetch(upload, { method: 'GET' }, upload, API)).toBe(false);
+  });
+
+  it('keeps a binary body to a THIRD-PARTY host on the plugin - CORS is not ours to grant there', () => {
+    const body = new Blob([new Uint8Array(4)]);
+    expect(
+      shouldUseNativeFetch('https://third-party.example/upload', { body }, undefined, API)
+    ).toBe(false);
+  });
+
+  it('matches on the ORIGIN, not on a prefix of the host', () => {
+    const body = new Blob([new Uint8Array(4)]);
+    expect(
+      shouldUseNativeFetch('https://canari.emse.fr.evil.example/x', { body }, undefined, API)
+    ).toBe(false);
+  });
+
+  it('changes nothing when no first-party origin is given', () => {
+    const body = new Blob([new Uint8Array(4)]);
+    expect(shouldUseNativeFetch(upload, { body })).toBe(false);
+  });
+
+  it('reads the body of a Request given as the first argument', () => {
+    const req = new Request(upload, { method: 'POST', body: new Blob([new Uint8Array(4)]) });
+    expect(shouldUseNativeFetch(upload, undefined, req, API)).toBe(true);
+    expect(hasBinaryBody(new Request(upload))).toBe(false);
+  });
+
+  it('does not call a form-urlencoded body binary', () => {
+    expect(hasBinaryBody(upload, { body: new URLSearchParams({ a: '1' }) })).toBe(false);
+    expect(hasBinaryBody(upload, { body: null })).toBe(false);
   });
 });

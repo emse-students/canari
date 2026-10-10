@@ -65,6 +65,23 @@ export function mediaUrl(): string {
 }
 
 /**
+ * The distinct origins of Canari's five services, as `fetch` sees them - what the Tauri fetch
+ * routing calls first-party (`shouldUseNativeFetch`). Read per call, never cached: the base URLs
+ * come from `VITE_*` values and `window.location`, and a test changes them between cases.
+ */
+export function apiServiceOrigins(): string[] {
+  const origins = new Set<string>();
+  for (const base of [coreUrl(), socialUrl(), gatewayUrl(), deliveryUrl(), mediaUrl()]) {
+    try {
+      origins.add(new URL(base).origin);
+    } catch {
+      // An empty or relative base (`socialUrl()` has an empty dev fallback) names no origin.
+    }
+  }
+  return [...origins];
+}
+
+/**
  * Makes an app-relative API path fetchable from the runtime that is actually running.
  *
  * On the web the app and the API share an origin, so `/api/...` resolves by itself and nothing here

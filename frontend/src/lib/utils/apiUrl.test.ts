@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { resolveServiceUrl } from './apiUrl';
+import { apiServiceOrigins, resolveServiceUrl } from './apiUrl';
 
 const TAURI_MARKER = '__TAURI_INTERNALS__';
 
@@ -81,5 +81,12 @@ describe('resolveServiceUrl', () => {
     pretendTauri();
 
     expect(resolveServiceUrl('   ', DEV_FALLBACK)).toBe(window.location.origin);
+  });
+});
+
+describe('apiServiceOrigins', () => {
+  it('lists each distinct service ORIGIN once, never a path or an empty base', () => {
+    // In a browser every service resolves to the page's own origin, so five bases collapse to one.
+    expect(apiServiceOrigins()).toEqual([window.location.origin]);
   });
 });
