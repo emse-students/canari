@@ -29,11 +29,13 @@ import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
 import { DeliveryUnreachableError, SendEdgeRefusedError } from '$lib/mls-client/mlsDeliveryApi';
 import {
   UPLOAD_NO_ANSWER_ATTEMPTS,
+  UPLOAD_PROGRESS_MARGIN_BYTES,
   UploadAbortedError,
   UploadGaveUpError,
+  UploadNetworkError,
+  UploadStalledError,
   type XhrUploadOptions,
 } from '$lib/utils/uploadXhr';
-import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { clearAllUploads, clearUpload, patchUpload, setUploadRetry } from './uploadProgress.svelte';
 import {
   getIsTabLeader,
@@ -52,6 +54,29 @@ import {
  * Indexed by attempt count, clamped to the last value.
  */
 const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
+
+const textEncoder = new TextEncoder();
+
+/**
+ * True when `entry` cannot go out while any of `ids` is unsent: a reply quoting one of them, or a
+ * control event (reaction, edit, delete, pin) whose pre-encoded proto carries one of the ids as a
+ * string - the protobuf carries a message id as its UTF-8 bytes, so a byte search is exact for a
+ * UUID and needs no decoding. An unrelated message is independent and may pass a parked one.
+ */
+function dependsOnAny(entry: OutboxEntry, ids: Set<string>): boolean {
+  if (ids.size === 0) return false;
+  if (entry.kind === 'reply' && entry.replyTo && ids.has(entry.replyTo.id)) return true;
+  if (entry.kind !== 'control' || !entry.controlProto) return false;
+  const proto = entry.controlProto;
+  for (const id of ids) {
+    const needle = textEncoder.encode(id);
+    outer: for (let i = 0; i + needle.length <= proto.length; i++) {
+      for (let j = 0; j < needle.length; j++) if (proto[i + j] !== needle[j]) continue outer;
+      return true;
+    }
+  }
+  return false;
+}
 
 /** Returns the backoff delay for the given (post-increment) attempt count. */
 function backoffFor(attempts: number): number {
@@ -266,6 +291,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * a success or a cancel starts the count again.
    */
   const noAnswer = new Map<string, number>();
+  /** The furthest an attempt of this entry has got, so only a NO-FURTHER attempt is counted. */
+  const bestLoaded = new Map<string, number>();
   const lanes = new Map<string, Promise<void>>();
   /** Conversations whose running lane must look at the queue once more (an enqueue or wake-up arrived). */
   const laneRerun = new Set<string>();
@@ -488,23 +515,35 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           patchUpload(entry.id, { phase: 'stalled' });
       }, 2_000);
       let uploaded: MediaRef;
+      let attemptLoaded = 0;
       try {
         uploaded = await deps.uploadMedia(media, {
           signal: control.signal,
           onProgress: ({ loaded, total }) => {
             lastMoved = Date.now();
+            attemptLoaded = Math.max(attemptLoaded, loaded);
             patchUpload(entry.id, { phase: 'uploading', loaded, total });
           },
         });
       } catch (e) {
-        // NO ANSWER, read from the TYPE the transport threw (a deadline, or the `TypeError` a
-        // rejected request carries) - never from a message. A status is an answer and is handled
-        // by `uploadRefusalCause` in the flush; a cancel is the member's own act.
-        if (
-          !(e instanceof UploadAbortedError) &&
-          (e instanceof RequestDeadlineError || e instanceof TypeError)
-        ) {
-          const count = (noAnswer.get(entry.id) ?? 0) + 1;
+        // NO ANSWER, read from the TYPE the TRANSPORT threw - `UploadStalledError` (no byte moved)
+        // or `UploadNetworkError` (the connection broke) - never from a message and never from a
+        // bare `TypeError`, which preparation and encryption can throw too. A status is an answer
+        // (`uploadRefusalCause` reads it in the flush), a cancel is the member's act, and an
+        // `UploadAnswerTimeoutError` means the BODY WAS DELIVERED and the server is slow: not this.
+        if (e instanceof UploadStalledError || e instanceof UploadNetworkError) {
+          // AN ATTEMPT THAT MOVED MORE BYTES THAN ANY BEFORE IS PROGRESS, NOT A VERDICT: a slow
+          // link advances a little each time and must never be given up on. Only an attempt that
+          // fails no further than the best so far counts - the signature of a refusal at a fixed
+          // point (a relay's body limit), which is what the count exists to end.
+          const best = bestLoaded.get(entry.id) ?? 0;
+          let count: number;
+          if (attemptLoaded > best + UPLOAD_PROGRESS_MARGIN_BYTES) {
+            bestLoaded.set(entry.id, attemptLoaded);
+            count = 0;
+          } else {
+            count = (noAnswer.get(entry.id) ?? 0) + 1;
+          }
           noAnswer.set(entry.id, count);
           if (count >= UPLOAD_NO_ANSWER_ATTEMPTS) throw new UploadGaveUpError(count, e);
         }
@@ -514,6 +553,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         uploads.delete(entry.id);
       }
       noAnswer.delete(entry.id);
+      bestLoaded.delete(entry.id);
       clearUpload(entry.id);
       ref = {
         mediaId: uploaded.mediaId,
@@ -725,7 +765,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (forbiddenParked.has(entry.id)) return 'skip';
     const resumed = resuming.delete(entry.id);
     // A manual retry (or a reconnect's resume) is a fresh start for the no-answer count.
-    if (resumed) noAnswer.delete(entry.id);
+    if (resumed) {
+      noAnswer.delete(entry.id);
+      bestLoaded.delete(entry.id);
+    }
     // PARKED IS NOT BLOCKING: the entry waits for the member, and what was written after it goes.
     if (!resumed && parked.has(entry.id)) return 'parked';
     parked.delete(entry.id);
@@ -939,6 +982,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         console.error(line);
         log(line);
         parked.add(entry.id);
+        // TERMINAL UNTIL THE MEMBER ACTS: a reconnect resumes every `transportHeld` entry, and the
+        // attempt that gave up was held as a transport failure - leaving it there would restart it
+        // behind a bubble still saying `failed`.
+        transportHeld.delete(entry.id);
         patchStatus(entry.id, 'pending');
         patchUpload(entry.id, { phase: 'failed' });
         return 'parked';
@@ -1149,8 +1196,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         `[OUTBOX] Flushing ${entries.length} queued entr${entries.length === 1 ? 'y' : 'ies'} for ${conversationId.slice(0, 8)}…`
       );
       let anySent = false;
+      // Ids parked or held back in THIS pass: what depends on one of them (a reply to it, a control
+      // naming it) is not attempted - it would reference a message the peers never received.
+      const heldBack = new Set<string>();
       for (const entry of entries) {
+        if (dependsOnAny(entry, heldBack)) {
+          heldBack.add(entry.id);
+          log(`[OUTBOX] ${entry.id.slice(0, 8)}… waits: it depends on a parked message`);
+          continue;
+        }
         const outcome = await withSendSlot(() => flushOne(entry));
+        if (outcome === 'parked') heldBack.add(entry.id);
         if (outcome === 'sent') anySent = true;
         // Withdrawn or permanently failed: the entry is out of the queue, so what follows it may go.
         else if (outcome === 'gone' || outcome === 'error') continue;
@@ -1197,6 +1253,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       cancelled.add(messageId);
       parked.delete(messageId);
       noAnswer.delete(messageId);
+      bestLoaded.delete(messageId);
       publishOutboxEntryCancelled(messageId);
       await storage
         .deleteOutboxEntry(messageId)

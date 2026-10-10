@@ -86,6 +86,21 @@ export class UploadGaveUpError extends Error {
 /** Consecutive no-answer attempts after which an attachment is parked as failed. */
 export const UPLOAD_NO_ANSWER_ATTEMPTS = 3;
 
+/** An attempt must get this much FURTHER than the best so far to count as progress, not a verdict. */
+export const UPLOAD_PROGRESS_MARGIN_BYTES = 256 * 1024;
+
+/**
+ * The connection broke under an upload (XHR `onerror`). A `TypeError` because that is what `fetch`
+ * throws and what {@link isTransportFailure} reads, but a TYPE of its own so the outbox can tell the
+ * transport's failure from a `TypeError` thrown by preparation or encryption.
+ */
+export class UploadNetworkError extends TypeError {
+  constructor(where: string) {
+    super(`Network request failed: POST ${where}`);
+    this.name = 'UploadNetworkError';
+  }
+}
+
 /**
  * The caller cancelled this upload ({@link XhrUploadOptions.signal}). Typed so the outbox can tell
  * "the member pressed cancel" from "the link broke" without reading a sentence.
@@ -226,7 +241,7 @@ export function xhrUpload(
     xhr.onerror = () =>
       finish(() => {
         console.warn(`[upload] ${where}: network error`);
-        reject(new TypeError(`Network request failed: POST ${where}`));
+        reject(new UploadNetworkError(where));
       });
     xhr.ontimeout = xhr.onerror;
     signal?.addEventListener('abort', onAbort, { once: true });
