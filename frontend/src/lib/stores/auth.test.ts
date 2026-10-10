@@ -210,3 +210,21 @@ describe('a token for another account than the local identity', () => {
     await expect(refresh()).resolves.toMatch(/^h\./);
   });
 });
+
+/** A sign-in completing while a refresh is in flight must not turn the stale answer into a split. */
+describe('a refresh superseded by a sign-in as another account', () => {
+  it('is dropped: no split latched, the new session token stands', async () => {
+    const claims = (sub: string) =>
+      `h.${btoa(JSON.stringify({ sub, exp: Math.floor(Date.now() / 1000) + 3600 }))}.s`;
+    setToken(claims('new-user'));
+    currentUserId.mockReturnValue('old-user');
+    fetchMock.mockImplementation(async () => {
+      // The sign-in saves the new identity while the request is out.
+      currentUserId.mockReturnValue('new-user');
+      return new Response(JSON.stringify({ access_token: claims('old-user') }), { status: 200 });
+    });
+
+    await expect(refresh()).resolves.toBe(claims('new-user'));
+    expect(getIdentitySplit()).toBeNull();
+  });
+});

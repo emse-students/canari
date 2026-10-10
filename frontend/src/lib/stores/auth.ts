@@ -473,6 +473,9 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     `${coreUrl()}/api/auth/refresh` + `?clientVersion=${encodeURIComponent(getClientAppVersion())}`;
   alog(`refresh→ ${endpoint}`);
   const t0 = Date.now();
+  // WHO WAS SIGNED IN WHEN THIS ASKED: a sign-in completing while the request is in flight changes
+  // the local identity under it, and the answer is then about the PREVIOUS credential, not a split.
+  const localAtStart = currentUserId();
 
   // On a platform whose WebView can refuse the cookie, the credential is ours to carry. An EMPTY
   // store is not proof of no session though: `tauri://` is also the desktop origin, where the
@@ -526,6 +529,14 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   }
 
   const data = (await res.json()) as { access_token: string; refresh_token?: string };
+  // SUPERSEDED BY A SIGN-IN: the local identity changed while this was in flight (handleOidcCallback
+  // saved a different user). The response belongs to the old credential - comparing it to the NEW
+  // identity would latch a false split and lock out the person who just signed in, and persisting its
+  // rotation would overwrite the new session's credential. It is dropped, and the new token stands.
+  if (localAtStart && currentUserId() !== localAtStart && _accessToken) {
+    alog('refresh✗superseded by a sign-in as another account - stale answer dropped');
+    return _accessToken;
+  }
   // WHOSE TOKEN IS THIS? Compared with the local/MLS identity BEFORE it is published anywhere: a
   // token for another account must never reach the socket cookie, or the gateway registers this
   // device's id under it (measured 2026-10-10, see `tokenIdentity.svelte.ts`).
