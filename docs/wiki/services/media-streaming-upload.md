@@ -125,7 +125,7 @@ Progress is `received / totalParts`; cancel is `AbortController` plus the `DELET
 | Client download | 2 ciphertext parts + the plaintext Blob list (+ 8 MiB) | the plaintext, not the ciphertext, is held |
 | Server upload | 64 KiB stream buffers per open PUT; the staging file is on disk; no `Buffer` of a body | yes (was 1-2x the body) |
 | Server download | the stream high-water mark per request (64 KiB) | yes (was 1x the object) |
-| Server `complete` | **`fPutObject` does NOT stream below 64 MiB** (9.3): `partSize` defaults to 64 MiB, so any object up to the 50 MB ceiling is read whole into a `Buffer` (~2x). Bounded only with `partSize` set (>= 5 MiB) on the client | no, until S1 sets it |
+| Server `complete` | **`fPutObject` does NOT stream below 64 MiB** (9.3): `partSize` defaults to 64 MiB, so any object up to the 50 MB ceiling is read whole into a `Buffer` (~2x). Bounded only with `partSize` set (>= 5 MiB) on the client | S1 sets it on a streaming-only client; unproven on Garage |
 
 ## 4. Compatibility, retention, quotas
 
@@ -291,10 +291,12 @@ two in flight double it, so the streaming writer MUST NOT send parts through `wi
   `Buffer.concat` of every chunk. So `fPutObject` (the chunked `complete` today, and S1's `complete`) holds the
   WHOLE object, about 2x transiently, for every object up to the 50 MB ceiling; `put()` (single POST) does the
   same through `Readable.from(data)`. Dev's media-service container is capped at 768 MiB
-  (`docker-compose.dev.yml`); no cap was found for prod. **S1 fix: construct the client with
-  `partSize: 5 * 1024 * 1024` (the minimum), which sends objects over 5 MiB through `uploadStream` (multipart,
-  one part buffered).** DONE in S1 (`STORE_PART_BYTES`); note `fPutObject` itself takes no part size, only
-  the client does, and the setting also covers `put()`'s buffers. Verify on dev with a 50 MB object and a `process.memoryUsage()` probe.
+  (`docker-compose.dev.yml`); no cap was found for prod. **S1 fix: a SECOND client with
+  `partSize: 5 * 1024 * 1024` (the minimum), used ONLY by `putFileStream`, which sends objects over 5 MiB
+  through `uploadStream` (multipart, one part buffered).** DONE in S1 (`STORE_PART_BYTES`); `put()` keeps the
+  default client (a Buffer already in memory gains nothing) and a failed streamed upload is aborted with
+  `removeIncompleteUpload`. **Owed, the first reading: a real 6 MB and a real 50 MB upload through dev Garage**
+  (multipart path, abort, `process.memoryUsage()` probe).
 - Cloudflare request body: 100 MB on Free and Pro, 200 MB Business, Enterprise up to 5 GB (Cloudflare docs,
   cache / default-cache-behavior, read 2026-10-10, not probed). 8 MiB parts are 12x under it.
 - Met on the way: dev's legacy name still answers `413` above 1 MiB (the relay's nginx), so no upload over

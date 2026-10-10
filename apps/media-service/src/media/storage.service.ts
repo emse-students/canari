@@ -19,6 +19,7 @@
  */
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import * as Minio from 'minio';
+import * as fs from 'fs';
 import { Readable } from 'stream';
 
 /** One object as the store describes it. The service never learns anything else about it. */
@@ -41,22 +42,19 @@ export const STORE_PART_BYTES = 5 * 1024 * 1024;
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
   private readonly client: Minio.Client;
+  /** Same store, 5 MiB part size: `putFileStream` only. */
+  private readonly streamClient: Minio.Client;
   private readonly bucket: string;
 
   constructor() {
     this.bucket = process.env.GARAGE_BUCKET ?? 'canari-media';
-    this.client = new Minio.Client({
+    const options: Minio.ClientOptions = {
       endPoint: process.env.GARAGE_ENDPOINT ?? 'localhost',
       port: parseInt(process.env.GARAGE_PORT ?? '3900', 10),
       useSSL: process.env.GARAGE_USE_SSL === 'true',
       // Garage's S3 API signs with the region declared in garage.toml; the client otherwise
       // defaults to us-east-1 and every request is refused. Not optional here.
       region: process.env.GARAGE_REGION,
-      // minio-js reads a whole object into ONE buffer when it is no larger than this (default 64 MiB,
-      // so every blob under the 50 MB ceiling), and only streams multipart above it. 5 MiB is the
-      // client's own minimum, and bounds the heap of `putFileStream` to one part. It is a CLIENT
-      // option: `fPutObject` takes no part size of its own (its 4th argument is metadata).
-      partSize: STORE_PART_BYTES,
       accessKey: (() => {
         const v = process.env.GARAGE_ACCESS_KEY_ID;
         if (!v) throw new Error('GARAGE_ACCESS_KEY_ID is required');
@@ -67,7 +65,13 @@ export class StorageService implements OnModuleInit {
         if (!v) throw new Error('GARAGE_SECRET_ACCESS_KEY is required');
         return v;
       })(),
-    });
+    };
+    this.client = new Minio.Client(options);
+    // minio-js reads a whole object into ONE buffer when it is no larger than `partSize` (default
+    // 64 MiB) and only goes multipart above it. A SECOND client, used by `putFileStream` alone, so
+    // that a staged upload is sent in 5 MiB parts (heap bounded to one part) while `put()` and every
+    // other call keep the default behaviour. `partSize` is a CLIENT option; nothing per call.
+    this.streamClient = new Minio.Client({ ...options, partSize: STORE_PART_BYTES });
   }
 
   async onModuleInit() {
@@ -93,13 +97,28 @@ export class StorageService implements OnModuleInit {
   }
 
   /**
-   * Store an opaque encrypted blob from a local file.
+   * Store an opaque encrypted blob from a local file, streamed (one 5 MiB part in memory at a time
+   * above that size). minio-js never aborts a multipart upload that failed, so on failure the read
+   * stream is destroyed and the incomplete upload of this key is removed here, with the cause logged;
+   * the original error is rethrown.
    */
-  async putFileStream(objectId: string, filePath: string, _size: number): Promise<void> {
-    await this.client.fPutObject(this.bucket, objectId, filePath, {
-      'Content-Type': 'application/octet-stream',
-      'x-amz-meta-encrypted': 'true',
-    });
+  async putFileStream(objectId: string, filePath: string, size: number): Promise<void> {
+    const source = fs.createReadStream(filePath);
+    try {
+      await this.streamClient.putObject(this.bucket, objectId, source, size, {
+        'Content-Type': 'application/octet-stream',
+        'x-amz-meta-encrypted': 'true',
+      });
+    } catch (err) {
+      this.logger.error(`Streamed store of ${objectId} failed, aborting it: ${String(err)}`);
+      source.destroy();
+      try {
+        await this.streamClient.removeIncompleteUpload(this.bucket, objectId);
+      } catch (abortErr) {
+        this.logger.error(`Incomplete upload of ${objectId} not removed: ${String(abortErr)}`);
+      }
+      throw err;
+    }
   }
 
   /**

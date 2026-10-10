@@ -662,6 +662,8 @@ describe('abuse: a session costs something even when no byte is sent', () => {
 
     // Disposed by the NEXT init, not by the hourly sweep.
     await open(r, 'bob', 3000);
+    await tick();
+    await tick();
     await expect(r.svc.status('alice', empty.uploadId)).rejects.toThrow(NotFoundException);
     expect(await fs.pathExists(path.join(r.dir, `${empty.uploadId}.data`))).toBe(false);
     // The one that holds a part keeps the full window and its reservation.
@@ -870,5 +872,106 @@ describe('a full staging disk', () => {
     expect((await r.svc.status('alice', s.uploadId)).received).toEqual([]);
     await fillAll(r, s);
     await expect(r.svc.complete('alice', s.uploadId)).resolves.toBeDefined();
+  });
+});
+
+describe('the short window judges an UNTOUCHED session only', () => {
+  afterEach(() => {
+    delete process.env.MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS;
+  });
+  const backdate = (r: Rig) => {
+    const all = (r.svc as unknown as { sessions: Map<string, { createdAt: number }> }).sessions;
+    for (const x of all.values()) x.createdAt = Date.now() - 5000;
+  };
+
+  it('keeps a session whose FIRST part is still arriving, and the write completes', async () => {
+    process.env.MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS = '1000';
+    const r = rig();
+    const s = await open(r, 'alice', 500);
+    const stuck = new Readable({ read() {} });
+    const inflight = r.svc.putPart('alice', s.uploadId, 0, stuck, s.blob.length);
+    await tick();
+    backdate(r);
+    await open(r, 'bob', 500);
+    await tick();
+    await expect(r.svc.status('alice', s.uploadId)).resolves.toBeDefined();
+    stuck.push(s.blob);
+    stuck.push(null);
+    await expect(inflight).resolves.toMatchObject({ receivedCount: 1 });
+  });
+
+  it('keeps a session whose only part is being re-sent, even when the re-send then fails', async () => {
+    process.env.MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS = '1000';
+    const r = rig();
+    const s = await open(r, 'alice', 500);
+    await put(r, 'alice', s.uploadId, 0, s.blob);
+    const broken = new Readable({
+      read() {
+        this.push(Buffer.alloc(100, 1));
+        this.destroy(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }));
+      },
+    });
+    await expect(r.svc.putPart('alice', s.uploadId, 0, broken, s.blob.length)).rejects.toThrow(
+      BadRequestException
+    );
+    expect((await r.svc.status('alice', s.uploadId)).received).toEqual([]);
+    backdate(r);
+    await open(r, 'bob', 500);
+    await tick();
+    await expect(r.svc.status('alice', s.uploadId)).resolves.toBeDefined();
+    expect((await fs.readJson(path.join(r.dir, `${s.uploadId}.json`))).everReceived).toBe(true);
+  });
+
+  it('remembers across a restart that a part was received, and validates the flag', async () => {
+    process.env.MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS = '1000';
+    const first = rig();
+    const s = await open(first, 'alice', 500);
+    await put(first, 'alice', s.uploadId, 0, s.blob);
+    const sidecar = path.join(first.dir, `${s.uploadId}.json`);
+    await fs.writeJson(sidecar, { ...(await fs.readJson(sidecar)), received: [] });
+    const second = rig(first.dir);
+    await second.svc.status('alice', s.uploadId);
+    backdate(second);
+    await expect(second.svc.status('alice', s.uploadId)).resolves.toBeDefined();
+
+    await fs.writeJson(sidecar, { ...(await fs.readJson(sidecar)), everReceived: 'yes' });
+    const third = rig(first.dir);
+    await expect(third.svc.status('alice', s.uploadId)).rejects.toThrow(NotFoundException);
+  });
+});
+
+describe('an expiry queued behind a running complete re-judges under the lock', () => {
+  const expireNow = (r: Rig, id: string) => {
+    const all = (r.svc as unknown as { sessions: Map<string, { expiresAt: number }> }).sessions;
+    all.get(id)!.expiresAt = Date.now() - 1;
+  };
+
+  it('does not dispose a session that complete has just given a fresh window', async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000, 1024, 'chat-reel');
+    await fillAll(r, s);
+    const g = gateStore(r);
+    const done = r.svc.complete('alice', s.uploadId);
+    await g.inside;
+    expireNow(r, s.uploadId);
+    const swept = r.svc.sweep();
+    await tick();
+    g.release();
+    const { mediaId } = await done;
+    await swept;
+    expect(await r.svc.status('alice', s.uploadId)).toMatchObject({ mediaId });
+  });
+
+  it("does not hold another member's init behind an expired session busy in complete", async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000, 1024, 'chat-reel');
+    await fillAll(r, s);
+    const g = gateStore(r);
+    const done = r.svc.complete('alice', s.uploadId);
+    await g.inside;
+    expireNow(r, s.uploadId);
+    await expect(open(r, 'bob', 500)).resolves.toBeDefined();
+    g.release();
+    await done;
   });
 });

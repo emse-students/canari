@@ -71,6 +71,11 @@ interface SessionRecord {
   expiresAt: number;
   received: number[];
   /**
+   * True once ANY part has landed, and never reset: a re-sent part leaves `received` while it is
+   * rewritten, and the session must not look untouched (and so expire in minutes) for that.
+   */
+  everReceived?: boolean;
+  /**
    * The id `complete` will register, persisted BEFORE the store is written: a crash anywhere after
    * that point retries into the same object key (the store overwrites it), so no orphan and no
    * second id for one upload.
@@ -140,6 +145,7 @@ function validateRecord(raw: unknown, id: string): SessionRecord {
   ) {
     bad('received');
   }
+  if (r.everReceived !== undefined && typeof r.everReceived !== 'boolean') bad('everReceived');
   if (r.intendedMediaId !== undefined && !isUuid(r.intendedMediaId)) bad('intendedMediaId');
   if (r.completed !== undefined) {
     const c = r.completed as Record<string, unknown> | null;
@@ -255,12 +261,12 @@ export class UploadSessionService {
     }
 
     // Sessions past their window free their staging and reservation now, not at the next sweep.
-    await this.disposeExpired();
+    const expiring = this.disposeExpired();
     let open = 0;
     let staged = 0;
     let ownerStaged = 0;
     for (const s of this.sessions.values()) {
-      if (s.completed) continue;
+      if (s.completed || expiring.has(s)) continue;
       staged += s.totalBytes;
       if (s.ownerId === ownerId) {
         open += 1;
@@ -305,6 +311,7 @@ export class UploadSessionService {
       createdAt: now,
       expiresAt: now + this.ttlMs,
       received: [],
+      everReceived: false,
       receivedSet: new Set(),
       release,
       aborts: new Set(),
@@ -436,6 +443,7 @@ export class UploadSessionService {
         throw new ConflictException('Upload session was closed');
       }
       session.receivedSet.add(idx);
+      session.everReceived = true;
       session.received = [...session.receivedSet].sort((a, b) => a - b);
       await this.mutex.run(`${id}:meta`, () => this.persist(session));
     });
@@ -668,6 +676,8 @@ export class UploadSessionService {
       const set = new Set(record.received);
       const session: Session = {
         ...record,
+        // A sidecar written before the flag existed: the received list is then the only evidence.
+        everReceived: record.everReceived === true || set.size > 0,
         received: [...set].sort((a, b) => a - b),
         receivedSet: set,
         release: () => {},
@@ -708,23 +718,52 @@ export class UploadSessionService {
     return session;
   }
 
-  /** When the session stops being served: the 24 h window, or the short one while it holds no part. */
+  /**
+   * When the session stops being served: the 24 h window, or the short one while it is UNTOUCHED -
+   * no part ever received (durable flag) and none in flight. A first part still arriving, or a
+   * received one being re-sent, is activity: the short window must not abort that write.
+   */
   private effectiveExpiry(session: Session): number {
-    if (session.completed || session.receivedSet.size > 0) return session.expiresAt;
+    if (
+      session.completed ||
+      session.everReceived ||
+      session.receivedSet.size > 0 ||
+      session.active.size > 0
+    ) {
+      return session.expiresAt;
+    }
     return Math.min(session.expiresAt, session.createdAt + this.emptyTtlMs);
   }
 
   private expire(session: Session): Promise<void> {
     return this.mutex.run(`${session.id}:complete`, async () => {
-      if (this.sessions.get(session.id) === session) await this.dispose(session, 'expired');
+      // Re-judged under the lock: a `complete` that held it may have finished (memo, longer window)
+      // or the session may be gone, and this call waited behind it with a stale verdict.
+      if (this.sessions.get(session.id) !== session) return;
+      if (this.effectiveExpiry(session) > Date.now()) {
+        this.logger.log(`Upload session ${session.id} no longer expired once the lock was taken`);
+        return;
+      }
+      await this.dispose(session, 'expired');
     });
   }
 
-  private async disposeExpired(): Promise<void> {
+  /**
+   * Starts the disposal of every expired session WITHOUT waiting: one behind a long `complete` must
+   * not hold every other member's `init`. Returns the sessions it is disposing, so the caller does
+   * not count them against its caps.
+   */
+  private disposeExpired(): Set<Session> {
     const now = Date.now();
+    const going = new Set<Session>();
     for (const session of this.sessions.values()) {
-      if (this.effectiveExpiry(session) <= now) await this.expire(session);
+      if (this.effectiveExpiry(session) > now) continue;
+      going.add(session);
+      void this.expire(session).catch((err) =>
+        this.logger.error(`Expiry of session ${session.id} failed: ${String(err)}`)
+      );
     }
+    return going;
   }
 
   private async requireOpen(ownerId: string, id: string): Promise<Session> {
@@ -766,6 +805,7 @@ export class UploadSessionService {
       createdAt: session.createdAt,
       expiresAt: session.expiresAt,
       received: session.received,
+      everReceived: session.everReceived === true || session.received.length > 0,
       ...(session.intendedMediaId ? { intendedMediaId: session.intendedMediaId } : {}),
       ...(session.completed ? { completed: session.completed } : {}),
     };

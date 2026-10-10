@@ -367,11 +367,17 @@ routes in `media.controller.ts` (NO `FileInterceptor`: a spec reads the route me
   budget (2 GiB declared), `429` past the daily `chat-reel` budget - **reserved ONCE here** with
   `reserveChatReelBudget`, the same machinery as the single POST. A sparse staging file of exactly
   `totalBytes` is created. The part size travels in `init`; the server assumes none.
-- **A session that received NOTHING lives 15 min, not 24 h** (`MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS`), and one
+- **A session UNTOUCHED lives 15 min, not 24 h** (`MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS`): untouched means no part
+  ever received (a durable `everReceived` flag in the sidecar, so a re-sent only-part leaving `received` does not
+  reset it; a sidecar without it falls back to its `received` list) AND no PUT in flight (a first part still
+  arriving is not "nothing"). One
   member may declare at most **256 MiB** across open sessions (`MEDIA_UPLOAD_SESSION_MAX_OWNER_BYTES`, `429`).
   Both exist because `init` is cheap (a sparse file plus a reservation) and the 2 GiB staging cap was
   otherwise fillable by anyone, for a day, with no part sent. Expired sessions are disposed at `init` too,
-  so a full cap does not wait for the hourly sweep. Their reservation goes with them.
+  so a full cap does not wait for the hourly sweep. Their reservation goes with them. That disposal is NOT awaited
+  by `init` (one behind a long `complete` would hold every member's `init`) and the sessions it is disposing are
+  not counted against the caps meanwhile; it re-judges expiry under the `:complete` lock, so an expiry queued
+  behind a `complete` that just gave the session a fresh window disposes nothing.
 - **`PUT parts/:index`**: raw `application/octet-stream`. `Content-Length` is REQUIRED (`411`), over **8 MiB is
   `413` before a byte is read**, more than the part's exact length `413`, fewer `400`. The request stream
   is piped through a byte counter into `createWriteStream(..., {flags: 'r+', start: index * partBytes})`
@@ -426,11 +432,14 @@ racing `complete`; `ENOSPC`.
 `/app/upload_sessions` (prod and dev compose; the local bench compose keeps the container layer), so it
 survives a recreate. It is DELIBERATELY not in the backup (transient by design; no bootstrap step, Docker
 creates the volume on the next deploy). An existing sparse file's declared size still counts against
-the disk of the volume's filesystem, not the object store. (2) `fPutObject` had no part size of its own (its
-4th argument is metadata): `partSize` is a CLIENT option and is now `5 MiB` in `StorageService`
-(minio 8.0.7 `client.js` read: default 64 MiB means `size <= partSize` is read whole into a buffer;
-the minimum accepted is 5 MiB). **Unproven against Garage**: no multipart upload through Garage and no
-`process.memoryUsage()` probe on a 50 MB object has been run. (2b) **The vault/opaque mode is NOT in S1**
+the disk of the volume's filesystem, not the object store. (2) `partSize` is a CLIENT option of minio-js (default 64 MiB: `size <= partSize` is read whole into a buffer;
+minimum 5 MiB). It is set on a SECOND client, `streamClient`, used ONLY by `StorageService.putFileStream`
+(this service's `complete` and the chunk route's); `put()` and every other call keep the default client, so
+the single POST is unchanged. `putFileStream` opens its own read stream and calls `putObject`; on failure it
+destroys the stream and calls `removeIncompleteUpload` for the key (minio-js 8.0.7 never aborts a failed
+multipart upload; its first part number is 2), logging both, and rethrows the original error. **Unproven
+against Garage, and THE FIRST READING OWED: a real 6 MB and a real 50 MB upload through dev Garage** (the
+multipart path, the abort, a `process.memoryUsage()` probe); the specs stub the S3 client. (2b) **The vault/opaque mode is NOT in S1**
 (the header check is mandatory here, `init` refuses a non-`segmented-v1` blob): a vault document over 10 MiB
 still has no session route; it is a later package, see the design's 9.1/9.4. (3) Streamed `GET` (design 3.5) is not in this
 package. (4) The edge (nginx buffers a request body by default, then forwards it) and the 10 MiB wall are
