@@ -120,7 +120,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **create the new Cloudflare tunnel on the `rootz-emse.fr` zone.** The project's token answers 200 with an EMPTY list on `cfd_tunnel` and 403 on Access groups, so tunnels are out of its scope. (verify: phase 1 completed for all three estates on 2026-09-24 without it - whether this tunnel is still wanted at all) | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
 | **the spaces release order (WP6b), three gestures in THIS order**: (1) go for the WP3 profile backfill on production once 6a/6d's release ran migration 071 (`backfill-canari-profiles.sh apply`); (2) set every association's real reach and the BDEs at `/admin/spaces` - the seed gave all of them (ICM, saint-etienne) only; (3) only then cut the release carrying 6b. Out of order, ISMIN/Gardanne/FSSS/Autre readers see no existing association post, and anyone not backfilled loses the feed | 1 go, 1 grid, 1 release | [profiles-and-access](profiles-and-access.md), "WP6b as built" |
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala` (the repository answers `404`). Nothing runs from it; it is somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
-| **decide two privileges for the host-update report**: a sudoers rule letting the runner account run `needrestart -b` (without it the check is blind), and/or a runner key on `mitv`, `cercle`, `miconnect` | 1 decision | [the P2](#p2---three-hosts-take-security-updates-that-nothing-reports-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
+| **decide whether the host-update report gets a runner key on `mitv`, `cercle`, `miconnect`** (your own old VMs; without it they are unreported) | 1 decision | [the P2](#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
 | **decide whether `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App itself** (a lockfile-refresh superseding a Dependabot pull request, which is how the last class of dependency update that needs a person would merge unattended) | 1 decision | [the P2](#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **raise `minClientVersion` to `1.2.1` once BOTH stores serve `1.2.1`** - `1.0.3`-`1.1.2` keep the native key-group epoch bug (a cold start arms an epoch gap, salon sends are refused, the device re-joins 45 s later); the same floor clears Graine v2's `>= 1.0.3` | 1 gesture | [channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09), [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
@@ -492,16 +492,18 @@ and FAILS the day an ignored id is no longer reported, naming the ignore, its pr
 (`.github/scripts/stream-json-premise.sh`) and this entry as what to delete. The reasoning is in
 [cicd](cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
 
-### P2 - THREE hosts take security updates that nothing reports on, and a library nothing restarts (the rest closed 2026-09-03)
+### P2 - TWO of the hosts that take security updates are not reported on, and a library nothing restarts (the rest closed 2026-09-03)
 
-The mechanism and report exist since 2026-09-03 ([host-updates](infrastructure/host-updates.md)). Three
-open items, each with its retirement condition in
-[host-updates](infrastructure/host-updates.md#what-stays-open-the-reports-reach-the-raid-channel-and-libraries-nothing-restarts):
+The mechanism and report exist since 2026-09-03 ([host-updates](infrastructure/host-updates.md)). **The shared
+Portail-etu host is judged on OUR questions only since 2026-10-10** (`POLICY_OWNER=host-admins`: timer ran, no
+security update pending, no reboot owed; its origin list and unreadable log belong to the School and are
+printed, not judged - the daily run was red for ever on facts nobody here may change). Open, each with its
+retirement condition in [host-updates](infrastructure/host-updates.md#what-stays-open-the-reports-reach-the-raid-channel-and-libraries-nothing-restarts):
 
-1. the report reaches the Portail-etu host (where the runner lives, checked 2026-10-09) and no other host (`mitv`, `cercle`,
-   `miconnect` unreported) - a runner key on them is the user's decision;
-2. `mitv`'s 7.3 TB RAID1 has a sensor (`mdmonitor`) and no channel - `/proc/mdstat` into the daily report;
-3. a library fix is installed, not in effect - `needrestart -b` as the runner's unprivileged account is BLIND (prints only its version, measured 2026-10-09), so it waits on a sudoers rule for that one command, the user's decision.
+1. the report reaches that host and no other (`mitv`, `cercle`, `miconnect` are the user's old VMs, unreported) - a runner key on them is the user's decision;
+2. `mitv`'s 7.3 TB RAID1 has a sensor (`mdmonitor`) and no channel - `/proc/mdstat` into the daily report.
+
+A library fix installed and not in effect (`needrestart -b` is blind as the runner's account) concerns the shared host only and is the School's to restart: not pursued.
 
 ## iOS, platform and runtime - the residue that fits no other section
 
