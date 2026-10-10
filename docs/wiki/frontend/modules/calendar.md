@@ -209,6 +209,12 @@ accept. The form reads the states from `GET .../events/:eventId/co-organisers` a
 sends `coOwnerIds` only once they arrived (`coOwnersLoad`), because the event's own `coOwners` names
 only the accepted ones ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
 
+**The detail modal and the picker (2026-10-10).** The modal lists every organiser as a pill chip
+(logo, name, link to its page) and, to whoever may edit the event, one quiet "n pending" line read
+from the states endpoint (a reader without the right gets none: the endpoint refuses, and the modal
+logs it). The picker counts `n / 4` (the owner included), stops offering associations at three picks
+and says why; `coOrganiserCap.ts` mirrors the server's constant.
+
 The same fact decides what a row says: the day panel takes `ownAssociationId` (not a
 `hideAssociationName` boolean) and the dialog is told `showAssociation` per event, so a row the page
 merely co-owns still names, colours and badges its real owner.

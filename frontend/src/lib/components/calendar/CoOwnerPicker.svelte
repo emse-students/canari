@@ -33,6 +33,7 @@
     type CalendarEventCoOrganiserState,
   } from '$lib/associations/api';
   import { groupAssociationsForSelect, listOptionLabel } from '$lib/associations/selectGroups';
+  import { MAX_CO_ORGANISERS, MAX_ORGANISING_ASSOCIATIONS } from '$lib/calendar/coOrganiserCap';
   import { m } from '$lib/paraglide/messages';
   import { X, Users } from '@lucide/svelte';
 
@@ -71,9 +72,17 @@
     }
   });
 
+  /**
+   * THE CAP (user, 2026-10-10): four associations in total, so three co-organisers. At it the
+   * picker offers nothing more and says why; the server refuses the same overflow with a typed
+   * code, so this is the form's courtesy and the server's rule is the safety net.
+   */
+  const atCap = $derived(selectedIds.length >= MAX_CO_ORGANISERS);
+
   const candidates = $derived(
     allAssociations.filter(
       (a) =>
+        !atCap &&
         a.id !== excludeId &&
         !selectedIds.includes(a.id) &&
         statusById.get(a.id) !== 'refused' &&
@@ -105,6 +114,12 @@
   <p class="text-text-muted flex items-center gap-1 text-xs font-bold tracking-wide uppercase">
     <Users size={14} />
     {m.asso_calendar_co_owner_label()}
+    <span class="text-text-muted ml-auto font-normal normal-case" data-co-owner-counter
+      >{m.asso_calendar_co_owner_counter({
+        count: selectedIds.length + 1,
+        max: MAX_ORGANISING_ASSOCIATIONS,
+      })}</span
+    >
   </p>
   <p class="text-text-muted text-xs">{m.asso_calendar_co_owner_hint()}</p>
   {#if selected.length > 0}
@@ -137,6 +152,13 @@
   {#if refused.length > 0}
     <p class="text-text-muted text-xs">
       {m.asso_calendar_co_owner_refused_line({ names: refused.map((s) => s.name).join(', ') })}
+    </p>
+  {/if}
+  {#if atCap}
+    <p
+      class="border-cn-border text-text-muted rounded-lg border border-dashed px-2.5 py-1.5 text-xs"
+    >
+      {m.asso_calendar_co_owner_cap_reached({ max: MAX_ORGANISING_ASSOCIATIONS })}
     </p>
   {/if}
   <div class="relative">
