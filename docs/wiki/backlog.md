@@ -443,12 +443,6 @@ The mechanisms are on [mobile](frontend/mobile.md#one-builder-two-triggers),
 
 ## Notifications - one builder on Android since 2026-09-18, and the rows that still owe it a run
 
-### P2 - NOTIF-15 - NOTHING HAS HEARD `canari_reactions` ON A REAL HANDSET
-
-Owed: NOTIF-15 on a real Android handset - a reaction to the recipient's OWN message rings on
-`canari_reactions`, and every other reaction stays silent. That the channel exists in both locales
-is already asserted (`notificationChannels.test.ts`); how it sounds is not.
-
 ### P3 - THREE SERVICES REFUSE AN UNSIGNED CALLER THREE DIFFERENT WAYS, AND MERGING THEM IS A POLICY DECISION
 
 Owed to the USER: a written decision of which refusal is intended, before any file is touched, and
@@ -470,12 +464,9 @@ Both halves are fixed since `v0.18.18`; nothing has run them on a genuine first 
 3. **NOTIF-17b re-run on the `admits` route** (a device added while offline is a recipient of the
    next message).
 
-### P3 - three tap/reply rows owed against Android's single notification builder
+### P3 - NOTIF-6c / NOTIF-6d: the quick reply from a BACKGROUNDED shade, and a reply that fails to send
 
-Owed on the board, each stating its trigger (`builtBy`): NOTIF-6c (quick reply, backgrounded, and its
-2026-08-30 `403` fix), NOTIF-7c and NOTIF-7d (tap into a CHANNEL, backgrounded and killed). Also
-settle whether NOTIF-11/-12 (`MessagingStyle` stacking) already speak for the backgrounded path,
-which reaches the same builder.
+Owed on the Mi 9T against a pushing estate (the local one; dev has no Firebase): `bun archive/k.mjs`, answer the shade by hand. NOTIF-7c/7d (tap into a salon) PASSED 2026-10-08 and NOTIF-11 PASSED 2026-09-07; NOTIF-12 only records ([board](cross-client-testing.md#14---notif---notifications)).
 
 ### P3 - notification taps: what the 2026-10-08 audit left open
 
@@ -597,13 +588,6 @@ generation and the withdrawn 2026-09-08 fix are on
 [mobile](frontend/mobile.md#one-row-arriving-through-the-push-the-pull-and-the-socket-measured-2026-09-08-to-2026-10-06).
 
 ## Background notifications on Android - what the 2026-09-05 investigation left open
-
-### P2 - a COMMUNITY message is not decrypted in a background notification, and the KILLED case is unmeasured for both kinds (user, 2026-09-05)
-
-Owed: four NOTIF rows on ONE build - salon x {backgrounded, killed} and DM x {backgrounded, killed} -
-so the comparison is one afternoon. Read the board first: NOTIF-18/-19/-20 (killed salon rows) may
-already answer the killed salon cell with a mirrored seed. A blind banner is counted since
-2026-10-05 (`[PUSH_BLIND]`, `missing=` names the cause), so the fleet rate can be read beside them.
 
 ### P1 (hardware-owed) - an iPhone's salon banner for a session started while it was shut
 
@@ -774,10 +758,6 @@ The pictures replaced the font on 2026-09-25 ([emoji](frontend/emoji.md)). **Ope
 ### P1 - the resume reload and the receive ratchet: fixed, owed one device reading; a SEND-side rewind is still unexplained (measured on the Mi 9T 2026-09-08)
 
 Defects A (#435, `v0.16.6`) and B (#1527, the native reload refuses `live-ahead`) are shipped; mechanism in [mls-desync-prevention](protocols/mls-desync-prevention.md#the-resume-reload-re-installed-a-receive-ratchet-behind-the-live-one---the-2026-09-08-captures-mi-9t). **Owed on the Mi 9T:** (1) resume right after a received frame with no checkpoint between and read `[MLS][Tauri] Resume reload SKIPPED`; (2) re-measure the `E/` pair (a duplicate `recevoir_messages_batch` 83 ms apart) on a rebuilt APK (`adb logcat -v time` during NOTIF-7); (3) reproduce the 2026-09-06 SEND-side rewind from the phone. **Do not await the outbound checkpoint** ([why](protocols/mls-desync-prevention.md#the-checkpoint-window-and-the-per-document-snapshot-counter-moved-from-the-backlog-2026-10-08)).
-
-### P2 - the notification QUICK ACTIONS exist only while the app is DEAD, so check K's backgrounded case is not performable (measured 2026-09-06)
-
-The JS-side `sendNotification` path posts no reply/mark-read actions; only the Kotlin FCM service does. **Owed: a decision** - post through the Kotlin service or grow actions on the JS path ([mobile](frontend/mobile.md#notification-quick-actions-exist-only-while-the-app-is-dead-measured-on-the-mi-9t-2026-09-06)). Check K records `SKIPPED` until then.
 
 ### P1 - THE MINTING LOOP HAS NEVER BEEN OBSERVED ON THE HANDSET, AND A BLOB'S SIZE CANNOT SETTLE IT
 
