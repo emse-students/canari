@@ -149,6 +149,9 @@ describe('the slow state is derived from observed answers, and never stacks on o
     vi.setSystemTime(Date.now() + 4_000);
     await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
     expect(connectivity.slow).toBe(false);
+    // Still unanswered a full threshold later: the link, not the device, is now the suspect.
+    await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
+    expect(connectivity.slow).toBe(true);
     r.answered(false);
   });
 

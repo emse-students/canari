@@ -57,13 +57,39 @@ import {
 const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 
 /**
- * Consecutive failed attempts of ONE attachment, made while the link was up and not typed as a
- * no-answer upload (those end at `UPLOAD_NO_ANSWER_ATTEMPTS`), after which it is parked as `error`.
- * Counts the failures nothing else bounds: an unreadable file, a 5xx that never mends, an unexpected
- * throw. About five minutes of the ladder - long enough for a deploy, short enough that a Pixel 6a is
- * not made to decode a 13 MB file every minute for ever (2026-10-10).
+ * Consecutive LOCAL failures of ONE attachment - this device could not read, decode or hold the file
+ * (see {@link isLocalAttachmentFailure}) - after which it is parked as `error`. About five minutes of
+ * the ladder, short enough that a Pixel 6a is not made to decode a 13 MB file every minute for ever
+ * (2026-10-10). NOTHING ELSE COUNTS: a transport failure, a 5xx, a roster repair or an edge refusal
+ * is about the network or the server, and a relay outage of five minutes must not tell the member
+ * that their file is unreadable.
  */
 export const MAX_UNEXPECTED_ATTEMPTS = 8;
+
+/**
+ * The queued attachment cannot be read on THIS device: its row failed to load, or it holds no bytes
+ * while still owing an upload. Typed, so the outbox never decides "local" from a message.
+ */
+export class LocalAttachmentError extends Error {
+  constructor(why: string, cause?: unknown) {
+    super(why, { cause });
+    this.name = 'LocalAttachmentError';
+  }
+}
+
+/**
+ * True for the failures that are about this device and no one else, read from the TYPE: the outbox's
+ * own {@link LocalAttachmentError}, the platform's `NotReadableError`/`NotFoundError` on a file, and a
+ * `RangeError` (an allocation the renderer refused).
+ */
+export function isLocalAttachmentFailure(e: unknown): boolean {
+  if (e instanceof LocalAttachmentError || e instanceof RangeError) return true;
+  return (
+    typeof DOMException !== 'undefined' &&
+    e instanceof DOMException &&
+    (e.name === 'NotReadableError' || e.name === 'NotFoundError')
+  );
+}
 
 const textEncoder = new TextEncoder();
 
@@ -515,6 +541,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     let ref = media.uploadedRef;
     if (!ref) {
       if (!deps.uploadMedia) throw new Error('uploadMedia callback not provided');
+      if (!media.fileBytes || media.fileBytes.length === 0) {
+        throw new LocalAttachmentError('the queued attachment holds no bytes to upload');
+      }
       logMlsMetric({ kind: 'outbox_upload_attempt', conversationId: entry.conversationId });
       const control = new AbortController();
       uploads.set(entry.id, control);
@@ -733,13 +762,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function holdForRetry(
     entry: OutboxEntry,
     describe: (attempts: number) => string,
-    opts: { transport?: boolean } = {}
+    opts: { transport?: boolean; local?: boolean; quiet?: boolean } = {}
   ): Promise<FlushOutcome> {
     if (opts.transport) transportHeld.add(entry.id);
     else transportHeld.delete(entry.id);
+    // The count is of CONSECUTIVE local failures: any other kind of hold breaks the run.
+    if (!opts.local) unexpected.delete(entry.id);
     patchStatus(entry.id, 'pending');
     // An attachment still to upload shows that its next attempt is queued (and starts from zero).
-    if (entry.kind === 'media' && !entry.media?.uploadedRef) {
+    // `quiet` when the payload was not read, so whether the upload already happened is not known.
+    if (!opts.quiet && entry.kind === 'media' && !entry.media?.uploadedRef) {
       patchUpload(entry.id, { phase: 'waiting', loaded: 0, attempt: entry.attempts + 1 });
     }
     const attempts = entry.attempts + 1;
@@ -782,18 +814,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /**
-   * The generic retry of an ATTACHMENT, bounded: counts the failure when the link is up and parks
-   * the entry at {@link MAX_UNEXPECTED_ATTEMPTS}. While offline nothing is counted - a dead link is
-   * waited out, not held against the file. Any other entry kind is held without a count (cheap now
-   * that a queue read decodes no file, and the ladder tops at 60 s).
+   * The generic retry of an ATTACHMENT, bounded ONLY for local failures (see
+   * {@link isLocalAttachmentFailure}): the Nth consecutive one parks the entry. Every other failure
+   * is held on the ladder without a count and resets the run - the network and the server are
+   * waited out, never held against the file. Any other entry kind is held without a count (cheap
+   * now that a queue read decodes no file, and the ladder tops at 60 s).
    */
   function countedHold(
     entry: OutboxEntry,
     e: unknown,
     describe?: (attempts: number) => string,
-    opts: { transport?: boolean } = {}
+    opts: { transport?: boolean; quiet?: boolean } = {}
   ): Promise<FlushOutcome> | FlushOutcome {
-    if (entry.kind === 'media' && !connectivity.isOffline) {
+    const local = entry.kind === 'media' && isLocalAttachmentFailure(e);
+    if (local) {
       const count = (unexpected.get(entry.id) ?? 0) + 1;
       unexpected.set(entry.id, count);
       if (count >= MAX_UNEXPECTED_ATTEMPTS) {
@@ -805,7 +839,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       describe ??
         ((attempts) =>
           `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`),
-      opts
+      { ...opts, local }
     );
   }
 
@@ -859,6 +893,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       try {
         const full = await storage?.getOutboxEntry(entry.id, deviceKey());
         if (!full) {
+          // Withdrawn between the `cancelled` check above and this read: consume it, like that check.
+          cancelled.delete(entry.id);
+          clearUpload(entry.id);
           log(`[OUTBOX] ${entry.id.slice(0, 8)}… no longer queued - nothing to send`);
           return 'gone';
         }
@@ -870,7 +907,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             `its payload cannot be decrypted (${String(e.cause).slice(0, 80)})`
           );
         }
-        return countedHold(entry, e);
+        // A row that exists but cannot be loaded is a LOCAL failure, and whether the upload already
+        // happened is unknown here, so the bubble is left as it is.
+        return countedHold(
+          entry,
+          new LocalAttachmentError('the queued row could not be read', e),
+          undefined,
+          {
+            quiet: true,
+          }
+        );
       }
     }
 

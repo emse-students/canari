@@ -222,21 +222,28 @@ class ConnectivityStore {
     // A TRANSFER (a body big enough that its time is mostly upload) is not a probe of the link: it
     // is unanswered for as long as the bytes take to leave, which is the bandwidth, not the latency.
     // It is still counted for reachability and stalls; it just never arms the in-flight hint.
-    this.inFlight.set(
-      id,
-      setTimeout(() => {
-        if (!this.inFlight.has(id) || opts.transfer) return;
-        const lagMs = Date.now() - startedAt - SLOW_IN_FLIGHT_MS;
-        if (lagMs > LOOP_LAG_TOLERANCE_MS) {
-          console.debug(
-            `[CONNECTIVITY] in-flight timer ran ${Math.round(lagMs)} ms late - this device was busy, not the link; no slow hint`
-          );
-          return;
-        }
-        this.inFlightSlow = true;
-        this.recomputeSlow();
-      }, SLOW_IN_FLIGHT_MS)
-    );
+    // Re-armed after a late fire: the busy spell is forgiven ONCE, but a request that is still
+    // unanswered a full threshold later is measured again, so a really stalled one still raises it.
+    const arm = (): void => {
+      const armedAt = Date.now();
+      this.inFlight.set(
+        id,
+        setTimeout(() => {
+          if (!this.inFlight.has(id) || opts.transfer) return;
+          const lagMs = Date.now() - armedAt - SLOW_IN_FLIGHT_MS;
+          if (lagMs > LOOP_LAG_TOLERANCE_MS) {
+            console.debug(
+              `[CONNECTIVITY] in-flight timer ran ${Math.round(lagMs)} ms late - this device was busy, not the link; re-armed`
+            );
+            arm();
+            return;
+          }
+          this.inFlightSlow = true;
+          this.recomputeSlow();
+        }, SLOW_IN_FLIGHT_MS)
+      );
+    };
+    arm();
     const settle = (): void => {
       const timer = this.inFlight.get(id);
       if (timer === undefined) return;

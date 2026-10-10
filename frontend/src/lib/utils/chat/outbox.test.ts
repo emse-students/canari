@@ -91,9 +91,6 @@ function makeStorage(seed: OutboxEntry[] = []) {
     saveOutboxEntry: vi.fn(async (e: OutboxEntry) => {
       map.set(e.id, structuredClone(e));
     }),
-    getOutboxEntries: vi.fn(async () =>
-      [...map.values()].sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id))
-    ),
     // Like the real stores: a media entry comes back WITHOUT its payload.
     getOutboxQueue: vi.fn(async () =>
       [...map.values()]
@@ -2530,7 +2527,9 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
     });
 
     it('an attachment that keeps failing for a local reason is parked after MAX_UNEXPECTED_ATTEMPTS, then a retry runs it again', async () => {
-      const uploadMedia = vi.fn().mockRejectedValue(new Error('the file could not be read'));
+      const uploadMedia = vi
+        .fn()
+        .mockRejectedValue(new DOMException('unreadable', 'NotReadableError'));
       const { storage, outbox } = build('d4', {}, uploadMedia);
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       for (let i = 0; i < MAX_UNEXPECTED_ATTEMPTS + 3; i++) {
@@ -2548,13 +2547,124 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
       errorSpy.mockRestore();
     });
 
-    it('failures while OFFLINE are not held against the attachment', async () => {
-      connectivity.notifyServerUnreachable();
-      const uploadMedia = vi.fn().mockRejectedValue(new Error('x'));
-      const { storage, outbox } = build('d5', {}, uploadMedia);
-      for (let i = 0; i < MAX_UNEXPECTED_ATTEMPTS + 2; i++) await outbox.flush();
-      expect(uploadViewOf('d5')?.phase).not.toBe('error');
-      expect(storage._map.has('d5')).toBe(true);
+    async function runN(
+      id: string,
+      uploadMedia: OutboxDeps['uploadMedia'],
+      n: number,
+      mls = makeMls()
+    ) {
+      const storage = makeStorage([mediaEntry(id)]);
+      const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', [id])]]);
+      const outbox = createOutbox(
+        makeDeps({
+          mlsService: mls,
+          storage,
+          conversations,
+          uploadMedia,
+          isGroupHealthy: () => true,
+        })
+      );
+      for (let i = 0; i < n; i++) {
+        for (const row of storage._map.values()) row.nextAttemptAt = 0;
+        await outbox.flush();
+      }
+      return { storage, outbox };
+    }
+
+    it.each([
+      ['a transport failure', () => new TypeError('Failed to fetch')],
+      ['a 5xx', () => new MediaUploadError(503, 'later')],
+      ['an unexpected non-local throw', () => new Error('boom')],
+    ])(
+      '%s never counts toward the limit: the network and the server are waited out',
+      async (_n, mk) => {
+        const uploadMedia = vi.fn(async () => {
+          throw mk();
+        });
+        const { storage } = await runN('n1', uploadMedia, MAX_UNEXPECTED_ATTEMPTS + 4);
+        expect(uploadMedia).toHaveBeenCalledTimes(MAX_UNEXPECTED_ATTEMPTS + 4);
+        expect(uploadViewOf('n1')?.phase).not.toBe('error');
+        expect(storage._map.has('n1')).toBe(true);
+      }
+    );
+
+    it('sender-not-active (a roster repair wait) never counts toward the limit', async () => {
+      const send = vi.fn(async () => {
+        throw new SenderNotActiveError('g1', 'pending');
+      });
+      const uploadMedia = vi.fn().mockResolvedValue(REF);
+      const { storage } = await runN(
+        'n2',
+        uploadMedia,
+        MAX_UNEXPECTED_ATTEMPTS + 4,
+        makeMls({ send })
+      );
+      expect(send).toHaveBeenCalledTimes(MAX_UNEXPECTED_ATTEMPTS + 4);
+      expect(uploadViewOf('n2')?.phase).not.toBe('error');
+      expect(storage._map.has('n2')).toBe(true);
+    });
+
+    it('the count is of CONSECUTIVE local failures: a network failure in between starts it again', async () => {
+      let call = 0;
+      const uploadMedia = vi.fn(async () => {
+        call++;
+        throw call === MAX_UNEXPECTED_ATTEMPTS - 1
+          ? new MediaUploadError(503, 'later')
+          : new DOMException('unreadable', 'NotReadableError');
+      });
+      const { storage } = await runN('n3', uploadMedia, MAX_UNEXPECTED_ATTEMPTS + 2);
+      // Without the reset the Nth call would have parked it; with it, the run restarted at call N-1.
+      expect(uploadMedia).toHaveBeenCalledTimes(MAX_UNEXPECTED_ATTEMPTS + 2);
+      expect(uploadViewOf('n3')?.phase).not.toBe('error');
+      expect(storage._map.has('n3')).toBe(true);
+    });
+
+    it('an attachment that holds no bytes while owing an upload is a local failure, typed', async () => {
+      const uploadMedia = vi.fn().mockResolvedValue(REF);
+      const base = mediaEntry('n4');
+      const storage = makeStorage([
+        { ...base, media: { ...base.media!, fileBytes: new Uint8Array(0) } },
+      ]);
+      const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['n4'])]]);
+      const outbox = createOutbox(
+        makeDeps({
+          mlsService: makeMls(),
+          storage,
+          conversations,
+          uploadMedia,
+          isGroupHealthy: () => true,
+        })
+      );
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      for (let i = 0; i < MAX_UNEXPECTED_ATTEMPTS; i++) {
+        for (const row of storage._map.values()) row.nextAttemptAt = 0;
+        await outbox.flush();
+      }
+      expect(uploadMedia).not.toHaveBeenCalled();
+      expect(uploadViewOf('n4')?.phase).toBe('error');
+      errorSpy.mockRestore();
+    });
+
+    it('a cancel landing between the snapshot and the payload read is consumed, not leaked', async () => {
+      const uploadMedia = vi.fn().mockResolvedValue(REF);
+      const { storage, outbox } = build('n5', {}, uploadMedia);
+      storage.getOutboxEntry.mockImplementationOnce(async () => {
+        await outbox.cancelPending('n5');
+        return null;
+      });
+      await outbox.flush();
+      expect(uploadMedia).not.toHaveBeenCalled();
+      expect(uploadViewOf('n5')).toBeUndefined();
+    });
+
+    it('a row that cannot be loaded is held without telling the bubble it is waiting for an upload', async () => {
+      const uploadMedia = vi.fn().mockResolvedValue(REF);
+      const { storage, outbox } = build('n6', {}, uploadMedia);
+      storage.getOutboxEntry.mockRejectedValue(new Error('SQL busy'));
+      await outbox.flush();
+      expect(uploadMedia).not.toHaveBeenCalled();
+      expect(uploadViewOf('n6')).toBeUndefined();
+      expect(storage._map.get('n6')!.attempts).toBe(1);
     });
 
     it('the retry button un-parks a 403-parked entry, which it used to leave parked for the whole session', async () => {

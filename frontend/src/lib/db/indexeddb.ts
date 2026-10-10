@@ -786,18 +786,6 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
-  /** Decrypt and return all queued entries, sorted by `sentAt` ascending. */
-  async getOutboxEntries(deviceKeyB64: string): Promise<OutboxEntry[]> {
-    const db = this.ensureDb();
-    const rows: any[] = await new Promise((resolve, reject) => {
-      const tx = db.transaction('outbox', 'readonly');
-      const req = tx.objectStore('outbox').getAll();
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    return this.decodeOutboxRows(rows, deviceKeyB64);
-  }
-
   /** The queue with `media` rows left undecrypted (clear columns only) - see {@link IStorage.getOutboxQueue}. */
   async getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]> {
     const db = this.ensureDb();
@@ -857,6 +845,30 @@ export class IndexedDbStorage implements IStorage {
     deviceKeyB64: string
   ): Promise<void> {
     const db = this.ensureDb();
+    if (isOutboxClearPatch(patch)) {
+      // Scheduling columns are clear: rewrite the row as it is, ciphertext untouched, instead of
+      // decrypting and re-encrypting a payload that may hold a whole file (see the sqlite twin).
+      // ONE readwrite transaction, get then put, and only if the row still exists: a get in one
+      // transaction and a put in another could resurrect a row `cancelPending` deleted in between
+      // (the flusher would then send a deleted message) or overwrite a fresh `saveOutboxEntry`.
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('outbox', 'readwrite');
+        const store = tx.objectStore('outbox');
+        const req = store.get(id);
+        req.onsuccess = () => {
+          const row = req.result;
+          if (!row) return;
+          for (const k of ['status', 'attempts', 'lastAttemptAt', 'nextAttemptAt'] as const) {
+            if (patch[k] !== undefined) row[k] = patch[k];
+          }
+          store.put(row);
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+      return;
+    }
     const existing: any = await new Promise((resolve, reject) => {
       const tx = db.transaction('outbox', 'readonly');
       const req = tx.objectStore('outbox').get(id);
@@ -864,21 +876,6 @@ export class IndexedDbStorage implements IStorage {
       req.onerror = () => reject(req.error);
     });
     if (!existing) return;
-    if (isOutboxClearPatch(patch)) {
-      // Scheduling columns are clear: rewrite the row as it is, ciphertext untouched, instead of
-      // decrypting and re-encrypting a payload that may hold a whole file (see the sqlite twin).
-      const row = { ...existing };
-      for (const k of ['status', 'attempts', 'lastAttemptAt', 'nextAttemptAt'] as const) {
-        if (patch[k] !== undefined) row[k] = patch[k];
-      }
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction('outbox', 'readwrite');
-        tx.objectStore('outbox').put(row);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
-      return;
-    }
     let entry: OutboxEntry;
     try {
       const payload = await decryptData(existing.cipherText, existing.iv, deviceKeyB64);

@@ -769,17 +769,6 @@ export class SqliteStorage implements IStorage {
     );
   }
 
-  /** Decrypt and return all queued entries, sorted by `sentAt` ascending. */
-  async getOutboxEntries(deviceKeyB64: string): Promise<OutboxEntry[]> {
-    const rows: any[] = await this.db.select('SELECT * FROM outbox ORDER BY sent_at ASC');
-    const out: OutboxEntry[] = [];
-    for (const row of rows) {
-      const entry = await this.decodeOutboxRow(row, deviceKeyB64);
-      if (entry) out.push(entry);
-    }
-    return out;
-  }
-
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
   async getOutboxEntriesForConversation(
     conversationId: string,
@@ -807,7 +796,7 @@ export class SqliteStorage implements IStorage {
       `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, created_at,
          CASE WHEN kind = 'media' THEN NULL ELSE iv END AS iv,
          CASE WHEN kind = 'media' THEN NULL ELSE cipher_text END AS cipher_text
-       FROM outbox ORDER BY sent_at ASC`
+       FROM outbox ORDER BY sent_at ASC, id ASC`
     );
     const out: OutboxEntry[] = [];
     for (const row of rows) {

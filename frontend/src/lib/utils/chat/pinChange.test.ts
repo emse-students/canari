@@ -65,7 +65,6 @@ function makeEncryptedStorage(): IStorage & {
     importEncryptedRow: vi.fn().mockResolvedValue(undefined),
     saveOutboxEntry: vi.fn().mockResolvedValue(undefined),
     saveMessageWithOutboxEntry: vi.fn().mockResolvedValue(undefined),
-    getOutboxEntries: vi.fn().mockResolvedValue([]),
     getOutboxQueue: vi.fn().mockResolvedValue([]),
     getOutboxEntry: vi.fn().mockResolvedValue(null),
     getOutboxEntriesForConversation: vi.fn().mockResolvedValue([]),

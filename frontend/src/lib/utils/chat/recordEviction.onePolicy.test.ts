@@ -233,7 +233,6 @@ function outboxStorage() {
   return {
     saveMessage: vi.fn().mockResolvedValue(undefined),
     saveOutboxEntry: vi.fn().mockResolvedValue(undefined),
-    getOutboxEntries: vi.fn(async () => [...map.values()]),
     getOutboxQueue: vi.fn(async () => [...map.values()]),
     getOutboxEntry: vi.fn(async (id: string) => map.get(id) ?? null),
     getOutboxEntriesForConversation: vi.fn(async () => [...map.values()]),

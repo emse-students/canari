@@ -88,3 +88,13 @@ describe('SqliteStorage.getOutboxEntry', () => {
     );
   });
 });
+
+describe('the in-place patch keeps a zero', () => {
+  it('binds attempts: 0 as 0, not as null (COALESCE would keep the old value)', async () => {
+    const storage = new SqliteStorage('u');
+    const execute = vi.fn().mockResolvedValue(undefined);
+    (storage as unknown as { db: unknown }).db = { execute, select: vi.fn() };
+    await storage.updateOutboxEntry('id-1', { attempts: 0, nextAttemptAt: 0 }, 'key');
+    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, 0, null, 0]);
+  });
+});
