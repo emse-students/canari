@@ -1422,6 +1422,7 @@
   "calendar_error_invalid_start": "The start date is not valid.",
   "calendar_error_invalid_end": "The end date is not valid.",
   "calendar_error_end_before_start": "The end must come after the start.",
+  "calendar_error_coorganiser_cap": "An event has at most {total} associations: the organiser and {others} co-hosts.",
   "asso_calendar_error_title_required": "Title and start date are required.",
   "asso_calendar_image_upload_error": "Error uploading image",
   "asso_calendar_confirm_delete": "Delete this event?",

@@ -1,6 +1,11 @@
 import { SocialApiError } from '$lib/associations/api';
 import { m } from '$lib/paraglide/messages';
 import { describeApiRefusal } from '$lib/utils/apiRefusal';
+import {
+  CO_ORGANISER_CAP_CODE,
+  MAX_CO_ORGANISERS,
+  MAX_ORGANISING_ASSOCIATIONS,
+} from '$lib/calendar/coOrganiserCap';
 
 /**
  * The sentence a calendar write's refusal reads as, chosen from the server's CODE.
@@ -22,6 +27,11 @@ const BY_CODE: Record<string, () => string> = {
   CALENDAR_INVALID_START: m.calendar_error_invalid_start,
   CALENDAR_INVALID_END: m.calendar_error_invalid_end,
   CALENDAR_END_BEFORE_START: m.calendar_error_end_before_start,
+  [CO_ORGANISER_CAP_CODE]: () =>
+    m.calendar_error_coorganiser_cap({
+      total: MAX_ORGANISING_ASSOCIATIONS,
+      others: MAX_CO_ORGANISERS,
+    }),
 };
 
 /**
