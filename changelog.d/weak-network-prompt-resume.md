@@ -1,3 +1,0 @@
-### Fixed - messages queued offline leave within a round trip of the link coming back
-
-After the link returned a queued message waited 2.4-2.9 s for some unrelated request to prove the server reachable and then for its backoff. The app now probes the server itself on `online` (a bounded, jittered, single-flight handful of tiny GETs, never a poll) and an entry that failed for want of an answer skips its backoff once; refusals keep theirs, and a frame whose answer was lost is still delivered once in effect ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#12-wp-off-6-shipped-a-prompt-bounded-resume-exactly-once-in-effect)).
