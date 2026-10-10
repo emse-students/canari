@@ -52,9 +52,12 @@ async function open(svc: MediaService) {
 
 describe('DELETE upload/chunk/:id', () => {
   it('is declared as a 204', () => {
-    expect(Reflect.getMetadata('__httpCode__', MediaController.prototype.abortChunkedUpload)).toBe(
-      204
-    );
+    expect(
+      Reflect.getMetadata(
+        '__httpCode__',
+        Object.getOwnPropertyDescriptor(MediaController.prototype, 'abortChunkedUpload')?.value
+      )
+    ).toBe(204);
   });
 
   it('the opener gets a void answer and the staging is gone; a repeat is also fine', async () => {

@@ -285,7 +285,9 @@ describe('an init that fails registers no opener', () => {
     const { svc, internals } = service();
     const owners = () =>
       (internals as unknown as { chunkOwners?: Map<string, string> }).chunkOwners;
-    await expect(svc.initChunkedUpload(OWNER, 'chat-reel', undefined, 1e8)).rejects.toThrow();
+    await expect(svc.initChunkedUpload(OWNER, 'chat-reel', undefined, 1e8)).rejects.toThrow(
+      'declares totalBytes'
+    );
     expect(owners()?.size ?? 0).toBe(0);
 
     // A staging path under a FILE cannot be created (ENOTDIR): the real `ensureFile` fails.
@@ -294,7 +296,9 @@ describe('an init that fails registers no opener', () => {
     staged.push(blocker);
     (internals as unknown as { chunkTempPath: (id: string) => string }).chunkTempPath = (id) =>
       `${blocker}/${id}`;
-    await expect(svc.initChunkedUpload(OWNER, undefined, undefined, 1e8)).rejects.toThrow();
+    await expect(svc.initChunkedUpload(OWNER, undefined, undefined, 1e8)).rejects.toThrow(
+      'ENOTDIR'
+    );
     expect(owners()?.size ?? 0).toBe(0);
   });
 });
