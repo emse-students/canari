@@ -41,7 +41,7 @@ export async function trackedFetch(
   const requestClass = opts.requestClass ?? classOfMethod(init.method ?? 'GET');
   const bytes = bodyByteLength(init.body);
   const deadlineMs = deadlineFor(requestClass, bytes, opts.deadlineMs);
-  const tracked = connectivity.trackRequest();
+  const tracked = connectivity.trackRequest({ transfer: bytes >= LATENCY_BODY_CEILING_BYTES });
   try {
     const res = await fetchUnderDeadline(fetchImpl, url, init, requestClass, deadlineMs);
     tracked.answered(bytes < LATENCY_BODY_CEILING_BYTES);

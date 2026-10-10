@@ -24,7 +24,9 @@ import {
   encodeOutboxSensitive,
   isOutboxClearPatch,
   mergeOutboxEntry,
+  OutboxPayloadUnreadableError,
   outboxClearColumns,
+  type OutboxClearColumns,
 } from './outboxCodec';
 import type { GraineClearColumns } from './graineCodec';
 import {
@@ -696,24 +698,26 @@ export class SqliteStorage implements IStorage {
       const iv = base64ToUint8(row.iv);
       const cipherText = base64ToUint8(row.cipher_text);
       const payload = await decryptData(cipherText, iv, deviceKeyB64);
-      return decodeOutboxEntry(
-        {
-          id: row.id,
-          conversationId: row.conversation_id,
-          sentAt: rowTimestampMs(row.sent_at),
-          kind: row.kind,
-          status: row.status,
-          attempts: typeof row.attempts === 'number' ? row.attempts : 0,
-          lastAttemptAt: row.last_attempt_at ?? undefined,
-          nextAttemptAt: row.next_attempt_at ?? undefined,
-          createdAt: rowTimestampMs(row.created_at),
-        },
-        payload
-      );
+      return decodeOutboxEntry(this.outboxClearOf(row), payload);
     } catch {
       console.warn('Failed to decrypt outbox row', row.id);
       return null;
     }
+  }
+
+  /** The clear columns of an outbox row. */
+  private outboxClearOf(row: any): OutboxClearColumns {
+    return {
+      id: row.id,
+      conversationId: row.conversation_id,
+      sentAt: rowTimestampMs(row.sent_at),
+      kind: row.kind,
+      status: row.status,
+      attempts: typeof row.attempts === 'number' ? row.attempts : 0,
+      lastAttemptAt: row.last_attempt_at ?? undefined,
+      nextAttemptAt: row.next_attempt_at ?? undefined,
+      createdAt: rowTimestampMs(row.created_at),
+    };
   }
 
   /** Encrypt the sensitive payload and upsert a queued outbound message. */
@@ -791,6 +795,46 @@ export class SqliteStorage implements IStorage {
       if (entry) out.push(entry);
     }
     return out;
+  }
+
+  /**
+   * The queue as the flusher reads it - several times per flush. A media row comes back with its
+   * clear columns ONLY: its ciphertext column is not even selected, so the file neither crosses the
+   * SQL bridge nor is decrypted until {@link getOutboxEntry} is asked for that one entry.
+   */
+  async getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]> {
+    const rows: any[] = await this.db.select(
+      `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, created_at,
+         CASE WHEN kind = 'media' THEN NULL ELSE iv END AS iv,
+         CASE WHEN kind = 'media' THEN NULL ELSE cipher_text END AS cipher_text
+       FROM outbox ORDER BY sent_at ASC`
+    );
+    const out: OutboxEntry[] = [];
+    for (const row of rows) {
+      const entry =
+        row.kind === 'media'
+          ? decodeOutboxEntry(this.outboxClearOf(row), undefined)
+          : await this.decodeOutboxRow(row, deviceKeyB64);
+      if (entry) out.push(entry);
+    }
+    return out;
+  }
+
+  /** One entry with its full payload, or null when not queued. Throws {@link OutboxPayloadUnreadableError}. */
+  async getOutboxEntry(id: string, deviceKeyB64: string): Promise<OutboxEntry | null> {
+    const rows: any[] = await this.db.select('SELECT * FROM outbox WHERE id = $1', [id]);
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    try {
+      const payload = await decryptData(
+        base64ToUint8(row.cipher_text),
+        base64ToUint8(row.iv),
+        deviceKeyB64
+      );
+      return decodeOutboxEntry(this.outboxClearOf(row), payload);
+    } catch (e) {
+      throw new OutboxPayloadUnreadableError(id, e);
+    }
   }
 
   /** Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent. */

@@ -24,10 +24,19 @@ import { SvelteMap } from 'svelte/reactivity';
  *   the member retries or deletes.
  * - `failed`: the last attempts each ended with no answer at all while online (the server, or a relay in
  *   front of it, never replied). Terminal until the member retries or deletes; nothing runs on its own.
+ * - `error`: the attempts kept failing for a reason that is not the network (an unreadable file, an
+ *   unexpected error) - terminal until the member retries or deletes; nothing runs on its own.
  * - `waiting`: the last attempt failed (or the link is down) and the next one is queued. The bytes
  *   already sent are gone: the media route has no offset, so an attempt always restarts at zero.
  */
-export type UploadPhase = 'preparing' | 'uploading' | 'stalled' | 'waiting' | 'blocked' | 'failed';
+export type UploadPhase =
+  | 'preparing'
+  | 'uploading'
+  | 'stalled'
+  | 'waiting'
+  | 'blocked'
+  | 'failed'
+  | 'error';
 
 export interface UploadView {
   phase: UploadPhase;
@@ -87,7 +96,8 @@ export function uploadPercent(view: UploadView): number | null {
     view.phase === 'preparing' ||
     view.phase === 'waiting' ||
     view.phase === 'blocked' ||
-    view.phase === 'failed'
+    view.phase === 'failed' ||
+    view.phase === 'error'
   )
     return null;
   return Math.min(99, Math.floor((view.loaded / view.total) * 100));

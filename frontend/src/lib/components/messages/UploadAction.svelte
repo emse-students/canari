@@ -23,7 +23,8 @@
     view.phase === 'stalled' ||
       view.phase === 'waiting' ||
       view.phase === 'blocked' ||
-      view.phase === 'failed'
+      view.phase === 'failed' ||
+      view.phase === 'error'
   );
 </script>
 

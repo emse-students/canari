@@ -43,6 +43,14 @@ export type ReconnectListener = () => void;
 export const SLOW_ENTER_MS = 700;
 export const SLOW_EXIT_MS = 350;
 export const SLOW_IN_FLIGHT_MS = 5_000;
+/**
+ * How late the in-flight timer may fire before the delay is blamed on THIS DEVICE rather than the
+ * link. The timer measures wall time, and a renderer whose single thread is busy (decoding a queued
+ * 13 MB attachment, 2026-10-10, Pixel 6a) fires it seconds late and delays every response handler by
+ * as much - a "slow link" that is only a slow phone. A timer that ran this far behind its own
+ * schedule proves nothing about the network, so it raises no hint.
+ */
+export const LOOP_LAG_TOLERANCE_MS = 1_000;
 const LATENCY_ALPHA = 0.3;
 /** Samples needed before the smoothed value may enter `slow` - one outlier is not a link. */
 const MIN_SAMPLES = 3;
@@ -207,14 +215,24 @@ class ConnectivityStore {
    * `trackedFetch`), so the store sees the whole population rather than the calls that happen to
    * be interesting. Settle the returned handle exactly once.
    */
-  trackRequest(): TrackedRequest {
+  trackRequest(opts: { transfer?: boolean } = {}): TrackedRequest {
     this.ensureGlobalListeners();
     const id = this.nextRequestId++;
     const startedAt = Date.now();
+    // A TRANSFER (a body big enough that its time is mostly upload) is not a probe of the link: it
+    // is unanswered for as long as the bytes take to leave, which is the bandwidth, not the latency.
+    // It is still counted for reachability and stalls; it just never arms the in-flight hint.
     this.inFlight.set(
       id,
       setTimeout(() => {
-        if (!this.inFlight.has(id)) return;
+        if (!this.inFlight.has(id) || opts.transfer) return;
+        const lagMs = Date.now() - startedAt - SLOW_IN_FLIGHT_MS;
+        if (lagMs > LOOP_LAG_TOLERANCE_MS) {
+          console.debug(
+            `[CONNECTIVITY] in-flight timer ran ${Math.round(lagMs)} ms late - this device was busy, not the link; no slow hint`
+          );
+          return;
+        }
         this.inFlightSlow = true;
         this.recomputeSlow();
       }, SLOW_IN_FLIGHT_MS)

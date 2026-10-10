@@ -24,6 +24,20 @@ export interface OutboxClearColumns {
   createdAt: number;
 }
 
+/**
+ * The payload of a queued row could not be decrypted or parsed. Typed so the outbox can tell a row
+ * this device will NEVER read (a key that no longer matches, a damaged blob) from an absent one,
+ * without matching a message.
+ */
+export class OutboxPayloadUnreadableError extends Error {
+  readonly entryId: string;
+  constructor(entryId: string, cause: unknown) {
+    super(`outbox payload of ${entryId} is unreadable`, { cause });
+    this.name = 'OutboxPayloadUnreadableError';
+    this.entryId = entryId;
+  }
+}
+
 /** Encode a binary buffer as a base64 string for JSON-safe storage in the encrypted payload. */
 function uint8ToBase64(arr: Uint8Array): string {
   let binary = '';
@@ -74,8 +88,12 @@ export function encodeOutboxSensitive(entry: OutboxEntry): Record<string, unknow
   return payload;
 }
 
-/** Reconstruct a full {@link OutboxEntry} from its clear columns and decrypted payload. */
-export function decodeOutboxEntry(clear: OutboxClearColumns, payload: any): OutboxEntry {
+/**
+ * Reconstruct an {@link OutboxEntry} from its clear columns and decrypted payload. With no payload
+ * (`undefined`) the entry carries its scheduling columns only: that is what a queue READ returns for
+ * a media row, whose payload is the whole file.
+ */
+export function decodeOutboxEntry(clear: OutboxClearColumns, payload?: any): OutboxEntry {
   let media: OutboxEntry['media'];
   if (payload?.media) {
     const { fileBytesB64, ...rest } = payload.media;

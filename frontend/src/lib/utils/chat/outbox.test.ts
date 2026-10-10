@@ -34,7 +34,13 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
   ...tabOutboxMock,
 }));
 
-import { createOutbox, buildOutboxProto, MAX_CONCURRENT_SENDS, type OutboxDeps } from './outbox';
+import {
+  createOutbox,
+  buildOutboxProto,
+  MAX_CONCURRENT_SENDS,
+  MAX_UNEXPECTED_ATTEMPTS,
+  type OutboxDeps,
+} from './outbox';
 import {
   DeliveryUnreachableError,
   GroupDeletedError,
@@ -52,7 +58,12 @@ import {
   UploadStalledError,
 } from '$lib/utils/uploadXhr';
 import { clearAllUploads, uploadPercent, uploadViewOf } from './uploadProgress.svelte';
-import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
+import {
+  encodeOutboxSensitive,
+  decodeOutboxEntry,
+  outboxClearColumns,
+  OutboxPayloadUnreadableError,
+} from '$lib/db/outboxCodec';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { TabOutboxEvent } from '$lib/mls-client/tabMessageSync';
 import type { OutboxEntry } from '$lib/db';
@@ -83,6 +94,16 @@ function makeStorage(seed: OutboxEntry[] = []) {
     getOutboxEntries: vi.fn(async () =>
       [...map.values()].sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id))
     ),
+    // Like the real stores: a media entry comes back WITHOUT its payload.
+    getOutboxQueue: vi.fn(async () =>
+      [...map.values()]
+        .sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id))
+        .map((e) => (e.kind === 'media' ? { ...e, media: undefined } : e))
+    ),
+    getOutboxEntry: vi.fn(async (id: string) => {
+      const e = map.get(id);
+      return e ? structuredClone(e) : null;
+    }),
     getOutboxEntriesForConversation: vi.fn(async (cid: string) =>
       [...map.values()].filter((e) => e.conversationId === cid)
     ),
@@ -1724,7 +1745,7 @@ describe('outbox flusher - the device key is read at each access', () => {
 
     await outbox.flush();
 
-    const keys = storage.getOutboxEntries.mock.calls.map((c: unknown[]) => c[0]);
+    const keys = storage.getOutboxQueue.mock.calls.map((c: unknown[]) => c[0]);
     expect(keys.length).toBeGreaterThan(0);
     expect(keys.every((k: unknown) => k === 'new-key')).toBe(true);
   });
@@ -2451,5 +2472,106 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
     outbox.retryUpload('b1');
     await vi.waitFor(() => expect(mls.sendMessage).toHaveBeenCalledTimes(1));
     expect(uploadMedia).toHaveBeenCalledTimes(1);
+  });
+
+  describe('a queued attachment is decoded only when it is about to be sent, and never retried for ever', () => {
+    beforeEach(() => connectivity.reset());
+    afterEach(() => connectivity.reset());
+
+    function build(id: string, over: Partial<OutboxEntry>, uploadMedia: OutboxDeps['uploadMedia']) {
+      const storage = makeStorage([mediaEntry(id, over)]);
+      const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', [id])]]);
+      const outbox = createOutbox(
+        makeDeps({
+          mlsService: makeMls(),
+          storage,
+          conversations,
+          uploadMedia,
+          isGroupHealthy: () => true,
+        })
+      );
+      return { storage, outbox };
+    }
+
+    it('an entry that is not due is never decoded: the queue read carries no payload', async () => {
+      const uploadMedia = vi.fn().mockResolvedValue(REF);
+      const { storage, outbox } = build(
+        'd1',
+        { attempts: 2, nextAttemptAt: Date.now() + 60_000 },
+        uploadMedia
+      );
+      await outbox.flush();
+      expect(storage.getOutboxEntry).not.toHaveBeenCalled();
+      expect(uploadMedia).not.toHaveBeenCalled();
+    });
+
+    it('a due entry is decoded exactly once for the whole flush', async () => {
+      const uploadMedia = vi.fn().mockResolvedValue(REF);
+      const { storage, outbox } = build('d2', {}, uploadMedia);
+      await outbox.flush();
+      expect(storage.getOutboxEntry).toHaveBeenCalledTimes(1);
+      expect(uploadMedia).toHaveBeenCalledTimes(1);
+      expect(storage._map.has('d2')).toBe(false);
+    });
+
+    it('an entry whose payload cannot be decrypted is parked as an error, kept, and not retried', async () => {
+      const uploadMedia = vi.fn().mockResolvedValue(REF);
+      const { storage, outbox } = build('d3', {}, uploadMedia);
+      storage.getOutboxEntry.mockRejectedValue(new OutboxPayloadUnreadableError('d3', 'bad key'));
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await outbox.flush();
+      await outbox.flush();
+      expect(storage.getOutboxEntry).toHaveBeenCalledTimes(1);
+      expect(uploadMedia).not.toHaveBeenCalled();
+      expect(storage._map.has('d3')).toBe(true);
+      expect(uploadViewOf('d3')?.phase).toBe('error');
+      expect(await outbox.cancelPending('d3')).toBe(true);
+      errorSpy.mockRestore();
+    });
+
+    it('an attachment that keeps failing for a local reason is parked after MAX_UNEXPECTED_ATTEMPTS, then a retry runs it again', async () => {
+      const uploadMedia = vi.fn().mockRejectedValue(new Error('the file could not be read'));
+      const { storage, outbox } = build('d4', {}, uploadMedia);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      for (let i = 0; i < MAX_UNEXPECTED_ATTEMPTS + 3; i++) {
+        for (const row of storage._map.values()) row.nextAttemptAt = 0;
+        await outbox.flush();
+      }
+      expect(uploadMedia).toHaveBeenCalledTimes(MAX_UNEXPECTED_ATTEMPTS);
+      expect(uploadViewOf('d4')?.phase).toBe('error');
+      expect(storage._map.has('d4')).toBe(true);
+
+      outbox.retryUpload('d4');
+      await vi.waitFor(() =>
+        expect(uploadMedia).toHaveBeenCalledTimes(MAX_UNEXPECTED_ATTEMPTS + 1)
+      );
+      errorSpy.mockRestore();
+    });
+
+    it('failures while OFFLINE are not held against the attachment', async () => {
+      connectivity.notifyServerUnreachable();
+      const uploadMedia = vi.fn().mockRejectedValue(new Error('x'));
+      const { storage, outbox } = build('d5', {}, uploadMedia);
+      for (let i = 0; i < MAX_UNEXPECTED_ATTEMPTS + 2; i++) await outbox.flush();
+      expect(uploadViewOf('d5')?.phase).not.toBe('error');
+      expect(storage._map.has('d5')).toBe(true);
+    });
+
+    it('the retry button un-parks a 403-parked entry, which it used to leave parked for the whole session', async () => {
+      const storage = makeStorage([textEntry('d6', 'g1', 100)]);
+      const send = vi.fn(async () => {
+        throw new SendForbiddenError('g1');
+      });
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const outbox = createOutbox(
+        makeDeps({ mlsService: makeMls({ send }), storage, isGroupHealthy: () => true })
+      );
+      await outbox.flush();
+      await outbox.flush();
+      expect(send).toHaveBeenCalledTimes(1);
+      outbox.retryUpload('d6');
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+      errorSpy.mockRestore();
+    });
   });
 });

@@ -507,6 +507,18 @@ export interface IStorage {
   saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void>;
   /** Decrypt and return all queued entries, sorted by `sentAt` ascending (compose order). */
   getOutboxEntries(deviceKeyB64: string): Promise<OutboxEntry[]>;
+  /**
+   * The queue as the flusher polls it: every entry sorted by `sentAt`, but a `media` entry carries
+   * its scheduling columns ONLY (`media` undefined) - its payload is the whole file, and reading
+   * the queue several times per flush must not decode it. Ask {@link getOutboxEntry} for the one
+   * entry about to be sent.
+   */
+  getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]>;
+  /**
+   * One entry with its full payload, or null when it is no longer queued. Throws
+   * `OutboxPayloadUnreadableError` when the row exists but cannot be decrypted.
+   */
+  getOutboxEntry(id: string, deviceKeyB64: string): Promise<OutboxEntry | null>;
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
   getOutboxEntriesForConversation(
     conversationId: string,

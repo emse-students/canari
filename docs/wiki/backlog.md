@@ -31,6 +31,10 @@ half, the shipped half is a pointer, never a retelling.
 
 P3. The cap (#1721), the stacked faces in the list and day rows, the detail modal's chips with the quiet "n pending" line and the picker's `n / 4` are built ([calendar](frontend/modules/calendar.md), [profiles-and-access](profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)). OWED, unbuilt: (a) the month grid's tooltip and a `+N` tag above four bands, and the admin agenda rows; (b) the ICS summary and the share title naming every organiser (`title - A + B` up to two names, `A + N autres` beyond); (c) whether an ACCEPTED co-organisation notifies the organiser (`CoorganisationService.apply` writes the row and announces nothing; if it should, a push content in the Android, iOS and NSE tables like `coorganise_proposed`). OWED, a reading: nothing here was rendered on a phone (ring and overlap of the stack, the chips' wrap, the counter).
 
+## Queued media: bytes still live in the DB row, and a text has no terminal state (2026-10-10)
+
+P3. Built in [offline-and-weak-network 13.6](frontend/offline-and-weak-network.md): lazy decode, the `error` parking of an attachment, the banner fix. OWED: (a) a SIZE CAP at compose time for a queued attachment, and keeping the bytes OUT of the row (a file in app storage, the row holding its path) - deliberately not done, it moves the durability story of the file (crash, PIN change, native mirror) and needs its own design; until then a due attachment is still decoded once per attempt, bounded by `MAX_UNEXPECTED_ATTEMPTS`; (b) a terminal, visible state for a NON-media entry that keeps failing (a text on a persistent 5xx) - it needs a surface a text bubble does not have; (c) a re-read on the Pixel 6a of the freeze with a 13 MB attachment queued (nothing here was run on that phone).
+
 ## Institutions: what the creation UI does not do yet (2026-10-07)
 
 [associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07)

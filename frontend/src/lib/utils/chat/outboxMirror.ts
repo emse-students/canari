@@ -224,7 +224,7 @@ export async function adoptOrphanedMirrorEntries(
   if (!mirror.length) return 0;
 
   const known = await storage
-    .getOutboxEntries(deviceKeyB64)
+    .getOutboxQueue(deviceKeyB64)
     .catch((e) => {
       // Treating a failed read as an empty queue here would re-adopt the whole live queue, so this
       // is the one branch that must give up rather than guess.

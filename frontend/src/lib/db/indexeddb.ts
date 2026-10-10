@@ -21,7 +21,9 @@ import type {
 import {
   decodeOutboxEntry,
   encodeOutboxSensitive,
+  isOutboxClearPatch,
   mergeOutboxEntry,
+  OutboxPayloadUnreadableError,
   outboxClearColumns,
 } from './outboxCodec';
 import {
@@ -796,6 +798,40 @@ export class IndexedDbStorage implements IStorage {
     return this.decodeOutboxRows(rows, deviceKeyB64);
   }
 
+  /** The queue with `media` rows left undecrypted (clear columns only) - see {@link IStorage.getOutboxQueue}. */
+  async getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction('outbox', 'readonly');
+      const req = tx.objectStore('outbox').getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const media = rows.filter((r) => r.kind === 'media').map((r) => decodeOutboxEntry(r));
+    const others = await this.decodeOutboxRows(
+      rows.filter((r) => r.kind !== 'media'),
+      deviceKeyB64
+    );
+    return [...media, ...others].sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id));
+  }
+
+  /** One entry with its full payload - see {@link IStorage.getOutboxEntry}. */
+  async getOutboxEntry(id: string, deviceKeyB64: string): Promise<OutboxEntry | null> {
+    const db = this.ensureDb();
+    const row: any = await new Promise((resolve, reject) => {
+      const tx = db.transaction('outbox', 'readonly');
+      const req = tx.objectStore('outbox').get(id);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!row) return null;
+    try {
+      return decodeOutboxEntry(row, await decryptData(row.cipherText, row.iv, deviceKeyB64));
+    } catch (e) {
+      throw new OutboxPayloadUnreadableError(id, e);
+    }
+  }
+
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
   async getOutboxEntriesForConversation(
     conversationId: string,
@@ -828,6 +864,21 @@ export class IndexedDbStorage implements IStorage {
       req.onerror = () => reject(req.error);
     });
     if (!existing) return;
+    if (isOutboxClearPatch(patch)) {
+      // Scheduling columns are clear: rewrite the row as it is, ciphertext untouched, instead of
+      // decrypting and re-encrypting a payload that may hold a whole file (see the sqlite twin).
+      const row = { ...existing };
+      for (const k of ['status', 'attempts', 'lastAttemptAt', 'nextAttemptAt'] as const) {
+        if (patch[k] !== undefined) row[k] = patch[k];
+      }
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('outbox', 'readwrite');
+        tx.objectStore('outbox').put(row);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      return;
+    }
     let entry: OutboxEntry;
     try {
       const payload = await decryptData(existing.cipherText, existing.iv, deviceKeyB64);
