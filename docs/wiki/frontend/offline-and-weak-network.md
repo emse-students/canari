@@ -562,3 +562,175 @@ between the two is covered by `outbox.test.ts` (a new controller over the same d
 once more and never again). **Not measured**: the whole app (MLS encryption, the incoming-queue
 barrier `waitForMessageQueueIdle`, which adds the time of any pending decrypt after a resume, and the
 WebSocket), and Android/iOS where `plugin-http` is invisible to CDP.
+
+## 13. Audit of 2026-10-10: a 13 MB attachment on a poor link, and what navigation waits for
+
+> **Request (user, 2026-10-10, production 1.2.1, iPhone, bad connection):** a 13.4 MB PDF sent in a DM
+> was a grey bubble with an endless spinner and no figure, the peer typed *"C'est long la"*; the whole
+> app feels slow; *navigation must never depend on loading*. The screenshot shows the file row (name,
+> "13,4 Mo", one turning ring) and nothing else.
+
+### 13.0 THE ROOT CAUSE WAS NOT THE CONNECTION: the host's WAF drops any body over 10 MiB
+
+The user's console export (production web, 2026-10-10) shows `encryptAndUpload: application/pdf,
+14049945 bytes, single block`, an XHR `POST /api/media/upload` answered **403 in ~1 s with an HTML
+body** (`<title>CrowdSec Ban</title>`, 5.75 KB), and the outbox logging `transient failure (attempt N):
+MediaUploadError: media upload failed (403 ) - <!DOCTYPE html>` in a loop: the bubble spun for ever
+because **a status code was treated as a transport failure**. The school-managed CrowdSec AppSec in
+the HOST nginx drops ANY request body over 10 MiB (10 485 760 bytes), for every user, whatever the
+connection: [host-waf-body-limit](../infrastructure/host-waf-body-limit.md). Fixed by WP-OFF-8 (below):
+no body over 8 MiB is ever built, and a refusal ends the entry. The weak-link findings that follow
+are real and independent.
+
+### 13.1 What the upload did on a poor link, measured (W2, local estate, Slow 3G = 400 ms RTT, 50 kB/s each way)
+
+A 13 400 000-byte PDF staged in the composer of the `Canari Test Alpha` DM and sent; CDP throttle set
+after the conversation opened; samples every second.
+
+| Fact | Measured |
+| --- | --- |
+| Press of send -> bubble on screen | **<= 2.8 s** (file name, "12,8 Mo", ONE `animate-spin`) |
+| Press -> the upload request is issued | **4.8 s** (the file is read whole into memory, encrypted, wrapped in a `FormData`; nothing is on the wire before that) |
+| What the bubble offered during the transfer | **0 progress elements, 0 percentage, 0 buttons** - no cancel, no retry; only the generic hover toolbar |
+| Body | ONE `POST /api/media/upload` of ~12.8 MB (chunking starts at 50 MB, `media.ts`), `fetch`, no deadline, no abort signal |
+| Time the transfer needs at this speed | 12.8 MB / 50 kB/s = **~256 s** of a spinner |
+| Link cut 25-30 s in | the request failed `net::ERR_INTERNET_DISCONNECTED` 2.3 s later; the entry stayed queued (IndexedDB, bytes included); after the link came back the message was sent - **the whole body again from byte 0** (the media route has no offset) |
+
+**Not captured, said plainly:** W2 is a shared browser and another session navigated it away from the
+conversation mid-run, so the second half of the retry timeline (request count after the link returned)
+was not sampled; "sent after the link came back" is read from the bubble the next probe found
+(`Message envoye`). The throttle is CDP's, so the iPhone's WKWebView, `NSURLSession` background
+behaviour and a cellular radio's real stalls are NOT measured: the numbers say what the bubble can and
+cannot show, not how long an iPhone takes.
+
+Reading the code beside the measurement (`outbox.ts` `prepareMedia`, `media.ts` `encryptAndUpload`,
+`MessageMediaRenderer.svelte`):
+
+- The bubble of a queued attachment has ONE state, the spinner, from enqueue to the answer. It cannot
+  tell "encrypting", "sending 40 %", "the link died" and "waiting for the next attempt".
+- `fetchUpload` is a bare `fetch`: WP-OFF-5's deadline covers `apiFetch` and the MLS POST, **not the
+  upload**, which is the one request whose body is megabytes. A dead socket on a phone is a spinner
+  until the OS gives up.
+- The upload runs INSIDE `flushOne`, which holds the conversation's lane and one of the three send
+  slots: **a text sent behind a 13 MB attachment waits for the whole transfer** (~4 min on Slow 3G;
+  from the code, not measured live).
+- Every failure restarts at byte 0, and the bytes (13 MB) sit in the outbox row and, during an attempt,
+  three times in memory (`file.arrayBuffer()`, the ciphertext, the `FormData` blob).
+
+### 13.2 What navigation waits for
+
+From the routes' `load` functions (all `ssr = false`, so a `load` that awaits holds the navigation):
+
+| Where | Awaits | Verdict |
+| --- | --- | --- |
+| `routes/+layout.ts` (every route) | when the MLS session is NOT yet logged in (boot, a resume, the whole unlock window): `refresh()` if no user id, **then `fetchUserProfile(userId)`, a network call** (20 s deadline on a slow link) | **BLOCKS EVERY NAVIGATION during that window.** It only decides "redirect to login on a confirmed 404" and a transport failure is deliberately survived, so nothing it learns is needed to render. Fixed by WP-NAV-1 |
+| `routes/posts/[postId]/+page.ts` | the post itself (`await fetching`) | blocks the click on a post from the feed until the GET answers; the page then shows "not found" or the post. Fixed by WP-NAV-1 (the shell and header render at once, the post is a promise) |
+| `routes/posts/+page.ts` | the audience verdict only when none is remembered (first ever visit); the 20 posts are a promise handed to `{#await}` already | fine |
+| `associations/[slug]`, `lists/[slug]`, `dashboard/association`, `app-shell` | nothing (synchronous `load`) | fine |
+| `/chat` and its DMs | no `load`; the list waits on the WASM by ORDER, not by data (R7, section 10.3) | covered by WP-W3 (diagnosed, not built) |
+
+So the user's belief is half right: item loading is already independent of the skeleton almost
+everywhere (the feed, associations, lists), but the ROOT layout puts a profile round trip in front of
+every navigation while the session is not yet unlocked - exactly the cold-start window a weak link
+makes long - and one detail page awaits its own data.
+
+### 13.3 The prioritised list
+
+| # | Item | State | Where |
+| --- | --- | --- | --- |
+| 0 | **P1** Any upload body over 10 MiB is dropped by the host WAF (403 HTML) and was retried for ever | **BUILT: WP-OFF-8** (8 MiB budget, chunk route above it, a refusal ends the entry with an explicit bubble) | [host-waf-body-limit](../infrastructure/host-waf-body-limit.md) |
+| 1 | **P1** An attachment bubble is blind: no progress, cancel or retry, no deadline on the upload | **BUILT: WP-OFF-8** ([13.4](#134-wp-off-8-built-a-bubble-that-says-how-much-has-gone-and-can-be-ended)) | this page |
+| 2 | **P1** Navigation waits on a profile call (root layout) and on one post (detail page) | **BUILT: WP-NAV-1** (a separate pull request; [posts](modules/posts.md)) | `routes/+layout.ts`, `routes/posts/[postId]` |
+| 3 | **P2** Every failed upload restarts at byte 0; a 50 MB body is ONE request | open: the resumable chunk upload with a server offset route is reels-in-chat RC-5, and RC-5 now only has to reuse `xhrUpload` | [reels-in-chat](modules/reels-in-chat.md), [media-service](../services/media-service.md) |
+| 4 | **P2** The upload holds the conversation's lane and a send slot, so text sent behind a big file waits for it | open: **WP-OFF-9**, start the upload at enqueue outside the lane (display order is `sentAt`, so a late attachment still sorts at its compose time) and let the send wait only for ITS own ref | [backlog](../backlog.md) |
+| 5 | **P2** A salon (channel) attachment blocks the composer with no progress and no cancel (`isUploadingMedia`) | open: it needs WP-OFF-2/3's salon row; `xhrUpload` is ready for it | [backlog](../backlog.md) |
+| 6 | **P2** The 13 MB file lives in the outbox row and three times in memory per attempt | open: RC-5 ("the file outside the row") | [reels-in-chat](modules/reels-in-chat.md) |
+| 7 | **P2** First list render waits for the WASM (R7) | diagnosed, not built: WP-W3 | section 10.3 |
+| 8 | **P3** Chat images have no thumbnail, a 300 px bubble downloads the whole blob | open: WP-W7 | section 5 |
+| 9 | Covered already: REST and MLS-POST deadlines, the `slow` state, one lane per conversation (OFF-5, #1652); prompt resume (OFF-6); compression and WASM preload (W1, W2); salon optimistic row (OFF-2, #1649, draft) | | sections 10-12 |
+
+### 13.4 WP-OFF-8 built: a bubble that says how much has gone, and can be ended
+
+**One transport for a big body** (`utils/uploadXhr.ts`). `fetch` exposes no upload progress, so the
+body of an attachment goes through `XMLHttpRequest` when the caller passes a `transport` to
+`MediaService.encryptAndUpload`: the same engine, cookies and CORS rules on every shell (browsers,
+WKWebView, Android WebView), a real `Response` back, so the 401 renew-and-retry of `fetchUpload` is
+the one path for both. It reports `{loaded, total}`, honours an `AbortSignal` (a typed
+`UploadAbortedError`), and **gives up on silence, never on a total**: 45 s without one byte moving
+(`DEFAULT_UPLOAD_IDLE_MS`) raises `UploadStalledError`, a `RequestDeadlineError`, so `isTransportFailure`
+reads it by type and it can never log anyone out. **The guard stops when the body has left**
+(`upload.onload`): a chunked `complete` streams up to 100 MB to storage with nothing on the wire, and
+abandoning it at 45 s made the client restart while the server finished. The wait for the answer has its
+own bound, `DEFAULT_UPLOAD_ANSWER_MS` (5 min), whose expiry is the typed `UploadAnswerTimeoutError`, also a
+transport failure. A 50 MB file on a 50 kbit/s link takes seven minutes
+and must not be abandoned for being big. Chunked uploads report the WHOLE blob's progress.
+
+**The outbox owns the transfer** (`utils/chat/outbox.ts`, `uploadProgress.svelte.ts`). `prepareMedia`
+creates an `AbortController` per entry and mirrors `{phase, loaded, total, attempt}` into an in-memory
+store the bubble reads (never IndexedDB: the numbers change several times a second and mean nothing
+after a crash). Phases: `preparing` (reading and encrypting), `uploading` (real bytes), `stalled` (no
+byte for 10 s, display only; the transport's guard abandons it later), `waiting` (the last attempt
+failed, the next is queued, and it starts from zero). **Cancel is the ordinary delete of an unsent
+message**: `cancelPending` withdraws the row and now also aborts the body already on the wire, so a
+13 MB transfer does not keep leaving a weak uplink for a message nobody wants. **Retry** skips the
+backoff for that entry (the `resuming` set WP-OFF-6 already had) and, when a transfer is stalled on the
+wire, aborts it and lets the lane re-run at once, not counted as a failure.
+
+**The bubble** (`UploadAction.svelte`, `uploadLabel.ts`, the file row and the image/video frame of
+`MessageMediaRenderer`). A ring that fills with the bytes sent, the cancel cross inside it, a retry
+beside it only while nothing is moving, and one line: *Envoi 40 % - 5,4 Mo sur 12,8 Mo*, *Plus rien ne
+passe - ...*, *En attente de connexion - nouvel essai automatique*. The percentage is clamped to 99 until
+the server answers (100 is the answer, not the last byte leaving), and a state with no honest figure
+turns instead of filling. After a reload the queued row shows `waiting` until the flush runs again.
+Strings are Paraglide (`upload_*`).
+
+**Pinned by** `utils/uploadXhr.test.ts` (progress, a refusal as a status, network error as `TypeError`,
+silence versus steady progress, abort), `media.uploadTransport.test.ts` (progress, 401 through the same
+transport, abort reaching the request), `outbox.test.ts` (progress mirrored and cleared, `waiting` after a
+failure, a withdrawal aborts and never sends, a retry restarts without a backoff, a retry on a backing-off
+entry runs it) and `MessageMediaRenderer.upload.svelte.test.ts` (figure, buttons, no spinner).
+
+**A refusal is an answer, never transient.** `MediaUploadError` carries its status and its ORIGIN, read
+from the response's Content-Type at the throw (`gateway` = an HTML page, which the application never
+produces; `app` = our JSON). `uploadRefusalCause` classifies by that type: 413 -> `too-large`; a 4xx from
+the gateway **403 HTML** only -> `blocked` (an HTML 400/404/502 from nginx or Cloudflare during a deploy is
+retried); the application own 400/403/404/422 -> `refused`, except a 404 that means the staged chunk session
+is gone (`sessionLost`: a new session mends it); 401, 408, 425, 429, 5xx, a deadline and a network error stay
+retried. `requestBodyBytes` fails closed: a body of unknown size (a stream) counts as over budget.
+
+**A failed chunked attempt gives its session back.** Every restart uses a new uploadId, so the staged bytes
+would wait for the 24 h sweep. `MediaService` calls `DELETE /api/media/upload/chunk/:id` (best effort, logged,
+never delaying the failure) on a cancel, a refusal, a stall or a lost chunk, and the server route is owner-checked
+and idempotent. `complete` is idempotent too: a repeated call for a finished session returns the same mediaId, from a
+`<uploadId>.done` sidecar file next to the staging (so it survives a restart or a redeploy; it ages out with
+the 24 h orphan sweep). **The client uses it**: on a lost answer, a transport failure or a 5xx of `complete`
+it re-asks the SAME uploadId, at most 3 times (a counter, no clock); starting over under a new uploadId would
+store the object twice. After those 3 the attempt fails, the session is released and the outbox restarts under a
+new uploadId: if the server had finished every time, one object is orphaned (ephemeral class: the idle sweep
+takes it). The **single-request route (< 8 MiB) has no memo**, a repeat stores a second object, so it keeps the
+45 s bound for the answer instead of the 5 min of a chunked `complete`. A cancel during `complete` is logged
+(the assembled object is then unreferenced). **What releases a session when the app is killed: nothing but the
+24 h sweep** - the DELETE is a best-effort of a live page (it refreshes an expired token through `fetchUpload`).
+**A blocked upload is parked, not ended**: a CrowdSec ban is time-limited, so the entry stays in the queue with
+the bubble phase `blocked` (retry + delete), is never retried by the ladder, and a reload makes one new
+attempt.
+Pinned by `media.chunkLifecycle.test.ts` (failure at chunk N, refusal, cancel, slow complete) and
+`media.service.chunk-lifecycle.spec.ts`. The outbox ends the entry at once (`failPermanently`: bubble `error`, entry
+deleted, a notice in the thread, metric cause), and the bubble shows *Envoi refuse par le serveur* with the
+delete action instead of the spinner a missing `mediaId` used to draw for ever. There is no retry button
+on a refused entry: it is deleted from the queue, and the same bytes would be refused again. The page of a
+gateway is never copied into a log line (it was 5.75 KB per retry).
+
+**The body budget.** `utils/mediaRequestLimits.ts`: `GATEWAY_MAX_BODY_BYTES` (10 MiB, the host's limit) and
+`MEDIA_REQUEST_BODY_BUDGET_BYTES` (8 MiB), the single-request ceiling AND the chunk size, so the
+14 049 945-byte PDF now goes `chunk/init` + 2 chunks + `complete` (it was 50 MB before chunking began).
+`fetchUpload` throws before sending if a body would exceed the gateway limit, and
+`media.bodyBudget.test.ts` sends files around the budget through the real `MediaService` and fails if any
+request carries more. Every upload surface (chat, salon, posts, comments, reels, camera) goes through
+`encryptAndUpload`, so one place covers them; the other large-body POSTs are listed in the
+[host-waf-body-limit](../infrastructure/host-waf-body-limit.md#what-else-posts-a-big-body) page.
+
+**Not done, on purpose:** resume (needs a server offset route, RC-5), the lane decoupling (WP-OFF-9),
+the salon composer, and any hardware reading: **owed ONE look on the iPhone** with a real 13 MB file on
+a bad link, because every gate here is blind to what a WKWebView `XMLHttpRequest` upload reports on a
+cellular radio.

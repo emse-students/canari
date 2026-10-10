@@ -26,6 +26,7 @@ import {
   Post,
   Get,
   Delete,
+  HttpCode,
   Param,
   Body,
   Res,
@@ -295,10 +296,22 @@ export class MediaController {
     @UploadedFile() file: unknown,
     @Req() req: Request
   ): Promise<{ ok: boolean }> {
-    this.verifyToken(req);
+    const ownerId = this.verifyToken(req);
     const buffer = uploadedFileBuffer(file);
-    await this.mediaService.appendChunk(id, buffer, MAX_BYTES);
+    await this.mediaService.appendChunk(id, buffer, MAX_BYTES, ownerId);
     return { ok: true };
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE /media/upload/chunk/:id - a client abandons ITS OWN staged session (cancel, refusal, a
+  // stalled attempt it is replacing). Idempotent, owner-checked, 204 either way. LEGACY: retired
+  // with the chunk routes (media-streaming-upload WP-S6).
+  // ---------------------------------------------------------------------------
+  @Delete('upload/chunk/:id')
+  @HttpCode(204)
+  async abortChunkedUpload(@Param('id') id: string, @Req() req: Request): Promise<void> {
+    const ownerId = this.verifyToken(req);
+    await this.mediaService.abortChunkedUpload(id, ownerId);
   }
 
   // ---------------------------------------------------------------------------
