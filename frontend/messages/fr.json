@@ -345,6 +345,7 @@
   "outbox_upload_too_large": "Ce fichier n'a pas pu être envoyé : il dépasse la taille maximale acceptée par le serveur. Envoyez une version plus petite ou compressée.",
   "outbox_upload_refused": "Ce fichier n'a pas pu être envoyé : le serveur l'a refusé. Supprimez ce message, puis réessayez ou envoyez une autre version du fichier.",
   "upload_failed_label": "Envoi refusé par le serveur",
+  "media_orphan_label": "Cet envoi n'a pas abouti : le fichier n'existe pas sur le serveur",
   "upload_delete_label": "Supprimer ce message",
   "chat_media_too_large": "Fichier trop volumineux ({size} Mo). Limite : {limit} Mo.",
   "video_prepare_progress": "Préparation de la vidéo… {percent} %",

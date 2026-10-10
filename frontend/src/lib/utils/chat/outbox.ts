@@ -78,6 +78,19 @@ export class LocalAttachmentError extends Error {
 }
 
 /**
+ * A message could NOT be handed to the queue: there is no storage layer, no controller is active, or
+ * the durable write failed. Typed and thrown, never swallowed: the caller still holds the file and
+ * the optimistic row, and a swallowed one left a `mediaId: ''` placeholder that nothing would ever
+ * upload (the orphan seen on the Mi 9T, alpha.3).
+ */
+export class OutboxEnqueueError extends Error {
+  constructor(why: string, cause?: unknown) {
+    super(why, { cause });
+    this.name = 'OutboxEnqueueError';
+  }
+}
+
+/**
  * True for the failures that are about this device and no one else, read from the TYPE: the outbox's
  * own {@link LocalAttachmentError}, the platform's `NotReadableError`/`NotFoundError` on a file, and a
  * `RangeError` (an allocation the renderer refused).
@@ -238,6 +251,11 @@ export interface OutboxController {
    * `true` means there is nothing out there to tell anyone about.
    */
   cancelPending: (messageId: string) => Promise<boolean>;
+  /**
+   * Whether the durable queue holds an entry for this message id: `true`/`false` from the light read
+   * (no payload decode), `null` when the queue could not be read - which is NOT "absent".
+   */
+  hasEntry: (messageId: string) => Promise<boolean | null>;
   /** Drain the outbox. Gated on tab leadership here, not by the caller. Coalesces concurrent calls. */
   flush: () => Promise<void>;
   /**
@@ -1357,7 +1375,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
   return {
     async enqueue(entry: OutboxEntry, opts: { alreadyDurable?: boolean } = {}): Promise<void> {
-      if (!storage) return;
+      // REJECTS RATHER THAN RETURNS: a no-op here told the caller its message was queued when
+      // nothing would ever send it.
+      if (!storage) {
+        log(`[OUTBOX] Enqueue refused for ${entry.id.slice(0, 8)}…: no storage layer`);
+        throw new OutboxEnqueueError('no storage layer');
+      }
       // The first trace of a message on this device: without it there is no way to tell a send that
       // never reached the queue from one the queue accepted and lost.
       log(
@@ -1368,12 +1391,25 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // way to fail AFTER the fact is durable - which is the state this argument exists to make
       // impossible to reach.
       if (!opts.alreadyDurable) {
-        await storage
-          .saveOutboxEntry(entry, deviceKey())
-          .catch((e) => log(`[OUTBOX] Enqueue failed: ${String(e)}`));
+        try {
+          await storage.saveOutboxEntry(entry, deviceKey());
+        } catch (e) {
+          log(`[OUTBOX] Enqueue failed for ${entry.id.slice(0, 8)}…: ${String(e)}`);
+          throw new OutboxEnqueueError('the durable write failed', e);
+        }
       }
       await refreshMirror();
       runFlush();
+    },
+
+    async hasEntry(messageId: string): Promise<boolean | null> {
+      if (!storage) return null;
+      try {
+        return (await storage.getOutboxQueue(deviceKey())).some((e) => e.id === messageId);
+      } catch (e) {
+        log(`[OUTBOX] hasEntry ${messageId.slice(0, 8)}…: reading the queue failed: ${String(e)}`);
+        return null;
+      }
     },
 
     async cancelPending(messageId: string): Promise<boolean> {
@@ -1524,12 +1560,23 @@ export function flushOutbox(): void {
   void active?.flush();
 }
 
-/** Enqueue a message on the active controller (no-op when none). */
+/** Enqueue a message on the active controller. Rejects with {@link OutboxEnqueueError} when it cannot. */
 export function enqueueOutboxMessage(
   entry: OutboxEntry,
   opts?: { alreadyDurable?: boolean }
 ): Promise<void> {
-  return active ? active.enqueue(entry, opts) : Promise.resolve();
+  if (!active) {
+    return Promise.reject(new OutboxEnqueueError('no active outbox controller'));
+  }
+  return active.enqueue(entry, opts);
+}
+
+/**
+ * Whether the durable queue still holds `messageId`. `null` when that cannot be known (no controller,
+ * unreadable queue) - an unknown is never reported as an absence.
+ */
+export function isOutboxEntryQueued(messageId: string): Promise<boolean | null> {
+  return active ? active.hasEntry(messageId) : Promise.resolve(null);
 }
 
 /**

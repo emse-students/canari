@@ -27,6 +27,10 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Orphan media rows: source fixed, one reading owed (2026-10-10)
+
+P3. A `mediaId: ''` placeholder with no outbox entry (Mi 9T, alpha.3) is closed at the source and on screen ([media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)): `enqueue` and `enqueueOutboxMessage` now REJECT (`OutboxEnqueueError`) with no storage, no controller or a failed durable write, `handleSendChat` withdraws the placeholder before re-staging, and the bubble asks the durable queue (`isOutboxEntryQueued`). OWED: (a) a control event the queue refuses (`enqueueControlEvent`) is absorbed and accused with `console.error` (kind and reason), so the peers miss that reaction/edit/pin/delete/watermark, and a delete that was not queued is still tombstoned locally - whether the UI should say so is undecided; (b) the row already stored on the Mi 9T is only cleared by its Delete; (c) a reading of the dark card on the phone.
+
 ## Four organisers per event: what is left after the cap (user, 2026-10-10)
 
 P3. The cap (#1721), the stacked faces in the list and day rows, the detail modal's chips with the quiet "n pending" line and the picker's `n / 4` are built ([calendar](frontend/modules/calendar.md), [profiles-and-access](profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)). OWED, unbuilt: (a) the month grid's tooltip and a `+N` tag above four bands, and the admin agenda rows; (b) the ICS summary and the share title naming every organiser (`title - A + B` up to two names, `A + N autres` beyond); (c) whether an ACCEPTED co-organisation notifies the organiser (`CoorganisationService.apply` writes the row and announces nothing; if it should, a push content in the Android, iOS and NSE tables like `coorganise_proposed`). OWED, a reading: nothing here was rendered on a phone (ring and overlap of the stack, the chips' wrap, the counter).

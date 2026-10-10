@@ -206,6 +206,14 @@ ratio - **one shift, once per old message per device** - then files it in the me
 every later render of that row, in this session or after a restart, opens at the right size. A new
 message never shifts.
 
+## 7. An orphan media row, and a card with no bubble
+
+**An own file card assumed an amber bubble** (`text-cn-ink`, `bg-black/10`), but a media-only message has none (`MessageBubble` `isMediaOnly`): in dark theme the navy ink sat on the black page. `MessageMediaRenderer` takes `onBubble` (`!isMediaOnly`); amber tones apply only when `isOwn && onBubble`, otherwise the theme pair (`bg-black/5 dark:bg-white/10`, `text-text-main`). The ring and buttons use `currentColor`, so they follow.
+
+**An orphan** is MY attachment (`isOwn`: a receiver cannot know the sender's outbox, and a sender uploads before it sends, so a received empty-`mediaId` row has no producer) whose ref has an empty `mediaId`, with no live upload view and no refused-upload state, AND that the DURABLE queue no longer holds (`isOutboxEntryQueued`, the light read, no payload decode). It is never decided from `status`: that is derived in memory and re-applied only at session start, so a real 13 MB entry after a reload has no status and its Delete would withdraw the real upload, while a lost one keeps `pending`. An unreadable queue answers `null` and stays the queued spinner. The bubble logs the verdict. It shows `media_orphan_label` and the delete (`utils/chat/orphanMedia.ts`).
+
+**The source.** `handleSendChat` writes the placeholder, then the outbox entry. The file is read before the placeholder; `enqueue` / `enqueueOutboxMessage` reject instead of returning silently; on a rejection the placeholder is withdrawn (row and store) before the file is re-staged, so a second Send cannot duplicate it. **Callers of the enqueue**: the media send (`handleSendChat`) catches, withdraws the placeholder and re-stages; the text send (`sendChatMessage`) PROPAGATES to `MainChatPage.sendText`, which logs and raises the banner; every control event goes through `enqueueControlEvent`, which catches only `OutboxEnqueueError` and logs it at `console.error` with the event kind. Open items: [backlog](../backlog.md).
+
 ## 6. Where it stands
 
 | Half | Pull request | State |

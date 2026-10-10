@@ -26,6 +26,8 @@
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
   import MessageReactions from './MessageReactions.svelte';
   import type { MessageReaction } from '$lib/types';
+  import { isOrphanMediaCandidate } from '$lib/utils/chat/orphanMedia';
+  import { isOutboxEntryQueued } from '$lib/utils/chat/outbox';
   import { activeReactions } from '$lib/utils/chat/messageReactions';
   import type { MessagePickerOrigin } from '$lib/utils/chat/reactionPicker';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
@@ -585,6 +587,37 @@
     return uploadViewOf(messageId) ?? { phase: 'waiting', loaded: 0, total: 0, attempt: 0 };
   });
 
+  /**
+   * AN ORPHAN IS DECIDED FROM THE DURABLE QUEUE, never from `status`: the status is derived in
+   * memory and only re-applied at session start, so a real queued upload after a reload has none
+   * (`upload` null) and a lost one keeps `pending`. A candidate (my own empty-mediaId attachment that
+   * no live upload view advances) asks the outbox whether it still holds an entry; only a definite
+   * `false` makes it an orphan, an unreadable queue (`null`) stays the queued spinner.
+   */
+  let outboxHasEntry = $state<boolean | null>(null);
+  const orphanCandidate = $derived(
+    isOrphanMediaCandidate({ mediaRef, isOwn, hasUpload: !!upload, uploadFailed })
+  );
+  $effect(() => {
+    if (!orphanCandidate) {
+      outboxHasEntry = null;
+      return;
+    }
+    let stale = false;
+    void isOutboxEntryQueued(messageId).then((queued) => {
+      if (stale) return;
+      outboxHasEntry = queued;
+      Log.d(
+        'MESSAGE',
+        `media ${messageId.slice(0, 8)} has no mediaId: outbox entry ${queued === null ? 'unknown' : queued ? 'present (queued)' : 'absent (orphan)'}`
+      );
+    });
+    return () => {
+      stale = true;
+    };
+  });
+  const orphanMedia = $derived(orphanCandidate && outboxHasEntry === false);
+
   $effect(() => {
     // Empty mediaId = media still queued in the outbox (upload pending): leave blobUrl null
     // so MessageMediaRenderer shows its skeleton/spinner. Don't attempt a download (would 404).
@@ -827,6 +860,8 @@
                 onRetry={() => (mediaAttempt += 1)}
                 {textContent}
                 {isOwn}
+                onBubble={!isMediaOnly}
+                orphan={orphanMedia}
                 {textSegments}
                 bleed={bleedsMedia}
                 {senderId}

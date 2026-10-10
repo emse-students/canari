@@ -314,6 +314,7 @@
   "outbox_upload_too_large": "This file could not be sent: it is larger than the server accepts. Send a smaller or compressed version.",
   "outbox_upload_refused": "This file could not be sent: the server refused it. Delete this message, then try again or send another version of the file.",
   "upload_failed_label": "Upload refused by the server",
+  "media_orphan_label": "This upload never completed: the file is not on the server",
   "upload_delete_label": "Delete this message",
   "chat_media_too_large": "File too large ({size} MB). Limit: {limit} MB.",
   "video_prepare_progress": "Preparing the video… {percent}%",

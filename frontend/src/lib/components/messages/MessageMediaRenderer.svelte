@@ -46,8 +46,20 @@
     onRetry?: () => void;
     /** Caption text shown below the media (or the full text for text-only messages). */
     textContent: string;
-    /** When true, adjusts colours for the amber bubble used on own messages. */
+    /** When true, adjusts colours for the amber bubble used on own messages (see `onBubble`). */
     isOwn?: boolean;
+    /**
+     * Whether a bubble is drawn behind this media. A media-only message has NONE (`MessageBubble`'s
+     * `isMediaOnly`): the card then sits on the page itself, so an own message must not assume the
+     * amber one - its navy ink and `black/10` wash vanished on the dark page (Mi 9T, alpha.3).
+     */
+    onBubble?: boolean;
+    /**
+     * The message carries a media reference that no upload is advancing and that never got a
+     * `mediaId` (`isOrphanMediaRef`): nothing will ever arrive, so the row says so and offers the
+     * delete instead of an endless spinner.
+     */
+    orphan?: boolean;
     /**
      * Pre-split text+link segments used to render the caption with clickable links - the text runs
      * between them go through {@link MessageInlineText}, which is what resolves a mention to a
@@ -99,6 +111,8 @@
     onRetry,
     textContent = '',
     isOwn = false,
+    onBubble = true,
+    orphan = false,
     textSegments = [],
     onNavigateLink: _onNavigateLink,
     onNear,
@@ -147,16 +161,22 @@
     showLightbox = false;
   }
 
-  // Dynamic classes adapt to the message bubble background.
-  // isOwn = amber background (dark text); !isOwn = glassmorphism light/dark (theme-adaptive text).
+  /**
+   * THE AMBER BUBBLE IS BEHIND US ONLY WHEN IT IS DRAWN: an own message with a caption or a quote.
+   * A media-only one has no bubble, so it takes the theme-adaptive tones like everything else.
+   */
+  const onAmber = $derived(isOwn && onBubble);
+
+  // Dynamic classes adapt to what is behind the card.
+  // onAmber = amber bubble (dark ink); otherwise the page or the incoming bubble (theme tokens).
   const glassBoxClass = $derived(
-    isOwn
+    onAmber
       ? 'bg-black/10 border-black/10 text-cn-ink'
-      : 'bg-black/5 dark:bg-white/10 border-black/5 dark:border-white/10'
+      : 'bg-black/5 dark:bg-white/10 border-black/5 dark:border-white/10 text-text-main'
   );
 
   /** Red is unreadable on one's own amber bubble, so the failure box speaks in its ink there. */
-  const failureTone = $derived(isOwn ? 'ink' : 'surface');
+  const failureTone = $derived(onAmber ? 'ink' : 'surface');
 
   /**
    * What an image or video frame shows behind its layers: the bubble-aware tone until the bytes are
@@ -167,7 +187,7 @@
       ? 'bg-black shadow-sm'
       : blobUrl
         ? 'bg-black/5 dark:bg-white/5'
-        : isOwn
+        : onAmber
           ? 'bg-black/10'
           : 'bg-black/5 dark:bg-white/10'
   );
@@ -189,6 +209,23 @@
     showPdfViewer = true;
   }
 </script>
+
+{#snippet orphanDelete()}
+  {#if onCancelUpload}
+    <button
+      type="button"
+      onclick={(e) => {
+        e.stopPropagation();
+        onCancelUpload();
+      }}
+      aria-label={m.upload_delete_label()}
+      title={m.upload_delete_label()}
+      class="ui-icon-button rounded-xl outline-none hover:bg-current/10 focus-visible:ring-2 focus-visible:ring-current"
+    >
+      <Trash2 size={18} strokeWidth={2.5} />
+    </button>
+  {/if}
+{/snippet}
 
 {#if mediaRef}
   <!-- THE ROW'S ONE ELEMENT THAT ALWAYS EXISTS WHEN THERE IS MEDIA, which is why the viewport
@@ -309,6 +346,15 @@
                 </button>
               {/if}
             </div>
+          {:else if orphan}
+            <div
+              class="text-text-main absolute inset-0 flex flex-col items-center justify-center gap-2 p-2 text-center"
+              role="alert"
+            >
+              <CircleAlert size={22} class="text-red-500" />
+              <p class="text-2xs leading-tight font-semibold">{m.media_orphan_label()}</p>
+              {@render orphanDelete()}
+            </div>
           {:else if upload}
             <!-- THE SENDER'S OWN UPLOAD: the real figure and the two buttons, over the same frame
                  the picture will fill, so nothing moves when it lands. -->
@@ -366,6 +412,14 @@
             compact
           />
         </div>
+      {:else if orphan}
+        <div
+          class="h-[5.25rem] w-[20rem] max-w-full rounded-2xl border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-1 px-3 py-1 text-center"
+          role="alert"
+        >
+          <p class="text-2xs leading-tight font-semibold">{m.media_orphan_label()}</p>
+          {@render orphanDelete()}
+        </div>
       {:else}
         <!-- Skeleton Audio. THE PLAYER'S BOX, NOT A SMALLER ONE (2026-10-02): it was `h-14` and
              `w-full` - 56 px tall, and a percentage width inside a `w-fit` bubble - so the row grew
@@ -373,7 +427,7 @@
              below, and 5.25rem the player's height measured at 436 px (one 44 px button, the
              timestamp line, `py-3` and the border). -->
         <div
-          class="h-[5.25rem] w-[20rem] max-w-full rounded-2xl {isOwn
+          class="h-[5.25rem] w-[20rem] max-w-full rounded-2xl {onAmber
             ? 'bg-black/10'
             : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center px-4"
         >
@@ -426,6 +480,10 @@
             {:else if !failure && uploadFailed}
               <p class="text-2xs leading-tight font-semibold text-red-500" role="alert">
                 {m.upload_failed_label()}
+              </p>
+            {:else if !failure && orphan}
+              <p class="text-2xs leading-tight font-semibold text-red-500" role="alert">
+                {m.media_orphan_label()}
               </p>
             {:else if !failure && upload}
               <p class="text-2xs leading-tight font-semibold opacity-70" role="status">
@@ -494,7 +552,7 @@
           </button>
         {:else if failure}
           <CircleAlert size={18} class="shrink-0 text-red-500 opacity-50" />
-        {:else if uploadFailed}
+        {:else if uploadFailed || orphan}
           <button
             type="button"
             disabled={!onCancelUpload}
