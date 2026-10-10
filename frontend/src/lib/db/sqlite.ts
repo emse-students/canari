@@ -22,6 +22,7 @@ import type {
 import {
   decodeOutboxEntry,
   encodeOutboxSensitive,
+  isOutboxClearPatch,
   mergeOutboxEntry,
   outboxClearColumns,
 } from './outboxCodec';
@@ -798,6 +799,25 @@ export class SqliteStorage implements IStorage {
     patch: Partial<OutboxEntry>,
     deviceKeyB64: string
   ): Promise<void> {
+    if (isOutboxClearPatch(patch)) {
+      // A retry only moves the clear scheduling columns. Decoding the row and writing it back
+      // re-encrypts the whole payload - file bytes included - for a change that never touches it:
+      // measured on a Pixel 6a (2026-10-10), the renderer swung from 160 MB to 1.4 GB and the
+      // INSERT took 1.5 s on EVERY backoff of one queued media entry.
+      await this.db.execute(
+        `UPDATE outbox SET status = COALESCE($2, status), attempts = COALESCE($3, attempts),
+           last_attempt_at = COALESCE($4, last_attempt_at), next_attempt_at = COALESCE($5, next_attempt_at)
+         WHERE id = $1`,
+        [
+          id,
+          patch.status ?? null,
+          patch.attempts ?? null,
+          patch.lastAttemptAt ?? null,
+          patch.nextAttemptAt ?? null,
+        ]
+      );
+      return;
+    }
     const rows: any[] = await this.db.select('SELECT * FROM outbox WHERE id = $1', [id]);
     if (rows.length === 0) return;
     const entry = await this.decodeOutboxRow(rows[0], deviceKeyB64);

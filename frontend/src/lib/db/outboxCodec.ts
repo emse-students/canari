@@ -104,6 +104,21 @@ export function decodeOutboxEntry(clear: OutboxClearColumns, payload: any): Outb
   };
 }
 
+/**
+ * True when a patch touches ONLY the clear scheduling columns (status, attempts, lastAttemptAt,
+ * nextAttemptAt), so a store can update them in place without decoding or re-encrypting the
+ * payload - which for a media entry holds the whole file.
+ */
+export function isOutboxClearPatch(patch: Partial<OutboxEntry>): boolean {
+  const keys = Object.keys(patch).filter(
+    (k) => (patch as Record<string, unknown>)[k] !== undefined
+  );
+  return (
+    keys.length > 0 &&
+    keys.every((k) => ['status', 'attempts', 'lastAttemptAt', 'nextAttemptAt'].includes(k))
+  );
+}
+
 /** Apply a partial patch to an entry, returning a new merged entry. */
 export function mergeOutboxEntry(entry: OutboxEntry, patch: Partial<OutboxEntry>): OutboxEntry {
   const merged = { ...entry, ...patch };
