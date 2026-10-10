@@ -12,7 +12,7 @@ Canari runs as a native mobile app on Android and iOS via Tauri 2, using the sam
 | MLS | WASM (`WebMlsService`) | Native Rust (`TauriMlsService` via `invoke()`) |
 | Which of the two ships | chosen when the bundle is BUILT - see below | idem |
 | State storage | IndexedDB | Filesystem (`~/.canari/`) |
-| HTTP | `fetch()` with cookies | `@tauri-apps/plugin-http` (bypasses CORS) |
+| HTTP | `fetch()` with cookies | `@tauri-apps/plugin-http` (bypasses CORS); a binary body to Canari's API uses the WebView's own `fetch` ([why](#a-binary-body-through-the-http-plugin-costs-85-times-its-size-and-50-mb-crashes-the-app)) |
 | WebSocket auth | `canari_ws_token` cookie | `?token=` query param (cookie not sent on cross-origin WS) |
 | MLS snapshot | Argon2 in worker thread → IndexedDB | Direct filesystem write under `mls_bin_write_lock` |
 | Prekeys | 50 OTKPs | 200 OTKPs (more frequent offline periods) |
@@ -229,6 +229,74 @@ consequences that nothing type-checks:
 
 Also verified on hardware while chasing it: `XMLHttpRequest` is NOT patched and reads a `blob:` URL
 fine, so a passing XHR next to a failing `fetch` is the fingerprint of this class of bug.
+
+### A binary body through the HTTP plugin costs 85 times its size, and 50 MB crashes the app
+
+**Measured on the Mi 9T (Android 16, 5.6 GB, app 1.2.2), 2026-10-10.** The plugin's JS (`dist-js/index.js`,
+2.6.1 installed, **2.8.1 in the lockfile, byte-identical on this point; 2.8.1 is the latest on npm**, the
+3.0 line is alpha) does `Array.from(new Uint8Array(await req.arrayBuffer()))` and ships it through `invoke`
+as JSON: one JS number per byte, then a JSON string, then a Rust `Vec<u8>`. The RESPONSE side is not like
+that: `fetch_read_body` returns raw binary chunks (`tauri::ipc::Response`), so only request bodies are hit.
+
+Resident memory above the pre-run baseline (`/proc/<pid>/statm` polled every ~20 ms for the app and the
+renderer, upload of a random `FormData` blob to `dev.canari-emse.fr/api/media/upload` with an invalid token,
+which stores nothing; same method as [section 9.2 of the upload design](../services/media-streaming-upload.md)):
+
+| Body | Through the plugin (app / renderer) | Native WebView `fetch` (app / renderer) |
+| --- | --- | --- |
+| 4 MB | +326 / +167 | +5 / +5 |
+| 13.4 MB | +1185 / +487 | +14 / +14 (+15 / +38 through the patched `window.fetch`) |
+| 28 MB | +2209 / +1156 (earlier run) | +36 / +28 |
+| 50 MB | render process killed, the app crashes | +52 / +100 |
+
+**Why the override exists, and why this is safe to narrow.** `ad405e190` (2026-04-05) installed it when the
+Tauri origins were not yet in the services' CORS allowlists. They all are now (`TAURI_WEBVIEW_ORIGINS`, three
+spellings, asserted by name in each `cors-origins.spec.ts`), and every credentialed call already goes native
+(`shouldUseNativeFetch`), so the WebView's `fetch` already talks to every service from `tauri.localhost` in
+production. Checked from the Android origin against dev: an `Authorization`-bearing POST with a `FormData`,
+`Blob` or `Uint8Array` body, so a real preflight, answers 401 readably on `/api/media/upload`,
+`/upload/public`, `/upload/chunk/init`, `/api/associations/:id/logo` and `/api/forms/:id/image`.
+
+**The rule (`shouldUseNativeFetch`, third and fourth arguments, wired in `hooks.client.ts`):** a request with a
+BINARY body (`Blob`/`File`, `FormData`, `ArrayBuffer`, typed array, or a `Request` whose `Content-Type` is not
+text) to one of Canari's five service origins (`apiServiceOrigins()`) goes to the WebView. JSON string bodies,
+JSON/text `Request`s, GETs and third-party hosts stay on the plugin, which is what the override is for. A
+`ReadableStream` or async-iterable body is NEVER native (WKWebView cannot stream a request body; the plugin
+buffers it). A `Request` built from a stream looks like one built from an untyped `Blob` and counts as binary,
+the one case `hasBinaryBody` cannot tell apart. The hook installs `createRoutedFetch` (`utils/fetchRouting.ts`),
+the tested seam that forwards `init`, the `Request` and a freshly read origin list on every call. The three options
+and why this won:
+
+| Option | Verdict |
+| --- | --- |
+| Newer plugin-http | None exists: 2.8.1 is the latest JS and still has the `Array.from` path. |
+| A Rust command taking a path/offset or a raw `invoke` payload and streaming with `reqwest` | Works and would also unlock a file-backed outbox, but it is new native code on two platforms, needs its own auth, 401-retry, cancel and progress, and cannot be exercised by any web test. Kept as the fallback if native fetch fails on a device. |
+| WebView `fetch` for binary bodies to first-party origins | **Chosen.** One predicate, no native code, the same path web users run today (including the 401-refresh retry in `fetchUpload`), and no copy at all. |
+
+**Which origin the release builds bake (read from the workflows and the relay, 2026-10-10).** `android.yml` and
+`ios.yml` write the SAME `APP_URL` into every `VITE_*_URL`: the `BASE_URL` secret for a stable (the classifier
+accepts `canari.emse.fr` or `canari-emse.fr`; `BASE_URL` moved to `canari.emse.fr` on 2026-09-25) and
+`DEV_BASE_URL` for a pre-release, which must be `dev.canari-emse.fr` (the only dev name the classifier knows).
+Measured with a 2 MB POST to `/api/media/upload`: `canari.emse.fr` answers `401` (straight to the Portail-etu
+host, no cap), while `dev.canari-emse.fr` and `canari-emse.fr` answer **`413`** - both still go through the old
+VM's nginx relay (`canari-relay-dev.conf`, `canari-relay-prod.conf`), which sets no `client_max_body_size` and
+so keeps nginx's 1 MiB default. **So stable builds are unaffected; every pre-release (dev, tester) build uploads
+through the cap.** The secret values themselves cannot be read; this is inferred from the classifier and the
+measured answers. Removing the cap is a relay edit and not done here. In the meantime
+`fetchWithAnswerDeadline` (`utils/uploadDeadline.ts`, used by `fetchUpload`) aborts an upload nobody answers
+after `30 s + bytes / 16 KiB/s` and throws the ONE `UploadAnswerTimeoutError` (`uploadXhr.ts`, a `RequestDeadlineError`, the same type the XHR path raises), so `isTransportFailure` reads it by type and the UI shows the existing unreachable text (`auth_server_unreachable`); no second error type exists.
+
+**Not verified, and why.** (1) The iPhone: nothing was run (the installed build has no inspectable page, see
+[section 9.5](../services/media-streaming-upload.md)). The WKWebView sends `Origin: tauri://localhost`, which
+every service allows and which already carries the credentialed calls, but a multi-megabyte `FormData` fetch
+from WKWebView is a reading owed on the device. (2) A complete large upload: dev answers `413` above 1 MiB at its
+legacy relay and a native fetch then waits instead of reading the 413 (an 8 s abort in the bench), while the
+plugin reads it. No Canari server was reachable without that limit and a local server needs cleartext HTTP,
+which the release build refuses. Bodies over 1 MiB therefore proved MEMORY, not delivery; delivery is proven
+below 1 MiB (401 on a 500 KB body) and by the web client, which runs this very `fetch` path. The deadline turns
+the wait into a typed error but was proven only by unit test (fake timers), NOT on a device. (3) Downloads were
+not changed or measured. (4) That the deadline's 16 KiB/s floor suits a real member link is a choice, not a
+measurement.
 
 ### A relative `/api/` path is dead on mobile, and it fails as a SUCCESS
 

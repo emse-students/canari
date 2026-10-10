@@ -189,6 +189,7 @@ import {
   type UploadProgress,
 } from '$lib/utils/uploadXhr';
 import { isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { fetchWithAnswerDeadline } from '$lib/utils/uploadDeadline';
 
 /** How many times `complete` is asked for ONE uploadId when its answer is lost. */
 const COMPLETE_ATTEMPTS = 3;
@@ -272,7 +273,7 @@ async function fetchUpload(
           },
           transport
         )
-      : fetch(url, init);
+      : fetchWithAnswerDeadline(url, init);
   };
   const res = await send(authToken);
   if (res.status !== 401) return res;
