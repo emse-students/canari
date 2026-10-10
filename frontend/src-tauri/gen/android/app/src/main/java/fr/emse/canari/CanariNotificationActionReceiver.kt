@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.RemoteInput
+import fr.emse.canari.push.ChannelReadMark
 import java.util.UUID
 
 /**
@@ -16,10 +17,11 @@ import java.util.UUID
  * `outbox_pending.ndjson` mirror, same `drainOutboxBackground`/`nativeSendMessagesBackground` path
  * the background welcome-join/decrypt flows already use) - only the plaintext `AppMessage` proto
  * is built differently, via [CanariFirebaseMessagingService.nativeBuildTextMessageProto] /
- * [CanariFirebaseMessagingService.nativeBuildReadReceiptProto] (no TS runtime involved). Never
- * fires for a `channel_` conversation id: channels are server-authoritative and do not use the
- * MLS outbox (see `outbox.ts` `isChannelConversationId`); [CanariFirebaseMessagingService] never
- * attaches these actions to a channel notification in the first place.
+ * [CanariFirebaseMessagingService.nativeBuildReadReceiptProto] (no TS runtime involved). REPLY
+ * never fires for a `channel_` conversation id: channels are server-authoritative and do not use
+ * the MLS outbox (see `outbox.ts` `isChannelConversationId`), and a salon send is sealed under a
+ * Graine session this receiver cannot hold. MARK AS READ does fire for one, as a single PushSecret
+ * call to the salon's read receipt ([ChannelReadMark], [handleMarkRead]).
  */
 class CanariNotificationActionReceiver : BroadcastReceiver() {
 
@@ -201,7 +203,17 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      */
     private fun handleMarkRead(context: Context, intent: Intent, groupId: String) {
         CanariFirebaseMessagingService.cancelConversationNotification(context, groupId)
-        sendReadWatermark(context, groupId, intent.getLongExtra(CanariFirebaseMessagingService.EXTRA_SENT_AT, 0L))
+        val at = intent.getLongExtra(CanariFirebaseMessagingService.EXTRA_SENT_AT, 0L)
+        val channelId = ChannelReadMark.channelIdOf(groupId)
+        if (channelId == null) {
+            sendReadWatermark(context, groupId, at)
+        } else if (at > 0L) {
+            // A SALON: its read state is a server row, not an MLS frame, so it is one PushSecret
+            // call. `at` is the server's `createdAt` of the newest message the banner shows.
+            CanariFirebaseMessagingService.postChannelRead(context, channelId, at)
+        } else {
+            Log.w(TAG, "handleMarkRead: no instant on the intent for channel=${channelId.take(8)} - nothing sent")
+        }
     }
 
     /**

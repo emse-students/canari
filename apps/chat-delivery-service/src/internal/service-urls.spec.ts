@@ -2,7 +2,7 @@
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join as joinPath, resolve, sep } from 'path';
-import { coreUrl, mediaUrl } from './service-urls';
+import { coreUrl, mediaUrl, socialUrl } from './service-urls';
 
 /**
  * THE LAST TEST IS THE ONE THAT MATTERS: a production source that names an internal service's base
@@ -15,7 +15,7 @@ import { coreUrl, mediaUrl } from './service-urls';
 const SRC = resolve(__dirname, '..');
 
 /** Every internal base this service names - not the ones some past defect happened to involve. */
-const INTERNAL_BASES = ['MEDIA_SERVICE_URL', 'CORE_SERVICE_INTERNAL_URL'];
+const INTERNAL_BASES = ['MEDIA_SERVICE_URL', 'CORE_SERVICE_INTERNAL_URL', 'SOCIAL_SERVICE_URL'];
 
 /** Every PRODUCTION `.ts` under `src/`: no specs, and not this module itself. */
 function productionSources(dir: string): string[] {
@@ -51,6 +51,13 @@ describe("service-urls - the prefix is not the caller's to write", () => {
   it('addresses core-service the same way', () => {
     delete process.env.CORE_SERVICE_INTERNAL_URL;
     expect(coreUrl('users/abc/avatar')).toBe('http://core-service:3012/api/users/abc/avatar');
+  });
+
+  it('addresses social-service the same way', () => {
+    delete process.env.SOCIAL_SERVICE_URL;
+    expect(socialUrl('internal/channels/abc/read')).toBe(
+      'http://social-service:3014/api/internal/channels/abc/read'
+    );
   });
 
   it('does not double the prefix when an operator has already appended it', () => {
