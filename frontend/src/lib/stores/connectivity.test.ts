@@ -135,6 +135,26 @@ describe('the slow state is derived from observed answers, and never stacks on o
     expect(connectivity.slow).toBe(false);
   });
 
+  it('a transfer (a body mostly upload time) never arms the in-flight hint, yet still settles cleanly', async () => {
+    const r = connectivity.trackRequest({ transfer: true });
+    await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS * 3);
+    expect(connectivity.slow).toBe(false);
+    r.answered(false);
+    expect(connectivity.slow).toBe(false);
+  });
+
+  it('a timer that fired far behind its schedule blames the device, not the link', async () => {
+    const r = connectivity.trackRequest();
+    // The renderer thread was busy: the wall clock ran ahead of the timer by seconds.
+    vi.setSystemTime(Date.now() + 4_000);
+    await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
+    expect(connectivity.slow).toBe(false);
+    // Still unanswered a full threshold later: the link, not the device, is now the suspect.
+    await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
+    expect(connectivity.slow).toBe(true);
+    r.answered(false);
+  });
+
   it('is never slow while offline: the two hints do not stack', async () => {
     const r = connectivity.trackRequest();
     await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);

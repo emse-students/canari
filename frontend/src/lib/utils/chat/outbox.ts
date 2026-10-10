@@ -2,6 +2,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
+import { OutboxPayloadUnreadableError } from '$lib/db/outboxCodec';
 import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
 import type { MediaRef } from '$lib/media';
 import {
@@ -54,6 +55,41 @@ import {
  * Indexed by attempt count, clamped to the last value.
  */
 const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
+
+/**
+ * Consecutive LOCAL failures of ONE attachment - this device could not read, decode or hold the file
+ * (see {@link isLocalAttachmentFailure}) - after which it is parked as `error`. About five minutes of
+ * the ladder, short enough that a Pixel 6a is not made to decode a 13 MB file every minute for ever
+ * (2026-10-10). NOTHING ELSE COUNTS: a transport failure, a 5xx, a roster repair or an edge refusal
+ * is about the network or the server, and a relay outage of five minutes must not tell the member
+ * that their file is unreadable.
+ */
+export const MAX_UNEXPECTED_ATTEMPTS = 8;
+
+/**
+ * The queued attachment cannot be read on THIS device: its row failed to load, or it holds no bytes
+ * while still owing an upload. Typed, so the outbox never decides "local" from a message.
+ */
+export class LocalAttachmentError extends Error {
+  constructor(why: string, cause?: unknown) {
+    super(why, { cause });
+    this.name = 'LocalAttachmentError';
+  }
+}
+
+/**
+ * True for the failures that are about this device and no one else, read from the TYPE: the outbox's
+ * own {@link LocalAttachmentError}, the platform's `NotReadableError`/`NotFoundError` on a file, and a
+ * `RangeError` (an allocation the renderer refused).
+ */
+export function isLocalAttachmentFailure(e: unknown): boolean {
+  if (e instanceof LocalAttachmentError || e instanceof RangeError) return true;
+  return (
+    typeof DOMException !== 'undefined' &&
+    e instanceof DOMException &&
+    (e.name === 'NotReadableError' || e.name === 'NotFoundError')
+  );
+}
 
 const textEncoder = new TextEncoder();
 
@@ -293,6 +329,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   const noAnswer = new Map<string, number>();
   /** The furthest an attempt of this entry has got, so only a NO-FURTHER attempt is counted. */
   const bestLoaded = new Map<string, number>();
+  /**
+   * Consecutive ONLINE failures per attachment that are not a typed no-answer upload (see
+   * {@link MAX_UNEXPECTED_ATTEMPTS}). In memory by design, like `noAnswer`: a reload, a manual retry
+   * or a success starts the count again.
+   */
+  const unexpected = new Map<string, number>();
   const lanes = new Map<string, Promise<void>>();
   /** Conversations whose running lane must look at the queue once more (an enqueue or wake-up arrived). */
   const laneRerun = new Set<string>();
@@ -353,7 +395,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   async function readQueue(where: string): Promise<OutboxEntry[]> {
     if (!storage) return [];
-    return storage.getOutboxEntries(deviceKey()).catch((e) => {
+    return storage.getOutboxQueue(deviceKey()).catch((e) => {
       log(`[OUTBOX] ${where}: reading the queue failed, treating it as empty: ${String(e)}`);
       return [] as OutboxEntry[];
     });
@@ -499,6 +541,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     let ref = media.uploadedRef;
     if (!ref) {
       if (!deps.uploadMedia) throw new Error('uploadMedia callback not provided');
+      if (!media.fileBytes || media.fileBytes.length === 0) {
+        throw new LocalAttachmentError('the queued attachment holds no bytes to upload');
+      }
       logMlsMetric({ kind: 'outbox_upload_attempt', conversationId: entry.conversationId });
       const control = new AbortController();
       uploads.set(entry.id, control);
@@ -554,6 +599,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       }
       noAnswer.delete(entry.id);
       bestLoaded.delete(entry.id);
+      unexpected.delete(entry.id);
       clearUpload(entry.id);
       ref = {
         mediaId: uploaded.mediaId,
@@ -716,13 +762,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function holdForRetry(
     entry: OutboxEntry,
     describe: (attempts: number) => string,
-    opts: { transport?: boolean } = {}
+    opts: { transport?: boolean; local?: boolean; quiet?: boolean } = {}
   ): Promise<FlushOutcome> {
     if (opts.transport) transportHeld.add(entry.id);
     else transportHeld.delete(entry.id);
+    // The count is of CONSECUTIVE local failures: any other kind of hold breaks the run.
+    if (!opts.local) unexpected.delete(entry.id);
     patchStatus(entry.id, 'pending');
     // An attachment still to upload shows that its next attempt is queued (and starts from zero).
-    if (entry.kind === 'media' && !entry.media?.uploadedRef) {
+    // `quiet` when the payload was not read, so whether the upload already happened is not known.
+    if (!opts.quiet && entry.kind === 'media' && !entry.media?.uploadedRef) {
       patchUpload(entry.id, { phase: 'waiting', loaded: 0, attempt: entry.attempts + 1 });
     }
     const attempts = entry.attempts + 1;
@@ -747,6 +796,53 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     return 'retry';
   }
 
+  /**
+   * Parks an entry that keeps failing for a reason retrying cannot mend, with a state the member can
+   * SEE and act on (`error`: retry or delete). Kept, never deleted - nothing the user wrote is lost -
+   * and terminal until the member acts: a reconnect resumes only `transportHeld` entries.
+   */
+  function parkAsError(entry: OutboxEntry, why: string): FlushOutcome {
+    const line = `[OUTBOX] ${entry.id.slice(0, 8)}… ${entry.kind} entry FAILED on this device: ${why} - parked for a manual retry, entry kept`;
+    console.error(line);
+    log(line);
+    parked.add(entry.id);
+    transportHeld.delete(entry.id);
+    unexpected.delete(entry.id);
+    patchStatus(entry.id, 'pending');
+    patchUpload(entry.id, { phase: 'error' });
+    return 'parked';
+  }
+
+  /**
+   * The generic retry of an ATTACHMENT, bounded ONLY for local failures (see
+   * {@link isLocalAttachmentFailure}): the Nth consecutive one parks the entry. Every other failure
+   * is held on the ladder without a count and resets the run - the network and the server are
+   * waited out, never held against the file. Any other entry kind is held without a count (cheap
+   * now that a queue read decodes no file, and the ladder tops at 60 s).
+   */
+  function countedHold(
+    entry: OutboxEntry,
+    e: unknown,
+    describe?: (attempts: number) => string,
+    opts: { transport?: boolean; quiet?: boolean } = {}
+  ): Promise<FlushOutcome> | FlushOutcome {
+    const local = entry.kind === 'media' && isLocalAttachmentFailure(e);
+    if (local) {
+      const count = (unexpected.get(entry.id) ?? 0) + 1;
+      unexpected.set(entry.id, count);
+      if (count >= MAX_UNEXPECTED_ATTEMPTS) {
+        return parkAsError(entry, `${count} attempts in a row failed (${String(e).slice(0, 120)})`);
+      }
+    }
+    return holdForRetry(
+      entry,
+      describe ??
+        ((attempts) =>
+          `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`),
+      { ...opts, local }
+    );
+  }
+
   /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
   async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
     // Withdrawn after this flush read its snapshot of the queue. The row is already gone, so this
@@ -768,6 +864,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (resumed) {
       noAnswer.delete(entry.id);
       bestLoaded.delete(entry.id);
+      unexpected.delete(entry.id);
     }
     // PARKED IS NOT BLOCKING: the entry waits for the member, and what was written after it goes.
     if (!resumed && parked.has(entry.id)) return 'parked';
@@ -786,6 +883,41 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… channel entry - dropped (channels do not use MLS)`);
       await storage?.deleteOutboxEntry(entry.id).catch(() => {});
       return 'error';
+    }
+
+    // THE PAYLOAD OF AN ATTACHMENT IS READ HERE AND NOWHERE EARLIER: the queue read returns a media
+    // entry as its scheduling columns only, because decoding the file is what froze a Pixel 6a once
+    // per backoff (2026-10-10). Every skip above returns before this line, so an entry that is not
+    // due costs a row of numbers - and a due one is decoded exactly once.
+    if (entry.kind === 'media' && !entry.media) {
+      try {
+        const full = await storage?.getOutboxEntry(entry.id, deviceKey());
+        if (!full) {
+          // Withdrawn between the `cancelled` check above and this read: consume it, like that check.
+          cancelled.delete(entry.id);
+          clearUpload(entry.id);
+          log(`[OUTBOX] ${entry.id.slice(0, 8)}… no longer queued - nothing to send`);
+          return 'gone';
+        }
+        entry = full;
+      } catch (e) {
+        if (e instanceof OutboxPayloadUnreadableError) {
+          return parkAsError(
+            entry,
+            `its payload cannot be decrypted (${String(e.cause).slice(0, 80)})`
+          );
+        }
+        // A row that exists but cannot be loaded is a LOCAL failure, and whether the upload already
+        // happened is unknown here, so the bubble is left as it is.
+        return countedHold(
+          entry,
+          new LocalAttachmentError('the queued row could not be read', e),
+          undefined,
+          {
+            quiet: true,
+          }
+        );
+      }
     }
 
     const terminalId = entry.conversationId;
@@ -868,6 +1000,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       patchStatus(entry.id, 'sent');
       clearUpload(entry.id);
       transportHeld.delete(entry.id);
+      unexpected.delete(entry.id);
       // The tab that composed this may be a follower, whose own echo is still showing `pending`.
       publishOutboxEntrySent(entry.id, mediaContent);
       // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
@@ -1045,8 +1178,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // as "transient failure (attempt 23)" is what let eight stuck messages read as ordinary
       // network noise for two and a half hours. What is retried here is the MESSAGE; what is being
       // waited on is the REPAIR, and the line says which.
-      return holdForRetry(
+      return countedHold(
         entry,
+        e,
         (attempts) =>
           kind === 'sender-not-active'
             ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
@@ -1254,6 +1388,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       parked.delete(messageId);
       noAnswer.delete(messageId);
       bestLoaded.delete(messageId);
+      unexpected.delete(messageId);
       publishOutboxEntryCancelled(messageId);
       await storage
         .deleteOutboxEntry(messageId)
@@ -1292,6 +1427,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // transfer is on the wire and stalled, abandon it: the flush then restarts it at once.
       resuming.add(messageId);
       parked.delete(messageId);
+      // A 403-parked entry used to ignore this button for the controller's whole life.
+      forbiddenParked.delete(messageId);
       const running = uploads.get(messageId);
       if (running) running.abort('retry');
       else runFlush();
