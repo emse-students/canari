@@ -1,0 +1,3 @@
+### Fixed - a file sent on a poor connection shows its progress, and big files no longer spin for ever
+
+A file over 10 MiB was dropped by the host's security layer and retried for ever behind an endless spinner. Uploads now go in pieces of at most 8 MiB, an attachment's bubble shows the real percentage with a cancel and a retry, and a refusal ends the send with a clear message and a delete button ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for), [host-waf-body-limit](docs/wiki/infrastructure/host-waf-body-limit.md)).

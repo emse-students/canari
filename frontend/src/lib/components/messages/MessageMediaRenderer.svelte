@@ -10,6 +10,7 @@
     Video as VideoIcon,
     Mic,
     RotateCw,
+    Trash2,
   } from '@lucide/svelte';
   import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
   import { isRetryableMediaFailure, type MediaFailureCause } from '$lib/utils/mediaErrors';
@@ -27,6 +28,9 @@
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import { nearViewport } from '$lib/actions/nearViewport';
   import ChatReelTile from './ChatReelTile.svelte';
+  import UploadAction from './UploadAction.svelte';
+  import { uploadCaption } from '$lib/utils/chat/uploadLabel';
+  import type { UploadView } from '$lib/utils/chat/uploadProgress.svelte';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
   import { isReelMessage, isReelMessageExpired, reelMessageAsPost } from '$lib/reels/chatReel';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -75,6 +79,17 @@
     messageId?: string;
     /** Bearer token the reel viewer's own download resolves; a tile fetches nothing without a tap. */
     authToken?: string;
+    /**
+     * The upload this bubble stands for, while the sender's outbox still holds the bytes. Draws the
+     * real progress, a cancel and a retry where the plain skeleton had an endless spinner.
+     */
+    upload?: UploadView | null;
+    /** The upload was refused for good: says so and offers the delete (`onCancelUpload`). */
+    uploadFailed?: boolean;
+    /** Withdraws the message and stops its transfer (the sender's delete of an unsent message). */
+    onCancelUpload?: () => void;
+    /** Tries the upload again now, skipping the backoff. */
+    onRetryUpload?: () => void;
   }
 
   let {
@@ -92,6 +107,10 @@
     sentAt,
     messageId = '',
     authToken = '',
+    upload = null,
+    uploadFailed = false,
+    onCancelUpload,
+    onRetryUpload,
   }: Props = $props();
 
   /**
@@ -268,6 +287,40 @@
                 compact
               />
             </div>
+          {:else if uploadFailed}
+            <div
+              class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2 text-center"
+              role="alert"
+            >
+              <CircleAlert size={22} class="text-red-500" />
+              <p class="text-2xs leading-tight font-semibold">{m.upload_failed_label()}</p>
+              {#if onCancelUpload}
+                <button
+                  type="button"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    onCancelUpload();
+                  }}
+                  aria-label={m.upload_delete_label()}
+                  title={m.upload_delete_label()}
+                  class="ui-icon-button rounded-xl outline-none hover:bg-current/10 focus-visible:ring-2 focus-visible:ring-current"
+                >
+                  <Trash2 size={18} strokeWidth={2.5} />
+                </button>
+              {/if}
+            </div>
+          {:else if upload}
+            <!-- THE SENDER'S OWN UPLOAD: the real figure and the two buttons, over the same frame
+                 the picture will fill, so nothing moves when it lands. -->
+            <div
+              class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2 text-center"
+              role="status"
+            >
+              <UploadAction view={upload} onCancel={onCancelUpload} onRetry={onRetryUpload} />
+              <p class="text-2xs leading-tight font-semibold opacity-70">
+                {uploadCaption(upload, mediaRef.size)}
+              </p>
+            </div>
           {:else}
             <div class="absolute inset-0 flex animate-pulse items-center justify-center">
               {#if mediaRef.type === 'video'}
@@ -370,6 +423,14 @@
                   other: m.msg_image_load_error(),
                 })}
               </p>
+            {:else if !failure && uploadFailed}
+              <p class="text-2xs leading-tight font-semibold text-red-500" role="alert">
+                {m.upload_failed_label()}
+              </p>
+            {:else if !failure && upload}
+              <p class="text-2xs leading-tight font-semibold opacity-70" role="status">
+                {uploadCaption(upload, mediaRef!.size)}
+              </p>
             {:else if !failure}
               <!-- No `uppercase`: it would render the "Ko" unit as "KO". -->
               <p class="text-2xs font-semibold tracking-wider opacity-60">
@@ -433,6 +494,22 @@
           </button>
         {:else if failure}
           <CircleAlert size={18} class="shrink-0 text-red-500 opacity-50" />
+        {:else if uploadFailed}
+          <button
+            type="button"
+            disabled={!onCancelUpload}
+            onclick={(e) => {
+              e.stopPropagation();
+              onCancelUpload?.();
+            }}
+            aria-label={m.upload_delete_label()}
+            title={m.upload_delete_label()}
+            class="ui-icon-button rounded-xl text-red-500 outline-none hover:bg-current/10 focus-visible:ring-2 focus-visible:ring-current"
+          >
+            <Trash2 size={18} strokeWidth={2.5} />
+          </button>
+        {:else if upload}
+          <UploadAction view={upload} onCancel={onCancelUpload} onRetry={onRetryUpload} />
         {:else}
           <div
             class="h-8 w-8 shrink-0 animate-spin rounded-full border-2 border-current/20 border-t-current"

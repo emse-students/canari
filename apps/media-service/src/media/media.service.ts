@@ -6,6 +6,7 @@ import {
   HttpException,
   HttpStatus,
   InternalServerErrorException,
+  NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
 import { StorageService } from './storage.service';
@@ -18,6 +19,7 @@ import sharp from 'sharp';
 
 /** UUID v4 pattern - used to validate user-supplied IDs before path joins and property accesses. */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** How many finished legacy chunk sessions are remembered (uploadId -> mediaId) for an idempotent `complete`. */
 
 const CHUNK_DIR = path.join(process.cwd(), 'chunks_temp');
 // Stored in a dedicated directory so it can be mounted as a named Docker volume
@@ -290,6 +292,14 @@ export class MediaService {
   private chatReelReservations?: Map<string, number>;
   /** Chunked sessions that hold a reservation, by uploadId. Lazily created, same reason. */
   private chunkSessions?: Map<string, ChunkSession>;
+  /**
+   * Who opened each LEGACY chunk session, by uploadId (every session, not only the ones holding a
+   * reservation). It exists so a client can abandon its own session ({@link abortChunkedUpload}) and
+   * nobody else can. In memory: after a restart the answer is "unknown", and the staged file is
+   * left to the orphan sweeper. Lazily created, same reason as above. Retired with the legacy chunk
+   * routes (media-streaming-upload WP-S6).
+   */
+  private chunkOwners?: Map<string, string>;
   private readonly sweepIntervalMs = Number.parseInt(
     process.env.MEDIA_RETENTION_SWEEP_MS ?? `${DEFAULT_SWEEP_MS}`,
     10
@@ -1087,7 +1097,43 @@ export class MediaService {
       this.dropChunkSession(uploadId);
       throw err;
     }
+    // THE OPENER IS RECORDED ONLY ONCE THE STAGING EXISTS: an init refused earlier (a budget, a
+    // size, a disk error) never registers an entry, so the sweeper - which forgets an opener whose
+    // file is absent - can neither race the registration nor be left a stray one.
+    if (ownerId) (this.chunkOwners ??= new Map()).set(uploadId, ownerId);
     return uploadId;
+  }
+
+  /**
+   * Abandons a staged legacy upload: removes its temp file and gives back its reservation. Called by
+   * a client that cancelled, was refused, or gave up on this session and is about to start a new one
+   * - without it every such attempt strands up to the whole file on disk until the 24 h sweep.
+   *
+   * IDEMPOTENT: a session that is already gone (completed, swept, never existed, restarted away) is a
+   * success, so a retried or doubled call never errors. OWNER-CHECKED: when the opener is known and
+   * is somebody else, `ForbiddenException`; an unknown opener (the process restarted) is allowed,
+   * since the uploadId is an unguessable UUID that only its opener was given.
+   */
+  async abortChunkedUpload(uploadId: string, ownerId?: string): Promise<'removed' | 'absent'> {
+    if (!UUID_REGEX.test(uploadId)) {
+      throw new BadRequestException('Invalid uploadId');
+    }
+    return this.withUploadLock(uploadId, async () => {
+      const opener = this.chunkOwners?.get(uploadId);
+      if (opener && opener !== ownerId) {
+        this.logger.warn(`Chunked upload ${uploadId} abort refused: not its opener`);
+        throw new ForbiddenException('Not your upload session');
+      }
+      const tempFile = this.chunkTempPath(uploadId);
+      const existed = await fs.pathExists(tempFile);
+      if (existed) await fs.remove(tempFile);
+      this.dropChunkSession(uploadId);
+      this.chunkOwners?.delete(uploadId);
+      this.logger.log(
+        `Chunked upload ${uploadId} abandoned by its client (${existed ? 'staged bytes removed' : 'nothing staged'})`
+      );
+      return existed ? 'removed' : 'absent';
+    });
   }
 
   /** Gives a session's reservation back and forgets it; a no-op for a session that held none. */
@@ -1098,13 +1144,28 @@ export class MediaService {
     this.chunkSessions?.delete(uploadId);
   }
 
-  async appendChunk(uploadId: string, chunk: Buffer, maxBytes: number): Promise<void> {
+  /**
+   * Appends one chunk to a staged session. OWNER-CHECKED like abort and complete: when the opener
+   * is known and is somebody else, `ForbiddenException` and nothing is written (an unknown opener,
+   * after a restart, is allowed - the uploadId is an unguessable UUID only its opener was given).
+   */
+  async appendChunk(
+    uploadId: string,
+    chunk: Buffer,
+    maxBytes: number,
+    ownerId: string | undefined
+  ): Promise<void> {
     // Validate uploadId is a UUID to prevent path traversal (uncontrolled data in path).
     if (!UUID_REGEX.test(uploadId)) {
       throw new BadRequestException('Invalid uploadId');
     }
     // Serialize concurrent chunk writes for the same uploadId to prevent TOCTOU race conditions.
     await this.withUploadLock(uploadId, async () => {
+      const opener = this.chunkOwners?.get(uploadId) ?? this.chunkSessions?.get(uploadId)?.ownerId;
+      if (opener && opener !== ownerId) {
+        this.logger.warn(`Chunked upload ${uploadId} append refused: not its opener`);
+        throw new ForbiddenException('Not your upload session');
+      }
       const tempFile = this.chunkTempPath(uploadId);
 
       // ONE DESCRIPTOR, OPENED ONCE, AND THAT IS WHAT REMOVES THE RACE RATHER THAN HIDING IT.
@@ -1125,7 +1186,7 @@ export class MediaService {
       // descriptor, which has no methods and would need the same path-free operations spelt as
       // free functions. The promises API hands back a handle that carries them.
       const handle = await fs.promises.open(tempFile, 'r+').catch(() => {
-        throw new Error('Upload session not found or expired');
+        throw new NotFoundException('Upload session not found or expired');
       });
 
       let overCap = false;
@@ -1149,6 +1210,7 @@ export class MediaService {
       if (overCap) {
         await fs.remove(tempFile);
         this.dropChunkSession(uploadId);
+        this.chunkOwners?.delete(uploadId);
         throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
       }
     });
@@ -1165,8 +1227,23 @@ export class MediaService {
       throw new BadRequestException('Invalid uploadId');
     }
     return this.withUploadLock(uploadId, async () => {
+      // A `complete` asked again for a session that already produced its object answers with the
+      // SAME id (a lost or abandoned response, a client retry) - never a second stored copy. The lock
+      // serialises it behind a first call still assembling, so the memo is read after it lands.
+      const done = await this.readCompletedChunkUpload(uploadId);
+      if (done) {
+        if (done.ownerId !== ownerId) throw new ForbiddenException('Not your upload session');
+        this.logger.log(
+          `Chunked upload ${uploadId} completed again: answering the same ${done.mediaId}`
+        );
+        return done.mediaId;
+      }
       const session = this.chunkSessions?.get(uploadId);
-      if (session && session.ownerId !== ownerId) {
+      // THE OPENER IS KEPT ACROSS A FAILED COMPLETE (the staged bytes stay for the re-ask), so a
+      // member who merely knows the uploadId cannot assemble another's bytes under their own name.
+      // Forgotten only on success, abort, an over-cap append or the sweep. Unknown after a restart.
+      const opener = this.chunkOwners?.get(uploadId) ?? session?.ownerId;
+      if (opener && opener !== ownerId) {
         // Not the member who opened (and reserved for) this session.
         this.logger.warn(`Chunked upload ${uploadId} completed by another member than its opener`);
         throw new ForbiddenException('Not your upload session');
@@ -1176,12 +1253,13 @@ export class MediaService {
       try {
         const tempFile = this.chunkTempPath(uploadId);
         if (!(await fs.pathExists(tempFile))) {
-          throw new Error('Upload session not found or expired');
+          throw new NotFoundException('Upload session not found or expired');
         }
 
         const stat = await fs.stat(tempFile);
         if (stat.size > maxBytes) {
           await fs.remove(tempFile);
+          this.chunkOwners?.delete(uploadId);
           throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
         }
         if (!(session && retentionClass === 'chat-reel')) {
@@ -1192,6 +1270,7 @@ export class MediaService {
           } catch (err) {
             // The member is over their daily budget: the staged bytes are of no use to anyone.
             await fs.remove(tempFile);
+            this.chunkOwners?.delete(uploadId);
             throw err;
           }
         }
@@ -1199,12 +1278,24 @@ export class MediaService {
 
         await this.storage.putFileStream(mediaId, tempFile, stat.size);
 
-        await fs.remove(tempFile);
-
         this.setAccess(mediaId, Date.now(), ownerId, retentionClass, stat.size);
+        // THE RECORD IS WRITTEN BEFORE THE STAGING IS REMOVED: a crash between the two leaves the
+        // record (a re-ask answers from it) and the staging (swept at 24 h), never neither.
+        const recorded = await this.writeCompletedChunkUpload(uploadId, { mediaId, ownerId });
         // Entry registered: the reservation hands over to it in this same synchronous run.
         release();
         this.dropChunkSession(uploadId);
+        if (recorded) {
+          await fs.remove(tempFile);
+          this.chunkOwners?.delete(uploadId);
+        } else {
+          // NO RECORD, SO THE STAGING IS THE ONLY THING A RE-ASK CAN ANSWER FROM: it stays, with
+          // its opener, so the re-ask re-assembles under the opener check (never a 404 for a
+          // member whose answer was lost). The 24 h sweep takes both if nobody comes back.
+          this.logger.warn(
+            `Chunked upload ${uploadId}: completed as ${mediaId} but unrecorded, staging kept for a re-ask`
+          );
+        }
         await this.persistMetadata();
 
         return mediaId;
@@ -1213,6 +1304,45 @@ export class MediaService {
         this.dropChunkSession(uploadId);
       }
     });
+  }
+
+  /**
+   * THE ANSWER OF A COMPLETED LEGACY SESSION, kept as a sidecar file next to the staging
+   * (`<uploadId>.done`) so a `complete` whose answer was lost, and is asked again, gets the SAME
+   * mediaId instead of storing the object twice. On disk, not in memory, so it survives a restart or
+   * a redeploy (the common moment for a lost answer); it ages out with the 24 h orphan sweep, which
+   * is also the lifetime of the session it answers for. A failure is logged and reported as
+   * `false`, never thrown: the caller then KEEPS the staging, which is what a re-ask answers from.
+   */
+  private async writeCompletedChunkUpload(
+    uploadId: string,
+    done: { mediaId: string; ownerId?: string }
+  ): Promise<boolean> {
+    try {
+      // Temp + rename: a reader sees the whole record or none, never a truncated one.
+      const target = `${this.chunkTempPath(uploadId)}.done`;
+      await fs.writeFile(`${target}.tmp`, JSON.stringify(done));
+      await fs.rename(`${target}.tmp`, target);
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `Chunked upload ${uploadId}: could not record its completion: ${String(err)}`
+      );
+      return false;
+    }
+  }
+
+  private async readCompletedChunkUpload(
+    uploadId: string
+  ): Promise<{ mediaId: string; ownerId?: string } | null> {
+    const file = `${this.chunkTempPath(uploadId)}.done`;
+    if (!(await fs.pathExists(file))) return null;
+    try {
+      return JSON.parse(await fs.readFile(file, 'utf8')) as { mediaId: string; ownerId?: string };
+    } catch (err) {
+      this.logger.warn(`Chunked upload ${uploadId}: unreadable completion record: ${String(err)}`);
+      return null;
+    }
   }
 
   /**
@@ -1474,9 +1604,16 @@ export class MediaService {
     } catch {
       // CHUNK_DIR may not exist yet on first run - ignore.
     }
-    // A reservation must not outlive its staged file (swept above, or lost with the volume).
-    for (const uploadId of this.chunkSessions?.keys() ?? []) {
-      if (!(await fs.pathExists(this.chunkTempPath(uploadId)))) this.dropChunkSession(uploadId);
+    // A reservation must not outlive its staged file (swept above, or lost with the volume), and
+    // neither must the record of who opened it.
+    for (const uploadId of [
+      ...(this.chunkSessions?.keys() ?? []),
+      ...(this.chunkOwners?.keys() ?? []),
+    ]) {
+      if (!(await fs.pathExists(this.chunkTempPath(uploadId)))) {
+        this.dropChunkSession(uploadId);
+        this.chunkOwners?.delete(uploadId);
+      }
     }
     if (removed > 0) {
       this.logger.log(`Purged ${removed} orphaned chunked upload temp file(s) (>24h)`);
