@@ -6,6 +6,7 @@
  * until a specific date, which is why they are pinned rather than eyeballed.
  */
 import { describe, it, expect } from 'vitest';
+import { m } from '$lib/paraglide/messages';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 import {
   dayOccupancy,
@@ -17,6 +18,9 @@ import {
   eventAccentColor,
   eventOwners,
   eventOwnersLabel,
+  MAX_ORGANISER_FACES,
+  organisersFullList,
+  splitOrganiserFaces,
 } from './feedEvents';
 
 /** Local-time ISO, so the test says the same thing wherever it runs. */
@@ -286,6 +290,40 @@ describe('eventOwnersLabel', () => {
   it('still names both on the page of one of them - that it is shared is the point', () => {
     expect(eventOwnersLabel(shared, 'mitv-id')).toBe('Corpo + MiTV');
     expect(eventOwnersLabel(shared, 'corpo-id')).toBe('Corpo + MiTV');
+  });
+
+  it('names two and COUNTS the rest from three associations on', () => {
+    const co = (n: number) => ({
+      associationId: `c${n}`,
+      name: `Co${n}`,
+      slug: `co${n}`,
+      color: null,
+      logoUrl: null,
+    });
+    const three = event({ associationName: 'Corpo', coOwners: [co(1), co(2)] });
+    const four = event({ associationName: 'Corpo', coOwners: [co(1), co(2), co(3)] });
+
+    expect(eventOwnersLabel(three)).toBe(
+      m.calendar_owners_and_others({ first: 'Corpo', count: 2 })
+    );
+    expect(eventOwnersLabel(four)).toBe(m.calendar_owners_and_others({ first: 'Corpo', count: 3 }));
+    expect(organisersFullList(eventOwners(four))).toBe('Corpo, Co1, Co2, Co3');
+  });
+
+  it('splits the faces drawn from the ones a +N pill stands for', () => {
+    const ids = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        associationId: `x${i}`,
+        name: `X${i}`,
+        slug: `x${i}`,
+        color: null,
+        logoUrl: null,
+      }));
+
+    expect(splitOrganiserFaces(ids(3))).toMatchObject({ hidden: [] });
+    const four = splitOrganiserFaces(ids(4));
+    expect(four.shown).toHaveLength(MAX_ORGANISER_FACES);
+    expect(four.hidden.map((o) => o.associationId)).toEqual(['x3']);
   });
 
   it('says nothing only when the page owns the event alone', () => {

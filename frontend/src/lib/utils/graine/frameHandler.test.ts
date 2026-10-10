@@ -29,6 +29,19 @@ import {
  * `sentCount` that decides the next message index and the 100-message rotation.
  */
 
+// The real walk, observed: the id the bundle quotes must reach it, or a decline never advances it.
+const noteSeedUnavailableSpy = vi.fn();
+vi.mock('./repair', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./repair')>();
+  return {
+    ...actual,
+    noteSeedUnavailable: (...args: Parameters<typeof actual.noteSeedUnavailable>) => {
+      noteSeedUnavailableSpy(...args);
+      return actual.noteSeedUnavailable(...args);
+    },
+  };
+});
+
 vi.mock('./graineMirror', () => ({ mirrorGraineSeed: vi.fn().mockResolvedValue(undefined) }));
 
 /** Where each session becomes readable for the asker - computed by the server, never here. */
@@ -616,10 +629,13 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.keyMaterial);
   });
 
-  it('sends an answer that carries only declines as transport, keeping the capped log for seeds', async () => {
-    // The other half of the same rule. A decline restates a fact the requester can derive and holds
-    // no key material, so it must not spend a distribution group's log - the argument that makes
-    // the seed above durable is the argument that keeps this one transport.
+  it('sends an answer that carries only declines as KEY MATERIAL too, so a decline is never dropped for an offline requester', async () => {
+    // THE STRANDING (user decision, 2026-10-10). A pure decline used to go out as `DELIVERY.transport`,
+    // which the server delivers only to recipients presence reports online and never appends to the
+    // log. A requester that asked from a cold start has no socket yet, so the decline was dropped
+    // for good - and a decline is the one fact that sends the requester to the NEXT member, so
+    // nothing re-asked and the session stayed unreadable. An answer is ONE message whatever it
+    // carries: same delivery, same retry, same heal.
     const { storage } = fakeStorage();
     const sendMessage = wireWithMls(storage);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -634,8 +650,34 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       })
     );
 
-    expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.transport);
+    expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.keyMaterial);
+    expect(sendMessage.mock.calls[0][3].durable).toBe(true);
     warn.mockRestore();
+  });
+
+  it('hands the request id of an inbound decline to the repair walk', async () => {
+    const { storage } = fakeStorage();
+    wireWithMls(storage);
+    noteSeedUnavailableSpy.mockClear();
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'bob',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({
+          workspaceId: 'ws-1',
+          requestId: 'r-7',
+          seeds: [],
+          missingSessionIds: ['sess-9'],
+          truncated: false,
+        })
+      ),
+    });
+
+    // Dropping or emptying the id here would make every decline a no-op in the walk.
+    expect(noteSeedUnavailableSpy).toHaveBeenCalledWith('sess-9', 'bob', 'r-7');
   });
 
   it('says which sessions it does not hold, rather than answering an empty hand with silence', async () => {
