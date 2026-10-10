@@ -10,7 +10,7 @@
  * SAME mediaId back, never a second stored copy. Real filesystem under `chunks_temp`, mocked storage.
  */
 import * as fs from 'fs-extra';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { MediaService } from './media.service';
 
 const OWNER = 'owner-1';
@@ -168,13 +168,32 @@ describe('the opener map does not leak', () => {
     expect(owners(internals)?.has(uploadId)).toBe(false);
   });
 
-  it('forgets a session whose complete failed', async () => {
+  it('KEEPS the opener after a failed complete: the staged bytes wait for the re-ask', async () => {
+    const { svc, internals } = service();
+    const { uploadId, file } = await openAndStage(svc, internals);
+    internals.storage.putFileStream.mockRejectedValueOnce(new Error('storage down'));
+    await expect(svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral')).rejects.toThrow(
+      'storage down'
+    );
+    expect(owners(internals)?.get(uploadId)).toBe(OWNER);
+    expect(await fs.pathExists(file)).toBe(true);
+  });
+
+  it('after a failed complete, ANOTHER member gets 403 and the opener can re-ask', async () => {
     const { svc, internals } = service();
     const { uploadId } = await openAndStage(svc, internals);
     internals.storage.putFileStream.mockRejectedValueOnce(new Error('storage down'));
     await expect(svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral')).rejects.toThrow(
       'storage down'
     );
+
+    await expect(
+      svc.completeChunkedUpload(uploadId, 1e8, 'someone-else', 'ephemeral')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    const mediaId = await svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
+    staged.push(internals.chunkTempPath(uploadId) + '.done');
+    expect(typeof mediaId).toBe('string');
     expect(owners(internals)?.has(uploadId)).toBe(false);
   });
 
@@ -184,5 +203,40 @@ describe('the opener map does not leak', () => {
     await fs.remove(file);
     await (svc as unknown as { purgeOrphanedChunks: () => Promise<void> }).purgeOrphanedChunks();
     expect(owners(internals)?.has(uploadId)).toBe(false);
+  });
+});
+
+describe('the completion record is crash-safe and a lost session is a 404', () => {
+  it('is written BEFORE the staging is removed, and whole (temp + rename)', async () => {
+    const { svc, internals } = service();
+    const { uploadId, file } = await openAndStage(svc, internals);
+    const done = file + '.done';
+    staged.push(done);
+    let stagingPresentWhenRecordLanded: boolean | null = null;
+    const priv = svc as unknown as {
+      writeCompletedChunkUpload: (id: string, d: unknown) => Promise<void>;
+    };
+    const real = priv.writeCompletedChunkUpload.bind(svc);
+    priv.writeCompletedChunkUpload = async (id, d) => {
+      stagingPresentWhenRecordLanded = await fs.pathExists(file);
+      return real(id, d);
+    };
+    await svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
+    expect(stagingPresentWhenRecordLanded).toBe(true);
+    expect(await fs.pathExists(done + '.tmp')).toBe(false);
+  });
+
+  it('a re-ask for a session that is gone throws NotFoundException (404), not a plain Error', async () => {
+    const { svc } = service();
+    await expect(
+      svc.completeChunkedUpload('11111111-1111-4111-8111-111111111111', 1e8, OWNER, 'ephemeral')
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('an append to a session that is gone is a 404 as well', async () => {
+    const { svc } = service();
+    await expect(
+      svc.appendChunk('22222222-2222-4222-8222-222222222222', SECOND_FILE, 1e8)
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
