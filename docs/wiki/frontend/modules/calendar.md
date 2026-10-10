@@ -209,6 +209,17 @@ accept. The form reads the states from `GET .../events/:eventId/co-organisers` a
 sends `coOwnerIds` only once they arrived (`coOwnersLoad`), because the event's own `coOwners` names
 only the accepted ones ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
 
+**UP TO FOUR ORGANISERS, AND WHAT A ROW SHOWS OF THEM (user, 2026-10-10).** The cap is four
+associations in total ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
+Nothing in the interface capped at two; what LOOKED like a limit was that a pending proposal is
+invisible until accepted, and that the list and day rows drew only the organiser's logo beside the
+names joined with " + " in one truncating span. Those rows now draw `OrganiserFaces`: at most three
+circular `AssociationAvatar` faces ringed in the surface colour, then a `+N` pill, carrying the full
+list as its `aria-label` and title. The label is `eventOwnersLabel`: `A`, `A + B`, then `A + N others`
+from three on (`organisersLabel`); the full list is `organisersFullList` and the detail modal.
+**Nothing was rendered on a phone**: the stack's ring and overlap, and its look on the row's hover
+background, are owed one reading.
+
 The same fact decides what a row says: the day panel takes `ownAssociationId` (not a
 `hideAssociationName` boolean) and the dialog is told `showAssociation` per event, so a row the page
 merely co-owns still names, colours and badges its real owner.
