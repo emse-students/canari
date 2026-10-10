@@ -86,6 +86,7 @@ import { AssociationAudience } from '../spaces/association-audience.entity';
 import { assertCreatorCampusGoverned, defaultCampusRules } from '../spaces/audience-policy';
 import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
+import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import type { CoOrganiserPort } from './co-organisers.port';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
@@ -2134,6 +2135,11 @@ ${rejectionReason}`
 
     const kind = dto.kind ?? AssociationCalendarEventKind.Event;
     assertMayDecideKind(kind, AssociationCalendarEventKind.Event, isValidator);
+    // The cap is checked BEFORE the event is saved: `sync` runs after the save, and a refusal there
+    // would leave an event the caller was told failed.
+    assertWithinCoOrganiserCap(
+      new Set((dto.coOwnerIds ?? []).filter((id) => id !== targetId)).size
+    );
 
     const linkedFormId = dto.linkedFormId ?? null;
     if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId);

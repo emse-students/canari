@@ -956,6 +956,17 @@ A pending or refused co-organiser lives only in `proposals`, so it has no right 
     names only the accepted ones and a list seeded from it would withdraw every pending proposal;
   - the receiving side decides in the proposal queue, renamed "Propositions" for both kinds.
 
+**The cap: FOUR associations in total, the organiser and three co-organisers (user, 2026-10-10).**
+Accepted and pending both count (a pending proposal holds its seat), a refused one holds nothing.
+`CoorganisationService.sync` refuses an ADDITION that would pass three, and `createCalendarEvent`
+checks the same count before it saves (a refusal after the save would leave an event the caller was
+told failed); both throw `CALENDAR_COORGANISER_CAP`, which `calendarErrorMessage` names. The DTO's
+`@ArrayMaxSize(10)` stays a transport bound ON PURPOSE: a DTO at 3 would answer a generic
+validation error and make the typed code unreachable. Only an addition is refused, so an event over
+the cap could still be edited and shrunk - none exists: **prod, read-only, 2026-10-10: 9 events with
+co-organisers, the most on one event is 1, 2 proposals pending.** Nothing was grandfathered, nothing
+deleted. The picker stops the overflow first (counter `n / 4`, [calendar](frontend/modules/calendar.md)).
+
 **Migration 074 (`074_coorganise.sql`), replay-safe** (every statement guarded; the spec runs it twice):
 
 1. `coorganise` is added to the kind CHECK.

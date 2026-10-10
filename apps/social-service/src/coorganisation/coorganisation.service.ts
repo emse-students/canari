@@ -11,6 +11,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import type { CoOrganiserPort, CoOrganiserSyncRequest } from '../associations/co-organisers.port';
+import { coOrganiserCapRefusal, MAX_CO_ORGANISERS } from '../associations/co-organiser-cap';
 import { AssociationCalendarEventCoOwner } from '../associations/entities/association-calendar-event-co-owner.entity';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
@@ -166,6 +167,18 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
       this.logger.log(
         `[COORG] ${eventId.slice(0, 8)}: ${refusedAgain.length} refused co-organiser(s) not asked again`
       );
+    }
+    // THE CAP (2026-10-10): accepted + pending after this save, a refused one holding nothing. Only
+    // an ADDITION is refused, so an event already over the cap may still be edited and shrunk
+    // (none exists on prod, measured 2026-10-10; the rule is cheap and never destroys).
+    if (toPropose.length > 0) {
+      const held = [...desired].filter((id) => byId.get(id)?.status !== 'refused').length;
+      if (held > MAX_CO_ORGANISERS) {
+        this.logger.warn(
+          `[COORG] ${eventId.slice(0, 8)}: ${held} co-organisers asked, cap ${MAX_CO_ORGANISERS}`
+        );
+        throw coOrganiserCapRefusal(held);
+      }
     }
     if (!request.organiserSide) {
       const onlyLeaving =

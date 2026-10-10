@@ -340,8 +340,10 @@ export class CreateAssociationCalendarEventDto {
   targetAssocId?: string;
 
   /**
-   * Associations ASKED to co-organise this event (D39, max 10): each gets a `coorganise` proposal
-   * and co-organises only once its publishers accept it.
+   * Associations ASKED to co-organise this event (D39): each gets a `coorganise` proposal and
+   * co-organises only once its publishers accept it. The array bound (10) is only a transport
+   * sanity limit: THE CAP IS `MAX_CO_ORGANISERS`, enforced by the service so the refusal is a typed
+   * code (`CALENDAR_COORGANISER_CAP`) the form can name, not a generic validation error.
    */
   @IsOptional()
   @IsArray()
@@ -384,7 +386,7 @@ export class UpdateAssociationCalendarEventDto {
   linkedFormId?: string | null;
 
   /**
-   * The co-organisers the form now names (D39, max 10): a new one is proposed, a pending one left
+   * The co-organisers the form now names (D39; cap in the service, see the create DTO): a new one is proposed, a pending one left
    * out is withdrawn, an accepted one left out is ended. Omit to leave them unchanged.
    */
   @IsOptional()
