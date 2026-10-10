@@ -57,7 +57,7 @@ the listening prototype the user chose from, and live in ONE file,
 - **Android**: `bun tools/notification-sounds/render.mjs` renders message, mention and reaction
   offline (seeded room reverb, 44.1 kHz mono WAV, one common gain so the loudest peaks at -3 dBFS and
   relative levels hold) into `gen/android/app/src/main/res/raw/canari_gazouillis_*.wav`; `--check`
-  fails on drift. Re-run it after ANY palette edit and commit the files.
+  fails on drift (tolerating a rounding step across platforms), and `notificationSoundsDrift.test.ts` runs it in CI. Re-run it after ANY palette edit and commit the files.
 - **Channel ids moved to `_v2`.** A channel's sound is immutable once created, so
   `canari_messages`, `canari_mentions` and `canari_reactions` are deleted at startup
   (`CanariApplication.deleteSupersededChannels`) and the three sounding channels are re-created as
@@ -66,7 +66,9 @@ the listening prototype the user chose from, and live in ONE file,
   `notificationChannels.test.ts` and `soundPalette.test.ts`.
 - **iOS: not done.** A banner's sound is chosen by the APNs payload's `sound` field (set by the push
   server) and the file must be bundled in BOTH the app and the NSE targets, which means editing the
-  Xcode project and the delivery service together. Recorded in [backlog](../backlog.md).
+  Xcode project and the delivery service together. The Xcode project is the hand-maintained
+  `project.pbxproj` (not `project.yml`), which is why it is not built from a workstation.
+  Recorded in [backlog](../backlog.md).
 
 **Owed:** a listen on the Mi 9T and the Pixel (channels, after upgrade: the old entries gone, the new
 ones sounding) and on a browser (the in-app trills against the prototype).

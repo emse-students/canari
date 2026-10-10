@@ -138,6 +138,28 @@ function wav(samples) {
   return buf;
 }
 
+/**
+ * Whether a committed file IS the palette's rendering, for `--check`.
+ *
+ * The format fields of the header (rate, channels, depth) must match; the samples may differ by
+ * `CHECK_TOLERANCE_LSB` and the length by `CHECK_TOLERANCE_SAMPLES` (the tail trim sits at -70 dBFS),
+ * because `Math.sin` is not bit-identical across engines and platforms (this is checked on Linux CI
+ * and rendered on Windows) and a rounding flip of one 16-bit step is inaudible. A real palette
+ * change moves samples by hundreds of steps and the length by thousands, so the tolerance cannot
+ * hide one.
+ */
+const CHECK_TOLERANCE_LSB = 2;
+const CHECK_TOLERANCE_SAMPLES = 8;
+function sameSound(committed, fresh) {
+  if (!committed.subarray(8, 36).equals(fresh.subarray(8, 36))) return false;
+  if (Math.abs(committed.length - fresh.length) > CHECK_TOLERANCE_SAMPLES * 2) return false;
+  const end = Math.min(committed.length, fresh.length) - 1;
+  for (let i = 44; i < end; i += 2) {
+    if (Math.abs(committed.readInt16LE(i) - fresh.readInt16LE(i)) > CHECK_TOLERANCE_LSB) return false;
+  }
+  return true;
+}
+
 const ir = impulse();
 const rendered = SHIPPED.map((name) => ({ name, samples: renderSound(name, ir) }));
 const peak = Math.max(...rendered.flatMap((r) => [Math.max(...r.samples.map(Math.abs))]));
@@ -154,7 +176,7 @@ for (const { name, samples } of rendered) {
   const file = resolve(OUT, `canari_gazouillis_${name}.wav`);
   const data = wav(kept);
   if (check) {
-    if (!existsSync(file) || !readFileSync(file).equals(data)) {
+    if (!existsSync(file) || !sameSound(readFileSync(file), data)) {
       console.error(`DRIFT: ${file} differs from the palette`);
       drift++;
     }
