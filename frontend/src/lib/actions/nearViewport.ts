@@ -12,6 +12,12 @@
  * there is nothing for a second call to do and an observer left connected is a callback per scroll
  * for the life of the page. It disconnects itself the moment it fires.
  *
+ * UNLESS THE CALLER HAS SOMETHING TO GIVE BACK (`onleave`). A feed VIDEO holds a stream, a decoder
+ * and its bytes, and keeping them for every card ever scrolled past is what the reels audit found
+ * (2026-10-11: ten reels, ~300 MB). With `onleave` the observer stays connected and reports both
+ * edges of the same band - `onnear` on entering it, `onleave` on leaving it - so the owner can
+ * release what the card holds and take it again on return.
+ *
  * `rootMargin` defaults to 400px rather than 0: a card that enters the viewport and only THEN
  * starts asking is a card that is blank while the reader is already looking at it. The number is a
  * distance, not a delay - it does not decide WHETHER the work happens, only how far ahead, so
@@ -29,8 +35,10 @@
  * ```
  */
 export interface NearViewportOptions {
-  /** Called once, the first time the node is within `rootMargin` of the viewport. */
+  /** Called once, the first time the node is within `rootMargin` of the viewport - or on every entry when `onleave` is set. */
   onnear: () => void;
+  /** Called when the node leaves that band after `onnear`. Setting it keeps the observer connected. */
+  onleave?: () => void;
   /** How far ahead of the viewport counts as near. CSS margin syntax; defaults to `400px`. */
   rootMargin?: string;
 }
@@ -39,13 +47,23 @@ export function nearViewport(node: HTMLElement, options: NearViewportOptions) {
   let opts = options;
   let observer: IntersectionObserver | null = null;
   let fired = false;
+  /** Two-way, read once like the margin: an observer is not rebuilt for a changed mode. */
+  const twoWay = !!options.onleave;
 
   function fire() {
     if (fired) return;
     fired = true;
-    observer?.disconnect();
-    observer = null;
+    if (!twoWay) {
+      observer?.disconnect();
+      observer = null;
+    }
     opts.onnear();
+  }
+
+  function leave() {
+    if (!fired) return;
+    fired = false;
+    opts.onleave?.();
   }
 
   if (typeof IntersectionObserver === 'undefined') {
@@ -60,7 +78,9 @@ export function nearViewport(node: HTMLElement, options: NearViewportOptions) {
 
   observer = new IntersectionObserver(
     (entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) fire();
+      // The LAST entry is the node's current state; several arrive when it crosses back and forth.
+      if (entries[entries.length - 1]?.isIntersecting) fire();
+      else if (twoWay) leave();
     },
     { rootMargin: opts.rootMargin ?? '400px' }
   );

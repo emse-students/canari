@@ -133,6 +133,30 @@ describe('nearViewport', () => {
   });
 
   /**
+   * TWO-WAY WHEN THE CALLER HAS SOMETHING TO GIVE BACK: a feed video releases its stream and its
+   * decoder on leaving the band, and takes them again on return (reels audit, 2026-10-11).
+   */
+  it('with onleave, stays connected and reports each entry and each exit once', () => {
+    useFakeObserver();
+    const onnear = vi.fn();
+    const onleave = vi.fn();
+    nearViewport(document.createElement('a'), { onnear, onleave });
+
+    FakeObserver.last!.leave();
+    expect(onleave).not.toHaveBeenCalled();
+
+    FakeObserver.last!.enter();
+    FakeObserver.last!.enter();
+    FakeObserver.last!.leave();
+    FakeObserver.last!.leave();
+    FakeObserver.last!.enter();
+
+    expect(onnear).toHaveBeenCalledTimes(2);
+    expect(onleave).toHaveBeenCalledTimes(1);
+    expect(FakeObserver.last!.disconnected).toBe(0);
+  });
+
+  /**
    * NOT A FALLBACK PATH: no primary path failed, the environment simply cannot answer. Saying "yes"
    * is what every caller did before this action existed, and it is what keeps a preview from never
    * loading at all where the API is absent.

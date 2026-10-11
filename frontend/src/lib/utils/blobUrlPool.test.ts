@@ -75,6 +75,44 @@ describe('BlobUrlPool', () => {
     expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:first');
   });
 
+  /**
+   * THE CAP IS BYTES, NOT ENTRIES (reels audit, 2026-10-11): ten reels of 30 MB are ten entries of
+   * a 200-entry cap, and were all kept for five minutes. Past the byte cap the least recently used
+   * IDLE entry goes at once, and a HELD one - the video on screen - never does.
+   */
+  it('evicts idle entries least recently used first once the byte cap is exceeded', () => {
+    const pool = new BlobUrlPool({ maxBytes: 100 });
+    pool.retain('old', 'blob:old', 40);
+    vi.advanceTimersByTime(1);
+    pool.retain('recent', 'blob:recent', 40);
+    pool.release('old');
+    vi.advanceTimersByTime(1);
+    pool.release('recent');
+
+    pool.retain('new', 'blob:new', 40);
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:old');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:recent');
+    expect(pool.bytes).toBe(80);
+    expect(pool.tryRetain('old')).toBeNull();
+    expect(pool.tryRetain('recent')).toBe('blob:recent');
+  });
+
+  it('never evicts a held entry to honour the byte cap, and evicts it as soon as it is released', () => {
+    const pool = new BlobUrlPool({ maxBytes: 100 });
+    pool.retain('playing', 'blob:playing', 80);
+    pool.retain('next', 'blob:next', 80);
+
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    expect(pool.bytes).toBe(160);
+
+    // Released while over the cap: given back now, not after the five-minute delay.
+    pool.release('playing');
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:playing');
+    expect(pool.bytes).toBe(80);
+    expect(pool.tryRetain('next')).toBe('blob:next');
+  });
+
   it('keeps a blob alive while another holder remains', () => {
     const pool = new BlobUrlPool({ evictDelayMs: 0 });
     pool.retain('a', 'blob:first');

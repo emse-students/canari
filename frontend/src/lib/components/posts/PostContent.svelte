@@ -120,6 +120,18 @@
   const nearMedia = new SvelteSet<string>();
 
   /**
+   * The band watch of one attachment. A VIDEO is watched both ways: leaving the band takes it out
+   * of `nearMedia`, which defers its `PostMedia` again and so closes its stream and unmounts its
+   * player (reels audit, 2026-10-11: every reel ever scrolled near kept downloading and kept its
+   * decoder). A picture stays one-shot - once fetched there is nothing worth giving back.
+   */
+  function watchNear(media: PostMediaRef) {
+    const near = () => nearMedia.add(media.mediaId);
+    if (resolveMediaType(media) !== 'video') return { onnear: near };
+    return { onnear: near, onleave: () => nearMedia.delete(media.mediaId) };
+  }
+
+  /**
    * A CanaReel (C7) is drawn VERTICAL in the feed - a 9:16 box, the video covering it - rather than
    * as an ordinary attachment, whose box follows the file's own ratio under a ceiling that crops a
    * phone's portrait clip. Touching it opens the full-screen reel viewer instead of the media viewer.
@@ -163,7 +175,7 @@
   <div class="mt-1 mb-1 w-full px-3">
     {#if reel}
       {@const media = postMedia[0]}
-      <div use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}>
+      <div use:nearViewport={watchNear(media)}>
         <div
           class="relative mx-auto aspect-9/16 h-[70svh] max-w-full overflow-hidden rounded-lg bg-black"
           data-reel-card
@@ -207,7 +219,7 @@
             {@const featured = gallery.shape === 'feature' && i === 0}
             {@const overflowCell = gallery.overflow > 0 && i === gallery.visible - 1}
             <div
-              use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}
+              use:nearViewport={watchNear(media)}
               class="relative aspect-square overflow-hidden bg-black/5 dark:bg-white/5 {featured
                 ? 'col-span-2 row-span-2'
                 : ''}"
@@ -259,7 +271,7 @@
      and each file row under a gallery. -->
 {#snippet singleMedia(media: PostMediaRef)}
   {@const reserved = reservesAspectRatio(resolveMediaType(media))}
-  <div use:nearViewport={{ onnear: () => nearMedia.add(media.mediaId) }}>
+  <div use:nearViewport={watchNear(media)}>
     <!-- A PICTURE IS INSET AND ROUNDED, NO LONGER FULL-BLEED (user, 2026-10-01, Mi 9T): run
          edge to edge, its square corners cut across the card's 18 px ones. The block's `px-3` +
          `rounded-lg` is the concentric pair - 18 px outside, 12 px in, 8 px left, which is also

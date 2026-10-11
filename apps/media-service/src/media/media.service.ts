@@ -56,6 +56,14 @@ const CHAT_REEL_RETENTION_MS = positiveIntEnv(
  * attribution this service has - and refused with a 429, an ANSWER the client must not retry blindly.
  */
 const CHAT_REEL_DAILY_BYTES = positiveIntEnv('MEDIA_CHAT_REEL_DAILY_BYTES', 500 * 1024 * 1024);
+/**
+ * A FEED reel's upload (`reel-pending`) that no post has claimed is deleted this long after it was
+ * UPLOADED. The client uploads and then publishes in the next second; a gap of a day is a publish
+ * that failed, was killed or was cancelled after the bytes had landed (reels audit, 2026-10-11:
+ * 14-35 MB left for ever). Overridable by env so a bench can cross it in seconds.
+ * [reels](docs/wiki/frontend/modules/reels.md)
+ */
+const PENDING_REEL_TTL_MS = positiveIntEnv('MEDIA_PENDING_REEL_TTL_MS', 24 * 60 * 60 * 1000);
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Purged metadata entries (tombstones) are removed from the index after this delay. */
 const META_TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -131,6 +139,17 @@ export interface MediaStorageStats {
   /** The window the sweep applies to them, echoed so the reader need not know the constant. */
   chatReelRetentionMs: number;
   /**
+   * Feed reel uploads no post has claimed yet (`reel-pending`): a publish in progress, or one that
+   * failed after its upload. Swept {@link PENDING_REEL_TTL_MS} after upload; a count that does not
+   * fall back, or an `overdue` pair that is not zero after a sweep, is the sweep or the claim broken.
+   */
+  pendingReelCount: number;
+  pendingReelBytes: number;
+  pendingReelOverdueCount: number;
+  pendingReelOverdueBytes: number;
+  /** The window the sweep applies to them, echoed so the reader need not know the constant. */
+  pendingReelTtlMs: number;
+  /**
    * Live objects carrying no class at all: everything stored before the sweep became an allowlist
    * (2026-10-01), and every upload from a client too old to name its surface. The sweep may not
    * touch them, so this line is where their growth shows.
@@ -186,6 +205,15 @@ function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason }
  *   when the post expires, 30 days after publication. Still reached by account deletion: a reel is
  *   its uploader's.
  *
+ * - `reel-pending` - a FEED reel's upload before its post exists. SET BY THE CLIENT AT UPLOAD and
+ *   PROMOTED to `reel` by the claim (`createPost` through `internal/reel-claim`), so a claimed reel
+ *   is never this class. Swept by AGE ({@link PENDING_REEL_TTL_MS} from upload) and tombstoned
+ *   `retention_expired`: an upload whose publish failed, was killed or was cancelled is reclaimed
+ *   rather than kept for ever (reels audit, 2026-10-11). Safe for the reason `chat-reel` is: a
+ *   client naming it gains only a shorter life. It cannot be applied to an existing id
+ *   (`internal/retention-class` refuses it) - that would make a claimed reel sweepable. A client
+ *   older than this class uploads `reel`, which stays kept until its post's purge, as before.
+ *
  * - `chat-reel` - a CanaReel sent in a conversation. The only class swept by AGE
  *   ({@link CHAT_REEL_RETENTION_MS} from upload, never from the last read), tombstoned `reel_expired`
  *   and answered `410`. SET BY THE CLIENT AT UPLOAD, which is safe where `association` is not: a
@@ -197,13 +225,20 @@ function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason }
  * None of them is `publicAsset`: that flag also opens `GET /media/public/:id` (no JWT), so reusing
  * it would put ciphertext on an unauthenticated route.
  */
-export type RetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel' | 'chat-reel';
+export type RetentionClass =
+  | 'ephemeral'
+  | 'archive'
+  | 'association'
+  | 'reel'
+  | 'reel-pending'
+  | 'chat-reel';
 
 export const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
   'ephemeral',
   'archive',
   'association',
   'reel',
+  'reel-pending',
   'chat-reel',
 ]);
 
@@ -632,6 +667,9 @@ export class MediaService {
    * claim it. A public asset, a purged entry, an unknown id and an object stored before ownership
    * was recorded (no `ownerId`) are all refused, never claimed on trust.
    *
+   * THE CLAIM IS THE PROMOTION: a `reel-pending` upload becomes `reel` here, which is what takes it
+   * off the age sweep ({@link isDue}). Nothing else ever turns a pending reel into a kept one.
+   *
    * Idempotent: an entry already `reel` is claimed again as a no-op.
    *
    * @returns the ids claimed (including ones already classified `reel`) and the ids refused.
@@ -1014,6 +1052,11 @@ export class MediaService {
       chatReelOverdueCount: 0,
       chatReelOverdueBytes: 0,
       chatReelRetentionMs: CHAT_REEL_RETENTION_MS,
+      pendingReelCount: 0,
+      pendingReelBytes: 0,
+      pendingReelOverdueCount: 0,
+      pendingReelOverdueBytes: 0,
+      pendingReelTtlMs: PENDING_REEL_TTL_MS,
       unclassifiedCount: 0,
       unclassifiedBytes: 0,
       retentionMs: RETENTION_MS,
@@ -1072,6 +1115,15 @@ export class MediaService {
         if (this.isDue(entry, now)) {
           stats.chatReelOverdueCount += 1;
           stats.chatReelOverdueBytes += object.size;
+        }
+        continue;
+      }
+      if (entry.retentionClass === 'reel-pending') {
+        stats.pendingReelCount += 1;
+        stats.pendingReelBytes += object.size;
+        if (this.isDue(entry, now)) {
+          stats.pendingReelOverdueCount += 1;
+          stats.pendingReelOverdueBytes += object.size;
         }
         continue;
       }
@@ -1459,7 +1511,8 @@ export class MediaService {
   }
 
   /**
-   * THE ALLOWLIST: true only for what the idle sweep may delete, which is the `ephemeral` class.
+   * THE ALLOWLIST: true only for what the sweep may delete - `ephemeral` by idleness, `chat-reel`
+   * and an unclaimed `reel-pending` by age ({@link isDue}). A claimed reel is `reel`, never here.
    *
    * Everything else is kept - every other class, an unclassified entry, a public asset - so a new
    * surface that forgets to name its class costs storage rather than a member's file. That
@@ -1472,7 +1525,9 @@ export class MediaService {
   private isSweepable(entry: MediaMetaEntry | undefined): boolean {
     if (!entry) return false;
     return (
-      (entry.retentionClass === 'ephemeral' || entry.retentionClass === 'chat-reel') &&
+      (entry.retentionClass === 'ephemeral' ||
+        entry.retentionClass === 'chat-reel' ||
+        entry.retentionClass === 'reel-pending') &&
       !this.isPublicAssetEntry(entry)
     );
   }
@@ -1480,13 +1535,17 @@ export class MediaService {
   /**
    * Whether a sweepable entry's OWN clock has run out: an `ephemeral` object when nobody has read it
    * for {@link RETENTION_MS}, a `chat-reel` when {@link CHAT_REEL_RETENTION_MS} has passed since it
-   * was UPLOADED (reading it moves nothing). One function, used by the sweep and by the stats'
+   * was UPLOADED (reading it moves nothing), a `reel-pending` when {@link PENDING_REEL_TTL_MS} has
+   * passed since its upload with no post claiming it. One function, used by the sweep and by the stats'
    * `overdue` figures, so the number stays a verdict on the sweep and not an estimate of it.
    */
   private isDue(entry: MediaMetaEntry, now: number): boolean {
     if (!this.isSweepable(entry)) return false;
     if (entry.retentionClass === 'chat-reel') {
       return entry.createdAt + CHAT_REEL_RETENTION_MS < now;
+    }
+    if (entry.retentionClass === 'reel-pending') {
+      return entry.createdAt + PENDING_REEL_TTL_MS < now;
     }
     return entry.lastAccessAt < now - RETENTION_MS;
   }

@@ -53,6 +53,12 @@
      * can play at once, as on Discord; opening a viewer pauses them.
      */
     manualPlay?: boolean;
+    /**
+     * Handed the `<video>` once it exists, and again with a new callback; the function it returns
+     * runs when either goes. A PACED stream reads its demand from this element (`PostMedia`,
+     * `SegmentedStreamHandle.attach`): what it plays decides what is fetched.
+     */
+    onVideo?: (video: HTMLVideoElement) => (() => void) | void;
   }
 
   let {
@@ -65,6 +71,7 @@
     streamed = false,
     onMetadata,
     manualPlay = false,
+    onVideo,
   }: Props = $props();
 
   /**
@@ -77,6 +84,11 @@
   }
 
   let videoEl: HTMLVideoElement | null = $state(null);
+
+  $effect(() => {
+    if (!videoEl || !onVideo) return;
+    return onVideo(videoEl) ?? undefined;
+  });
   /**
    * The first frame is in the element. Until then `VideoPoster` covers the box: a stream has no
    * `#t=0.1` frame to show, and an engine slow to decode one would otherwise show a black box.
