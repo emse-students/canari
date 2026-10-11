@@ -6,10 +6,13 @@
    * because Android's WebView has no PDF renderer and would show a blank frame - this is the
    * one rendering path that behaves identically on web, Android, iOS and desktop.
    *
-   * Pages render lazily as they scroll into view, so opening a 200-page document costs one
-   * page. A placeholder holds A4 proportions until its page lands: the real size is only
-   * known once the page object is loaded, and loading every page up front to measure them
-   * would defeat the laziness. The scrollbar therefore settles slightly as pages arrive.
+   * Pages render lazily as they come near the viewport, through a bounded queue
+   * (`utils/pdfRenderQueue.ts`): visible pages first, at most two renders at once, and a render
+   * for a page that has left the window is cancelled. Each page first gets a small PREVIEW, kept
+   * for the life of the document, then a SHARP bitmap held under a byte budget, the farthest
+   * dropped first - so a page is blurry for one cheap pass rather than blank, and a long document
+   * cannot exhaust a phone's memory. A placeholder holds A4 proportions until a page's own are
+   * known, so the scrollbar settles slightly as pages arrive.
    */
   import { tick, untrack } from 'svelte';
   import {
@@ -24,11 +27,27 @@
   import FullScreenViewer from './FullScreenViewer.svelte';
   import {
     openPdfDocument,
-    releasePdfObjectUrl,
+    PdfRenderCancelled,
+    releasePdfCanvas,
     type PdfDocument,
     type PdfTextRun,
-    type RenderedPdfPage,
+    type RenderedPdfCanvas,
   } from '$lib/utils/pdfDocument';
+  import {
+    bitmapBytes,
+    planEviction,
+    PREVIEW_BYTE_BUDGET,
+    PREVIEW_PIXEL_BUDGET,
+    RenderQueue,
+    SettledWidth,
+    VIEWER_BYTE_BUDGET,
+    wantedJobs,
+    type PageNeed,
+    type RenderJob,
+    type RunningRender,
+    type VisibleRange,
+  } from '$lib/utils/pdfRenderQueue';
+  import { Log } from '$lib/utils/Log';
   import PdfTextLayer from './PdfTextLayer.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -46,36 +65,45 @@
 
   /** Render width multipliers, in order. 1 = fit the column width. */
   const ZOOM_STEPS = [1, 1.5, 2, 3];
-  /** Hard cap on the rasterised width, mirroring the scale cap in `pdfDocument.ts`. */
-  const MAX_RENDER_WIDTH = 2400;
   /** Reading width at zoom 1; wider than this a page column stops being readable. */
   const COLUMN_MAX_WIDTH = 900;
+  /**
+   * How long the zoom must stay put before visible pages are re-rendered sharp. Until then the
+   * current bitmaps are simply stretched by CSS (the column widens, each canvas is `width: 100%`),
+   * so walking 1 -> 1.5 -> 2 -> 3 on the buttons costs ONE re-render, at the step it ends on.
+   */
+  const ZOOM_SETTLE_MS = 250;
 
   let zoomIndex = $state(0);
   const zoom = $derived(ZOOM_STEPS[zoomIndex]);
 
   let pageCount = $state(0);
   let loadError = $state(false);
-  /** Rasterised bitmap per page, 0-based; `null` until that page has been rendered. */
-  let pages = $state<(RenderedPdfPage | null)[]>([]);
+  /**
+   * Sharp bitmap per page, 0-based; `null` until rendered or once evicted.
+   *
+   * `$state.raw` because a canvas must never be proxied, and every change is a whole new array.
+   */
+  let sharp = $state.raw<(RenderedPdfCanvas | null)[]>([]);
+  /** Low-resolution preview per page, 0-based; kept for the life of the document. */
+  let previews = $state.raw<(RenderedPdfCanvas | null)[]>([]);
   /**
    * Selectable text per page, 0-based; `null` until extracted.
    *
-   * Kept apart from {@link pages} because the two have different lifetimes: the bitmap is replaced
-   * on every zoom step and the text never changes, so one extraction serves the whole session.
+   * Kept apart from the bitmaps because the two have different lifetimes: a bitmap is replaced on
+   * every zoom and the text never changes, so one extraction serves the whole session.
    */
   let pageTexts = $state<(PdfTextRun[] | null)[]>([]);
   /**
-   * Last known height/width per page, kept ACROSS a re-render so the placeholder that replaces
-   * a page during a zoom keeps that page's real proportions instead of falling back to A4.
+   * Last known height/width per page, kept ACROSS a re-render so the placeholder keeps that page's
+   * real proportions instead of falling back to A4.
    */
-  const knownRatios: Record<number, number> = {};
+  let knownRatios = $state<Record<number, number>>({});
   /**
-   * CSS width each page's current bitmap was rasterised FOR, per 0-based index.
+   * CSS width each page's sharp bitmap was rasterised FOR, per 0-based index.
    *
-   * Not derivable from the bitmap: `RenderedPdfPage.width` is the canvas size in DEVICE pixels
-   * (`maxWidth * devicePixelRatio`, capped), so comparing it against `renderWidth` would compare
-   * two different units and re-render every page forever on any screen with a dpr above 1.
+   * Not derivable from the bitmap: its size is in DEVICE pixels and capped by the pixel budget, so
+   * comparing it against `renderWidth` would compare two different units and re-render forever.
    */
   let renderedAt: Record<number, number> = {};
   /** Width of the scroll viewport, which is what "fit" means at zoom 1. */
@@ -92,26 +120,41 @@
   const columnWidth = $derived(Math.min(COLUMN_MAX_WIDTH, Math.max(320, viewportWidth)));
 
   /**
-   * The only two scales pages are ever rasterised at.
-   *
-   * Rasterising per zoom STEP meant four passes over the document, and a pinch through 1.5 and 2
-   * on the way to 3 paid for all of them - which is heavy on a phone and, since each pass swapped
-   * the bitmaps out, made the page flash empty repeatedly. Two levels bound that to at most one
-   * re-render for any gesture: `1` for the fit-width reading view, and the LARGEST step for
-   * everything above it. The intermediate steps then display a bitmap rasterised bigger than they
-   * need, i.e. downscaled by the browser, which loses nothing visually; only a zoom past the last
-   * step (impossible here, it is the cap) would ever upscale.
+   * CSS width each page is rasterised for. The bitmap's PIXEL size is then bounded by the per-page
+   * budget in `pdfRenderQueue.ts`, which is what keeps a x3 zoom affordable on a phone.
    */
-  const RENDER_ZOOMS = [ZOOM_STEPS[0], ZOOM_STEPS[ZOOM_STEPS.length - 1]];
-  const renderZoom = $derived(zoom <= RENDER_ZOOMS[0] ? RENDER_ZOOMS[0] : RENDER_ZOOMS[1]);
+  const renderWidth = $derived(columnWidth * zoom);
 
+  // `$state.raw`: a deep proxy of the handle would never be `===` the handle the queue holds, and
+  // every finished render would be dropped as belonging to a closed document.
+  let doc = $state.raw<PdfDocument | null>(null);
+
+  /** 0-based indices within a screen of the viewport: the render window. Not reactive. */
+  const near: Record<number, true> = {};
   /**
-   * Width each page is rasterised at. Zooming re-renders rather than upscaling a bitmap, so the
-   * text stays sharp - which is the point of zooming into a document on a phone.
+   * 0-based indices within THREE screens of the viewport: the pages that carry their selectable
+   * text layer. Reactive, because the template mounts the layer from it.
+   *
+   * A window and not "every page whose text ever loaded": a layer is hundreds of absolutely placed
+   * spans, a zoom re-lays out every mounted one, and with all 81 pages of a scan carrying theirs a
+   * zoom click froze for 11-13 s on a Mi 9T. Three screens rather than one keeps a drag selection
+   * across pages and the browser's find-in-page working around where the reader is; a page farther
+   * away than that is not findable by Ctrl+F until the reader comes back near it - the price, named
+   * in the wiki.
    */
-  const renderWidth = $derived(Math.min(MAX_RENDER_WIDTH, columnWidth * renderZoom));
+  const textWindow = $state<Record<number, true>>({});
+  /** 0-based indices actually intersecting the viewport. Not reactive: nothing renders it. */
+  const visible: Record<number, true> = {};
 
-  let doc = $state<PdfDocument | null>(null);
+  /** The render queue of the open document; replaced with it. */
+  let queue: RenderQueue | null = null;
+
+  /** Inclusive range of what is on screen; empty (`first > last`) before anything is laid out. */
+  function visibleRange(): VisibleRange {
+    const shown = Object.keys(visible).map(Number);
+    if (shown.length === 0) return { first: 0, last: -1 };
+    return { first: Math.min(...shown), last: Math.max(...shown) };
+  }
 
   // Open the document once per URL; everything rendered from it dies with it.
   $effect(() => {
@@ -121,7 +164,8 @@
 
     loadError = false;
     pageCount = 0;
-    pages = [];
+    sharp = [];
+    previews = [];
     pageTexts = [];
     renderedAt = {};
 
@@ -133,10 +177,12 @@
         }
         opened = handle;
         doc = handle;
+        queue = new RenderQueue((job) => startRender(handle, job));
         pageCount = handle.numPages;
-        pages = Array.from({ length: handle.numPages }, () => null);
+        sharp = Array.from({ length: handle.numPages }, () => null);
+        previews = Array.from({ length: handle.numPages }, () => null);
         pageTexts = Array.from({ length: handle.numPages }, () => null);
-        console.debug(`[pdfViewer] opened "${fileName}" (${handle.numPages} pages)`);
+        Log.d('pdfViewer:opened', { fileName, pages: handle.numPages });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -146,84 +192,156 @@
 
     return () => {
       cancelled = true;
+      queue?.clear();
+      queue = null;
       doc = null;
       void opened?.destroy();
-      // Every bitmap was produced from this document, so it dies with it - on close as much
-      // as on a URL change. `untrack` because this effect must depend on `url` ALONE: reading
-      // `pages` here would re-run the teardown on every page that lands and revoke the object
-      // URLs the images are currently displaying.
+      // Every bitmap was produced from this document, so it dies with it - on close as much as on
+      // a URL change. `untrack` because this effect must depend on `url` ALONE.
       untrack(() => {
-        for (const page of pages) releasePdfObjectUrl(page?.url ?? null);
+        for (const page of sharp) releasePdfCanvas(page?.canvas);
+        for (const page of previews) releasePdfCanvas(page?.canvas);
       });
     };
   });
 
-  // A zoom (or a viewport resize) makes every bitmap the wrong size, so whatever is on screen is
-  // re-rendered - but the CURRENT bitmaps stay on screen while that happens. Dropping them first
-  // blanked the document mid-gesture, and the placeholder that replaced them is an `aspect-ratio`
-  // box with `overflow-hidden`, so a page whose proportions were not yet known was also visibly
-  // CUT. An old bitmap is simply the right image at the wrong resolution: the browser scales it,
-  // and it is replaced in place the moment the sharp one lands.
-  // Same `untrack` reason as above - the dependency is the width, and only the width. The observer
-  // cannot do this on its own: a page that is already intersecting produces no new callback, so
-  // nothing would ever ask for it again.
-  $effect(() => {
-    const width = renderWidth;
-    untrack(() => {
-      if (!pages.some((page) => page !== null)) return;
-      console.debug(
-        `[pdfViewer] re-rendering visible pages at ${width}px, keeping current bitmaps`
-      );
-      for (const [index, isOnScreen] of Object.entries(onScreen)) {
-        if (isOnScreen) void renderPage(Number(index));
+  /**
+   * Starts one queued render and wires its outcome into the page arrays.
+   *
+   * The current bitmap stays on screen until its replacement lands: an old bitmap is the right
+   * image at the wrong resolution, which is strictly better than a blank or cut page.
+   */
+  function startRender(handle: PdfDocument, job: RenderJob): RunningRender {
+    const render = handle.renderPage(
+      job.index + 1,
+      job.kind === 'preview'
+        ? { cssWidth: columnWidth, maxPixels: PREVIEW_PIXEL_BUDGET }
+        : { cssWidth: job.width }
+    );
+    const done = render.promise.then(
+      (rendered) => accept(handle, job, rendered),
+      (err) => {
+        if (err instanceof PdfRenderCancelled) {
+          Log.d('pdfViewer:renderCancelled', { page: job.index + 1, kind: job.kind });
+          return;
+        }
+        console.error(`[pdfViewer] page ${job.index + 1} could not be rendered`, err);
       }
-    });
-  });
+    );
+    return { cancel: render.cancel, done };
+  }
 
-  /** 0-based page indices currently rasterising. Deliberately NOT reactive: nothing renders it. */
-  const rendering: Record<number, boolean> = {};
-  /** 0-based page indices currently within a screen of the viewport. Not reactive either. */
-  const onScreen: Record<number, boolean> = {};
+  /** Puts a finished render on screen, or frees it if its document has gone. */
+  async function accept(handle: PdfDocument, job: RenderJob, rendered: RenderedPdfCanvas) {
+    if (doc !== handle) {
+      Log.d('pdfViewer:renderForClosedDocument', { page: job.index + 1, kind: job.kind });
+      releasePdfCanvas(rendered.canvas);
+      return;
+    }
+    knownRatios[job.index] = rendered.height / rendered.width;
+    const isPreview = job.kind === 'preview';
+    const next = [...(isPreview ? previews : sharp)];
+    const previous = next[job.index];
+    next[job.index] = rendered;
+    if (isPreview) {
+      previews = next;
+    } else {
+      sharp = next;
+      renderedAt[job.index] = job.width;
+    }
+    // Only once the swap has been flushed is the old canvas certainly out of the page.
+    if (previous) {
+      await tick();
+      releasePdfCanvas(previous.canvas);
+    }
+    evictOverBudget(job.kind);
+  }
 
   /**
-   * Rasterises one 0-based page index, unless it is in flight or already at the wanted width.
-   *
-   * The width is the guard rather than "has a bitmap at all", because a zoom does not remove the
-   * old bitmaps any more: a page held at the previous width must be re-rendered when it comes back
-   * on screen, and one already at this width must not be rendered twice.
+   * Drops the bitmaps of one kind farthest from the screen until the rest fit that kind's budget:
+   * {@link VIEWER_BYTE_BUDGET} for sharp bitmaps, {@link PREVIEW_BYTE_BUDGET} for previews.
    */
-  async function renderPage(index: number) {
-    const handle = doc;
-    if (!handle || rendering[index]) return;
-    const width = renderWidth;
-    if (pages[index] && renderedAt[index] === width) return;
-    rendering[index] = true;
-    try {
-      const rendered = await handle.renderPage(index + 1, width);
-      knownRatios[index] = rendered.height / rendered.width;
-      // The zoom (or the document) may have changed while this page was rasterising; a
-      // bitmap for a width nobody displays any more is dropped rather than shown.
-      if (doc !== handle || width !== renderWidth) {
-        releasePdfObjectUrl(rendered.url);
-        return;
+  function evictOverBudget(kind: RenderJob['kind']) {
+    const pool = kind === 'preview' ? previews : sharp;
+    const resident = pool.flatMap((page, index) =>
+      page ? [{ index, bytes: bitmapBytes(page.width, page.height) }] : []
+    );
+    const budget = kind === 'preview' ? PREVIEW_BYTE_BUDGET : VIEWER_BYTE_BUDGET;
+    const evict = planEviction(resident, budget, visibleRange());
+    if (evict.length === 0) return;
+    Log.d('pdfViewer:evict', { kind, pages: evict.map((i) => i + 1) });
+    const next = [...pool];
+    const freed: RenderedPdfCanvas[] = [];
+    for (const index of evict) {
+      const page = next[index];
+      if (page) freed.push(page);
+      next[index] = null;
+      if (kind === 'sharp') {
+        delete renderedAt[index];
+        doc?.releasePage(index + 1);
       }
-      const next = [...pages];
-      const previous = next[index];
-      next[index] = rendered;
-      pages = next;
-      renderedAt[index] = width;
-      // Only once the swap has been flushed is the old bitmap certainly off screen. Revoking it
-      // before that races the `<img>` still pointing at it.
-      if (previous) {
-        await tick();
-        releasePdfObjectUrl(previous.url);
-      }
-    } catch (err) {
-      console.error(`[pdfViewer] page ${index + 1} could not be rendered`, err);
-    } finally {
-      delete rendering[index];
     }
+    if (kind === 'preview') previews = next;
+    else sharp = next;
+    void tick().then(() => {
+      for (const page of freed) releasePdfCanvas(page.canvas);
+    });
   }
+
+  /**
+   * Pages that left the near window since the last pass, whose pdf.js caches are dropped AFTER the
+   * queue has cancelled their renders - pdf.js refuses to clean a page that is still rendering.
+   */
+  let leftWindow: number[] = [];
+
+  /** Tells the queue what is wanted now, from what is near and visible. */
+  function schedule() {
+    // The SETTLED width, never the live `renderWidth`: reading the live one started a round of
+    // sharp renders on every zoom click, 250 ms before the settle that was meant to be the only one.
+    const width = settledWidth.value;
+    if (!queue || width === null) return;
+    const needs: PageNeed[] = Object.keys(near)
+      .map(Number)
+      .map((index) => ({
+        index,
+        hasPreview: previews[index] != null,
+        sharpWidth: sharp[index] ? (renderedAt[index] ?? null) : null,
+      }));
+    queue.want(wantedJobs(needs, visibleRange(), width, width <= columnWidth * ZOOM_STEPS[0]));
+    for (const index of leftWindow) if (!near[index]) doc?.releasePage(index + 1);
+    leftWindow = [];
+  }
+
+  /**
+   * Coalesces the bursts of intersection callbacks a scroll produces into one scheduling pass per
+   * frame - a fling crosses many pages, and each crossing would otherwise re-plan the whole queue.
+   */
+  let scheduleFrame = 0;
+  function scheduleSoon() {
+    if (scheduleFrame) return;
+    scheduleFrame = requestAnimationFrame(() => {
+      scheduleFrame = 0;
+      schedule();
+    });
+  }
+
+  /** The width renders are for, written only by its own settle timer (see `SettledWidth`). */
+  const settledWidth = new SettledWidth(ZOOM_SETTLE_MS, (width) => {
+    Log.d('pdfViewer:zoomSettled', { width });
+    schedule();
+  });
+
+  // A zoom (or a viewport resize) makes the sharp bitmaps the wrong size. They stay on screen,
+  // stretched by CSS, and the visible pages are re-rendered once the zoom has stopped moving.
+  // Nothing is proposed before the viewport has a width: the 320 px floor of `columnWidth` would
+  // otherwise settle first and render every first page twice. `untrack` because the dependency is
+  // the width, and only the width.
+  $effect(() => {
+    const width = renderWidth;
+    if (viewportWidth === 0) return;
+    untrack(() => settledWidth.propose(width));
+  });
+  $effect(() => () => settledWidth.dispose());
 
   /** 0-based page indices whose text is being extracted. Not reactive: nothing renders it. */
   const extracting: Record<number, boolean> = {};
@@ -231,8 +349,8 @@
   /**
    * Extracts one page's selectable text, once for the life of the document.
    *
-   * Unlike {@link renderPage} there is no width to guard on - the runs are in page fractions, so
-   * they are already correct at every zoom. The guard is therefore simply "do we have it".
+   * There is no width to guard on - the runs are in page fractions, so they are already correct at
+   * every zoom. The guard is therefore simply "do we have it".
    */
   async function loadPageText(index: number) {
     const handle = doc;
@@ -255,28 +373,112 @@
     }
   }
 
+  /** The three page observers, shared by every page so a 600-page document costs three, not 1800. */
+  interface PageObservers {
+    near: IntersectionObserver;
+    text: IntersectionObserver;
+    visible: IntersectionObserver;
+  }
+  let observers: PageObservers | null = null;
+
   /**
-   * Renders a page when it comes within a screen of the viewport. Attached per placeholder
-   * so a page that scrolls away never costs anything it has not already cost.
+   * Creates the observers on first use, once the scroll container exists. Each tracks one window:
+   * within a screen ("near", rendered ahead), within three screens ("text", carries its selectable
+   * layer) and on screen ("visible", rendered first and never evicted). A page leaving the near
+   * window also has its pdf.js decoded images dropped, on the next scheduling pass.
+   *
+   * ROOTED ON THE SCROLL CONTAINER. Against the viewport, a page below the container's visible area
+   * is clipped by the container's own overflow before the margin applies, so the margin did nothing
+   * (measured in Chrome 2026-10-11: a page 0.3 screens below the fold was never requested until it
+   * scrolled in) - "near" meant "visible".
    */
-  function visible(node: HTMLElement, index: number) {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const isOnScreen = entries.some((entry) => entry.isIntersecting);
-        onScreen[index] = isOnScreen;
-        if (isOnScreen) {
-          void renderPage(index);
-          void loadPageText(index);
-        }
-      },
-      { rootMargin: '100% 0px' }
-    );
-    observer.observe(node);
+  function pageObservers(): PageObservers {
+    if (observers) return observers;
+    const each = (
+      entries: IntersectionObserverEntry[],
+      apply: (i: number, on: boolean) => void
+    ) => {
+      for (const entry of entries) {
+        apply(Number((entry.target as HTMLElement).dataset.pageIndex), entry.isIntersecting);
+      }
+      scheduleSoon();
+    };
+    observers = {
+      near: new IntersectionObserver(
+        (entries) =>
+          each(entries, (index, on) => {
+            if (on) near[index] = true;
+            else if (near[index]) {
+              delete near[index];
+              leftWindow.push(index);
+            }
+          }),
+        { root: scrollEl, rootMargin: '100% 0px' }
+      ),
+      text: new IntersectionObserver(
+        (entries) =>
+          each(entries, (index, on) => {
+            if (on) {
+              textWindow[index] = true;
+              void loadPageText(index);
+            } else delete textWindow[index];
+          }),
+        { root: scrollEl, rootMargin: '300% 0px' }
+      ),
+      visible: new IntersectionObserver(
+        (entries) =>
+          each(entries, (index, on) => {
+            if (on) visible[index] = true;
+            else delete visible[index];
+          }),
+        { root: scrollEl }
+      ),
+    };
+    return observers;
+  }
+
+  $effect(() => () => {
+    observers?.near.disconnect();
+    observers?.text.disconnect();
+    observers?.visible.disconnect();
+    observers = null;
+  });
+
+  /** Registers one page placeholder with the shared observers. */
+  function observePage(node: HTMLElement, index: number) {
+    node.dataset.pageIndex = String(index);
+    const all = pageObservers();
+    all.near.observe(node);
+    all.text.observe(node);
+    all.visible.observe(node);
     return {
       destroy: () => {
-        delete onScreen[index];
-        observer.disconnect();
+        delete near[index];
+        delete textWindow[index];
+        delete visible[index];
+        all.near.unobserve(node);
+        all.text.unobserve(node);
+        all.visible.unobserve(node);
       },
+    };
+  }
+
+  /**
+   * Shows one page's canvas inside its slot - the sharp one when there is one, else the preview.
+   * The canvas is moved, never copied: it IS the bitmap, and a copy would hold the pixels twice.
+   */
+  function showCanvas(node: HTMLElement, shown: { canvas: HTMLCanvasElement; label: string }) {
+    const place = ({ canvas, label }: { canvas: HTMLCanvasElement; label: string }) => {
+      canvas.className = 'block h-auto w-full';
+      canvas.setAttribute('role', 'img');
+      canvas.setAttribute('aria-label', label);
+      if (node.firstChild !== canvas) node.replaceChildren(canvas);
+    };
+    place(shown);
+    return {
+      update: place,
+      // The slot unmounts with the page or the viewer; the canvas itself is freed by its owner.
+      destroy: () => node.replaceChildren(),
     };
   }
 
@@ -581,31 +783,32 @@
                transform-origin: {pinchOriginCss};
                transition: {pinchScale === 1 && !settling ? 'transform 120ms ease-out' : 'none'};"
       >
-        {#each pages as page, index (index)}
+        {#each { length: pageCount } as _, index (index)}
+          {@const shown = sharp[index] ?? previews[index]}
           <!-- `relative` so the text layer can be absolutely placed over the bitmap. -->
           <div
-            use:visible={index}
+            use:observePage={index}
             class="relative w-full overflow-hidden rounded-lg bg-white shadow-lg"
-            style={page ? '' : `aspect-ratio: 1 / ${placeholderRatio(index)};`}
+            style={shown ? '' : `aspect-ratio: 1 / ${placeholderRatio(index)};`}
           >
-            {#if page}
-              <img
-                src={page.url}
-                alt={m.pdf_viewer_page_alt({ page: index + 1, total: pageCount })}
-                class="block h-auto w-full"
-                draggable="false"
-              />
+            {#if shown}
+              <div
+                use:showCanvas={{
+                  canvas: shown.canvas,
+                  label: m.pdf_viewer_page_alt({ page: index + 1, total: pageCount }),
+                }}
+              ></div>
               <!--
                 The page's own displayed height, derived rather than measured: every page is
                 the column's inner width wide, and the bitmap's aspect ratio gives the rest.
                 Measuring instead would mean one ResizeObserver per page - two hundred of them
                 on a long document - to learn something the numbers already say exactly.
               -->
-              {#if pageTexts[index] && columnInnerWidth > 0}
+              {#if pageTexts[index] && textWindow[index] && columnInnerWidth > 0}
                 <PdfTextLayer
                   runs={pageTexts[index]!}
                   pageWidth={columnInnerWidth}
-                  pageHeight={(columnInnerWidth * page.height) / page.width}
+                  pageHeight={(columnInnerWidth * shown.height) / shown.width}
                 />
               {/if}
             {/if}

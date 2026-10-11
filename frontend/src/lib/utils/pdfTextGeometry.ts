@@ -72,7 +72,10 @@ export function composeMatrix(m1: Matrix, m2: Matrix): Matrix {
  *
  * @param viewportTransform - `page.getViewport({ scale: 1 }).transform`.
  * @param runTransform - `item.transform` from `page.getTextContent()`.
- * @param runWidth - `item.width`, in text space at scale 1.
+ * @param runWidth - `item.width`, which pdf.js already gives in PAGE units ("device space" at scale
+ *   1: font size and text matrix applied). It used to be multiplied by the run's scale again, which
+ *   made every span of the selectable layer about font-size times too wide - measured 2026-10-11 on
+ *   a scan, a 43-character line 3.3 page-widths wide.
  * @param pageWidth - viewport width at scale 1, in CSS pixels.
  * @param pageHeight - viewport height at scale 1, in CSS pixels.
  * @returns the box in page fractions, or `null` when the page has no area to divide by - returning
@@ -96,13 +99,12 @@ export function textRunBox(
   if (!(fontHeight > 0)) return null;
 
   const angle = Math.atan2(t[1], t[0]);
-  // Same reasoning horizontally: the run's advance is measured along its own baseline.
-  const scaleX = Math.hypot(t[0], t[1]);
 
   return {
     left: t[4] / pageWidth,
     top: (t[5] - fontHeight) / pageHeight,
-    width: (runWidth * scaleX) / pageWidth,
+    // Already the advance along the run's own baseline, in page units - see `runWidth`.
+    width: runWidth / pageWidth,
     fontHeight: fontHeight / pageHeight,
     angle,
   };
