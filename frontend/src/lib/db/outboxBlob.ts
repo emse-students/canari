@@ -1,4 +1,6 @@
 import { fromBase64, toBase64 } from '$lib/utils/hex';
+import { Log } from '$lib/utils/Log';
+import { appendLog } from '$lib/utils/sessionLog';
 import { OutboxPayloadUnreadableError } from './outboxCodec';
 import type { OutboxEntry } from './types';
 
@@ -114,12 +116,29 @@ function request<T>(req: IDBRequest<T>): Promise<T> {
   });
 }
 
-/** Resolves when the transaction COMMITS; rejects with its error on abort (a quota refusal included). */
-function committed(tx: IDBTransaction): Promise<void> {
+/**
+ * Resolves when the transaction COMMITS; rejects with the error that made it fail.
+ *
+ * THE ERROR IS READ FROM THE REQUEST FIRST. Per the IndexedDB spec `transaction.error` is set only
+ * when the transaction ABORTS, so during the `error` event a request fired it is still `null` -
+ * rejecting with it there handed `null` to {@link isQuotaError}, and an engine that reports a full
+ * disk as a request error never showed the member "storage full". The request's own `error` is what
+ * that event carries; `tx.error` is the answer at abort; a bare abort with neither still rejects
+ * with a real error, never `null`.
+ *
+ * Exported for every IndexedDB transaction of the outbox, on both databases.
+ */
+export function idbCommitted(tx: IDBTransaction): Promise<void> {
   const done = new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+    tx.onerror = (ev) => {
+      const req = ev.target as IDBRequest | null;
+      reject(
+        req?.error ?? tx.error ?? new DOMException('IndexedDB request failed', 'UnknownError')
+      );
+    };
+    tx.onabort = () =>
+      reject(tx.error ?? new DOMException('IndexedDB transaction aborted', 'AbortError'));
   });
   // Marked handled up front: a synchronous throw between opening the transaction and awaiting it
   // (a DataCloneError on `put`) would otherwise leave an unhandled rejection behind the real one.
@@ -193,6 +212,7 @@ export class OutboxBlobStore {
    * browser refused for lack of space - never a partial write: the put is one transaction.
    */
   async put(id: string, bytes: Uint8Array): Promise<string> {
+    Log.d('outboxBlob.put', { id, bytes: bytes.length });
     try {
       const rawKey = crypto.getRandomValues(new Uint8Array(32));
       const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -206,13 +226,15 @@ export class OutboxBlobStore {
       );
       const db = await this.open();
       const tx = db.transaction(STORE, 'readwrite');
-      const done = committed(tx);
+      const done = idbCommitted(tx);
       const record: BlobRecord = { id, iv, cipher, createdAt: Date.now() };
       tx.objectStore(STORE).put(record);
       await done;
       return toBase64(rawKey);
     } catch (e) {
-      throw new OutboxBlobWriteError(id, e);
+      const err = new OutboxBlobWriteError(id, e);
+      appendLog(`[DB] outbox blob of ${id} NOT written (quota=${err.quota}): ${String(e)}`);
+      throw err;
     }
   }
 
@@ -222,11 +244,15 @@ export class OutboxBlobStore {
    * does not open it (a damaged record).
    */
   async get(id: string, keyB64: string): Promise<Uint8Array> {
+    Log.d('outboxBlob.get', { id });
     const db = await this.open();
     const record = (await request(db.transaction(STORE, 'readonly').objectStore(STORE).get(id))) as
       | BlobRecord
       | undefined;
-    if (!record) throw new OutboxBlobMissingError(id);
+    if (!record) {
+      Log.d('outboxBlob.get.missing', { id });
+      throw new OutboxBlobMissingError(id);
+    }
     try {
       const key = await crypto.subtle.importKey(
         'raw',
@@ -242,6 +268,7 @@ export class OutboxBlobStore {
       );
       return new Uint8Array(plain);
     } catch (e) {
+      Log.d('outboxBlob.get.corrupt', { id });
       throw new OutboxBlobCorruptError(id, e);
     }
   }
@@ -250,16 +277,17 @@ export class OutboxBlobStore {
   async delete(id: string): Promise<void> {
     const db = await this.open();
     const tx = db.transaction(STORE, 'readwrite');
-    const done = committed(tx);
+    const done = idbCommitted(tx);
     tx.objectStore(STORE).delete(id);
     await done;
   }
 
-  /** Remove every blob (account reset). */
+  /** Remove every blob (account reset). Storage layers call it through {@link clearOutboxBlobsLast}. */
   async clear(): Promise<void> {
+    Log.d('outboxBlob.clear');
     const db = await this.open();
     const tx = db.transaction(STORE, 'readwrite');
-    const done = committed(tx);
+    const done = idbCommitted(tx);
     tx.objectStore(STORE).clear();
     await done;
   }
@@ -286,10 +314,14 @@ export class OutboxBlobStore {
   }
 
   /**
-   * Delete every blob that no row owns. `listRowIds` is read AFTER the blob list and the in-flight
-   * set AFTER that, which is the only order in which a concurrent enqueue cannot be swept: either
-   * its row is already visible, or it is still marked as being written.
-   * Returns the ids removed.
+   * Delete every blob that no row owns. Returns the ids removed.
+   *
+   * WHAT PROTECTS A CONCURRENT ENQUEUE IS THE GRACE ({@link BLOB_SWEEP_GRACE_MS}), NOT THE ORDER OF
+   * THE READS. The row ids are a snapshot: an enqueue whose row commits AFTER `listRowIds` read it
+   * and whose `endWrite` runs before the filter below looks exactly like garbage - no row in the
+   * snapshot, no longer in the in-flight set. The in-flight set also sees only THIS document, never
+   * another tab. Both cases are blobs written seconds ago, and only the age test excludes them; the
+   * set and the read order narrow the window, they do not close it.
    */
   async sweep(listRowIds: () => Promise<Iterable<string>>, now = Date.now()): Promise<string[]> {
     const stored = await this.list();
@@ -327,22 +359,77 @@ export async function writeOutboxWithBlob(
 }
 
 /**
+ * Delete a blob whose row no longer names it (sent, cancelled, uploaded). A failure leaves garbage
+ * the boot sweep removes, never an error for the caller - but it is logged, because a delete that
+ * keeps failing is a store that keeps refusing.
+ */
+export async function deleteOutboxBlobQuietly(blobs: OutboxBlobStore, id: string): Promise<void> {
+  await blobs
+    .delete(id)
+    .catch((e) =>
+      appendLog(`[DB] outbox blob of ${id} NOT deleted (left for the boot sweep): ${String(e)}`)
+    );
+}
+
+/**
+ * The blob store could not be cleared during an account reset. Thrown AFTER every row store was
+ * emptied ({@link clearOutboxBlobsLast}), so what it leaves is encrypted bytes whose keys are gone
+ * with the rows - unreadable garbage, never an account half-wiped.
+ */
+export class OutboxBlobClearError extends Error {
+  constructor(cause: unknown) {
+    super('the outbox attachment store could not be cleared (its rows are gone)', { cause });
+    this.name = 'OutboxBlobClearError';
+  }
+}
+
+/**
+ * The last step of an account reset on either backend: clear the blob store, once every row store
+ * (graine seeds, owed exits and distribution groups included) has already been emptied.
+ *
+ * WHY LAST, AND WHY IT CANNOT THROW EARLY. The blob store is a SEPARATE database: when IndexedDB is
+ * unavailable or blocked its open throws. Awaited between two row deletes, that throw skipped the
+ * rest of the reset and left sensitive seeds behind; awaited first, it left rows naming blobs that
+ * were already gone. Here the rows go first (row first, blob second), so a failure leaves only
+ * keyless ciphertext - logged as the defect it is and rethrown typed, so the reset is not reported
+ * as clean.
+ */
+export async function clearOutboxBlobsLast(blobs: OutboxBlobStore): Promise<void> {
+  try {
+    await blobs.clear();
+  } catch (e) {
+    appendLog(`[DB] account reset: rows cleared but the outbox blob store was NOT: ${String(e)}`);
+    throw new OutboxBlobClearError(e);
+  }
+}
+
+/**
  * Put the bytes of a decoded row's blob back on it. A row with no `media.blob` is returned as is.
  * A blob that is absent or cannot be decrypted is the row's own verdict - this device will never
  * read that attachment - and so is {@link OutboxPayloadUnreadableError}, which the flusher parks as
  * a visible error. Any OTHER failure (the database would not open) is not a verdict and propagates
  * untouched, to be retried.
+ *
+ * A MISSING BLOB IS A VERDICT ONLY WHILE THE ROW STILL EXISTS. A cancel deletes the row and then
+ * the blob; a read that loaded the row before the cancel and the blob after it finds no blob for a
+ * message the member just deleted. `rowExists` is asked again at that point, and a row that is gone
+ * resolves `null` - the same answer as "no longer queued" - instead of parking an error for it.
  */
 export async function attachOutboxBlob(
   blobs: OutboxBlobStore,
-  entry: OutboxEntry
-): Promise<OutboxEntry> {
+  entry: OutboxEntry,
+  rowExists: () => Promise<boolean>
+): Promise<OutboxEntry | null> {
   const blob = entry.media?.blob;
   if (!entry.media || !blob) return entry;
   let fileBytes: Uint8Array;
   try {
     fileBytes = await blobs.get(entry.id, blob.keyB64);
   } catch (e) {
+    if (e instanceof OutboxBlobMissingError && !(await rowExists())) {
+      appendLog(`[DB] outbox ${entry.id}: row withdrawn while its blob was read - nothing to send`);
+      return null;
+    }
     if (e instanceof OutboxBlobMissingError || e instanceof OutboxBlobCorruptError) {
       throw new OutboxPayloadUnreadableError(entry.id, e);
     }

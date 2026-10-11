@@ -41,6 +41,7 @@ import {
   MAX_UNEXPECTED_ATTEMPTS,
   enqueueOutboxMessage,
   isOutboxEntryQueued,
+  registerOutbox,
   unregisterOutbox,
   type OutboxDeps,
 } from './outbox';
@@ -1282,6 +1283,19 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
       name: 'OutboxEnqueueError',
     });
     await expect(isOutboxEntryQueued('m2')).resolves.toBeNull();
+  });
+
+  it('registers even when the orphan blob sweep throws SYNCHRONOUSLY, and logs the failure', async () => {
+    const storage = makeStorage();
+    storage.sweepOutboxBlobs = vi.fn(() => {
+      throw new Error('handle not open');
+    });
+    const log = vi.fn();
+    const controller = registerOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+    expect(controller).toBeTruthy();
+    await outboxIdle();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('orphan blob sweep failed'));
+    unregisterOutbox();
   });
 
   it('answers hasEntry from the durable queue: true, false, and null when it cannot be read', async () => {

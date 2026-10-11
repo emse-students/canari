@@ -12,6 +12,8 @@ import { IndexedDbStorage } from './indexeddb';
 import { SqliteStorage } from './sqlite';
 import {
   BLOB_SWEEP_GRACE_MS,
+  idbCommitted,
+  OutboxBlobClearError,
   OutboxBlobCorruptError,
   OutboxBlobMissingError,
   OutboxBlobStore,
@@ -85,6 +87,9 @@ function fakeSql() {
       return { rowsAffected: 1 };
     },
     async select(sql: string, params: any[] = []) {
+      if (sql.includes('SELECT id FROM outbox WHERE id')) {
+        return rows.has(params[0]) ? [{ id: params[0] }] : [];
+      }
       if (sql.includes('SELECT id FROM outbox')) return [...rows.keys()].map((id) => ({ id }));
       if (sql.includes('SELECT kind FROM outbox')) {
         const r = rows.get(params[0]);
@@ -440,5 +445,194 @@ describe('IndexedDbStorage (web build): same contract', () => {
     expect(await blobs.list()).toEqual([]);
     expect((await storage.getOutboxEntry('m1', KEY))?.media?.uploadedRef?.mediaId).toBe('s');
     await storage.close();
+  });
+});
+
+describe('account reset: rows first, the blob store LAST, and a blob failure skips nothing', () => {
+  const ROW_DELETES = [
+    'DELETE FROM messages',
+    'DELETE FROM conversations',
+    'DELETE FROM outbox',
+    'DELETE FROM graine',
+    'DELETE FROM pending_group_exits',
+    'DELETE FROM distribution_groups',
+  ];
+
+  it('SQLite: a blob store that will not open still lets every table be emptied, then rejects typed', async () => {
+    const { storage, sql } = sqliteStorage();
+    const order: string[] = [];
+    const execute = sql.db.execute;
+    sql.db.execute = async (q: string, p?: any[]) => {
+      order.push(q);
+      return execute(q, p);
+    };
+    vi.spyOn(blobsOf(storage), 'clear').mockImplementation(async () => {
+      order.push('BLOBS');
+      throw new DOMException('blocked', 'UnknownError');
+    });
+
+    const err = await storage.clear().catch((e) => e);
+    expect(err).toBeInstanceOf(OutboxBlobClearError);
+    expect(order).toEqual([...ROW_DELETES, 'BLOBS']);
+  });
+
+  it('SQLite: a row delete that fails leaves the blobs alone (row first, blob second)', async () => {
+    const { storage, sql } = sqliteStorage();
+    const execute = sql.db.execute;
+    sql.db.execute = async (q: string, p?: any[]) => {
+      if (q === 'DELETE FROM graine') throw new Error('locked');
+      return execute(q, p);
+    };
+    const clear = vi.spyOn(blobsOf(storage), 'clear');
+    await expect(storage.clear()).rejects.toThrow('locked');
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it('IndexedDB: a blob store that will not open still empties every store, then rejects typed', async () => {
+    const storage = new IndexedDbStorage(uid());
+    await storage.init();
+    await storage.saveOutboxEntry(mediaEntry('m1', pattern(100)), KEY);
+    const db = (storage as unknown as { db: IDBDatabase }).db;
+    const graineCount = () =>
+      new Promise<number>((resolve, reject) => {
+        const req = db.transaction('graine').objectStore('graine').count();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('graine', 'readwrite');
+      tx.objectStore('graine').put({ sessionId: 's1', channelId: 'c1' });
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    expect(await graineCount()).toBe(1);
+    vi.spyOn(blobsOf(storage), 'clear').mockRejectedValue(
+      new DOMException('blocked', 'UnknownError')
+    );
+
+    const err = await storage.clear().catch((e) => e);
+    expect(err).toBeInstanceOf(OutboxBlobClearError);
+    expect(await storage.getOutboxQueue(KEY)).toEqual([]);
+    expect(await graineCount()).toBe(0);
+    await storage.close();
+  });
+
+  it('IndexedDB: a row transaction that fails leaves the blobs alone (the rows still name them)', async () => {
+    const storage = new IndexedDbStorage(uid());
+    await storage.init();
+    await storage.saveOutboxEntry(mediaEntry('m1', pattern(100)), KEY);
+    const clear = vi.spyOn(blobsOf(storage), 'clear');
+    const real = IDBObjectStore.prototype.clear;
+    const spy = vi.spyOn(IDBObjectStore.prototype, 'clear').mockImplementation(function (
+      this: IDBObjectStore
+    ) {
+      if (this.name === 'graine') throw new DOMException('refused', 'UnknownError');
+      return real.call(this);
+    });
+    await expect(storage.clear()).rejects.toThrow('refused');
+    spy.mockRestore();
+    expect(clear).not.toHaveBeenCalled();
+    expect(await blobsOf(storage).list()).toHaveLength(1);
+    expect(
+      sameBytes((await storage.getOutboxEntry('m1', KEY))?.media?.fileBytes, pattern(100))
+    ).toBe(true);
+    await storage.close();
+  });
+});
+
+describe('idbCommitted: the error a failed transaction rejects with is never null', () => {
+  /** A transaction double: `tx.error` stays null during a request's error event, as the spec says. */
+  function fakeTx() {
+    return { error: null, oncomplete: null, onerror: null, onabort: null } as unknown as {
+      error: DOMException | null;
+      onerror: (ev: Event) => void;
+      onabort: (ev: Event) => void;
+    } & IDBTransaction;
+  }
+
+  it("rejects with the REQUEST's error on a request error, so a quota refusal stays a quota refusal", async () => {
+    const tx = fakeTx();
+    const done = idbCommitted(tx);
+    const quota = new DOMException('full', 'QuotaExceededError');
+    tx.onerror({ target: { error: quota } } as unknown as Event);
+    const err = await done.catch((e) => e);
+    expect(err).toBe(quota);
+    expect(new OutboxBlobWriteError('m1', err).quota).toBe(true);
+  });
+
+  it('rejects with tx.error on abort, and with a real error when the engine gives none', async () => {
+    const tx = fakeTx();
+    const done = idbCommitted(tx);
+    const quota = new DOMException('full', 'QuotaExceededError');
+    tx.error = quota;
+    tx.onabort({} as Event);
+    await expect(done).rejects.toBe(quota);
+
+    const bare = fakeTx();
+    const bareDone = idbCommitted(bare);
+    bare.onabort({} as Event);
+    const err = await bareDone.catch((e) => e);
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe('AbortError');
+  });
+});
+
+describe('a cancel between the row read and the blob read', () => {
+  it('SQLite: the entry the member just deleted reads as gone (null), never as a lost attachment', async () => {
+    const { storage } = sqliteStorage();
+    await storage.saveOutboxEntry(mediaEntry('m1', pattern(100)), KEY);
+    const blobs = blobsOf(storage);
+    const get = blobs.get.bind(blobs);
+    vi.spyOn(blobs, 'get').mockImplementation(async (id, key) => {
+      await storage.deleteOutboxEntry(id); // the cancel lands here
+      return get(id, key);
+    });
+    await expect(storage.getOutboxEntry('m1', KEY)).resolves.toBeNull();
+  });
+
+  it('IndexedDB: same', async () => {
+    const storage = new IndexedDbStorage(uid());
+    await storage.init();
+    await storage.saveOutboxEntry(mediaEntry('m1', pattern(100)), KEY);
+    const blobs = blobsOf(storage);
+    const get = blobs.get.bind(blobs);
+    vi.spyOn(blobs, 'get').mockImplementation(async (id, key) => {
+      await storage.deleteOutboxEntry(id);
+      return get(id, key);
+    });
+    await expect(storage.getOutboxEntry('m1', KEY)).resolves.toBeNull();
+    await storage.close();
+  });
+
+  it('a blob missing while the row is STILL there remains the typed failure', async () => {
+    const { storage } = sqliteStorage();
+    await storage.saveOutboxEntry(mediaEntry('m1', pattern(100)), KEY);
+    await blobsOf(storage).delete('m1');
+    await expect(storage.getOutboxEntry('m1', KEY)).rejects.toBeInstanceOf(
+      OutboxPayloadUnreadableError
+    );
+  });
+});
+
+describe('a cancel cannot fail on the blob bookkeeping', () => {
+  it('SQLite: an unreadable kind still deletes the row, and the blob with it', async () => {
+    const { storage, sql } = sqliteStorage();
+    await storage.saveOutboxEntry(mediaEntry('m1', pattern(100)), KEY);
+    const select = sql.db.select;
+    sql.db.select = async (q: string, p?: any[]) => {
+      if (q.includes('SELECT kind')) throw new Error('bridge hiccup');
+      return select(q, p);
+    };
+    await storage.deleteOutboxEntry('m1');
+    expect(sql.rows.has('m1')).toBe(false);
+    expect(await blobsOf(storage).list()).toEqual([]);
+  });
+
+  it('a blob delete that fails does not fail the cancel', async () => {
+    const { storage, sql } = sqliteStorage();
+    await storage.saveOutboxEntry(mediaEntry('m1', pattern(100)), KEY);
+    vi.spyOn(blobsOf(storage), 'delete').mockRejectedValue(new Error('blocked'));
+    await expect(storage.deleteOutboxEntry('m1')).resolves.toBeUndefined();
+    expect(sql.rows.has('m1')).toBe(false);
   });
 });

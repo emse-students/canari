@@ -953,7 +953,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           );
         }
         if (!full) {
-          // Withdrawn between the `cancelled` check above and this read: consume it, like that check.
+          // Withdrawn between the `cancelled` check above and this read - or between the row read
+          // and the blob read inside it, which the storage layer re-asks before calling a missing
+          // blob a lost attachment: consume it, like that check.
           cancelled.delete(entry.id);
           clearUpload(entry.id);
           log(`[OUTBOX] ${entry.id.slice(0, 8)}… no longer queued - nothing to send`);
@@ -1575,8 +1577,10 @@ export function registerOutbox(deps: OutboxDeps): OutboxController {
 function sweepOrphanBlobs(deps: OutboxDeps): void {
   const storage = deps.storage;
   if (!storage) return;
-  storage
-    .sweepOutboxBlobs()
+  // Called INSIDE the chain: a synchronous throw (a storage handle not open yet) must land in the
+  // `.catch` below, never in `registerOutbox`, which would then return no controller at all.
+  Promise.resolve()
+    .then(() => storage.sweepOutboxBlobs())
     .then((n) => {
       if (n > 0) deps.log(`[OUTBOX] swept ${n} orphan attachment blob(s) (no row owns them)`);
     })

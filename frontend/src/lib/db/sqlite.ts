@@ -21,10 +21,13 @@ import type {
 } from './types';
 import {
   attachOutboxBlob,
+  clearOutboxBlobsLast,
+  deleteOutboxBlobQuietly,
   OutboxBlobStore,
   outboxBlobReleased,
   writeOutboxWithBlob,
 } from './outboxBlob';
+import { appendLog } from '$lib/utils/sessionLog';
 import {
   decodeOutboxEntry,
   encodeOutboxSensitive,
@@ -839,7 +842,10 @@ export class SqliteStorage implements IStorage {
     } catch (e) {
       throw new OutboxPayloadUnreadableError(id, e);
     }
-    return attachOutboxBlob(this.blobs, entry);
+    return attachOutboxBlob(this.blobs, entry, async () => {
+      const again: any[] = await this.db.select('SELECT id FROM outbox WHERE id = $1', [id]);
+      return again.length > 0;
+    });
   }
 
   /** Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent. */
@@ -875,14 +881,7 @@ export class SqliteStorage implements IStorage {
     // post-upload patch (uploadedRef, fileBytes dropped) rewrites ~1 KB and never the attachment.
     const merged = mergeOutboxEntry(entry, patch);
     await this.saveOutboxEntry(merged, deviceKeyB64);
-    if (outboxBlobReleased(merged)) await this.deleteBlobQuietly(id);
-  }
-
-  /** Delete a blob whose row no longer names it; a failure leaves garbage for the sweep, not an error. */
-  private async deleteBlobQuietly(id: string): Promise<void> {
-    await this.blobs
-      .delete(id)
-      .catch((e) => console.warn(`[DB] outbox blob of ${id} not deleted (swept at boot):`, e));
+    if (outboxBlobReleased(merged)) await deleteOutboxBlobQuietly(this.blobs, id);
   }
 
   /**
@@ -890,9 +889,19 @@ export class SqliteStorage implements IStorage {
    * goes first: a kill between the two leaves a blob with no row, which the boot sweep removes.
    */
   async deleteOutboxEntry(id: string): Promise<void> {
-    const rows: any[] = await this.db.select('SELECT kind FROM outbox WHERE id = $1', [id]);
+    // The kind only decides whether a blob may exist, so its read must never be what fails a
+    // cancel: unreadable, the blob is deleted anyway (absent is success).
+    let kind: string | undefined = 'unknown';
+    try {
+      const rows: any[] = await this.db.select('SELECT kind FROM outbox WHERE id = $1', [id]);
+      kind = rows[0]?.kind;
+    } catch (e) {
+      appendLog(
+        `[DB] outbox ${id}: kind not readable before delete, blob deleted too: ${String(e)}`
+      );
+    }
     await this.db.execute('DELETE FROM outbox WHERE id = $1', [id]);
-    if (rows[0]?.kind === 'media') await this.deleteBlobQuietly(id);
+    if (kind === 'media' || kind === 'unknown') await deleteOutboxBlobQuietly(this.blobs, id);
   }
 
   /** See {@link IStorage.sweepOutboxBlobs}. */
@@ -1119,18 +1128,24 @@ export class SqliteStorage implements IStorage {
 
   // -- Misc ----------------------------------------------------------------
 
-  /** Delete every row from the messages, conversations, outbox and graine tables (account reset / testing). */
+  /**
+   * Delete every row from the messages, conversations, outbox, graine, owed-exit and distribution
+   * tables, then the outbox blob store (account reset / testing). Rejects with
+   * `OutboxBlobClearError` when only the blob store failed - every table is empty by then.
+   */
   async clear(): Promise<void> {
     invalidateAllHistoryStateKeys();
     await this.db.execute('DELETE FROM messages');
     await this.db.execute('DELETE FROM conversations');
     await this.db.execute('DELETE FROM outbox');
-    await this.blobs.clear();
     await this.db.execute('DELETE FROM graine');
     // See the IndexedDB twin: an account reset takes the owed exits with it, because a drain firing
     // afterwards would act on a decision taken by an account that is no longer here.
     await this.db.execute('DELETE FROM pending_group_exits');
     // The seeds go with the reset, so the classification that routes to them goes too.
     await this.db.execute('DELETE FROM distribution_groups');
+    // LAST, and only once every row above is gone: a separate database that may refuse to open
+    // must not be able to skip the deletes of the seeds (see `clearOutboxBlobsLast`).
+    await clearOutboxBlobsLast(this.blobs);
   }
 }
