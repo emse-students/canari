@@ -2,7 +2,11 @@ import { AssociationsService } from './associations.service';
 import { Association } from './entities/association.entity';
 import { AssociationCalendarEvent } from './entities/association-calendar-event.entity';
 import { AssociationMember } from './entities/association-member.entity';
-import { Form } from '../forms/entities/form.entity';
+import { retireForms } from '../forms/retire-forms';
+
+jest.mock('../forms/retire-forms', () => ({
+  retireForms: jest.fn(() => Promise.resolve({ archived: 1, deleted: 0 })),
+}));
 
 /**
  * Deleting an association deletes its forms IN THE SAME TRANSACTION. Found on dev 2026-10-07: the
@@ -49,9 +53,11 @@ describe('AssociationsService.remove - the forms go with the association', () =>
     expect(assoRepo.manager.transaction).toHaveBeenCalledTimes(1);
     expect(manager.delete.mock.calls).toEqual([
       [AssociationCalendarEvent, { associationId: 'asso-1' }],
-      [Form, { associationId: 'asso-1' }],
       [AssociationMember, { associationId: 'asso-1' }],
       [Association, 'asso-1'],
     ]);
+    // Forms go through `retireForms`: archived when they hold submissions (`submissions_form_fk`),
+    // deleted otherwise - never a bare `manager.delete(Form, ...)`, which the key would refuse.
+    expect(retireForms).toHaveBeenCalledWith(manager, { associationId: 'asso-1' });
   });
 });

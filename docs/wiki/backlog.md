@@ -872,36 +872,9 @@ The principle is accepted (user, 2026-08-26) and the work is scheduled AFTER the
 
 1. **A and B: do NOT re-attach.** No form is recoverable and nothing identifies one, so "unambiguous re-attach" has no case. A holds no money: leave. B is `pending`/`cancelled` on a test or abandoned session: leave, or delete in one reviewed statement once the user agrees.
 2. **C (paid, 5): never delete, never edit an amount.** Proof needed first, per row: the full `stripeSessionId` looked up in the Stripe dashboard (live vs test mode, status paid, amount, payment-intent id), and for the three live ones matched to their `purchase_records` row (same amount, same payer, same date). If the three live ones are the team's own 6,00 EUR test charges, note it here and keep the rows as the audit trail. If any is a real third-party charge it is refunded or documented BEFORE anything else, and the payer is told from the purchase history (its form title is unknown).
-3. **All classes: give the orphan a parent, do not erase it.** One tombstone `forms` row per missing form id (title says "deleted form, title unknown"), so the foreign key below can be validated without touching a payment row.
+3. **All classes: the owner deletes them on prod and dev (decided 2026-10-11), NO tombstone rows.** That deletion is the owner's gesture, not code.
 
-**The code fix that prevents new orphans (plan, one PR, after the user chooses).** Recommended: **soft delete + a foreign key**, rather than a `formTitle` copy on the submission (a copy keeps the row but still lets a form vanish under a paid submission; the cotisation grant and the purchase history both read the form).
-
-- Migration `081_forms_soft_delete_and_submission_fk.sql` (DRAFT, not added to the tree; 080 is the last):
-
-```sql
--- A form that has answers is archived, never removed (2026-10-11 audit: 29 orphan submissions, 5 paid).
-ALTER TABLE forms ADD COLUMN IF NOT EXISTS "deletedAt" timestamptz NULL;
-
--- Tombstones for the 13 forms already gone, so the constraint validates. REVIEW WITH THE USER: it
--- writes rows, and the NOT NULL columns of `forms` must be checked against the entity first.
-INSERT INTO forms (id, "ownerId", title, items, "createdAt", "updatedAt", "deletedAt")
-SELECT s."formId", 'system', '(deleted form, title unknown)', '[]'::jsonb, min(s."createdAt"), now(), now()
-FROM submissions s
-WHERE NOT EXISTS (SELECT 1 FROM forms f WHERE f.id = s."formId")
-GROUP BY s."formId"
-ON CONFLICT (id) DO NOTHING;
-
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'submissions_form_fk') THEN
-    ALTER TABLE submissions
-      ADD CONSTRAINT submissions_form_fk FOREIGN KEY ("formId") REFERENCES forms (id) ON DELETE RESTRICT;
-  END IF;
-END $$;
-```
-
-  (Without the tombstone insert: `ADD CONSTRAINT ... NOT VALID`, which guards new rows only, and `VALIDATE CONSTRAINT` once the orphans are dealt with.)
-- `FormsService.delete`: a form with any submission gets `deletedAt` (and `closedAt`) instead of `remove`; a form with none is removed as today. The association delete takes the same branch instead of `manager.delete(Form, ...)`, which `RESTRICT` would otherwise refuse and roll back.
-- `Form` entity gains `deletedAt`; every form LIST and public read filters `deletedAt IS NULL`; submission and purchase readers still load the archived form to name it.
+**The prevention is BUILT (PR `fix/forms-soft-delete-fk`, 2026-10-11): soft delete + a foreign key.** Migration `081_forms_soft_delete_submissions_fk.sql` adds `forms."deletedAt"` and `submissions_form_fk` (`ON DELETE RESTRICT`); it RAISES with the orphan count while any remain, so **IT MUST NOT DEPLOY BEFORE THE ORPHANS ARE DELETED** (a deploy that hits it fails loudly instead of adding no key). `retireForms` (`forms/retire-forms.ts`) is the one removal path: `FormsService.delete` and the association delete ARCHIVE a form that holds submissions and hard-delete one with none. Lists, the member and public reads, `submit`, `hasSubmission` and the reminder subscription filter `deletedAt IS NULL`; `assertFormManager` and `getSubmissions` do not, so staff read an archived form's submissions by id. Mechanism: [forms module](frontend/modules/forms.md#a-form-with-submissions-is-archived-never-removed-2026-10-11). OWED: the integration run of migration 081 on a database (no database was reachable when it was written), and the purchase-history name of a paid submission of an archived form (the form row still exists, so it is nameable; not exercised).
 - Tests: deleting a form with a paid submission archives it and the purchase history still names it; an empty form is removed; an association delete archives its answered forms; a raw `DELETE FROM forms` of an answered form is refused by the constraint.
 
 **Decision needed from the user:** (a) soft delete + foreign key (recommended) or a `formTitle` on the submission; (b) confirm the 5 paid rows are test charges (Stripe dashboard, test and live) so no payer is owed anything; (c) A and B deleted, or all 29 kept under tombstone parents; (d) may the tombstone insert run on prod (13 rows written).
