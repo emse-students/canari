@@ -527,6 +527,7 @@ ONLY - nothing in the app can send a reel message yet (no RC-4 camera entry, no 
 | D7 | Per-member daily cap | **500 MB per day for `chat-reel`**, from `ownerId`, answered `429` | same | none |
 | D8 | "Disclosed report" of a DM/group reel | **Not in v1** | same | none |
 | D11 | Expiry display | **Tombstone with the age only**, no "N days left" chip | same | none |
+| D-camera | Which camera a conversation opens | **The in-app CanaReel camera only, no native camera**; ONE "Ouvrir la camera" in the chat and the new-post composer, the gallery picker kept; retention by DESTINATION (post: the post class, published reel: `reel` 30 days, chat: `chat-reel` 30 days) | the user, 2026-10-11 | 1 (the camera entry) |
 
 **What the save button changes elsewhere.** Forwarding stays not offered (it copies the `MediaRef`,
 so the CEK). A save writes the DECRYPTED video to the gallery through the plugin that already saves a
