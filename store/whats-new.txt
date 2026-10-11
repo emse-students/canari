@@ -1,3 +1,3 @@
-version: 1.2.2
+version: 1.2.3
 
-Un nouveau jeu de sons, plus léger et plus gai : un gazouillis distinct pour les messages, les mentions et les réactions. Le clavier ne fait plus sauter la zone de saisie, la pastille de date reste lisible quand on fait défiler, et l'application tient mieux sur une mauvaise connexion avec un état « réseau lent ». Les réglages s'ouvrent comme un explorateur, avec un fil d'Ariane cliquable, et les droits de lecture des associations sont plus précis.
+L'envoi de pièces jointes lourdes est réparé : plus de gel de l'application, essais bornés avec un message clair et un bouton pour réessayer ou supprimer, envoi bien moins gourmand en mémoire. Les fichiers de plus de 10 Mo partent par morceaux. L'état d'un envoi dit la vérité, et les cartes de fichier sont lisibles en thème sombre.
