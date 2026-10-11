@@ -14,6 +14,110 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-10-11
+
+### Fixed - the standing CodeQL alerts of the nightly gate are closed
+
+Two code changes (a flag on a shared object, a tag strip without a regex) and two dismissals with their reason on the alert; no behaviour changes ([cicd](docs/wiki/cicd.md)).
+
+### Changed - an event has at most four organising associations
+
+The organiser plus three co-organisers, accepted and pending counted, refused by the server with a typed code the event form names ([profiles-and-access](docs/wiki/profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
+
+### Fixed - a seed request's decline is delivered like any other message, so a requester is no longer stranded
+
+A bundle of pure declines used to be dropped for a requester with no socket yet, and nothing re-asked; it now travels durably like a seed, and a replayed decline is matched to the request it answers ([mls-graine-state-machine](docs/wiki/protocols/mls-graine-state-machine.md)).
+
+### Fixed - the daily host-update report no longer fails on the School's own apt policy
+
+On the shared Portail-etu host the report was red every day on three facts nobody here may change (a wide origin list, an automatic reboot, an unreadable log). It now judges only what is ours there and prints the rest ([host-updates](docs/wiki/infrastructure/host-updates.md)).
+
+### Changed - the four media-service audit ignores retire themselves, and the 22h band is re-measured
+
+CI now fails the day an ignored advisory is no longer reported, instead of a dated hand re-check of minio ([cicd](docs/wiki/cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable)). The tunnel's 22h drop did not recur in seven days ([cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it)), and every backlog item whose only action was a request to the School is deleted.
+
+### Fixed - a join waits for the server's statement that the device has a KeyPackage, and the round's requests can no longer hang it
+
+The external join of a key group now waits on the published fact (the row the commit gate reads) rather than on a round that may not have started, and every HTTP call of the key package round has a typed deadline. Design, measurements and the one clock in [campaign-measured-defects](docs/wiki/protocols/campaign-measured-defects.md#a-new-devices-join-reaches-the-commit-gate-before-its-keypackage-2026-10-09).
+
+### Fixed - own file cards are legible in dark theme, and a media row that never uploaded says so
+
+A media-only own message has no amber bubble, so its card now uses theme tokens; an attachment with no id and no upload shows a failure with a delete instead of an endless spinner ([media-frame](docs/wiki/frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)).
+
+### Documented - media streaming upload, WP-S0 measured: the phone's HTTP plugin is the real cost
+
+On the Mi 9T a 13.4 MB upload peaks at about 1.5 GB in the app and 0.8 GB in the WebView, and 50 MB crashes the app, because the Tauri HTTP plugin turns every body byte into a JSON number; the audit of every media-ref surface and the minio buffering are on [media-streaming-upload](docs/wiki/services/media-streaming-upload.md#9-wp-s0-results-2026-10-10---what-the-audit-the-phone-and-the-code-say).
+
+### Added - the media service accepts a streamed, resumable upload in parts, none over 8 MiB
+
+Server half only, additive and called by no client yet: open, put part, status, complete, cancel, with the daily budget reserved once and every body streamed to disk instead of buffered ([media-service](docs/wiki/services/media-service.md#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10), design in [media-streaming-upload](docs/wiki/services/media-streaming-upload.md)).
+
+### Fixed - tapping a page no longer waits on the network
+
+On a weak connection a tap on a post, or any page while the app was still unlocking, waited for a server round trip before anything appeared. The page now opens at once and its data fills in ([posts](docs/wiki/frontend/modules/posts.md#a-navigation-never-waits-on-data-the-post-page-and-the-root-layout-wp-nav-1-2026-10-10)).
+
+### Changed - the event detail lists every organiser as a chip, and the picker counts to four
+
+Chips with logo and link, a quiet "n pending" line for the organiser side, and a `n / 4` counter that stops offering associations at the cap ([calendar](docs/wiki/frontend/modules/calendar.md)).
+
+### Changed - the agenda rows show every organising association as a stack of faces
+
+The list and day rows drew one logo and a truncated " + " line; they now stack up to three faces with a `+N` pill and say "A + N others" from three associations on ([calendar](docs/wiki/frontend/modules/calendar.md)).
+
+### Fixed - a large attachment no longer flashes "Cet envoi n'a pas abouti" while it is being queued
+
+The sender now says an enqueue is in flight, so the orphan card waits for the durable row instead of reading its brief absence ([media-frame](docs/wiki/frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)).
+
+### Fixed - a queued attachment is decoded only when it is sent, and no longer retries for ever
+
+Reading the queue no longer decrypts the file of an attachment that is not due, an attachment that keeps failing on this device is parked with a message and a retry button, the retry button works on a 403-parked message, and a busy phone no longer shows the "slow connection" banner ([wiki](docs/wiki/frontend/offline-and-weak-network.md#136-a-queued-attachment-is-decoded-when-it-is-sent-never-when-the-queue-is-read-and-no-retry-loop-is-endless-2026-10-10)).
+
+### Fixed - queuing a large attachment no longer builds a string per byte
+
+The base64 of a queued file was a per-byte string concatenation and a callback-per-character decode, about 1 GB of transient heap for a 13 MB file; it is now chunked and byte-identical, and the queue logs how long its durable write and payload read take. The file still sits inside the row: design in [backlog](docs/wiki/backlog.md).
+
+### Fixed - an outbox retry no longer re-encrypts the queued file
+
+A backoff bump now updates the clear scheduling columns in place; it used to decode and rewrite the whole payload, which on a Pixel 6a swung the renderer from 160 MB to 1.4 GB every minute ([backlog](docs/wiki/backlog.md)).
+
+### Changed - the profile is a hub of route sections under a breadcrumb
+
+`/profile` keeps the identity block and lists its seven sections as rows (`/profile/me/<section>`, Back goes up one level, a reload keeps the place), like settings and associations. Details: [section-navigation](docs/wiki/frontend/section-navigation.md).
+
+### Added - "Marquer comme lu" on an Android salon notification
+
+A salon notification now offers Mark as read, which clears the banner on every device and raises the salon's read receipt without opening the app. Reply stays absent on salons ([mobile](docs/wiki/frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android)).
+
+### A 403 on a send is classified by origin: an edge/WAF HTML page (CrowdSec ban) no longer parks the outbox as an identity refusal, it retries and tells the user once.
+
+### Fixed - an upload from the phone app no longer inflates its body ~85 times in memory
+
+On Android and iOS the HTTP plugin turned every request body byte into a JSON number, so a 13 MB upload cost +1.2 GiB in the app and 50 MB crashed it. A file, blob or form body sent to Canari's own API now goes through the WebView's own `fetch`, which streams it. See [media streaming upload](docs/wiki/services/media-streaming-upload.md) and [mobile](docs/wiki/frontend/mobile.md#a-binary-body-through-the-http-plugin-costs-85-times-its-size-and-50-mb-crashes-the-app).
+
+### Fixed - a session whose token names another account than the device is refused, and a 403 send is no longer retried for ever
+
+A token whose `sub` is not the local/MLS user is withheld, the app stops with one notice offering the sign-out, and the outbox parks an entry the server answered 403 instead of re-posting it every minute. See [sessions](docs/wiki/sessions.md#a-token-that-names-another-account-than-the-local-identity-is-refused-2026-10-10).
+
+### Fixed - refused forms and association calls carry their status and code
+
+Every refused call of the forms API and every upload, export and provider lookup of the associations API now throws a typed refusal (`SocialApiError` extends `ApiRefusalError`) instead of a sentence with the number spelt into it, so a screen can tell a 403 from a dead network. Remaining sites in [backlog](docs/wiki/backlog.md).
+
+### Fixed - an attachment the server never answers ends as "failed" with retry and delete, and no longer blocks the messages after it
+
+After three attempts with no answer (a relay refusing early and closing the socket delivers no status) the bubble says so instead of spinning for ever; a blocked or failed attachment no longer holds back later messages ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
+### Fixed - a file sent on a poor connection shows its progress, and big files no longer spin for ever
+
+A file over 10 MiB was dropped by the host's security layer and retried for ever behind an endless spinner. Uploads now go in pieces of at most 8 MiB, an attachment's bubble shows the real percentage with a cancel and a retry, and a refusal ends the send with a clear message and a delete button ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for), [host-waf-body-limit](docs/wiki/infrastructure/host-waf-body-limit.md)).
+
+### Added - resumable streamed upload sessions (media-service, WP-S1)
+
+Parts of at most 8 MiB are streamed to a staging file, resumable and completed once; large staged uploads reach the store in 5 MiB parts and a failed one is aborted. Unproven against Garage until a real 6 MB and 50 MB upload is read on dev ([media-service](docs/wiki/services/media-service.md#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10)).
+
+### Fixed - an attachment being sent no longer says "waiting for a connection" while online
+
+The bubble now says `queued`, `repairing` or `retrying` from the outbox's typed hold reason, and "waiting for a connection" only after a transport failure or a known-offline link ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
 ## [1.2.2] - 2026-10-10
 
 ### Fixed - the notification plugin's empty "Default" channel no longer shows in a French app's settings
