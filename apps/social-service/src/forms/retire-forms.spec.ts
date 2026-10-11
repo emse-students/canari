@@ -122,7 +122,9 @@ describe('FormsService.delete', () => {
       findOne: jest.fn(() => Promise.resolve({ id: 'f1', ownerId: 'u1', associationId: null })),
       manager,
     };
-    await expect(serviceFor(formRepo).delete('f1', 'intruder', false)).rejects.toThrow(/not allowed/);
+    await expect(serviceFor(formRepo).delete('f1', 'intruder', false)).rejects.toThrow(
+      /not allowed/
+    );
     expect(calls).toHaveLength(0);
   });
 });

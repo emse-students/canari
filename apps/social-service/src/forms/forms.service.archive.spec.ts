@@ -24,7 +24,8 @@ describe('FormsService - archived forms', () => {
   function makeService() {
     const formRepo: any = {
       findOne: jest.fn((opts: { where: Record<string, unknown> }) => {
-        const wantsLive = (opts.where.deletedAt as { type?: string } | undefined)?.type === 'isNull';
+        const wantsLive =
+          (opts.where.deletedAt as { type?: string } | undefined)?.type === 'isNull';
         return Promise.resolve(wantsLive && stored.deletedAt ? null : stored);
       }),
       find: jest.fn(() => Promise.resolve([])),
@@ -77,9 +78,7 @@ describe('FormsService - archived forms', () => {
     await expect(service.submit('f1', { answers: {} }, 'member')).rejects.toThrow(
       NotFoundException
     );
-    await expect(service.submit('f1', { answers: {} }, 'guest')).rejects.toThrow(
-      NotFoundException
-    );
+    await expect(service.submit('f1', { answers: {} }, 'guest')).rejects.toThrow(NotFoundException);
   });
 
   it('takes no reminder subscription', async () => {
