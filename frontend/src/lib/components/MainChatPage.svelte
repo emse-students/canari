@@ -565,7 +565,7 @@
 
     const meNorm = session.userId.toLowerCase();
     const held = watermarkFor(convo.readWatermarks, meNorm);
-    const target = watermarkAfterReading(convo.messages, held);
+    const target = watermarkAfterReading(convo.messages, held, isSelectedChannel);
     if (target <= held) return;
 
     const currentContact = convs.selectedContact;
@@ -605,7 +605,8 @@
     if (channelReceipt) {
       let newestServerAt = 0;
       for (const msg of convo.messages) {
-        if (!msg.isSystem && msg.serverTimestamp !== undefined) {
+        // System rows included: the server counts a membership notice until a mark reaches it.
+        if (msg.serverTimestamp !== undefined) {
           newestServerAt = Math.max(newestServerAt, msg.serverTimestamp);
         }
       }
@@ -614,7 +615,7 @@
 
     pendingReadWatermark = Math.max(pendingReadWatermark, target);
     for (const msg of convo.messages) {
-      if (!msg.isSystem && msg.serverTimestamp !== undefined) {
+      if (msg.serverTimestamp !== undefined) {
         pendingReadServerAt = Math.max(pendingReadServerAt, msg.serverTimestamp);
       }
     }

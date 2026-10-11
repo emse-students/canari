@@ -190,6 +190,15 @@ describe('the watermark reading a conversation produces', () => {
     expect(watermarkAfterReading(messages, 0)).toBe(4000);
   });
 
+  it('a salon read point reaches a trailing membership notice, a DM one does not', () => {
+    // Prod 2026-10-11: a salon whose newest rows were two "X added Y" notices could never be marked
+    // read, because the notices were skipped - the server kept counting them at every reload.
+    const messages = [msg('a', 1000, PEER), msg('sys', 2000, 'system', { isSystem: true })];
+
+    expect(watermarkAfterReading(messages, 1000)).toBe(1000);
+    expect(watermarkAfterReading(messages, 1000, true)).toBe(2000);
+  });
+
   it('never moves backwards', () => {
     expect(watermarkAfterReading([msg('a', 1000)], 5000)).toBe(5000);
     expect(watermarkAfterReading([], 5000)).toBe(5000);

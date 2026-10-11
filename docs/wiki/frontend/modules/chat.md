@@ -3165,3 +3165,21 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 ## Profile fetches that failed on a device, and the denominator that is owed (2026-08-16)
 
 The symptom was seen twice on 2026-08-16, on both platforms: nine of ten sidebar rows carrying "Utilisateur inconnu" for twenty seconds. The log line that makes it countable did not exist then; since 2026-08-19 every warn in `displayName.ts` ends `(failed/attempted lookups failed this session, X%)`, counting only lookups that reached the network. Do not assume it is the same fault as the avatar endpoint, and do not assume it is not. The number is read from a device or browser console during a campaign run: there is no client telemetry, and server-side is not an option (`GET /api/users/:id` is not request-logged, and a client that never reached the network would not appear anyway). **Then decide about `FAILURE_BACKOFF_MS`**: a high rate says the two-minute suppression does real work against a refusing server; a rate near zero says it is a clock hiding a name for two minutes over a blip the reconnection listener already handles.
+
+### A salon read mark reaches its membership notices (2026-10-11)
+
+**Reported:** community Pist'On Fire, salon `infos` showed a badge of 3 and the community a red dot;
+opening cleared it, a refresh (and the phone) brought it back. **Cause:** the server's
+`listUnreadCounts` counts every non-silent row not authored by the caller after the caller's mark,
+and a membership notice is such a row (authored by the adder, encrypted, `isSystem` only once the
+client decodes it). The client read point (`watermarkAfterReading`) and the `serverAt` it sends both
+SKIPPED system rows, so when the newest rows of a salon were notices there was no `target > held`
+and no mark was ever sent: nothing could cover them. **Evidence (prod, read-only):** `infos` newest
+two rows (2026-10-09 09:09:16 and :31, by the adder, right after two memberships) sit after every
+member's mark (09:03:13); the two other salons end on real messages, which carry the mark past any
+notice before them - hence only this salon. Recomputing the server query gave 3 for the members whose
+mark was 09:03:13.234 (one real message plus the two notices). Not a stuck row: the data is
+correct, the notices simply were never coverable. **Fix:** `watermarkAfterReading(..., includeSystem)`
+is true for a salon (its notice is dated by the server's `createdAt`, unlike a DM's, which is stamped by
+the device clock and still skipped) and the salon `serverAt` includes system rows. Self-heals: the
+next open of the salon sends the mark. No data repair needed.
