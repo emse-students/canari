@@ -1,6 +1,6 @@
 /**
  * THE CONNECTION STRIP HAS THREE STATES (WP-OFF-5): offline, slow, and nothing. The slow one is a
- * calm hint on the existing banner surface, driven by `connectivity.slow`, and never stacks on the
+ * small fixed icon (no strip), driven by `connectivity.slow`, and never stacks on the
  * offline one - a link that reaches nothing is not "slow".
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
@@ -45,7 +45,11 @@ describe('OfflineBanner', () => {
     connectivity.trackRequest();
     await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
     flushSync();
-    expect(target.textContent).toContain(m.slow_banner_title());
+    const icon = target.querySelector('[data-testid="slow-link-indicator"]');
+    expect(icon?.getAttribute('aria-label')).toBe(m.slow_indicator_label());
+    expect(icon?.getAttribute('title')).toBe(m.slow_indicator_label());
+    // An icon, not a strip: no visible text, nothing in the flow.
+    expect(target.textContent?.trim()).toBe('');
     expect(target.textContent).not.toContain(m.offline_banner_title());
   });
 
@@ -56,6 +60,6 @@ describe('OfflineBanner', () => {
     connectivity.notifyServerUnreachable();
     flushSync();
     expect(target.textContent).toContain(m.offline_banner_title());
-    expect(target.textContent).not.toContain(m.slow_banner_title());
+    expect(target.querySelector('[data-testid="slow-link-indicator"]')).toBeNull();
   });
 });

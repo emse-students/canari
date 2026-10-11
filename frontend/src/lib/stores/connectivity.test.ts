@@ -109,21 +109,30 @@ describe('the slow state is derived from observed answers, and never stacks on o
     expect(connectivity.slow).toBe(false);
   });
 
-  it('enters slow once smoothed answers pass the threshold, not on one outlier', async () => {
+  it('enters slow once the FLOOR of recent answers passes the threshold, not on outliers', async () => {
     await answerAfter(100);
-    await answerAfter(100);
-    // One answer at twice the entry threshold: alone it lifts the average (alpha 0.3) to ~490 ms,
-    // still under SLOW_ENTER_MS - one outlier is not a link.
-    await answerAfter(SLOW_ENTER_MS * 2);
+    await answerAfter(SLOW_ENTER_MS * 3);
+    await answerAfter(SLOW_ENTER_MS * 3);
+    // Heavy server-side calls lift the average, never the floor while one cheap call answers fast.
+    expect(connectivity.latencyMs).toBe(100);
     expect(connectivity.slow).toBe(false);
-    for (let i = 0; i < 4; i++) await answerAfter(SLOW_ENTER_MS + 500);
+    for (let i = 0; i < 5; i++) await answerAfter(SLOW_ENTER_MS + 500);
     expect(connectivity.slow).toBe(true);
+  });
+
+  it('heavy routes interleaved with cheap ones never accuse the link (the Mi 9T 784 ms case)', async () => {
+    for (let i = 0; i < 20; i++) {
+      await answerAfter(1200);
+      await answerAfter(1200);
+      await answerAfter(40);
+    }
+    expect(connectivity.slow).toBe(false);
   });
 
   it('clears when answers come back quickly (hysteresis: not at the entry threshold)', async () => {
     for (let i = 0; i < 6; i++) await answerAfter(2500);
     expect(connectivity.slow).toBe(true);
-    for (let i = 0; i < 12; i++) await answerAfter(100);
+    for (let i = 0; i < 6; i++) await answerAfter(100);
     expect(connectivity.slow).toBe(false);
   });
 
@@ -133,6 +142,15 @@ describe('the slow state is derived from observed answers, and never stacks on o
     expect(connectivity.slow).toBe(true);
     r.answered(false);
     expect(connectivity.slow).toBe(false);
+  });
+
+  it('a slow route does not accuse the link while other calls are being answered', async () => {
+    const heavy = connectivity.trackRequest();
+    await vi.advanceTimersByTimeAsync(2_000);
+    connectivity.trackRequest().answered();
+    await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS * 3);
+    expect(connectivity.slow).toBe(false);
+    heavy.answered(false);
   });
 
   it('a transfer (a body mostly upload time) never arms the in-flight hint, yet still settles cleanly', async () => {

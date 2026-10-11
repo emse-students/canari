@@ -24,22 +24,28 @@
   let reconnecting = $derived(!connectivity.isOffline && session.isOfflineSession);
 
   /**
-   * The third state (WP-OFF-5): answers are arriving, slowly. A calm, non-blocking hint on the same
-   * surface - nothing is disabled, because a slow link is not an offline one and the queue is
-   * still sending. Derived from observed answer latency, never from a timer that guesses (see
+   * The third state (WP-OFF-5): answers are arriving, slowly. A small discreet icon, no strip (user,
+   * 2026-10-11: the band was too present, and not always justified) - nothing is disabled,
+   * because a slow link is not an offline one and the queue is still sending. Derived from observed answer latency, never from a timer that guesses (see
    * `connectivity.slow`), and never shown on top of the offline banner.
    */
   let showSlow = $derived(session.isLoggedIn && !show && connectivity.slow);
 </script>
 
 {#if showSlow}
-  <Banner>
-    <SignalLow size={15} class="shrink-0 opacity-70" aria-hidden="true" />
-    <span class="flex min-w-0 flex-wrap gap-x-1">
-      <span class="font-semibold">{m.slow_banner_title()}</span>
-      <span class="opacity-80">{m.slow_banner_desc()}</span>
-    </span>
-  </Banner>
+  <!-- A hint, not a banner: a fixed 20 px badge in the top corner, so it takes no band of the screen
+       and shifts nothing. Never focusable and never intercepting a tap (`pointer-events-none`); the
+       text lives in the live region and in `title` for a pointer hover. -->
+  <div
+    class="bg-banner text-text-muted border-cn-border pointer-events-none fixed top-[calc(var(--safe-area-inset-top,0px)+0.5rem)] right-2 z-(--z-banner) flex size-7 items-center justify-center rounded-full border opacity-80"
+    role="status"
+    aria-live="polite"
+    aria-label={m.slow_indicator_label()}
+    title={m.slow_indicator_label()}
+    data-testid="slow-link-indicator"
+  >
+    <SignalLow size={16} aria-hidden="true" />
+  </div>
 {:else if show}
   <Banner busy={reconnecting}>
     {#if reconnecting}

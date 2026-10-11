@@ -491,12 +491,14 @@ the socket and the replay have all finished) and it should be its own package wi
 - **The MLS send POST goes through the same `trackedFetch`** (class `write`); expiry surfaces as
   `DeliveryUnreachableError` carrying the typed cause. It now also feeds the connectivity store, which
   it did not before.
-- **`connectivity.slow`**: derived from observed answer latency, never a guess. An EWMA of the time to
-  head (alpha 0.3, at least 3 samples) enters at 700 ms and leaves at 350 ms (hysteresis), and one
-  request unanswered for 5 s enters at once. Measured (CDP, 14 sequential GETs): good 2 ms, Slow 3G
-  440 ms (**no strip**: slow but workable), 2G-like 960 ms (**strip after 2.9 s**, three requests).
-  Never set while offline. UI: the existing `Banner` surface, one calm line, Paraglide `slow_banner_*`,
-  nothing disabled; the offline banner wins when both could show.
+- **`connectivity.slow`**: derived from observed answer latency, never a guess. **Revised 2026-10-11
+  (see the last bullet of section 11's follow-ups below): the reading is the FLOOR (minimum) of the last
+  5 time-to-head samples, not their mean**, at least 3 samples, entering at 700 ms and leaving at 350 ms
+  (hysteresis). One request unanswered for 5 s enters too, but only while NOTHING ELSE was answered since
+  it started. Measured (CDP, 14 sequential GETs): good 2 ms, Slow 3G 440 ms (**no hint**: slow but
+  workable), 2G-like 960 ms (**hint after 2.9 s**, three requests). Never set while offline. UI: a small
+  fixed icon (`SignalLow`, 20 px badge in the top corner, `aria-label` + `title` from Paraglide
+  `slow_indicator_label`), NOT a strip; nothing disabled; the offline banner wins when both could show.
 - **Lanes in the outbox** ([chat](modules/chat.md#one-lane-per-conversation-three-frames-on-the-wire-at-most-wp-off-5-2026-10-09)).
 
 **Measured, before and after** (headless Chrome `headless=new` on a private profile, real `apiFetch`,
@@ -757,3 +759,15 @@ A Pixel 6a was made unusable by ONE queued 13 MB attachment. #1728 removed the r
 - **The retry button reached nothing for a 403-parked entry**: `retryUpload` never cleared `forbiddenParked`. It does now.
 - **NOT bounded, on purpose**: a NON-media entry held by the generic arm (a text on a 5xx, `sender-not-active` waiting for the repair, an edge refusal) - the ladder tops at 60 s and a retry is now one cheap row read, so it is a cadence, not a load; a terminal state for it needs a design of its own (a text has no bubble overlay to carry the message). The retry button on a bubble BEHIND a backing-off earlier entry of the same conversation still waits its turn (lane order).
 - **The "slow connection" banner**: media uploads go through `xhrUpload`/`fetchWithAnswerDeadline`, which never call `trackRequest`, so an upload in flight did not arm it. What did was the renderer itself: a busy thread fires the 5 s in-flight timer late and delays every response handler. `trackRequest` now forgives a timer that fired more than `LOOP_LAG_TOLERANCE_MS` (1 s) behind its schedule (the device was busy, not the link) and re-arms it, so a request still unanswered a full threshold later does raise the hint, and a body of 16 KiB or more (`transfer`, the same ceiling that already keeps it out of the latency average) never arms the in-flight hint.
+- **The slow hint accused the link for server time (user, 2026-10-11).** The Mi 9T bench phone (account
+  `fourth`, dev) logged `slow link (smoothed answer 784 ms, 0 request(s) in flight)` on a good link: the
+  mean of every tracked call includes heavy routes (feed, lists, MLS), whose time-to-head is link RTT PLUS
+  server processing, and the gateway sends no `Server-Timing`. It was the average that was wrong: server
+  time only ADDS, so the minimum of the last 5 samples is the closest reading of the link and one cheap
+  call (presence poll, version probe) answering fast keeps it low, whatever heavy calls surround it
+  (`connectivity.test.ts`, "heavy routes interleaved with cheap ones"). The 5 s in-flight rule likewise
+  ignores a request while any other call was answered since it started (the link works; that route is slow
+  server-side), re-checked every 5 s so a link that then goes quiet is still caught; no call in the app is a
+  long poll or a stream, so no exemption flag exists. On the phone the in-flight list was empty and the
+  banner gone when read (the 784 ms state had cleared); the live per-request capture is owed to the next
+  occurrence. The strip became a small fixed icon because the phone has no top bar to host it.

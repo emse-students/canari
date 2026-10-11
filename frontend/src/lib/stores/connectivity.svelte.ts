@@ -25,20 +25,24 @@ export type ReconnectListener = () => void;
 
 /**
  * The `slow` state is DERIVED FROM WHAT ANSWERS ACTUALLY TOOK, not from a guess about the link
- * (WP-OFF-5). Two readings feed it, and each has a stated reason:
+ * (WP-OFF-5), and it must measure THE LINK, not the server. Two readings feed it:
  *
- * - **Smoothed answer latency.** An exponentially-weighted mean (alpha 0.3, so ~5 samples settle it)
- *   of the time to the response head of every ordinary call. Measured on this app's estate, a good
- *   link answers a small GET in ~16 ms, the Slow 3G profile (400 ms RTT) in ~440 ms and the 2G-like
- *   profile (800 ms RTT) in ~960 ms (CDP, 2026-10-09, [offline-and-weak-network]). The state is
- *   entered at 700 ms - between Slow 3G, which is slow but workable and earns no strip, and the
- *   2G-like profile, where every screen visibly waits - and left at 350 ms, below Slow 3G: the gap is
- *   hysteresis, so a link hovering at the threshold does not make the hint flicker.
- * - **A request still unanswered after 5 s.** The smoothed value only moves when an answer arrives,
- *   so a link that has just gone quiet would show nothing for the whole deadline. One request
- *   unanswered for 5 s is, by the numbers above, five times the worst measured profile's answer.
+ * - **The latency FLOOR of the last few answers.** The time to the response head of a call is
+ *   link RTT plus server processing; processing only ever ADDS. So the smallest of the last
+ *   {@link LATENCY_WINDOW} samples is the closest reading of the link, and one heavy feed, list or
+ *   MLS call cannot lift it while any cheap call (a presence poll, the version probe) answers fast.
+ *   The first version averaged every call (EWMA) and accused the link for server work: the Mi 9T
+ *   bench phone showed the strip at a smoothed 784 ms with NOTHING in flight on a good link
+ *   (2026-10-11). Measured on this estate, a good link answers a small GET in ~16 ms, the Slow 3G
+ *   profile (400 ms RTT) in ~440 ms and the 2G-like profile (800 ms RTT) in ~960 ms (CDP,
+ *   2026-10-09). Entered at 700 ms (between Slow 3G and the 2G-like profile), left at 350 ms: the
+ *   gap is hysteresis, so a link hovering at the threshold does not make the hint flicker.
+ * - **A request still unanswered after 5 s, while NOTHING ELSE answered meanwhile.** If any other
+ *   call was answered since it started, the link is alive and the delay is that route's own server
+ *   time, so it raises nothing. (No call in the app is a long poll or a stream - audited
+ *   2026-10-11, the socket is separate - so a legitimately open request needs no exemption.)
  *
- * Neither can cause load, only a hint: if either were wrong, a calm line of text would be wrong.
+ * Neither can cause load, only a hint: if either were wrong, a small icon would be wrong.
  */
 export const SLOW_ENTER_MS = 700;
 export const SLOW_EXIT_MS = 350;
@@ -51,8 +55,9 @@ export const SLOW_IN_FLIGHT_MS = 5_000;
  * schedule proves nothing about the network, so it raises no hint.
  */
 export const LOOP_LAG_TOLERANCE_MS = 1_000;
-const LATENCY_ALPHA = 0.3;
-/** Samples needed before the smoothed value may enter `slow` - one outlier is not a link. */
+/** How many recent answers the latency floor is taken over. */
+const LATENCY_WINDOW = 5;
+/** Samples needed before the floor may enter `slow` - one answer is not a link. */
 const MIN_SAMPLES = 3;
 /**
  * Consecutive deadline expiries (with no answer in between) after which the server is treated as
@@ -78,6 +83,12 @@ export type ReachabilityProbe = () => Promise<boolean>;
 export const PROBE_DELAYS_AFTER_ONLINE_MS = [0, 1_000, 2_000, 4_000];
 export const PROBE_DELAYS_AFTER_FAILURE_MS = [1_000, 2_000, 4_000, 8_000];
 
+/** Options of {@link ConnectivityStore.trackRequest}. */
+export interface TrackRequestOptions {
+  /** A body big enough that its time is mostly upload: never arms the in-flight hint. */
+  transfer?: boolean;
+}
+
 /** A request counted by {@link ConnectivityStore.trackRequest}; settle it exactly once. */
 export interface TrackedRequest {
   /** The server answered (any status). `latencyMs` is excluded from the average when `measured` is false. */
@@ -102,9 +113,10 @@ class ConnectivityStore {
    */
   slow = $state(false);
 
-  /** Smoothed time-to-response-head in ms, 0 until the first answer. Exposed for diagnostics and tests. */
+  /** Floor of the recent time-to-response-head samples in ms, 0 until the first answer. Diagnostics and tests. */
   latencyMs = 0;
-  private samples = 0;
+  private recent: number[] = [];
+  private lastAnswerAt = 0;
   private latencySlow = false;
   private inFlightSlow = false;
   private consecutiveStalls = 0;
@@ -215,7 +227,7 @@ class ConnectivityStore {
    * `trackedFetch`), so the store sees the whole population rather than the calls that happen to
    * be interesting. Settle the returned handle exactly once.
    */
-  trackRequest(opts: { transfer?: boolean } = {}): TrackedRequest {
+  trackRequest(opts: TrackRequestOptions = {}): TrackedRequest {
     this.ensureGlobalListeners();
     const id = this.nextRequestId++;
     const startedAt = Date.now();
@@ -238,6 +250,12 @@ class ConnectivityStore {
             arm();
             return;
           }
+          // Something else was answered since this one left: the link works, this route is just slow
+          // server-side. Looked at again a threshold later, so a link that then goes quiet is caught.
+          if (this.lastAnswerAt > startedAt) {
+            arm();
+            return;
+          }
           this.inFlightSlow = true;
           this.recomputeSlow();
         }, SLOW_IN_FLIGHT_MS)
@@ -257,6 +275,7 @@ class ConnectivityStore {
         if (!this.inFlight.has(id)) return;
         settle();
         this.consecutiveStalls = 0;
+        this.lastAnswerAt = Date.now();
         this.notifyServerReachable();
         if (measured) this.observeLatency(Date.now() - startedAt);
         this.recomputeSlow();
@@ -278,12 +297,13 @@ class ConnectivityStore {
     };
   }
 
-  /** Folds one answer's time-to-head into the smoothed latency. */
+  /** Folds one answer's time-to-head into the window and re-reads the floor. */
   private observeLatency(ms: number): void {
-    this.latencyMs =
-      this.samples === 0 ? ms : this.latencyMs + LATENCY_ALPHA * (ms - this.latencyMs);
-    this.samples++;
-    if (this.samples >= MIN_SAMPLES && this.latencyMs >= SLOW_ENTER_MS) this.latencySlow = true;
+    this.recent.push(ms);
+    if (this.recent.length > LATENCY_WINDOW) this.recent.shift();
+    this.latencyMs = Math.min(...this.recent);
+    if (this.recent.length >= MIN_SAMPLES && this.latencyMs >= SLOW_ENTER_MS)
+      this.latencySlow = true;
     else if (this.latencyMs <= SLOW_EXIT_MS) this.latencySlow = false;
   }
 
@@ -294,8 +314,8 @@ class ConnectivityStore {
     this.slow = next;
     console.log(
       next
-        ? `[CONNECTIVITY] slow link (smoothed answer ${Math.round(this.latencyMs)} ms, ${this.inFlight.size} request(s) in flight)`
-        : `[CONNECTIVITY] link no longer slow (smoothed answer ${Math.round(this.latencyMs)} ms)`
+        ? `[CONNECTIVITY] slow link (latency floor ${Math.round(this.latencyMs)} ms, ${this.inFlight.size} request(s) in flight)`
+        : `[CONNECTIVITY] link no longer slow (latency floor ${Math.round(this.latencyMs)} ms)`
     );
   }
 
@@ -331,7 +351,8 @@ class ConnectivityStore {
     this.inFlight.clear();
     this.slow = false;
     this.latencyMs = 0;
-    this.samples = 0;
+    this.recent = [];
+    this.lastAnswerAt = 0;
     this.latencySlow = false;
     this.inFlightSlow = false;
     this.consecutiveStalls = 0;
