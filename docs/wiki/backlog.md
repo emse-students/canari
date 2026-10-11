@@ -840,9 +840,90 @@ The principle is accepted (user, 2026-08-26) and the work is scheduled AFTER the
 
 **A mechanism was designed and tested 2026-10-09, and is PARKED on a decision (nothing of it is in the repository).** A scheduled job takes each Dependabot pull request whose only failure is the lock guard, opens a NEW pull request (never a push onto Dependabot's branch, which [cicd](cicd.md) records as refused for good) carrying Dependabot's cherry-picked commits plus `cargo update --precise` refreshes of the locks, closes the original with a pointer, and lets `CI passed` decide. It refuses, once and with a comment, a plugin whose crate drags `tauri`/`wry`/`tao`, a lock still failing `cargo metadata --locked`, and anything `lib/ceiling.sh` has no gate for; it runs only when every commit is Dependabot's and every changed file a manifest or lockfile. Tested with fake `cargo`/`gh` and a local bare remote (29 assertions). **Blocked because** the new pull request must be armed by the `canari-auto-merge` App and the safety classifier refused edits letting `arm-auto-merge.yml` arm a bot-opened pull request from a non-Dependabot author - so this is the user's decision to allow ([owed table](#owed-to-the-user---decisions-rotations-and-one-off-clicks)); the design is rebuilt from this paragraph in about a day.
 
-### P3 - `submissions.formId` names a form nothing keeps, and 28 rows point at deleted ones
+### P3 - `submissions.formId` names a form nothing keeps, and 29 rows point at deleted ones
 
-No foreign key (measured on prod 2026-08-31): 28 orphaned submissions over twelve missing forms, 5 of them `paid` (36,00 EUR). **Decision owed**, not "add a foreign key" (a cascade would delete paid submissions): a tombstoned form (soft delete) or a `formTitle` denormalised on the submission at write time.
+**Re-measured read-only on 2026-10-11, prod AND dev (dev is a copy of prod, identical numbers): 29 orphan submissions of 79, over 13 missing forms, 5 `paid` (3600 cents).** The 2026-08-31 count was 28 over twelve: ONE row and one form are NEW (`547d1d0c`, free, 2026-09-21, form `1c54ee8e`), so the mechanism below is still live. **Decision owed**, not "add a foreign key" (a cascade would delete paid submissions).
+
+**What the data says.**
+
+- **Every orphan is a form that was deleted; none is NULL** (`formId` is `NOT NULL`; no foreign key on `submissions` or `forms`, measured). `forms` holds 5 rows, the oldest created 2026-08-11, so the 12 older missing forms (13 May - 6 Jun 2026) were removed before then.
+- **The form cannot be recovered from the database.** No form-definition history table exists; `form_respondents` and `form_reminders` hold 0 rows for these ids; `purchase_records` names the form id but carries only `productName` (3 rows, below). `answers` is keyed by item ids that lived on the deleted form, so the payload shape identifies NOTHING. Backups keep 14 days ([backup](infrastructure/backup.md#retention)): a form deleted in May is in none; only `1c54ee8e` (gone around 2026-09-21) could still have been in a dump, and that window has closed too.
+- **Writer of the orphan: ONE path, still live.** `FormsService.delete` (`forms.service.ts`, `formRepo.remove(form)`) leaves the submissions ("the payers' records"); the association delete (`associations.service.ts`, `manager.delete(Form, { associationId })`, since 2026-10-07) does the same. Submission WRITES cannot create one: `submit` loads the form first and 404s, and every `submissionRepo.save` site works on a loaded form. So the count grows exactly when a form that has answers is deleted.
+- **What an orphan then breaks:** `assertSubmissionAccess` finds the submission but `assertFormManager(sub.formId)` throws on the missing form, so only the submitter can read it; the purchase history lists a paid orphan with no form to name.
+
+**Inventory** (submission id | form id | created, 2026 | payer = first 8 hex of the pseudonymised user id | cents | status). Class A = free (17), B = unpaid, never captured (7), C = paid (5).
+
+| Class | submission id | form id | created | payer | cents | status |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 5cd7fd8b-d9b2-4821-9fc0-c507abe6da35 | 04a34e21 | 05-18 | 75462313 | 0 | free |
+| A | 7af46369-e87e-45cf-9df0-54eebe20c6e6 | 0e7d38c5 | 05-27 | d82cd226 | 0 | free |
+| A | 547d1d0c-a272-4a85-abf9-58800b94eb58 | 1c54ee8e | 09-21 | 75462313 | 0 | free |
+| A | add45322-a00e-4e52-93f0-cf455b2fa1eb | 3761d37e | 05-21 | 75462313 | 0 | free |
+| A | b0d39c13-45ad-41c4-8a06-777fd23e3a5a | 3761d37e | 05-22 | c69eb4ef | 0 | free |
+| A | be7138ae-bd11-4435-a880-f91ca245b356 | 3761d37e | 05-22 | 3655b848 | 0 | free |
+| A | 321aa3d7-3ee6-4908-9bc7-b44ef9a99db3 | 3761d37e | 05-22 | 353b7909 | 0 | free |
+| A | f7c30e86-59ba-4d7f-b6d3-f32cbabea6d6 | 406b95f4 | 05-15 | 75462313 | 0 | free |
+| A | dda3936a-edc3-4c19-943d-3389d636689e | 406b95f4 | 05-15 | ffa49b96 | 0 | free |
+| A | 25fc0702-2e49-4604-832f-ba16267bf461 | 406b95f4 | 05-15 | 588c063b | 0 | free |
+| A | e2bece93-9b12-49e6-9adb-7ed8fe35f4ee | 562e06d9 | 05-26 | 80a0050b | 0 | free |
+| A | b45b1b3d-076d-4f4f-9530-1b0cd9c124bf | 562e06d9 | 05-26 | d82cd226 | 0 | free |
+| A | 37e1d4ba-3127-481e-9802-2da6d871428a | 97421a50 | 05-13 | 75462313 | 0 | free |
+| A | a8938536-5d6a-4832-a017-61cb41b07879 | 97421a50 | 05-13 | c17aee08 | 0 | free |
+| A | da4deb0e-39f9-4f8d-b69d-d92c12292f9f | 97421a50 | 05-13 | 83ed04d8 | 0 | free |
+| A | e7912684-68be-4469-96a0-9b74101f8640 | 97421a50 | 05-13 | 496d6c7d | 0 | free |
+| A | 0f028685-86a3-473c-a6b0-a441250aead9 | 97421a50 | 05-13 | 588c063b | 0 | free |
+| B | 3360e279-6810-436d-b098-a198eb76b38a | 5c81b216 | 06-03 | 75462313 | 100 | pending |
+| B | 20a5a92e-7be7-49ba-a751-595a20cef602 | bf55350e | 05-16 | 588c063b | 2000 | pending (`cs_test_`) |
+| B | a3b1a25a-e4d7-4cb8-ada7-3fa640f89cb6 | bf55350e | 05-16 | ffa49b96 | 2000 | cancelled (`cs_test_`) |
+| B | 3e28c981-ae01-45c3-9593-537054b27368 | bf55350e | 05-16 | ffa49b96 | 2000 | pending (`cs_test_`) |
+| B | 03936173-422b-40a7-aa4f-ced83bb8049d | bf55350e | 05-18 | 30553e49 | 2000 | pending (`cs_test_`) |
+| B | be94704d-b06f-408a-acf1-2b47f3833195 | bf55350e | 05-20 | e812be1b | 2000 | pending (`cs_test_`) |
+| B | 937bb5b6-aa2a-499b-91dc-23ba413f0b45 | bf55350e | 05-26 | d82cd226 | 2000 | pending (`cs_test_`) |
+| C | 21a1e925-e302-4152-a31a-4319885e15c4 | aa74cfe2 | 05-16 | 75462313 | 1000 | paid, `cs_test_` session |
+| C | 1e3bc807-dbce-4f95-9314-1e4561f8881e | bf55350e | 05-16 | 75462313 | 2000 | paid, `cs_test_` session |
+| C | 11d1e49b-8454-4715-a150-3da6cde6475c | 25d71b8a | 06-04 | d82cd226 | 50 | paid, `cs_live_` session |
+| C | 1fd2eaf6-7fea-4c0c-9450-16a54d6d1fbb | 2788ed51 | 06-06 | 75462313 | 500 | paid, `cs_live_` session |
+| C | 25ed7e01-6fb4-4904-8d40-f836dc00f38b | 916fe840 | 06-06 | 75462313 | 50 | paid, `cs_live_` session |
+
+**The five paid are almost certainly the developers' own tests, and the "36,00 EUR" is mostly not money:** two are Stripe TEST-mode sessions (30,00 EUR that never moved), and the three live-mode ones total 6,00 EUR (0,50 + 5,00 + 0,50) and each has a `purchase_records` row (`productName` "Formulaire Test", "TEST", "t"; payers `d82cd226` and `75462313`, the latter on 9 of the 29 rows, so a test account). That is an inference from names and amounts, NOT a proof: the user confirms it.
+
+**Proposed repair, per class (nothing applied).**
+
+1. **A and B: do NOT re-attach.** No form is recoverable and nothing identifies one, so "unambiguous re-attach" has no case. A holds no money: leave. B is `pending`/`cancelled` on a test or abandoned session: leave, or delete in one reviewed statement once the user agrees.
+2. **C (paid, 5): never delete, never edit an amount.** Proof needed first, per row: the full `stripeSessionId` looked up in the Stripe dashboard (live vs test mode, status paid, amount, payment-intent id), and for the three live ones matched to their `purchase_records` row (same amount, same payer, same date). If the three live ones are the team's own 6,00 EUR test charges, note it here and keep the rows as the audit trail. If any is a real third-party charge it is refunded or documented BEFORE anything else, and the payer is told from the purchase history (its form title is unknown).
+3. **All classes: give the orphan a parent, do not erase it.** One tombstone `forms` row per missing form id (title says "deleted form, title unknown"), so the foreign key below can be validated without touching a payment row.
+
+**The code fix that prevents new orphans (plan, one PR, after the user chooses).** Recommended: **soft delete + a foreign key**, rather than a `formTitle` copy on the submission (a copy keeps the row but still lets a form vanish under a paid submission; the cotisation grant and the purchase history both read the form).
+
+- Migration `081_forms_soft_delete_and_submission_fk.sql` (DRAFT, not added to the tree; 080 is the last):
+
+```sql
+-- A form that has answers is archived, never removed (2026-10-11 audit: 29 orphan submissions, 5 paid).
+ALTER TABLE forms ADD COLUMN IF NOT EXISTS "deletedAt" timestamptz NULL;
+
+-- Tombstones for the 13 forms already gone, so the constraint validates. REVIEW WITH THE USER: it
+-- writes rows, and the NOT NULL columns of `forms` must be checked against the entity first.
+INSERT INTO forms (id, "ownerId", title, items, "createdAt", "updatedAt", "deletedAt")
+SELECT s."formId", 'system', '(deleted form, title unknown)', '[]'::jsonb, min(s."createdAt"), now(), now()
+FROM submissions s
+WHERE NOT EXISTS (SELECT 1 FROM forms f WHERE f.id = s."formId")
+GROUP BY s."formId"
+ON CONFLICT (id) DO NOTHING;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'submissions_form_fk') THEN
+    ALTER TABLE submissions
+      ADD CONSTRAINT submissions_form_fk FOREIGN KEY ("formId") REFERENCES forms (id) ON DELETE RESTRICT;
+  END IF;
+END $$;
+```
+
+  (Without the tombstone insert: `ADD CONSTRAINT ... NOT VALID`, which guards new rows only, and `VALIDATE CONSTRAINT` once the orphans are dealt with.)
+- `FormsService.delete`: a form with any submission gets `deletedAt` (and `closedAt`) instead of `remove`; a form with none is removed as today. The association delete takes the same branch instead of `manager.delete(Form, ...)`, which `RESTRICT` would otherwise refuse and roll back.
+- `Form` entity gains `deletedAt`; every form LIST and public read filters `deletedAt IS NULL`; submission and purchase readers still load the archived form to name it.
+- Tests: deleting a form with a paid submission archives it and the purchase history still names it; an empty form is removed; an association delete archives its answered forms; a raw `DELETE FROM forms` of an answered form is refused by the constraint.
+
+**Decision needed from the user:** (a) soft delete + foreign key (recommended) or a `formTitle` on the submission; (b) confirm the 5 paid rows are test charges (Stripe dashboard, test and live) so no payer is owed anything; (c) A and B deleted, or all 29 kept under tombstone parents; (d) may the tombstone insert run on prod (13 rows written).
 
 ### P3 - MiGallery's `resolve()` bypasses, and an inherited disable is the only reason nobody sees them
 
