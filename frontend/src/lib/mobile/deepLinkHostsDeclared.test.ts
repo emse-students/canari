@@ -15,6 +15,9 @@ import { describe, expect, it } from 'vitest';
  */
 const SERVER_HOSTS = ['chat', 'post', 'form', 'posts', 'calendar', 'admin-agenda', 'proposals'];
 
+/** The checkout return: `payment` is emitted, `stripe` is what builds before 2026-10-09 still send. */
+const CHECKOUT_HOSTS = ['payment', 'stripe'];
+
 describe('custom-scheme deep-link hosts', () => {
   const conf = JSON.parse(
     readFileSync(resolve(__dirname, '../../../src-tauri/tauri.conf.json'), 'utf8')
@@ -23,7 +26,15 @@ describe('custom-scheme deep-link hosts', () => {
     .filter((e) => e.scheme.includes('fr.emse.canari'))
     .map((e) => e.host);
 
-  it.each(SERVER_HOSTS)('declares fr.emse.canari://%s', (host) => {
+  it.each([...SERVER_HOSTS, ...CHECKOUT_HOSTS])('declares fr.emse.canari://%s', (host) => {
     expect(declared).toContain(host);
+  });
+
+  it.each(CHECKOUT_HOSTS)('the Android manifest filters fr.emse.canari://%s too', (host) => {
+    const manifest = readFileSync(
+      resolve(__dirname, '../../../src-tauri/gen/android/app/src/main/AndroidManifest.xml'),
+      'utf8'
+    );
+    expect(manifest).toContain(`android:host="${host}"`);
   });
 });

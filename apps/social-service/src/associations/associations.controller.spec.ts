@@ -110,7 +110,7 @@ describe('AssociationsController secret stripping', () => {
     slug: 'bde',
     name: 'BDE',
     memberCount: 3,
-    stripeOnboardingComplete: true,
+    lydiaOnboardingComplete: true,
     documentVaultKey: 'a'.repeat(64),
     notesCiphertext: 'encrypted-notes',
   };
@@ -142,7 +142,7 @@ describe('AssociationsController secret stripping', () => {
     expect(result.documentVaultKey).toBeNull();
     expect(result.notesCiphertext).toBeNull();
     // The rest of the row still has to reach the app - the fix is a strip, not an allowlist.
-    expect(result).toMatchObject({ id: 'asso1', name: 'BDE', stripeOnboardingComplete: true });
+    expect(result).toMatchObject({ id: 'asso1', name: 'BDE', lydiaOnboardingComplete: true });
   });
 });
 
@@ -202,7 +202,7 @@ describe('AssociationsController directory scope (D37)', () => {
 
 /**
  * Stripping the two secrets was only half the fix. The three reads still answer the whole row -
- * `stripeAccountId`, `createdBy`, the document quota, the cotisation configuration - and nginx
+ * `lydiaAccountId`, `createdBy`, the document quota, the cotisation configuration - and nginx
  * lets an anonymous request through `/api/associations` because `AuthController.check()` answers
  * 200 for anonymous. The guard is therefore load-bearing, and it is a decorator: nothing in the
  * type system notices when one goes missing, so the metadata Nest reads is what has to be asserted.

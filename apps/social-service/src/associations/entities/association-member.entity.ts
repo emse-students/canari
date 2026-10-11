@@ -29,7 +29,7 @@ export enum AssociationPermissionFlag {
   /** Create, edit and delete boutique products. */
   MANAGE_PRODUCTS = 1 << 8,
   /** Start or resume Stripe Connect onboarding for the association. */
-  MANAGE_STRIPE_CONNECT = 1 << 9,
+  MANAGE_PAYOUT_ACCOUNT = 1 << 9,
   /** Create, edit and delete partnership cards, and view/add their codes. */
   MANAGE_PARTNERSHIPS = 1 << 10,
 }
@@ -39,7 +39,7 @@ export enum AssociationPermissionFlag {
  *
  * Derived from the enum rather than written down, because the literal that preceded it had to be
  * raised by hand on every new flag and was not: `@Max(511)` became `@Max(1023)` for
- * MANAGE_STRIPE_CONNECT (bit 9) and then stayed at 1023 when MANAGE_PARTNERSHIPS (bit 10) landed,
+ * MANAGE_PAYOUT_ACCOUNT (bit 9) and then stayed at 1023 when MANAGE_PARTNERSHIPS (bit 10) landed,
  * so the server rejected the admin preset outright. This constant is the ONLY bound the member
  * DTOs may use; adding a flag to the enum above moves it with no second edit.
  *
@@ -56,16 +56,16 @@ export const ALL_PERMISSION_FLAGS = Object.values(AssociationPermissionFlag)
  *
  * `MANAGE_ASSO` grants administration - members, documents, forms, products - and these two are
  * not administration:
- * - `MANAGE_STRIPE_CONNECT` points an association's payouts at a bank account, so it stays with
+ * - `MANAGE_PAYOUT_ACCOUNT` points an association's payouts at a bank account, so it stays with
  *   the association's own people and the platform admin.
  * - `POST_AS_ASSO` speaks in the association's name, which is an identity rather than a right over
  *   its data.
  *
  * This is the ONLY place the exception is written. It was previously an omission at two call sites
- * (`canPostAs`, `canManageStripeConnect`), which is indistinguishable from a forgotten check.
+ * (`canPostAs`, `canManagePayoutAccount`), which is indistinguishable from a forgotten check.
  */
 export const SUPER_ADMIN_EXCLUDED_FLAGS =
-  AssociationPermissionFlag.MANAGE_STRIPE_CONNECT | AssociationPermissionFlag.POST_AS_ASSO;
+  AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT | AssociationPermissionFlag.POST_AS_ASSO;
 
 /**
  * Base admin flags granted to association admins.
@@ -74,7 +74,7 @@ export const SUPER_ADMIN_EXCLUDED_FLAGS =
  * = 1311
  *
  * Intentionally excludes:
- * - MANAGE_STRIPE_CONNECT (1 << 9): sensitive financial flag, granted separately via
+ * - MANAGE_PAYOUT_ACCOUNT (1 << 9): sensitive financial flag, granted separately via
  *   ASSOCIATION_ADMIN_PRESET in the frontend or via migration 004. Admins who should
  *   manage Stripe onboarding must be explicitly granted this flag.
  * - VALIDATE_EVENTS / MANAGE_ASSO / MODERATE: BDE-only flags with no effect in

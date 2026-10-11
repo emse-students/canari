@@ -54,7 +54,7 @@ export interface EditRights {
   forms: boolean;
   partnerships: boolean;
   proposals: boolean;
-  stripeConnect: boolean;
+  payoutAccount: boolean;
   audience: boolean;
   /** The delete card inside `danger`; archiving is `members`. */
   delete: boolean;
@@ -78,7 +78,7 @@ export function editRights(
     // Republications (POST_AS_ASSO) and co-organisations (PROPOSE_EVENT) share one queue.
     proposals:
       may(AssociationPermissionFlag.POST_AS_ASSO) || may(AssociationPermissionFlag.PROPOSE_EVENT),
-    stripeConnect: may(AssociationPermissionFlag.MANAGE_STRIPE_CONNECT),
+    payoutAccount: may(AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT),
     audience: ctx.isGlobalAdmin || (ctx.isSuperAdmin && assoType !== 'institution'),
     delete: ctx.isGlobalAdmin || ctx.isSuperAdmin,
   };
@@ -92,7 +92,7 @@ export function mayOpenEditSection(section: EditSection, rights: EditRights): bo
     case 'members':
       return rights.members;
     case 'payments':
-      return rights.stripeConnect || rights.products;
+      return rights.payoutAccount || rights.products;
     case 'documents':
       return rights.documents;
     case 'achats':

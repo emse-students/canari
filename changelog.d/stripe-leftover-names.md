@@ -1,0 +1,3 @@
+### Fixed - a parent association onboarded on Lydia can approve a payment delegation, and the dead Stripe names are gone
+
+The delegation state and its approval still tested the Stripe account columns, so a parent that had finished its Lydia onboarding could not approve a request. The unreachable `stripe-*` routes, the unmapped `stripe*` columns in the code, the `MANAGE_STRIPE_CONNECT` name (now `MANAGE_PAYOUT_ACCOUNT`, same bit) are removed, the checkout return deep link is `payment` (the `stripe` host stays read for older builds). No column is dropped: the plan is in [stripe-archive](docs/wiki/stripe-archive.md#the-names-that-outlived-the-processor---what-2026-10-09-renamed-and-what-stays).

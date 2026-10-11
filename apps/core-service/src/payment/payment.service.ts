@@ -89,7 +89,7 @@ export class PaymentService {
     successUrl: string;
     cancelUrl: string;
     metadata?: Record<string, string>;
-    stripeConnectAccountId?: string;
+    connectAccountId?: string;
     /** Payer identity, required by Lydia's request/do. */
     payerRecipient?: PayerRecipient;
     /** Stable key for idempotency; derived from submission ID or a client-supplied UUID. */
@@ -101,7 +101,7 @@ export class PaymentService {
       cancelUrl: params.cancelUrl,
       metadata: params.metadata,
       payerRecipient: params.payerRecipient,
-      connectAccountId: params.stripeConnectAccountId,
+      connectAccountId: params.connectAccountId,
       idempotencyKey: params.idempotencyKey,
     });
   }
