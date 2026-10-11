@@ -168,6 +168,15 @@ The index is a **JSON file** (`media_meta/media_metadata.json`), not a database 
 object's clock **and losing its class** - which is why the backfills below run at every boot rather
 than once. Since the allowlist, a lost class means "kept", never "swept".
 
+**It is written atomically and one write at a time (2026-10-11).** `persistMetadata` used to be a bare
+`writeJson` onto the index, called un-awaited from many paths at once: two writes could interleave on
+the one file, and a crash or a full disk mid-write left a truncated JSON that `loadMetadata` cannot
+parse - every entry lost at the next boot. It now writes `media_metadata.json.tmp` and renames it into
+place, and every call queues behind the previous one (`metadataWrites`), so no two writes share the
+temp file and an older snapshot never renames over a newer one. Each write serialises the index as it
+is when its turn comes; a failed write is logged, rejects to its own caller and does not block the
+next. Pinned by `media.service.persist-metadata.spec.ts`.
+
 ### A purged object reads as 410, an absent one as 404 - and both were already typed (measured 2026-10-08)
 
 Closed from the backlog entry of 2026-09-05, whose two premises were both stale:
