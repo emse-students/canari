@@ -77,7 +77,7 @@ import type {
 import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
-import { enqueueOutboxMessage } from '$lib/utils/chat/outbox';
+import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/outbox';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { ChannelService } from '$lib/services/ChannelService';
 import {
@@ -1271,7 +1271,9 @@ export function useMessaging() {
         const status = refusalStatus(error);
         ctx.setSendError(
           describeApiRefusal(status, m.chat_media_action_send()) ??
-            m.chat_media_send_error_generic()
+            (isEnqueueQuotaFailure(error)
+              ? m.chat_media_send_error_storage_full()
+              : m.chat_media_send_error_generic())
         );
         ctx.log(
           `[MEDIA] send failed (status=${status ?? 'none'}), ${fileEntries.length - sentMediaMessageCount} file(s) re-staged: ${String(error)}`

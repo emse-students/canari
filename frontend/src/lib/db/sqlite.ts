@@ -20,6 +20,15 @@ import type {
   StoredMessagePatch,
 } from './types';
 import {
+  attachOutboxBlob,
+  clearOutboxBlobsLast,
+  deleteOutboxBlobQuietly,
+  OutboxBlobStore,
+  outboxBlobReleased,
+  writeOutboxWithBlob,
+} from './outboxBlob';
+import { appendLog } from '$lib/utils/sessionLog';
+import {
   decodeOutboxEntry,
   encodeOutboxSensitive,
   isOutboxClearPatch,
@@ -86,10 +95,13 @@ function base64ToUint8(val: unknown): Uint8Array {
 export class SqliteStorage implements IStorage {
   private db: any = null;
   private readonly dbPath: string;
+  /** The bytes of queued attachments: IndexedDB, never the SQL bridge (see outboxBlob.ts). */
+  private readonly blobs: OutboxBlobStore;
 
   /** Create a storage instance for the given user. Call init() before using. */
   constructor(userId: string) {
     this.dbPath = `sqlite:canari_${userId}.db`;
+    this.blobs = new OutboxBlobStore(userId);
   }
 
   /** Whether the SQLite handle is open. See {@link IStorage.isOpen}. */
@@ -109,6 +121,7 @@ export class SqliteStorage implements IStorage {
       console.warn('[DB] SQLite close failed:', e);
     }
     this.db = null;
+    await this.blobs.close();
   }
 
   async init(): Promise<void> {
@@ -743,27 +756,34 @@ export class SqliteStorage implements IStorage {
     await this.saveMessages([msg], deviceKeyB64);
   }
 
+  /**
+   * Upsert a queued entry. An attachment's bytes go to the blob store FIRST and the row, holding
+   * only the blob's key, SECOND - so a row without its blob is a typed failure at flush time and a
+   * blob without its row is garbage {@link sweepOutboxBlobs} removes.
+   */
   async saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void> {
-    const encrypted = await encryptData(encodeOutboxSensitive(entry), deviceKeyB64);
-    const c = outboxClearColumns(entry);
-    await this.db.execute(
-      `INSERT OR REPLACE INTO outbox
+    await writeOutboxWithBlob(this.blobs, entry, async (blobKeyB64) => {
+      const encrypted = await encryptData(encodeOutboxSensitive(entry, blobKeyB64), deviceKeyB64);
+      const c = outboxClearColumns(entry);
+      await this.db.execute(
+        `INSERT OR REPLACE INTO outbox
          (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, created_at, iv, cipher_text)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [
-        c.id,
-        c.conversationId,
-        c.sentAt,
-        c.kind,
-        c.status,
-        c.attempts,
-        c.lastAttemptAt ?? null,
-        c.nextAttemptAt ?? null,
-        c.createdAt,
-        uint8ToBase64(encrypted.iv),
-        uint8ToBase64(encrypted.cipherText),
-      ]
-    );
+        [
+          c.id,
+          c.conversationId,
+          c.sentAt,
+          c.kind,
+          c.status,
+          c.attempts,
+          c.lastAttemptAt ?? null,
+          c.nextAttemptAt ?? null,
+          c.createdAt,
+          uint8ToBase64(encrypted.iv),
+          uint8ToBase64(encrypted.cipherText),
+        ]
+      );
+    });
   }
 
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
@@ -811,16 +831,21 @@ export class SqliteStorage implements IStorage {
     const rows: any[] = await this.db.select('SELECT * FROM outbox WHERE id = $1', [id]);
     if (rows.length === 0) return null;
     const row = rows[0];
+    let entry: OutboxEntry;
     try {
       const payload = await decryptData(
         base64ToUint8(row.cipher_text),
         base64ToUint8(row.iv),
         deviceKeyB64
       );
-      return decodeOutboxEntry(this.outboxClearOf(row), payload);
+      entry = decodeOutboxEntry(this.outboxClearOf(row), payload);
     } catch (e) {
       throw new OutboxPayloadUnreadableError(id, e);
     }
+    return attachOutboxBlob(this.blobs, entry, async () => {
+      const again: any[] = await this.db.select('SELECT id FROM outbox WHERE id = $1', [id]);
+      return again.length > 0;
+    });
   }
 
   /** Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent. */
@@ -852,12 +877,40 @@ export class SqliteStorage implements IStorage {
     if (rows.length === 0) return;
     const entry = await this.decodeOutboxRow(rows[0], deviceKeyB64);
     if (!entry) return;
-    await this.saveOutboxEntry(mergeOutboxEntry(entry, patch), deviceKeyB64);
+    // The row read above is the small one: a blob-format row carries a key, not the file, so the
+    // post-upload patch (uploadedRef, fileBytes dropped) rewrites ~1 KB and never the attachment.
+    const merged = mergeOutboxEntry(entry, patch);
+    await this.saveOutboxEntry(merged, deviceKeyB64);
+    if (outboxBlobReleased(merged)) await deleteOutboxBlobQuietly(this.blobs, id);
   }
 
-  /** Remove a queued entry (after a confirmed send or a permanent failure). */
+  /**
+   * Remove a queued entry (after a confirmed send or a permanent failure), and its blob. The row
+   * goes first: a kill between the two leaves a blob with no row, which the boot sweep removes.
+   */
   async deleteOutboxEntry(id: string): Promise<void> {
+    // The kind only decides whether a blob may exist, so its read must never be what fails a
+    // cancel: unreadable, the blob is deleted anyway (absent is success).
+    let kind: string | undefined = 'unknown';
+    try {
+      const rows: any[] = await this.db.select('SELECT kind FROM outbox WHERE id = $1', [id]);
+      kind = rows[0]?.kind;
+    } catch (e) {
+      appendLog(
+        `[DB] outbox ${id}: kind not readable before delete, blob deleted too: ${String(e)}`
+      );
+    }
     await this.db.execute('DELETE FROM outbox WHERE id = $1', [id]);
+    if (kind === 'media' || kind === 'unknown') await deleteOutboxBlobQuietly(this.blobs, id);
+  }
+
+  /** See {@link IStorage.sweepOutboxBlobs}. */
+  async sweepOutboxBlobs(): Promise<number> {
+    const removed = await this.blobs.sweep(async () => {
+      const rows: any[] = await this.db.select('SELECT id FROM outbox');
+      return rows.map((r) => String(r.id));
+    });
+    return removed.length;
   }
 
   // -- Pending group exits -------------------------------------------------
@@ -1075,7 +1128,11 @@ export class SqliteStorage implements IStorage {
 
   // -- Misc ----------------------------------------------------------------
 
-  /** Delete every row from the messages, conversations, outbox and graine tables (account reset / testing). */
+  /**
+   * Delete every row from the messages, conversations, outbox, graine, owed-exit and distribution
+   * tables, then the outbox blob store (account reset / testing). Rejects with
+   * `OutboxBlobClearError` when only the blob store failed - every table is empty by then.
+   */
   async clear(): Promise<void> {
     invalidateAllHistoryStateKeys();
     await this.db.execute('DELETE FROM messages');
@@ -1087,5 +1144,8 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM pending_group_exits');
     // The seeds go with the reset, so the classification that routes to them goes too.
     await this.db.execute('DELETE FROM distribution_groups');
+    // LAST, and only once every row above is gone: a separate database that may refuse to open
+    // must not be able to skip the deletes of the seeds (see `clearOutboxBlobsLast`).
+    await clearOutboxBlobsLast(this.blobs);
   }
 }
