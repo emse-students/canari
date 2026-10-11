@@ -93,14 +93,17 @@ function addEmoji(target: HTMLElement, index = 0) {
 
 const overlay = (target: HTMLElement) => target.querySelector<HTMLElement>('[data-overlay-id]')!;
 
-it('lays the editor out as one column: header, stage, tools - nothing floats over the stage', () => {
+it('lays the editor out full-bleed: the stage is the whole box, the header and tools float over it', () => {
   const target = mountEditor();
   const root = target.querySelector('[data-reel-editor]')!;
-  expect(root.className).toContain('flex-col');
+  const stage = target.querySelector('[data-reel-stage]')!;
+  expect(stage.parentElement).toBe(root);
   const tools = target.querySelector('[data-reel-tool-text]')!.closest('div.flex-col')!;
-  expect(tools.className).not.toContain('absolute');
+  expect(tools.className).toContain('absolute');
+  expect(tools.className).toContain('bottom-0');
   expect(tools.className).toContain('safe-area-inset-bottom');
   expect(tools.parentElement).toBe(root);
+  expect(stage.contains(tools)).toBe(false);
 });
 
 it('adds an emoji from the tray, selected, centred and upright', () => {
