@@ -127,6 +127,33 @@ Ranked by what a cold PIN user pays, which is the default (the checkbox is untic
 - The native HTTP client opens a NEW connection to the estate for each minute-spaced request
   (`reqwest::connect starting new connection` every 60 s while idle).
 
+### F3 - the PIN gate is drawn on the local fact (measured)
+
+**What held the gate was not the refresh itself but a question that needed it.** `openPinModal`
+awaited `detectFirstPinSetup` - `GET pin-status`, which takes an access token - before drawing the
+keypad, so the gate waited for the refresh (555-706 ms on dev) AND a round trip, although "no
+device key in the vault" was known at ~1.6 s. The answer only chooses the wording ("choose" vs
+"enter" your PIN): registration is the server's decision at `pin-check`.
+
+**The fix** (`firstPinSetupFromDevice`): a device holding an enrolled device id for this user
+(`mls_device_id_<userId>`, written by `resolveDeviceId`, never cleared by a sign-out) is a returning
+one, and the gate is drawn at once; only a device that never enrolled the user still asks the
+server. The one reading that changes: a first setup interrupted between the device id and
+`pin-check` now reads "enter your PIN" on its next launch, and its PIN is still registered as given.
+A device with a local state is never told "first setup", which is what
+`pinFirstSetupRefuted.test.ts` already demands.
+
+| cold, PIN (n=6, medians, ms after the tap) | baseline (`main`) | F3 |
+| --- | ---: | ---: |
+| `[PIN] No device key in vault` | 1701 [1615-1815] | 1662 [1636-1718] |
+| **PIN gate on screen** | **2187** [2085-2275] | **1741** [1711-1796] |
+| PIN submitted by the instrument (`login-start`) | 2325 [2195-2405] | 2060 [2002-2079] |
+
+**~0.45 s sooner on screen**: the gate now follows the vault answer by ~70 ms. A human typing a
+PIN takes longer than the refresh, so the PIN check still finds its token ready. The composer column
+is not quoted for this build: it still carries the feed contention F2 removes, which scatters it by
+±0.9 s run to run.
+
 ## The ranked fix plan
 
 **Each line names its expected gain on THIS bench and the risk that decides whether it is worth
