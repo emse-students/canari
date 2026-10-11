@@ -88,7 +88,7 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
 | POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`)                                                        |
 
-(`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel`: it is attached at the upload that creates the object.)
+(`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel` and `reel-pending`: they are attached at the upload that creates the object.)
 
 Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
@@ -138,7 +138,7 @@ this removed. The answer is cached per origin, so one fetch serves every picker.
 `MediaService.purgeExpiredMedia` (`media.service.ts`) deletes any **`ephemeral`** object whose
 `lastAccessAt` is older than **`RETENTION_MS` = 90 days**, leaving a tombstone that is itself
 trimmed after 90 days. It runs at boot, hourly (`DEFAULT_SWEEP_MS`, overridable with
-`MEDIA_RETENTION_SWEEP_MS`) and on every `download()`. **It was 30 days until 2026-09-23** - what
+`MEDIA_RETENTION_SWEEP_MS`); a `download()` judges only its OWN entry (below). **It was 30 days until 2026-09-23** - what
 moved it, and why moving it is not the same decision as the one taken in August, is §6 of
 [storage-forecast](../infrastructure/storage-forecast.md).
 
@@ -220,14 +220,15 @@ community image (`channel_workspaces`) was unclassified, uploaded before `upload
 
 **The design now**, `RetentionClass` in `media.service.ts`:
 
-| Class         | Who sets it                                                                           | Idle sweep   | Account deletion |
-| ------------- | ------------------------------------------------------------------------------------- | ------------ | ---------------- |
-| `ephemeral`   | the client, for chat and channel media; social-service on a post release              | **takes it** | takes it         |
-| `archive`     | the client, for feed media and avatars; social-service's boot backfill                | keeps        | takes it         |
-| `association` | the client, for a vault upload; social-service on `createDocument` and at boot        | keeps        | **keeps**        |
-| `reel`        | the client at upload; social-service's CLAIM, proven by `ownerId` ([reels](reels.md)) | keeps        | takes it         |
-| `chat-reel`   | the client at upload ([below](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09)) | **by AGE: 30 days from upload** | takes it |
-| none          | an old client, anything before 2026-10-01, an entry re-created after an index loss    | **keeps**    | takes it         |
+| Class          | Who sets it                                                                                                                 | Idle sweep                                   | Account deletion |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ---------------- |
+| `ephemeral`    | the client, for chat and channel media; social-service on a post release                                                    | **takes it**                                 | takes it         |
+| `archive`      | the client, for feed media and avatars; social-service's boot backfill                                                      | keeps                                        | takes it         |
+| `association`  | the client, for a vault upload; social-service on `createDocument` and at boot                                              | keeps                                        | **keeps**        |
+| `reel`         | social-service's CLAIM, proven by `ownerId` ([reels](reels.md)); a client older than `reel-pending` at upload               | keeps                                        | takes it         |
+| `reel-pending` | the client at upload of a FEED reel ([below](#the-reel-pending-class-a-feed-reel-whose-post-does-not-exist-yet-2026-10-11)) | **by AGE: 24 h from upload**, unless claimed | takes it         |
+| `chat-reel`    | the client at upload ([below](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09))                          | **by AGE: 30 days from upload**              | takes it         |
+| none           | an old client, anything before 2026-10-01, an entry re-created after an index loss                                          | **keeps**                                    | takes it         |
 
 - **The client's `encryptAndUpload` takes the class as a REQUIRED argument**, so no new call site
   can forget it the way the vault did.
@@ -307,6 +308,47 @@ breakdown was split to fix on 2026-08-18. At the rate measured on the day it shi
 ## One request body is at most 8 MiB (2026-10-10)
 
 The host's WAF drops any body over 10 MiB ([host-waf-body-limit](../infrastructure/host-waf-body-limit.md)), so the client sends a single-request upload only up to 8 MiB of ciphertext and uses `upload/chunk/init` + 8 MiB chunks + `complete` above it. The server needed no change (chunks append in order, 100 MB policy). A chunk that fails restarts the whole upload under a new session: there is no offset route yet (reels-in-chat RC-5). The abandoned session is released by `DELETE /media/upload/chunk/:id` (204, owner-checked, idempotent, logged), and `POST .../complete` is idempotent: a repeat for a finished session answers the same mediaId from a `<uploadId>.done` sidecar in the chunk directory (survives a restart, aged out by the 24 h orphan sweep). The record is written (temp + rename) BEFORE the staging is removed. A lost or expired session answers 404 (`NotFoundException`), which the client reads as "session lost" and mends with a new one. The in-memory opener map is what refuses another member's `complete`: it is KEPT across a failed complete (the staged bytes wait for the re-ask) and dropped only on success, abort, an over-cap append or the sweep; it is unknown after a restart. **The opener check covers all three routes** (append, complete, abort; 403 for another member), and the opener is recorded only AFTER the staging file exists, so a refused init registers nothing for the sweeper to race. **If the memo cannot be written (full disk) the staging file and its opener are KEPT**: the `complete` still answers its mediaId, and a re-ask re-assembles under the opener check instead of meeting a 404. Abort, complete and append share one per-uploadId lock, so a `DELETE` during an in-flight `complete` waits for it (the object survives, the memo answers the re-ask) and an abort after a finished `complete` is a no-op success; the sweep removes a stale `.done` / `.done.tmp` like any other file of the directory. **The client pauses between the three `complete` asks** (2 s, then 4 s, a function of the attempt counter; a cancel interrupts the pause; the pause is injectable so tests assert the schedule, not a clock). **Limits, stated**: a memo hit does not check that the object still exists; `DELETE` does not remove the memo, so a cancel racing a successful `complete` leaves the object and the memo; a memo that could not be written followed by a re-ask stores the object a second time (the first is left to the idle sweep); the single-request route (< 8 MiB) has no memo at all.
+
+## The `reel-pending` class: a feed reel whose post does not exist yet (2026-10-11)
+
+The reels audit ([reels](../frontend/modules/reels.md)) found that a feed reel was uploaded as
+`reel` and claimed only by `createPost`, so a `createPost` failure, a kill between the two calls or
+a cancel there left 14-35 MB nobody cited and nothing reaped. The client now uploads `reel-pending`
+(`FEED_REEL_UPLOAD_CLASS` in `publishReel.ts`); `claimReels` PROMOTES it to `reel`, the only path
+from one to the other; the sweep's allowlist (`isSweepable`) takes `reel-pending`, and `isDue` makes
+it due `MEDIA_PENDING_REEL_TTL_MS` (default 24 h) after `createdAt` - reads move nothing. The
+tombstone says `retention_expired` (`410`). What is NEVER deleted: a claimed reel is `reel`, and every
+reel stored before this class (uploaded `reel`) keeps its old life - the sweep was given a NEW name
+rather than a predicate over the old one, so no existing object became sweepable. `retention-class`
+refuses `reel-pending`, which would otherwise make a claimed reel's blob sweepable under its live
+post. Old server + new client: the class is unknown there, so the object is stored unclassified
+(kept) and the claim sets `reel` - nothing lost. The storage stats carry `pendingReelCount/Bytes`
+and an `overdue` pair (not yet drawn on the admin page, like `chat-reel`'s). Pinned by
+`media.service.reel-pending.spec.ts`.
+
+**The claim and the sweep cannot interleave into a dead post (review of #1744).** The sweep used to
+judge an entry, `await` the store's delete, then write the tombstone FROM THE STALE ENTRY - so a
+claim landing in that await (a `createPost` arriving more than a day after its upload, a phone
+suspended mid-publish) promoted the entry, the post was saved, and the object was deleted under it:
+a live reel answering `410` to everyone. Now (1) `claimReels` REFUSES a `reel-pending` entry that is
+already due instead of promoting it - the member publishes again; (2) the sweep re-reads every entry
+from the index, judges it and writes its tombstone in ONE synchronous step, BEFORE the delete, so a
+claim during the delete meets a tombstone and refuses, and an entry promoted (or replaced by a
+download's `setAccess`) before the sweep reaches it is judged as it is now. **The window has a
+floor**: `MEDIA_PENDING_REEL_TTL_MS` under 1 h stops the service at boot (`86400` meant as seconds
+would be 86 s), and the effective value is logged at boot. **Every deletion is logged** with its id,
+class and age; the run summary counts per class and names each class's window; a run deletes at most
+500 objects and says so when it stops there.
+
+**The 500 is a ceiling because the sweep is SINGLE-FLIGHT (review of #1744).** Boot, the interval
+and - until then - every `download`/`downloadRange`/`downloadPublic` each started their own run, so
+N overlapping callers could delete N x 500 objects, and every read waited for a whole sweep to learn
+whether ITS object was due. Now `purgeExpiredMedia` hands a caller arriving mid-run the run in flight
+(`sweeping`), and the download paths call none of it: `expireIfDue` judges the requested entry alone
+with the same `isDue`, tombstones and deletes it through the same `tombstoneAndDelete` the sweep
+uses, and the read answers `410`. `downloadPublic` judges nothing - a public asset is never
+sweepable. Pinned by `media.service.sweep-single-flight.spec.ts` (three concurrent callers, 1500 due
+objects, 500 deleted; a read answered while a sweep is held in flight).
 
 ## The `chat-reel` class: a reel sent in a conversation (RC-2, 2026-10-09)
 
@@ -613,23 +655,24 @@ machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 
 ## Environment variables
 
-| Variable                   | Required | Description                                                                                                                                                                                                  |
-| -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `JWT_SECRET`               | yes      | HS256 secret (shared with all services)                                                                                                                                                                      |
-| `GARAGE_ENDPOINT`          | yes      | Garage host (`garage` in Compose)                                                                                                                                                                            |
-| `GARAGE_PORT`              | yes      | Garage S3 API port (`3900`)                                                                                                                                                                                  |
-| `GARAGE_REGION`            | yes      | Must match `s3_region` in `infrastructure/garage/garage.toml` (`garage`). Its absence is a crash loop, not a degradation: the S3 client signs for `us-east-1` and `bucketExists` fails inside `onModuleInit` |
-| `GARAGE_ACCESS_KEY_ID`     | yes      | The key Garage provisions on first boot - the only S3 identity in the stack                                                                                                                                  |
-| `GARAGE_SECRET_ACCESS_KEY` | yes      | Its secret                                                                                                                                                                                                   |
-| `GARAGE_BUCKET`            | yes      | Bucket name for media blobs (default `canari-media`), **also used for public assets**                                                                                                                        |
-| `MEDIA_MAX_SIZE_MB`        | no       | Max upload size in MB, measured on the CIPHERTEXT (default 100, capped at 100). **Both estates run `50`.** Published by `GET /api/media/limits` and the only copy of the number                              |
-| `MEDIA_CHAT_REEL_RETENTION_MS` | no   | The `chat-reel` age window (default 30 days); a bench shortens it to cross it in seconds |
-| `MEDIA_CHAT_REEL_DAILY_BYTES` | no    | Per-member `chat-reel` upload budget per rolling 24 h (default 500 MB) |
-| `MEDIA_RETENTION_SWEEP_MS` | no       | Retention sweep interval (default 1 h); also the upload-session sweep's                                                                                                                                      |
-| `MEDIA_UPLOAD_SESSION_DIR` | no       | Where sessions stage (default `./upload_sessions`, NOT a volume: see the residuals of [sessions](#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10)) |
-| `MEDIA_UPLOAD_SESSION_TTL_MS` | no    | The resume window, from the opening (default 24 h) |
-| `MEDIA_UPLOAD_SESSION_MAX_OPEN` | no  | Open sessions per member (default 4) |
-| `MEDIA_UPLOAD_SESSION_MAX_STAGED_BYTES` | no | Total declared size of open sessions (default 2 GiB) |
+| Variable                                | Required | Description                                                                                                                                                                                                  |
+| --------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `JWT_SECRET`                            | yes      | HS256 secret (shared with all services)                                                                                                                                                                      |
+| `GARAGE_ENDPOINT`                       | yes      | Garage host (`garage` in Compose)                                                                                                                                                                            |
+| `GARAGE_PORT`                           | yes      | Garage S3 API port (`3900`)                                                                                                                                                                                  |
+| `GARAGE_REGION`                         | yes      | Must match `s3_region` in `infrastructure/garage/garage.toml` (`garage`). Its absence is a crash loop, not a degradation: the S3 client signs for `us-east-1` and `bucketExists` fails inside `onModuleInit` |
+| `GARAGE_ACCESS_KEY_ID`                  | yes      | The key Garage provisions on first boot - the only S3 identity in the stack                                                                                                                                  |
+| `GARAGE_SECRET_ACCESS_KEY`              | yes      | Its secret                                                                                                                                                                                                   |
+| `GARAGE_BUCKET`                         | yes      | Bucket name for media blobs (default `canari-media`), **also used for public assets**                                                                                                                        |
+| `MEDIA_MAX_SIZE_MB`                     | no       | Max upload size in MB, measured on the CIPHERTEXT (default 100, capped at 100). **Both estates run `50`.** Published by `GET /api/media/limits` and the only copy of the number                              |
+| `MEDIA_CHAT_REEL_RETENTION_MS`          | no       | The `chat-reel` age window (default 30 days); a bench shortens it to cross it in seconds                                                                                                                     |
+| `MEDIA_PENDING_REEL_TTL_MS`             | no       | How long an unclaimed `reel-pending` upload lives (default 24 h). Milliseconds; under 1 h (3600000) the service REFUSES TO START, and the effective value is logged at boot                                  |
+| `MEDIA_CHAT_REEL_DAILY_BYTES`           | no       | Per-member `chat-reel` upload budget per rolling 24 h (default 500 MB)                                                                                                                                       |
+| `MEDIA_RETENTION_SWEEP_MS`              | no       | Retention sweep interval (default 1 h); also the upload-session sweep's                                                                                                                                      |
+| `MEDIA_UPLOAD_SESSION_DIR`              | no       | Where sessions stage (default `./upload_sessions`, NOT a volume: see the residuals of [sessions](#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10))                               |
+| `MEDIA_UPLOAD_SESSION_TTL_MS`           | no       | The resume window, from the opening (default 24 h)                                                                                                                                                           |
+| `MEDIA_UPLOAD_SESSION_MAX_OPEN`         | no       | Open sessions per member (default 4)                                                                                                                                                                         |
+| `MEDIA_UPLOAD_SESSION_MAX_STAGED_BYTES` | no       | Total declared size of open sessions (default 2 GiB)                                                                                                                                                         |
 
 **Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself
 stopped being MinIO. Renamed rather than kept: a name that lies about what it configures is read

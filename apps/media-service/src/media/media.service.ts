@@ -56,6 +56,39 @@ const CHAT_REEL_RETENTION_MS = positiveIntEnv(
  * attribution this service has - and refused with a 429, an ANSWER the client must not retry blindly.
  */
 const CHAT_REEL_DAILY_BYTES = positiveIntEnv('MEDIA_CHAT_REEL_DAILY_BYTES', 500 * 1024 * 1024);
+/** The shortest life an unclaimed `reel-pending` upload may be given - see {@link resolvePendingReelTtlMs}. */
+export const PENDING_REEL_TTL_FLOOR_MS = 60 * 60 * 1000;
+const PENDING_REEL_TTL_DEFAULT_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long a FEED reel's upload (`reel-pending`) that no post has claimed lives, from the env value.
+ *
+ * The client uploads and then publishes in the next second; a gap of a day is a publish that failed,
+ * was killed or was cancelled after the bytes had landed (reels audit, 2026-10-11: 14-35 MB left for
+ * ever). The window is DESTRUCTIVE, so a value under {@link PENDING_REEL_TTL_FLOOR_MS} REFUSES TO
+ * BOOT rather than being honoured: `86400` meant as seconds would otherwise be 86 s, and every reel
+ * published by a phone that slept for two minutes between its upload and its post would be deleted.
+ * An unset or unparseable value is the default (24 h). [reels](docs/wiki/frontend/modules/reels.md)
+ *
+ * @throws {Error} on a value under the floor - at module load, so the service does not start.
+ */
+export function resolvePendingReelTtlMs(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(parsed)) return PENDING_REEL_TTL_DEFAULT_MS;
+  if (parsed < PENDING_REEL_TTL_FLOOR_MS) {
+    throw new Error(
+      `MEDIA_PENDING_REEL_TTL_MS=${raw} is under the ${PENDING_REEL_TTL_FLOOR_MS} ms floor (milliseconds, not seconds) - refusing to start`
+    );
+  }
+  return parsed;
+}
+const PENDING_REEL_TTL_MS = resolvePendingReelTtlMs(process.env.MEDIA_PENDING_REEL_TTL_MS);
+/**
+ * At most this many objects are deleted per sweep run. A destructive loop with no ceiling is one bad
+ * predicate away from emptying the store in one pass; past it the rest waits for the next run, and
+ * the summary says so.
+ */
+const PURGE_MAX_PER_RUN = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Purged metadata entries (tombstones) are removed from the index after this delay. */
 const META_TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -131,6 +164,17 @@ export interface MediaStorageStats {
   /** The window the sweep applies to them, echoed so the reader need not know the constant. */
   chatReelRetentionMs: number;
   /**
+   * Feed reel uploads no post has claimed yet (`reel-pending`): a publish in progress, or one that
+   * failed after its upload. Swept {@link PENDING_REEL_TTL_MS} after upload; a count that does not
+   * fall back, or an `overdue` pair that is not zero after a sweep, is the sweep or the claim broken.
+   */
+  pendingReelCount: number;
+  pendingReelBytes: number;
+  pendingReelOverdueCount: number;
+  pendingReelOverdueBytes: number;
+  /** The window the sweep applies to them, echoed so the reader need not know the constant. */
+  pendingReelTtlMs: number;
+  /**
    * Live objects carrying no class at all: everything stored before the sweep became an allowlist
    * (2026-10-01), and every upload from a client too old to name its surface. The sweep may not
    * touch them, so this line is where their growth shows.
@@ -186,6 +230,15 @@ function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason }
  *   when the post expires, 30 days after publication. Still reached by account deletion: a reel is
  *   its uploader's.
  *
+ * - `reel-pending` - a FEED reel's upload before its post exists. SET BY THE CLIENT AT UPLOAD and
+ *   PROMOTED to `reel` by the claim (`createPost` through `internal/reel-claim`), so a claimed reel
+ *   is never this class. Swept by AGE ({@link PENDING_REEL_TTL_MS} from upload) and tombstoned
+ *   `retention_expired`: an upload whose publish failed, was killed or was cancelled is reclaimed
+ *   rather than kept for ever (reels audit, 2026-10-11). Safe for the reason `chat-reel` is: a
+ *   client naming it gains only a shorter life. It cannot be applied to an existing id
+ *   (`internal/retention-class` refuses it) - that would make a claimed reel sweepable. A client
+ *   older than this class uploads `reel`, which stays kept until its post's purge, as before.
+ *
  * - `chat-reel` - a CanaReel sent in a conversation. The only class swept by AGE
  *   ({@link CHAT_REEL_RETENTION_MS} from upload, never from the last read), tombstoned `reel_expired`
  *   and answered `410`. SET BY THE CLIENT AT UPLOAD, which is safe where `association` is not: a
@@ -197,13 +250,20 @@ function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason }
  * None of them is `publicAsset`: that flag also opens `GET /media/public/:id` (no JWT), so reusing
  * it would put ciphertext on an unauthenticated route.
  */
-export type RetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel' | 'chat-reel';
+export type RetentionClass =
+  | 'ephemeral'
+  | 'archive'
+  | 'association'
+  | 'reel'
+  | 'reel-pending'
+  | 'chat-reel';
 
 export const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
   'ephemeral',
   'archive',
   'association',
   'reel',
+  'reel-pending',
   'chat-reel',
 ]);
 
@@ -301,6 +361,12 @@ export class MediaService {
    */
   private chunkOwners?: Map<string, string>;
   /**
+   * The sweep in flight, if any: every caller of {@link purgeExpiredMedia} while it runs gets THIS
+   * promise, so boot and the interval share one run and {@link PURGE_MAX_PER_RUN} is a real ceiling
+   * on what deletes at once - not a per-caller allowance that N overlapping callers multiply.
+   */
+  private sweeping?: Promise<void>;
+  /**
    * The tail of the metadata write queue ({@link persistMetadata}); absent until the first write
    * (specs build the service without its constructor, same reason as above).
    */
@@ -314,6 +380,9 @@ export class MediaService {
     fs.ensureDirSync(CHUNK_DIR);
     fs.ensureDirSync(MEDIA_DATA_DIR);
     this.loadMetadata();
+    this.logger.log(
+      `Pending reel uploads expire ${PENDING_REEL_TTL_MS} ms (${(PENDING_REEL_TTL_MS / 3_600_000).toFixed(1)} h) after upload unless claimed`
+    );
     void this.purgeExpiredMedia();
 
     const sweepMs =
@@ -365,7 +434,9 @@ export class MediaService {
     if (!UUID_REGEX.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId');
     }
-    await this.purgeExpiredMedia();
+    // Its OWN entry is judged, never the whole index: a read must not wait behind a sweep of every
+    // object (up to PURGE_MAX_PER_RUN deletes) to learn whether the one it asked for is due.
+    await this.expireIfDue(mediaId);
 
     const entry = this.meta.items[mediaId];
     if (isGoneTombstone(entry)) {
@@ -408,7 +479,9 @@ export class MediaService {
     if (!UUID_REGEX.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId');
     }
-    await this.purgeExpiredMedia();
+    // Its OWN entry is judged, never the whole index: a read must not wait behind a sweep of every
+    // object (up to PURGE_MAX_PER_RUN deletes) to learn whether the one it asked for is due.
+    await this.expireIfDue(mediaId);
 
     const entry = this.meta.items[mediaId];
     if (isGoneTombstone(entry)) {
@@ -454,8 +527,8 @@ export class MediaService {
     if (!UUID_REGEX.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId');
     }
-    await this.purgeExpiredMedia();
-
+    // No retention judgement: a public asset is never sweepable ({@link isSweepable}), and anything
+    // else is refused below whatever its clock says.
     const entry = this.meta.items[mediaId];
 
     // Normal path: metadata present and valid.
@@ -637,6 +710,12 @@ export class MediaService {
    * claim it. A public asset, a purged entry, an unknown id and an object stored before ownership
    * was recorded (no `ownerId`) are all refused, never claimed on trust.
    *
+   * THE CLAIM IS THE PROMOTION: a `reel-pending` upload becomes `reel` here, which is what takes it
+   * off the age sweep ({@link isDue}). Nothing else ever turns a pending reel into a kept one. A
+   * pending upload ALREADY DUE is refused, never promoted: the sweep may be deleting it at this very
+   * moment, and a post saved on it would answer `410` to everyone. The publish is refused instead,
+   * and the member publishes again with a fresh upload.
+   *
    * Idempotent: an entry already `reel` is claimed again as a no-op.
    *
    * @returns the ids claimed (including ones already classified `reel`) and the ids refused.
@@ -647,6 +726,7 @@ export class MediaService {
   ): Promise<{ claimed: string[]; refused: string[] }> {
     const claimed: string[] = [];
     const refused: string[] = [];
+    let pastWindow = 0;
     let changed = false;
 
     for (const mediaId of new Set(mediaIds)) {
@@ -661,6 +741,14 @@ export class MediaService {
         refused.push(mediaId);
         continue;
       }
+      if (entry.retentionClass === 'reel-pending' && this.isDue(entry, Date.now())) {
+        this.logger.warn(
+          `Reel claim by ${ownerId}: ${mediaId} is a pending upload past its ${PENDING_REEL_TTL_MS} ms window - refused, not promoted`
+        );
+        refused.push(mediaId);
+        pastWindow += 1;
+        continue;
+      }
       if (entry.retentionClass !== 'reel') {
         entry.retentionClass = 'reel';
         changed = true;
@@ -671,7 +759,7 @@ export class MediaService {
     if (changed) await this.persistMetadata();
     if (refused.length > 0) {
       this.logger.warn(
-        `Reel claim by ${ownerId}: ${refused.length} object(s) refused (unknown, purged, public or not theirs)`
+        `Reel claim by ${ownerId}: ${refused.length} object(s) refused (${pastWindow} past their pending window, ${refused.length - pastWindow} unknown, purged, public or not theirs)`
       );
     }
     return { claimed, refused };
@@ -1019,6 +1107,11 @@ export class MediaService {
       chatReelOverdueCount: 0,
       chatReelOverdueBytes: 0,
       chatReelRetentionMs: CHAT_REEL_RETENTION_MS,
+      pendingReelCount: 0,
+      pendingReelBytes: 0,
+      pendingReelOverdueCount: 0,
+      pendingReelOverdueBytes: 0,
+      pendingReelTtlMs: PENDING_REEL_TTL_MS,
       unclassifiedCount: 0,
       unclassifiedBytes: 0,
       retentionMs: RETENTION_MS,
@@ -1077,6 +1170,15 @@ export class MediaService {
         if (this.isDue(entry, now)) {
           stats.chatReelOverdueCount += 1;
           stats.chatReelOverdueBytes += object.size;
+        }
+        continue;
+      }
+      if (entry.retentionClass === 'reel-pending') {
+        stats.pendingReelCount += 1;
+        stats.pendingReelBytes += object.size;
+        if (this.isDue(entry, now)) {
+          stats.pendingReelOverdueCount += 1;
+          stats.pendingReelOverdueBytes += object.size;
         }
         continue;
       }
@@ -1501,7 +1603,8 @@ export class MediaService {
   }
 
   /**
-   * THE ALLOWLIST: true only for what the idle sweep may delete, which is the `ephemeral` class.
+   * THE ALLOWLIST: true only for what the sweep may delete - `ephemeral` by idleness, `chat-reel`
+   * and an unclaimed `reel-pending` by age ({@link isDue}). A claimed reel is `reel`, never here.
    *
    * Everything else is kept - every other class, an unclassified entry, a public asset - so a new
    * surface that forgets to name its class costs storage rather than a member's file. That
@@ -1514,7 +1617,9 @@ export class MediaService {
   private isSweepable(entry: MediaMetaEntry | undefined): boolean {
     if (!entry) return false;
     return (
-      (entry.retentionClass === 'ephemeral' || entry.retentionClass === 'chat-reel') &&
+      (entry.retentionClass === 'ephemeral' ||
+        entry.retentionClass === 'chat-reel' ||
+        entry.retentionClass === 'reel-pending') &&
       !this.isPublicAssetEntry(entry)
     );
   }
@@ -1522,13 +1627,17 @@ export class MediaService {
   /**
    * Whether a sweepable entry's OWN clock has run out: an `ephemeral` object when nobody has read it
    * for {@link RETENTION_MS}, a `chat-reel` when {@link CHAT_REEL_RETENTION_MS} has passed since it
-   * was UPLOADED (reading it moves nothing). One function, used by the sweep and by the stats'
+   * was UPLOADED (reading it moves nothing), a `reel-pending` when {@link PENDING_REEL_TTL_MS} has
+   * passed since its upload with no post claiming it. One function, used by the sweep and by the stats'
    * `overdue` figures, so the number stays a verdict on the sweep and not an estimate of it.
    */
   private isDue(entry: MediaMetaEntry, now: number): boolean {
     if (!this.isSweepable(entry)) return false;
     if (entry.retentionClass === 'chat-reel') {
       return entry.createdAt + CHAT_REEL_RETENTION_MS < now;
+    }
+    if (entry.retentionClass === 'reel-pending') {
+      return entry.createdAt + PENDING_REEL_TTL_MS < now;
     }
     return entry.lastAccessAt < now - RETENTION_MS;
   }
@@ -1598,36 +1707,107 @@ export class MediaService {
     };
   }
 
-  private async purgeExpiredMedia() {
+  /**
+   * The retention sweep: deletes every object whose own clock has run out ({@link isDue}).
+   *
+   * THE DECISION AND THE TOMBSTONE ARE ONE SYNCHRONOUS STEP, AND THE DELETE COMES AFTER. The entry
+   * is re-read from the index on every iteration (a download or a claim may have replaced or
+   * promoted it since the run began), judged, and tombstoned before the first `await`. It used to
+   * be judged, then deleted (an await), then tombstoned FROM THE STALE ENTRY - so a claim landing
+   * during that await promoted an overdue `reel-pending` to `reel`, the post was saved, and the
+   * object was deleted under it anyway (review of #1744). Now a claim during the delete meets a
+   * tombstone and refuses; a claim before the sweep reaches the entry takes it off the sweep.
+   *
+   * Every deletion is logged with its id, class and age, and the summary counts per class.
+   *
+   * SINGLE-FLIGHT: a caller arriving while a run is in flight shares it ({@link sweeping}), so boot
+   * and the interval overlapping still delete at most {@link PURGE_MAX_PER_RUN} objects together.
+   * Downloads do not call this at all - they judge their own entry ({@link expireIfDue}).
+   */
+  private purgeExpiredMedia(): Promise<void> {
+    if (this.sweeping) {
+      this.logger.debug('Retention sweep already in flight - joining it');
+      return this.sweeping;
+    }
+    this.sweeping = this.runSweep().finally(() => {
+      this.sweeping = undefined;
+    });
+    return this.sweeping;
+  }
+
+  /**
+   * A download's own retention verdict: when THIS entry is due, it is tombstoned and its blob
+   * deleted exactly as the sweep would ({@link tombstoneAndDelete}), so the caller answers `410`
+   * without the whole index being swept first. A no-op for anything not due - which is every
+   * entry the sweep would keep, by the same {@link isDue}.
+   */
+  private async expireIfDue(mediaId: string): Promise<void> {
+    const entry = this.meta.items[mediaId];
+    if (!entry || entry.purgedAt) return;
+    if (!this.isDue(entry, Date.now())) return;
+    this.logger.debug(`media ${mediaId}: due at read time - expired before the sweep reached it`);
+    await this.tombstoneAndDelete(mediaId, entry, Date.now());
+    await this.persistMetadata();
+  }
+
+  /**
+   * Tombstones a due entry SYNCHRONOUSLY, then deletes its blob. The tombstone lands before the
+   * first `await`, which is what makes a claim during the delete meet a tombstone and refuse (see
+   * {@link purgeExpiredMedia}). A failed delete is logged and the tombstone kept.
+   */
+  private async tombstoneAndDelete(
+    mediaId: string,
+    entry: MediaMetaEntry,
+    now: number
+  ): Promise<void> {
+    const retentionClass = entry.retentionClass ?? 'none';
+    this.meta.items[mediaId] = {
+      createdAt: entry.createdAt,
+      lastAccessAt: entry.lastAccessAt,
+      purgedAt: now,
+      purgeReason: entry.retentionClass === 'chat-reel' ? 'reel_expired' : 'retention_expired',
+    };
+    this.logger.log(
+      `Retention delete ${mediaId}: class ${retentionClass}, uploaded ${Math.round((now - entry.createdAt) / 3_600_000)} h ago, last read ${Math.round((now - entry.lastAccessAt) / 3_600_000)} h ago`
+    );
+
+    try {
+      await this.storage.delete(mediaId);
+    } catch (err) {
+      // Still marked purged above - the object may simply be absent already. But this branch is
+      // how a blob is STRANDED: the entry becomes a tombstone, the tombstone is trimmed after
+      // META_TOMBSTONE_MAX_AGE_MS, and the sweep only ever iterates the metadata - so an object
+      // whose delete failed here can never be seen again. Measured 2026-08-11: 7 of the 26 live
+      // objects on production have no metadata entry at all. Never swallow it silently.
+      this.logger.warn(
+        `Retention delete failed for ${mediaId} (object may be stranded): ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+
+  /** One sweep run - only ever started by {@link purgeExpiredMedia}, which makes it single-flight. */
+  private async runSweep(): Promise<void> {
     const now = Date.now();
     let purgedCount = 0;
+    const purgedByClass: Record<string, number> = {};
+    let capped = false;
 
-    for (const [mediaId, entry] of Object.entries(this.meta.items)) {
-      if (entry.purgedAt) continue;
+    for (const mediaId of Object.keys(this.meta.items)) {
+      const entry = this.meta.items[mediaId];
+      if (!entry || entry.purgedAt) continue;
       if (!this.isDue(entry, now)) continue;
-
-      try {
-        await this.storage.delete(mediaId);
-      } catch (err) {
-        // Still marked purged below - the object may simply be absent already. But this branch is
-        // how a blob is STRANDED: the entry becomes a tombstone, the tombstone is trimmed after
-        // META_TOMBSTONE_MAX_AGE_MS, and the sweep only ever iterates the metadata - so an object
-        // whose delete failed here can never be seen again. Measured 2026-08-11: 7 of the 26 live
-        // objects on production have no metadata entry at all. Never swallow it silently.
-        this.logger.warn(
-          `Retention delete failed for ${mediaId} (object may be stranded): ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
+      if (purgedCount >= PURGE_MAX_PER_RUN) {
+        capped = true;
+        break;
       }
 
-      this.meta.items[mediaId] = {
-        createdAt: entry.createdAt,
-        lastAccessAt: entry.lastAccessAt,
-        purgedAt: now,
-        purgeReason: entry.retentionClass === 'chat-reel' ? 'reel_expired' : 'retention_expired',
-      };
+      const retentionClass = entry.retentionClass ?? 'none';
       purgedCount += 1;
+      purgedByClass[retentionClass] = (purgedByClass[retentionClass] ?? 0) + 1;
+      // Tombstoned BEFORE the delete is awaited - see above.
+      await this.tombstoneAndDelete(mediaId, entry, now);
     }
 
     // Remove tombstone entries (purgedAt != null) older than META_TOMBSTONE_MAX_AGE_MS.
@@ -1645,10 +1825,14 @@ export class MediaService {
       // Both windows are interpolated, never spelled: these two lines said "30 days" and
       // "> 90 days" in prose next to the constants they were meant to report, which is one edit
       // away from a log that lies about the policy it is enforcing.
-      if (purgedCount > 0)
+      if (purgedCount > 0) {
+        const byClass = Object.entries(purgedByClass)
+          .map(([cls, count]) => `${cls} ${count}`)
+          .join(', ');
         this.logger.log(
-          `Purged ${purgedCount} expired media object(s) (retention ${msToDays(RETENTION_MS)} days)`
+          `Purged ${purgedCount} expired media object(s) [${byClass}] (ephemeral idle ${msToDays(RETENTION_MS)} days, chat-reel ${msToDays(CHAT_REEL_RETENTION_MS)} days, reel-pending ${PENDING_REEL_TTL_MS} ms from upload)${capped ? ` - per-run cap of ${PURGE_MAX_PER_RUN} reached, the rest waits for the next run` : ''}`
         );
+      }
       if (trimmedCount > 0)
         this.logger.log(
           `Trimmed ${trimmedCount} metadata tombstone(s) > ${msToDays(META_TOMBSTONE_MAX_AGE_MS)} days`

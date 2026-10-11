@@ -592,7 +592,7 @@ export class PostsService {
    * Proves, through the media service, that every blob a reel cites is the author's own.
    *
    * Not optional hygiene: the later purge deletes what the row names, and an id is not a secret. A
-   * `refused` id (not theirs, unknown, already deleted) is a `400`; the media service being
+   * `refused` id (not theirs, unknown, already deleted, or a pending upload past its window) is a `400`; the media service being
    * unreachable is a `503` - a reel is never stored on trust, and never silently without a check.
    */
   private async claimReelBlob(authorId: string, mediaIds: string[]): Promise<void> {
@@ -609,10 +609,12 @@ export class PostsService {
     }
     if (refused.length > 0) {
       this.logger.warn(
-        `[REEL] ${authorId.slice(0, 8)} cited ${refused.length} blob(s) that are not theirs, or gone`
+        `[REEL] ${authorId.slice(0, 8)} cited ${refused.length} blob(s) that are not theirs, gone, or a pending upload past its window`
       );
+      // The pending window is the MEDIA service's (MEDIA_PENDING_REEL_TTL_MS), so it is not spelled
+      // here: a duration written in this sentence is one env change away from a lie.
       throw new BadRequestException(
-        "a reel's video must be a file you uploaded (with retentionClass 'reel') and that still exists"
+        "a reel's video must be a file you uploaded yourself that still exists - an unclaimed upload ('reel-pending') expires after the media service's pending window, upload it again"
       );
     }
   }

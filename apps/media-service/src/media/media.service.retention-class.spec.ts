@@ -138,7 +138,7 @@ describe('retention class: the idle sweep is an ALLOWLIST', () => {
 
   it('never answers `purged` for an association document, however long it sat unopened', async () => {
     // The production failure end to end: an idle vault document, then a download. `download()`
-    // runs the sweep itself first, so this is the real path the 410 took.
+    // judges its own entry by the sweep's predicate, so this is the real path the 410 took.
     const items: Record<string, Entry> = {
       [UUID_DOCUMENT]: idle({ retentionClass: 'association', ownerId: 'officer' }),
     };

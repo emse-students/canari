@@ -496,11 +496,12 @@ export class MediaController {
         "class 'reel' is set by POST internal/reel-claim, with an owner"
       );
     }
-    // `chat-reel` is attached AT UPLOAD, where the owner and the size are known: applying it to an
-    // existing id would make that object sweepable by age and count it against nobody's budget.
-    if (retentionClass === 'chat-reel') {
+    // `chat-reel` and `reel-pending` are attached AT UPLOAD, where the owner (and for a chat-reel
+    // the size) are known: applying either to an existing id would make that object sweepable by
+    // age - a claimed reel's blob deleted under its live post.
+    if (retentionClass === 'chat-reel' || retentionClass === 'reel-pending') {
       throw new BadRequestException(
-        "class 'chat-reel' is set by the upload that creates the object"
+        `class '${retentionClass}' is set by the upload that creates the object`
       );
     }
 

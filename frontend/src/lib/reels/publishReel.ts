@@ -2,7 +2,8 @@
  * PUBLISHING A REEL - the CanaReels publish step's work, in the order the server's contract asks
  * for it ([reels (server)](docs/wiki/services/reels.md)): the mute check, the media token, the
  * on-device re-encode to ONE fragmented MP4 (`prepareVideoForUpload`, C3), the upload under the
- * `reel` retention class, then `POST /api/posts` with `kind: 'reel'` and the declared duration.
+ * `reel-pending` retention class ({@link FEED_REEL_UPLOAD_CLASS}), then `POST /api/posts` with
+ * `kind: 'reel'` and the declared duration - whose claim promotes the blob to `reel`.
  *
  * Every dependency is a parameter so the order and the payload are pinned by a test with no network
  * and no encoder (`publishReel.test.ts`); the screen passes {@link defaultPublishReelDeps}.
@@ -11,7 +12,13 @@
  * error as its cause - typed at the throw, so the screen names where it stopped without reading a
  * message (`publishFailureMessage` reads the cause).
  */
-import { MediaService, preparePostMedia, type ImageDimensions, type MediaRef } from '$lib/media';
+import {
+  MediaService,
+  preparePostMedia,
+  type ImageDimensions,
+  type MediaRef,
+  type MediaRetentionClass,
+} from '$lib/media';
 import { createPost, type CreatePostPayload, type PostEntity } from '$lib/posts/api';
 import { assertNotMuted } from '$lib/moderation/muteCheck';
 import type { PublishStage } from '$lib/posts/publishFailure';
@@ -34,7 +41,15 @@ export interface PublishReelDeps {
   createPost: (payload: CreatePostPayload) => Promise<PostEntity>;
 }
 
-/** The production dependencies: the real services, the `reel` retention class. */
+/**
+ * The class a feed reel is UPLOADED under. Not `reel`: an upload whose post is never created (a
+ * failed `createPost`, a kill or a cancel between the two calls) would then be kept for ever. A
+ * `reel-pending` object is swept a day after upload unless the post's claim promotes it to `reel`
+ * (reels audit, 2026-10-11; [media-service](docs/wiki/services/media-service.md)).
+ */
+export const FEED_REEL_UPLOAD_CLASS: MediaRetentionClass = 'reel-pending';
+
+/** The production dependencies: the real services, the {@link FEED_REEL_UPLOAD_CLASS} upload class. */
 export function defaultPublishReelDeps(): PublishReelDeps {
   const media = new MediaService();
   return {
@@ -42,7 +57,8 @@ export function defaultPublishReelDeps(): PublishReelDeps {
     getToken,
     uploadLimits: () => media.uploadLimits(),
     prepare: prepareVideoForUpload,
-    upload: (file, token, dims) => media.encryptAndUpload(file, token, dims, 'reel'),
+    upload: (file, token, dims) =>
+      media.encryptAndUpload(file, token, dims, FEED_REEL_UPLOAD_CLASS),
     createPost,
   };
 }

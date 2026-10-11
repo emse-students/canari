@@ -46,6 +46,7 @@ type ServiceInternals = {
   storage: Record<string, unknown>;
   logger: {
     log: (msg: string) => void;
+    debug: (msg: string) => void;
     warn: (msg: string) => void;
     error: (msg: string) => void;
   };
@@ -103,7 +104,7 @@ function serviceWith(items: Record<string, Entry>, failDeleteOf: string[] = []) 
           .map((id) => ({ id, size: 10, lastModifiedMs: Date.now() }))
       ),
   };
-  internals.logger = { log: () => {}, warn: () => {}, error: () => {} };
+  internals.logger = { log: () => {}, debug: () => {}, warn: () => {}, error: () => {} };
   internals.uploadLocks = new Map();
   internals.persistMetadata = () => Promise.resolve();
   internals.sweepIntervalMs = 60_000;
@@ -167,7 +168,7 @@ describe('chat-reel: swept by AGE from upload, never by idleness', () => {
     };
     const { service } = serviceWith(items);
 
-    // `download()` runs the sweep first: this is the real path a late viewer takes.
+    // `download()` judges its own entry first: this is the real path a late viewer takes.
     expect((await service.download(UUID_REEL_OLD)).status).toBe('purged');
     expect((await service.downloadRange(UUID_REEL_OLD, 'bytes=0-9')).status).toBe('purged');
   });

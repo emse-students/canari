@@ -18,7 +18,12 @@
     mediaFailureCause,
     type MediaFailureCause,
   } from '$lib/utils/mediaErrors';
-  import { chooseSegmentedPlayback, openSegmentedStream } from '$lib/utils/segmentedMediaStream';
+  import {
+    chooseSegmentedPlayback,
+    FEED_STREAM_PACING,
+    openSegmentedStream,
+    type SegmentedStreamHandle,
+  } from '$lib/utils/segmentedMediaStream';
   import { mediaUrl } from '$lib/utils/apiUrl';
   import { resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { formatFileSize } from '$lib/utils/fileSize';
@@ -80,6 +85,12 @@
      * the box is what an `IntersectionObserver` can watch: this component renders a different root
      * per media type and has none of its own. Defaults to `false`, so a lightbox or any other call
      * site that knows the media is on screen is unaffected.
+     *
+     * A VIDEO THAT BECOMES DEFERRED AGAIN GIVES EVERYTHING BACK: its owner reports the card leaving
+     * the viewport band (`nearViewport`'s `onleave`), the stream is closed - its segment in flight
+     * aborted - and the `<video>` unmounts, decoder and all; the poster stands in until the card
+     * comes back, which opens a new stream. A deferred video takes no warm blob either: holding a
+     * decoder for a card nobody can see is the cost the reels audit measured (2026-10-11).
      */
     deferred?: boolean;
     /** The post's publisher and date, for the viewer's title and information panel. */
@@ -108,6 +119,16 @@
   let streamUrl = $state<string | null>(null);
   /** Whether that stream runs through Safari's `ManagedMediaSource`. */
   let streamManaged = $state(false);
+  /**
+   * The stream itself while there is one. Outside the viewer it is PACED (`FEED_STREAM_PACING`):
+   * the head, then what the inline element is about to play - a card scrolled past without being
+   * watched never downloads the whole reel.
+   */
+  let stream = $state.raw<SegmentedStreamHandle | null>(null);
+  /** Hands the inline `<video>` to the paced stream - a new function per stream, so it re-attaches. */
+  const attachStream = $derived(
+    stream ? (video: HTMLVideoElement) => stream?.attach(video) : undefined
+  );
   /** What the inline player shows: the stream while there is one, the blob otherwise. */
   const playUrl = $derived(streamUrl ?? blobUrl);
   let loading = $state(true);
@@ -148,8 +169,20 @@
       ...(media.encoding ? { encoding: media.encoding } : {}),
     };
 
-    // Already decrypted in memory - a page rebuilt by a tab swipe: drawn in this very frame,
-    // deferred or not, instead of a placeholder the reader watches turn into what was just there.
+    // A deferred VIDEO holds nothing, not even a warm blob: a mounted `<video>` with a source is a
+    // decoder, and a card outside the band is one nobody sees. The poster draws the same either
+    // way - an inline video shows it until its first frame decodes. A viewer the card's tap opened
+    // and that is still waiting for the file goes with it: the stream it waited on is closed.
+    if (deferred && mediaType === 'video') {
+      loading = true;
+      failure = null;
+      lightboxOpen = false;
+      return;
+    }
+
+    // Already decrypted in memory - a page rebuilt by a tab swipe: drawn in this very frame instead
+    // of a placeholder the reader watches turn into what was just there. Deferred or not for a
+    // PICTURE; a deferred video returned above.
     const warm = retainWarmDecryptedMediaBlobUrl(mediaRef);
     if (warm) {
       blobUrl = warm;
@@ -175,11 +208,18 @@
     // blob included - takes the whole-blob path below, which reads both formats.
     const playback = mediaType === 'video' ? chooseSegmentedPlayback(mediaRef) : null;
     if (playback?.kind === 'stream') {
-      const stream = openSegmentedStream(mediaRef, mediaUrl(), playback);
-      streamUrl = stream.url;
+      // The viewer (`galleryMode`) wants the whole file: the reader opened that video.
+      const opened = openSegmentedStream(
+        mediaRef,
+        mediaUrl(),
+        playback,
+        galleryMode ? undefined : FEED_STREAM_PACING
+      );
+      stream = opened;
+      streamUrl = opened.url;
       streamManaged = playback.managed;
       loading = false;
-      stream.done
+      opened.done
         .then((blob) => {
           if (destroyed) return;
           blobUrl = adoptDecryptedMediaBlob(mediaRef, blob);
@@ -195,9 +235,10 @@
         });
       return () => {
         destroyed = true;
-        stream.close();
+        opened.close();
         if (acquired) releaseDecryptedMediaBlobUrl(mediaRef);
         acquired = false;
+        stream = null;
         streamUrl = null;
         blobUrl = null;
       };
@@ -247,6 +288,13 @@
 
   let lightboxOpen = $state(false);
   let pdfViewerOpen = $state(false);
+
+  // The lightbox waits for the WHOLE file (`blobUrl`), which a paced stream builds only once every
+  // segment is in - and the inline element it paces is paused under the viewer. Opening it is the
+  // reader asking for that video, so the pacing is lifted.
+  $effect(() => {
+    if (lightboxOpen && stream) stream.fetchAll();
+  });
 
   function handleClick(e: MouseEvent) {
     e.preventDefault();
@@ -424,6 +472,7 @@
         src={playUrl!}
         disableRemotePlayback={streamManaged}
         streamed={streamUrl !== null}
+        onVideo={attachStream}
         onOpen={() => (onOpen ? onOpen() : (lightboxOpen = true))}
         openLabel={m.post_fullscreen_label()}
         class={letterbox
@@ -524,7 +573,10 @@
   {/if}
 
   <!-- Lightbox for image/video -->
-  {#if lightboxOpen && blobUrl && (mediaType === 'image' || mediaType === 'video')}
+  <!-- A STREAMED video's viewer opens AT THE TAP, on the poster, and fills when the whole file is in
+       (`fetchAll` above): waiting for `blobUrl` here made a tap on a paced feed video do nothing
+       until the last segment, then pop the viewer up unasked (review of #1744). -->
+  {#if lightboxOpen && (blobUrl || streamUrl) && (mediaType === 'image' || mediaType === 'video')}
     <MediaLightbox
       open={lightboxOpen}
       onClose={closeLightbox}

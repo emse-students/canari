@@ -113,7 +113,11 @@ Progress is `received / totalParts`; cancel is `AbortController` plus the `DELET
   cache (`caches.put`) is fed from the response stream, never from a whole `ArrayBuffer`.
 - **Video**: already streamed through MSE by `segmentedMediaReader` for refs naming codecs; the work is
   bounding what it keeps (SourceBuffer eviction behind the playhead - **owed, not read**) and not adopting
-  the whole file into the blob pool for a stream nobody downloads.
+  the whole file into the blob pool for a stream nobody downloads. **The second half is done for the
+  feed (2026-10-11)**: a feed card's stream is PACED - its head, then what its playing element is about
+  to play - and closed when the card leaves the viewport band, so an unwatched reel never builds the
+  whole file; segments are kept as Blobs, not `ArrayBuffer`s; the decrypted pool is capped at 64 MiB
+  ([reels](../frontend/modules/reels.md#watching-the-feed-card-and-the-full-screen-viewer-c7)).
 - A single-block blob (every legacy ref, every photo under the threshold) is unchanged and read whole: AES-GCM
   cannot release a byte before its tag, so bounded memory is not available for it, and none is promised.
 

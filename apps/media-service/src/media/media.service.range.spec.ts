@@ -27,7 +27,6 @@ type ServiceInternals = {
     getRange: (id: string, offset: number, length: number) => Promise<unknown>;
   };
   persistMetadata: () => Promise<void>;
-  purgeExpiredMedia: () => Promise<void>;
   logger: { warn: (m: string) => void; log: (m: string) => void; debug: (m: string) => void };
 };
 
@@ -64,7 +63,6 @@ function serviceWith(items: Record<string, MetaEntry>) {
     persistCalls += 1;
     return Promise.resolve();
   };
-  internals.purgeExpiredMedia = () => Promise.resolve();
   internals.logger = { warn: () => {}, log: () => {}, debug: () => {} };
   return { service, reads, persisted: () => persistCalls, items };
 }

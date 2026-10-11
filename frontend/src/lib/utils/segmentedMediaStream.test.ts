@@ -12,7 +12,8 @@ import type { MediaSourceConstructor } from './segmentedMediaStream';
 
 vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') }));
 
-const { chooseSegmentedPlayback, openSegmentedStream } = await import('./segmentedMediaStream');
+const { chooseSegmentedPlayback, openSegmentedStream, FEED_STREAM_PACING } =
+  await import('./segmentedMediaStream');
 
 const WEBM = 'video/webm;codecs=vp9,opus';
 
@@ -212,5 +213,178 @@ describe('openSegmentedStream', () => {
     );
     const err = await handle.done.catch((e) => e);
     expect(err.name).toBe('MediaRangeUnsupportedError');
+  });
+
+  /** A sealed video of `segments` default-sized segments, served by a fetch that records ranges. */
+  async function servedVideo(segments: number, hangFromRequest = Infinity) {
+    const n = segments * SEGMENTED_MEDIA_SEGMENT_BYTES;
+    const { ciphertext, keyHex, ivHex } = await encryptSegmentedMedia(new Uint8Array(n).buffer);
+    const sealed = new Uint8Array(ciphertext);
+    const requests: Array<{ mediaId: string; bytes: number; signal?: AbortSignal }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init: RequestInit) => {
+        const [, a, b] = /bytes=(\d+)-(\d+)/.exec((init.headers as Record<string, string>).Range)!;
+        const part = sealed.slice(Number(a), Math.min(Number(b) + 1, sealed.byteLength));
+        requests.push({
+          mediaId: decodeURIComponent(url.split('/').pop()!),
+          bytes: part.byteLength,
+          signal: init.signal ?? undefined,
+        });
+        if (requests.length > hangFromRequest) {
+          // On the wire until aborted, as a slow link holds a segment.
+          return new Promise<Response>((_resolve, reject) =>
+            init.signal?.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError'))
+            )
+          );
+        }
+        return Promise.resolve(new Response(part, { status: 206 }));
+      })
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:stream');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const ref = (mediaId: string): MediaRef => ({
+      type: 'video',
+      mediaId,
+      key: keyHex,
+      iv: ivHex,
+      mimeType: WEBM,
+      size: n,
+      encoding: 'segmented-v1',
+    });
+    return { ref, requests };
+  }
+
+  const STREAM = {
+    kind: 'stream' as const,
+    MediaSourceCtor: FakeMediaSource as unknown as MediaSourceConstructor,
+    managed: false,
+  };
+
+  /** An element's state as a paced stream reads it: playing or not, and what it has buffered. */
+  class FakeElement extends EventTarget {
+    paused = true;
+    currentTime = 0;
+    bufferedEnd = 0;
+    get buffered() {
+      const end = this.bufferedEnd;
+      return {
+        length: end > 0 ? 1 : 0,
+        start: () => 0,
+        end: () => end,
+      } as unknown as TimeRanges;
+    }
+  }
+
+  /** Lets every pending fetch, decrypt and append settle. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+  /**
+   * THE BOUND THE AUDIT FOUND MISSING (2026-10-11): nothing failed if a feed card downloaded a 35 MB
+   * reel it never played. Ten paced cards that are never played fetch their HEAD and nothing else -
+   * two segments each, whatever the length of the video.
+   */
+  it('bounds what N paced feed cards fetch to their head when none of them plays', async () => {
+    const { ref, requests } = await servedVideo(8);
+    const handles = Array.from({ length: 10 }, (_, i) =>
+      openSegmentedStream(ref(`reel-${i}`), 'https://media.test', STREAM, FEED_STREAM_PACING)
+    );
+    for (const handle of handles) handle.attach(new FakeElement());
+    await vi.waitFor(() => expect(requests).toHaveLength(20));
+    await settle();
+
+    expect(requests).toHaveLength(20);
+    const total = requests.reduce((sum, r) => sum + r.bytes, 0);
+    // Two segments a card and their tags/header: never the eight-segment file.
+    expect(total).toBeLessThanOrEqual(10 * (2 * SEGMENTED_MEDIA_SEGMENT_BYTES + 1024));
+    for (let i = 0; i < 10; i++) {
+      expect(requests.filter((r) => r.mediaId === `reel-${i}`)).toHaveLength(2);
+    }
+    for (const handle of handles) handle.close();
+  });
+
+  it('fetches past the head only while its element plays and is short of buffer', async () => {
+    const { ref, requests } = await servedVideo(6);
+    const handle = openSegmentedStream(ref('r'), 'https://media.test', STREAM, FEED_STREAM_PACING);
+    const element = new FakeElement();
+    handle.attach(element);
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+
+    // Playing with nothing ahead of the playhead: the next segment is asked for.
+    element.paused = false;
+    element.dispatchEvent(new Event('play'));
+    await vi.waitFor(() => expect(requests.length).toBeGreaterThan(2));
+
+    // Enough buffered ahead: the stream holds.
+    element.bufferedEnd = 60;
+    await settle();
+    const held = requests.length;
+    element.dispatchEvent(new Event('timeupdate'));
+    await settle();
+    expect(requests).toHaveLength(held);
+
+    // The rest on demand: `fetchAll` lifts the pacing and the whole file arrives.
+    handle.fetchAll();
+    const blob = await handle.done;
+    expect(blob.size).toBe(6 * SEGMENTED_MEDIA_SEGMENT_BYTES);
+    expect(requests).toHaveLength(6);
+    handle.close();
+  });
+
+  it('stops for good when closed - the segment in flight is aborted and nothing more is asked', async () => {
+    const { ref, requests } = await servedVideo(6, 2);
+    const handle = openSegmentedStream(ref('r'), 'https://media.test', STREAM, FEED_STREAM_PACING);
+    const element = new FakeElement();
+    element.paused = false;
+    handle.attach(element);
+    // The third request - past the head, asked because the element plays - hangs on the wire.
+    await vi.waitFor(() => expect(requests).toHaveLength(3));
+    expect(requests[2].signal?.aborted).toBe(false);
+
+    handle.close();
+    const atClose = requests.length;
+    expect(requests[2].signal?.aborted).toBe(true);
+    await expect(handle.done).rejects.toMatchObject({ name: 'AbortError' });
+    element.dispatchEvent(new Event('timeupdate'));
+    await settle();
+    expect(requests).toHaveLength(atClose);
+  });
+
+  /** Safari's ManagedMediaSource says when it wants bytes; a paced stream waits for it. */
+  it('holds a ManagedMediaSource stream while it is not streaming, and resumes on startstreaming', async () => {
+    const { ref, requests } = await servedVideo(6);
+    const handle = openSegmentedStream(
+      ref('r'),
+      'https://media.test',
+      { ...STREAM, managed: true },
+      FEED_STREAM_PACING
+    );
+    const source = FakeMediaSource.last as FakeMediaSource & { streaming?: boolean };
+    source.streaming = false;
+    const element = new FakeElement();
+    element.paused = false;
+    handle.attach(element);
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    element.dispatchEvent(new Event('timeupdate'));
+    await settle();
+    expect(requests).toHaveLength(2);
+
+    source.streaming = true;
+    source.dispatchEvent(new Event('startstreaming'));
+    await vi.waitFor(() => expect(requests.length).toBeGreaterThan(2));
+    handle.close();
+  });
+
+  it('wakes a stream waiting for demand when it is closed, so it never hangs', async () => {
+    const { ref, requests } = await servedVideo(4);
+    const handle = openSegmentedStream(ref('r'), 'https://media.test', STREAM, FEED_STREAM_PACING);
+    handle.attach(new FakeElement());
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    await settle();
+
+    handle.close();
+
+    await expect(handle.done).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

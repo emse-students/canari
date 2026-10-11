@@ -103,7 +103,7 @@ async function sharedPooledLoad(
   map: Map<string, SharedLoad>,
   key: string,
   signal: AbortSignal | undefined,
-  load: (signal: AbortSignal, onStart: () => void) => Promise<string>
+  load: (signal: AbortSignal, onStart: () => void) => Promise<PooledBlob>
 ): Promise<string> {
   const cached = pool.tryRetain(key);
   if (cached) return cached;
@@ -123,8 +123,8 @@ async function sharedPooledLoad(
     started: false,
   };
   entry.promise = (async () => {
-    const blobUrl = await load(controller.signal, () => (entry.started = true));
-    return pool.retain(key, blobUrl);
+    const { url, bytes } = await load(controller.signal, () => (entry.started = true));
+    return pool.retain(key, url, bytes);
   })();
   map.set(key, entry);
   holdSharedLoad(map, key, entry, signal);
@@ -133,6 +133,17 @@ async function sharedPooledLoad(
   } finally {
     if (map.get(key) === entry) map.delete(key);
   }
+}
+
+/** A blob URL a load produced, and the blob's size - which the pool's byte cap counts. */
+interface PooledBlob {
+  url: string;
+  bytes: number;
+}
+
+/** Mints the URL of `blob`, with the size the pool is told. */
+function pooledBlob(blob: Blob): PooledBlob {
+  return { url: URL.createObjectURL(blob), bytes: blob.size };
 }
 
 function decryptedKey(ref: MediaRef): string {
@@ -296,7 +307,7 @@ function loadDecryptedBlobUrl(
         await evictCiphertext(ref.mediaId, baseUrl);
         throw new MediaDecryptError(err);
       }
-      return URL.createObjectURL(new Blob([plaintext], { type: ref.mimeType }));
+      return pooledBlob(new Blob([plaintext], { type: ref.mimeType }));
     }
   );
 }
@@ -304,7 +315,7 @@ function loadDecryptedBlobUrl(
 function loadRawBlobUrl(mediaId: string, baseUrl: string, signal?: AbortSignal): Promise<string> {
   return sharedPooledLoad(rawPool, inflightRaw, mediaId, signal, async (loadSignal, onStart) => {
     const res = await fetchMediaObject(mediaId, baseUrl, loadSignal, onStart);
-    return URL.createObjectURL(await res.blob());
+    return pooledBlob(await res.blob());
   });
 }
 
@@ -348,7 +359,7 @@ export function adoptDecryptedMediaBlob(ref: MediaRef, blob: Blob): string {
   const held = decryptedPool.tryRetain(key);
   if (held) return held;
   const blobUrl = URL.createObjectURL(blob);
-  decryptedPool.retain(key, blobUrl);
+  decryptedPool.retain(key, blobUrl, blob.size);
   return blobUrl;
 }
 
