@@ -18,6 +18,8 @@ not a work package, it is a line in this table. The WP ids are kept in the table
 `CHANGELOG.md` name them. **A check that FAILS earns a new WP; a check that passes earns a PASS
 here and nothing else.**
 
+**The bench is the Mi 9T and the iPhone 12. The Pixel 6a is the user's personal phone: observation only** (user, 2026-10-11) - no agent installs, resets, signs in over or drives it; a reading on it is the user's own look.
+
 ## Where the pass stands
 
 **2026-10-11, `v1.2.3-alpha.5` on the iPhone 12 (iOS 27.0.1, TestFlight build 100200305, `dev.canari-emse.fr`, account `canari-test-gamma`).** `PASS`: the login page's "Ouvrir dans l'application" opens the app (#1605, iPhone half), the conversation's glass chrome (alignment, "+" > Photos opens ONE picker, the four accessible names), the camera opening full-bleed on the front lens 15 of 15 times with a home-and-return (#1370, front half), the emoji pictures in the composer and the bubble (rows 3 and 12, in part), the profile hub's breadcrumb, a 5 s video sent, the associations list scroll. **`FAIL` in a new shape: check W on the iPhone** (3 of 3 rises). Every reading, what is blocked and what waits for the next pre-release: [the inventory below](#the-iphone-12-owed-readings-inventory-2026-10-11).
