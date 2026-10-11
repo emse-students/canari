@@ -351,6 +351,31 @@ describe('openSegmentedStream', () => {
     expect(requests).toHaveLength(atClose);
   });
 
+  /** Safari's ManagedMediaSource says when it wants bytes; a paced stream waits for it. */
+  it('holds a ManagedMediaSource stream while it is not streaming, and resumes on startstreaming', async () => {
+    const { ref, requests } = await servedVideo(6);
+    const handle = openSegmentedStream(
+      ref('r'),
+      'https://media.test',
+      { ...STREAM, managed: true },
+      FEED_STREAM_PACING
+    );
+    const source = FakeMediaSource.last as FakeMediaSource & { streaming?: boolean };
+    source.streaming = false;
+    const element = new FakeElement();
+    element.paused = false;
+    handle.attach(element);
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    element.dispatchEvent(new Event('timeupdate'));
+    await settle();
+    expect(requests).toHaveLength(2);
+
+    source.streaming = true;
+    source.dispatchEvent(new Event('startstreaming'));
+    await vi.waitFor(() => expect(requests.length).toBeGreaterThan(2));
+    handle.close();
+  });
+
   it('wakes a stream waiting for demand when it is closed, so it never hangs', async () => {
     const { ref, requests } = await servedVideo(4);
     const handle = openSegmentedStream(ref('r'), 'https://media.test', STREAM, FEED_STREAM_PACING);

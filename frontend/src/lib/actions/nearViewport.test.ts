@@ -7,6 +7,7 @@ import { nearViewport } from './nearViewport';
  */
 class FakeObserver {
   static last: FakeObserver | null = null;
+  static all: FakeObserver[] = [];
   observed: Element[] = [];
   disconnected = 0;
 
@@ -15,6 +16,7 @@ class FakeObserver {
     readonly options?: IntersectionObserverInit
   ) {
     FakeObserver.last = this;
+    FakeObserver.all.push(this);
   }
 
   observe(el: Element) {
@@ -46,6 +48,7 @@ const realObserver = globalThis.IntersectionObserver;
 
 function useFakeObserver() {
   FakeObserver.last = null;
+  FakeObserver.all = [];
   vi.stubGlobal('IntersectionObserver', FakeObserver);
 }
 
@@ -141,19 +144,60 @@ describe('nearViewport', () => {
     const onnear = vi.fn();
     const onleave = vi.fn();
     nearViewport(document.createElement('a'), { onnear, onleave });
+    const [near, far] = FakeObserver.all;
 
-    FakeObserver.last!.leave();
+    far.leave();
     expect(onleave).not.toHaveBeenCalled();
 
-    FakeObserver.last!.enter();
-    FakeObserver.last!.enter();
-    FakeObserver.last!.leave();
-    FakeObserver.last!.leave();
-    FakeObserver.last!.enter();
+    near.enter();
+    near.enter();
+    far.leave();
+    far.leave();
+    near.enter();
 
     expect(onnear).toHaveBeenCalledTimes(2);
     expect(onleave).toHaveBeenCalledTimes(1);
-    expect(FakeObserver.last!.disconnected).toBe(0);
+    expect(near.disconnected + far.disconnected).toBe(0);
+  });
+
+  /**
+   * HYSTERESIS (review of #1744): with one edge, a card resting on it reopened its stream and
+   * refetched its 2 MiB head on every small scroll. It leaves only past a FARTHER edge.
+   */
+  it('leaves only past a farther edge than the one it entered by', () => {
+    useFakeObserver();
+    const onnear = vi.fn();
+    const onleave = vi.fn();
+    nearViewport(document.createElement('a'), { onnear, onleave });
+    const [near, far] = FakeObserver.all;
+
+    expect(near.options?.rootMargin).toBe('400px');
+    expect(far.options?.rootMargin).toBe('1200px');
+
+    near.enter();
+    // Back out past the entry edge, still inside the exit edge: the near observer reports it,
+    // and nothing is given back.
+    near.leave();
+    near.enter();
+    expect(onleave).not.toHaveBeenCalled();
+    expect(onnear).toHaveBeenCalledTimes(1);
+
+    far.leave();
+    expect(onleave).toHaveBeenCalledTimes(1);
+  });
+
+  it('observes in the scrolling box the node moves in, so the margin is not clipped away', () => {
+    useFakeObserver();
+    const scroller = document.createElement('div');
+    scroller.style.overflowY = 'auto';
+    const node = document.createElement('a');
+    scroller.appendChild(node);
+    document.body.appendChild(scroller);
+
+    nearViewport(node, { onnear: () => {} });
+
+    expect(FakeObserver.last?.options?.root).toBe(scroller);
+    scroller.remove();
   });
 
   /**

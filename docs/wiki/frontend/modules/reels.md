@@ -328,16 +328,24 @@ fetched once the card is within 400 px of the viewport, and the rest only while 
 `<video>` is PLAYING and holds under 10 s past its playhead. The demand is read from the element
 (`paused`, `buffered`, `currentTime`, its `play`/`timeupdate`/`waiting` events), never a clock, so a
 card scrolled past (paused by `playWhileVisible`), a refused autoplay or a viewer open over it asks
-for nothing more. Leaving the same 400 px band is reported by `nearViewport`'s two-way mode
-(`onleave`, video attachments only): `PostMedia` is deferred again, the stream is CLOSED (the segment
+for nothing more. LEAVING is reported by `nearViewport`'s two-way mode (`onleave`, video
+attachments only) at a FARTHER edge, 1200 px, so a card resting on the 400 px edge does not reopen
+its stream on every small scroll; both observers are rooted at the box the feed scrolls in
+(`.page-scroll-wrap`), since an observer rooted at the viewport clips a target by its scrolling
+ancestors without the margin. On leaving, `PostMedia` is deferred again, the stream is CLOSED (the segment
 in flight aborted) and the `<video>` unmounts with its decoder; a deferred video takes no warm blob
 either, so only the cards near the screen hold a player. Coming back opens a new stream, which
 re-fetches the head (nothing else keeps those bytes). The segments the final file needs are kept as
 `Blob`s, never as the decrypted `ArrayBuffer`s - the JS-heap second copy is gone - and a paced
 stream builds the whole file only once the member has watched it to the end, or opened the media
-viewer (`fetchAll`). The decrypted pool is capped by BYTES (64 MiB, `BLOB_URL_POOL_MAX_BYTES`)
-as well as entries: past it the least recently used IDLE blob is revoked at once, and a held one -
-the video playing - never. Pinned by `segmentedMediaStream.test.ts` (ten unplayed cards fetch 20
+viewer (`fetchAll`) - which opens AT THE TAP on the poster and fills when the file is in, and goes
+away with the card if the card leaves the band. On an iPhone the pacing also honours
+`ManagedMediaSource.streaming` (`startstreaming`/`endstreaming`); a range the engine EVICTS is not
+fetched again (no time-to-segment index yet), and nothing is trimmed behind the playhead because a
+feed video loops from its own buffer. The decrypted pool is capped by BYTES (64 MiB,
+`BLOB_URL_POOL_MAX_BYTES`) as well as entries, SOFTLY: when a new blob takes it past the cap, the
+least recently used IDLE blob is revoked, a held one - the video playing - never, and a release
+alone evicts nothing, so a page torn down by a tab swipe keeps its grace. Pinned by `segmentedMediaStream.test.ts` (ten unplayed cards fetch 20
 requests, two segments each, of an eight-segment file; close aborts the segment in flight),
 `PostMedia.stream.svelte.test.ts` and `blobUrlPool.test.ts`. NOT measured on a phone with a 30 MB
 reel: the decoder count and the bytes on the wire are owed one reading on the Mi 9T.

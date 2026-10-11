@@ -98,19 +98,37 @@ describe('BlobUrlPool', () => {
     expect(pool.tryRetain('recent')).toBe('blob:recent');
   });
 
-  it('never evicts a held entry to honour the byte cap, and evicts it as soon as it is released', () => {
+  it('never evicts a held entry to honour the byte cap', () => {
     const pool = new BlobUrlPool({ maxBytes: 100 });
     pool.retain('playing', 'blob:playing', 80);
     pool.retain('next', 'blob:next', 80);
 
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
     expect(pool.bytes).toBe(160);
+  });
 
-    // Released while over the cap: given back now, not after the five-minute delay.
-    pool.release('playing');
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:playing');
-    expect(pool.bytes).toBe(80);
-    expect(pool.tryRetain('next')).toBe('blob:next');
+  /**
+   * A SOFT CAP (review of #1744): a release over the cap used to evict at once, so a feed page torn
+   * down by a tab swipe lost its warm videos past 64 MiB. The grace holds until a new blob needs
+   * the room.
+   */
+  it('keeps a released entry warm over the cap until a new blob needs the room', () => {
+    const pool = new BlobUrlPool({ maxBytes: 100 });
+    pool.retain('a', 'blob:a', 80);
+    pool.retain('b', 'blob:b', 80);
+    pool.release('a');
+    pool.release('b');
+
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(pool.tryRetain('a')).toBe('blob:a');
+    pool.release('a');
+
+    vi.advanceTimersByTime(1);
+    pool.retain('c', 'blob:c', 10);
+    // `b` was released first and not touched since: it goes; `a` (retained again) stays.
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:b');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:a');
   });
 
   it('keeps a blob alive while another holder remains', () => {

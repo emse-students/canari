@@ -48,6 +48,13 @@
  *   that writes the container (R3).
  * - A closed stream re-fetches its head when it is opened again: the segments it had are not kept
  *   anywhere but the element it fed, which closing released.
+ * - A range the ENGINE EVICTS from the buffer is not fetched again: segments go in once, in order. A
+ *   `ManagedMediaSource` (iPhone) may evict under memory pressure and stall there - the pacing
+ *   honours its `streaming` flag, but re-fetching an evicted range needs the time-to-segment index
+ *   above. Not observed on a device.
+ * - Nothing is trimmed BEHIND the playhead: a feed video LOOPS from its own buffer, which trimming
+ *   would break (the loop would need a re-fetch), so the engine's own buffer quota and eviction
+ *   bound it.
  */
 
 import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
@@ -197,10 +204,22 @@ export function openSegmentedStream(
   const poke = () => wake?.();
   // A close wakes a waiting loop, which then sees the abort and stops.
   abort.signal.addEventListener('abort', poke, { once: true });
+  if (playback.managed) {
+    source.addEventListener('startstreaming', poke);
+    source.addEventListener('endstreaming', poke);
+  }
+
+  /**
+   * Safari's `ManagedMediaSource` says itself when it wants bytes: `streaming` is false between its
+   * `endstreaming` and `startstreaming` events (memory pressure, a hidden page), and a paced stream
+   * honours it on top of its element's demand. A standard `MediaSource` has no such property.
+   */
+  const managedSource = source as MediaSource & { streaming?: boolean };
 
   /** Whether segment `index` may be fetched now. */
   function wanted(index: number): boolean {
     if (!paced || !pacing || index < pacing.headSegments) return true;
+    if (playback.managed && managedSource.streaming === false) return false;
     if (!element || element.paused) return false;
     return bufferedAhead(element) < pacing.aheadSeconds;
   }

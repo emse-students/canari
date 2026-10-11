@@ -16,7 +16,15 @@
  * and its bytes, and keeping them for every card ever scrolled past is what the reels audit found
  * (2026-10-11: ten reels, ~300 MB). With `onleave` the observer stays connected and reports both
  * edges of the same band - `onnear` on entering it, `onleave` on leaving it - so the owner can
- * release what the card holds and take it again on return.
+ * release what the card holds and take it again on return. The exit edge is FARTHER than the entry
+ * edge (`leaveMargin`, 1200px by default, against 400px): with one edge, a card resting on it
+ * reopened its stream and refetched its head on every small scroll (review of #1744).
+ *
+ * THE ROOT IS THE NEAREST SCROLLING ANCESTOR, NOT THE VIEWPORT. The feed scrolls inside
+ * `.page-scroll-wrap` (`+layout.svelte`), and an observer rooted at the viewport clips its target
+ * by every scrolling ancestor WITHOUT the margin (the IntersectionObserver spec; not measured on a
+ * device) - so the "400px ahead" stopped at that box's edge. Rooting
+ * the observer at that ancestor is what makes the margin mean what this page says.
  *
  * `rootMargin` defaults to 400px rather than 0: a card that enters the viewport and only THEN
  * starts asking is a card that is blank while the reader is already looking at it. The number is a
@@ -35,19 +43,34 @@
  * ```
  */
 export interface NearViewportOptions {
-  /** Called once, the first time the node is within `rootMargin` of the viewport - or on every entry when `onleave` is set. */
+  /** Called once, the first time the node is within `rootMargin` - or on every entry when `onleave` is set. */
   onnear: () => void;
-  /** Called when the node leaves that band after `onnear`. Setting it keeps the observer connected. */
+  /**
+   * Called when the node goes farther than `leaveMargin` after `onnear`. Setting it keeps the
+   * observers connected (two-way mode).
+   */
   onleave?: () => void;
-  /** How far ahead of the viewport counts as near. CSS margin syntax; defaults to `400px`. */
+  /** How far ahead of the visible area counts as near. CSS margin syntax; defaults to `400px`. */
   rootMargin?: string;
+  /** Two-way only: how far the node must go before it has left. Defaults to `1200px`. */
+  leaveMargin?: string;
+}
+
+/** The nearest ancestor that scrolls vertically - the box the node actually moves in - or `null`. */
+export function scrollRoot(node: HTMLElement): HTMLElement | null {
+  for (let el = node.parentElement; el; el = el.parentElement) {
+    const overflowY = getComputedStyle(el).overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') return el;
+  }
+  return null;
 }
 
 export function nearViewport(node: HTMLElement, options: NearViewportOptions) {
   let opts = options;
   let observer: IntersectionObserver | null = null;
+  let leaveObserver: IntersectionObserver | null = null;
   let fired = false;
-  /** Two-way, read once like the margin: an observer is not rebuilt for a changed mode. */
+  /** Two-way, read once like the margins: an observer is not rebuilt for a changed mode. */
   const twoWay = !!options.onleave;
 
   function fire() {
@@ -76,22 +99,31 @@ export function nearViewport(node: HTMLElement, options: NearViewportOptions) {
     };
   }
 
+  const root = scrollRoot(node);
+  // The LAST entry is the node's current state; several arrive when it crosses back and forth.
   observer = new IntersectionObserver(
     (entries) => {
-      // The LAST entry is the node's current state; several arrive when it crosses back and forth.
       if (entries[entries.length - 1]?.isIntersecting) fire();
-      else if (twoWay) leave();
     },
-    { rootMargin: opts.rootMargin ?? '400px' }
+    { root, rootMargin: opts.rootMargin ?? '400px' }
   );
   observer.observe(node);
+  if (twoWay) {
+    leaveObserver = new IntersectionObserver(
+      (entries) => {
+        if (!entries[entries.length - 1]?.isIntersecting) leave();
+      },
+      { root, rootMargin: opts.leaveMargin ?? '1200px' }
+    );
+    leaveObserver.observe(node);
+  }
 
   return {
     /**
-     * The margin is READ ONCE, when the observer is built, and a changed one is not honoured: an
-     * `IntersectionObserver` cannot be re-margined, and silently building a second one would double
-     * the callbacks for a value no caller here varies. `onnear` is updated, because a component may
-     * legitimately re-create its closure on any re-render.
+     * The margins are READ ONCE, when the observers are built, and a changed one is not honoured:
+     * an `IntersectionObserver` cannot be re-margined, and silently building another would double
+     * the callbacks for a value no caller here varies. `onnear` and `onleave` are updated, because a
+     * component may legitimately re-create its closures on any re-render.
      */
     update(next: NearViewportOptions) {
       opts = next;
@@ -99,6 +131,8 @@ export function nearViewport(node: HTMLElement, options: NearViewportOptions) {
     destroy() {
       observer?.disconnect();
       observer = null;
+      leaveObserver?.disconnect();
+      leaveObserver = null;
     },
   };
 }

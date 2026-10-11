@@ -171,15 +171,18 @@
 
     // A deferred VIDEO holds nothing, not even a warm blob: a mounted `<video>` with a source is a
     // decoder, and a card outside the band is one nobody sees. The poster draws the same either
-    // way - an inline video shows it until its first frame decodes.
+    // way - an inline video shows it until its first frame decodes. A viewer the card's tap opened
+    // and that is still waiting for the file goes with it: the stream it waited on is closed.
     if (deferred && mediaType === 'video') {
       loading = true;
       failure = null;
+      lightboxOpen = false;
       return;
     }
 
-    // Already decrypted in memory - a page rebuilt by a tab swipe: drawn in this very frame,
-    // deferred or not, instead of a placeholder the reader watches turn into what was just there.
+    // Already decrypted in memory - a page rebuilt by a tab swipe: drawn in this very frame instead
+    // of a placeholder the reader watches turn into what was just there. Deferred or not for a
+    // PICTURE; a deferred video returned above.
     const warm = retainWarmDecryptedMediaBlobUrl(mediaRef);
     if (warm) {
       blobUrl = warm;
@@ -570,7 +573,10 @@
   {/if}
 
   <!-- Lightbox for image/video -->
-  {#if lightboxOpen && blobUrl && (mediaType === 'image' || mediaType === 'video')}
+  <!-- A STREAMED video's viewer opens AT THE TAP, on the poster, and fills when the whole file is in
+       (`fetchAll` above): waiting for `blobUrl` here made a tap on a paced feed video do nothing
+       until the last segment, then pop the viewer up unasked (review of #1744). -->
+  {#if lightboxOpen && (blobUrl || streamUrl) && (mediaType === 'image' || mediaType === 'video')}
     <MediaLightbox
       open={lightboxOpen}
       onClose={closeLightbox}

@@ -10,8 +10,9 @@ export const BLOB_URL_POOL_MAX_ENTRIES = 200;
  * AN ENTRY CAP ALONE BOUNDS NOTHING THAT MATTERS: 200 entries were 200 thumbnails or 200 reels of
  * 30 MB, and a feed scrolled past ten reels kept ~300 MB of plaintext for five minutes (reels
  * audit, 2026-10-11, on a 5.6 GB phone). 64 MiB keeps a feed's pictures and a couple of whole
- * videos warm; past it the least recently used IDLE entry goes first. A HELD entry - the video on
- * screen, the picture being drawn - is never evicted, whatever the total.
+ * videos warm; when a new blob takes the total past it, the least recently used IDLE entry goes
+ * first. A HELD entry - the video on screen, the picture being drawn - is never evicted, whatever
+ * the total. The cap is soft: a release alone evicts nothing (see `release`).
  */
 export const BLOB_URL_POOL_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -135,9 +136,10 @@ export class BlobUrlPool {
       if (!current || current.refCount > 0) return;
       this.drop(key, current);
     }, this.evictDelayMs);
-    // Over a cap, an entry nobody holds any more is a candidate NOW: waiting five minutes would
-    // keep the bytes the cap exists to give back.
-    this.enforceMaxSize();
+    // NOT evicted here, even over a cap: the cap is SOFT and applies when a NEW blob arrives
+    // (`retain`), so an entry released a moment ago - a feed page torn down by a tab swipe - keeps
+    // its five minutes of grace until something actually needs the room, and is then the last to go
+    // (least recently used first).
   }
 
   private overBudget(): boolean {

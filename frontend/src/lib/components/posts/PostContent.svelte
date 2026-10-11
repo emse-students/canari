@@ -120,8 +120,8 @@
   const nearMedia = new SvelteSet<string>();
 
   /**
-   * The band watch of one attachment. A VIDEO is watched both ways: leaving the band takes it out
-   * of `nearMedia`, which defers its `PostMedia` again and so closes its stream and unmounts its
+   * The band watch of one attachment. A VIDEO is watched both ways: leaving the band - at a farther
+   * edge than the one it entered by (`nearViewport`'s `leaveMargin`) - takes it out of `nearMedia`, which defers its `PostMedia` again and so closes its stream and unmounts its
    * player (reels audit, 2026-10-11: every reel ever scrolled near kept downloading and kept its
    * decoder). A picture stays one-shot - once fetched there is nothing worth giving back.
    */

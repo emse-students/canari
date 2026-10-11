@@ -41,7 +41,6 @@ export interface PublishReelDeps {
   createPost: (payload: CreatePostPayload) => Promise<PostEntity>;
 }
 
-/** The production dependencies: the real services, the `reel` retention class. */
 /**
  * The class a feed reel is UPLOADED under. Not `reel`: an upload whose post is never created (a
  * failed `createPost`, a kill or a cancel between the two calls) would then be kept for ever. A
@@ -50,6 +49,7 @@ export interface PublishReelDeps {
  */
 export const FEED_REEL_UPLOAD_CLASS: MediaRetentionClass = 'reel-pending';
 
+/** The production dependencies: the real services, the {@link FEED_REEL_UPLOAD_CLASS} upload class. */
 export function defaultPublishReelDeps(): PublishReelDeps {
   const media = new MediaService();
   return {

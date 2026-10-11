@@ -9,6 +9,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { FEED_STREAM_PACING } from '$lib/utils/segmentedMediaStream';
+import { m } from '$lib/paraglide/messages';
 
 const cache = vi.hoisted(() => ({
   retainWarmDecryptedMediaBlobUrl: vi.fn<() => string | null>(() => null),
@@ -114,6 +115,34 @@ describe('PostMedia - a streamed feed video', () => {
     expect(streams).toHaveLength(2);
     expect(streams[1].closed).toBe(false);
     expect(target.querySelector('video')).not.toBeNull();
+  });
+
+  /**
+   * THE TAP OF THE REVIEW (#1744): the viewer waited for the whole file, which a paced stream builds
+   * only at the end - so a tap did nothing, then the viewer popped up unasked. It opens AT THE TAP,
+   * lifts the pacing, and goes away with the card if the card leaves.
+   */
+  it('a tap opens the viewer at once on a paced stream, lifts the pacing, and leaving closes it', async () => {
+    const props = $state({ media: REEL, authToken: 'token', letterbox: true, deferred: false });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const component = mount(PostMedia, { target, props });
+    mounted.push(() => unmount(component));
+    await settle();
+    const dialog = () => document.querySelector('[role="dialog"]');
+    expect(dialog()).toBeNull();
+
+    target
+      .querySelector<HTMLButtonElement>(`button[aria-label="${m.post_fullscreen_label()}"]`)!
+      .click();
+    await settle();
+
+    expect(dialog()).not.toBeNull();
+    expect(streams[0].fetchAll).toHaveBeenCalled();
+
+    props.deferred = true;
+    await settle();
+    expect(dialog()).toBeNull();
   });
 
   it('takes no warm blob while deferred: a card outside the band holds no decoder', async () => {

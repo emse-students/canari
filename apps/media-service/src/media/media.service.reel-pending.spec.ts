@@ -10,12 +10,19 @@
  *  - an unclaimed pending reel older than the TTL is deleted, and one younger is not;
  *  - a CLAIMED reel is `reel` and is never deleted, however old - including every reel stored
  *    before this class existed;
+ *  - a claim and the sweep cannot interleave into a live post on a deleted object (review of #1744);
+ *  - the window cannot be set below an hour;
  *  - the class cannot be put on an existing id through `internal/retention-class`, which would
  *    make a claimed reel sweepable.
  */
 import { BadRequestException } from '@nestjs/common';
 import { MediaController } from './media.controller';
-import { MediaService, isRetentionClass } from './media.service';
+import {
+  MediaService,
+  PENDING_REEL_TTL_FLOOR_MS,
+  isRetentionClass,
+  resolvePendingReelTtlMs,
+} from './media.service';
 
 const ALICE = 'alice';
 const PENDING_OLD = '11111111-1111-4111-8111-111111111111';
@@ -43,18 +50,24 @@ type ServiceInternals = {
   logger: { log: (msg: string) => void; warn: (msg: string) => void };
   persistMetadata: () => Promise<void>;
   purgeExpiredMedia: () => Promise<void>;
+  purgeOrphanedChunks: () => Promise<void>;
   sweepIntervalMs: number;
 };
 
-function serviceWith(items: Record<string, Entry>): { service: MediaService; deleted: string[] } {
+/** `deleteGate`, when given, holds every store delete until it resolves - a slow store. */
+function serviceWith(
+  items: Record<string, Entry>,
+  deleteGate?: Promise<void>
+): { service: MediaService; deleted: string[]; logs: string[] } {
   const service = Object.create(MediaService.prototype) as MediaService;
   const deleted: string[] = [];
+  const logs: string[] = [];
   const internals = service as unknown as ServiceInternals;
   internals.meta = { items };
   internals.storage = {
-    delete: (id: string) => {
+    delete: async (id: string) => {
+      if (deleteGate) await deleteGate;
       deleted.push(id);
-      return Promise.resolve();
     },
     listObjects: () =>
       Promise.resolve(
@@ -63,14 +76,25 @@ function serviceWith(items: Record<string, Entry>): { service: MediaService; del
           .map((id) => ({ id, size: 10, lastModifiedMs: Date.now() }))
       ),
   };
-  internals.logger = { log: () => {}, warn: () => {} };
+  internals.logger = {
+    log: (msg: string) => void logs.push(msg),
+    warn: (msg: string) => void logs.push(msg),
+  };
   internals.persistMetadata = () => Promise.resolve();
+  internals.purgeOrphanedChunks = () => Promise.resolve();
   internals.sweepIntervalMs = 60_000;
-  return { service, deleted };
+  return { service, deleted, logs };
 }
 
 const purge = (service: MediaService) =>
   (service as unknown as ServiceInternals).purgeExpiredMedia();
+
+const pending = (createdAgoMs: number): Entry => ({
+  createdAt: Date.now() - createdAgoMs,
+  lastAccessAt: Date.now() - 60_000,
+  retentionClass: 'reel-pending',
+  ownerId: ALICE,
+});
 
 describe('reel-pending: an unclaimed feed reel upload expires', () => {
   it('is a recognised class', () => {
@@ -79,18 +103,8 @@ describe('reel-pending: an unclaimed feed reel upload expires', () => {
 
   it('sweeps an unclaimed upload older than a day - even one read a minute ago - and keeps a younger one', async () => {
     const items: Record<string, Entry> = {
-      [PENDING_OLD]: {
-        createdAt: Date.now() - 2 * DAY,
-        lastAccessAt: Date.now() - 60_000,
-        retentionClass: 'reel-pending',
-        ownerId: ALICE,
-      },
-      [PENDING_NEW]: {
-        createdAt: Date.now() - 60_000,
-        lastAccessAt: Date.now() - 60_000,
-        retentionClass: 'reel-pending',
-        ownerId: ALICE,
-      },
+      [PENDING_OLD]: pending(2 * DAY),
+      [PENDING_NEW]: pending(60_000),
     };
     const { service, deleted } = serviceWith(items);
 
@@ -104,12 +118,7 @@ describe('reel-pending: an unclaimed feed reel upload expires', () => {
 
   it('is promoted to `reel` by the claim, and a claimed reel is NEVER swept, however old', async () => {
     const items: Record<string, Entry> = {
-      [CLAIMED]: {
-        createdAt: Date.now() - 400 * DAY,
-        lastAccessAt: Date.now() - 400 * DAY,
-        retentionClass: 'reel-pending',
-        ownerId: ALICE,
-      },
+      [CLAIMED]: pending(60_000),
       // Stored before this class existed: uploaded as `reel` and kept until its post's purge.
       [LEGACY_REEL]: {
         createdAt: Date.now() - 400 * DAY,
@@ -122,25 +131,85 @@ describe('reel-pending: an unclaimed feed reel upload expires', () => {
 
     expect((await service.claimReels([CLAIMED], ALICE)).claimed).toEqual([CLAIMED]);
     expect(items[CLAIMED].retentionClass).toBe('reel');
+    // A year later, the claimed reel is still not the sweep's.
+    items[CLAIMED].createdAt = Date.now() - 400 * DAY;
+    items[CLAIMED].lastAccessAt = Date.now() - 400 * DAY;
     await purge(service);
 
     expect(deleted).toEqual([]);
   });
 
+  it('REFUSES to claim a pending upload already past its window, rather than promoting it', async () => {
+    const items: Record<string, Entry> = { [PENDING_OLD]: pending(2 * DAY) };
+    const { service } = serviceWith(items);
+
+    const out = await service.claimReels([PENDING_OLD], ALICE);
+
+    expect(out).toEqual({ claimed: [], refused: [PENDING_OLD] });
+    expect(items[PENDING_OLD].retentionClass).toBe('reel-pending');
+  });
+
+  /**
+   * THE RACE OF THE REVIEW (#1744): the sweep judged an entry, awaited the store's delete, then
+   * tombstoned it from the stale entry - so a claim landing in that await promoted it, the post was
+   * saved, and the object was deleted under the live reel. The tombstone now comes first.
+   */
+  it('a claim arriving while the sweep is deleting the object meets a tombstone and is refused', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const items: Record<string, Entry> = { [PENDING_OLD]: pending(2 * DAY) };
+    const { service, deleted } = serviceWith(items, gate);
+
+    const sweeping = purge(service);
+    // The sweep is now inside `await storage.delete`, the window the race used.
+    const claim = await service.claimReels([PENDING_OLD], ALICE);
+    release();
+    await sweeping;
+
+    expect(claim.refused).toEqual([PENDING_OLD]);
+    expect(deleted).toEqual([PENDING_OLD]);
+    expect(items[PENDING_OLD].purgedAt).toBeDefined();
+  });
+
+  it('an entry promoted while the sweep is busy with another, then replaced in the index, is never deleted', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const items: Record<string, Entry> = {
+      // Reached first: its delete is what holds the run.
+      [PENDING_OLD]: pending(2 * DAY),
+      // Claimed during that delete, then replaced by a new object (as a download's `setAccess`
+      // does) carrying an age that would be due - the run must read the CURRENT entry.
+      [CLAIMED]: pending(60_000),
+    };
+    const { service, deleted } = serviceWith(items, gate);
+
+    const sweeping = purge(service);
+    expect((await service.claimReels([CLAIMED], ALICE)).claimed).toEqual([CLAIMED]);
+    items[CLAIMED] = { ...items[CLAIMED], createdAt: Date.now() - 3 * DAY };
+    release();
+    await sweeping;
+
+    expect(deleted).toEqual([PENDING_OLD]);
+    expect(items[CLAIMED].purgedAt).toBeUndefined();
+    expect(items[CLAIMED].retentionClass).toBe('reel');
+  });
+
+  it('logs every deletion with its id, class and age, and the run summary per class', async () => {
+    const items: Record<string, Entry> = { [PENDING_OLD]: pending(2 * DAY) };
+    const { service, logs } = serviceWith(items);
+
+    await purge(service);
+
+    expect(logs.some((l) => l.includes(PENDING_OLD) && l.includes('class reel-pending'))).toBe(
+      true
+    );
+    expect(logs.some((l) => l.includes('Purged 1') && l.includes('reel-pending 1'))).toBe(true);
+  });
+
   it('reports pending reels and the overdue ones on their own line of the storage stats', async () => {
     const { service } = serviceWith({
-      [PENDING_OLD]: {
-        createdAt: Date.now() - 2 * DAY,
-        lastAccessAt: Date.now(),
-        retentionClass: 'reel-pending',
-        ownerId: ALICE,
-      },
-      [PENDING_NEW]: {
-        createdAt: Date.now(),
-        lastAccessAt: Date.now(),
-        retentionClass: 'reel-pending',
-        ownerId: ALICE,
-      },
+      [PENDING_OLD]: pending(2 * DAY),
+      [PENDING_NEW]: pending(0),
     });
 
     const stats = await service.getStorageStats();
@@ -153,6 +222,25 @@ describe('reel-pending: an unclaimed feed reel upload expires', () => {
     // Never folded into the idle sweep's overdue figure, which reads `lastAccessAt`.
     expect(stats.overdueCount).toBe(0);
     expect(stats.unclassifiedCount).toBe(0);
+  });
+});
+
+describe('reel-pending: the window has a floor', () => {
+  it('defaults to a day when unset or garbled', () => {
+    expect(resolvePendingReelTtlMs(undefined)).toBe(DAY);
+    expect(resolvePendingReelTtlMs('soon')).toBe(DAY);
+  });
+
+  it('honours a value at or over an hour', () => {
+    expect(resolvePendingReelTtlMs(String(PENDING_REEL_TTL_FLOOR_MS))).toBe(
+      PENDING_REEL_TTL_FLOOR_MS
+    );
+    expect(resolvePendingReelTtlMs(String(2 * DAY))).toBe(2 * DAY);
+  });
+
+  it('refuses to start on a value under the floor - 86400 read as milliseconds is 86 s', () => {
+    expect(() => resolvePendingReelTtlMs('86400')).toThrow(/floor/);
+    expect(() => resolvePendingReelTtlMs('1')).toThrow(/floor/);
   });
 });
 

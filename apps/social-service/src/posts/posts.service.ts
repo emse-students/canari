@@ -612,7 +612,7 @@ export class PostsService {
         `[REEL] ${authorId.slice(0, 8)} cited ${refused.length} blob(s) that are not theirs, or gone`
       );
       throw new BadRequestException(
-        "a reel's video must be a file you uploaded (with retentionClass 'reel') and that still exists"
+        "a reel's video must be a file you uploaded (with retentionClass 'reel-pending') in the last 24 hours and that still exists"
       );
     }
   }
