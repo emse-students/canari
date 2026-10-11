@@ -57,7 +57,7 @@ re-encodes it AGAIN at publish. Two lossy encodes, real-time duration, and the a
   element, and a twist past half a turn keeps turning. Pointer events with pointer capture on the
   frame; `touch-action: none` there. The centre is clamped to the frame so an element cannot be lost
   off-screen.
-- **Safe areas**: the header pads the top inset, the tool tray the bottom one; the stage is the
+- **Safe areas** (layout superseded 2026-10-11, see the last section): the header pads the top inset, the tool tray the bottom one; the stage was the
   space between, so nothing overlaps and the keyboard (which resizes the layout viewport on both
   platforms, [durable-rules](../../durable-rules.md)) only shortens the stage.
 - **Drawing is a mode**, not a gesture: while it is on, overlays do not take pointers.
@@ -164,3 +164,30 @@ tab is re-rendered rather than restored. **NOT reproduced:** the discard itself 
 navigates in code, and a jsdom replay of the overlay stack (sheet Back, Back, re-arm, X) stays on `/camera`;
 the Dashboard landing was reached through the camera's own close. Owed ONE re-read on the phone: discard
 stays on the camera, the camera's X returns to the tab it came from.
+
+## The picture is full-bleed and never moves (2026-10-11)
+
+User report (Android WebView, two screenshots): the preview was a letterboxed rectangle, and when the
+text field took focus it SHRANK to a small centred box. Cause: the editor was one flex column (header,
+stage, tray) and the stage was `flex-1` with the frame sized from its container-query units. The
+keyboard shrinks the layout viewport on both platforms ([durable-rules](../../durable-rules.md)), so
+the stage shrank and the frame with it; and `min(100cqw, 100cqh * ratio)` is a CONTAIN fit, hence the
+bands.
+
+Now (`ReelEditor`, geometry in `reels/editorStage.ts`, unit-tested):
+
+- The **stage** is the whole editor box, absolute at the top, at a size kept by `stableStageSize`: the
+  height only grows while the width is unchanged (a new width is a rotation and is taken whole). The
+  keyboard therefore cannot resize it.
+- The media's **frame** COVERS the stage (`coverFrameSize`, the `object-fit: cover` rule); the stage
+  clips the overflow. Overlays, `cqmin` sizes and the export still address the WHOLE frame, so the
+  published media is unchanged. Cover crops a sliver on one axis (a 9:16 capture on a taller phone loses
+  a few percent of width), the same as `ReelReview` and the camera, which already use `object-cover`.
+  An overlay dragged into that sliver is in the export but off-screen; centres stay clamped to the frame.
+- The **header and the tool tray** are `absolute` overlays on `cn-scrim` gradients. The tray is anchored
+  to the (shrunken) box, so it rides above the keyboard; it still owns the bottom safe-area inset, the
+  header the top one. The trash circle sits in the stage, above the tray.
+- The camera and the review already fill the screen under `object-cover`; the viewer has no text input.
+
+**Not verified:** nothing ran on a phone or in a browser (the editor needs a camera take and a session);
+a real soft keyboard is the open check.

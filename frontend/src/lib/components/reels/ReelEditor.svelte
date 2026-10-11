@@ -9,9 +9,11 @@
    * letterboxed one), every overlay is placed in 0..1 of that frame and sized from its short side
    * (`reelOverlays.ts`), and the export uses the same numbers on the media's own pixels.
    *
-   * LAYOUT: one column - header, stage, tool tray - so nothing is ever drawn over the stage's own
-   * controls, the home indicator is the tray's padding, and the keyboard (which resizes the layout
-   * viewport) simply shortens the stage.
+   * LAYOUT (user, 2026-10-11: the picture never moves or resizes while editing): the STAGE is the
+   * whole screen, edge to edge behind the status bar and the tools, and the media covers it. The
+   * header and the tool tray are overlays on translucent scrims. The keyboard shrinks the layout
+   * viewport, so the stage keeps the largest height it measured (`stableStageSize`) while the tray,
+   * anchored to the shrunken box, rides above the keyboard.
    *
    * GESTURES: ONE `TransformGesture` for every overlay kind. A finger on an overlay selects and
    * drags it; a second finger anywhere pinches and twists the same one; a tap on empty space
@@ -31,6 +33,7 @@
   } from '@lucide/svelte';
   import { TAP_SLOP_PX, TransformGesture, pointInRect } from '$lib/gestures/transformGesture';
   import type { ReelClip } from '$lib/reels/reelCapture';
+  import { coverFrameSize, stableStageSize, type StageSize } from '$lib/reels/editorStage';
   import { renderEditedReelMedia } from '$lib/reels/reelEditor';
   import {
     STROKE_WIDTHS,
@@ -98,6 +101,15 @@
   /** The stroke being drawn, in frame pixels: shown live, turned into an overlay on release. */
   let livePath = $state<FramePoint[]>([]);
   let frameSize = $state({ width: 0, height: 0 });
+  /** The editor's box as measured now (the keyboard shrinks it) and the stage size kept from it. */
+  let boxWidth = $state(0);
+  let boxHeight = $state(0);
+  /** Latched, not reactive: each measure is folded into the previous kept size (it only grows). */
+  let keptStage: StageSize = { width: 0, height: 0 };
+  const stage = $derived.by(() => {
+    keptStage = stableStageSize(keptStage, { width: boxWidth, height: boxHeight });
+    return keptStage;
+  });
   let trayOpen = $state(false);
   /** The full picker (categories, search) is open under the quick shelf. */
   let gridOpen = $state(false);
@@ -111,6 +123,7 @@
   let overTrash = $state(false);
   /** The media's width / height, known once it has loaded; the frame takes this shape. */
   let ratio = $state(9 / 16);
+  const coverSize = $derived(coverFrameSize(stage, ratio));
   /** The pointer running a draw or erase pass, and whether that erase pass already took its undo step. */
   let paintingPointer: number | null = null;
   let erasedSomething = false;
@@ -423,37 +436,18 @@
     'inline-flex h-11 w-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500';
 </script>
 
-<div class="absolute inset-0 z-20 flex flex-col bg-black text-white" data-reel-editor>
-  <header
-    class="flex shrink-0 items-center justify-between gap-2 px-3 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-2"
-  >
-    <button
-      type="button"
-      class="ui-icon-button"
-      aria-label={m.reels_editor_back()}
-      title={m.reels_editor_back()}
-      onclick={() => void requestLeave()}
-    >
-      <ChevronLeft size={24} strokeWidth={2.5} />
-    </button>
-    <h1 class="min-w-0 text-base font-bold">{m.reels_editor_title()}</h1>
-    <button
-      type="button"
-      class="text-cn-ink inline-flex h-11 items-center gap-1.5 rounded-full bg-amber-500 px-4 text-sm font-bold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
-      disabled={busy}
-      onclick={next}
-      data-reel-editor-next
-    >
-      {busy ? m.reels_editor_exporting() : m.reels_review_next()}
-      <ArrowRight size={18} strokeWidth={2.5} />
-    </button>
-  </header>
-
-  <!-- THE STAGE: the media's own box, as large as fits. `cqw`/`cqh` are the stage's size, so the
-       frame never exceeds it and never takes a different shape from the media. -->
+<div
+  class="absolute inset-0 z-20 overflow-hidden bg-black text-white"
+  bind:clientWidth={boxWidth}
+  bind:clientHeight={boxHeight}
+  data-reel-editor
+>
+  <!-- THE STAGE: the whole screen at the largest height seen, pinned to the top; the media's frame
+       covers it and the stage clips the overflow. The keyboard never reaches it. -->
   <div
-    class="relative flex min-h-0 flex-1 items-center justify-center"
-    style="container-type: size"
+    class="absolute top-0 left-0 flex items-center justify-center overflow-hidden"
+    style={stage.height > 0 ? `width:${stage.width}px;height:${stage.height}px` : 'inset:0'}
+    data-reel-stage
   >
     <!-- Pointer-only by nature (a drag, a pinch): the keyboard and the screen reader reach the same
          actions through the tool buttons below, which add and clear what the gestures arrange. -->
@@ -461,7 +455,7 @@
     <div
       bind:this={frame}
       class="relative touch-none overflow-hidden select-none"
-      style={`width: min(100cqw, calc(100cqh * ${ratio})); aspect-ratio: ${ratio}; container-type: size`}
+      style={`width:${coverSize.width}px;height:${coverSize.height}px;container-type:size;flex:none`}
       data-reel-frame
       onpointerdown={(event) => (mode === 'arrange' ? arrangeDown(event) : paintDown(event))}
       onpointermove={(event) => (mode === 'arrange' ? arrangeMove(event) : paintMove(event))}
@@ -559,7 +553,7 @@
     {#if dragging}
       <div
         bind:this={trash}
-        class="absolute bottom-4 left-1/2 flex h-14 w-14 -translate-x-1/2 items-center justify-center rounded-full transition-transform {overTrash
+        class="absolute bottom-48 left-1/2 flex h-14 w-14 -translate-x-1/2 items-center justify-center rounded-full transition-transform {overTrash
           ? 'scale-125 bg-red-500'
           : 'bg-black/60'}"
         role="img"
@@ -571,8 +565,33 @@
     {/if}
   </div>
 
+  <header
+    class="from-cn-scrim/60 absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-2 bg-gradient-to-b to-transparent px-3 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
+  >
+    <button
+      type="button"
+      class="ui-icon-button"
+      aria-label={m.reels_editor_back()}
+      title={m.reels_editor_back()}
+      onclick={() => void requestLeave()}
+    >
+      <ChevronLeft size={24} strokeWidth={2.5} />
+    </button>
+    <h1 class="min-w-0 text-base font-bold">{m.reels_editor_title()}</h1>
+    <button
+      type="button"
+      class="text-cn-ink inline-flex h-11 items-center gap-1.5 rounded-full bg-amber-500 px-4 text-sm font-bold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
+      disabled={busy}
+      onclick={next}
+      data-reel-editor-next
+    >
+      {busy ? m.reels_editor_exporting() : m.reels_review_next()}
+      <ArrowRight size={18} strokeWidth={2.5} />
+    </button>
+  </header>
+
   <div
-    class="flex shrink-0 flex-col gap-2 px-3 pt-2 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)]"
+    class="from-cn-scrim/70 absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2 bg-gradient-to-t to-transparent px-3 pt-6 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)]"
   >
     {#if composing}
       <form
