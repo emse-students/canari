@@ -20,6 +20,8 @@ here and nothing else.**
 
 ## Where the pass stands
 
+**2026-10-11, `v1.2.3-alpha.5` on the iPhone 12 (iOS 27.0.1, TestFlight build 100200305, `dev.canari-emse.fr`, account `canari-test-gamma`).** `PASS`: the login page's "Ouvrir dans l'application" opens the app (#1605, iPhone half), the conversation's glass chrome (alignment, "+" > Photos opens ONE picker, the four accessible names), the camera opening full-bleed on the front lens 15 of 15 times with a home-and-return (#1370, front half), the emoji pictures in the composer and the bubble (rows 3 and 12, in part), the profile hub's breadcrumb, a 5 s video sent, the associations list scroll. **`FAIL` in a new shape: check W on the iPhone** (3 of 3 rises). Every reading, what is blocked and what waits for the next pre-release: [the inventory below](#the-iphone-12-owed-readings-inventory-2026-10-11).
+
 **2026-10-07, `v1.0.4-alpha.5` on the iPhone 12 (iOS 27.0.1, TestFlight build 100000405, `dev.canari-emse.fr`).** Read and `PASS`: the signed calendar subscription for the reader's own campus and formation, copied and opened in Calendar (#1541, #1551), the reel camera opening on the FRONT lens (#1552), the post composer draft per account (#1549), the glass tab bar, the profile page, the tab swipe and the reel review controls. **Not read: the reaction toast, the send path and the reply context (#1548)** - `canari-test-gamma` is the service account and cannot discover or be discovered by a non-admin peer. Detail and owed causes: [backlog](backlog.md).
 
 **2026-10-06, `v1.0.4-alpha.4` on the iPhone 12 (iOS 27.0.1, the TestFlight build, `dev.canari-emse.fr`).** Read and `PASS`: the profile page and header (#1513), the glass tab bar, the tab swipe showing its destination and a drift staying put (#1515), the reel review letterbox with its controls, Next to publish and the confirmed discard (#1539, #1505, #1506), Noto emoji, the feed scroll. `FAIL`: the signed calendar subscription refuses the reader's own campus (#1541). Not reached: the reaction toast, the send path and the scheduled-post time (no second account on dev). Detail and owed causes: [backlog](backlog.md).
@@ -1105,6 +1107,61 @@ text field of an open conversation.
 2. **iPhone 12**: the top goes from 766 straight to ~487 pt, with NO ~400 ms plateau at 465, and the
    closed composer is where it always was (the pin is released on close).
 3. Open and close the keyboard five times each: no frame outside the two resting positions.
+
+**iPhone 12, `v1.2.3-alpha.5`, 2026-10-11: `FAIL` in a new shape, 3 of 3 rises.** The store build is
+not inspectable, so the composer was read from WDA's MJPEG stream (~22 frames/s, a frame every 45 ms).
+Step 2 holds: the composer goes from 766 to 487 pt with no plateau at 465, and a close goes back to
+766 in one frame. Step 3 fails. The native "+" twin is at 487 in the first frame of the rise. The web
+layer is not: for five or six frames (~250 ms) it is drawn about one keyboard height LOWER, then it
+slides up. The web composer is hidden behind the rising keyboard, the "+" floats alone, and the dev
+banner slides from y=333-353 pt up over the glass header. In points per frame: banner
+333/282/204/117/72/60, composer 713/642/592/546/501/487. Frames:
+`F:/Programmation/canari-harness/ios-bench/r1011/kbd2`, `kbd3`, and the contact sheets
+`kbd2-contact*.png`.
+
+## The iPhone 12 owed-readings inventory (2026-10-11)
+
+Every reading the wiki, the backlog, `CLAUDE.md` and the pull requests of 2026-10-09 to 2026-10-11
+owe the iPhone, classified against the build on the bench that day: TestFlight `1.2.3 (100200305)`,
+which is `v1.2.3-alpha.5`, signed *TestFlight Beta Distribution* (aps `production`, no
+`get-task-allow`, so NOT inspectable and no app log in the syslog), on `dev.canari-emse.fr`, signed
+in through "Connexion externe (service-account)" as `canari-test-gamma`. Driven with
+`tools/ios-device/ios.mjs` over WDA, timed from WDA's MJPEG stream on port 9100. Evidence:
+`F:/Programmation/canari-harness/ios-bench/r1011/`. **Delete a row when its reading is taken on
+the build it names.**
+
+| Reading owed | Source | Status on 2026-10-11 |
+| --- | --- | --- |
+| #1370 camera letterbox: 20+ opens, both lenses, a home-and-return | backlog verification table | **`PASS` front lens, rear NOT READ.** 22 opens, 8 lens flips, 2 home-and-returns: every front-lens preview full-bleed (0 dark columns, 3 dark rows: the status band). The rear lens faced the table, so its frame was black, with the torch button drawn. Owed: the rear half with the phone held up |
+| #1605 "Ouvrir dans l'application" on the login page | backlog | **`PASS` (iPhone half).** `canari.emse.fr/login` in Safari shows the link (dev correctly has none: `MOBILE_APP_LINK_HOSTS`), Safari asks "Ouvrir dans Canari ?", the app comes up on `/chat`. Android half still owed |
+| Liquid glass chrome: alignment, keyboard, "+" > Photos, the four names | backlog, the Liquid Glass section | **alignment, picker and names `PASS`**: back, title pill and menu share one centre line, and the pill is centred at x=195. "+" opens Photothèque / Appareil photo / Tous les fichiers / Envoyer un GIF, and Photothèque opens ONE system picker. The AX names (the ones VoiceOver speaks): "Retour au menu", "Paramètres du groupe", "Plus d'actions", "Ajouter". **Keyboard: see W** |
+| W, the composer during a keyboard rise | check W | **`FAIL`, new shape**: [W above](#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones) |
+| Emoji rows 1, 3, 12 (the iPhone, where the font never drew) | [emoji](frontend/emoji.md#what-a-future-campaign-owes---the-twelve-rows-moved-from-the-backlog-2026-10-08) | **`PASS` by eye, in part**: a flag, a ZWJ family and a skin-toned thumb are ONE picture each in the composer, with the caret after them. One Backspace removes the toned thumb whole. The sent bubble draws the flag and the family as pictures. `naturalWidth` (row 1) needs the DOM; a paste and an IME commit were not read |
+| `/posts` and associations scroll (first iOS feedback) | backlog, "The first iOS feedback" | **`PASS` on the BENCH iPhone**: three flicks on the associations list, momentum in 41 of 113 frames, the list moves 0 to 12 members down. The reading owed is on the REPORTING iPhone, which this is not |
+| Section navigation on the phone (profile hub, breadcrumb) | CLAUDE.md queue item 0 | **`PASS`**: Mon profil > Cotisations et achats shows the crumb and "Retour : Mon profil", and the crumb goes back. A synthetic edge swipe did NOT go back on that page (not a verdict: whether the edge swipe applies there is not written down) |
+| An attachment over 1 MiB on dev (WP-S1 #1708, #1710 on iOS) | backlog Cloudflare P1, offline section | **sent**: a 5 s gallery video in a one-member group read "Message envoyé" in ~2 s. Its size was NOT measured, and the server log read was refused to the agent, so this does not close the 1 MiB question |
+| #1604, no PIN prompt after a later sign-in | backlog | **BLOCKED** by the P3 "switching accounts on one iPhone install makes the local store unreadable", which this session met again (below) |
+| #1536 / #1548 reaction toast, send path, reply context | backlog | **BLOCKED**: no peer that the dev service account may discover |
+| NOTIF-18 (NSE on a silent frame), the iPhone salon banner, a push carrying its ciphertext once, the iOS reaction stack, mention names, check B/C/K on iOS | backlog, notification sections | **BLOCKED on the estate**: dev cannot send a push (Firebase not initialised in `canari-dev-chat-delivery-service`), and a TestFlight pre-release only talks to dev |
+| Check U (biometric cadence, all of iOS) | check U | **BLOCKED**: needs an enrolled face |
+| The iOS launch logo (#1289): delete, RESTART, reinstall | backlog | **not taken**: a restart kills the WDA runner the session depends on. Owed in a session that can re-arm `wda-daemon.py` |
+| The window bars (status bar, home indicator) with the glass chrome | backlog, iOS window layout | **screenshots for the user's look** in `r1011/` (`17-group.png`, `19-plus.png`). Seen: the dev banner sits over the status bar on the camera screen (`09-cam.png`), dev builds only |
+| The reel editor end to end (text, drawing, stickers, "Suivant"), real-content take, viewer swipe timing | backlog, CanaReels | **WAITS for the next pre-release**: #1739 and #1742 (the 9:16 frame, the editor full-bleed and keyboard-proof) merged after `v1.2.3-alpha.5` |
+| #1742 reel frame parity | PR | **WAITS** (merged, in no release yet) |
+| #1738 IndexedDB eviction: kill with a queued 13 MB file, relaunch | PR #1738 (open) | **WAITS**: the PR is not merged |
+| #1744 feed reel fetch, playback start | PR #1744 (open) | **WAITS**: not merged |
+| PDF viewer performance | branch `perf/pdf-viewer` | **WAITS**: no pull request yet |
+| Session holds, check P | CLAUDE.md | **not re-read by rule**: proven, "must not be re-verified" |
+
+**Met again: the account-switch P3, and how the bench got there.** TestFlight "Mises à jour
+automatiques" was ON, and it had replaced the bench's `1.2.2-alpha.1` with the `1.2.3` STABLE, a
+build that talks to PRODUCTION. Installing `100200305` from "Builds précédents" turns automatic
+updates off for the app (TestFlight says so), which keeps it off. The next sign-in as gamma then
+answered `auth_local_state_unopenable` on the right PIN, and the documented remedy cleared it:
+uninstall, reinstall, sign in. "PIN oublié ?" was not used, because it would reset the ACCOUNT's
+PIN. A fresh install then asks for notifications, the microphone and the camera, and, the first time
+a URL is opened, for iOS 27's default browser, which must be answered (Safari) before `ios.mjs url`
+or a Safari launch is allowed.
 
 ## Traps that outlived the work that found them
 
