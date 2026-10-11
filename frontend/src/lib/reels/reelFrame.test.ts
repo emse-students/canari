@@ -3,8 +3,8 @@ import {
   REEL_FRAME_RATIO,
   containFrame,
   frameToPixels,
-  pixelsToFrame,
   stableStageSize,
+  stageStep,
 } from './reelFrame';
 
 describe('stable stage', () => {
@@ -21,12 +21,45 @@ describe('stable stage', () => {
   });
 });
 
+describe('stage step', () => {
+  const full = { width: 400, height: 800 };
+  const small = { width: 400, height: 480 };
+  const fresh = { kept: full, holding: false };
+
+  it('follows the box when nothing latches (the camera records what is visible)', () => {
+    expect(stageStep(fresh, small, false)).toEqual({ kept: small, holding: false });
+  });
+
+  it('keeps the full height while latched, then holds until the box grows back', () => {
+    const latched = stageStep(fresh, small, true);
+    expect(latched).toEqual({ kept: full, holding: true });
+    // The latch drops while the keyboard is still closing: no jump to the small box.
+    const releasing = stageStep(latched, small, false);
+    expect(releasing).toEqual(latched);
+    expect(stageStep(releasing, full, false)).toEqual({ kept: full, holding: false });
+  });
+
+  it('takes a rotation whole even while held, and ignores an empty measure', () => {
+    const held = { kept: full, holding: true };
+    expect(stageStep(held, { width: 800, height: 400 }, false)).toEqual({
+      kept: { width: 800, height: 400 },
+      holding: false,
+    });
+    expect(stageStep(held, { width: 0, height: 0 }, false)).toEqual(held);
+  });
+});
+
 describe('contained frame', () => {
   const R = REEL_FRAME_RATIO;
 
-  it('is edge to edge, square-cornered, on a 9:16 screen', () => {
+  it('is the whole stage, square-cornered, on a 9:16 screen', () => {
     const box = containFrame({ width: 360, height: 640 }, R);
     expect(box).toMatchObject({ left: 0, top: 0, width: 360, height: 640, fillsStage: true });
+  });
+
+  it('is the whole stage on a screen within the 2 % tolerance (cover on purpose)', () => {
+    const box = containFrame({ width: 360, height: 650 }, REEL_FRAME_RATIO);
+    expect(box).toMatchObject({ left: 0, top: 0, width: 360, height: 650, fillsStage: true });
   });
 
   it('shows the whole frame, centred, with bands above and below on a 20:9 phone', () => {
@@ -68,16 +101,12 @@ describe('contained frame', () => {
 });
 
 describe('overlay coordinates', () => {
-  it('round-trip between the preview frame and the exported media', () => {
+  it('map to the same share of the frame at any size', () => {
     const point = { x: 0.37, y: 0.82 };
-    const preview = { width: 360, height: 640 };
-    const exported = { width: 720, height: 1280 };
-    const onScreen = frameToPixels(point, preview);
-    expect(pixelsToFrame(onScreen, preview).x).toBeCloseTo(point.x);
-    expect(pixelsToFrame(onScreen, preview).y).toBeCloseTo(point.y);
-    const inExport = frameToPixels(pixelsToFrame(onScreen, preview), exported);
-    expect(inExport.x / exported.width).toBeCloseTo(onScreen.x / preview.width);
-    expect(inExport.y / exported.height).toBeCloseTo(onScreen.y / preview.height);
+    const preview = frameToPixels(point, { width: 360, height: 640 });
+    const exported = frameToPixels(point, { width: 720, height: 1280 });
+    expect(exported.x / 720).toBeCloseTo(preview.x / 360);
+    expect(exported.y / 1280).toBeCloseTo(preview.y / 640);
   });
 
   it('is the same share of the frame on a differently shaped screen', () => {

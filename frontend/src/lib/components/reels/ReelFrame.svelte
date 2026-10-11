@@ -6,18 +6,15 @@
    *
    * The frame of aspect `ratio` is shown WHOLE in the screen (never cropped). When the screen has its
    * shape it runs edge to edge with square corners; otherwise it is centred with `--radius-2xl`
-   * corners and the rest of the screen is the blurred backdrop of the same picture. The stage is kept
-   * at the largest height seen (`stableStageSize`), so a keyboard shrinking the layout viewport never
-   * moves or resizes the frame. The parent's controls are siblings of this component, not children:
+   * corners and the rest of the screen is the blurred backdrop of the same picture. Within 2 % of its
+   * shape the frame IS the stage (cover on purpose, no sliver of backdrop). The stage FOLLOWS the
+   * measured box (the camera records what is visible) except while `latch` is set - the editor's text
+   * field is open - when it keeps the largest height seen (`stageStep`), so the keyboard shrinking the
+   * layout viewport never moves or resizes the frame. The parent's controls are siblings of this component, not children:
    * a child sits INSIDE the frame and is clipped to it.
    */
   import type { Snippet } from 'svelte';
-  import {
-    REEL_FRAME_RATIO,
-    containFrame,
-    stableStageSize,
-    type StageSize,
-  } from '$lib/reels/reelFrame';
+  import { REEL_FRAME_RATIO, containFrame, stageStep, type StageState } from '$lib/reels/reelFrame';
   import ReelBackdrop from './ReelBackdrop.svelte';
 
   interface Props {
@@ -27,19 +24,36 @@
     children: Snippet;
     /** The frame element, for a caller that has to read its box. */
     frameEl?: HTMLElement | null;
+    /** Hold the stage at the largest height seen (the keyboard may shrink the box). */
+    latch?: boolean;
   }
 
-  let { ratio = REEL_FRAME_RATIO, children, frameEl = $bindable(null) }: Props = $props();
+  let {
+    ratio = REEL_FRAME_RATIO,
+    children,
+    frameEl = $bindable(null),
+    latch = false,
+  }: Props = $props();
 
   let boxWidth = $state(0);
   let boxHeight = $state(0);
-  /** Latched, not reactive: each measure is folded into the previous kept size (it only grows). */
-  let keptStage: StageSize = { width: 0, height: 0 };
+  /** Not reactive: each measure is folded into the previous state (`stageStep`). */
+  let stageState: StageState = { kept: { width: 0, height: 0 }, holding: false };
   const stage = $derived.by(() => {
-    keptStage = stableStageSize(keptStage, { width: boxWidth, height: boxHeight });
-    return keptStage;
+    const next = stageStep(stageState, { width: boxWidth, height: boxHeight }, latch);
+    if (next.holding !== stageState.holding || next.kept.height !== stageState.kept.height) {
+      console.debug(
+        `[reel-frame] stage ${next.kept.width}x${next.kept.height} latch=${latch} holding=${next.holding}`
+      );
+    }
+    stageState = next;
+    return next.kept;
   });
   const box = $derived(containFrame(stage, ratio));
+
+  $effect(() => {
+    console.debug(`[reel-frame] ratio ${ratio.toFixed(3)} fillsStage=${box.fillsStage}`);
+  });
 </script>
 
 <div
@@ -48,7 +62,7 @@
   bind:clientHeight={boxHeight}
   data-reel-stage
 >
-  <ReelBackdrop host={frameEl} />
+  <ReelBackdrop host={frameEl} active={!box.fillsStage && box.width > 0} />
   <div
     bind:this={frameEl}
     class="absolute overflow-hidden bg-black {box.fillsStage ? '' : 'rounded-2xl'}"

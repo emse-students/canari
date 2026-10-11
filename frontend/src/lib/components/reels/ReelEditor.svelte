@@ -14,6 +14,8 @@
    * the screen has its shape, rounded over a blurred backdrop otherwise - at the largest height seen,
    * so the keyboard cannot move it. The header and the tool tray are overlays on translucent scrims;
    * the tray, anchored to the shrunken box, rides above the keyboard. Overlays live inside the frame.
+   * The scrims let touches through (only the real controls take them), so an overlay dragged under
+   * them can always be grabbed again; the trash sits above the tray.
    *
    * GESTURES: ONE `TransformGesture` for every overlay kind. A finger on an overlay selects and
    * drags it; a second finger anywhere pinches and twists the same one; a tap on empty space
@@ -430,7 +432,7 @@
   <!-- THE FRAME (ReelFrame, shared with the camera, the review and the viewer): the media shown whole,
        edge to edge when the screen has its shape, rounded over a blurred backdrop otherwise. It keeps
        the largest height seen, so the keyboard never moves it. Overlays live INSIDE it. -->
-  <ReelFrame {ratio}>
+  <ReelFrame {ratio} latch={composing !== null}>
     <!-- Pointer-only by nature (a drag, a pinch): the keyboard and the screen reader reach the same
          actions through the tool buttons below, which add and clear what the gestures arrange. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -536,7 +538,7 @@
   {#if dragging}
     <div
       bind:this={trash}
-      class="absolute bottom-48 left-1/2 flex h-14 w-14 -translate-x-1/2 items-center justify-center rounded-full transition-transform {overTrash
+      class="absolute bottom-48 left-1/2 z-20 flex h-14 w-14 -translate-x-1/2 items-center justify-center rounded-full transition-transform {overTrash
         ? 'scale-125 bg-red-500'
         : 'bg-black/60'}"
       role="img"
@@ -548,7 +550,7 @@
   {/if}
 
   <header
-    class="from-cn-scrim/60 absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-2 bg-gradient-to-b to-transparent px-3 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
+    class="from-cn-scrim/60 pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-2 bg-gradient-to-b to-transparent px-3 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6 [&>*]:pointer-events-auto"
   >
     <button
       type="button"
@@ -573,7 +575,7 @@
   </header>
 
   <div
-    class="from-cn-scrim/70 absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2 bg-gradient-to-t to-transparent px-3 pt-6 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)]"
+    class="from-cn-scrim/70 pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2 bg-gradient-to-t to-transparent px-3 pt-6 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)] [&>*]:pointer-events-auto"
   >
     {#if composing}
       <form

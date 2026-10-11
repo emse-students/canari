@@ -49,7 +49,10 @@
   /** The take's own shape (9:16 for a capture, whatever it was for a gallery import): the frame wears it. */
   let ratio = $state(REEL_FRAME_RATIO);
   function setRatio(width: number, height: number) {
-    if (width > 0 && height > 0) ratio = width / height;
+    if (width > 0 && height > 0) {
+      ratio = width / height;
+      console.debug(`[reel-review] take is ${width}x${height}`);
+    }
   }
 
   function toggleSound() {
@@ -65,9 +68,8 @@
 </script>
 
 <div class="absolute inset-0 z-10 bg-black text-white" data-reel-review>
-  <!-- FULL-BLEED, NEVER A PLAYER (user, 2026-10-09: black bars): the take fills the screen under
-       `object-cover` and loops; the capture is already cropped to the preview box, so nothing
-       meaningful is cut. No seek bar, no timecode, no second sound button. -->
+  <!-- FULL-BLEED, NEVER A PLAYER (user, 2026-10-09: black bars): the take fills the reel frame (the
+       camera's own 9:16, or a gallery import's shape) and loops; nothing is cropped. No seek bar, no timecode, no second sound button. -->
   <ReelFrame {ratio}>
     {#if isImage}
       <img

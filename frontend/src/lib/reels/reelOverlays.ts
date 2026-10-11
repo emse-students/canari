@@ -83,6 +83,12 @@ export function newOverlayId(): string {
 /** Where a new overlay lands: the middle of the frame, upright, at its base size. */
 const CENTRED: Transform = { x: 0.5, y: 0.5, scale: 1, rotation: 0 };
 
+/**
+ * A new text starts in the upper part of the frame: the member has just typed it with the keyboard
+ * and the tool tray over the lower half, so the centre would be hidden behind them.
+ */
+export const TEXT_START_Y = 0.3;
+
 /** A text overlay, or null for text that is empty once trimmed. */
 export function createTextOverlay(
   text: string,
@@ -91,7 +97,15 @@ export function createTextOverlay(
 ): ReelTextOverlay | null {
   const value = text.trim().slice(0, MAX_OVERLAY_TEXT_LENGTH);
   if (!value) return null;
-  return { id: newOverlayId(), kind: 'text', text: value, color, ...style, ...CENTRED };
+  return {
+    id: newOverlayId(),
+    kind: 'text',
+    text: value,
+    color,
+    ...style,
+    ...CENTRED,
+    y: TEXT_START_Y,
+  };
 }
 
 /** An emoji overlay. */

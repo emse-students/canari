@@ -17,6 +17,7 @@
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import type { PostEntity } from '$lib/posts/api';
   import { postAuthorName } from '$lib/posts/postAuthorName';
+  import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
   import { ReelPreload } from '$lib/reels/reelPreload';
   import { markdownToPlainText } from '$lib/seo/text';
   import { exactDate, timeAgo } from '$lib/utils/time';
@@ -35,6 +36,10 @@
   let { post, authToken, active, preload }: Props = $props();
 
   const video = $derived((post.media ?? post.images ?? [])[0]);
+  /** The reel's own shape when the publisher recorded it, else the canonical frame. */
+  const ratio = $derived(
+    video?.width && video?.height ? video.width / video.height : REEL_FRAME_RATIO
+  );
   const caption = $derived(markdownToPlainText(post.markdown ?? ''));
 
   $effect(() => {
@@ -52,8 +57,10 @@
 {/snippet}
 
 <div class="relative h-full w-full overflow-hidden bg-black" data-reel-slide={post.id}>
-  <!-- THE SAME FRAME AS THE CAMERA, THE REVIEW AND THE EDITOR: what is published is what was framed. -->
-  <ReelFrame>
+  <!-- THE SAME FRAME AS THE CAMERA, THE REVIEW AND THE EDITOR: what is published is what was framed,
+       in the reel's own shape (a legacy reel was captured to a screen box, a gallery import has its
+       own). The caption is INSIDE the frame, above the player's bar, so the two never overlap. -->
+  <ReelFrame {ratio}>
     <div class="flex h-full w-full items-center justify-center">
       {#if active && video}
         <PostMedia media={video} {authToken} galleryMode {barActions} />
@@ -61,20 +68,20 @@
         <VideoPoster />
       {/if}
     </div>
-  </ReelFrame>
 
-  <div
-    class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-black/70 to-transparent px-4 pt-16 pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)] text-white"
-  >
-    <p class="text-sm font-bold">
-      {postAuthorName(post)}
-      <!-- The same age, from the same helper, as the post header's: the viewer has no header. -->
-      <span class="ml-1.5 text-xs font-medium opacity-70" title={exactDate(post.createdAt)}
-        >{timeAgo(post.createdAt)}</span
-      >
-    </p>
-    {#if caption}
-      <p class="mt-1 line-clamp-3 text-sm leading-snug opacity-90">{caption}</p>
-    {/if}
-  </div>
+    <div
+      class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-black/70 to-transparent px-4 pt-16 pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)] text-white"
+    >
+      <p class="text-sm font-bold">
+        {postAuthorName(post)}
+        <!-- The same age, from the same helper, as the post header's: the viewer has no header. -->
+        <span class="ml-1.5 text-xs font-medium opacity-70" title={exactDate(post.createdAt)}
+          >{timeAgo(post.createdAt)}</span
+        >
+      </p>
+      {#if caption}
+        <p class="mt-1 line-clamp-3 text-sm leading-snug opacity-90">{caption}</p>
+      {/if}
+    </div>
+  </ReelFrame>
 </div>

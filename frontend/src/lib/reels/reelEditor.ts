@@ -1,3 +1,4 @@
+import { frameToPixels } from './reelFrame';
 import { canvasToBlob } from '$lib/utils/canvasBlob';
 import { emojiSvgSrc } from '$lib/utils/emojiSvg';
 import {
@@ -40,7 +41,8 @@ export function drawDecorations(
 ) {
   for (const overlay of edits.overlays) {
     context.save();
-    context.translate(overlay.x * width, overlay.y * height);
+    const at = frameToPixels(overlay, { width, height });
+    context.translate(at.x, at.y);
     context.rotate(overlay.rotation);
     if (overlay.kind === 'stroke') {
       // The points are in short-side units: the same factor sizes the line, as in the preview's SVG.
