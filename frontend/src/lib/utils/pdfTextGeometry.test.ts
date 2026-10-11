@@ -38,7 +38,8 @@ describe('textRunBox', () => {
     // height above it.
     expect(box!.top).toBeCloseTo((700 - 12) / PAGE_H);
     expect(box!.fontHeight).toBeCloseTo(12 / PAGE_H);
-    expect(box!.width).toBeCloseTo((5 * 12) / PAGE_W);
+    // `item.width` is already in page units: the 12 pt font is NOT applied a second time.
+    expect(box!.width).toBeCloseTo(5 / PAGE_W);
     expect(box!.angle).toBeCloseTo(0);
   });
 
@@ -58,8 +59,18 @@ describe('textRunBox', () => {
 
     expect(box).not.toBeNull();
     expect(box!.fontHeight).toBeCloseTo(12 / PAGE_H);
-    expect(box!.width).toBeCloseTo((5 * 12) / PAGE_W);
+    // `item.width` is already in page units: the 12 pt font is NOT applied a second time.
+    expect(box!.width).toBeCloseTo(5 / PAGE_W);
     expect(Math.abs(box!.angle)).toBeCloseTo(Math.PI / 2);
+  });
+
+  it('keeps a real line inside its page (pdf.js numbers from a scanned magazine, 2026-10-11)', () => {
+    // "Adoptés par SIDÉLOR, ..." - 43 characters at ~8.6 pt; pdf.js reports `width` 228.5 on a
+    // 595.2-wide page. Multiplying by the font size again made this span 3.3 pages wide.
+    const run: Matrix = [8.6, 0, 0, 9.4, 329.4, 56.8];
+    const box = textRunBox(flipY(842), run, 228.5, 595.2, 842);
+    expect(box!.width).toBeCloseTo(228.5 / 595.2);
+    expect(box!.width).toBeLessThan(1);
   });
 
   it('returns the absence rather than a NaN box', () => {

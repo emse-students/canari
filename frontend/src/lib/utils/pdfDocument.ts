@@ -13,9 +13,8 @@
  */
 
 import { asMatrix, textRunBox, type TextRunBox } from './pdfTextGeometry';
-
-/** Upper bound on the render scale, so a poster-sized page cannot blow up memory. */
-export const MAX_PDF_RENDER_SCALE = 4;
+import { renderScale } from './pdfRenderQueue';
+import { Log } from './Log';
 
 type PdfjsModule = typeof import('pdfjs-dist');
 
@@ -38,14 +37,58 @@ async function loadPdfjs(): Promise<PdfjsModule> {
   return pdfjsPromise;
 }
 
-/** One rasterised page. */
-export interface RenderedPdfPage {
-  /** Object URL of the PNG; the caller MUST release it with {@link releasePdfObjectUrl}. */
-  url: string;
-  /** Bitmap width in pixels. */
+/**
+ * The rejection of a render that was cancelled - a TYPE, so a caller tells "nobody wants this page
+ * any more" from a real failure without reading a message.
+ */
+export class PdfRenderCancelled extends Error {
+  constructor(pageNumber: number) {
+    super(`PDF page ${pageNumber} render cancelled`);
+    this.name = 'PdfRenderCancelled';
+  }
+}
+
+/**
+ * One page rasterised into a DETACHED canvas, which the caller inserts into the page as it is.
+ *
+ * A canvas rather than an encoded image, and that is the fix of 2026-10-11. The reader used to
+ * `toBlob` every page to a PNG and show it in an `<img>`. Chromium encodes PNG and JPEG for
+ * `toBlob` only when the main thread is IDLE, and a reader who is scrolling or pinching leaves it
+ * none: measured on a Mi 9T, the same `toBlob` took 150-350 ms on a quiet page and 4.07 s while
+ * the reader scrolled - for a 1040 x 1470 page and a 109 x 154 thumbnail alike - when the render
+ * itself took 55-83 ms. Showing the canvas skips the encode and the decode, and holds the page's
+ * pixels once instead of three times (canvas, PNG, decoded image).
+ */
+export interface RenderedPdfCanvas {
+  /** The rasterised page; free it with {@link releasePdfCanvas} once it is no longer shown. */
+  canvas: HTMLCanvasElement;
+  /** Bitmap width in device pixels. */
   width: number;
-  /** Bitmap height in pixels - what a caller needs to reserve the page's real proportions. */
+  /** Bitmap height in device pixels - what a caller needs to reserve the page's real proportions. */
   height: number;
+}
+
+/** A render in flight: its result, and the way to stop it. */
+export interface PdfRenderHandle {
+  /** Resolves with the page, or rejects with {@link PdfRenderCancelled} once cancelled. */
+  promise: Promise<RenderedPdfCanvas>;
+  /** Stops the render (pdf.js `RenderTask.cancel`) and frees its canvas. Safe to call twice. */
+  cancel(): void;
+}
+
+/** Sizing of one render. */
+export interface PdfRenderSize {
+  /** CSS width the page is displayed at; the bitmap targets it at the device pixel ratio. */
+  cssWidth: number;
+  /** Pixel cap for this bitmap, defaulting to `PAGE_PIXEL_BUDGET` in `pdfRenderQueue.ts`. */
+  maxPixels?: number;
+}
+
+/** Frees a canvas's backing store now rather than whenever the collector gets to it. */
+export function releasePdfCanvas(canvas: HTMLCanvasElement | null | undefined): void {
+  if (!canvas) return;
+  canvas.width = 0;
+  canvas.height = 0;
 }
 
 /** One run of text, placed in fractions of the page box so it survives every re-rasterisation. */
@@ -58,16 +101,22 @@ export interface PdfTextRun extends TextRunBox {
 export interface PdfDocument {
   /** Total page count, 1-based page numbers. */
   readonly numPages: number;
-  /** Rasterises one page to a PNG. */
-  renderPage(pageNumber: number, maxWidth: number): Promise<RenderedPdfPage>;
+  /** Starts rasterising one page into a fresh canvas. */
+  renderPage(pageNumber: number, size: PdfRenderSize): PdfRenderHandle;
+  /**
+   * Drops pdf.js's caches for one page - chiefly its DECODED images, which for a scanned page are
+   * the full picture (1240 x 1754 RGBA is 8.7 MB) and used to be kept for every page ever shown.
+   * The next render of that page decodes again. pdf.js refuses while the page renders; that is
+   * logged and harmless, since the page is wanted again anyway.
+   */
+  releasePage(pageNumber: number): void;
   /**
    * Text runs of one page, for the selectable layer drawn over its bitmap.
    *
    * Separate from {@link renderPage} rather than returned with it, because the two have different
    * lifetimes: a page is re-rasterised on every zoom step and its text never changes, so folding
-   * them together would re-extract the text three times for nothing. It is also the cheap half -
-   * no canvas, no PNG encode - which is what makes it affordable to have for a page that is merely
-   * on screen.
+   * them together would re-extract the text for nothing. It is also the cheap half - no canvas -
+   * which is what makes it affordable to have for a page that is merely on screen.
    */
   getPageText(pageNumber: number): Promise<PdfTextRun[]>;
   /** Tears the worker down. Safe to call twice. */
@@ -85,6 +134,9 @@ export async function openPdfDocument(source: string): Promise<PdfDocument> {
   // These documents come from other users. pdf.js 6 no longer has the `eval`-based
   // font-compilation path that older versions needed to be told to turn off, so there is
   // nothing left to opt out of here.
+  //
+  // Range requests and streaming would buy nothing: the source is a blob already decrypted in
+  // memory, read whole in ~60 ms for 13 MB on a Mi 9T, and the document opens in ~220 ms.
   const task = lib.getDocument({ url: source, disableAutoFetch: true, disableStream: true });
   const doc = await task.promise;
   let destroyed = false;
@@ -92,29 +144,62 @@ export async function openPdfDocument(source: string): Promise<PdfDocument> {
   return {
     numPages: doc.numPages,
 
-    async renderPage(pageNumber: number, maxWidth: number): Promise<RenderedPdfPage> {
-      if (destroyed) throw new Error('PDF document already destroyed');
-      const page = await doc.getPage(pageNumber);
-      const base = page.getViewport({ scale: 1 });
-      const dpr = typeof window === 'undefined' ? 1 : (window.devicePixelRatio ?? 1);
-      const scale = Math.min((maxWidth * dpr) / base.width, MAX_PDF_RENDER_SCALE);
-      const viewport = page.getViewport({ scale });
-
+    renderPage(pageNumber: number, size: PdfRenderSize): PdfRenderHandle {
+      let cancelled = false;
+      let renderTask: { cancel(): void } | null = null;
       const canvas = document.createElement('canvas');
-      const width = Math.max(1, Math.ceil(viewport.width));
-      const height = Math.max(1, Math.ceil(viewport.height));
-      canvas.width = width;
-      canvas.height = height;
 
-      await page.render({ canvas, viewport }).promise;
+      const promise = (async (): Promise<RenderedPdfCanvas> => {
+        if (destroyed) throw new Error('PDF document already destroyed');
+        const page = await doc.getPage(pageNumber);
+        if (cancelled) throw new PdfRenderCancelled(pageNumber);
+        const base = page.getViewport({ scale: 1 });
+        const dpr = typeof window === 'undefined' ? 1 : (window.devicePixelRatio ?? 1);
+        const scale = renderScale(base.width, base.height, size.cssWidth, dpr, size.maxPixels);
+        const viewport = page.getViewport({ scale });
+        const width = Math.max(1, Math.ceil(viewport.width));
+        const height = Math.max(1, Math.ceil(viewport.height));
+        canvas.width = width;
+        canvas.height = height;
 
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-      // Release the backing store immediately: on a long document these add up.
-      canvas.width = 0;
-      canvas.height = 0;
+        const running = page.render({ canvas, viewport });
+        renderTask = running;
+        try {
+          await running.promise;
+        } catch (err) {
+          releasePdfCanvas(canvas);
+          if (cancelled || err instanceof lib.RenderingCancelledException) {
+            throw new PdfRenderCancelled(pageNumber);
+          }
+          throw err;
+        }
+        if (cancelled) {
+          releasePdfCanvas(canvas);
+          throw new PdfRenderCancelled(pageNumber);
+        }
+        return { canvas, width, height };
+      })();
 
-      if (!blob) throw new Error(`Canvas produced no bitmap for page ${pageNumber}`);
-      return { url: URL.createObjectURL(blob), width, height };
+      return {
+        promise,
+        cancel: () => {
+          if (cancelled) return;
+          cancelled = true;
+          renderTask?.cancel();
+        },
+      };
+    },
+
+    releasePage(pageNumber: number): void {
+      if (destroyed) return;
+      // `getPage` on a page already loaded resolves from pdf.js's own cache; it never parses a
+      // page only to clean it.
+      void doc
+        .getPage(pageNumber)
+        .then((page) => {
+          if (!page.cleanup()) Log.d('pdfDocument:cleanupRefused', { page: pageNumber });
+        })
+        .catch((err) => Log.d('pdfDocument:cleanupFailed', { page: pageNumber, err }));
     },
 
     async getPageText(pageNumber: number): Promise<PdfTextRun[]> {
@@ -148,9 +233,4 @@ export async function openPdfDocument(source: string): Promise<PdfDocument> {
       await task.destroy();
     },
   };
-}
-
-/** Revokes an object URL from a {@link RenderedPdfPage}. */
-export function releasePdfObjectUrl(url: string | null): void {
-  if (url) URL.revokeObjectURL(url);
 }

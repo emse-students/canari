@@ -265,8 +265,9 @@ OWED, see below):
   FIX: `utils/canvasBlob.ts` (`canvasToBlob`, via `toDataURL`) replaces every `toBlob` that feeds a
   user wait: the photo, the reel editor's export, the image upload compressor (`media.ts`) and the
   square cropper. With the same change patched live on the phone: tap to review painted in 69 ms.
-  NOT converted: `pdfDocument.ts` and `qrCode.ts` (large PNG canvases, not on a tap path; they pay the
-  same 4 s on Android). Re-measure before touching `reelRecorderMimeCandidates`: VP9 is NOT the
+  NOT converted: `qrCode.ts` (a large PNG canvas, not on a tap path; it pays the same 4 s on Android).
+  `pdfDocument.ts` encodes nothing since 2026-10-11 (pages stay canvases) and the PDF thumbnail goes
+  through `canvasToBlob` ([posts](posts.md#making-the-reader-fluid-on-a-phone-2026-10-11)). Re-measure before touching `reelRecorderMimeCandidates`: VP9 is NOT the
   cause of the photo wait; it stays a lead for the TAKE's end only.
 
 **The camera also takes still photos.** A photo is captured from the live frame, reviewed, and can

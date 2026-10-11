@@ -6,7 +6,8 @@
  * "identify a PDF attachment, show its cover" half.
  */
 
-import { openPdfDocument, releasePdfObjectUrl } from './pdfDocument';
+import { canvasToBlob } from './canvasBlob';
+import { openPdfDocument, releasePdfCanvas } from './pdfDocument';
 
 /** Canonical PDF mime type. */
 export const PDF_MIME_TYPE = 'application/pdf';
@@ -23,7 +24,15 @@ export function isPdfAttachment(mimeType?: string, fileName?: string): boolean {
 }
 
 /**
- * Renders page 1 of a PDF to a PNG and returns an object URL for it.
+ * Encoding of a thumbnail - WebP, which is small, and which every engine either encodes or answers
+ * with a PNG instead. Encoded through `canvasToBlob` (synchronous `toDataURL`), never `toBlob`: on
+ * the Android WebView `toBlob` waits for an idle slot that a chat which is loading or scrolling does
+ * not grant, and a 109 x 154 thumbnail took 4.0 s to appear on a Mi 9T (2026-10-11).
+ */
+export const PDF_THUMBNAIL_TYPE = 'image/webp';
+
+/**
+ * Renders page 1 of a PDF and returns an object URL for it.
  *
  * @param source - URL of the decrypted PDF (an object URL, in practice).
  * @param maxWidth - CSS width the thumbnail is displayed at; the bitmap is
@@ -33,11 +42,20 @@ export function isPdfAttachment(mimeType?: string, fileName?: string): boolean {
 export async function renderPdfFirstPage(source: string, maxWidth: number): Promise<string> {
   const doc = await openPdfDocument(source);
   try {
-    return (await doc.renderPage(1, maxWidth)).url;
+    const { canvas } = await doc.renderPage(1, { cssWidth: maxWidth }).promise;
+    try {
+      const blob = canvasToBlob(canvas, PDF_THUMBNAIL_TYPE, 0.85);
+      if (!blob) throw new Error('Canvas produced no bitmap for the PDF thumbnail');
+      return URL.createObjectURL(blob);
+    } finally {
+      releasePdfCanvas(canvas);
+    }
   } finally {
     await doc.destroy();
   }
 }
 
 /** Revokes a thumbnail object URL returned by {@link renderPdfFirstPage}. */
-export { releasePdfObjectUrl as releasePdfThumbnail };
+export function releasePdfThumbnail(url: string | null): void {
+  if (url) URL.revokeObjectURL(url);
+}
