@@ -118,8 +118,13 @@
     if (read) {
       preset = read.preset;
       ticked = [...read.formations];
-    } else if (currentRules && currentRules.length > 0 && isGlobalAdmin) {
-      // A union the three presets cannot say (set on the grid): the admin opens on it, as it is.
+    } else if (
+      currentRules &&
+      currentRules.length > 0 &&
+      isGlobalAdmin &&
+      asso.type === 'institution'
+    ) {
+      // An institution's union the three presets cannot say (set on the grid): the admin opens on it, as it is.
       preset = 'custom';
       cells = reachedCells(currentRules);
     }

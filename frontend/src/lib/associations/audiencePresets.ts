@@ -10,8 +10,8 @@ import type { AudienceRule } from './api';
  * - `formations`: that campus, restricted to the formations the manager names;
  * - `everyone`: every campus and formation - an institution's alone (decision 6). The SERVER refuses
  *   it elsewhere; hiding it here is a convenience, never the rule.
- * - `custom`: any union of formation x campus pairs (two campuses, ICM here and ISMIN there), picked
- *   on a grid and stored as `toRules` writes it. Offered to a global admin only - the grid is theirs,
+ * - `custom`: (institutions only) any union of formation x campus pairs (two campuses, ICM here and ISMIN there), picked
+ *   on a grid and stored as `toRules` writes it. Offered to a global admin only, on an institution - the grid is theirs,
  *   and a preset cannot say a union. It carries no campus or formation of its own, so
  *   `presetToRules` does not build it.
  */
@@ -21,13 +21,15 @@ export type AudiencePreset = 'campus' | 'formations' | 'everyone' | 'custom';
 export type AudienceEntityType = 'association' | 'list' | 'institution';
 
 /**
- * The presets offered for an entity: `everyone` for an institution only (decision 6), `custom` for a
- * reader who may use the grid (a global admin).
+ * The presets offered for an entity: `everyone` for an institution only (decision 6), and `custom` for
+ * an institution too, to a reader who may use the grid (a global admin): an association or a list
+ * addresses ONE campus (decision 3), so a union across campuses is never offered there.
  */
 export function offeredPresets(type: AudienceEntityType, gridAllowed = false): AudiencePreset[] {
-  const presets: AudiencePreset[] =
-    type === 'institution' ? ['campus', 'formations', 'everyone'] : ['campus', 'formations'];
-  return gridAllowed ? [...presets, 'custom'] : presets;
+  if (type !== 'institution') return ['campus', 'formations'];
+  return gridAllowed
+    ? ['campus', 'formations', 'everyone', 'custom']
+    : ['campus', 'formations', 'everyone'];
 }
 
 /**
