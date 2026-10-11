@@ -9,11 +9,11 @@
    * letterboxed one), every overlay is placed in 0..1 of that frame and sized from its short side
    * (`reelOverlays.ts`), and the export uses the same numbers on the media's own pixels.
    *
-   * LAYOUT (user, 2026-10-11: the picture never moves or resizes while editing): the STAGE is the
-   * whole screen, edge to edge behind the status bar and the tools, and the media covers it. The
-   * header and the tool tray are overlays on translucent scrims. The keyboard shrinks the layout
-   * viewport, so the stage keeps the largest height it measured (`stableStageSize`) while the tray,
-   * anchored to the shrunken box, rides above the keyboard.
+   * LAYOUT (user, 2026-10-11: the picture never moves or resizes while editing, and what is captured,
+   * edited and published is ONE rectangle): the media sits in `ReelFrame`, whole - edge to edge when
+   * the screen has its shape, rounded over a blurred backdrop otherwise - at the largest height seen,
+   * so the keyboard cannot move it. The header and the tool tray are overlays on translucent scrims;
+   * the tray, anchored to the shrunken box, rides above the keyboard. Overlays live inside the frame.
    *
    * GESTURES: ONE `TransformGesture` for every overlay kind. A finger on an overlay selects and
    * drags it; a second finger anywhere pinches and twists the same one; a tap on empty space
@@ -33,7 +33,7 @@
   } from '@lucide/svelte';
   import { TAP_SLOP_PX, TransformGesture, pointInRect } from '$lib/gestures/transformGesture';
   import type { ReelClip } from '$lib/reels/reelCapture';
-  import { coverFrameSize, stableStageSize, type StageSize } from '$lib/reels/editorStage';
+  import ReelFrame from './ReelFrame.svelte';
   import { renderEditedReelMedia } from '$lib/reels/reelEditor';
   import {
     STROKE_WIDTHS,
@@ -101,15 +101,6 @@
   /** The stroke being drawn, in frame pixels: shown live, turned into an overlay on release. */
   let livePath = $state<FramePoint[]>([]);
   let frameSize = $state({ width: 0, height: 0 });
-  /** The editor's box as measured now (the keyboard shrinks it) and the stage size kept from it. */
-  let boxWidth = $state(0);
-  let boxHeight = $state(0);
-  /** Latched, not reactive: each measure is folded into the previous kept size (it only grows). */
-  let keptStage: StageSize = { width: 0, height: 0 };
-  const stage = $derived.by(() => {
-    keptStage = stableStageSize(keptStage, { width: boxWidth, height: boxHeight });
-    return keptStage;
-  });
   let trayOpen = $state(false);
   /** The full picker (categories, search) is open under the quick shelf. */
   let gridOpen = $state(false);
@@ -123,7 +114,6 @@
   let overTrash = $state(false);
   /** The media's width / height, known once it has loaded; the frame takes this shape. */
   let ratio = $state(9 / 16);
-  const coverSize = $derived(coverFrameSize(stage, ratio));
   /** The pointer running a draw or erase pass, and whether that erase pass already took its undo step. */
   let paintingPointer: number | null = null;
   let erasedSomething = false;
@@ -436,27 +426,19 @@
     'inline-flex h-11 w-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500';
 </script>
 
-<div
-  class="absolute inset-0 z-20 overflow-hidden bg-black text-white"
-  bind:clientWidth={boxWidth}
-  bind:clientHeight={boxHeight}
-  data-reel-editor
->
-  <!-- THE STAGE: the whole screen at the largest height seen, pinned to the top; the media's frame
-       covers it and the stage clips the overflow. The keyboard never reaches it. -->
-  <div
-    class="absolute top-0 left-0 flex items-center justify-center overflow-hidden"
-    style={stage.height > 0 ? `width:${stage.width}px;height:${stage.height}px` : 'inset:0'}
-    data-reel-stage
-  >
+<div class="absolute inset-0 z-20 overflow-hidden bg-black text-white" data-reel-editor>
+  <!-- THE FRAME (ReelFrame, shared with the camera, the review and the viewer): the media shown whole,
+       edge to edge when the screen has its shape, rounded over a blurred backdrop otherwise. It keeps
+       the largest height seen, so the keyboard never moves it. Overlays live INSIDE it. -->
+  <ReelFrame {ratio}>
     <!-- Pointer-only by nature (a drag, a pinch): the keyboard and the screen reader reach the same
          actions through the tool buttons below, which add and clear what the gestures arrange. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       bind:this={frame}
-      class="relative touch-none overflow-hidden select-none"
-      style={`width:${coverSize.width}px;height:${coverSize.height}px;container-type:size;flex:none`}
-      data-reel-frame
+      data-reel-surface
+      class="absolute inset-0 touch-none overflow-hidden select-none"
+      style="container-type: size"
       onpointerdown={(event) => (mode === 'arrange' ? arrangeDown(event) : paintDown(event))}
       onpointermove={(event) => (mode === 'arrange' ? arrangeMove(event) : paintMove(event))}
       onpointerup={(event) => (mode === 'arrange' ? arrangeUp(event) : paintUp(event))}
@@ -549,21 +531,21 @@
         </svg>
       {/if}
     </div>
+  </ReelFrame>
 
-    {#if dragging}
-      <div
-        bind:this={trash}
-        class="absolute bottom-48 left-1/2 flex h-14 w-14 -translate-x-1/2 items-center justify-center rounded-full transition-transform {overTrash
-          ? 'scale-125 bg-red-500'
-          : 'bg-black/60'}"
-        role="img"
-        aria-label={m.reels_editor_trash()}
-        data-reel-trash
-      >
-        <Trash2 size={24} strokeWidth={2.25} />
-      </div>
-    {/if}
-  </div>
+  {#if dragging}
+    <div
+      bind:this={trash}
+      class="absolute bottom-48 left-1/2 flex h-14 w-14 -translate-x-1/2 items-center justify-center rounded-full transition-transform {overTrash
+        ? 'scale-125 bg-red-500'
+        : 'bg-black/60'}"
+      role="img"
+      aria-label={m.reels_editor_trash()}
+      data-reel-trash
+    >
+      <Trash2 size={24} strokeWidth={2.25} />
+    </div>
+  {/if}
 
   <header
     class="from-cn-scrim/60 absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-2 bg-gradient-to-b to-transparent px-3 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"

@@ -3082,3 +3082,10 @@ click-opened `MessageInfoTooltip`, and the panels (`ReactorsPanel`, `SeenByHeads
   admin project rename carried French literals; they are messages now.
 - **A `title` carrying data a phone cannot hover (exact dates, full device id, long names) is
   harmless but is never the only place the fact exists** if the fact matters.
+
+### The reel frame: a media surface rounds at `--radius-2xl` only when it does not fill the screen (2026-10-11)
+
+`ReelFrame` draws the picture whole at the capture ratio. It is square-cornered and edge to edge when
+the screen has its shape (within 2 %), else `rounded-2xl` (12 px, the larger card) centred over a
+blurred canvas copy of the same picture. The scale has no step above 12 px that means "media surface";
+`--radius-4xl` (24 px) is unscaled and was not used. See [reel-editor](modules/reel-editor.md#one-frame-for-capture-edit-and-publish-2026-10-11-replaces-the-cover-and-crop-of-1739).

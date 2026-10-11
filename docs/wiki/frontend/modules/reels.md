@@ -581,3 +581,10 @@ route and retry, the decoder count in the feed, and a long-take harness row.
    prepared file for a retry; later the RC-5 durable take (P2).
 4. Measure the worst case on both phones (a scripted busy 90 s take) and write it above (P2).
 5. Preload the previous reel; test the feed fetch bound; reconcile the board (P3).
+
+## One frame (2026-10-11)
+
+The camera preview, the review, the editor and the viewer share `ReelFrame` (9:16, shown whole, rounded
+`--radius-2xl` over a blurred backdrop when the screen's shape differs, edge to edge when it matches),
+and the camera records that frame, not the screen box. Detail and what is unverified:
+[reel-editor](reel-editor.md#one-frame-for-capture-edit-and-publish-2026-10-11-replaces-the-cover-and-crop-of-1739).

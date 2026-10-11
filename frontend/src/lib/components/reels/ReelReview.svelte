@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
+  import ReelFrame from './ReelFrame.svelte';
   /**
    * A finished take, looped full-bleed before it goes anywhere (CanaReels R3): discard it and film
    * again, edit it, remove its sound, or go on to publish it.
    *
-   * IT IS NOT A PLAYER (user, 2026-10-09): the media fills the screen under `object-cover` (no black
-   * bars) and loops; there is no seek bar, no timecode and no sound button at the bottom. The pencil,
+   * IT IS NOT A PLAYER (user, 2026-10-09): the media fills the reel frame (`ReelFrame`: edge to edge, or rounded
+   * over a blurred backdrop, never black bars) and loops; there is no seek bar, no timecode and no sound button at the bottom. The pencil,
    * the sound button and the cross sit at the TOP; "Next" floats at the bottom edge over the media,
    * which is safe now that no control of the media lives there.
    *
@@ -44,6 +46,12 @@
     if (previous) URL.revokeObjectURL(previous);
   });
 
+  /** The take's own shape (9:16 for a capture, whatever it was for a gallery import): the frame wears it. */
+  let ratio = $state(REEL_FRAME_RATIO);
+  function setRatio(width: number, height: number) {
+    if (width > 0 && height > 0) ratio = width / height;
+  }
+
   function toggleSound() {
     const next = !soundRemoved;
     console.debug(`[reel-review] sound ${next ? 'removed' : 'kept'}`);
@@ -60,21 +68,34 @@
   <!-- FULL-BLEED, NEVER A PLAYER (user, 2026-10-09: black bars): the take fills the screen under
        `object-cover` and loops; the capture is already cropped to the preview box, so nothing
        meaningful is cut. No seek bar, no timecode, no second sound button. -->
-  {#if isImage}
-    <img {src} alt="" class="absolute inset-0 h-full w-full object-cover" data-reel-media />
-  {:else}
-    <!-- svelte-ignore a11y_media_has_caption -->
-    <video
-      {src}
-      autoplay
-      loop
-      playsinline
-      muted={soundRemoved}
-      poster={TRANSPARENT_VIDEO_POSTER}
-      class="absolute inset-0 h-full w-full object-cover"
-      data-reel-media
-    ></video>
-  {/if}
+  <ReelFrame {ratio}>
+    {#if isImage}
+      <img
+        {src}
+        alt=""
+        class="absolute inset-0 h-full w-full object-cover"
+        onload={(event) => {
+          const picture = event.currentTarget as HTMLImageElement;
+          setRatio(picture.naturalWidth, picture.naturalHeight);
+        }}
+        data-reel-media
+      />
+    {:else}
+      <!-- svelte-ignore a11y_media_has_caption -->
+      <video
+        {src}
+        autoplay
+        loop
+        playsinline
+        muted={soundRemoved}
+        poster={TRANSPARENT_VIDEO_POSTER}
+        class="absolute inset-0 h-full w-full object-cover"
+        onloadedmetadata={(event) =>
+          setRatio(event.currentTarget.videoWidth, event.currentTarget.videoHeight)}
+        data-reel-media
+      ></video>
+    {/if}
+  </ReelFrame>
 
   <div
     class="pointer-events-none absolute inset-x-0 top-0 flex flex-col items-start gap-2 p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"

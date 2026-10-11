@@ -20,6 +20,7 @@
   import { ReelPreload } from '$lib/reels/reelPreload';
   import { markdownToPlainText } from '$lib/seo/text';
   import { exactDate, timeAgo } from '$lib/utils/time';
+  import ReelFrame from './ReelFrame.svelte';
   import ReelSaveButton from './ReelSaveButton.svelte';
 
   interface Props {
@@ -51,13 +52,16 @@
 {/snippet}
 
 <div class="relative h-full w-full overflow-hidden bg-black" data-reel-slide={post.id}>
-  <div class="flex h-full w-full items-center justify-center">
-    {#if active && video}
-      <PostMedia media={video} {authToken} galleryMode {barActions} />
-    {:else}
-      <VideoPoster />
-    {/if}
-  </div>
+  <!-- THE SAME FRAME AS THE CAMERA, THE REVIEW AND THE EDITOR: what is published is what was framed. -->
+  <ReelFrame>
+    <div class="flex h-full w-full items-center justify-center">
+      {#if active && video}
+        <PostMedia media={video} {authToken} galleryMode {barActions} />
+      {:else}
+        <VideoPoster />
+      {/if}
+    </div>
+  </ReelFrame>
 
   <div
     class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-black/70 to-transparent px-4 pt-16 pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)] text-white"
