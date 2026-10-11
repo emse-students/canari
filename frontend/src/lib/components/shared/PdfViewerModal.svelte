@@ -36,8 +36,10 @@
   import {
     bitmapBytes,
     planEviction,
+    PREVIEW_BYTE_BUDGET,
     PREVIEW_PIXEL_BUDGET,
     RenderQueue,
+    SettledWidth,
     VIEWER_BYTE_BUDGET,
     wantedJobs,
     type PageNeed,
@@ -127,13 +129,20 @@
   // every finished render would be dropped as belonging to a closed document.
   let doc = $state.raw<PdfDocument | null>(null);
 
+  /** 0-based indices within a screen of the viewport: the render window. Not reactive. */
+  const near: Record<number, true> = {};
   /**
-   * 0-based indices within a screen of the viewport. Reactive, because it also decides which pages
-   * carry their text layer: hundreds of absolutely placed spans per page, and a zoom re-lays out
-   * every mounted one. Kept on all 81 pages of a scan after a fling, that froze each zoom click for
-   * 11-13 s on a Mi 9T.
+   * 0-based indices within THREE screens of the viewport: the pages that carry their selectable
+   * text layer. Reactive, because the template mounts the layer from it.
+   *
+   * A window and not "every page whose text ever loaded": a layer is hundreds of absolutely placed
+   * spans, a zoom re-lays out every mounted one, and with all 81 pages of a scan carrying theirs a
+   * zoom click froze for 11-13 s on a Mi 9T. Three screens rather than one keeps a drag selection
+   * across pages and the browser's find-in-page working around where the reader is; a page farther
+   * away than that is not findable by Ctrl+F until the reader comes back near it - the price, named
+   * in the wiki.
    */
-  const near = $state<Record<number, true>>({});
+  const textWindow = $state<Record<number, true>>({});
   /** 0-based indices actually intersecting the viewport. Not reactive: nothing renders it. */
   const visible: Record<number, true> = {};
 
@@ -245,27 +254,35 @@
       await tick();
       releasePdfCanvas(previous.canvas);
     }
-    if (!isPreview) evictOverBudget();
+    evictOverBudget(job.kind);
   }
 
-  /** Drops the sharp bitmaps farthest from the screen until the rest fit the byte budget. */
-  function evictOverBudget() {
-    const resident = sharp.flatMap((page, index) =>
+  /**
+   * Drops the bitmaps of one kind farthest from the screen until the rest fit that kind's budget:
+   * {@link VIEWER_BYTE_BUDGET} for sharp bitmaps, {@link PREVIEW_BYTE_BUDGET} for previews.
+   */
+  function evictOverBudget(kind: RenderJob['kind']) {
+    const pool = kind === 'preview' ? previews : sharp;
+    const resident = pool.flatMap((page, index) =>
       page ? [{ index, bytes: bitmapBytes(page.width, page.height) }] : []
     );
-    const evict = planEviction(resident, VIEWER_BYTE_BUDGET, visibleRange());
+    const budget = kind === 'preview' ? PREVIEW_BYTE_BUDGET : VIEWER_BYTE_BUDGET;
+    const evict = planEviction(resident, budget, visibleRange());
     if (evict.length === 0) return;
-    Log.d('pdfViewer:evict', { pages: evict.map((i) => i + 1) });
-    const next = [...sharp];
+    Log.d('pdfViewer:evict', { kind, pages: evict.map((i) => i + 1) });
+    const next = [...pool];
     const freed: RenderedPdfCanvas[] = [];
     for (const index of evict) {
       const page = next[index];
       if (page) freed.push(page);
       next[index] = null;
-      delete renderedAt[index];
-      doc?.releasePage(index + 1);
+      if (kind === 'sharp') {
+        delete renderedAt[index];
+        doc?.releasePage(index + 1);
+      }
     }
-    sharp = next;
+    if (kind === 'preview') previews = next;
+    else sharp = next;
     void tick().then(() => {
       for (const page of freed) releasePdfCanvas(page.canvas);
     });
@@ -279,7 +296,10 @@
 
   /** Tells the queue what is wanted now, from what is near and visible. */
   function schedule() {
-    if (!queue) return;
+    // The SETTLED width, never the live `renderWidth`: reading the live one started a round of
+    // sharp renders on every zoom click, 250 ms before the settle that was meant to be the only one.
+    const width = settledWidth.value;
+    if (!queue || width === null) return;
     const needs: PageNeed[] = Object.keys(near)
       .map(Number)
       .map((index) => ({
@@ -287,7 +307,7 @@
         hasPreview: previews[index] != null,
         sharpWidth: sharp[index] ? (renderedAt[index] ?? null) : null,
       }));
-    queue.want(wantedJobs(needs, visibleRange(), renderWidth, zoom === ZOOM_STEPS[0]));
+    queue.want(wantedJobs(needs, visibleRange(), width, width <= columnWidth * ZOOM_STEPS[0]));
     for (const index of leftWindow) if (!near[index]) doc?.releasePage(index + 1);
     leftWindow = [];
   }
@@ -305,19 +325,23 @@
     });
   }
 
+  /** The width renders are for, written only by its own settle timer (see `SettledWidth`). */
+  const settledWidth = new SettledWidth(ZOOM_SETTLE_MS, (width) => {
+    Log.d('pdfViewer:zoomSettled', { width });
+    schedule();
+  });
+
   // A zoom (or a viewport resize) makes the sharp bitmaps the wrong size. They stay on screen,
   // stretched by CSS, and the visible pages are re-rendered once the zoom has stopped moving.
-  // `untrack` because the dependency is the width, and only the width.
+  // Nothing is proposed before the viewport has a width: the 320 px floor of `columnWidth` would
+  // otherwise settle first and render every first page twice. `untrack` because the dependency is
+  // the width, and only the width.
   $effect(() => {
     const width = renderWidth;
-    const timer = setTimeout(() => {
-      untrack(() => {
-        Log.d('pdfViewer:zoomSettled', { width });
-        schedule();
-      });
-    }, ZOOM_SETTLE_MS);
-    return () => clearTimeout(timer);
+    if (viewportWidth === 0) return;
+    untrack(() => settledWidth.propose(width));
   });
+  $effect(() => () => settledWidth.dispose());
 
   /** 0-based page indices whose text is being extracted. Not reactive: nothing renders it. */
   const extracting: Record<number, boolean> = {};
@@ -349,46 +373,92 @@
     }
   }
 
+  /** The three page observers, shared by every page so a 600-page document costs three, not 1800. */
+  interface PageObservers {
+    near: IntersectionObserver;
+    text: IntersectionObserver;
+    visible: IntersectionObserver;
+  }
+  let observers: PageObservers | null = null;
+
   /**
-   * Tracks each page placeholder against two observers: within a screen of the viewport ("near",
-   * worth rendering ahead) and actually on screen ("visible", rendered first and never evicted).
-   * A page leaving the near window also has its pdf.js decoded images dropped, on the next pass.
+   * Creates the observers on first use, once the scroll container exists. Each tracks one window:
+   * within a screen ("near", rendered ahead), within three screens ("text", carries its selectable
+   * layer) and on screen ("visible", rendered first and never evicted). A page leaving the near
+   * window also has its pdf.js decoded images dropped, on the next scheduling pass.
+   *
+   * ROOTED ON THE SCROLL CONTAINER. Against the viewport, a page below the container's visible area
+   * is clipped by the container's own overflow before the margin applies, so the margin did nothing
+   * (measured in Chrome 2026-10-11: a page 0.3 screens below the fold was never requested until it
+   * scrolled in) - "near" meant "visible".
    */
+  function pageObservers(): PageObservers {
+    if (observers) return observers;
+    const each = (
+      entries: IntersectionObserverEntry[],
+      apply: (i: number, on: boolean) => void
+    ) => {
+      for (const entry of entries) {
+        apply(Number((entry.target as HTMLElement).dataset.pageIndex), entry.isIntersecting);
+      }
+      scheduleSoon();
+    };
+    observers = {
+      near: new IntersectionObserver(
+        (entries) =>
+          each(entries, (index, on) => {
+            if (on) near[index] = true;
+            else if (near[index]) {
+              delete near[index];
+              leftWindow.push(index);
+            }
+          }),
+        { root: scrollEl, rootMargin: '100% 0px' }
+      ),
+      text: new IntersectionObserver(
+        (entries) =>
+          each(entries, (index, on) => {
+            if (on) {
+              textWindow[index] = true;
+              void loadPageText(index);
+            } else delete textWindow[index];
+          }),
+        { root: scrollEl, rootMargin: '300% 0px' }
+      ),
+      visible: new IntersectionObserver(
+        (entries) =>
+          each(entries, (index, on) => {
+            if (on) visible[index] = true;
+            else delete visible[index];
+          }),
+        { root: scrollEl }
+      ),
+    };
+    return observers;
+  }
+
+  $effect(() => () => {
+    observers?.near.disconnect();
+    observers?.text.disconnect();
+    observers?.visible.disconnect();
+    observers = null;
+  });
+
+  /** Registers one page placeholder with the shared observers. */
   function observePage(node: HTMLElement, index: number) {
-    const nearObserver = new IntersectionObserver(
-      (entries) => {
-        const isNear = entries.some((entry) => entry.isIntersecting);
-        if (isNear) {
-          near[index] = true;
-          void loadPageText(index);
-        } else if (near[index]) {
-          delete near[index];
-          leftWindow.push(index);
-        }
-        scheduleSoon();
-      },
-      // ROOTED ON THE SCROLL CONTAINER. Against the viewport, a page below the container's visible
-      // area is clipped by the container's own overflow before the margin is applied, so the margin
-      // did nothing (measured in Chrome 2026-10-11: a page 0.3 screens below the fold was never
-      // requested until it scrolled in) - "near" meant "visible".
-      { root: scrollEl, rootMargin: '100% 0px' }
-    );
-    const visibleObserver = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) visible[index] = true;
-        else delete visible[index];
-        scheduleSoon();
-      },
-      { root: scrollEl }
-    );
-    nearObserver.observe(node);
-    visibleObserver.observe(node);
+    node.dataset.pageIndex = String(index);
+    const all = pageObservers();
+    all.near.observe(node);
+    all.text.observe(node);
+    all.visible.observe(node);
     return {
       destroy: () => {
         delete near[index];
+        delete textWindow[index];
         delete visible[index];
-        nearObserver.disconnect();
-        visibleObserver.disconnect();
+        all.near.unobserve(node);
+        all.text.unobserve(node);
+        all.visible.unobserve(node);
       },
     };
   }
@@ -734,7 +804,7 @@
                 Measuring instead would mean one ResizeObserver per page - two hundred of them
                 on a long document - to learn something the numbers already say exactly.
               -->
-              {#if pageTexts[index] && near[index] && columnInnerWidth > 0}
+              {#if pageTexts[index] && textWindow[index] && columnInnerWidth > 0}
                 <PdfTextLayer
                   runs={pageTexts[index]!}
                   pageWidth={columnInnerWidth}

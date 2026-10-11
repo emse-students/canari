@@ -1,8 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   bitmapBytes,
   MAX_PDF_RENDER_SCALE,
   PAGE_PIXEL_BUDGET,
+  PREVIEW_BYTE_BUDGET,
+  PREVIEW_PIXEL_BUDGET,
+  RENDER_CONCURRENCY,
+  SettledWidth,
+  VIEWER_BYTE_BUDGET,
+  WEBKIT_CANVAS_MEMORY_LIMIT,
   pageDistance,
   planEviction,
   RenderQueue,
@@ -200,5 +206,79 @@ describe('RenderQueue', () => {
     expect(h.cancelled).toEqual(['s1@420', 's2@420']);
     expect(h.queue.runningKeys).toEqual([]);
     expect(h.queue.pendingKeys).toEqual([]);
+  });
+});
+
+describe('the memory budgets', () => {
+  it('keep a 600-page document under WebKit canvas limit, previews included', () => {
+    // A 600-page A4 document fully previewed: one preview per page at the preview pixel budget.
+    const preview = Math.floor(PREVIEW_PIXEL_BUDGET) * 4;
+    const resident = Array.from({ length: 600 }, (_, index) => ({ index, bytes: preview }));
+    const visible = { first: 300, last: 301 };
+    const evicted = new Set(planEviction(resident, PREVIEW_BYTE_BUDGET, visible));
+    const kept = resident.filter((r) => !evicted.has(r.index));
+    const keptBytes = kept.reduce((sum, r) => sum + r.bytes, 0);
+
+    expect(keptBytes).toBeLessThanOrEqual(PREVIEW_BYTE_BUDGET);
+    // What is kept is the neighbourhood of the reader, not the start of the document.
+    expect(kept.some((r) => r.index === 300)).toBe(true);
+    expect(kept.some((r) => r.index === 0)).toBe(false);
+
+    // And the three pools together, at their worst, stay well under the limit.
+    const inFlight = RENDER_CONCURRENCY * PAGE_PIXEL_BUDGET * 4;
+    expect(PREVIEW_BYTE_BUDGET + VIEWER_BYTE_BUDGET + inFlight).toBeLessThan(
+      WEBKIT_CANVAS_MEMORY_LIMIT / 2
+    );
+  });
+});
+
+describe('SettledWidth', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('takes the first width at once, there being nothing on screen to stretch', () => {
+    const settled: number[] = [];
+    const width = new SettledWidth(250, (w) => settled.push(w));
+    width.propose(420);
+    expect(width.value).toBe(420);
+    expect(settled).toEqual([420]);
+  });
+
+  it('settles a walk of zoom clicks ONCE, at the width it ends on, after the delay', () => {
+    const settled: number[] = [];
+    const width = new SettledWidth(250, (w) => settled.push(w));
+    width.propose(420);
+    width.propose(630);
+    vi.advanceTimersByTime(200);
+    width.propose(840);
+    vi.advanceTimersByTime(200);
+    width.propose(1260);
+    // The scheduler reads `value`: still the old width while the zoom moves.
+    expect(width.value).toBe(420);
+    vi.advanceTimersByTime(249);
+    expect(settled).toEqual([420]);
+    vi.advanceTimersByTime(1);
+    expect(width.value).toBe(1260);
+    expect(settled).toEqual([420, 1260]);
+  });
+
+  it('settles nothing when the zoom comes back to where it was', () => {
+    const settled: number[] = [];
+    const width = new SettledWidth(250, (w) => settled.push(w));
+    width.propose(420);
+    width.propose(630);
+    width.propose(420);
+    vi.advanceTimersByTime(1000);
+    expect(settled).toEqual([420]);
+  });
+
+  it('drops a pending settle on dispose', () => {
+    const settled: number[] = [];
+    const width = new SettledWidth(250, (w) => settled.push(w));
+    width.propose(420);
+    width.propose(630);
+    width.dispose();
+    vi.advanceTimersByTime(1000);
+    expect(settled).toEqual([420]);
   });
 });

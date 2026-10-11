@@ -20,10 +20,23 @@ export const VIEWER_BYTE_BUDGET = 96 * 1024 * 1024;
 /**
  * Pixel size of a page's PREVIEW, the cheap bitmap shown until the sharp one lands and kept after
  * that one is evicted, so a page the reader scrolls back to is blurry rather than blank. About a
- * quarter of a phone's fit-width scale in each dimension (~205 x 290 for A4), which is ~240 KB a
- * page - 81 pages cost under 20 MB, which is why previews are never evicted.
+ * quarter of a phone's fit-width scale in each dimension (~205 x 290 for A4), ~240 KB a page.
  */
 export const PREVIEW_PIXEL_BUDGET = 60_000;
+
+/**
+ * Bytes all previews together may hold - about 100 pages' worth - before the farthest are dropped.
+ *
+ * Previews are cheap, not free: a 600-page document would hold ~140 MB of them. On an iPhone every
+ * canvas counts against WebKit's canvas memory limit (Safari's console names 384 MB when a page
+ * exceeds it, and the canvas then draws nothing), so the three pools are sized to stay well under
+ * it together: this, {@link VIEWER_BYTE_BUDGET} and {@link RENDER_CONCURRENCY} renders in flight
+ * at {@link PAGE_PIXEL_BUDGET} each.
+ */
+export const PREVIEW_BYTE_BUDGET = 24 * 1024 * 1024;
+
+/** WebKit's canvas memory limit on iOS, the ceiling every budget above must stay under together. */
+export const WEBKIT_CANVAS_MEMORY_LIMIT = 384 * 1024 * 1024;
 
 /** Renders running at once. pdf.js parses on ONE worker and paints on the main thread, so more
  *  than two only interleaves work and delays every page instead of finishing the first. */
@@ -249,5 +262,56 @@ export class RenderQueue {
       };
       run.done.then(settle, settle);
     }
+  }
+}
+
+/**
+ * The render width the queue may act on: the live width, but only once it has stopped moving.
+ *
+ * A zoom click changes the live width at once, and each step of a walk 1 -> 1.5 -> 2 -> 3 would
+ * otherwise start - and then cancel - a round of sharp renders at a width nobody stays at. Only
+ * this object's timer writes {@link SettledWidth.value}, and the scheduler reads nothing else. The
+ * FIRST width is taken at once: there is nothing on screen yet to stretch, so waiting would only
+ * delay the first page.
+ */
+export class SettledWidth {
+  private settled: number | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * @param delayMs - How long the width must stay put.
+   * @param onSettle - Called with the new settled width, from the timer (or at once the first time).
+   */
+  constructor(
+    private readonly delayMs: number,
+    private readonly onSettle: (width: number) => void
+  ) {}
+
+  /** The width renders are for; `null` until a first width was proposed. */
+  get value(): number | null {
+    return this.settled;
+  }
+
+  /** Reports the live width; settles at once the first time, after `delayMs` of quiet after that. */
+  propose(width: number): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    if (this.settled === null) {
+      this.settled = width;
+      this.onSettle(width);
+      return;
+    }
+    if (width === this.settled) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.settled = width;
+      this.onSettle(width);
+    }, this.delayMs);
+  }
+
+  /** Drops a pending settle. */
+  dispose(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
   }
 }

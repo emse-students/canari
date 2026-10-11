@@ -519,18 +519,33 @@ What each number came from, and the fix that bounds it:
   budget over sharp bitmaps with farthest-first eviction (never a visible page), and
   `page.cleanup()` when a page leaves the window or is evicted.
 - **A page is never blank for more than one cheap pass.** Each page first gets a ~60 000-pixel
-  PREVIEW (~240 KB, kept for the document's life, so a page scrolled back to is blurry rather than
-  white), then its sharp bitmap.
-- **Zoom is a CSS stretch, then one sharp render.** Visible pages re-render 250 ms after the zoom
-  stops moving, so walking 1 -> 1.5 -> 2 -> 3 costs one render; pages off screen keep their
-  stretched bitmap until they scroll in. The two-scale scheme (`RENDER_ZOOMS`) went with the pixel
-  cap that made it unnecessary.
+  PREVIEW (~240 KB), then its sharp bitmap. Previews have their OWN budget, 24 MB (about 100
+  pages), evicted farthest from the reader first: a page scrolled back to inside it is blurry rather
+  than white, one further away re-renders its preview. Unbounded, a 600-page document read to the
+  end would hold 144 MB of previews, and WKWebView kills canvas allocation past a total
+  (`WEBKIT_CANVAS_MEMORY_LIMIT`, set at 384 MB here, conservative for an iPhone 12); the three
+  pools (sharp, preview, in-flight) are tested to stay under half of it.
+- **Zoom is a CSS stretch, then one sharp render.** The render width the queue plans against is a
+  SETTLED width (`SettledWidth` in `pdfRenderQueue.ts`), written only 250 ms after the zoom stops
+  moving - the queue never reads the live width, so a click mid-walk starts no sharp render and
+  walking 1 -> 1.5 -> 2 -> 3 costs exactly one; coming back to the settled width before the timer
+  fires costs none. Pages off screen keep their stretched bitmap until they scroll in. The
+  two-scale scheme (`RENDER_ZOOMS`) went with the pixel cap that made it unnecessary.
 - **The text layer was the zoom freeze.** `PdfTextLayer` fitted each span with its own action - a
   transform write then a width read, span after span, so one forced layout per span - and re-did it
   on every zoom step, on every page whose text had ever loaded. It now measures all spans of a
   page in one read pass and one write pass, one frame after the width changes, reading the target
   off the laid-out layer itself (a fit between the prop update and the font-size update made every
-  span 24 % too wide); and only pages in the near window carry a layer.
+  span 24 % too wide); and only pages within THREE SCREENS of the reader carry a layer (a window of
+  its own, wider than the one-screen render window).
+- **What that window costs, honestly.** The browser's find-in-page (Ctrl+F) only searches text that
+  is in the DOM, so a page read and then left more than three screens behind is no longer found
+  until it scrolls back near; before, every page whose text had ever loaded stayed searchable.
+  Likewise a drag selection can span about three screens of pages, not the whole document. The
+  window is a trade between that and the zoom freeze: a layer on every visited page is what made
+  each zoom step re-fit thousands of spans. The batched fit alone removed most of the freeze, so
+  the window is wide rather than tight; an in-viewer search over `getPageText` would lift the
+  find-in-page limit and is not built.
 - **And the layer was font-size times too wide, on every PDF.** `textRunBox` multiplied pdf.js's
   `item.width` by the run's scale, but pdf.js gives that width already in page units: a 43-character
   line measured 3.3 page widths. Selection and highlight boxes now match the glyphs
