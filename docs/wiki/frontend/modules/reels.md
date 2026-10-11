@@ -321,6 +321,27 @@ cropped a phone's portrait clip into a wide strip; a reel is always portrait, so
 before the first frame. It plays muted while on screen like any feed video (`InlineVideo`), and a
 touch opens the viewer instead of the media viewer.
 
+**A feed card fetches what its video is about to play, and gives it all back off screen (fix of
+the 2026-10-11 audit's first P2).** The card's stream is PACED (`FEED_STREAM_PACING` in
+`utils/segmentedMediaStream.ts`): the HEAD (2 segments, 2 MiB - the first frame needs 2 of 20) is
+fetched once the card is within 400 px of the viewport, and the rest only while the inline
+`<video>` is PLAYING and holds under 10 s past its playhead. The demand is read from the element
+(`paused`, `buffered`, `currentTime`, its `play`/`timeupdate`/`waiting` events), never a clock, so a
+card scrolled past (paused by `playWhileVisible`), a refused autoplay or a viewer open over it asks
+for nothing more. Leaving the same 400 px band is reported by `nearViewport`'s two-way mode
+(`onleave`, video attachments only): `PostMedia` is deferred again, the stream is CLOSED (the segment
+in flight aborted) and the `<video>` unmounts with its decoder; a deferred video takes no warm blob
+either, so only the cards near the screen hold a player. Coming back opens a new stream, which
+re-fetches the head (nothing else keeps those bytes). The segments the final file needs are kept as
+`Blob`s, never as the decrypted `ArrayBuffer`s - the JS-heap second copy is gone - and a paced
+stream builds the whole file only once the member has watched it to the end, or opened the media
+viewer (`fetchAll`). The decrypted pool is capped by BYTES (64 MiB, `BLOB_URL_POOL_MAX_BYTES`)
+as well as entries: past it the least recently used IDLE blob is revoked at once, and a held one -
+the video playing - never. Pinned by `segmentedMediaStream.test.ts` (ten unplayed cards fetch 20
+requests, two segments each, of an eight-segment file; close aborts the segment in flight),
+`PostMedia.stream.svelte.test.ts` and `blobUrlPool.test.ts`. NOT measured on a phone with a 30 MB
+reel: the decoder count and the bytes on the wire are owed one reading on the Mi 9T.
+
 **The viewer** (`components/reels/ReelViewer.svelte`) shows the touched reel first, then the reels
 `GET /api/posts?kind=reel&feed=all` lists, without repeating it, one per screen. Drag up for the
 next, down for the previous, to the right (or Back, or the X, or Escape) to close; a wide screen has
@@ -575,8 +596,11 @@ route and retry, the decoder count in the feed, and a long-take harness row.
 ### Proposed fix list, in order
 
 1. Feed card: head-only streaming with back-pressure and abort off-screen, plus a byte cap on the
-   decrypted pool (P2; measure first with a 30 MB reel).
-2. Orphan `reel` blobs: the claim promotes the class, or a bounded sweep (P2).
+   decrypted pool (P2). **Built (`fix/reel-feed-fetch`), see "Watching" above; the 30 MB reel
+   reading on a phone is still owed.**
+2. Orphan `reel` blobs: the claim promotes the class, or a bounded sweep (P2). **Built: the client
+   uploads `reel-pending`, the claim promotes it to `reel`, the sweep takes an unclaimed one a day
+   after upload ([media-service](../../services/media-service.md)).**
 3. Give the reel upload the attachment `transport` (progress, cancel, stall guard) and keep the
    prepared file for a retry; later the RC-5 durable take (P2).
 4. Measure the worst case on both phones (a scripted busy 90 s take) and write it above (P2).
