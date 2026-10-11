@@ -210,6 +210,35 @@ it.** Gains are not additive: 1 and 2 overlap.
 already refuted chunking as the lever twice, and the JavaScript itself is the cost; and the MLS load,
 which is ~10-30 ms here and must be re-read on a production-sized state before anyone touches it.
 
+### F5 - the warm diagnosis was wrong, and the fix it suggested measured to nothing
+
+**The JS foreground verdict is NOT late.** The resume sequence in `ChatBackgroundService` now logs
+each step it makes the socket wait for (`[LIFECYCLE] Resume prepared in N ms (reload, outbox, call,
+fcm, watermarks)`). On six warm taps it STARTED ~50 ms after the tap and took 528-717 ms (median
+~564). `[LIFECYCLE] App in foreground` is the line `resumeConnection` prints AFTER that sequence, so
+"reconnect on the native resume" would have changed nothing: the resume already begins at once. The
+reconnect requests refused at 14-57 ms are the service's own foreground hook, answered correctly
+while the pause is still up.
+
+**No step is slow on its own.** The native `read_and_clear_pending_call_accept` is a one-file read,
+yet the step around it took 370-450 ms in five runs of six (the outbox step 384 ms in the sixth).
+An await only returns when the main thread is free, and the landing's `/chat` render holds it for
+~220-260 ms right then (`long-animation-frame`: one `import.then` continuation at ~100-170 ms), so
+whichever step is in flight absorbs it.
+
+**Refuted by measurement:** running the independent steps side by side (outbox, call drain,
+FCM -> watermarks after the `mls.bin` reload) left the preparation at 508-608 ms (median ~570, n=8).
+The block moved to the watermarks step (382-473 ms) and the socket still connected at ~0.9 s. Not
+shipped. Moving the reconnect ahead of the preparation would break the order the sequence exists for
+(the FCM cache and the read watermarks before the socket pulls queued rows, the outbox reconcile
+before the flusher), so the lever is the `/chat` render on the warm landing, which is F1's ground.
+
+| warm (ms after the tap, medians) | baseline (`main`, n=6) | resume steps in parallel (n=8) |
+| --- | ---: | ---: |
+| `[LIFECYCLE] App in foreground` | 615 | 646 |
+| socket connected | 931 | ~920 |
+| reply accepted, after the click | 839 | 911 |
+
 ## iOS (iPhone 12) - NOT measured
 
 The WebDriverAgent answered, but the installed build is a TestFlight build with no WebKit inspector

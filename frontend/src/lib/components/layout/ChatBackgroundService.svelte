@@ -1466,7 +1466,11 @@
           };
           await globalSession.ensureMls().reloadStateFromDisk();
           stepDone('reload');
-          if (storage) await reconcileOutboxSent(storage).catch(() => {});
+          if (storage) {
+            await reconcileOutboxSent(storage).catch((e) =>
+              appendLog(`[OUTBOX_MIRROR] Resume reconcile failed: ${String(e)}`)
+            );
+          }
           stepDone('outbox');
           // WP-XP-5: the user may have answered a CallKit ring while we were away - record
           // the intent BEFORE the WS reconnect delivers the MLS invite that auto-accepts it.
