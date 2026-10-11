@@ -83,6 +83,19 @@ describe('AssociationsService payment delegation', () => {
       });
     });
 
+    it.each([
+      ['no Lydia account', { lydiaOnboardingComplete: false, lydiaAccountId: null }],
+      [
+        'an account whose onboarding is not complete',
+        { lydiaOnboardingComplete: false, lydiaAccountId: 'vendor_x' },
+      ],
+      ['a complete flag with no account', { lydiaOnboardingComplete: true, lydiaAccountId: null }],
+    ])('reports the parent as not ready with %s', async (_name, parent) => {
+      const { service } = makeService({ club: {}, parent });
+      const state = await service.requestPaymentDelegation('club', 'parent');
+      expect(state.parentReady).toBe(false);
+    });
+
     it('rejects a parent that itself delegates (no chains)', async () => {
       const { service } = makeService({
         club: {},
