@@ -64,17 +64,32 @@ export function outboxClearColumns(entry: OutboxEntry): OutboxClearColumns {
   };
 }
 
-/** Build the sensitive payload object to encrypt (file bytes base64-encoded). */
-export function encodeOutboxSensitive(entry: OutboxEntry): Record<string, unknown> {
+/**
+ * Build the sensitive payload object to encrypt. THE FILE BYTES ARE NEVER IN IT: a queued attachment
+ * lives in the blob store ({@link ./outboxBlob}), and the payload keeps only `media.blob.keyB64`, so
+ * a row stays under ~1 KB however large the file is.
+ *
+ * `blobKeyB64` is the key of a blob the storage layer has JUST committed for this entry. Without
+ * one, an existing `media.blob` reference is carried over unless the file has been uploaded
+ * (`uploadedRef`): from then on nothing reads the bytes, and the reference is dropped so the
+ * caller can delete the blob. Rows written before this format held the bytes inline as
+ * `fileBytesB64`; they are still READ ({@link decodeOutboxEntry}) and never written again.
+ */
+export function encodeOutboxSensitive(
+  entry: OutboxEntry,
+  blobKeyB64?: string
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (entry.text !== undefined) payload.text = entry.text;
   if (entry.replyTo) payload.replyTo = entry.replyTo;
   if (entry.media) {
-    const { fileBytes, ...rest } = entry.media;
-    payload.media = {
-      ...rest,
-      ...(fileBytes && fileBytes.length > 0 ? { fileBytesB64: toBase64(fileBytes) } : {}),
-    };
+    const { fileBytes: _bytes, blob, ...rest } = entry.media;
+    const keep = blobKeyB64
+      ? { blob: { keyB64: blobKeyB64 } }
+      : blob && !rest.uploadedRef
+        ? { blob }
+        : {};
+    payload.media = { ...rest, ...keep };
   }
   if (entry.controlProto && entry.controlProto.length > 0) {
     payload.controlProtoB64 = toBase64(entry.controlProto);
@@ -90,6 +105,8 @@ export function encodeOutboxSensitive(entry: OutboxEntry): Record<string, unknow
 export function decodeOutboxEntry(clear: OutboxClearColumns, payload?: any): OutboxEntry {
   let media: OutboxEntry['media'];
   if (payload?.media) {
+    // `fileBytesB64` is the pre-blob inline format, read lazily here so a row queued by an older
+    // build is still sent; a `blob` reference is left for the storage layer to resolve.
     const { fileBytesB64, ...rest } = payload.media;
     media = {
       ...rest,

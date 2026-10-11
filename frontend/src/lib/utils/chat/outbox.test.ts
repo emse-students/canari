@@ -198,7 +198,7 @@ describe('outboxCodec', () => {
     });
   });
 
-  it('round-trips media file bytes via base64', () => {
+  it('reads a row queued BEFORE blobs (inline base64 bytes) and never writes the bytes into a row', () => {
     const bytes = new Uint8Array([1, 2, 3, 250, 255]);
     const e: OutboxEntry = {
       id: 'm2',
@@ -210,8 +210,16 @@ describe('outboxCodec', () => {
       attempts: 0,
       createdAt: 1,
     };
-    const decoded = decodeOutboxEntry(outboxClearColumns(e), encodeOutboxSensitive(e));
+    // The legacy format, spelled out: this is what an older build left in the queue.
+    const legacy = { media: { kind: 1, mimeType: 'image/png', size: 5, fileBytesB64: 'AQID+v8=' } };
+    const decoded = decodeOutboxEntry(outboxClearColumns(e), legacy);
     expect(Array.from(decoded.media!.fileBytes!)).toEqual([1, 2, 3, 250, 255]);
+    // The writer keeps the bytes OUT of the payload: only the blob's key is recorded.
+    const written = encodeOutboxSensitive(e, 'a2V5') as { media: Record<string, unknown> };
+    expect(written.media.fileBytesB64).toBeUndefined();
+    expect(written.media.fileBytes).toBeUndefined();
+    expect(written.media.blob).toEqual({ keyB64: 'a2V5' });
+    expect(JSON.stringify(written).length).toBeLessThan(1024);
   });
 
   it('round-trips a control entry proto via base64', () => {

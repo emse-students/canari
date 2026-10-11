@@ -1,4 +1,5 @@
 import { closeOpenIndexedDbStores } from '$lib/db';
+import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
 import { closeMlsDb } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
@@ -104,6 +105,14 @@ export async function wipeDeviceToFactory(): Promise<string[]> {
   await step('the message store connections', async () => {
     const closed = await closeOpenIndexedDbStores();
     if (closed > 0) console.log(`[RESET] closed ${closed} open connection(s) to the message store`);
+  });
+
+  // The queued attachments' bytes live in `CanariDBOutbox_<userId>`, a database of its own that
+  // BOTH backends use (a phone's message store is SQLite, this is not). Same rule: a delete blocks
+  // on an open connection, and it is the prefix enumeration below that removes it.
+  await step('the outbox attachment connections', async () => {
+    const closed = await closeOutboxBlobStores();
+    if (closed > 0) console.log(`[RESET] closed ${closed} open connection(s) to the outbox blobs`);
   });
 
   // THE CONNECTION NO CALLER CAN PASS. `closeStorage` covers the message store, which the session

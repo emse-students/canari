@@ -37,7 +37,7 @@ P3. The cap (#1721), the stacked faces in the list and day rows, the detail moda
 
 ## Queued media: bytes still live in the DB row, and a text has no terminal state (2026-10-10)
 
-P3. Built in [offline-and-weak-network 13.6](frontend/offline-and-weak-network.md): lazy decode, the `error` parking of an attachment, the banner fix. OWED: (a) a SIZE CAP at compose time for a queued attachment, and keeping the bytes OUT of the row (a file in app storage, the row holding its path) - deliberately not done, it moves the durability story of the file (crash, PIN change, native mirror) and needs its own design; until then a due attachment is still decoded once per attempt, bounded by `MAX_UNEXPECTED_ATTEMPTS`; (b) a terminal, visible state for a NON-media entry that keeps failing (a text on a persistent 5xx) - it needs a surface a text bubble does not have; (c) a re-read on the Pixel 6a of the freeze with a 13 MB attachment queued (nothing here was run on that phone).
+P3. Built in [offline-and-weak-network 13.6](frontend/offline-and-weak-network.md): lazy decode, the `error` parking of an attachment, the banner fix. OWED: (a) a SIZE CAP at compose time for a queued attachment (not recommended, see the P1 section above); the bytes are now OUT of the row ([offline-and-weak-network 13.7](frontend/offline-and-weak-network.md)); (b) a terminal, visible state for a NON-media entry that keeps failing (a text on a persistent 5xx) - it needs a surface a text bubble does not have; (c) a re-read on the Pixel 6a of the freeze with a 13 MB attachment queued (nothing here was run on that phone).
 
 
 ---
@@ -212,6 +212,8 @@ Peak is linear: **~95 MB of renderer per MB of file**. The server ceiling is 50 
 
 **Tier 0 - shipped by `fix/outbox-media-peak`: chunked base64** (`utils/hex.ts` `toBase64`/`fromBase64`, used by `outboxCodec.ts` and `sqlite.ts`; byte-identical to `btoa`, tested across the 32 KiB slice). Desktop numbers, 13 MiB: encode 411 + 816 ms -> ~85 ms each; decode 1114 + 672 ms -> ~60 ms and ~15 ms; ~1.0 GB of transient heap gone. It does NOT touch the three 23 MiB IPC crossings.
 
+**Tier 1 - DONE (2026-10-11, `feat/outbox-media-blob`): see [offline-and-weak-network 13.7](frontend/offline-and-weak-network.md).** The text below is the design it followed; what remains OPEN is listed after the risks.
+
 **Tier 1 - the file leaves the row (removes the IPC and most of the peak).** Binary over IPC is hopeless on Android (`process-ipc-message-fn.js`: a `Uint8Array` inside the message becomes a JSON number array, ~4x worse than base64), so the bytes must not cross it: keep them in **IndexedDB** (the webview's own store, structured clone of an `ArrayBuffer`, no base64, no JSON), in a store `outbox_media` `{ id, iv, cipher }`.
 - Encrypt the RAW bytes under a **random per-entry AES key** kept in the small encrypted SQLite payload (`blobId`, `blobKeyB64`): AES-GCM of 13 MB is ~9 ms and the row stays under 1 KB, so `getOutboxEntry`, every retry and the post-upload patch cost milliseconds and no longer move 23 MiB.
 - Order: **blob first, row second** (the opposite reasoning of the message/entry pair: a row with no blob is a VISIBLE typed failure - `LocalAttachmentError`, the #1730 orphan verdict, parked with a delete - while a blob with no row is invisible garbage a boot sweep deletes).
@@ -221,13 +223,23 @@ Peak is linear: **~95 MB of renderer per MB of file**. The server ceiling is 50 
 
 **Tier 2 - a client cap is NOT recommended once Tier 1 lands.** Until it does, a native cap near 20 MB would stop the 50 MB OOM; it needs a Paraglide message and is offered as a decision, not a default.
 
-### Risks, to decide before building Tier 1
+### Risks (Tier 1 built; the verdicts)
 
 - **iOS WKWebView IndexedDB eviction** under storage pressure: unmeasured. The row survives in SQLite and a lost blob becomes the typed orphan, but that is a lost attachment. Needs one iPhone check (kill the app with a queued 13 MB file, relaunch).
 - **Crash survival:** the IDB put commits before the row; a kill between the two leaves swept garbage, never a ghost send. Test: kill after the put.
 - **PIN change:** `pinChange.ts` re-encrypts messages and seeds and shows no outbox rows, so a queued row looks already unreadable after a PIN change (`OutboxPayloadUnreadableError`, parked). A per-entry blob key inside the row neither worsens nor fixes that; verify and file separately.
 - **Native mirror:** unaffected, media entries are never mirrored.
 - **Side finding:** between `addMessageToChat` (placeholder) and the end of the 23 MiB INSERT the bubble has no upload view and `hasEntry` can answer `false`, so #1730's orphan red state can flash on a slow phone and is not re-asked when the row lands. Tier 1 shrinks the window to milliseconds, Tier 0 by the encode time.
+
+
+### Still open after Tier 1
+
+- **Phone measurement (owed to the user):** the 13 MB send on the Mi 9T with the `[OUTBOX] ... durable write took N ms` and `payload read in N ms` lines; peak and wait before the first byte were derived from a desktop micro-benchmark, not measured on the phone. If the wait is still long, the remaining suspects are the three upload copies (`sessionAuth.ts:245`, `media.ts:739,746`), not the row.
+- **iOS WKWebView IndexedDB eviction (owed, ONE iPhone check):** kill the app with a queued 13 MB file, relaunch. Expected: either the send completes, or the bubble shows the `upload_error` card (blob missing -> parked). Nothing here ran on an iPhone.
+- **P2 - a PIN change leaves every queued outbox row unreadable (pre-existing, found while verifying this):** `pinChange.ts` re-encrypts messages and Graine rows but no `outbox` row, so after a PIN change a queued text, reaction or attachment fails to decrypt (`OutboxPayloadUnreadableError`, parked as an error; for an attachment the stranded blob goes with the entry the member deletes). Fix = re-encrypt the rows (metadata only for media, the blob key lives in the row) in the same pass, with a test; not done here because it is a separate durability change.
+- **Multi-tab web, the sweep:** the 10-minute grace is a clock guarding a cross-tab race no in-document set can see; a web tab enqueuing a file in the same seconds as another tab's session start, with an enqueue longer than the grace, would see a typed `upload_error` on that attachment. Not reproducible by test (needs two tabs); accepted.
+- **Tier 2 (a client size cap)** stays NOT recommended; the 50 MB ceiling now costs ~3 copies of the file, not 4.7 GB.
+- **Row-delete cost:** `SqliteStorage.deleteOutboxEntry` now does one extra clear-column `SELECT kind` per delete (to know whether a blob exists); microseconds, noted in case a profile ever shows the outbox.
 
 ## P3 - iOS notification sounds still play the default tone (palette A is Android and in-app only, 2026-10-09)
 

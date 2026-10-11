@@ -19,6 +19,12 @@ import type {
   StoredMessagePatch,
 } from './types';
 import {
+  attachOutboxBlob,
+  OutboxBlobStore,
+  outboxBlobReleased,
+  writeOutboxWithBlob,
+} from './outboxBlob';
+import {
   decodeOutboxEntry,
   encodeOutboxSensitive,
   isOutboxClearPatch,
@@ -111,10 +117,13 @@ export async function closeOpenIndexedDbStores(): Promise<number> {
 export class IndexedDbStorage implements IStorage {
   private readonly dbName: string;
   private db: IDBDatabase | null = null;
+  /** The bytes of queued attachments, in their own database (see outboxBlob.ts). */
+  private readonly blobs: OutboxBlobStore;
 
   /** Create a storage instance for the given user. Call init() before using. */
   constructor(userId: string) {
     this.dbName = `CanariDB_${userId}`;
+    this.blobs = new OutboxBlobStore(userId);
   }
 
   /** Whether the IndexedDB connection is open. See {@link IStorage.isOpen}. */
@@ -131,6 +140,7 @@ export class IndexedDbStorage implements IStorage {
    */
   async close(): Promise<void> {
     openConnections.delete(this);
+    await this.blobs.close();
     if (!this.db) return;
     this.db.close();
     this.db = null;
@@ -754,35 +764,43 @@ export class IndexedDbStorage implements IStorage {
   ): Promise<void> {
     invalidateHistoryStateKey(msg.conversationId);
     const db = this.ensureDb();
-    const [encryptedMessage, encryptedEntry] = await Promise.all([
-      encryptData(toMessagePayload(msg), deviceKeyB64),
-      encryptData(encodeOutboxSensitive(entry), deviceKeyB64),
-    ]);
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['messages', 'outbox'], 'readwrite');
-      tx.objectStore('messages').put({
-        id: msg.id,
-        conversationId: msg.conversationId,
-        timestamp: msg.timestamp,
-        ...encryptedMessage,
+    // An attachment's bytes are committed to the blob store BEFORE this transaction opens (see
+    // `writeOutboxWithBlob`): the pair below stays atomic, and a blob without its row is swept.
+    await writeOutboxWithBlob(this.blobs, entry, async (blobKeyB64) => {
+      const [encryptedMessage, encryptedEntry] = await Promise.all([
+        encryptData(toMessagePayload(msg), deviceKeyB64),
+        encryptData(encodeOutboxSensitive(entry, blobKeyB64), deviceKeyB64),
+      ]);
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(['messages', 'outbox'], 'readwrite');
+        tx.objectStore('messages').put({
+          id: msg.id,
+          conversationId: msg.conversationId,
+          timestamp: msg.timestamp,
+          ...encryptedMessage,
+        });
+        tx.objectStore('outbox').put({ ...outboxClearColumns(entry), ...encryptedEntry });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
       });
-      tx.objectStore('outbox').put({ ...outboxClearColumns(entry), ...encryptedEntry });
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
     });
   }
 
   /** Encrypt the sensitive payload and upsert a queued outbound message. */
   async saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void> {
     const db = this.ensureDb();
-    const encrypted = await encryptData(encodeOutboxSensitive(entry), deviceKeyB64);
-    const row = { ...outboxClearColumns(entry), ...encrypted };
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('outbox', 'readwrite');
-      tx.objectStore('outbox').put(row);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
+    // Blob FIRST, row SECOND: see `writeOutboxWithBlob`.
+    await writeOutboxWithBlob(this.blobs, entry, async (blobKeyB64) => {
+      const encrypted = await encryptData(encodeOutboxSensitive(entry, blobKeyB64), deviceKeyB64);
+      const row = { ...outboxClearColumns(entry), ...encrypted };
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('outbox', 'readwrite');
+        tx.objectStore('outbox').put(row);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
     });
   }
 
@@ -813,11 +831,13 @@ export class IndexedDbStorage implements IStorage {
       req.onerror = () => reject(req.error);
     });
     if (!row) return null;
+    let entry: OutboxEntry;
     try {
-      return decodeOutboxEntry(row, await decryptData(row.cipherText, row.iv, deviceKeyB64));
+      entry = decodeOutboxEntry(row, await decryptData(row.cipherText, row.iv, deviceKeyB64));
     } catch (e) {
       throw new OutboxPayloadUnreadableError(id, e);
     }
+    return attachOutboxBlob(this.blobs, entry);
   }
 
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
@@ -883,18 +903,54 @@ export class IndexedDbStorage implements IStorage {
     } catch {
       return;
     }
-    await this.saveOutboxEntry(mergeOutboxEntry(entry, patch), deviceKeyB64);
+    // The row read above is the small one: a blob-format row carries a key, not the file, so the
+    // post-upload patch (uploadedRef, fileBytes dropped) rewrites ~1 KB and never the attachment.
+    const merged = mergeOutboxEntry(entry, patch);
+    await this.saveOutboxEntry(merged, deviceKeyB64);
+    if (outboxBlobReleased(merged)) await this.deleteBlobQuietly(id);
   }
 
-  /** Remove a queued entry (after a confirmed send or a permanent failure). */
+  /** Delete a blob whose row no longer names it; a failure leaves garbage for the sweep, not an error. */
+  private async deleteBlobQuietly(id: string): Promise<void> {
+    await this.blobs
+      .delete(id)
+      .catch((e) => console.warn(`[DB] outbox blob of ${id} not deleted (swept at boot):`, e));
+  }
+
+  /**
+   * Remove a queued entry (after a confirmed send or a permanent failure), and its blob. The row
+   * goes first: a kill between the two leaves a blob with no row, which the boot sweep removes.
+   */
   async deleteOutboxEntry(id: string): Promise<void> {
     const db = this.ensureDb();
-    return new Promise((resolve, reject) => {
+    const kind = await new Promise<string | undefined>((resolve, reject) => {
       const tx = db.transaction('outbox', 'readwrite');
-      tx.objectStore('outbox').delete(id);
-      tx.oncomplete = () => resolve();
+      const store = tx.objectStore('outbox');
+      let found: string | undefined;
+      const req = store.get(id);
+      req.onsuccess = () => {
+        found = req.result?.kind;
+        store.delete(id);
+      };
+      tx.oncomplete = () => resolve(found);
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
     });
+    if (kind === 'media') await this.deleteBlobQuietly(id);
+  }
+
+  /** See {@link IStorage.sweepOutboxBlobs}. */
+  async sweepOutboxBlobs(): Promise<number> {
+    const db = this.ensureDb();
+    const removed = await this.blobs.sweep(
+      () =>
+        new Promise<IDBValidKey[]>((resolve, reject) => {
+          const req = db.transaction('outbox', 'readonly').objectStore('outbox').getAllKeys();
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        }) as Promise<string[]>
+    );
+    return removed.length;
   }
 
   // -- Pending group exits -------------------------------------------------
@@ -1121,6 +1177,7 @@ export class IndexedDbStorage implements IStorage {
   async clear(): Promise<void> {
     invalidateAllHistoryStateKeys();
     const db = this.ensureDb();
+    await this.blobs.clear();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(
         [

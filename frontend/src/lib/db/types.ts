@@ -138,8 +138,18 @@ export interface OutboxMediaPayload {
   /**
    * Raw (already client-compressed) file bytes, kept until the blob is uploaded.
    * Cleared once `uploadedRef` is set so the queue does not hold the file twice.
+   *
+   * IN MEMORY ONLY: the storage layer moves them into the outbox blob store on write and puts them
+   * back on {@link IStorage.getOutboxEntry}; they are never part of the persisted row.
    */
   fileBytes?: Uint8Array;
+  /**
+   * Where the bytes of a queued attachment live: the key of the per-entry AES-GCM blob in the
+   * outbox blob store (the blob id is the entry id). Persisted in the encrypted row; set by the
+   * storage layer, absent on a row written before blobs existed (its bytes are inline) and once the
+   * file is uploaded.
+   */
+  blob?: { keyB64: string };
   /** Set after a successful encryptAndUpload; makes the flush idempotent (no re-upload). */
   uploadedRef?: OutboxMediaUploadedRef;
 }
@@ -517,6 +527,11 @@ export interface IStorage {
    * `OutboxPayloadUnreadableError` when the row exists but cannot be decrypted.
    */
   getOutboxEntry(id: string, deviceKeyB64: string): Promise<OutboxEntry | null>;
+  /**
+   * Delete the attachment blobs no outbox row owns (a kill between a blob write and its row write
+   * leaves one). Run once per session by the outbox. Resolves with the number removed.
+   */
+  sweepOutboxBlobs(): Promise<number>;
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
   getOutboxEntriesForConversation(
     conversationId: string,

@@ -4,6 +4,11 @@ import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
 import { OutboxPayloadUnreadableError } from '$lib/db/outboxCodec';
+import {
+  OutboxBlobCorruptError,
+  OutboxBlobMissingError,
+  OutboxBlobWriteError,
+} from '$lib/db/outboxBlob';
 import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
 import type { MediaRef } from '$lib/media';
 import {
@@ -95,6 +100,17 @@ export class OutboxEnqueueError extends Error {
     super(why, { cause });
     this.name = 'OutboxEnqueueError';
   }
+}
+
+/**
+ * True when an enqueue failed because the device is out of storage (the attachment's blob was
+ * refused with `QuotaExceededError`): the one enqueue failure a member can act on, read from the
+ * TYPE of the cause chain and never from a message.
+ */
+export function isEnqueueQuotaFailure(e: unknown): boolean {
+  return (
+    e instanceof OutboxEnqueueError && e.cause instanceof OutboxBlobWriteError && e.cause.quota
+  );
 }
 
 /**
@@ -946,9 +962,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         entry = full;
       } catch (e) {
         if (e instanceof OutboxPayloadUnreadableError) {
+          // A blob the platform evicted (iOS WKWebView under storage pressure) or that no longer
+          // opens is the attachment LOST on this device: said so, because "cannot be decrypted"
+          // would send the reader after the PIN.
+          const gone =
+            e.cause instanceof OutboxBlobMissingError || e.cause instanceof OutboxBlobCorruptError;
           return parkAsError(
             entry,
-            `its payload cannot be decrypted (${String(e.cause).slice(0, 80)})`
+            gone
+              ? `its attachment is no longer readable on this device (${(e.cause as Error).name})`
+              : `its payload cannot be decrypted (${String(e.cause).slice(0, 80)})`
           );
         }
         // A row that exists but cannot be loaded is a LOCAL failure, and whether the upload already
@@ -1540,8 +1563,24 @@ export function registerOutbox(deps: OutboxDeps): OutboxController {
   installReachabilityProbe();
   active = createOutbox(deps);
   const controller = active;
+  sweepOrphanBlobs(deps);
   setUploadRetry((messageId) => controller.retryUpload(messageId));
   return active;
+}
+
+/**
+ * Once per session, delete the attachment blobs no queued row owns - what a kill between a blob
+ * write and its row write leaves. Best-effort and logged: garbage is a cost, never a failure.
+ */
+function sweepOrphanBlobs(deps: OutboxDeps): void {
+  const storage = deps.storage;
+  if (!storage) return;
+  storage
+    .sweepOutboxBlobs()
+    .then((n) => {
+      if (n > 0) deps.log(`[OUTBOX] swept ${n} orphan attachment blob(s) (no row owns them)`);
+    })
+    .catch((e) => deps.log(`[OUTBOX] orphan blob sweep failed: ${String(e)}`));
 }
 
 /** Tear down the active controller (logout). */

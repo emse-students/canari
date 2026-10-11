@@ -2,7 +2,7 @@
  * Base64 of a queued attachment: the chunked encoder and the loop decoder must stay byte-identical
  * to the platform's `btoa`/`atob`, across the 32 KiB slice boundary the encoder works in.
  */
-import { decodeOutboxEntry, encodeOutboxSensitive } from '$lib/db/outboxCodec';
+import { decodeOutboxEntry } from '$lib/db/outboxCodec';
 import { fromBase64, toBase64 } from './hex';
 
 function patterned(n: number): Uint8Array {
@@ -23,18 +23,17 @@ describe('toBase64 / fromBase64', () => {
     }
   );
 
-  it('carries a queued attachment through the outbox codec unchanged', () => {
+  it('decodes a legacy inline attachment through the outbox codec unchanged', () => {
     const fileBytes = patterned(200_000);
-    const payload = encodeOutboxSensitive({
-      id: 'm1',
-      conversationId: 'c1',
-      sentAt: 1,
-      kind: 'media',
-      media: { kind: 4, mimeType: 'application/pdf', size: fileBytes.length, fileBytes },
-      status: 'pending',
-      attempts: 0,
-      createdAt: 1,
-    });
+    // A row written before attachments moved to the blob store: inline base64, still readable.
+    const payload = {
+      media: {
+        kind: 4,
+        mimeType: 'application/pdf',
+        size: fileBytes.length,
+        fileBytesB64: toBase64(fileBytes),
+      },
+    };
     const clear = {
       id: 'm1',
       conversationId: 'c1',
