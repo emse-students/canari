@@ -366,6 +366,11 @@ export class MediaService {
    * on what deletes at once - not a per-caller allowance that N overlapping callers multiply.
    */
   private sweeping?: Promise<void>;
+  /**
+   * The tail of the metadata write queue ({@link persistMetadata}); absent until the first write
+   * (specs build the service without its constructor, same reason as above).
+   */
+  private metadataWrites?: Promise<void>;
   private readonly sweepIntervalMs = Number.parseInt(
     process.env.MEDIA_RETENTION_SWEEP_MS ?? `${DEFAULT_SWEEP_MS}`,
     10
@@ -1547,8 +1552,45 @@ export class MediaService {
     }
   }
 
-  private async persistMetadata() {
-    await fs.writeJson(MEDIA_META_FILE, { items: { ...this.meta.items } }, { spaces: 2 });
+  /**
+   * Writes the metadata index ATOMICALLY and ONE WRITE AT A TIME.
+   *
+   * Atomic: the JSON goes to `media_metadata.json.tmp`, then a rename puts it in place, so a crash or
+   * a full disk mid-write leaves the previous index whole rather than a truncated file that
+   * {@link loadMetadata} would fail to parse - and an unreadable index loses every entry, which the
+   * sweep then cannot see and an account deletion cannot reach.
+   *
+   * Serialised: every call queues behind the previous one ({@link metadataWrites}), so two writes
+   * never share the temp file and an older snapshot never renames over a newer one. Each write
+   * serialises the index as it is WHEN ITS TURN COMES, so the last write always carries the latest
+   * state. A failed write rejects to ITS caller and does not stop the next one from running.
+   */
+  private persistMetadata(): Promise<void> {
+    const previous = this.metadataWrites ?? Promise.resolve();
+    // Run after the previous write whatever its outcome: its failure was already handed to the
+    // caller that queued it, and must not poison every later write.
+    const write = previous.then(
+      () => this.writeMetadataFile(),
+      () => this.writeMetadataFile()
+    );
+    this.metadataWrites = write;
+    return write;
+  }
+
+  /** One temp-then-rename write of the index - only ever run by {@link persistMetadata}'s queue. */
+  private async writeMetadataFile(): Promise<void> {
+    const tmp = `${MEDIA_META_FILE}.tmp`;
+    try {
+      await fs.writeJson(tmp, { items: { ...this.meta.items } }, { spaces: 2 });
+      await fs.rename(tmp, MEDIA_META_FILE);
+    } catch (error) {
+      this.logger.error(
+        `Media metadata index write failed (the previous index is kept): ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      throw error;
+    }
   }
 
   /** Reads an object storage stream into a single buffer. */

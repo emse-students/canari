@@ -39,7 +39,7 @@ beforeEach(() => {
   ) {
     const box = this.hasAttribute('data-reel-trash')
       ? TRASH
-      : this.hasAttribute('data-reel-frame')
+      : this.hasAttribute('data-reel-surface')
         ? FRAME
         : { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
     return { ...box, x: box.left, y: box.top, toJSON: () => box } as DOMRect;
@@ -120,7 +120,7 @@ it('adds an emoji from the tray, selected, centred and upright', () => {
 it('drags with one finger, and a tap on empty space deselects', () => {
   const target = mountEditor();
   addEmoji(target);
-  const frame = target.querySelector('[data-reel-frame]')!;
+  const frame = target.querySelector('[data-reel-surface]')!;
   fire(overlay(target), 'pointerdown', 1, 100, 200);
   fire(frame, 'pointermove', 1, 140, 240);
   fire(frame, 'pointerup', 1, 140, 240);
@@ -135,7 +135,7 @@ it('drags with one finger, and a tap on empty space deselects', () => {
 it('pinches and twists with a second finger that lands anywhere', () => {
   const target = mountEditor();
   addEmoji(target);
-  const frame = target.querySelector('[data-reel-frame]')!;
+  const frame = target.querySelector('[data-reel-surface]')!;
   const before = overlay(target).dataset.overlayScale;
   fire(overlay(target), 'pointerdown', 1, 100, 200);
   fire(frame, 'pointerdown', 2, 140, 200); // lands on empty space, joins the gesture
@@ -152,7 +152,7 @@ it('pinches and twists with a second finger that lands anywhere', () => {
 it('deletes an overlay released over the trash, and not one released elsewhere', () => {
   const target = mountEditor();
   addEmoji(target);
-  const frame = target.querySelector('[data-reel-frame]')!;
+  const frame = target.querySelector('[data-reel-surface]')!;
   expect(target.querySelector('[data-reel-trash]')).toBeNull();
   fire(overlay(target), 'pointerdown', 1, 100, 200);
   fire(frame, 'pointermove', 1, 100, 300);
@@ -170,7 +170,7 @@ it('deletes an overlay released over the trash, and not one released elsewhere',
 it('a cancelled gesture never deletes', () => {
   const target = mountEditor();
   addEmoji(target);
-  const frame = target.querySelector('[data-reel-frame]')!;
+  const frame = target.querySelector('[data-reel-surface]')!;
   fire(overlay(target), 'pointerdown', 1, 100, 200);
   fire(frame, 'pointermove', 1, 100, 360);
   fire(frame, 'pointercancel', 1, 100, 360);
@@ -192,7 +192,7 @@ it('adds a text through the field, and edits it by tapping it once selected', ()
   expect(overlay(target).textContent!.trim()).toBe('salut');
   expect(target.querySelector('form')).toBeNull();
 
-  const frame = target.querySelector('[data-reel-frame]')!;
+  const frame = target.querySelector('[data-reel-surface]')!;
   // Selected already (it was just created): a tap that does not move opens the field on its text.
   fire(overlay(target), 'pointerdown', 1, 100, 200);
   fire(frame, 'pointerup', 1, 100, 200);
@@ -226,13 +226,13 @@ it('styles a text: the font and the pill apply to the selected text at once, and
   expect(span().style.borderRadius).toBe('');
   expect(span().style.fontFamily).toContain('monospace');
   // No text selected, no row.
-  const frame = target.querySelector('[data-reel-frame]')!;
+  const frame = target.querySelector('[data-reel-surface]')!;
   fire(frame, 'pointerdown', 1, 5, 5);
   expect(pill()).toBeNull();
 });
 
 function drawLine(target: HTMLElement, id = 1) {
-  const frame = target.querySelector('[data-reel-frame]')!;
+  const frame = target.querySelector('[data-reel-surface]')!;
   fire(frame, 'pointerdown', id, 40, 100);
   fire(frame, 'pointermove', id, 100, 100);
   fire(frame, 'pointermove', id, 160, 100);
@@ -272,7 +272,7 @@ it('a drawn stroke moves like any overlay, and that move is undone first', () =>
   drawLine(target);
   tool(target, 'draw').click();
   flushSync();
-  const frame = target.querySelector('[data-reel-frame]')!;
+  const frame = target.querySelector('[data-reel-surface]')!;
   fire(strokes(target)[0], 'pointerdown', 1, 100, 100);
   fire(frame, 'pointermove', 1, 100, 200);
   fire(frame, 'pointerup', 1, 100, 200);
@@ -288,7 +288,7 @@ it('erases only the strokes the finger crosses, as one undo step', () => {
   tool(target, 'draw').click();
   flushSync();
   drawLine(target);
-  const frame = target.querySelector('[data-reel-frame]')!;
+  const frame = target.querySelector('[data-reel-surface]')!;
   fire(frame, 'pointerdown', 1, 40, 300);
   fire(frame, 'pointermove', 1, 100, 300);
   fire(frame, 'pointermove', 1, 160, 300);
@@ -311,7 +311,7 @@ it('clears everything in one undoable step, and a tap-drawn dot adds nothing', (
   addEmoji(target);
   tool(target, 'draw').click();
   flushSync();
-  const frame = target.querySelector('[data-reel-frame]')!;
+  const frame = target.querySelector('[data-reel-surface]')!;
   fire(frame, 'pointerdown', 1, 40, 100);
   fire(frame, 'pointerup', 1, 40, 100);
   expect(strokes(target)).toHaveLength(0);

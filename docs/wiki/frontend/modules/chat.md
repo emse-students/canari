@@ -313,6 +313,8 @@ up for fifteen seconds, anchored to an input that was `display: none`.
 | iOS browser | **no Canari menu**: the paperclip is a `<label>` around one input, and WebKit's sheet is the only menu | - | - |
 | desktop | no menu: the paperclip opens the file dialog | - | - |
 
+**DECIDED, NOT BUILT (user, 2026-10-11): no native camera.** The camera column above (the `capture` inputs) is replaced by ONE "Ouvrir la camera" entry opening the in-app CanaReel camera, in the chat and in the new-post composer alike; the library and files entries stay. A chat take is `chat-reel` (30 days), a post take the post class ([backlog](../../backlog.md#decided-by-the-user-on-2026-10-11)).
+
 - **Android has two camera entries** because its capture intents are photo OR video: with both types
   accepted, wry's `RustWebChromeClient.onShowFileChooser` launches the video recorder only.
 - **The iOS app's native picks come back through `take_picked_file`** (`commands/picked_files.rs`): the

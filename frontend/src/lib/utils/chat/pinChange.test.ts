@@ -70,6 +70,7 @@ function makeEncryptedStorage(): IStorage & {
     getOutboxEntriesForConversation: vi.fn().mockResolvedValue([]),
     updateOutboxEntry: vi.fn().mockResolvedValue(undefined),
     deleteOutboxEntry: vi.fn().mockResolvedValue(undefined),
+    sweepOutboxBlobs: vi.fn().mockResolvedValue(0),
     // Graine: really encrypted, like the messages above, so a re-encryption can be OBSERVED
     // rather than asserted on a spy call.
     saveGraineSession: vi.fn(async (session: StoredGraineSession, deviceKeyB64: string) => {

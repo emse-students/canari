@@ -1,3 +1,3 @@
-### Fixed - the capture editor's picture fills the screen and no longer moves when the keyboard opens
+### Changed - the camera, the review, the editor and the viewer draw ONE 9:16 reel frame, and the keyboard never moves it
 
-The media covers the whole screen edge to edge and keeps the largest height measured, so the keyboard only lifts the tool tray; header and tools are translucent overlays ([reel-editor](docs/wiki/frontend/modules/reel-editor.md#the-picture-is-full-bleed-and-never-moves-2026-10-11)).
+The frame is shown whole (the whole screen when it has its shape, rounded over a blurred backdrop otherwise), the camera records exactly it, and overlays live inside it ([reel-editor](docs/wiki/frontend/modules/reel-editor.md#one-frame-for-capture-edit-and-publish-2026-10-11-replaces-the-cover-and-crop-of-1739)).

@@ -45,7 +45,7 @@ describe('classifyCameraError', () => {
 });
 
 describe('openReelCamera', () => {
-  it('asks for both tracks, the lens and the SCREEN-sized frame, and hands back the stream', async () => {
+  it('asks for both tracks, the lens and the reel frame as the screen shows it, and hands back the stream', async () => {
     vi.stubGlobal('screen', { width: 393, height: 851 });
     vi.stubGlobal('devicePixelRatio', 2.75);
     const stream = { getVideoTracks: () => [{ label: 'camera 0, facing back' }] };
@@ -57,7 +57,7 @@ describe('openReelCamera', () => {
       video: {
         facingMode: { exact: 'environment' },
         width: { ideal: 1280 },
-        height: { ideal: 590 },
+        height: { ideal: 720 },
         frameRate: { ideal: 30 },
       },
       // No voice-call processing: a reel records the room (framedCapture.ts REEL_AUDIO_CONSTRAINTS).

@@ -771,3 +771,36 @@ A Pixel 6a was made unusable by ONE queued 13 MB attachment. #1728 removed the r
   long poll or a stream, so no exemption flag exists. On the phone the in-flight list was empty and the
   banner gone when read (the 784 ms state had cleared); the live per-request capture is owed to the next
   occurrence. The strip became a small fixed icon because the phone has no top bar to host it.
+
+### 13.7 The file leaves the outbox row: bytes in IndexedDB, a key in the row (2026-10-11)
+
+**Why.** Even chunked (13.6, `#1732`) a queued 13 MB attachment was a 23 MiB row crossing the Android SQL bridge as a JSON string three times per send (write, read, post-upload patch), ~1.2 GB of renderer memory on a Mi 9T ([backlog](../backlog.md)). A `Uint8Array` cannot cross that bridge better (it becomes a JSON number array), so the bytes no longer cross it at all.
+
+**Mechanism** (`db/outboxBlob.ts`, used by BOTH `SqliteStorage` and `IndexedDbStorage`, so there is one behaviour):
+- Database `CanariDBOutbox_<userId>` (its OWN database, not a store of `CanariDB_<userId>`, which does not exist on a phone and which a stray open there is a recorded defect). The `CanariDB` prefix is what the device wipe enumerates; `closeOutboxBlobStores` is a wipe step because a delete blocks on an open connection. Record `{ id, iv, cipher, createdAt }`, the cipher a structured-clone `ArrayBuffer` (no base64, no JSON).
+- Each blob is AES-256-GCM under a RANDOM per-entry key held ONLY in the row's encrypted payload (`media.blob.keyB64`). **The blob id IS the entry id**: deleting needs no read of a row that may be unreadable, and the sweep asks "does a row have this id?" from the clear `id` column. A row stays under ~1 KB (tested with a 5 MiB file: under 2 KiB of parameters in total reach the SQL layer).
+- **`encodeOutboxSensitive` never writes file bytes.** `saveOutboxEntry` / `saveMessageWithOutboxEntry` call `writeOutboxWithBlob`: put the blob, THEN write the row. `getOutboxEntry` re-attaches the bytes (`attachOutboxBlob`); `getOutboxQueue` is unchanged (a media row is still clear columns only); `hasEntry`, the in-flight enqueue tracking (`#1733`) and the typed errors (`OutboxPayloadUnreadableError`, `LocalAttachmentError`, `OutboxEnqueueError`) are untouched.
+- **After the upload** the flusher's patch (`uploadedRef`, `fileBytes` dropped) is a non-clear patch: it re-reads the SMALL row, writes it back without the blob reference, then deletes the blob. It never re-puts the file. `deleteOutboxEntry` (sent, cancelled, parked-and-deleted) removes the row, then the blob; it only touches the blob database for a `media` row.
+
+**Crash windows, each tested** (`db/outboxBlob.test.ts`):
+
+| Killed | Left | Outcome |
+| --- | --- | --- |
+| after the blob put, before the row write | a blob, no row | nothing to send, no ghost; swept at the next session start (`registerOutbox` -> `sweepOutboxBlobs`) |
+| a blob put that fails (quota, disk) | nothing | `OutboxBlobWriteError`, wrapped in `OutboxEnqueueError`; the send path withdraws the placeholder and re-stages the file. A QUOTA failure says so (`chat_media_send_error_storage_full`, fr+en) instead of the generic line |
+| row exists, blob gone (platform eviction) | a row | `OutboxBlobMissingError` -> `OutboxPayloadUnreadableError` -> the flusher PARKS it as `phase: 'error'` (`upload_error` caption, retry or delete), entry kept; a blob the key does not open is `OutboxBlobCorruptError`, the same way. An IndexedDB failure that is neither (would not open) is NOT a verdict and is retried through the counted hold |
+| after the row rewrite, before the blob delete (post-upload) | a blob, a row that no longer names it | removed when the entry is deleted after the send |
+| a cancel landing between the row read and the blob read of `getOutboxEntry` | nothing | the missing blob is NOT a verdict while the row is gone: `attachOutboxBlob` re-asks whether the row exists and returns `null` ("no longer queued"), so a message the member just deleted is dropped, never parked as an error |
+| `deleteOutboxEntry`'s `SELECT kind` failing (SQLite) | nothing | the cancel still deletes the row, and the blob too (absent is success); a blob delete that fails is logged and left to the sweep, never a failed cancel |
+
+**Account reset (`clear()`), both backends: rows FIRST, the blob store LAST** (`clearOutboxBlobsLast`). The blob store is a separate database whose open throws when IndexedDB is unavailable or blocked. Awaited between `DELETE FROM outbox` and the graine/owed-exit/distribution deletes it skipped them (sensitive seeds survived a reset); awaited before the IndexedDB transaction it left rows naming blobs already gone. Now a blob-store failure can only leave keyless ciphertext, and it is logged and rethrown as `OutboxBlobClearError` after every row store is empty. The IndexedDB reset also ABORTS its transaction on a synchronous refusal, which otherwise committed the clears queued before it.
+
+**`idbCommitted`, every outbox IndexedDB transaction.** Per the spec `transaction.error` is set only at abort, so `tx.onerror = () => reject(tx.error)` rejected with `null` during a request's error event: `isQuotaError(null)` was false and the "storage full" line never showed on an engine reporting quota as a request error. It rejects with the request's error, then `tx.error` at abort, and never with `null`.
+
+**The sweep** deletes blobs no row owns. **The 10-minute grace (`BLOB_SWEEP_GRACE_MS`) is what protects a concurrent enqueue**, not the order of the reads: the row ids are a snapshot, so an enqueue whose row commits after that snapshot and whose "being written" mark ends before the filter looks like garbage; the in-document set also cannot see another web TAB. Both are seconds-old blobs and only the age test excludes them. A wrong clock there costs one more session of garbage, or a typed `upload_error` on a file written in the same seconds, never a send. The sweep is started inside a promise chain, so a synchronous throw cannot escape `registerOutbox`.
+
+**Migration.** A row queued by an older build keeps its bytes inline (`fileBytesB64`): `decodeOutboxEntry` still reads it, `getOutboxEntry` returns the bytes, it is sent as before, and nothing writes the inline form again. Any re-save of an entry holding bytes converts it to the blob form.
+
+**Not changed, by design.** The native mirror never carries media (`toMirrorEntry` is null for it). A PIN change does not re-encrypt ANY outbox row (`pinChange.ts` handles messages and seeds only): that pre-existing gap is in the [backlog](../backlog.md); the per-entry blob key lives in the row, so it neither worsens nor fixes it, and the stranded blob is deleted with the entry the member deletes.
+
+**Owed.** (a) the Mi 9T re-reading of the 13 MB send (peak and the wait before the first byte); (b) ONE iPhone check: kill the app with a queued 13 MB file and relaunch. WKWebView may evict IndexedDB under storage pressure; the row then survives in SQLite and the attachment shows the `upload_error` card (a lost attachment, visibly, never a silent one). Not measured.

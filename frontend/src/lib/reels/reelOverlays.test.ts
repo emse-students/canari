@@ -6,6 +6,7 @@ import {
   createTextOverlay,
   EMOJI_SHELF_SIZE,
   QUICK_EMOJI,
+  TEXT_START_Y,
   emojiShelf,
   emojiSize,
   fontStack,
@@ -22,7 +23,14 @@ describe('reel overlays', () => {
   it('creates centred, upright overlays with distinct ids, and refuses empty text', () => {
     const a = createTextOverlay('  hi  ', '#fff')!;
     const b = createEmojiOverlay('\u{1F525}');
-    expect(a).toMatchObject({ kind: 'text', text: 'hi', x: 0.5, y: 0.5, scale: 1, rotation: 0 });
+    expect(a).toMatchObject({
+      kind: 'text',
+      text: 'hi',
+      x: 0.5,
+      y: TEXT_START_Y,
+      scale: 1,
+      rotation: 0,
+    });
     expect(b).toMatchObject({ kind: 'emoji', x: 0.5, y: 0.5, scale: 1, rotation: 0 });
     expect(a.id).not.toBe(b.id);
     expect(createTextOverlay('   ', '#fff')).toBeNull();

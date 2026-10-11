@@ -277,3 +277,12 @@ Rig lessons: `login.mjs` against a stale `adb forward` on 9334 (Jelly, the phone
 Chrome, owns the Custom Tab) fails with "never rendered a credential form" or "no submit button";
 `adb forward --remove-all`, `pm clear org.lineageos.jelly`, then login works. Git Bash rewrites
 `/sdcard` paths: use `MSYS_NO_PATHCONV=1`.
+
+## 2026-10-11 - iPhone 12, `v1.2.3-alpha.5` TestFlight build (100200305), account gamma
+
+The verdicts, the method (WDA plus its MJPEG stream; the store build is not inspectable) and what is
+blocked or waits for the next pre-release are in one table:
+[the inventory](device-verification.md#the-iphone-12-owed-readings-inventory-2026-10-11). `PASS`:
+#1605 on the iPhone, the glass chrome's alignment, picker and names, #1370 on the front lens, the
+emoji pictures in the composer, the profile breadcrumb, the associations scroll. `FAIL`: check W, in
+a new shape. Bench trap: TestFlight's automatic updates had put the PRODUCTION stable on the bench.

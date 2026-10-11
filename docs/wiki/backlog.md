@@ -37,7 +37,7 @@ P3. The cap (#1721), the stacked faces in the list and day rows, the detail moda
 
 ## Queued media: bytes still live in the DB row, and a text has no terminal state (2026-10-10)
 
-P3. Built in [offline-and-weak-network 13.6](frontend/offline-and-weak-network.md): lazy decode, the `error` parking of an attachment, the banner fix. OWED: (a) a SIZE CAP at compose time for a queued attachment, and keeping the bytes OUT of the row (a file in app storage, the row holding its path) - deliberately not done, it moves the durability story of the file (crash, PIN change, native mirror) and needs its own design; until then a due attachment is still decoded once per attempt, bounded by `MAX_UNEXPECTED_ATTEMPTS`; (b) a terminal, visible state for a NON-media entry that keeps failing (a text on a persistent 5xx) - it needs a surface a text bubble does not have; (c) a re-read on the Pixel 6a of the freeze with a 13 MB attachment queued (nothing here was run on that phone).
+P3. Built in [offline-and-weak-network 13.6](frontend/offline-and-weak-network.md): lazy decode, the `error` parking of an attachment, the banner fix. OWED: (a) a SIZE CAP at compose time for a queued attachment (not recommended, see the P1 section above); the bytes are now OUT of the row ([offline-and-weak-network 13.7](frontend/offline-and-weak-network.md)); (b) a terminal, visible state for a NON-media entry that keeps failing (a text on a persistent 5xx) - it needs a surface a text bubble does not have; (c) a re-read on the Pixel 6a of the freeze with a 13 MB attachment queued (nothing here was run on that phone).
 
 
 ---
@@ -55,7 +55,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | after an edge swipe the next scroll is swallowed (Mi 9T, 2026-10-05; NOT a code defect anyone has seen: the page never holds the touch) | check X, ONE real-finger scroll on the Mi 9T with the `[swipeBack]` lines now logged ([device-verification](device-verification.md#x-the-scroll-after-an-edge-swipe---owed-on-the-mi-9t)) |
 | NOTIF-10: a refused push after real banners leaves no generic line (2026-10-09, `GenericBannerLedger` unclaimed notes; JVM-tested, the service's two cancel hooks NOT compiled from here) | `bun archive/notif.mjs 10` on the Mi 9T against a build carrying it: five messages with the push channel cut, then the radios back; the shade ends with the summary and the real banners, NO `Nouveau message de ...` ([mobile](frontend/mobile.md), board row [NOTIF-10](cross-client-testing.md#14---notif---notifications)) |
 | the swipe to the camera after publishing a post (2026-10-09) | check V on the Mi 9T: publish, swipe right at once, three times ([device-verification](device-verification.md#v-the-camera-swipe-on-a-fresh-feed-after-publishing---owed-on-android)) |
-| the composer stands still while the keyboard rises (2026-10-09, Android double report and iOS stale inset, unit-proven only) | check W on BOTH phones, the original per-frame CDP sampling of the composer's top ([device-verification](device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)) |
+| the composer stands still while the keyboard rises (2026-10-09, Android double report and iOS stale inset, unit-proven only) | check W on the Mi 9T, the original per-frame CDP sampling of the composer's top ([device-verification](device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)). **iPhone 12, 2026-10-11: no 465 plateau any more, but a NEW defect, 3 of 3 rises**: the native "+" twin jumps to 487 pt at once while the web layer is drawn a keyboard height lower and slides up over ~250 ms, so the web composer is hidden and the "+" floats alone (an OPEN P3, cause not looked at) |
 | a salon carries read receipts (#1235, `v0.18.32`) | `READ-6` on the rig, then one look in a real community: a member who is not an admin sees the double check and "Lu par" under their own last message ([social-service](services/social-service.md#read-receipts-in-a-salon)) |
 | a salon's settings are offered only to who may change them (#1228, `v0.18.32`) | one look with a Membre account: the access tab reads only, rename and delete are absent; then grant `channel.manage` to Moderateur in the grid with a moderator's panel open - the controls must appear without a reload |
 | `/forms/success` no longer asks for a form called `success` | after a completed payment on production, social-service logs no `invalid input syntax for type uuid: "success"` (once per payment, so ONE payment settles it) |
@@ -83,11 +83,11 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | the iOS rig adapter (#1284-#1286, #1290, #1291, #1303) | **NO board row has a verdict on the iPhone yet**: each row needs its mechanical port; O3 and O6-O11 change phone state (airplane mode, force quit, reboot, reinstall) and wait for a dedicated session; the Return key was never pressed; `pymobiledevice3` is on no PATH (the env var `PYMOBILEDEVICE3` points to it). Order: [cross-client-ios](cross-client-ios.md#what-is-owed) |
 | the iOS push rows (O4, TAB-1, HEAL-NEW-5), **BLOCKED on a Firebase setting** | the development-signed bench build gets `[PUSH_SEND] FCM failed ... Invalid APNs credential` for sandbox tokens while production sends 366 `platform=ios` with 0 failures: the APNs key is missing in the DEVELOPMENT slot (the fix is INFERRED, not read; [the owed click](#owed-to-the-user---decisions-rotations-and-one-off-clicks)). After it, resend the test DM: success = `FCM sent ... platform=ios` plus an `apsd` line in the iPhone syslog. Blocked until then: O4, O11, O13, the NOTIF rows, MENTION-2/3, LIFE-2/3/5/8 |
 | a withheld product releases itself when an association's payments become ready | an OBSERVATION: the next association to finish onboarding sees its products go on sale untouched (`activationWithheld`); four associations have no payment account, the BDE tier is off sale deliberately (user, 2026-09-17) |
-| the login page's "Ouvrir dans l'application" (#1605) | tap the link on a phone WITH the app, Android and iPhone, and see it open ([auth](frontend/modules/auth.md#open-in-the-app-from-the-login-page-2026-10-08)); "Connexion externe (service-account)" stays word for word (user's decision) |
+| the login page's "Ouvrir dans l'application" (#1605) | the iPhone half PASSED 2026-10-11 ([inventory](device-verification.md#the-iphone-12-owed-readings-inventory-2026-10-11)); owed: tap the link on an Android phone WITH the app and see it open ([auth](frontend/modules/auth.md#open-in-the-app-from-the-login-page-2026-10-08)); "Connexion externe (service-account)" stays word for word (user's decision) |
 | a background on the Mi 9T no longer logs `pauseSocket: native disconnect failed`, and a post scheduled one minute ahead leaves the strip at its time (#1603) | ONE reading on the phone ([mobile](frontend/mobile.md), [posts](frontend/modules/posts.md)) |
 | the identity label after an account switch and the PIN reset box (#1604) | **whether no PIN prompt after a later sign-in is "Rester connecte" state or a skipped unlock** ([auth](frontend/modules/auth.md#two-iphone-12-findings-of-2026-10-07-a-name-saved-for-the-previous-account-and-a-reset-button-under-the-footer)) |
 | the reaction-failure toast, the send path and the reply context per conversation (#1536, #1548) on the iPhone | a peer the dev service account may discover (an admin sandbox account) or a seed conversation between gamma and a non-admin ([readings](device-readings-2026-10.md#2026-10-07---iphone-12-v104-alpha5-testflight-build-100000405-accounts-gamma-then-delta)) |
-| the iPhone camera letterbox fix (#1370, shipped UNVERIFIED by the user's choice) | ONE loop of 20+ camera opens on both lenses on the iPhone, with a home-and-return in it (5 of 5 bad before the fix after one) |
+| the iPhone camera letterbox fix (#1370, shipped UNVERIFIED by the user's choice) | the FRONT lens passed 22 opens with two home-and-returns on 2026-10-11 ([inventory](device-verification.md#the-iphone-12-owed-readings-inventory-2026-10-11)); owed: the REAR lens, phone held up (lying flat, its frame is black) |
 | Android fluidity (#1361-#1363) | a re-measure on the Mi 9T of `open_conversation` (662 ms on the first open before them); Lucide `Icon` costs ~1 ms per icon there, so 100-150 ms per heavy screen is the hardware |
 | "Seen by" heads in groups and salons (#1401) | one look in a group and a salon with four or more readers: each head under the last message its owner read, `+N` past three |
 | the signed calendar subscription's 503 path (#1551) | the signer cannot be stopped without touching the stack: only the 200 path was read on a phone |
@@ -115,7 +115,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **decide whether the host-update report gets a runner key on `mitv`, `cercle`, `miconnect`** (your own old VMs; without it they are unreported) | 1 decision | [the P2](#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
 | **decide whether `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App itself** (a lockfile-refresh superseding a Dependabot pull request, which is how the last class of dependency update that needs a person would merge unattended) | 1 decision | [the P2](#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
-| **raise `minClientVersion` to `1.2.1` once BOTH stores serve `1.2.1`** - `1.0.3`-`1.1.2` keep the native key-group epoch bug (a cold start arms an epoch gap, salon sends are refused, the device re-joins 45 s later); the same floor clears Graine v2's `>= 1.0.3` | 1 gesture | [channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09), [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
+| **raise `minClientVersion` to `1.2.1` once BOTH stores serve `1.2.1`** - `1.0.3`-`1.1.2` keep the native key-group epoch bug (a cold start arms an epoch gap, salon sends are refused, the device re-joins 45 s later); the floor is `1.0.3` since 2026-10-11; Apple's order is to wait for 1.2.1's review, then submit 1.2.4 | 1 gesture | [channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09), [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
@@ -147,9 +147,9 @@ the editor is [reel-editor](frontend/modules/reel-editor.md). **Owed, readings o
 Decisions L1-L4 (the three-piece glass header, the "+" that grows, phone apps only) and both halves,
 shipped in `v0.18.32` (#1251, #1254), are on
 [chat](frontend/modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)
-and [mobile](frontend/mobile.md#the-conversations-native-glass-chrome). **Owed on the iPhone 12**: the
-alignment, the keyboard, "+" > Photos opening the picker, VoiceOver's four names (the glass tab bar and
-the conversation's back/title/menu were READ 2026-10-05).
+and [mobile](frontend/mobile.md#the-conversations-native-glass-chrome). The alignment, "+" > Photos and
+the four accessible names PASSED on the iPhone 12 on 2026-10-11; **the keyboard FAILS in a new shape**
+(the web layer lags the native "+" by ~250 ms on every rise, [check W](device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)).
 
 ## The MiConnect profile reform - decided 2026-09-29, the technical plan is next
 
@@ -212,6 +212,8 @@ Peak is linear: **~95 MB of renderer per MB of file**. The server ceiling is 50 
 
 **Tier 0 - shipped by `fix/outbox-media-peak`: chunked base64** (`utils/hex.ts` `toBase64`/`fromBase64`, used by `outboxCodec.ts` and `sqlite.ts`; byte-identical to `btoa`, tested across the 32 KiB slice). Desktop numbers, 13 MiB: encode 411 + 816 ms -> ~85 ms each; decode 1114 + 672 ms -> ~60 ms and ~15 ms; ~1.0 GB of transient heap gone. It does NOT touch the three 23 MiB IPC crossings.
 
+**Tier 1 - DONE (2026-10-11, `feat/outbox-media-blob`): see [offline-and-weak-network 13.7](frontend/offline-and-weak-network.md).** The text below is the design it followed; what remains OPEN is listed after the risks.
+
 **Tier 1 - the file leaves the row (removes the IPC and most of the peak).** Binary over IPC is hopeless on Android (`process-ipc-message-fn.js`: a `Uint8Array` inside the message becomes a JSON number array, ~4x worse than base64), so the bytes must not cross it: keep them in **IndexedDB** (the webview's own store, structured clone of an `ArrayBuffer`, no base64, no JSON), in a store `outbox_media` `{ id, iv, cipher }`.
 - Encrypt the RAW bytes under a **random per-entry AES key** kept in the small encrypted SQLite payload (`blobId`, `blobKeyB64`): AES-GCM of 13 MB is ~9 ms and the row stays under 1 KB, so `getOutboxEntry`, every retry and the post-upload patch cost milliseconds and no longer move 23 MiB.
 - Order: **blob first, row second** (the opposite reasoning of the message/entry pair: a row with no blob is a VISIBLE typed failure - `LocalAttachmentError`, the #1730 orphan verdict, parked with a delete - while a blob with no row is invisible garbage a boot sweep deletes).
@@ -221,13 +223,23 @@ Peak is linear: **~95 MB of renderer per MB of file**. The server ceiling is 50 
 
 **Tier 2 - a client cap is NOT recommended once Tier 1 lands.** Until it does, a native cap near 20 MB would stop the 50 MB OOM; it needs a Paraglide message and is offered as a decision, not a default.
 
-### Risks, to decide before building Tier 1
+### Risks (Tier 1 built; the verdicts)
 
 - **iOS WKWebView IndexedDB eviction** under storage pressure: unmeasured. The row survives in SQLite and a lost blob becomes the typed orphan, but that is a lost attachment. Needs one iPhone check (kill the app with a queued 13 MB file, relaunch).
 - **Crash survival:** the IDB put commits before the row; a kill between the two leaves swept garbage, never a ghost send. Test: kill after the put.
 - **PIN change:** `pinChange.ts` re-encrypts messages and seeds and shows no outbox rows, so a queued row looks already unreadable after a PIN change (`OutboxPayloadUnreadableError`, parked). A per-entry blob key inside the row neither worsens nor fixes that; verify and file separately.
 - **Native mirror:** unaffected, media entries are never mirrored.
 - **Side finding:** between `addMessageToChat` (placeholder) and the end of the 23 MiB INSERT the bubble has no upload view and `hasEntry` can answer `false`, so #1730's orphan red state can flash on a slow phone and is not re-asked when the row lands. Tier 1 shrinks the window to milliseconds, Tier 0 by the encode time.
+
+
+### Still open after Tier 1
+
+- **Phone measurement (owed to the user):** the 13 MB send on the Mi 9T with the `[OUTBOX] ... durable write took N ms` and `payload read in N ms` lines; peak and wait before the first byte were derived from a desktop micro-benchmark, not measured on the phone. If the wait is still long, the remaining suspects are the three upload copies (`sessionAuth.ts:245`, `media.ts:739,746`), not the row.
+- **iOS WKWebView IndexedDB eviction (owed, ONE iPhone check):** kill the app with a queued 13 MB file, relaunch. Expected: either the send completes, or the bubble shows the `upload_error` card (blob missing -> parked). Nothing here ran on an iPhone.
+- **P2 - a PIN change leaves every queued outbox row unreadable (pre-existing, found while verifying this):** `pinChange.ts` re-encrypts messages and Graine rows but no `outbox` row, so after a PIN change a queued text, reaction or attachment fails to decrypt (`OutboxPayloadUnreadableError`, parked as an error; for an attachment the stranded blob goes with the entry the member deletes). Fix = re-encrypt the rows (metadata only for media, the blob key lives in the row) in the same pass, with a test. **Not done in #1738, reviewed 2026-10-11:** the rows are now cheap (~1 KB), but it needs a new raw-row read/write on BOTH backends (the existing `getOutboxEntry` + `saveOutboxEntry` pair re-puts the blob, which must not be touched), and the live flusher keeps the OLD key until `setDeviceKey` runs after the pass - a flush reading a re-encrypted row in that window parks it as unreadable, and its post-upload patch rewrites it under the old key. The fix therefore has to hold the flusher (or hand it the new key) across the pass, which is a design change, not a small one.
+- **Multi-tab web, the sweep:** the 10-minute grace is a clock guarding a cross-tab race no in-document set can see; a web tab enqueuing a file in the same seconds as another tab's session start, with an enqueue longer than the grace, would see a typed `upload_error` on that attachment. Not reproducible by test (needs two tabs); accepted.
+- **Tier 2 (a client size cap)** stays NOT recommended; the 50 MB ceiling now costs ~3 copies of the file, not 4.7 GB.
+- **Row-delete cost:** `SqliteStorage.deleteOutboxEntry` now does one extra clear-column `SELECT kind` per delete (to know whether a blob exists); microseconds, noted in case a profile ever shows the outbox. It is guarded: a failed read deletes the row and the blob anyway, never failing the cancel.
 
 ## P3 - iOS notification sounds still play the default tone (palette A is Android and in-app only, 2026-10-09)
 
@@ -290,11 +302,11 @@ v1 proves nothing about who wrote a salon message or where; the table is
 the design [§21](protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)
 (all three decisions of 2026-09-28: the whole of it, a relayed endorsement, the DMs included). R1 =
 G2-0 to G2-4 and the writer G2-5 are SHIPPED (#1221; the writer in the stable `v1.0.3`, 2026-10-05).
-`minClientVersion` is STILL `1.0.0` (read 2026-10-04) and is raised by the user only.
+`minClientVersion` is `1.0.3` since 2026-10-11, so G2-5's refusal is unblocked; the floor is still raised only on the user's yes.
 
 | WP | What is left |
 | --- | --- |
-| G2-5 | **v1 ends (user, 2026-09-28)**: a v1 seed that ARRIVES is refused, v1 seeds already held stay readable until their rows age out (365 days), the v1 reader is deleted. **BLOCKED on the floor**: clients `1.0.0`-`1.0.2` still mint v1 seeds. Unblock = raise `minClientVersion` to >= `1.0.3` once BOTH stores serve it (`bun tools/play-vitals/vitals.mjs` + App Store), then touch `utils/graine/{sessionManager,wireSeed}.ts`, `crypto/graine.ts` and the native `merge_graine_seed` |
+| G2-5 | **v1 ends (user, 2026-09-28)**: a v1 seed that ARRIVES is refused, v1 seeds already held stay readable until their rows age out (365 days), the v1 reader is deleted. **UNBLOCKED 2026-10-11** (the floor is `1.0.3`, so no admitted client mints a v1 seed): touch `utils/graine/{sessionManager,wireSeed}.ts`, `crypto/graine.ts` and the native `merge_graine_seed` |
 | G2-6b | a salon edit from a v1 session has an unsigned, server-supplied `senderId` (a deliberate level, no code owed, [§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05)); closes with the v1 reader. **Only if a channel ever gets an older-page load:** `listMessages` with a `before` cursor omits edit and reaction rows made after the cursor |
 | G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **GRAINE-AUTH-1..3 are `PASS` since 2026-10-05 on the local estate** ([board](cross-client-testing.md#20---graine---an-author-that-is-proven), the claim that they were owed was stale); **owed: NOTIF-19/20 on the Mi 9T against a G2-5 build** (needs adb), **GRAINE-AUTH-4** (no runner can exist without a decision on a mutating dev hook, see the board row) and the iPhone reading ([device-verification](device-verification.md)) |
 
@@ -825,6 +837,8 @@ The principle is accepted (user, 2026-08-26) and the work is scheduled AFTER the
 
 **Re-measured read-only on 2026-10-11, prod AND dev (dev is a copy of prod, identical numbers): 29 orphan submissions of 79, over 13 missing forms, 5 `paid` (3600 cents).** The 2026-08-31 count was 28 over twelve: ONE row and one form are NEW (`547d1d0c`, free, 2026-09-21, form `1c54ee8e`), so the mechanism below is still live. **Decision owed**, not "add a foreign key" (a cascade would delete paid submissions).
 
+**THE 29 ORPHANS ARE DELETED ON DEV THEN PROD (2026-10-11, owner's explicit authorisation; the 5 paid were the owner's own old Stripe test charges, nobody is owed anything).** Per estate: the orphan set was re-derived live and matched the 29 ids below exactly (79 submissions; no foreign key, trigger or rule points at `submissions`). The 29 rows and the 3 linked `purchase_records` (by `formId`) were dumped as CSV first, and a restore test into a scratch schema matched the live rows' md5, after which the schema was dropped. Then ONE transaction deleted the 29 listed ids and checked "29 deleted, 0 orphans left" before COMMIT. Result on both: `deleted 29`, `orphans_after 0`, 50 submissions left, the 3 `purchase_records` rows KEPT, `forms`/`form_respondents` untouched. Backup: `~jolan.boudin/orphan-submissions-backup-2026-10-11/` on the Portail-etu host (dir 700, files 600, `canari-{dev,prod}-{submissions,purchase_records}.csv`), NOT in the repo (pseudonymised payer ids, Stripe session ids). Migration 081 (PR `fix/forms-soft-delete-fk`) now finds 0 orphans on both estates, so it no longer refuses to run.
+
 **What the data says.**
 
 - **Every orphan is a form that was deleted; none is NULL** (`formId` is `NOT NULL`; no foreign key on `submissions` or `forms`, measured). `forms` holds 5 rows, the oldest created 2026-08-11, so the 12 older missing forms (13 May - 6 Jun 2026) were removed before then.
@@ -872,36 +886,9 @@ The principle is accepted (user, 2026-08-26) and the work is scheduled AFTER the
 
 1. **A and B: do NOT re-attach.** No form is recoverable and nothing identifies one, so "unambiguous re-attach" has no case. A holds no money: leave. B is `pending`/`cancelled` on a test or abandoned session: leave, or delete in one reviewed statement once the user agrees.
 2. **C (paid, 5): never delete, never edit an amount.** Proof needed first, per row: the full `stripeSessionId` looked up in the Stripe dashboard (live vs test mode, status paid, amount, payment-intent id), and for the three live ones matched to their `purchase_records` row (same amount, same payer, same date). If the three live ones are the team's own 6,00 EUR test charges, note it here and keep the rows as the audit trail. If any is a real third-party charge it is refunded or documented BEFORE anything else, and the payer is told from the purchase history (its form title is unknown).
-3. **All classes: give the orphan a parent, do not erase it.** One tombstone `forms` row per missing form id (title says "deleted form, title unknown"), so the foreign key below can be validated without touching a payment row.
+3. **All classes: the owner deletes them on prod and dev (decided 2026-10-11), NO tombstone rows.** That deletion is the owner's gesture, not code.
 
-**The code fix that prevents new orphans (plan, one PR, after the user chooses).** Recommended: **soft delete + a foreign key**, rather than a `formTitle` copy on the submission (a copy keeps the row but still lets a form vanish under a paid submission; the cotisation grant and the purchase history both read the form).
-
-- Migration `081_forms_soft_delete_and_submission_fk.sql` (DRAFT, not added to the tree; 080 is the last):
-
-```sql
--- A form that has answers is archived, never removed (2026-10-11 audit: 29 orphan submissions, 5 paid).
-ALTER TABLE forms ADD COLUMN IF NOT EXISTS "deletedAt" timestamptz NULL;
-
--- Tombstones for the 13 forms already gone, so the constraint validates. REVIEW WITH THE USER: it
--- writes rows, and the NOT NULL columns of `forms` must be checked against the entity first.
-INSERT INTO forms (id, "ownerId", title, items, "createdAt", "updatedAt", "deletedAt")
-SELECT s."formId", 'system', '(deleted form, title unknown)', '[]'::jsonb, min(s."createdAt"), now(), now()
-FROM submissions s
-WHERE NOT EXISTS (SELECT 1 FROM forms f WHERE f.id = s."formId")
-GROUP BY s."formId"
-ON CONFLICT (id) DO NOTHING;
-
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'submissions_form_fk') THEN
-    ALTER TABLE submissions
-      ADD CONSTRAINT submissions_form_fk FOREIGN KEY ("formId") REFERENCES forms (id) ON DELETE RESTRICT;
-  END IF;
-END $$;
-```
-
-  (Without the tombstone insert: `ADD CONSTRAINT ... NOT VALID`, which guards new rows only, and `VALIDATE CONSTRAINT` once the orphans are dealt with.)
-- `FormsService.delete`: a form with any submission gets `deletedAt` (and `closedAt`) instead of `remove`; a form with none is removed as today. The association delete takes the same branch instead of `manager.delete(Form, ...)`, which `RESTRICT` would otherwise refuse and roll back.
-- `Form` entity gains `deletedAt`; every form LIST and public read filters `deletedAt IS NULL`; submission and purchase readers still load the archived form to name it.
+**The prevention is BUILT (PR `fix/forms-soft-delete-fk`, 2026-10-11): soft delete + a foreign key.** Migration `081_forms_soft_delete_submissions_fk.sql` adds `forms."deletedAt"` and `submissions_form_fk` (`ON DELETE RESTRICT`); it RAISES with the orphan count while any remain, so **IT MUST NOT DEPLOY BEFORE THE ORPHANS ARE DELETED** (a deploy that hits it fails loudly instead of adding no key). `retireForms` (`forms/retire-forms.ts`) is the one removal path: `FormsService.delete` and the association delete ARCHIVE a form that holds submissions and hard-delete one with none. Lists, the member and public reads, `submit`, `hasSubmission` and the reminder subscription filter `deletedAt IS NULL`; `assertFormManager` and `getSubmissions` do not, so staff read an archived form's submissions by id. Mechanism: [forms module](frontend/modules/forms.md#a-form-with-submissions-is-archived-never-removed-2026-10-11). OWED: the integration run of migration 081 on a database (no database was reachable when it was written), and the purchase-history name of a paid submission of an archived form (the form row still exists, so it is nameable; not exercised).
 - Tests: deleting a form with a paid submission archives it and the purchase history still names it; an empty form is removed; an association delete archives its answered forms; a raw `DELETE FROM forms` of an answered form is refused by the constraint.
 
 **Decision needed from the user:** (a) soft delete + foreign key (recommended) or a `formTitle` on the submission; (b) confirm the 5 paid rows are test charges (Stripe dashboard, test and live) so no payer is owed anything; (c) A and B deleted, or all 29 kept under tombstone parents; (d) may the tombstone insert run on prod (13 rows written).
@@ -938,7 +925,7 @@ fails the day the site stops offending.
 
 ### P3 - docker-prune is built for the Portail-etu host but not installed there
 
-Measured 2026-10-10: the Portail-etu host is 70 % used (30 G of 45 G, 13 G free; 6.3 GB of 12 GB of images reclaimable, no build cache, 0 reclaimable volume) and it grew 4 G in a day, so 80 % is about two days away at that rate. (The old VM was 18 % on 2026-10-09.) **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"):** an agent installs and runs the prune when the host passes 80 %, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
+Measured 2026-10-10: the Portail-etu host is 70 % used (30 G of 45 G, 13 G free; 6.3 GB of 12 GB of images reclaimable, no build cache, 0 reclaimable volume) and it grew 4 G in a day, so 80 % is about two days away at that rate. (The old VM was 18 % on 2026-10-09.) **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"; threshold and scope set 2026-10-11, overriding the no-install-without-DSI-agreement rule for this case only):** an agent installs and runs the prune when the host passes 75 %, images and build cache only and never a volume, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 
@@ -1004,5 +991,13 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 - **A client entitlement floor for a re-admitted device**: design first, in the wiki, then a build with an adversarial review.
 - **A reason column on a roster seat without a Welcome** (additive migration, one field in the hourly report): not built.
 - **Event co-organisers**: the cap of four associations in total shipped (#1721); owed the shared organiser-faces component for the list and day rows, the detail chips with a quiet pending line, the picker counter, and the ICS and share title naming every organiser (mockup: session scratchpad `coorg/coorg-mockup.html`, not committed). No code capped the picker at two; the interface only LOOKED limited (a pending proposal draws nothing, names truncate).
-- **`minClientVersion`**: the user's gesture. Measured 2026-10-10 (read-only, 7-day sessions): `1.0.3` would bounce 111 of 336 devices (54 iPhone), `1.1.2` 241 of 336. `1.0.3` unlocks Graine G2-5; the key-group epoch bug survives on `1.0.3`-`1.1.2`. Do not raise it before the App Store serves the target: 1.2.1 sat WAITING_FOR_REVIEW and occupied the only version slot.
-- **docker-prune on the shared host**: CLAUDE.md rules and the 2026-10-09 standing authorisation disagree (install without written agreement vs an agent may install above 80 %); the host is at 70 %. Owed to the user: which rule holds.
+
+## Decided by the user on 2026-10-11
+
+- **Standing release authority.** The lead agent arms a pull request after an adversarial review and a green CI, and cuts pre-releases AND stables once the pre-release has been read on a phone and nothing blocks, informing the user each time. It replaces the 2026-10-01 rule (the stable only on the user's explicit go). Still asked first: a direct production change (a hand edit on the host, a production setting such as `minClientVersion`), a data migration or backfill, any deletion of data. Rule: [durable-rules](durable-rules.md#release-and-ci---cicd).
+- **`minClientVersion` is `1.0.3`** (2026-10-11): Graine G2-5's refusal of an arriving v1 seed is unblocked ([Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28)). The `1.2.1` floor (the key-group epoch bug) stays in the owed table.
+- **Docker prune on the shared host: authorised above 75 % disk, images and build cache ONLY, never a volume.** This overrides the no-install-without-DSI-agreement rule for that one case and no other ([the P3](#p3---docker-prune-is-built-for-the-portail-etu-host-but-not-installed-there)).
+- **No native camera access, anywhere.** The new-post composer and the chat each get ONE "Ouvrir la camera" entry that opens the in-app CanaReel camera; the gallery picker stays. This replaces the chat's `capture` inputs ([chat](frontend/modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). The media's retention class follows its DESTINATION: a post takes the post class, a published reel `reel` (30 days), a chat send `chat-reel` (30 days, [reels-in-chat](frontend/modules/reels-in-chat.md#91-decided---the-ui-target-is-snapchat-user-2026-10-09)). Not built.
+- **CanaReels in chats is a chantier, RC-0 to RC-11, and RC-0 (the measurement, no code) comes first** ([reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)).
+- **The Pixel 6a is the user's personal phone: observation only.** No install, reset, sign-in or driving by an agent; a reading on it is the user's own look ([device-verification](device-verification.md)). The bench is the Mi 9T and the iPhone 12.
+- **Apple: wait for the review of 1.2.1 (WAITING_FOR_REVIEW, it holds the only version slot), then submit 1.2.4.** No 1.2.2 or 1.2.3 submission.
