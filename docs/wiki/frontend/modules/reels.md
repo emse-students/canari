@@ -461,3 +461,123 @@ Mi 9T: "Discard this capture?" reappeared over the posts feed after publishing o
 
 Fix at the source: `historyOverlayStack` passes a reason to close handlers (`'back'` from popstate, `'navigation'` from the drain). The take's handler asks only for `'back'`; for `'navigation'` it clears the editor and publish step, aborts a recording and drops the take, with no question and no re-armed entry. Tests: `ReelCapture.svelte.test.ts` (review, publish step, editor, recording, discard) and `historyOverlayStack.test.ts`. Other handlers ignore the reason and are unchanged.
 
+
+## Audit of 2026-10-11 - are CanaReels functional and optimised? (code read at `origin/main` `1a9b4b91d`, Mi 9T measured)
+
+**Verdict.** The path WORKS end to end on the Mi 9T and nothing measured is broken: capture, review,
+on-device re-encode, upload, publish, feed card, viewer, preload. What is NOT yet shown is the
+WORST CASE (a busy 90 s take: ~28-35 MB) on either phone, and three real inefficiencies are in the
+code (feed cards fetch every reel in full, a failed publish orphans a blob for ever, the reel upload
+has none of the attachment upload's progress and cancel). Nothing found is a P1.
+
+**What was run** (bench Mi 9T `fa71073b`, Android 16, WebView 152, app `1.2.3-alpha.4` on dev,
+account "fourth", the app's own DevTools socket for the console, `ps`/`top`/`gfxinfo` sampled every
+~4 s). The camera looked at a ceiling, so every take is a STATIC scene: sizes below are a floor, not
+the 2.5 Mb/s the plan can reach.
+
+| Measured | Value |
+| --- | --- |
+| Take A, tap-and-hold, released | 21.98 s, 7,447,378 B, `video/x-matroska;codecs=avc1,opus` (hardware H.264 since #1645), asked 2.75 Mb/s, got ~2.7 |
+| Take B, ended by the app going to the background (a Play Protect install dialog raised by another session) | 47.3 s, 18,422,238 B, asked 3.08 Mb/s, ~3.1 actual. The take was KEPT and reached review, as this page says it must |
+| Re-encode, take A | 11.2 s for 21.5 s of video (0.52x real time), 7.45 MB -> 2.26 MB, plan 588x1040 at 2500 kb/s, output `video/mp4; codecs="avc1.64001f, mp4a.40.2"` |
+| Re-encode, three ~6 s takes | 3.3 s each (0.55x), 1.7-1.9 MB -> 0.8-1.1 MB |
+| Publish after the re-encode (take A) | segment encrypt, single POST and `POST /api/posts`: ~2.3 s for 2.26 MB; "Publier" to the feed ~14 s |
+| Capture cost, take B | renderer 105-140 % and app process 135-160 % of one core, renderer RSS 365 -> 545-575 MB (+~190 MB), 537 MB still held in review; `MemAvailable` never under 2.3 GB |
+| Feed, 5 reels of 1-2 MB, 6 up and 3 down swipes | 1048 frames, p50 26 ms, p90 32, p99 38 (`gfxinfo`); the same swipes on the text-only "Associations" feed: 695 frames, p50 13, p90 29, p99 38. Reels playing roughly halve the median frame rate (~38 fps). Swipes were `adb input`, so read the ratio, not the absolute |
+| Feed, resources while scrolling | renderer RSS 363 -> 385 MB; media-codec thread count (a PROXY: the platform lists no per-client codec) 4 idle, 12 scrolling, 4-6 at rest; app 30-45 % and renderer 15-40 % of a core |
+| Viewer (opened by accident on the 6 reels) | `[reel-preload] start` and `ready` 1-12 ms apart (the feed had already cached the video); next/prev logged cleanly. No frame timing taken for the viewer this time |
+| One `play()` refusal | one `[video] playWhileVisible: play() refused Object` warning at the first scroll. The error NAME was not captured; if it is the `AbortError` of a pause racing a play it is noise the rules forbid |
+
+**The rig was disturbed**: at 11:06:35 another session installed an APK on the bench phone
+(`installPackageLI`), killed the app and left it signed out, so the planned 90 s take and the viewer
+frame timing were NOT done. A stray tap of mine also queued a `pic86.pdf` in the BenchR1 DM; it was
+cancelled from its own cross.
+
+### Is a reel on the outbox path, and does the 1.2 GB peak reach it? No, and that is its own finding
+
+`publishReel` calls `MediaService.encryptAndUpload` directly (`reels/publishReel.ts:45`); the outbox
+is not involved, so #1729, #1732 and #1733 (lazy decode, chunked base64, the orphan card) do not
+touch it and the 1.2 GB transient of a queued 13 MB attachment is not a reel's. What a reel costs
+instead (read, not measured at full size): the prepared file is built in a `BufferTarget`
+(`prepareVideoForUpload.ts:218`, ~28-35 MB at 90 s), then `file.arrayBuffer()` (a copy), the
+ciphertext (a copy) and 8 MiB slices plus `FormData` blobs per chunk (`media.ts:739-790`): roughly
+100-150 MB of transient heap at the cap. What bounds the size: the recorder's bitrate
+(`REEL_RECORD_BITRATE_MAX` 4 Mb/s, scaled to pixels, `framedCapture.ts:128`), the plan's 2.5 Mb/s
+target lowered to fit `maxBytes` (`videoEncodingPlan.ts:92`, floor 400 kb/s, 90 % budget share), the
+90 s cap from `GET /api/posts/reel-limits`, and the server's 50 MB ceiling (`too-large` after the
+fact). Over 8 MiB the upload takes the chunk route (4 sequential 8 MiB POSTs for a 28 MB reel); the
+resumable sessions of #1708 are SERVER ONLY, no client calls them.
+
+### Ranked findings
+
+**P2 - a feed reel card downloads the WHOLE video of every reel it comes near, and keeps it.**
+`PostMedia.svelte:166` releases the download once `nearViewport` (400 px, one-shot, never un-set:
+`PostContent.svelte:166/210/262`) has fired; the segmented stream then fetches EVERY segment with no
+back-pressure and no abort when the card leaves the screen (`segmentedMediaStream.ts:139-154`), keeps
+each decrypted segment in `parts` (a second copy of the video) next to the MSE buffer, and ends in a
+`Blob` handed to the pool, whose cap is 200 ENTRIES, not bytes (`blobUrlPool.ts:5`), kept 5 minutes.
+At 28-35 MB a reel, scrolling past ten reels is ~300 MB of mobile data and tens of MB of retained
+memory per card. UNMEASURED at real size (the bench reels were 1-2 MB), and the likeliest cause of
+the "decoders from feed autoplay" the Pixel agent saw: every near card holds a `<video>` with a
+source. Fix: stream only the head until the card is the one playing, stop on back-pressure and on
+leaving the viewport, put a byte cap on the pool.
+
+**P2 - a reel whose upload succeeded and whose post did not is stored for ever.** The client names
+class `reel` AT UPLOAD (`publishReel.ts:45`), the idle sweep takes only `ephemeral` and `chat-reel`
+(`media.service.ts:1472-1477`), and the claim by social-service happens only in `createPost`. A
+`createPost` failure, a kill between the two calls or a cancel there leaves 14-35 MB nobody
+references and nothing reaps (account deletion only). Fix: promote the class at the claim, or sweep
+unclaimed `reel` blobs older than N hours. Same family as the orphan audit of #1736.
+
+**P2 - a reel's upload has none of an attachment's upload guarantees.** No `transport` is passed
+(`publishReel.ts:45`), so there is no byte progress, no cancel of the body and no 45 s silence guard
+(only `fetchWithAnswerDeadline`); any failure throws a `ReelPublishError`, the member re-taps
+"Publier" and the prepared file is gone, so a retry re-encodes (~0.5x real time, so ~50 s for a 90 s
+take - extrapolated, NOT measured) and re-uploads from byte 0. The take itself lives only in memory.
+The design for durability exists ([reels-in-chat](reels-in-chat.md), RC-5) and is not built for the
+feed.
+
+**P2 - the worst case is unmeasured.** A busy 90 s take (28-35 MB, 4 chunks), its re-encode time and
+peak RSS on the Mi 9T (5.6 GB) and the iPhone 12, the chunked reel upload over a weak link, and a
+feed of ten full-size reels. Static-scene takes are not evidence for any of them.
+
+**P3 - the capture is expensive and lossy twice.** The take is drawn through a canvas
+(`framedCapture.ts:233`, `requestAnimationFrame` + `captureStream`) at ~2.5 cores and +190 MB RSS,
+recorded at ~3 Mb/s, then re-encoded at 2.5 Mb/s or less. A documented trade-off (the preview's crop
+IS the file); the heat of a 90 s take is unmeasured.
+
+**P3 - the viewer preloads only the NEXT reel** (`ReelViewer.svelte:295`, `preload={i === index + 1}`), so
+a swipe down meets the poster first unless the 5-minute pool still holds the video.
+
+**P3 - the board contradicts this page.** `cross-client-testing.md` still lists REEL-2 `pending`
+while this page records it `PASS` on 2026-10-02, and no harness row covers the feed card's autoplay,
+the viewer or a long take.
+
+**Open and only "owed a look" (unchanged, from the backlog):** the iPhone letterbox fix #1370
+(shipped unverified by the user's choice), the live-mic echo #1368, the user's look at real content
+on both phones, the iOS frame timing of the viewer swipe, the publish step's "Visible 30 jours" note,
+the camera swipe being undiscoverable (backlog, 2026-10-09). Fixed and read since v1.0.0: #1539,
+#1552, #1575, #1578 (the 4 s `toBlob`), #1641, #1645 (the VP9 software recorder dropping a third of
+the frames, now hardware H.264), #1684.
+
+### Tests: what exists and what is missing
+
+Exist: a unit file per `reels/` module (recorder, capture state machine, framed capture, publish
+order and payload, preload, viewer navigation, gallery staging, save, editor, strokes, overlays,
+camera access and session), `video/` (plan arithmetic; `prepareVideoForUpload` over a SCRIPTED
+mediabunny, so no real encoder), `ReelCapture`, `ReelViewer`, `ReelPublishSheet`, `ReelReview`,
+`CameraScreen`, `PostContent.reel`, `InlineVideo`, the segmented writer, reader and stream, the
+server reel claim and purge specs, and harness rows REEL-1 and REEL-2. Missing: any test that bounds
+what a feed card FETCHES (nothing fails if a card downloads a 35 MB reel it never plays), a
+real-encoder run of the 90 s plan, the publish-failure-after-upload orphan, the reel upload's chunk
+route and retry, the decoder count in the feed, and a long-take harness row.
+
+### Proposed fix list, in order
+
+1. Feed card: head-only streaming with back-pressure and abort off-screen, plus a byte cap on the
+   decrypted pool (P2; measure first with a 30 MB reel).
+2. Orphan `reel` blobs: the claim promotes the class, or a bounded sweep (P2).
+3. Give the reel upload the attachment `transport` (progress, cancel, stall guard) and keep the
+   prepared file for a retry; later the RC-5 durable take (P2).
+4. Measure the worst case on both phones (a scripted busy 90 s take) and write it above (P2).
+5. Preload the previous reel; test the feed fetch bound; reconcile the board (P3).
