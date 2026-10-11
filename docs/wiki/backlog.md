@@ -39,17 +39,6 @@ P3. The cap (#1721), the stacked faces in the list and day rows, the detail moda
 
 P3. Built in [offline-and-weak-network 13.6](frontend/offline-and-weak-network.md): lazy decode, the `error` parking of an attachment, the banner fix. OWED: (a) a SIZE CAP at compose time for a queued attachment, and keeping the bytes OUT of the row (a file in app storage, the row holding its path) - deliberately not done, it moves the durability story of the file (crash, PIN change, native mirror) and needs its own design; until then a due attachment is still decoded once per attempt, bounded by `MAX_UNEXPECTED_ATTEMPTS`; (b) a terminal, visible state for a NON-media entry that keeps failing (a text on a persistent 5xx) - it needs a surface a text bubble does not have; (c) a re-read on the Pixel 6a of the freeze with a 13 MB attachment queued (nothing here was run on that phone).
 
-## Institutions: what the creation UI does not do yet (2026-10-07)
-
-[associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07)
-carries what shipped. Left, in order: (1) the members are added AFTER creation on the generic edit page
-(its title says "Gestion de l'institution" since #1569); (2) the reach of an existing institution is
-edited only on the `/admin/spaces` grid, its edit page has no reach control (the "Audience" tab of #1584
-is for associations and lists, institutions keep the grid); (3) the creation form picks ONE rule, a union
-of several (two campuses) goes through the grid; (4) no reading on a phone with a real global admin
-account yet (the local read used the sandbox admin). The audience policy, presets and read grants are
-BUILT (#1582, #1584, #1593, #1606, #1608, [profiles-and-access](profiles-and-access.md#audiences-policy-as-built-wp-a-2026-10-08)); owed there: one look at `/admin/read-access` signed in.
-
 ## Cloudflare, Stripe and the staff feed (2026-10-07/08)
 
 ### P3 - Stripe's leftover names: columns, permission flag, routes, deep-link host
@@ -110,7 +99,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | Android fluidity (#1361-#1363) | a re-measure on the Mi 9T of `open_conversation` (662 ms on the first open before them); Lucide `Icon` costs ~1 ms per icon there, so 100-150 ms per heavy screen is the hardware |
 | "Seen by" heads in groups and salons (#1401) | one look in a group and a salon with four or more readers: each head under the last message its owner read, `+N` past three |
 | the signed calendar subscription's 503 path (#1551) | the signer cannot be stopped without touching the stack: only the 200 path was read on a phone |
-| the audiences chantier (#1582, #1584, #1606, #1608) | one look at `/admin/read-access` signed in; the Audience tab of an association read by a BDE star; a global admin's phone reading of the institution creation flow |
+| the audiences chantier (#1582, #1584, #1606, #1608) | one look at `/admin/read-access` signed in; the Audience tab of an association read by a BDE star; a global admin's phone reading of the institution creation flow; the institution creation form and the Audience tab's "Custom" grid (`CellPicker`) read on a phone with a real global-admin account (read at 390 and 1280 on the local estate with the sandbox admin only) |
 
 ---
 

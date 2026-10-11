@@ -7,6 +7,18 @@ describe('offeredPresets', () => {
     expect(offeredPresets('association')).toEqual(['campus', 'formations']);
     expect(offeredPresets('list')).toEqual(['campus', 'formations']);
   });
+
+  it('adds the custom grid for an institution and a reader who may use it, never for an association or a list (decision 3)', () => {
+    expect(offeredPresets('association', true)).toEqual(['campus', 'formations']);
+    expect(offeredPresets('list', true)).toEqual(['campus', 'formations']);
+    expect(offeredPresets('institution', true)).toEqual([
+      'campus',
+      'formations',
+      'everyone',
+      'custom',
+    ]);
+    expect(offeredPresets('institution', false)).not.toContain('custom');
+  });
 });
 
 describe('presetToRules', () => {
@@ -19,6 +31,10 @@ describe('presetToRules', () => {
       { formation: 'FSSS', campus: 'gardanne' },
     ]);
     expect(presetToRules('everyone', '', [])).toEqual([{ formation: null, campus: null }]);
+  });
+
+  it('builds no rule for custom: its pairs come from the grid, not from a campus', () => {
+    expect(presetToRules('custom', 'gardanne', ['ICM'])).toEqual([]);
   });
 
   it('never widens a half-filled choice: no campus or no formation yields no rule', () => {

@@ -10,15 +10,26 @@ import type { AudienceRule } from './api';
  * - `formations`: that campus, restricted to the formations the manager names;
  * - `everyone`: every campus and formation - an institution's alone (decision 6). The SERVER refuses
  *   it elsewhere; hiding it here is a convenience, never the rule.
+ * - `custom`: (institutions only) any union of formation x campus pairs (two campuses, ICM here and ISMIN there), picked
+ *   on a grid and stored as `toRules` writes it. Offered to a global admin only, on an institution - the grid is theirs,
+ *   and a preset cannot say a union. It carries no campus or formation of its own, so
+ *   `presetToRules` does not build it.
  */
-export type AudiencePreset = 'campus' | 'formations' | 'everyone';
+export type AudiencePreset = 'campus' | 'formations' | 'everyone' | 'custom';
 
 /** The entity kinds the audience editor is drawn for. */
 export type AudienceEntityType = 'association' | 'list' | 'institution';
 
-/** The presets offered for an entity: `everyone` for an institution only (decision 6). */
-export function offeredPresets(type: AudienceEntityType): AudiencePreset[] {
-  return type === 'institution' ? ['campus', 'formations', 'everyone'] : ['campus', 'formations'];
+/**
+ * The presets offered for an entity: `everyone` for an institution only (decision 6), and `custom` for
+ * an institution too, to a reader who may use the grid (a global admin): an association or a list
+ * addresses ONE campus (decision 3), so a union across campuses is never offered there.
+ */
+export function offeredPresets(type: AudienceEntityType, gridAllowed = false): AudiencePreset[] {
+  if (type !== 'institution') return ['campus', 'formations'];
+  return gridAllowed
+    ? ['campus', 'formations', 'everyone', 'custom']
+    : ['campus', 'formations', 'everyone'];
 }
 
 /**
@@ -32,6 +43,7 @@ export function presetToRules(
   formations: readonly Formation[]
 ): AudienceRule[] {
   if (preset === 'everyone') return [{ formation: null, campus: null }];
+  if (preset === 'custom') return [];
   if (!campus) return [];
   if (preset === 'campus') return [{ formation: null, campus }];
   return formations.map((formation) => ({ formation, campus }));
