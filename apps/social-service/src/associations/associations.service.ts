@@ -53,6 +53,7 @@ import {
 } from './payment-delegation.util';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
+import { retireForms } from '../forms/retire-forms';
 import {
   AddMemberDto,
   CreateAssociationDto,
@@ -555,11 +556,13 @@ export class AssociationsService {
     // `forms.associationId` has no foreign key, so a surviving form kept a dangling id and the
     // client rendered it as a "Personnel" form - a paid form nobody could attribute or manage any
     // more (found on dev 2026-10-07). Archiving would keep exactly that orphan; the form's own
-    // delete (`FormsService.delete`) is the precedent. Its submissions are left as that delete
-    // leaves them: they are the payers' records.
+    // delete (`FormsService.delete`) is the precedent, and so is its rule: a form holding
+    // submissions is ARCHIVED rather than deleted (`retireForms`, `submissions_form_fk`), because
+    // they are the payers' records. An archived form is in no list, so it cannot be shown as
+    // "Personnel"; the staff reach it by id.
     await this.assoRepo.manager.transaction(async (manager) => {
       await manager.delete(AssociationCalendarEvent, { associationId: id });
-      await manager.delete(Form, { associationId: id });
+      await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
       await manager.delete(Association, id);
     });

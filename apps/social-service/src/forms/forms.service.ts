@@ -7,10 +7,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Form } from './entities/form.entity';
+import { retireForms } from './retire-forms';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
@@ -377,7 +378,9 @@ export class FormsService {
    */
   async list(ownerId?: string) {
     if (!ownerId) {
-      return this.withAssociationNames(await this.formRepo.find({ order: { createdAt: 'DESC' } }));
+      return this.withAssociationNames(
+        await this.formRepo.find({ where: { deletedAt: IsNull() }, order: { createdAt: 'DESC' } })
+      );
     }
     const managedAssociations = await this.associationsService.associationsWhereUserHasFlag(
       ownerId,
@@ -386,12 +389,13 @@ export class FormsService {
     const managedIds = managedAssociations.map((a) => a.id);
 
     const [owned, viaAssociation] = await Promise.all([
-      this.formRepo.find({ where: { ownerId }, order: { createdAt: 'DESC' } }),
+      this.formRepo.find({ where: { ownerId, deletedAt: IsNull() }, order: { createdAt: 'DESC' } }),
       managedIds.length === 0
         ? Promise.resolve([])
         : this.formRepo
             .createQueryBuilder('f')
             .where('"f"."associationId" IN (:...managedIds)', { managedIds })
+            .andWhere('"f"."deletedAt" IS NULL')
             .orderBy('"f"."createdAt"', 'DESC')
             .getMany(),
     ]);
@@ -427,7 +431,7 @@ export class FormsService {
    * "Empty response from server" - a status code is the answer, an empty success is not.
    */
   async get(id: string) {
-    const form = await this.formRepo.findOne({ where: { id } });
+    const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     if (!form) {
       this.logger.debug(`get: form ${id} not found`);
       throw new NotFoundException('Form not found');
@@ -454,7 +458,7 @@ export class FormsService {
    * public route cannot be used to learn which ids exist.
    */
   async getPublic(id: string) {
-    const form = await this.formRepo.findOne({ where: { id } });
+    const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     if (!form?.isPublic) {
       this.logger.debug(`[FORMS] public read refused, not a public form id=${id.slice(0, 8)}`);
       throw new NotFoundException('Form not found');
@@ -566,10 +570,15 @@ export class FormsService {
     return this.formRepo.save(form);
   }
 
-  /** Deletes a form entirely. Requires owner, co-owner, global admin, or MANAGE_FORMS flag. */
+  /**
+   * Deletes a form: ARCHIVED when it holds submissions (they are the payers' records and
+   * `submissions_form_fk` forbids orphaning them), removed outright when it holds none - see
+   * `retireForms`. Requires owner, co-owner, global admin, or MANAGE_FORMS flag. Deleting an
+   * already archived form is a no-op that still answers ok.
+   */
   async delete(formId: string, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
-    await this.formRepo.remove(form);
+    await retireForms(this.formRepo.manager, { formId: form.id });
     return { ok: true };
   }
 
@@ -659,7 +668,7 @@ export class FormsService {
     hiddenItemIds: string[];
     maySubmit: boolean;
   }> {
-    const form = await this.formRepo.findOne({ where: { id: formId } });
+    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
     if (!form)
       return {
         hasSubmitted: false,
@@ -735,7 +744,7 @@ export class FormsService {
   /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a checkout URL. */
   async submit(id: string, input: SubmitFormDto, origin: SubmitOrigin = 'member') {
     const guest = origin === 'guest';
-    const form = await this.formRepo.findOne({ where: { id } });
+    const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     // A guest reaching a form that is not public is told it does not exist, as `getPublic` does.
     if (!form || (guest && !form.isPublic)) throw new NotFoundException('Form not found');
 
@@ -1430,7 +1439,7 @@ export class FormsService {
 
   /** Subscribes a user to reminders for a form (upsert). Rejects if opensAt is null or already past. */
   async subscribeReminder(formId: string, userId: string) {
-    const form = await this.formRepo.findOne({ where: { id: formId } });
+    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
     if (!form) throw new NotFoundException('Form not found');
     if (!form.opensAt || new Date(form.opensAt) <= new Date()) {
       throw new BadRequestException('Form is already open or has no scheduled opening time');

@@ -14,6 +14,7 @@ export class Submission {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  /** Foreign key `submissions_form_fk` ON DELETE RESTRICT (migration 081): see `retireForms`. */
   @Column({ type: 'uuid' })
   @Index()
   formId: string;

@@ -771,3 +771,12 @@ Found while scoping it, so it is not re-derived (the paid half itself waits for 
   A leftover `stripe` or `disabled` provider shows an explicit "unavailable" line, an unknown one a
   neutral line without description - never a default. Saved cards stay Stripe-only via
   `supportsSavedCards` until the backend batch (see [payments](payments.md)).
+
+## A form with submissions is archived, never removed (2026-10-11)
+
+`submissions.formId` had no foreign key, so deleting a form orphaned its submissions (29 on prod and dev, 5 paid: the payers' records, nameless). Migration 081 adds `forms."deletedAt"` and `submissions_form_fk` (`ON DELETE RESTRICT`, never CASCADE: a cascade would delete paid rows). No tombstone rows exist.
+
+- **One removal path**, `retireForms(manager, { formId } | { associationId })` in `apps/social-service/src/forms/retire-forms.ts`: a correlated `EXISTS` on `submissions` decides per form - archive (`deletedAt = now()`) when it holds any, hard delete when it holds none. `FormsService.delete` and the association delete (inside its one transaction) both call it; a bare `remove` or `manager.delete(Form, ...)` would now be refused by the key.
+- **Respondents and lists never see an archived form**: `list` (admin, owned, association scan), `get`, `getPublic`, `submit` (member and guest), `hasSubmission` and `subscribeReminder` filter `deletedAt IS NULL` and answer 404 / no right to submit.
+- **Staff still do**: `assertFormManager` and `getSubmissions` do not filter, so an archived form's submissions stay readable by id (owner, global admin, MANAGE_FORMS of the association). An archived form keeps its `associationId`; deleting the association archives rather than detaches it, and it appears in no list, so it cannot show as "Personnel".
+- **The migration refuses to run while orphans exist**: it RAISES with their count, so it cannot deploy before the data is cleaned ([backlog](../../backlog.md#p3---submissionsformid-names-a-form-nothing-keeps-and-29-rows-point-at-deleted-ones)). It is idempotent (`IF NOT EXISTS`, a `pg_constraint` check).

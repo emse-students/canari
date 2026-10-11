@@ -139,6 +139,14 @@ export class Form {
   @Column({ type: 'varchar', length: 255, nullable: true })
   imageMediaId: string | null;
 
+  /**
+   * Set when the form was deleted while it held submissions (migration 081): it is ARCHIVED - gone
+   * from every list and respondent flow, still loadable by staff so the submissions stay readable.
+   * `retireForms` is the only writer; every list and respondent read filters `deletedAt IS NULL`.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  deletedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 
