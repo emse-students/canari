@@ -165,29 +165,48 @@ navigates in code, and a jsdom replay of the overlay stack (sheet Back, Back, re
 the Dashboard landing was reached through the camera's own close. Owed ONE re-read on the phone: discard
 stays on the camera, the camera's X returns to the tab it came from.
 
-## The picture is full-bleed and never moves (2026-10-11)
+## One frame for capture, edit and publish (2026-10-11, replaces the cover-and-crop of #1739)
 
-User report (Android WebView, two screenshots): the preview was a letterboxed rectangle, and when the
-text field took focus it SHRANK to a small centred box. Cause: the editor was one flex column (header,
-stage, tray) and the stage was `flex-1` with the frame sized from its container-query units. The
-keyboard shrinks the layout viewport on both platforms ([durable-rules](../../durable-rules.md)), so
-the stage shrank and the frame with it; and `min(100cqw, 100cqh * ratio)` is a CONTAIN fit, hence the
-bands.
+User report (Android WebView): the preview was letterboxed, and when the text field took focus it SHRANK
+to a small centred box. Cause: the editor was a flex column and the stage a `flex-1` slot; the keyboard
+shrinks the layout viewport on both platforms ([durable-rules](../../durable-rules.md)), so the stage and
+the frame (a contain fit in container-query units) shrank with it. #1739 fixed the shrink with a cover
+fit, which cropped a sliver the export still kept. **The owner then decided FULL PARITY: what the camera
+shows is what the editor shows and what viewers see; no crop that differs, no overlay off-screen.**
 
-Now (`ReelEditor`, geometry in `reels/editorStage.ts`, unit-tested):
+- **ONE canonical frame, 9:16** (`REEL_FRAME_RATIO`, `reels/reelFrame.ts`). The camera asks the sensor
+  for that frame as large as the screen shows it (`cameraAccess`), previews it `object-cover` INSIDE the
+  frame, and the capture crop is the frame element's own box (`framedCapture`, unchanged), so the
+  recorded file IS 9:16 whatever the phone's screen. A gallery import keeps its own ratio, and the
+  review and the editor wear it (`setRatio`). **The viewer passes the reel's recorded width / height**
+  (`media.width/height`) so a legacy reel (captured to a screen box, ~0.46 on a 20:9 phone) and an import
+  are not pillarboxed in a small 9:16 frame; 9:16 only when the size is unknown.
+- **`ReelFrame.svelte` is the one component** used by `CameraScreen`, `ReelReview`, `ReelEditor` and
+  `ReelSlide`. `containFrame`: the frame is shown WHOLE (contain, never cropped) and centred with
+  `rounded-2xl` (`--radius-2xl`, 12 px, "the larger card": the scale has no larger media step) over the
+  backdrop; **within 2 % of the screen's shape it is the WHOLE stage instead - cover ON PURPOSE**, square
+  corners, no backdrop sliver, the media cropped by at most 1 % per side (`data-reel-frame-fills`).
+- **`ReelBackdrop`**: a 24 px canvas copy of the frame's own video or image, upscaled by the browser
+  (that IS the blur: no CSS filter re-applied per repaint) and dimmed - NO second decoder (5.6 GB
+  phones). It exists and samples ONLY when the frame leaves stage uncovered; a still image once, a video
+  only while it plays on a visible tab; listeners and timer are released with the effect.
+- **The keyboard cannot move the frame, and the camera sees what is visible**: `stageStep` makes the stage
+  FOLLOW the measured box, except while `latch` is set - the editor passes `composing !== null`, the text
+  field being open - when it keeps the largest height seen; on release it holds until the box grows back
+  (the keyboard closing) so the frame does not jump. Every other surface follows the box, so
+  `CameraScreen.previewBox` records the visible box. The editor's header and tool tray are overlays on
+  `cn-scrim` gradients that let touches through (`pointer-events-none`, only their controls take them),
+  so an overlay dragged under them can be grabbed again; the tray rides above the keyboard. The trash
+  circle sits in the editor root at `z-20`, above the tray.
+- **Overlays live inside the frame**: `x`, `y` are 0..1 of it, centres clamped (`clampCentre`), and the
+  export paints at `frameToPixels(overlay, media size)` (`drawDecorations`, tested), the same share the
+  preview writes as `left`/`top` percentages. **A new text starts at y = 0.3** (`TEXT_START_Y`): the
+  member has just typed it under the keyboard and tray, so the centre would be hidden. The viewer's
+  caption sits INSIDE the frame above the player's bar, so the two never overlap.
 
-- The **stage** is the whole editor box, absolute at the top, at a size kept by `stableStageSize`: the
-  height only grows while the width is unchanged (a new width is a rotation and is taken whole). The
-  keyboard therefore cannot resize it.
-- The media's **frame** COVERS the stage (`coverFrameSize`, the `object-fit: cover` rule); the stage
-  clips the overflow. Overlays, `cqmin` sizes and the export still address the WHOLE frame, so the
-  published media is unchanged. Cover crops a sliver on one axis (a 9:16 capture on a taller phone loses
-  a few percent of width), the same as `ReelReview` and the camera, which already use `object-cover`.
-  An overlay dragged into that sliver is in the export but off-screen; centres stay clamped to the frame.
-- The **header and the tool tray** are `absolute` overlays on `cn-scrim` gradients. The tray is anchored
-  to the (shrunken) box, so it rides above the keyboard; it still owns the bottom safe-area inset, the
-  header the top one. The trash circle sits in the stage, above the tray.
-- The camera and the review already fill the screen under `object-cover`; the viewer has no text input.
-
-**Not verified:** nothing ran on a phone or in a browser (the editor needs a camera take and a session);
-a real soft keyboard is the open check.
+**Not verified (no device, no browser run):** the camera's real recorded size (the constraint is
+`ideal`; the track may answer another mode, and the crop then still yields 9:16); the backdrop on the
+Android WebView; the viewer with a legacy reel and the caption over the bar on 360x800; a real soft
+keyboard (the stage latch follows the box, not `visualViewport`, so an engine that does NOT shrink the
+layout viewport is unreleased by that path); the iPhone's `<video>` layer inside a rounded
+`overflow-hidden` box (a WebKit clip bug is possible).
