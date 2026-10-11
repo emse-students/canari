@@ -138,7 +138,7 @@ this removed. The answer is cached per origin, so one fetch serves every picker.
 `MediaService.purgeExpiredMedia` (`media.service.ts`) deletes any **`ephemeral`** object whose
 `lastAccessAt` is older than **`RETENTION_MS` = 90 days**, leaving a tombstone that is itself
 trimmed after 90 days. It runs at boot, hourly (`DEFAULT_SWEEP_MS`, overridable with
-`MEDIA_RETENTION_SWEEP_MS`) and on every `download()`. **It was 30 days until 2026-09-23** - what
+`MEDIA_RETENTION_SWEEP_MS`); a `download()` judges only its OWN entry (below). **It was 30 days until 2026-09-23** - what
 moved it, and why moving it is not the same decision as the one taken in August, is §6 of
 [storage-forecast](../infrastructure/storage-forecast.md).
 
@@ -330,6 +330,16 @@ floor**: `MEDIA_PENDING_REEL_TTL_MS` under 1 h stops the service at boot (`86400
 would be 86 s), and the effective value is logged at boot. **Every deletion is logged** with its id,
 class and age; the run summary counts per class and names each class's window; a run deletes at most
 500 objects and says so when it stops there.
+
+**The 500 is a ceiling because the sweep is SINGLE-FLIGHT (review of #1744).** Boot, the interval
+and - until then - every `download`/`downloadRange`/`downloadPublic` each started their own run, so
+N overlapping callers could delete N x 500 objects, and every read waited for a whole sweep to learn
+whether ITS object was due. Now `purgeExpiredMedia` hands a caller arriving mid-run the run in flight
+(`sweeping`), and the download paths call none of it: `expireIfDue` judges the requested entry alone
+with the same `isDue`, tombstones and deletes it through the same `tombstoneAndDelete` the sweep
+uses, and the read answers `410`. `downloadPublic` judges nothing - a public asset is never
+sweepable. Pinned by `media.service.sweep-single-flight.spec.ts` (three concurrent callers, 1500 due
+objects, 500 deleted; a read answered while a sweep is held in flight).
 
 ## The `chat-reel` class: a reel sent in a conversation (RC-2, 2026-10-09)
 

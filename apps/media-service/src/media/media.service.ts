@@ -360,6 +360,12 @@ export class MediaService {
    * routes (media-streaming-upload WP-S6).
    */
   private chunkOwners?: Map<string, string>;
+  /**
+   * The sweep in flight, if any: every caller of {@link purgeExpiredMedia} while it runs gets THIS
+   * promise, so boot and the interval share one run and {@link PURGE_MAX_PER_RUN} is a real ceiling
+   * on what deletes at once - not a per-caller allowance that N overlapping callers multiply.
+   */
+  private sweeping?: Promise<void>;
   private readonly sweepIntervalMs = Number.parseInt(
     process.env.MEDIA_RETENTION_SWEEP_MS ?? `${DEFAULT_SWEEP_MS}`,
     10
@@ -423,7 +429,9 @@ export class MediaService {
     if (!UUID_REGEX.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId');
     }
-    await this.purgeExpiredMedia();
+    // Its OWN entry is judged, never the whole index: a read must not wait behind a sweep of every
+    // object (up to PURGE_MAX_PER_RUN deletes) to learn whether the one it asked for is due.
+    await this.expireIfDue(mediaId);
 
     const entry = this.meta.items[mediaId];
     if (isGoneTombstone(entry)) {
@@ -466,7 +474,9 @@ export class MediaService {
     if (!UUID_REGEX.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId');
     }
-    await this.purgeExpiredMedia();
+    // Its OWN entry is judged, never the whole index: a read must not wait behind a sweep of every
+    // object (up to PURGE_MAX_PER_RUN deletes) to learn whether the one it asked for is due.
+    await this.expireIfDue(mediaId);
 
     const entry = this.meta.items[mediaId];
     if (isGoneTombstone(entry)) {
@@ -512,8 +522,8 @@ export class MediaService {
     if (!UUID_REGEX.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId');
     }
-    await this.purgeExpiredMedia();
-
+    // No retention judgement: a public asset is never sweepable ({@link isSweepable}), and anything
+    // else is refused below whatever its clock says.
     const entry = this.meta.items[mediaId];
 
     // Normal path: metadata present and valid.
@@ -711,6 +721,7 @@ export class MediaService {
   ): Promise<{ claimed: string[]; refused: string[] }> {
     const claimed: string[] = [];
     const refused: string[] = [];
+    let pastWindow = 0;
     let changed = false;
 
     for (const mediaId of new Set(mediaIds)) {
@@ -730,6 +741,7 @@ export class MediaService {
           `Reel claim by ${ownerId}: ${mediaId} is a pending upload past its ${PENDING_REEL_TTL_MS} ms window - refused, not promoted`
         );
         refused.push(mediaId);
+        pastWindow += 1;
         continue;
       }
       if (entry.retentionClass !== 'reel') {
@@ -742,7 +754,7 @@ export class MediaService {
     if (changed) await this.persistMetadata();
     if (refused.length > 0) {
       this.logger.warn(
-        `Reel claim by ${ownerId}: ${refused.length} object(s) refused (unknown, purged, public or not theirs)`
+        `Reel claim by ${ownerId}: ${refused.length} object(s) refused (${pastWindow} past their pending window, ${refused.length - pastWindow} unknown, purged, public or not theirs)`
       );
     }
     return { claimed, refused };
@@ -1665,8 +1677,76 @@ export class MediaService {
    * tombstone and refuses; a claim before the sweep reaches the entry takes it off the sweep.
    *
    * Every deletion is logged with its id, class and age, and the summary counts per class.
+   *
+   * SINGLE-FLIGHT: a caller arriving while a run is in flight shares it ({@link sweeping}), so boot
+   * and the interval overlapping still delete at most {@link PURGE_MAX_PER_RUN} objects together.
+   * Downloads do not call this at all - they judge their own entry ({@link expireIfDue}).
    */
-  private async purgeExpiredMedia() {
+  private purgeExpiredMedia(): Promise<void> {
+    if (this.sweeping) {
+      this.logger.debug('Retention sweep already in flight - joining it');
+      return this.sweeping;
+    }
+    this.sweeping = this.runSweep().finally(() => {
+      this.sweeping = undefined;
+    });
+    return this.sweeping;
+  }
+
+  /**
+   * A download's own retention verdict: when THIS entry is due, it is tombstoned and its blob
+   * deleted exactly as the sweep would ({@link tombstoneAndDelete}), so the caller answers `410`
+   * without the whole index being swept first. A no-op for anything not due - which is every
+   * entry the sweep would keep, by the same {@link isDue}.
+   */
+  private async expireIfDue(mediaId: string): Promise<void> {
+    const entry = this.meta.items[mediaId];
+    if (!entry || entry.purgedAt) return;
+    if (!this.isDue(entry, Date.now())) return;
+    this.logger.debug(`media ${mediaId}: due at read time - expired before the sweep reached it`);
+    await this.tombstoneAndDelete(mediaId, entry, Date.now());
+    await this.persistMetadata();
+  }
+
+  /**
+   * Tombstones a due entry SYNCHRONOUSLY, then deletes its blob. The tombstone lands before the
+   * first `await`, which is what makes a claim during the delete meet a tombstone and refuse (see
+   * {@link purgeExpiredMedia}). A failed delete is logged and the tombstone kept.
+   */
+  private async tombstoneAndDelete(
+    mediaId: string,
+    entry: MediaMetaEntry,
+    now: number
+  ): Promise<void> {
+    const retentionClass = entry.retentionClass ?? 'none';
+    this.meta.items[mediaId] = {
+      createdAt: entry.createdAt,
+      lastAccessAt: entry.lastAccessAt,
+      purgedAt: now,
+      purgeReason: entry.retentionClass === 'chat-reel' ? 'reel_expired' : 'retention_expired',
+    };
+    this.logger.log(
+      `Retention delete ${mediaId}: class ${retentionClass}, uploaded ${Math.round((now - entry.createdAt) / 3_600_000)} h ago, last read ${Math.round((now - entry.lastAccessAt) / 3_600_000)} h ago`
+    );
+
+    try {
+      await this.storage.delete(mediaId);
+    } catch (err) {
+      // Still marked purged above - the object may simply be absent already. But this branch is
+      // how a blob is STRANDED: the entry becomes a tombstone, the tombstone is trimmed after
+      // META_TOMBSTONE_MAX_AGE_MS, and the sweep only ever iterates the metadata - so an object
+      // whose delete failed here can never be seen again. Measured 2026-08-11: 7 of the 26 live
+      // objects on production have no metadata entry at all. Never swallow it silently.
+      this.logger.warn(
+        `Retention delete failed for ${mediaId} (object may be stranded): ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+
+  /** One sweep run - only ever started by {@link purgeExpiredMedia}, which makes it single-flight. */
+  private async runSweep(): Promise<void> {
     const now = Date.now();
     let purgedCount = 0;
     const purgedByClass: Record<string, number> = {};
@@ -1682,33 +1762,10 @@ export class MediaService {
       }
 
       const retentionClass = entry.retentionClass ?? 'none';
-      // Tombstoned BEFORE the delete is awaited - see above.
-      this.meta.items[mediaId] = {
-        createdAt: entry.createdAt,
-        lastAccessAt: entry.lastAccessAt,
-        purgedAt: now,
-        purgeReason: entry.retentionClass === 'chat-reel' ? 'reel_expired' : 'retention_expired',
-      };
       purgedCount += 1;
       purgedByClass[retentionClass] = (purgedByClass[retentionClass] ?? 0) + 1;
-      this.logger.log(
-        `Retention delete ${mediaId}: class ${retentionClass}, uploaded ${Math.round((now - entry.createdAt) / 3_600_000)} h ago, last read ${Math.round((now - entry.lastAccessAt) / 3_600_000)} h ago`
-      );
-
-      try {
-        await this.storage.delete(mediaId);
-      } catch (err) {
-        // Still marked purged below - the object may simply be absent already. But this branch is
-        // how a blob is STRANDED: the entry becomes a tombstone, the tombstone is trimmed after
-        // META_TOMBSTONE_MAX_AGE_MS, and the sweep only ever iterates the metadata - so an object
-        // whose delete failed here can never be seen again. Measured 2026-08-11: 7 of the 26 live
-        // objects on production have no metadata entry at all. Never swallow it silently.
-        this.logger.warn(
-          `Retention delete failed for ${mediaId} (object may be stranded): ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-      }
+      // Tombstoned BEFORE the delete is awaited - see above.
+      await this.tombstoneAndDelete(mediaId, entry, now);
     }
 
     // Remove tombstone entries (purgedAt != null) older than META_TOMBSTONE_MAX_AGE_MS.
