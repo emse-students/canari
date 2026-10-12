@@ -485,6 +485,9 @@
     } else {
       isFirstPinSetup = await detectFirstPinSetup(uid);
     }
+    // The salt does not depend on the PIN, so it is asked while the person types. A first setup
+    // is excluded: on a user without a salt that GET is a write (see `prefetchPinSaltImpl`).
+    if (!isFirstPinSetup) globalSession.prefetchPinSalt(appendLog);
     showPinModal = true;
   }
 
@@ -591,6 +594,8 @@
     pinError = msg;
     isFirstPinSetup = false;
     showPinModal = true;
+    // The last submit consumed its salt; the next one gets its own, asked while the person retypes.
+    globalSession.prefetchPinSalt(appendLog);
     applyPinFailure(globalSession.userId || currentUserId() || '', code);
   }
 

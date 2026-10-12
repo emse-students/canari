@@ -190,6 +190,34 @@ PIN takes longer than the refresh, so the PIN check still finds its token ready.
 is not quoted for this build: it still carries the feed contention F2 removes, which scatters it by
 ±0.9 s run to run.
 
+### F9 - the PIN salt is asked while the keypad is up, and the two derivations run together (built, phone before/after PENDING)
+
+**The spans of a cold PIN open after F2 and F3** (Mi 9T, `1.2.4`, 2026-10-12, one run shown, the
+other five within ~30 ms): `pin-salt-fetch` **350 ms**, `pin-verifier-pbkdf2` 117, `resolve-device-id`
+44, `pin-check-request` 253, `device-key-pbkdf2` **166** - ~0.93 s from the submit to `mls-init`,
+all of it in series. Two of those steps wait on nothing they need:
+
+- **The salt does not depend on the PIN.** It was asked at submit, after the person had typed, and on
+  a fresh process it is also the request that opens the connection. `openPinModal` now starts it
+  (`pinSaltAhead.ts`, `prefetchPinSaltImpl`) and `loginImpl` consumes it. An entry is used ONCE (a
+  retry after a wrong PIN gets its own round trip, started again when the keypad reopens), a failed
+  one is evicted and named in the log, so the submit asks the server itself and surfaces its answer,
+  and the salt lives in memory only, as it already did for the length of every login. **A first
+  setup is excluded**: `GET pin-salt` WRITES a placeholder row for a user with no salt, which
+  `pin-status` then reads as "registered", so asking it ahead could turn an abandoned keypad into a
+  skipped PIN choice.
+- **The device key does not depend on the PIN check.** It was derived AFTER `pin-check`, "on purpose".
+  The purpose is a rule about USING the key - nothing is decrypted with a key from an unproven PIN -
+  and that rule is kept: the derivation now starts next to the verifier (both PBKDF2 in WebCrypto,
+  off the main thread), and its result is awaited and installed (`ctx.setDeviceKey`) only after the
+  check answered and after the `mismatch` and `resetRequired` branches. On a mismatch it is dropped
+  unread. A source guard (`pinSaltAhead.test.ts`) pins that order. `resolveDeviceId` (a stored id,
+  nothing decrypted) joins them.
+
+Expected: ~0.35 s (salt, absorbed by the typing) + ~0.17 s (device key, hidden behind the check) +
+~0.04 s (device id). **The phone before/after is owed**; the APK is built (`pin.apk`, local, against
+dev) and the bench was held by another session when this was written.
+
 ## The ranked fix plan
 
 **Each line names its expected gain on THIS bench and the risk that decides whether it is worth

@@ -93,6 +93,7 @@ import {
   finishBootBench,
 } from '$lib/mls-client/bootBenchmark';
 import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/deviceKeyVault';
+import { askPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
 import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
@@ -646,29 +647,42 @@ export async function loginImpl(
       //  - a wrong PIN is rejected without ever touching the device's identity or state;
       //  - a revoked device is matched on its real deviceId (not the 'pending' placeholder),
       //    so the one-shot reset fires instead of leaving it banned forever.
-      // Fetch the per-user random salt from the server
+      // The per-user random salt - usually already in hand, asked while the keypad was up
+      // (`prefetchPinSaltImpl`). The span says which, so a cold open shows what it waited for.
       beginBootSpan('pin-salt-fetch');
-      const saltRes = await fetchOrUnreachable(
-        `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(ctx.getUserId())}`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-        m.auth_pin_salt_unreachable()
+      const saltAhead = takePinSaltAhead(ctx.getUserId());
+      const salt = await (saltAhead ?? fetchPinSalt(ctx, ctx.getUserId(), accessToken));
+      endBootSpan('pin-salt-fetch', { ahead: saltAhead !== undefined });
+      cb.log(`[PIN] Salt ${saltAhead ? 'asked while the keypad was up' : 'asked at submit'}.`);
+      // THE TWO DERIVATIONS RUN TOGETHER, AND ONLY THE USE OF THE SECOND WAITS FOR THE CHECK. Both
+      // are PBKDF2 in WebCrypto, off the main thread, and neither needs the other: the verifier
+      // (100k) goes to the server, the device key (310k) stays here. The rule the old sequence
+      // enforced - nothing is decrypted with a key from an unproven PIN - is a rule about USING the
+      // key, and it still holds: `deviceKeyAhead` is awaited and stored only after `pin-check`
+      // answered `ok`/`registered`. On a mismatch it is dropped unread. Measured on the Mi 9T
+      // 2026-10-12: the device key was 166 ms after a 253 ms check it does not depend on.
+      // `resolveDeviceId` reads a stored id and decrypts nothing, so it joins them.
+      // PBKDF2-SHA256: 310k iterations for the device key, 100k for the verifier.
+      const deviceKeyAhead = timeBootSpan(
+        'device-key-pbkdf2',
+        deriveDeviceKeyB64(ctx.getUserId(), pin, salt)
       );
-      if (!saltRes.ok) {
-        throw new LocalizedError(m.auth_pin_salt_unreachable());
-      }
-      const { salt } = (await saltRes.json()) as { salt: string };
-      endBootSpan('pin-salt-fetch');
-      // PBKDF2-SHA256, 100k iterations - the first of TWO derivations this path runs.
-      beginBootSpan('pin-verifier-pbkdf2');
-      const verifier = await computePinVerifier(ctx.getUserId(), ctx.getPin(), salt);
-      endBootSpan('pin-verifier-pbkdf2', { iterations: 100_000 });
+      // A wrong PIN or a refused check throws below before this promise is read; its own failure
+      // must still leave a line rather than an unhandled rejection.
+      deviceKeyAhead.catch((e: unknown) =>
+        cb.log(`[PIN] Device key derivation failed: ${String(e)}`)
+      );
+      const [verifier, deviceId] = await Promise.all([
+        timeBootSpan(
+          'pin-verifier-pbkdf2',
+          computePinVerifier(ctx.getUserId(), ctx.getPin(), salt)
+        ),
+        timeBootSpan('resolve-device-id', mlsService.resolveDeviceId(ctx.getUserId())),
+      ]);
       const verifierHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       };
-      beginBootSpan('resolve-device-id');
-      const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
-      endBootSpan('resolve-device-id');
       const verifierPayload = JSON.stringify({ userId: ctx.getUserId(), verifier, deviceId });
       beginBootSpan('pin-check-request');
       const pinCheckRes = await fetchOrUnreachable(
@@ -698,15 +712,10 @@ export async function loginImpl(
       }
       if (pinCheckData.status === 'registered') cb.log('First device: PIN registered.');
 
-      // PIN accepted: derive this device's at-rest key from it. Done here rather than at the
-      // call site because it needs the same server salt the verifier was just computed with,
-      // and it must not run before the PIN has been proven correct.
-      // PBKDF2-SHA256, 310k iterations - the SECOND derivation, and it is sequential with the
-      // first by construction: it is placed after the PIN check on purpose. Both halves are timed
-      // so the cost of that ordering is a measurement rather than an argument.
-      beginBootSpan('device-key-pbkdf2');
-      deviceKeyB64 = await deriveDeviceKeyB64(ctx.getUserId(), pin, salt);
-      endBootSpan('device-key-pbkdf2', { iterations: 310_000 });
+      // PIN accepted: only now is this device's at-rest key read and installed. It was derived
+      // alongside the verifier from the same server salt (see above); nothing used it before this
+      // line, which is the ordering that matters.
+      deviceKeyB64 = await deviceKeyAhead;
       ctx.setDeviceKey(deviceKeyB64);
     } else {
       cb.log(
@@ -1795,6 +1804,20 @@ async function fetchPinSalt(ctx: SessionContext, userId: string, token: string):
   if (!res.ok) throw new LocalizedError(m.auth_pin_salt_unreachable());
   const { salt } = (await res.json()) as { salt: string };
   return salt;
+}
+
+/**
+ * Starts the salt round trip for the signed-in user while the PIN keypad is up (see
+ * `pinSaltAhead.ts` for why, and for the lifecycle).
+ *
+ * CALLED FOR A RETURNING USER ONLY: `GET pin-salt` WRITES for a user without a salt (it creates the
+ * placeholder row that `pin-status` then reads as "registered"), so asking ahead on a first setup
+ * could turn an abandoned keypad into a skipped PIN choice. A returning user's salt already exists
+ * and the call reads it.
+ */
+export function prefetchPinSaltImpl(ctx: SessionContext, log: (msg: string) => void): void {
+  const userId = ctx.getUserId();
+  askPinSaltAhead(userId, async () => fetchPinSalt(ctx, userId, await getToken()), log);
 }
 
 /**
