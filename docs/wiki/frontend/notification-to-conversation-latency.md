@@ -190,7 +190,7 @@ PIN takes longer than the refresh, so the PIN check still finds its token ready.
 is not quoted for this build: it still carries the feed contention F2 removes, which scatters it by
 ±0.9 s run to run.
 
-### F9 - the PIN salt is asked while the keypad is up, and the two derivations run together (built, phone before/after PENDING)
+### F9 - the PIN salt is asked while the keypad is up, and the device key is derived during the check (measured: submit to `MLS ready` -0.3 s)
 
 **The spans of a cold PIN open after F2 and F3** (Mi 9T, `1.2.4`, 2026-10-12, one run shown, the
 other five within ~30 ms): `pin-salt-fetch` **350 ms**, `pin-verifier-pbkdf2` 117, `resolve-device-id`
@@ -208,15 +208,24 @@ all of it in series. Two of those steps wait on nothing they need:
   skipped PIN choice.
 - **The device key does not depend on the PIN check.** It was derived AFTER `pin-check`, "on purpose".
   The purpose is a rule about USING the key - nothing is decrypted with a key from an unproven PIN -
-  and that rule is kept: the derivation now starts next to the verifier (both PBKDF2 in WebCrypto,
-  off the main thread), and its result is awaited and installed (`ctx.setDeviceKey`) only after the
+  and that rule is kept: the derivation now starts once the verifier is computed, runs during the
+  check's round trip, and its result is awaited and installed (`ctx.setDeviceKey`) only after the
   check answered and after the `mismatch` and `resetRequired` branches. On a mismatch it is dropped
   unread. A source guard (`pinSaltAhead.test.ts`) pins that order. `resolveDeviceId` (a stored id,
-  nothing decrypted) joins them.
+  nothing decrypted) joins the verifier.
+- **After the verifier, not beside it - and that was measured, not assumed.** The first version
+  started both derivations together: they share the WebCrypto worker, the verifier went from ~112 to
+  **215 ms** and delayed the check it feeds by as much, so it gained ~0.1 s less.
 
-Expected: ~0.35 s (salt, absorbed by the typing) + ~0.17 s (device key, hidden behind the check) +
-~0.04 s (device id). **The phone before/after is owed**; the APK is built (`pin.apk`, local, against
-dev) and the bench was held by another session when this was written.
+| killed, PIN typed by the instrument ~130 ms after the gate (n=6 each) | without (4 builds, n=24) | beside the verifier | **during the check** |
+| --- | ---: | ---: | ---: |
+| `pin-salt-fetch` at submit | 212-239 | 76 | **27** |
+| `pin-verifier-pbkdf2` | 53-112 | 215 | 112 |
+| submit -> `MLS ready` | 742-886 (median per build) | 584 | **489** [433-975] |
+| composer usable | 3543-4117 | 3426 | **3266** |
+
+**~0.3 s off a PIN unlock with a keypad typed in 130 ms**; a person typing for 1.5-3 s leaves the salt
+fully absorbed, so the gain is at least that.
 
 ## The ranked fix plan
 
