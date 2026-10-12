@@ -3174,6 +3174,32 @@ Test: `useMessaging.replyScope.svelte.test.ts`.
 
 A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - only if the same conversation is still selected, and it logs either way. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
 
+## The restore keeps the salon rows the community load wrote (2026-10-12)
+
+Reported from an iPhone: after a notification tap into a salon, tapping the other salons lit the
+row and opened nothing, until a restart. **What the code proves** (`restoreKeepsSalonRows.test.ts`,
+two cases red on main): a salon's conversation row is written by `loadChannelWorkspacesFromBackend`,
+which never persists it, and `loadExistingConversations` used to `clear()` the whole map and
+rebuild it from storage. Any restore that ran AFTER the community load - the login path sets
+`isLoggedIn` (which starts the community load) and only restores after the socket opens, and
+`onWelcomeProcessed` restores mid-session - erased every salon storage did not hold, and emptied
+the messages of the ones it did. The sidebar reads `channelWorkspaces`, so the row stayed listed;
+a tap set `selectedChannelConversationId` (the highlight) and `selectedContact`, and the selection
+watchdog in `useConversations` dropped the key it could not find in the same frame. A restart ran
+the two loads in the other order, which is why it "healed".
+
+- **The fix:** the restore deletes only the rows it owns (every non-salon key) and does not rebuild a
+  stored salon already in memory - it only reads back the persisted state the live row lacks (read
+  watermarks, history floor, `startedAt`, the sort key), the live row winning; a stale salon is pruned by the community load, never by the restore.
+  It logs `[RESTORE] kept N salon row(s)`.
+- **The diagnostic:** the watchdog now says `[SELECT] <key> is not in the conversation map -
+  selection dropped` at `warn`, so the next inert tap names itself instead of looking like a tap
+  that never arrived.
+- **Not measured on the device:** the order of the two loads on the reporter's cold start was not
+  observed (no inspectable build on the bench at the time). The press held past the reorder hold
+  ([above](#a-communitys-salons-have-an-order-everyone-shares-and-a-name-that-is-only-a-name-2026-10-05))
+  is the other inert-tap cause, measured on the iPhone.
+
 ## Profile fetches that failed on a device, and the denominator that is owed (2026-08-16)
 
 The symptom was seen twice on 2026-08-16, on both platforms: nine of ten sidebar rows carrying "Utilisateur inconnu" for twenty seconds. The log line that makes it countable did not exist then; since 2026-08-19 every warn in `displayName.ts` ends `(failed/attempted lookups failed this session, X%)`, counting only lookups that reached the network. Do not assume it is the same fault as the avatar endpoint, and do not assume it is not. The number is read from a device or browser console during a campaign run: there is no client telemetry, and server-side is not an option (`GET /api/users/:id` is not request-logged, and a client that never reached the network would not appear anyway). **Then decide about `FAILURE_BACKOFF_MS`**: a high rate says the two-minute suppression does real work against a refusing server; a rate near zero says it is a clock hiding a name for two minutes over a blip the reconnection listener already handles.

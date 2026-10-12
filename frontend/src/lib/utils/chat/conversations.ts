@@ -833,11 +833,48 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     });
   }
 
-  ctx.conversations.clear();
+  // THE RESTORE REPLACES THE ROWS IT OWNS, AND A SALON'S ROW IS NOT ONE OF THEM. The community load
+  // writes salon rows without persisting them, so storage holds a salon only once something saved
+  // it. This used to `clear()` the whole map: a restore that ran after the community load (the login
+  // path awaits the socket first; `onWelcomeProcessed` restores mid-session) erased every salon
+  // storage lacked while the sidebar still listed it, and the selection watchdog then deselected
+  // every tap on one - lit, never opened, until a restart (`restoreKeepsSalonRows.test.ts`). A
+  // salon row in memory is the community load's, kept with its messages; a stale one is pruned by
+  // that load, never by this one.
+  const keptSalons = new Set<string>();
+  for (const key of Array.from(ctx.conversations.keys())) {
+    if (isChannelConversationId(key)) keptSalons.add(key);
+    else ctx.conversations.delete(key);
+  }
+  if (keptSalons.size > 0) {
+    ctx.log(`[RESTORE] kept ${keptSalons.size} salon row(s) the community load owns`);
+  }
   ctx.messageReactions.clear();
 
   // Phase 1 - fast, immediately usable conversation stubs.
   for (const meta of mergedConvMetas) {
+    if (keptSalons.has(meta.id)) {
+      // KEPT, BUT STILL SEEDED: the community load builds a cold row with none of the state this
+      // device persisted for the salon, and skipping the stored row outright would drop it for the
+      // session - the read watermarks behind "Lu par" and the unread recount, the history floor,
+      // the sort key. What the live row already carries wins; only what it lacks is read back.
+      // Absent stays absent, never `undefined` (the `buildConversationRow` contract).
+      const live = ctx.conversations.get(meta.id);
+      if (live) {
+        const lastMessageAt = live.lastMessageAt ?? meta.updatedAt;
+        const readWatermarks = live.readWatermarks ?? meta.readWatermarks;
+        const historyFloor = live.historyFloor ?? meta.historyFloor;
+        const startedAt = live.startedAt ?? meta.startedAt;
+        ctx.conversations.set(meta.id, {
+          ...live,
+          ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
+          ...(readWatermarks !== undefined ? { readWatermarks } : {}),
+          ...(historyFloor !== undefined ? { historyFloor } : {}),
+          ...(startedAt !== undefined ? { startedAt } : {}),
+        });
+      }
+      continue;
+    }
     const identity = deriveConversationIdentity(meta.name, ctx.userId, meta.id);
     const prev = snapshot.get(meta.id);
     const resolvedName =
