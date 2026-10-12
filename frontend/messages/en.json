@@ -304,8 +304,26 @@
   "chat_send_message_label": "Send message",
   "chat_send_error_generic": "The message could not be sent. Try again in a moment.",
   "chat_send_held": "Sending as soon as the session is ready ({count} waiting)",
-  "chat_send_held_not_sent": "{count} message(s) not sent: the sign-in did not complete. Write them again once signed in.",
-  "chat_send_held_misdirected": "{count} message(s) not sent: the conversation changed in the meantime.",
+  "chat_send_held_not_sent": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} message not sent: the sign-in did not complete. Write it again once signed in.",
+        "countPlural=other": "{count} messages not sent: the sign-in did not complete. Write them again once signed in."
+      }
+    }
+  ],
+  "chat_send_held_misdirected": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} message not sent: the conversation changed in the meantime.",
+        "countPlural=other": "{count} messages not sent: the conversation changed in the meantime."
+      }
+    }
+  ],
   "chat_send_error_seal_no_session": "Nothing was sent: this device's encryption is not ready yet. Try again in a moment.",
   "chat_send_error_seal_unknown_channel": "Nothing was sent: this channel is not loaded on this device yet. Try again in a moment.",
   "chat_send_error_seal_key_group_missing": "Nothing was sent: this device has not joined the community's key group yet. Try again in a moment.",
