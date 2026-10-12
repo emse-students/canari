@@ -58,7 +58,7 @@ let sharedWorker: PdfjsWorker | null = null;
  */
 function sharedPdfWorker(lib: PdfjsModule): PdfjsWorker {
   if (sharedWorker) return sharedWorker;
-  const worker = new lib.PDFWorker({ name: 'canari-pdf' });
+  const worker = new lib.PDFWorker();
   sharedWorker = worker;
   Log.d('pdfDocument:workerCreated');
   worker.promise.catch((err: unknown) => {
