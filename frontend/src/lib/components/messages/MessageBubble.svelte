@@ -119,7 +119,7 @@
     onReact?: (messageId: string, emoji: string) => void;
     /** Called when the user votes on a poll message (channels only). */
     onVotePoll?: (messageId: string, optionIds: string[]) => void;
-    /** Called when the poll author closes their poll early (channels only). */
+    /** Called when the poll's author or a moderator (`canModerate`) closes it early (channels only). */
     onClosePoll?: (messageId: string) => void;
     /** Called when the user confirms message deletion. */
     onDelete?: (messageId: string) => void;
@@ -922,7 +922,7 @@
                 meta={pollMeta}
                 {currentUserId}
                 onVote={(optionIds) => onVotePoll?.(messageId, optionIds)}
-                canClose={isOwn && !!onClosePoll}
+                canClose={(isOwn || canModerate) && !!onClosePoll}
                 onClose={() => onClosePoll?.(messageId)}
               />
             {:else}
