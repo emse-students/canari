@@ -1,0 +1,107 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>MLS checkpoint bench</title>
+<!--
+  What one encrypted MLS checkpoint costs IN A BROWSER, split into its parts, on states shaped like
+  a heavy account: N groups of 44 leaves, 10 past epochs, 3 senders x 20 frames each.
+  Served by serve.ts, which maps /wasm/ to frontend/src/lib/wasm (run `bun run generate` first).
+  The table is printed on the page and kept on window.__bench. See README.md.
+-->
+<pre id="out">loading</pre>
+<script type="module">
+  import init, { WasmMlsClient, encrypt_mls_state_blob_with_key } from './wasm/mls_wasm.js';
+  const out = document.getElementById('out');
+  const log = (s) => {
+    out.textContent += '\n' + s;
+    console.log(s);
+  };
+  await init();
+  const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+  const mk = (u) => new WasmMlsClient(u, 'd', null, null, false);
+  const kp = (c) => c.generate_key_packages(1)[0].public;
+  const INERT = 40;
+  const EPOCHS = 10;
+  const MESSAGES = 20;
+  const SIZES = (new URLSearchParams(location.search).get('groups') ?? '5,20,40,80')
+    .split(',')
+    .map(Number);
+  const inert = Array.from({ length: INERT }, (_, i) => mk('inert-' + i));
+  const senders = [0, 1, 2].map((i) => mk('sender-' + i));
+  const me = mk('me');
+  const enc = new TextEncoder();
+  function build(gid) {
+    me.create_group(gid);
+    const bulk = INERT - EPOCHS;
+    me.add_members_bulk(gid, inert.slice(0, bulk).map(kp));
+    me.merge_pending_commit(gid);
+    const added = me.add_members_bulk(gid, senders.map(kp));
+    me.merge_pending_commit(gid);
+    const tree = me.export_ratchet_tree(gid);
+    for (const s of senders) s.process_welcome(added[1], tree);
+    for (const c of inert.slice(bulk)) {
+      const a = me.add_members_bulk(gid, [kp(c)]);
+      me.merge_pending_commit(gid);
+      for (const s of senders) s.process_incoming_message_with_sender(gid, a[0]);
+    }
+    for (let i = 0; i < MESSAGES; i++)
+      for (const s of senders)
+        me.process_incoming_message_with_sender(
+          gid,
+          s.send_message_bytes(gid, enc.encode('m' + i))
+        );
+  }
+  const db = await new Promise((res, rej) => {
+    const q = indexedDB.open('canari-perf-bench', 1);
+    q.onupgradeneeded = () => q.result.createObjectStore('s');
+    q.onsuccess = () => res(q.result);
+    q.onerror = () => rej(q.error);
+  });
+  const put = (v) =>
+    new Promise((res, rej) => {
+      const tx = db.transaction('s', 'readwrite');
+      tx.objectStore('s').put(v, 'state');
+      tx.oncomplete = res;
+      tx.onerror = () => rej(tx.error);
+    });
+  const results = [];
+  let built = 0;
+  log('groups\tbytes\tdecrypt_ms\tsave_state_ms\tslice_ms\tencrypt_ms\tidb_put_ms (medians of 5)');
+  for (const target of SIZES) {
+    while (built < target) build('g-' + built++);
+    me.save_state(undefined);
+    const rows = [];
+    for (let rep = 0; rep < 5; rep++) {
+      const ct = senders[rep % 3].send_message_bytes('g-0', enc.encode('x' + rep));
+      let t = performance.now();
+      me.process_incoming_message_with_sender('g-0', ct);
+      const dec = performance.now() - t;
+      t = performance.now();
+      const raw = me.save_state(undefined);
+      const save = performance.now() - t;
+      t = performance.now();
+      const plain = raw.slice();
+      const sl = performance.now() - t;
+      t = performance.now();
+      const sealed = encrypt_mls_state_blob_with_key(plain, KEY);
+      const en = performance.now() - t;
+      t = performance.now();
+      await put(sealed);
+      const idb = performance.now() - t;
+      rows.push([dec, save, sl, en, idb, sealed.length]);
+    }
+    const med = (k) => rows.map((r) => r[k]).sort((a, b) => a - b)[2];
+    const line = [
+      target,
+      rows[0][5],
+      med(0).toFixed(2),
+      med(1).toFixed(1),
+      med(2).toFixed(1),
+      med(3).toFixed(1),
+      med(4).toFixed(1),
+    ];
+    results.push(line);
+    log(line.join('\t'));
+  }
+  window.__bench = results;
+  log('done');
+</script>

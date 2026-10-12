@@ -39,6 +39,12 @@ export type LoginErrorCode =
   | 'device_revoked'
   /** The server could not be REACHED at all - we never got an answer to disagree with. */
   | 'server_unreachable'
+  /**
+   * The server answered `stale-salt` twice: the account's PIN salt changed (a PIN reset) between
+   * this login asking for it and checking with it, and again on the one retry. Nothing was
+   * compared, so this says nothing about the PIN typed.
+   */
+  | 'pin_salt_rotated'
   /** Anything else (network, server, unexpected). */
   | 'other';
 
