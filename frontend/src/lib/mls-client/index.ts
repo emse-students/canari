@@ -8,6 +8,7 @@ export type {
   UserGroupRow,
   MlsInitOptions,
   MlsBatchProcessResult,
+  BulkIngestHandle,
   BulkIngestPhase,
   BulkIngestObserver,
 } from './IMlsService';

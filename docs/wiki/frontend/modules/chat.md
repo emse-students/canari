@@ -176,9 +176,11 @@ after every community load and every return of the socket, and `reconcileSalonUn
 count to the server's count PLUS the messages that landed live after the server counted
 (`ChatMessage.serverTimestamp > asOf`: both sides the row's `createdAt`, no device clock). A salon
 opened while the answer was in flight is skipped (a counter, not a timer). The receipt now names the
-row's own `createdAt` (`serverAt`): the author's `sentAt` is always earlier, so the newest message stayed
+row's own `createdAt` (`serverAt`): the author's `sentAt` is usually earlier, so the newest message stayed
 "newer than the mark" for ever - measured, 49 ms on one machine - and would have been counted unread
-right after it was read.
+right after it was read. **Not always earlier**: an author whose clock leads the server's writes a
+`sentAt` past `createdAt`, and since 2026-10-12 a salon row is dated by its `createdAt` on every path,
+the history load included ([social-service](../../services/social-service.md#read-receipts-in-a-salon)).
 
 **Refuted, not to be re-opened** (each read in the code AND measured):
 - *`onSelectChannelConversation` marks on load/visibility.* It runs on a click only; `claimChannelReadSignal`
@@ -712,7 +714,7 @@ ambiguity the split exists to remove. Hence `acquireMlsLock` is called directly 
 
 **It reports; it does not cancel, and the flush stays inside the window.** Moving `onDrainEnd`
 behind `isDraining = false` was the other option this page used to offer, and it is wrong:
-`bulkIngestPhases` is a stack, so a second drain starting during a live `endBulkIngest` would call
+the UI render buffer is ONE buffer, not one per window, so a second drain starting during a live `endBulkIngest` would call
 `beginBulkIngest` across it - a UI buffer cleared without being flushed, which is WP-ECHO-1's exact
 failure and a strictly worse one. **A freeze loses nothing durable; a lost buffer does.** So the
 deadline buys the only thing it safely can, which is evidence.
@@ -2788,6 +2790,10 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
   no per-member "hide my read state" setting: what `readWatermarks` holds IS the predicate, so the
   placement never filters a second time. A reader whose watermark is older than the loaded page
   gets no head (every loaded row is one they have not read); one past the newest row sits on it.
+  The placement compares a mark with each row's `timestamp`, so both must be on one clock: a salon
+  row is dated by its server `createdAt` on every path, or the heads under the last message flicker
+  with each history load (2026-10-12,
+  [social-service](../../services/social-service.md#read-receipts-in-a-salon)).
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.
@@ -2884,6 +2890,46 @@ the kind of thing a later refactor restores in good faith.
 **`showQuickReactions` went with it.** The tray it guarded was reachable only from the reaction
 swipe, so removing that gesture left a `$state` nothing ever set to `true` and a block that could
 never render - dead the moment the gesture was.
+
+### A double tap likes and does NOTHING else: the single tap waits out the window (2026-10-12)
+
+*"double tap pour liker ne doit pas aussi faire l'action du simple tap"* (user). On a phone the
+bubble's tap toggles `MessageInfoTooltip` (time, readers) and its double tap sends a heart. Both
+lived in one `onclick`: the first tap opened the panel AT ONCE and stamped `lastTapTime`, the second
+saw the 300 ms window, liked and closed the panel. So every heart flashed the readers' panel, and a
+like was always also a single tap.
+
+**THE STANDARD DISAMBIGUATION, AND ONE IMPLEMENTATION OF IT.** `utils/tapDisambiguator.ts` arms ONE
+timer of `GESTURE.DOUBLE_TAP_MS` on the first tap; a second tap inside it, within
+`DOUBLE_TAP_SLOP_PX`, cancels it and runs the double action alone. `MediaLightbox` had the same
+pattern written inline and now uses the same helper, behaviourally unchanged, so the bubble's private
+`300` literal is gone and the two surfaces cannot drift apart. **The window is 250 ms, decided (user,
+2026-10-12)**: the like's tolerance went from 300 to 250 ms, and the single tap answers 50 ms sooner.
+The wait is paid ONLY where a second tap would change the answer (`heartOnDoubleTap`: a phone, a live
+message, `onReact` wired); a desktop bubble or a tombstone opens its panel immediately, as before.
+
+**THE EDGES OF A SEQUENCE, EACH DECIDED.**
+
+- **A second tap too FAR away replaces the pending one**: the single action runs once, for the newer
+  tap. That is what the viewer always did, and it is right for the bubble too: settling the first as
+  single and then the second would toggle the panel open and shut within a quarter second - the very
+  flash this fix removes.
+- **A completed like consumes its window** (`quietAfterDouble`, the bubble only): a third quick tap
+  is IGNORED - no second like, and no pending single that would open the panel behind the heart. Past
+  the window, a tap is a new sequence. The viewer keeps its old behaviour (a third tap starts afresh).
+- **A long press, or the `contextmenu` a phone browser fires for one, cancels a pending tap**: the
+  action sheet supersedes it. An unmounted bubble cancels its own.
+
+**AN INNER CONTROL OWNS ITS TAP.** Links, mentions and media buttons already stopped propagation;
+a poll option did not, so two quick votes were also a heart. `tapBelongsToInnerControl` now drops,
+at the bubble, any click whose target sits in a nested `a[href]`, `button`, form control or
+`role="button"`: it acted, and it neither opens the panel nor counts towards a heart.
+
+Pinned with counts on fake timers by `MessageBubble.doubleTap.svelte.test.ts` (single -> 1 open,
+0 likes; double -> 1 like, 0 opens; three quick taps -> 1 like, 0 opens; contextmenu -> 0 opens;
+link and poll option -> 0 likes, 0 opens), by `MediaLightbox.videoTap.svelte.test.ts` (a far second
+tap -> exactly 1 toggle of the bars) and by `tapDisambiguator.test.ts`. The triple-tap, far-tap and
+contextmenu tests were each proven by reverting the behaviour they pin.
 
 ### The edge-swipe-back gesture had no target guard, and the back button sits inside its own edge zone (2026-09-22)
 
@@ -3107,6 +3153,38 @@ pinned banner, poll banner, reply quote, search result, notification deep link -
 function, which now calls `scrollMessageIntoList` (`utils/chat/scrollToMessage.ts`): the offset is
 computed against the list container and applied with `container.scrollTo`, so nothing else can move.
 Not driven in a browser by the agent that wrote it; owed a look at 390 and 1280 px.
+
+### The jump is instant, because a smooth one was cancelled by the tap that asked for it (2026-10-12)
+
+Reported by the user (phone app, salon): tapping the poll in the "1 sondage actif" shortcut did not
+scroll to it. The shortcut already called `navigateToMessageEnsureLoaded`, like the pinned banner -
+and **the pinned banner failed the same way** in the phone apps; only the website worked. Measured in
+a scratch preview at 390 px with the glass chrome on, by trapping every `scrollTop` write: the jump's
+`scrollTo({ behavior: 'smooth' })` started, then seven writes from `threadGrowthObserver`'s
+`ResizeObserver` followed within 120 ms, each `scrollTop += shift`, and the pane ended at its bottom.
+
+The chain: closing the dropdown (`showPolls = false`, `showPinned = false`) shrinks the chrome over its
+150 ms `slide`; in the phone apps the chrome FLOATS and its height is the list's `padding-top`
+(`--chat-header-height`), so every row's `offsetTop` moves; the observer reads that as a change above
+its anchor row and compensates with a plain `scrollTop` write - and **any plain write aborts a smooth
+scroll in flight**. The anchor was still the row from before the jump, so the compensation was
+computed from the bottom of the thread and put the reader back there. On the website the chrome is
+in the flow, the list's BOX shrinks instead of its padding, no row moves, nothing is written, and the
+smooth jump survived - which is why only the phone saw it.
+
+**The fix is in `scrollMessageIntoList`: the jump is `behavior: 'auto'`.** An instant jump has
+nothing in flight to abort, and the compensations that follow then do exactly their job (the padding
+moved every row by the same amount, so they keep the target where it landed). Measured after: the
+target lands at the same place with and without the glass chrome, poll and pinned alike, and carries
+`chat-message-jump-highlight`. Delaying the jump until the chrome settles was refused: it waits on an
+animation, and any other growth during a smooth scroll (a medium settling, the typing bubble) would
+abort it the same way. `scrollToMessage.test.ts` pins the default.
+
+**One thing seen and not changed:** the observer's anchor is captured only when it fires, never on
+a user scroll, so after a long scroll it is a row far from the viewport. A size change BETWEEN that
+row and the reader would move the reader. Recapturing on `scroll` would race the observer's own
+`ResizeObserver` delivery (a scroll event can land after a mutation and before the callback, erasing
+the shift), so it wants a bench of its own, not a line in this fix.
 
 ## Routes
 

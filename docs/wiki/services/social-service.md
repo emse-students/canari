@@ -331,6 +331,24 @@ retracts), closing is `PATCH .../poll/close`, which stamps `endsAt = now`, unpin
 broadcasts the new state on `channel.poll.vote` - the same frame a vote publishes, because both say
 the same thing: here is the poll as it now stands.
 
+**HOW A POLL ENDS - TWO WAYS, DECIDED BY THE USER 2026-10-12.** (1) An OPTIONAL end date chosen at
+creation (`PollComposerModal`'s deadline field, cleared by default; no maximum and no default
+duration), stored as `endsAt`. (2) A manual close, `PATCH .../poll/close`, by the poll's AUTHOR or
+anyone holding `channel.moderate` (or `channel.manage` / `workspace.manage`) - the salon's admins;
+anybody else gets a 403. A poll with no end date and nobody closing it stays open for ever, which is
+the accepted consequence of "optional, no default". Either way the server refuses votes from then on
+(`pollIsOver`), serves `closed: true`, and the card shows its results with no vote form. Until
+2026-10-12 the client offered "Clore le sondage" to the author ONLY (`MessageBubble` gated it on
+`isOwn`), so a moderator could close through the API but not from the app; it now reads
+`isOwn || canModerate`, the server's pair. The salon's "N sondage actif" shortcut used to count from
+the encrypted message alone, so a poll closed early stayed in it; it now reads this service's
+`closed` and `endsAt` (`utils/chat/activePolls.ts`) and drops an end date the moment it arrives,
+through the same one-timer `pollDeadlineClock` the card uses. That clock measures the next deadline
+from NOW, not from the instant it last moved: `ChatArea` is never remounted, so measured from a stale
+instant a poll posted hours later was scheduled hours late and stayed in the shortcut past its end
+(`pollDeadline.svelte.test.ts`)
+([chat](../frontend/modules/chat.md#the-jump-is-instant-because-a-smooth-one-was-cancelled-by-the-tap-that-asked-for-it-2026-10-12)).
+
 **What a client is served is not what is stored.** `ServedChannelPollMeta` adds one field,
 `closed`, and it is the server's own answer to "is this over?" rather than the input a client would
 need to compute it. `endsAt` is an instant on the SERVER's clock; a client comparing it to `Date.now()`
@@ -562,6 +580,19 @@ channel id, migration 066), one instant per reader, only ever raised.
 
 The client merges both into the conversation's `readWatermarks`, so "Lu par", the avatars and `+N`
 render through exactly the group code. No read tone for a salon.
+
+**A salon row is dated by its `createdAt` on EVERY client path (2026-10-12)**, because every mark is
+on that clock. Until then the live path (`channel.message.created`) dated a row by `createdAt` and the
+history load (`decodeChannelMessageRow`) dated the SAME row by the author's `sentAt`; the merge takes
+the page's copy, so the row's key flipped with whichever path wrote it last. When the author's clock
+LEADS the server's, `sentAt > createdAt` and the row lands past the mark of everyone who read it (the
+server bounds a mark by the newest row's `createdAt`): the "seen by" heads under the last message
+vanished at every history load and came back with the next live write - the flicker the user
+reported. Measured in prod the same day: 207 `[CHANNEL_READ] mark past the newest message bounded`
+in seven days, 26 distinct messages, 59 readers, gap 0.1 s to over 10 s (193 under 1 s). The same
+skew made the reader's own device re-POST the identical mark at every load, since its own mark (the
+server's, `createdAt`) never reached the row's `sentAt` key. Pinned by `salonRowClock.test.ts` (heads
+under the last message: 2 before the reload, 2 after; 0 before the fix).
 
 **"Mark as read" from a salon NOTIFICATION, app shut (Android, 2026-10-10).** A shut phone has no session, so the two public calls above are out of reach. Its action calls chat-delivery's `POST /api/mls/push/channel-read` `{ userId, deviceId, channelId, at }` under `Authorization: PushSecret` (which proves the caller is a device of `userId`); chat-delivery forwards it with `x-internal-secret` to `POST /api/internal/channels/:channelId/read` (`InternalChannelReadController`, never exposed by the edge), which runs `advanceChannelReadMark` (membership still checked here, `at` bounded by the newest message) and then `markChannelRead` so the user's other devices clear their banner. `at` is the notification's own `createdAt`, never the phone's clock. A refused or failed call is logged on both sides (`[CHANNEL_READ_PUSH]`) and never retried: the banner is already gone locally and the receipt rises the next time the salon is opened. Reply is NOT offered on a salon: see [mobile](../frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android).
 

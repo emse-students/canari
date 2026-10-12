@@ -52,6 +52,7 @@ function run(preserveMessagesOf: string | null) {
     getLocalGroups: vi.fn(() => []),
     getDismissedGroups: vi.fn(async () => []),
     isDistributionGroup: vi.fn(() => false),
+    notifyConversationRowsSeeded: vi.fn(),
   };
   void loadExistingConversations({
     storage,

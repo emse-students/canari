@@ -13,7 +13,9 @@ import { msUntilPollDeadline, type PollDeadline } from '$lib/posts/pollVote';
  * **ONE TIMER PER CARD, FIRING ONCE PER DEADLINE.** Not an interval, and not one timer per poll:
  * {@link msUntilPollDeadline} returns only the earliest deadline still ahead, and when that one
  * lands this schedules the next. A card whose polls have no deadline, or whose deadlines are all
- * behind it, schedules nothing at all.
+ * behind it, schedules nothing at all. The delay is measured from NOW, not from `at`: `at` moves
+ * only when a deadline lands, so a long-lived clock handed a new poll would otherwise schedule it
+ * late by however long it sat idle (the salon shortcut, 2026-10-12, `pollDeadline.svelte.test.ts`).
  *
  * **WHICH DIRECTION THE CLOCK MAY BE WRONG IN, AND WHY THAT IS THE WHOLE ARGUMENT.** The delay is
  * computed from the deadline the SERVER sent, against this browser's clock, so skew shifts when
@@ -32,7 +34,18 @@ export function pollDeadlineClock(polls: () => readonly PollDeadline[]) {
   let at = $state(Date.now());
 
   $effect(() => {
-    const delay = msUntilPollDeadline(polls(), at);
+    const list = polls();
+    const now = Date.now();
+    // `at` IS ONLY AS FRESH AS THE LAST DEADLINE THAT LANDED. A set handed in later - a poll posted
+    // hours after a long-lived view was made, a conversation switch in `ChatArea`, which is never
+    // remounted - may hold a deadline that passed since then: it is settled now, and the next one
+    // is measured from now, never from a stale `at` that would schedule it hours late.
+    const sinceAt = msUntilPollDeadline(list, at);
+    if (sinceAt !== undefined && at + sinceAt <= now) {
+      at = now;
+      return;
+    }
+    const delay = msUntilPollDeadline(list, now);
     if (delay === undefined) return;
     const timer = setTimeout(() => {
       at = Date.now();

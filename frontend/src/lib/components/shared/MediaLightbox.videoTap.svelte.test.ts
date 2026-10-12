@@ -12,6 +12,8 @@ import { describe, it, expect, afterAll, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import MediaLightbox from './MediaLightbox.svelte';
+import { Log } from '$lib/utils/Log';
+import { GESTURE } from '$lib/utils/viewerGestures';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // The viewer fades out; happy-dom rejects a cancelled animation, see the helper.
@@ -196,5 +198,39 @@ describe('MediaLightbox - zoom with a video player', () => {
 
     clip.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(clicked, 'the next click is an ordinary one').toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * A SECOND TAP TOO FAR FROM THE FIRST REPLACES IT (unchanged by the shared `tapDisambiguator`,
+ * 2026-10-12): the bars toggle ONCE, for the newer tap - never once per tap.
+ */
+describe('MediaLightbox - a far second tap', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function tapAt(target: Element, x: number): void {
+    const point = { clientX: x, clientY: 200 };
+    const make = (type: string, touches: unknown[]) =>
+      Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+        touches,
+        changedTouches: [point],
+      });
+    target.dispatchEvent(make('touchstart', [point]));
+    target.dispatchEvent(make('touchend', []));
+  }
+
+  it('toggles the bars exactly once', () => {
+    vi.useFakeTimers();
+    const log = vi.spyOn(Log, 'd');
+    open();
+    const picture = document.getElementById('picture')!;
+    tapAt(picture, 20);
+    tapAt(picture, 20 + GESTURE.DOUBLE_TAP_SLOP_PX * 4);
+    vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+    const toggles = log.mock.calls.filter(([tag]) => tag === 'mediaLightbox.chrome').length;
+    expect(toggles).toBe(1);
   });
 });
