@@ -145,6 +145,11 @@ import { startSyncWatchdogImpl } from './sessionWatchdogs';
  * any one session, so the subscription has to be revocable from logout, which is elsewhere.
  */
 let unregisterPeerReturn: (() => void) | null = null;
+/**
+ * Numbers each `loginImpl` run, so the local preview it draws (F1) carries its owner: a login that
+ * ends without a session removes ITS preview, never the one a later, overlapping login drew.
+ */
+let loginSeq = 0;
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -516,10 +521,15 @@ export async function loginImpl(
   // derived from the server's salt AFTER `pin-check`, so nothing is decryptable before then, which
   // is what keeps the PIN gate's promise by construction rather than by a flag.
   //
-  // THE PROMISE IS HELD, NEVER RACED. Every exit that ends this login without a session awaits it
-  // before removing what it drew, so a read still in flight cannot land after the removal; and the
-  // restore awaits it before rebuilding the map, so it cannot land after the rebuild either.
+  // A WITHDRAWAL NEVER WAITS ON THE STORE, AND IT ONLY TOUCHES THIS LOGIN'S PREVIEW. Every exit
+  // that ends this login without a session withdraws SYNCHRONOUSLY: what is drawn is removed now,
+  // and a read still in flight finds `isCurrent()` false and draws nothing - so an exit whose store
+  // open hangs is never held behind it, and the login flag is released only after the cleanup. The
+  // discard names `loginId`, so a later login that overlaps this one keeps what it drew. The
+  // restore still awaits the read before rebuilding the map, so it cannot land after the rebuild.
+  const loginId = ++loginSeq;
   let landingPreview: Promise<void> | null = null;
+  let previewWithdrawn = false;
   let storageOpen: Promise<IStorage> | null = null;
   const startLandingPreview = (storage: Promise<IStorage>, previewKey: string): void => {
     const preview = cb.previewLandingTarget;
@@ -532,15 +542,17 @@ export async function loginImpl(
           deviceKeyB64: previewKey,
           userId: ctx.getUserId(),
           storeOpenMs: Math.round(performance.now() - askedAt),
+          owner: loginId,
+          isCurrent: () => !previewWithdrawn,
         })
       )
       .then(() => markBoot('landing-preview-read'))
       .catch((e: unknown) => cb.log(`[LANDING_PREVIEW] local read failed: ${String(e)}`));
   };
-  const withdrawLandingPreview = async (reason: string): Promise<void> => {
-    if (!landingPreview) return;
-    await landingPreview;
-    cb.discardLandingPreview?.(reason);
+  const withdrawLandingPreview = (reason: string): void => {
+    if (!landingPreview || previewWithdrawn) return;
+    previewWithdrawn = true;
+    cb.discardLandingPreview?.(reason, loginId);
   };
 
   try {
@@ -602,10 +614,12 @@ export async function loginImpl(
       // was reached and refused us, which is precisely the case that must never be papered over
       // as "no network".
       if (err instanceof SessionExpiredError) {
-        ctx.setIsLoginInProgress(false);
-        await withdrawLandingPreview('session expired');
+        // The redirect first, the preview after it (synchronous), the flag last: nothing here may
+        // wait on the store, and a second login must not start while this one's preview is up.
         if (cb.onSessionExpired) cb.onSessionExpired();
         else void goto(resolve('/login'), { replaceState: true });
+        withdrawLandingPreview('session expired');
+        ctx.setIsLoginInProgress(false);
         return;
       }
       // THE TOKEN IS FOR SOMEBODY ELSE THAN THIS DEVICE'S MLS IDENTITY. Not a transport failure
@@ -614,12 +628,12 @@ export async function loginImpl(
       // same once the network returned. The blocking notice offers the sign-out; the PIN modal has
       // nothing to add, and the MLS state is left untouched.
       if (err instanceof IdentitySplitError) {
-        ctx.setIsLoginInProgress(false);
-        await withdrawLandingPreview('identity split');
         cb.log(
           `[LOGIN] IDENTITY SPLIT (token ${err.split.tokenSub} vs local ${err.split.localId}) - login stopped, sign-out required.`
         );
         cb.onLoginFailed?.(m.identity_split_title());
+        withdrawLandingPreview('identity split');
+        ctx.setIsLoginInProgress(false);
         return;
       }
       // Anything else is a transport failure (no network, backend restarting): the server was
@@ -855,9 +869,11 @@ export async function loginImpl(
     const revoked = revocationAnswer !== null && (await revocationAnswer);
     endBootSpan('revocation-gate', { asked: revocationAnswer !== null });
     if (revoked) {
-      // What the local preview drew comes off the screen BEFORE the wipe, and only once the read is
-      // over - the wipe deletes the store that read was reading.
-      await withdrawLandingPreview('device revoked');
+      // What the local preview drew comes off the screen BEFORE the wipe, and the wipe starts only
+      // once the read is over - it deletes the store that read was reading. The store is already
+      // open here (the init above awaited it), so this wait is the read alone and cannot hang.
+      withdrawLandingPreview('device revoked');
+      if (landingPreview) await landingPreview;
       await wipeRevokedDevice(ctx, cb);
       cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
       throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
@@ -1679,7 +1695,7 @@ export async function loginImpl(
     cancelStartupCatchupBench();
     // A login that failed shows nothing it drew before the session: the PIN gate, the recovery
     // modal or the login page come back over the same screen they would have without F1.
-    await withdrawLandingPreview(`login did not complete (${loginErrorCode(_e)})`);
+    withdrawLandingPreview(`login did not complete (${loginErrorCode(_e)})`);
     // THE SHOWN SENTENCE AND THE LOGGED ONE ARE NOT THE SAME STRING, which is the whole of the
     // defect this closes. Six of the throws below this catch are `LoginFailure(code, m.auth_...())`
     // and their message IS the French line the member must read; everything else - a

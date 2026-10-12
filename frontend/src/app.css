@@ -1894,6 +1894,13 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   z-index: 10;
 }
 
+/* A held send waiting for the session (F1): the same slot as the send error, without its alarm. */
+.chat-floating-alert.is-pending {
+  border-color: var(--cn-border);
+  background: var(--cn-popover);
+  color: var(--text-muted);
+}
+
 .chat-scroll-bottom-button {
   position: absolute;
   right: 1rem;

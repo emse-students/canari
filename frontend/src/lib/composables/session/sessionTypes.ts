@@ -45,9 +45,16 @@ export interface ChatSessionCallbacks {
     userId: string;
     /** How long the store took to open after the login asked for it - reported on the drawn line. */
     storeOpenMs: number;
+    /** The login drawing it: only that login's discard may remove the row. */
+    owner: number;
+    /** False once that login has given up - a read landing afterwards draws nothing. */
+    isCurrent: () => boolean;
   }) => Promise<void>;
-  /** Removes whatever {@link previewLandingTarget} drew: the login that started it did not finish. */
-  discardLandingPreview?: (reason: string) => void;
+  /**
+   * Removes whatever {@link previewLandingTarget} drew for login `owner`: that login did not
+   * finish. Synchronous, so a failing login never waits on a store before releasing its flag.
+   */
+  discardLandingPreview?: (reason: string, owner: number) => void;
   addMessageToChat: (
     senderId: string,
     content: string,

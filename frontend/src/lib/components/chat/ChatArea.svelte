@@ -54,6 +54,11 @@
      * the composer stays live: its sends are held by the page until the session is up.
      */
     localPreview?: boolean;
+    /**
+     * Shown while sends typed during a local preview wait for the session (F1), so the member sees
+     * them pending rather than lost and does not type them again. Empty when nothing waits.
+     */
+    heldNotice?: string;
     /** Current value of the composer text area (controlled). */
     messageText: string;
     /** Whether the active conversation is a community channel. */
@@ -211,6 +216,7 @@
   let {
     conversation,
     localPreview = false,
+    heldNotice = '',
     messageText,
     isChannel = false,
     onMessageChange,
@@ -1407,6 +1413,13 @@
         </div>
       </div>
     </div>
+
+    {#if heldNotice && !sendError}
+      <div class="chat-floating-alert is-pending md:text-sm" role="status">
+        <LoaderCircle size={16} class="animate-spin" />
+        <span>{heldNotice}</span>
+      </div>
+    {/if}
 
     {#if sendError}
       <div class="chat-floating-alert md:text-sm">

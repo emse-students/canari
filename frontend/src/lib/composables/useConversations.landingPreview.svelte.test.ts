@@ -180,6 +180,31 @@ describe('the landing preview in the conversation store', () => {
     expect(convs.landingPreviewKey).toBeNull();
   });
 
+  it('draws nothing when the login that asked was withdrawn during the read', async () => {
+    const convs = useConversations();
+    const { storage } = fakeStorage();
+    notifNav.navigate(GROUP_ID);
+    await convs.previewLandingTarget({
+      ...previewInput(storage),
+      owner: 1,
+      isCurrent: () => false,
+    });
+    expect(convs.conversations.has(GROUP_ID)).toBe(false);
+    expect(convs.landingPreviewKey).toBeNull();
+  });
+
+  it('a failing login removes only the preview IT drew, never a later login one', async () => {
+    const convs = useConversations();
+    const { storage } = fakeStorage();
+    notifNav.navigate(GROUP_ID);
+    await convs.previewLandingTarget({ ...previewInput(storage), owner: 2, isCurrent: () => true });
+    convs.discardLandingPreview('session expired', new SvelteMap() as never, vi.fn(), 1);
+    expect(convs.landingPreviewKey).toBe(GROUP_ID);
+    convs.discardLandingPreview('session expired', new SvelteMap() as never, vi.fn(), 2);
+    expect(convs.landingPreviewKey).toBeNull();
+    expect(convs.conversations.has(GROUP_ID)).toBe(false);
+  });
+
   it('keeps the row once the session owns it', async () => {
     const convs = useConversations();
     const { storage } = fakeStorage();

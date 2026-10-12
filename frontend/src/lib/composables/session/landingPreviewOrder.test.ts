@@ -41,21 +41,39 @@ describe('loginImpl and the landing preview', () => {
     expect(starts[1]).toBeGreaterThan(derive);
   });
 
-  it('removes the preview BEFORE the revocation wipe', () => {
+  it('removes the preview, then lets the read finish, BEFORE the revocation wipe', () => {
     const revoked = at(loginBody, 'if (revoked) {');
-    const block = loginBody.slice(revoked, revoked + 600);
-    expect(at(block, "await withdrawLandingPreview('device revoked');")).toBeLessThan(
-      at(block, 'await wipeRevokedDevice(ctx, cb);')
-    );
+    const block = loginBody.slice(revoked, revoked + 900);
+    const withdraw = at(block, "withdrawLandingPreview('device revoked');");
+    const settle = at(block, 'if (landingPreview) await landingPreview;');
+    expect(withdraw).toBeLessThan(settle);
+    expect(settle).toBeLessThan(at(block, 'await wipeRevokedDevice(ctx, cb);'));
   });
 
-  it('removes the preview on every exit without a session', () => {
+  it('removes the preview on every exit without a session, and never waits on the store to do it', () => {
     for (const reason of ["'session expired'", "'identity split'", 'login did not complete']) {
-      at(
-        loginBody,
-        `await withdrawLandingPreview(${reason.startsWith("'") ? reason : '`' + reason}`
-      );
+      at(loginBody, `withdrawLandingPreview(${reason.startsWith("'") ? reason : '`' + reason}`);
     }
+    expect(loginBody).not.toContain('await withdrawLandingPreview');
+  });
+
+  it('redirects first, withdraws second, and releases the login flag last on both early exits', () => {
+    for (const [branch, first, reason] of [
+      ['if (err instanceof SessionExpiredError) {', 'cb.onSessionExpired()', "'session expired'"],
+      ['if (err instanceof IdentitySplitError) {', 'cb.onLoginFailed?.(', "'identity split'"],
+    ]) {
+      const block = loginBody.slice(at(loginBody, branch), at(loginBody, branch) + 900);
+      const go = at(block, first);
+      const withdraw = at(block, `withdrawLandingPreview(${reason});`);
+      const release = at(block, 'ctx.setIsLoginInProgress(false);');
+      expect(go).toBeLessThan(withdraw);
+      expect(withdraw).toBeLessThan(release);
+    }
+  });
+
+  it('names its owner on the preview and on the discard, so an overlapping login keeps its own', () => {
+    expect(loginBody).toContain('owner: loginId,');
+    expect(loginBody).toContain('cb.discardLandingPreview?.(reason, loginId);');
   });
 
   it('lets the preview land before the restore rebuilds the map', () => {
@@ -91,6 +109,18 @@ describe('the chat page during a local preview', () => {
   it('does not mount the conversation list, whose rows act when tapped', () => {
     const sidebar = at(page, '<Sidebar {...makeSidebarCommonProps()}');
     expect(page.slice(sidebar - 120, sidebar)).toContain('{#if session.isLoggedIn}');
+  });
+  it('ends the landing and reports held sends when the page is left during a preview', () => {
+    const destroy = page.slice(at(page, 'onDestroy(() => {'));
+    const body = destroy.slice(0, destroy.indexOf('\n  });'));
+    expect(body).toContain('heldSends.drop()');
+    expect(body).toContain('convs.discardLandingPreview(');
+    expect(body).toContain('notifNav.clear()');
+  });
+  it('shows the held sends while they wait', () => {
+    expect(page).toContain(
+      "heldNotice={heldCount > 0 ? m.chat_send_held({ count: heldCount }) : ''}"
+    );
   });
   it('sends no typing frame without a session', () => {
     const typing = page.slice(at(page, 'function handleTyping('));

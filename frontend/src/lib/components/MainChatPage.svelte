@@ -9,7 +9,7 @@
 
 <script lang="ts">
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { foldForSearch } from '$lib/utils/textFold';
   import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
@@ -17,6 +17,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { sendReadWatermark } from '$lib/utils/chat/messaging';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
+  import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { isAppInForeground } from '$lib/utils/appForeground';
   import {
     watermarkAfterReading,
@@ -845,47 +846,85 @@
   }
 
   /**
-   * Sends made while the page shows a LOCAL PREVIEW (F1), waiting for the session to come up.
-   *
-   * WHY HELD, AND WHY IN MEMORY. The send path is unchanged and so is its rule: the optimistic echo
-   * and the outbox entry are written in ONE transaction (`saveMessageWithOutboxEntry`), encrypted
-   * before it opens, and only then is anything flushed. That write needs the session's store and
-   * the outbox controller, which `loginImpl` registers in the same synchronous run that sets
-   * `isLoggedIn` - so a send pressed before that instant cannot be made durable yet, and handing it
-   * to the outbox early would be a send with no queue. It is held here instead, in order, and
-   * replayed through the ordinary path by the session coming up (an event, not a timer). If the
-   * preview is withdrawn instead - the login failed, the device was revoked - nothing is sent and
-   * the loss is logged.
+   * Sends made while the page shows a LOCAL PREVIEW (F1), held until the session is up - the queue
+   * and why it exists are `heldSends.ts`. The page adds what a queue cannot know: the count is
+   * SHOWN while anything waits (so nobody retypes it), and a held send that does not go - the login
+   * ended without a session, the selection moved, the page was left - is said out loud on a toast
+   * (which outlives this page and the redirect to /login) and in the log. Its text is not put back:
+   * the conversation it was written in is no longer on screen.
    */
-  let heldSends: Array<{ what: string; run: () => void }> = [];
+  const heldSends = createHeldSendQueue();
+  let heldCount = $state(0);
 
   function whenSessionUp(what: string, run: () => void) {
     if (session.isLoggedIn) {
       run();
       return;
     }
-    heldSends.push({ what, run });
+    heldSends.hold({ what, target: convs.selectedContact, run });
+    heldCount = heldSends.size;
     log(`[LANDING_PREVIEW] ${what} held until the session is up`);
+  }
+
+  /** Reports held sends that will never go: toast for the member, log line for the reader. */
+  function reportUnsent(dropped: { what: string }[], why: string, notice: string) {
+    if (dropped.length === 0) return;
+    showToast(notice, 'error', 8000);
+    log(
+      `[LANDING_PREVIEW] ${dropped.length} held send(s) NOT sent (${why}): ` +
+        dropped.map((h) => h.what).join(', ')
+    );
   }
 
   $effect(() => {
     const up = session.isLoggedIn;
     const previewing = isLocalPreview;
-    if (heldSends.length === 0) return;
-    if (up) {
-      const queued = heldSends;
-      heldSends = [];
-      log(`[LANDING_PREVIEW] session up - sending ${queued.length} held send(s)`);
-      untrack(() => queued.forEach((h) => h.run()));
-      return;
-    }
-    if (previewing) return;
-    const dropped = heldSends;
-    heldSends = [];
-    log(
-      `[LANDING_PREVIEW] preview withdrawn before the session - ${dropped.length} held send(s) NOT sent: ` +
-        dropped.map((h) => h.what).join(', ')
+    if (heldCount === 0) return;
+    untrack(() => {
+      if (up) {
+        const { sent, misdirected } = heldSends.release(convs.selectedContact);
+        heldCount = 0;
+        log(`[LANDING_PREVIEW] session up - sending ${sent.length} held send(s)`);
+        reportUnsent(
+          misdirected,
+          'the conversation changed before the session came up',
+          m.chat_send_held_misdirected({ count: misdirected.length })
+        );
+        return;
+      }
+      if (previewing) return;
+      const dropped = heldSends.drop();
+      heldCount = 0;
+      reportUnsent(
+        dropped,
+        'the preview was withdrawn before the session came up',
+        m.chat_send_held_not_sent({ count: dropped.length })
+      );
+    });
+  });
+
+  // LEAVING THE PAGE DURING A PREVIEW ENDS THE LANDING. What is held cannot be sent from a page
+  // that is gone, and the preview row would stay in the map with nothing on screen to show it -
+  // so both are ended here, explicitly: the held sends are reported, the preview is discarded and
+  // the landing is cleared (abandoned, in `notifNav`'s terms). Only when the preview is the
+  // SELECTION, which `previewSelect` sets on the landing's own page: the `/communities` page,
+  // unmounting while the landing routes to `/chat`, has not drawn it and must not end it.
+  onDestroy(() => {
+    const dropped = heldSends.drop();
+    reportUnsent(
+      dropped,
+      'the chat page was left before the session came up',
+      m.chat_send_held_not_sent({ count: dropped.length })
     );
+    if (session.isLoggedIn) return;
+    const key = convs.landingPreviewKey;
+    if (key === null || convs.selectedContact !== key) return;
+    convs.discardLandingPreview(
+      'the chat page was left before the session came up',
+      messaging.messageReactions,
+      log
+    );
+    if (notifNav.pending === key) notifNav.clear();
   });
 
   function sendTextNow(text: string, onRefused?: () => void) {
@@ -1231,6 +1270,7 @@
           currentUserId={session.userId}
           conversation={activeConversation}
           localPreview={isLocalPreview}
+          heldNotice={heldCount > 0 ? m.chat_send_held({ count: heldCount }) : ''}
           {messageText}
           isChannel={isSelectedChannel ?? false}
           imageMediaId={activeConversation?.imageMediaId ?? null}

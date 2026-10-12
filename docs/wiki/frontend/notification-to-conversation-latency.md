@@ -224,12 +224,24 @@ holds a send (text, files, voice note) until `isLoggedIn` turns true, then sends
 normal path. That path is `saveMessageWithOutboxEntry`: the echo and the outbox entry are written
 in one transaction before anything leaves. `registerOutbox` runs in the same synchronous run that
 sets `isLoggedIn`, so the released send always finds the outbox controller (a source guard pins
-that). A held send is dropped and logged if the preview is withdrawn.
+that). Each held send remembers the conversation selected when it was pressed, and is released
+only if that conversation is still the selection (`heldSends.ts`). While anything is held, a
+"sending as soon as the session is ready" line shows above the composer, so nobody types it again.
+A held send that does not go is never silent: if the login ends without a session, if the selection
+moved, or if the page is left, an error toast says how many were not sent and the log names them.
+The toast outlives the page and the redirect to `/login`. The text is not put back, because the
+conversation it was written in is no longer on screen.
 
-**Withdrawal.** `withdrawLandingPreview` waits for the read to settle, then deletes the drawn row and
-its reactions, abandons its Back entry and clears the selection. It runs before `wipeRevokedDevice`
-on the revoked branch, on a session that expired, on an identity split, and in the login's `catch`.
-Leaving the landing before the session is up also discards the preview. The restore that follows a
+**Withdrawal.** `withdrawLandingPreview` is synchronous and never waits on the store. It deletes the
+drawn row and its reactions, abandons its Back entry and clears the selection, and a read still in
+flight finds the login withdrawn and draws nothing. Each login is numbered, and a discard removes
+only the preview its own login drew, so a failing login cannot remove the preview of a later login
+that overlaps it. On a session that expired and on an identity split, the redirect (or the notice)
+comes first, the withdrawal second, and the login flag is released last. It also runs in the login's
+`catch`. On the revoked branch it runs first, then the read is allowed to finish (the store is
+already open there, so this cannot hang), and only then does `wipeRevokedDevice` start. Leaving the
+landing before the session is up discards the preview, and so does leaving the chat page while the
+preview is selected: the page reports the held sends, discards the preview and clears the landing. The restore that follows a
 successful login keeps that one row's page through its `clear()` (`preserveMessagesOf`), so the
 thread does not go blank while Phase 2 waits on the network.
 
@@ -246,13 +258,15 @@ thread does not go blank while Phase 2 waits on the network.
 | pane and composer | 1274 [1220-1343] | 1334 [1208-1371] |
 | history rows drawn | 1964 [1880-2084] | 1334 [1208-1371] (with the pane) |
 
-On a slow network (refresh ~3.1 s, revocation ~3 s, n=2), F1 drew the pane at 2463 and 2410 ms, while
+On a slow network (refresh ~3.1 s, revocation ~3 s; only n=2, so an indication rather than a
+median), F1 drew the pane at 2463 and 2410 ms, while
 `MLS ready` came at 7280 and 4623 ms. On `main` the pane cannot appear before `MLS ready`. A reply
 typed in that window was held and sent when the session came up, as seen on the phone.
 
 **Honest reading.** On a good network, history arrives ~0.6 s sooner and routing ~0.5 s sooner. The
-composer arrives at about the same time (+60 to +160 ms, within one run's spread). The large gain is
-on a slow network, where the conversation no longer waits for the session. The gain predicted in the
+composer is unchanged or slightly slower: on the vault path its median moved from 2630 to 2792 ms
+(+160 ms), and on the PIN path by +60 ms. The gain on a slow network looks large, but it rests on two
+runs. The gain predicted in the
 plan below (usable at 1.4-1.6 s) did not happen. On Tauri the preview's store open costs ~380 ms
 (`[DB] Using SQLite storage` comes ~380 ms after `login-start`), and the read and decryption of 60
 rows follow it. So the preview usually lands just after `MLS ready`, and its render collides with
@@ -270,7 +284,7 @@ it.** Gains are not additive: 1 and 2 overlap.
 
 | # | change | expected gain | risk |
 | --- | --- | --- | --- |
-| **F1** (MEASURED, see the section above: history -0.6 s, composer unchanged on a good network) | **Route-first landing.** Route to `/chat` and select the target the moment the deep link is parsed (~1.25 s), drawing the conversation's shell (name, avatar, composer) before `MLS ready`; fill its history from the local store as soon as the device key is restored; a reply typed meanwhile goes to the outbox, which already holds sends until the session is up. Behind the PIN, the gate covers the target's page instead of the feed. | vault: usable at **~1.4-1.6 s instead of ~2.7 s**; PIN: the conversation is ALREADY there when the PIN is accepted (saves the ~0.95 s of block 5) | **medium-high**: `landingStep`'s `route -> await-arrival -> select` and the overlay/Back rules ([chat](modules/chat.md#and-the-re-verification-it-asked-for-says-the-mechanism-is-there-and-the-landing-destroys-it-2026-09-21)) must hold; the revocation gate must still precede anything that ACTS on the session ([cold-start](cold-start.md#the-revocation-gate-stays-in-front-of-the-prompt-and-the-launchs-console-noise-is-explained-pixel-6a-2026-09-15)) - drawing local history before the revocation answer (~110 ms on the vault path) is a decision for the user |
+| **F1** (MEASURED, see the section above: history -0.6 s, composer unchanged or slightly slower on a good network) | **Route-first landing.** Route to `/chat` and select the target the moment the deep link is parsed (~1.25 s), drawing the conversation's shell (name, avatar, composer) before `MLS ready`; fill its history from the local store as soon as the device key is restored; a reply typed meanwhile goes to the outbox, which already holds sends until the session is up. Behind the PIN, the gate covers the target's page instead of the feed. | vault: usable at **~1.4-1.6 s instead of ~2.7 s**; PIN: the conversation is ALREADY there when the PIN is accepted (saves the ~0.95 s of block 5) | **medium-high**: `landingStep`'s `route -> await-arrival -> select` and the overlay/Back rules ([chat](modules/chat.md#and-the-re-verification-it-asked-for-says-the-mechanism-is-there-and-the-landing-destroys-it-2026-09-21)) must hold; the revocation gate must still precede anything that ACTS on the session ([cold-start](cold-start.md#the-revocation-gate-stays-in-front-of-the-prompt-and-the-launchs-console-noise-is-explained-pixel-6a-2026-09-15)) - drawing local history before the revocation answer (~110 ms on the vault path) is a decision for the user |
 | **F2** (MEASURED: composer 5.06 -> 3.83 s, cold PIN) | **Do not boot the feed under a notification landing.** When the launch URL targets a conversation, skip the default route's feed load and mount (requests and the 20-post progressive mount) until the user goes there. | PIN: device-key PBKDF2 ~700 -> ~150 ms, `mls-init` ~450 -> ~70, route ~650 -> ~230: **~1.0-1.4 s if the contention is the feed** (to be confirmed by the heartbeat first); vault: ~0.1-0.3 s and four requests | **low**; confirm the cause with `tools/cold-start/launch-trace.mjs --heartbeat` BEFORE building - the correlation above is not a proof |
 | **F3** (MEASURED: gate 2.19 -> 1.74 s) | **Draw the PIN gate on the local fact, not after the refresh.** "No device key in the vault" is a local answer; let the user type while the refresh runs, and verify when both are in. | ~**0.5-1.0 s** of the PIN user's wait (the gate up at ~1.1-1.6 s instead of ~2.1 s) | **medium**: a refused refresh must still end on the login screen, and the PIN check needs the token - the typing overlaps the refresh, it does not replace it |
 | **F4** | **Make the no-PIN path the expected one**: "Rester connecte" / the biometric 12 h cadence ([auth](modules/auth.md#how-often-the-sheet-comes-back---the-biometric-cadence-2026-09-28)). | **~2.3 s of app time plus the 1.5-3 s of typing** (cold PIN 5.0 s vs vault 2.7 s to the composer) | a **security and product decision for the user**, not an optimisation |

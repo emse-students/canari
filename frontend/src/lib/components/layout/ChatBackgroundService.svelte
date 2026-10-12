@@ -801,6 +801,8 @@
         deviceKeyB64: string;
         userId: string;
         storeOpenMs: number;
+        owner: number;
+        isCurrent: () => boolean;
       }) =>
         globalConvs.previewLandingTarget({
           ...input,
@@ -808,8 +810,13 @@
           isSessionUp: () => globalSession.isLoggedIn,
           log: appendLog,
         }),
-      discardLandingPreview: (reason: string) =>
-        globalConvs.discardLandingPreview(reason, globalMessaging.messageReactions, appendLog),
+      discardLandingPreview: (reason: string, owner: number) =>
+        globalConvs.discardLandingPreview(
+          reason,
+          globalMessaging.messageReactions,
+          appendLog,
+          owner
+        ),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       drainOrphanMessages: (convoKey: string) =>

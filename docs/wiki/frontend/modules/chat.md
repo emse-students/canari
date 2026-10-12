@@ -1415,7 +1415,8 @@ nulls it, which is what made *every* deep link land in the right tab with nothin
   the preview and runs the ordinary `openNotificationTarget` over the same row, once: the "already
   on screen" idle guard does not apply to a previewed selection. `notifNav` itself is unchanged
   (`pending`, `landing`, `enRoute`, `markArrived`, `clear` keep their meaning); a landing cleared
-  before the session also discards the preview. The rules, the guarantees and the numbers are on
+  before the session also discards the preview, and leaving the chat page while the preview is
+  selected discards it and clears the landing (`clear`, i.e. abandoned). The rules, the guarantees and the numbers are on
   [notification-to-conversation-latency](../notification-to-conversation-latency.md#f1---the-conversation-is-drawn-from-the-local-store-before-the-session-is-up).
 
 `/chat` and `/communities` are **separate route components**, each rendering its own
