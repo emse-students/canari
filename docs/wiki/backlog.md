@@ -1102,5 +1102,4 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 | #1773 the open conversation read by its own key | draft, conflicting | a rebase |
 | #1785 a salon re-read once per drain | draft | review |
 | #1783 polls, #1784 double tap | drafts | review |
-| #1781 "seen by" heads stop flickering | ready | CI and the merge |
 | #1542 the run-locally rule | conflicting | a rebase |
