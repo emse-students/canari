@@ -1234,7 +1234,9 @@ export async function loginImpl(
       // Reconcile background sends (killed app) first: remove from the outbox any
       // messages already delivered by the native service, BEFORE re-deriving "pending"
       // statuses (otherwise an already-sent message would be shown as pending again).
-      await reconcileOutboxSent(ctx.getStorage()!).catch(() => {});
+      await reconcileOutboxSent(ctx.getStorage()!).catch((e) =>
+        cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`)
+      );
       // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
       await applyOutboxPendingStatuses();
 

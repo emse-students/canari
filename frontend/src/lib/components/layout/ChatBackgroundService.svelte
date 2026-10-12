@@ -1466,11 +1466,7 @@
           };
           await globalSession.ensureMls().reloadStateFromDisk();
           stepDone('reload');
-          if (storage) {
-            await reconcileOutboxSent(storage).catch((e) =>
-              appendLog(`[OUTBOX_MIRROR] Resume reconcile failed: ${String(e)}`)
-            );
-          }
+          if (storage) await reconcileOutboxSent(storage).catch(() => {});
           stepDone('outbox');
           // WP-XP-5: the user may have answered a CallKit ring while we were away - record
           // the intent BEFORE the WS reconnect delivers the MLS invite that auto-accepts it.
@@ -1491,15 +1487,16 @@
             ).catch((e) => appendLog(`[READ_WATERMARK] Resume merge failed: ${String(e)}`));
           }
           stepDone('watermarks');
-          appendLog(
-            `[LIFECYCLE] Resume prepared in ${Math.round(performance.now() - resumeStart)} ms (${steps.join(', ')} ms) - reconnecting`
-          );
           // resumeConnection, NOT attemptReconnect: `pauseConnection` stopped the connection and
           // sync watchdogs on the way out, and only this seam re-arms them - so it must run even
           // when the socket survived the background, hence no isWsConnected guard here. Calling
           // attemptReconnect directly left a mobile client with no timer able to notice a later
           // dead socket, which is exactly what was measured on hardware (see resumeConnectionImpl).
-          void globalSession.resumeConnection(sessionCb());
+          // The step timings ride on its `[LIFECYCLE] App in foreground` line.
+          void globalSession.resumeConnection(
+            sessionCb(),
+            `resume prepared in ${Math.round(performance.now() - resumeStart)} ms: ${steps.join(', ')} ms`
+          );
           checkSiblingCallWarning();
         })();
       }

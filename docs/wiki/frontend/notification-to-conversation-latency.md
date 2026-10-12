@@ -212,10 +212,11 @@ which is ~10-30 ms here and must be re-read on a production-sized state before a
 
 ### F5 - the warm diagnosis was wrong, and the fix it suggested measured to nothing
 
-**The JS foreground verdict is NOT late.** The resume sequence in `ChatBackgroundService` now logs
-each step it makes the socket wait for (`[LIFECYCLE] Resume prepared in N ms (reload, outbox, call,
-fcm, watermarks)`). On six warm taps it STARTED ~50 ms after the tap and took 528-717 ms (median
-~564). `[LIFECYCLE] App in foreground` is the line `resumeConnection` prints AFTER that sequence, so
+**The JS foreground verdict is NOT late.** The `[LIFECYCLE] App in foreground` line now carries
+what the resume made the socket wait for, step by step (`(resume prepared in N ms: reload, outbox,
+call, fcm, watermarks)` - one line per resume, as before). On six warm taps the sequence STARTED
+~50 ms after the tap and took 528-717 ms (median ~564). That line is printed by `resumeConnection`
+AFTER the sequence, so
 "reconnect on the native resume" would have changed nothing: the resume already begins at once. The
 reconnect requests refused at 14-57 ms are the service's own foreground hook, answered correctly
 while the pause is still up.
