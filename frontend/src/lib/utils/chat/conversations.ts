@@ -320,22 +320,6 @@ export function archiveStorageKey(uid: string): string {
   return `canari_archived_conversations_${uid.toLowerCase()}`;
 }
 
-/**
- * Reads the persisted set of archived conversation IDs for a user from localStorage.
- * Returns an empty array if nothing is stored or the stored value is not a valid array.
- */
-export function loadPersistedArchivedIds(uid: string): string[] {
-  try {
-    const raw = localStorage.getItem(archiveStorageKey(uid));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return [...new Set(parsed.map((id) => String(id).toLowerCase()).filter(Boolean))];
-  } catch {
-    return [];
-  }
-}
-
 /** Saves the current set of archived conversation IDs for a user to localStorage. */
 export function persistArchivedConversations(uid: string, ids: string[]) {
   localStorage.setItem(archiveStorageKey(uid), JSON.stringify([...new Set(ids)]));

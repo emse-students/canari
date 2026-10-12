@@ -514,18 +514,6 @@ export async function inviteMembersToGroup(
 }
 
 /**
- * Convenience wrapper around `inviteMembersToGroup` for adding a single user.
- * Adds all devices of the target user and broadcasts a `memberAdded` notification.
- */
-export async function inviteMemberToGroup(
-  memberId: string,
-  conversation: Conversation,
-  deps: GroupCreationDeps
-): Promise<void> {
-  return inviteMembersToGroup([memberId], conversation, deps);
-}
-
-/**
  * Starts a new 1-to-1 encrypted direct conversation with `contactName`.
  *
  * Before creating anything the function checks whether a conversation already

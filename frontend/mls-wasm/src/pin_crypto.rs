@@ -36,25 +36,6 @@ pub fn decrypt_with_key(key_b64: &str, encrypted_data: &[u8]) -> Result<Vec<u8>,
 
 // ── Legacy API (Argon2id + salt, kept for backward compatibility) ──────────────
 
-/// @deprecated Use `encrypt_with_key` instead.
-#[wasm_bindgen]
-pub fn encrypt_with_pin(pin: &str, data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    // Create an owned copy of the PIN so it can be zeroized after use.
-    // The original &str in WASM linear memory remains, but the Rust-side copy is cleared.
-    let pin_owned = pin.to_string();
-    // Still uses the old salt-prefix format for backward compatibility.
-    // generate_salt + encrypt_state_with_pin logic inline:
-    let salt = mls_core::security::generate_salt().map_err(|e| JsValue::from_str(&e))?;
-    let key = mls_core::security::derive_key_from_pin_owned(pin_owned, &salt)
-        .map_err(|e| JsValue::from_str(&e))?;
-    let ct = mls_core::security::encrypt_blob(&key, data).map_err(|e| JsValue::from_str(&e))?;
-    // Legacy format: [salt (16) || nonce (12) || ciphertext]
-    let mut result = Vec::with_capacity(16 + ct.len());
-    result.extend_from_slice(&salt);
-    result.extend_from_slice(&ct);
-    Ok(result)
-}
-
 /// @deprecated Use `decrypt_with_key` instead.
 #[wasm_bindgen]
 pub fn decrypt_with_pin(pin: &str, encrypted_data: &[u8]) -> Result<Vec<u8>, JsValue> {
