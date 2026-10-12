@@ -232,7 +232,12 @@ the `group-deleted` arm of `flushOne`'s catch), which reaches the same `failPerm
 same cause - and the pre-flight could never be the whole answer, a deletion landing inside its
 round trip. It is now asked only where the POST is not the next step: **an unsendable group** (its
 next step is the re-add, which would otherwise re-add a deleted group for ever) and **a media entry**
-(its upload precedes the POST). Its failure, swallowed before, is logged. Expected: ~150-250 ms per text or control send.
+(its upload precedes the POST). Its failure, swallowed before, is logged. **The 410 had a hole the
+pre-flight was hiding, closed in the same change**: `tombstoneGroups` sweeps the device memberships,
+so a send into a group deleted BEFORE it resolved an empty roster, skipped
+`enqueueForLiveGroup`'s liveness check, appended to the dead group's history stream and answered
+200 - the outbox would have marked the message sent. The delivery service now runs that check on
+an empty roster too, for every non-handshake frame (`messaging.send-race.spec.ts`). Expected: ~150-250 ms per text or control send.
 
 | Mi 9T, local APKs against dev, n=6 each, ms after the send click | without | F11 |
 | --- | ---: | ---: |
