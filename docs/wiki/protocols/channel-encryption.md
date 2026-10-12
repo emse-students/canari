@@ -820,6 +820,19 @@ holding both the seed layer and the conversations - and a repair landing with no
 rather than passing silently. `truncated` is on the wire for the same reason: *"this is all there
 is"* and *"this is all I could send"* are different facts, and only one of them means ask again.
 
+**Inside a drain, ONE re-read per salon, at the drain's end (2026-10-12).** Announcing on arrival
+re-read the salon once PER SEED: a device coming back drains every seed its members minted while it
+was away, and a production web console (`v1.2.5`) showed 26 new seeds for 3 salons in 1.8 s become 26
+history reloads - 52 requests (`messages?limit=200` + `read-marks`), 14 of them for one salon, each
+re-decrypting the page. The announcement is now HELD while a bulk-ingest window is open
+(`holdGraineRepairs` / `releaseGraineRepairs` in `graine/runtime.ts`, registered as a
+`BulkIngestObserver` in `sessionAuth`) and released as one set of distinct salons when the outermost
+window closes. **The window is the drain itself, not a timer**: `beginBulkIngest`/`endBulkIngest`
+pair exactly, and their close is the one moment after which a re-read sees every seed the drain
+brought. Outside a drain (a live seed on an idle socket) the announcement is immediate, as before.
+Pinned by a count: 26 seeds for 3 salons inside one window -> one announcement naming 3 salons
+(`frameHandler.test.ts`).
+
 **A seed arriving disarms its ask.** `forgetAskedSession` is called on every path that ends with the
 device holding the session, so the asked-set holds only requests still outstanding. It existed with
 **no caller at all** until WP-63 - the same shape as `deleteGraineSessionsForWorkspace` before WP-60,
