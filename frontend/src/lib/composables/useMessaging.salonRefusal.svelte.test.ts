@@ -62,8 +62,10 @@ describe('a salon text send', () => {
   });
 
   it('shows the row at once and re-keys it to the server id on the answer', async () => {
-    let answer: (id: string) => void = () => {};
-    sendMock.mockImplementation(() => new Promise<string>((resolve) => (answer = resolve)));
+    let answer: (row: { id: string; serverMs?: number }) => void = () => {};
+    sendMock.mockImplementation(
+      () => new Promise<{ id: string; serverMs?: number }>((resolve) => (answer = resolve))
+    );
     const { useMessaging } = await import('./useMessaging.svelte');
     const messaging = useMessaging();
     const ctx = makeContext();
@@ -78,11 +80,15 @@ describe('a salon text send', () => {
     expect(echo.status).toBe('sending');
     expect(echo.id).toBe(sendMock.mock.calls[0][2]);
 
-    answer('server-row-1');
+    answer({ id: 'server-row-1', serverMs: 1_000 });
     expect(await done).toBe(true);
 
     expect(rows(ctx)).toHaveLength(1);
-    expect(rows(ctx)[0]).toMatchObject({ id: 'server-row-1', status: 'sent' });
+    expect(rows(ctx)[0]).toMatchObject({
+      id: 'server-row-1',
+      status: 'sent',
+      serverTimestamp: 1_000,
+    });
     expect(rows(ctx)[0].awaitingServerId).toBeUndefined();
     expect(ctx.playSendTone).toHaveBeenCalledTimes(1);
   });
@@ -101,7 +107,7 @@ describe('a salon text send', () => {
     expect(rows(ctx)[0]).toMatchObject({ status: 'error', awaitingServerId: true });
     const localId = rows(ctx)[0].id;
 
-    sendMock.mockResolvedValueOnce('server-row-2');
+    sendMock.mockResolvedValueOnce({ id: 'server-row-2' });
     await messaging.retrySend(ctx, localId);
 
     // Same client id sent again (it is what the broadcast frame is matched on), one row left.
@@ -128,8 +134,10 @@ describe('a salon text send', () => {
   });
 
   it('keeps the text in the unsent ledger until the server answers, then forgets it', async () => {
-    let answer: (id: string) => void = () => {};
-    sendMock.mockImplementation(() => new Promise<string>((resolve) => (answer = resolve)));
+    let answer: (row: { id: string; serverMs?: number }) => void = () => {};
+    sendMock.mockImplementation(
+      () => new Promise<{ id: string; serverMs?: number }>((resolve) => (answer = resolve))
+    );
     const { useMessaging } = await import('./useMessaging.svelte');
     const { takeOrphanedSalonTexts } = await import('$lib/utils/chat/salonUnsent');
     const messaging = useMessaging();
@@ -143,7 +151,7 @@ describe('a salon text send', () => {
     const { recordUnsentSalonText } = await import('$lib/utils/chat/salonUnsent');
     recordUnsentSalonText('me', orphans[0]);
 
-    answer('srv');
+    answer({ id: 'srv' });
     await done;
     expect(takeOrphanedSalonTexts('me', CHANNEL, new Set())).toEqual([]);
   });

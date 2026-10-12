@@ -423,7 +423,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           conversations,
           convoKey,
           innerMessageId,
-          { kind: 'settled', serverId: renderedId },
+          { kind: 'settled', serverId: renderedId, serverMs: channelServerMs },
           log
         );
       }

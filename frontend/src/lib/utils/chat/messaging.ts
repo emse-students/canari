@@ -90,7 +90,7 @@ async function deliverSalonSend(
 ): Promise<string | null> {
   deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'sending' });
   try {
-    const serverId = await sendEncryptedChannelMessage(
+    const row = await sendEncryptedChannelMessage(
       send.channelId,
       send.payload,
       messageId,
@@ -99,7 +99,11 @@ async function deliverSalonSend(
     );
     salonSends.delete(messageId);
     clearUnsentSalonText(deps.userId, messageId);
-    deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'settled', serverId });
+    deps.patchSalonEcho(send.conversationKey, messageId, {
+      kind: 'settled',
+      serverId: row?.id ?? null,
+      serverMs: row?.serverMs,
+    });
     return null;
   } catch (error: unknown) {
     // THE ONLY ONE OF THE PARKED SEND SITES THAT CARRIES AN HTTP STATUS, which is why it is the

@@ -334,11 +334,20 @@ export function isChannelConversationId(conversationId: string): boolean {
  * seal, not discovered by a refusal afterwards. *Never learn by failing what a fact could have
  * told you.*
  *
- * Resolves with the id of the row the server created. `null` is a TYPED outcome, not a failure: the
- * server took the message but its reply carried no id, so the sender's echo stays addressable only by
- * its client id until the broadcast frame or the next history load brings the other half. It is
- * logged as an error, because the server always sends one - a reply without it is a contract break.
+ * Resolves with the row the server created: its id and its `createdAt`, the clock every salon row is
+ * dated by. `null` is a TYPED outcome, not a failure: the server took the message but its reply
+ * carried no id, so the sender's echo stays addressable only by its client id until the broadcast
+ * frame or the next history load brings the other half. It is logged as an error, because the server
+ * always sends one - a reply without it is a contract break.
  */
+/** The server's own row for a salon message it accepted (WP-OFF-2). */
+export interface ChannelRowAck {
+  /** The id the server minted - what react, edit, delete and pin address. */
+  id: string;
+  /** Its `createdAt` in ms, or undefined when the reply did not carry a readable one. */
+  serverMs?: number;
+}
+
 export async function sendEncryptedChannelMessage(
   channelId: string,
   payloadBytes: Uint8Array,
@@ -346,7 +355,7 @@ export async function sendEncryptedChannelMessage(
   poll?: ChannelPollInput,
   mentionedUserIds?: string[],
   options?: { silent?: boolean }
-): Promise<string | null> {
+): Promise<ChannelRowAck | null> {
   const channel = rawChannelId(channelId);
   const sealed = await sealChannelMessage(channel, payloadBytes);
   const row = await channelService.sendMessage(channel, {
@@ -363,7 +372,9 @@ export async function sendEncryptedChannelMessage(
       : { seedFrame: sealed.seedFrame, seedGroupId: sealed.seedGroupId }),
   });
   // The id the SERVER gave its row, which the sender's own echo is re-keyed to (WP-OFF-2).
-  if (typeof row?.id === 'string' && row.id) return row.id;
+  if (typeof row?.id === 'string' && row.id) {
+    return { id: row.id, serverMs: parseServerTimestampMs(row.createdAt) };
+  }
   console.error(
     `[CHANNEL] send of ${channel.slice(0, 8)} was accepted but the reply carries no row id (got ${typeof row?.id})`
   );

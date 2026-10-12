@@ -50,6 +50,32 @@ describe('nextEchoMessages', () => {
     expect(nextEchoMessages(next!, 'local', { kind: 'settled' })).toBeNull();
   });
 
+  it('takes the server clock when the answer carries it, and sorts by it', () => {
+    // The author's clock ran 2 s ahead: the echo was drawn at 5000, the server stamped it 3000, and
+    // somebody else's message stamped 4000 was already drawn below it.
+    const theirs = row('theirs', { isOwn: false, timestamp: new Date(4000) });
+    const next = nextEchoMessages(
+      [
+        row('a', { timestamp: new Date(1000) }),
+        { ...echo('local'), timestamp: new Date(5000) },
+        theirs,
+      ],
+      'local',
+      { kind: 'settled', serverId: 'srv', serverMs: 3000 }
+    );
+    expect(next?.map((m) => m.id)).toEqual(['a', 'srv', 'theirs']);
+    expect(next?.[1]).toMatchObject({ serverTimestamp: 3000 });
+    expect(next?.[1].timestamp.getTime()).toBe(3000);
+
+    const later = nextEchoMessages(
+      [echo('local'), row('theirs', { isOwn: false, timestamp: new Date(2000) })],
+      'local',
+      { kind: 'settled', serverId: 'srv', serverMs: 3000 }
+    );
+    // The server put theirs FIRST: the settled row moves below it, as every other device shows it.
+    expect(later?.map((m) => m.id)).toEqual(['theirs', 'srv']);
+  });
+
   it('a second answer is a no-op', () => {
     const settled = nextEchoMessages([echo()], 'local', { kind: 'settled', serverId: 'srv' })!;
     expect(nextEchoMessages(settled, 'local', { kind: 'settled', serverId: 'srv' })).toBeNull();

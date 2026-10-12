@@ -17,8 +17,11 @@ import { publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
 export type SalonEchoChange =
   /** The send is in flight, or the server refused it: the row says so, nothing else moves. */
   | { kind: 'state'; status: 'sending' | 'error' | 'pending' }
-  /** The server has the message. `serverId` is its row id when this answer carries it. */
-  | { kind: 'settled'; serverId?: string | null };
+  /**
+   * The server has the message. `serverId` is its row id and `serverMs` its `createdAt` when this
+   * answer carries them.
+   */
+  | { kind: 'settled'; serverId?: string | null; serverMs?: number };
 
 /**
  * The messages after `change`, or `null` when nothing changed (no flagged row under `localId`, or
@@ -41,20 +44,50 @@ export function nextEchoMessages(
   }
 
   const { serverId } = change;
+  // ONE CLOCK FOR EVERY SALON ROW. The echo was drawn at the author's `sentAt`; the server's row is
+  // dated by its `createdAt` on both the live and the history path, and read marks compare against
+  // that column. A settled echo keeping the author's clock would sort, and anchor "seen by", by a
+  // time no other device uses for it - ahead of the server's by up to seconds on production.
+  const dated =
+    change.serverMs !== undefined && Number.isFinite(change.serverMs)
+      ? { timestamp: new Date(change.serverMs), serverTimestamp: change.serverMs }
+      : {};
   if (serverId && serverId !== localId) {
     // The other answer got here first and already put the server's row in the list: the echo is the
     // duplicate, and it is the one that goes.
     if (messages.some((m) => m.id === serverId)) return messages.filter((m, i) => i !== idx);
-    const next = [...messages];
-    next[idx] = { ...row, id: serverId, status: 'sent', awaitingServerId: undefined };
-    return next;
+    return placeAt(messages, idx, {
+      ...row,
+      ...dated,
+      id: serverId,
+      status: 'sent',
+      awaitingServerId: undefined,
+    });
   }
   // No server id in this answer: the message is safe, but the row stays addressable only by the
   // client id until the broadcast frame brings the other half.
   if (row.status === 'sent') return null;
-  const next = [...messages];
-  next[idx] = { ...row, status: 'sent' };
-  return next;
+  return placeAt(messages, idx, { ...row, ...dated, status: 'sent' });
+}
+
+/**
+ * `messages` with the row at `idx` replaced by `updated`, moved only as far as its (server) time
+ * requires.
+ *
+ * The echo was appended at the author's click; the server may have stamped a message from somebody
+ * else, already drawn below the echo, EARLIER than ours. Leaving the row where it was would show the
+ * two in an order no other device shows and the next history load would reverse. Most of the time
+ * the row is already in place and this is a replacement; nothing ever moves past a row with the same
+ * time, so equal stamps keep the order they were drawn in.
+ */
+function placeAt(messages: ChatMessage[], idx: number, updated: ChatMessage): ChatMessage[] {
+  const rest = messages.filter((_, i) => i !== idx);
+  const at = updated.timestamp.getTime();
+  let insertAt = idx;
+  while (insertAt > 0 && rest[insertAt - 1].timestamp.getTime() > at) insertAt -= 1;
+  while (insertAt < rest.length && rest[insertAt].timestamp.getTime() < at) insertAt += 1;
+  rest.splice(insertAt, 0, updated);
+  return rest;
 }
 
 /**
