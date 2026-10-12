@@ -842,7 +842,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // salon row in memory is the community load's, kept with its messages; a stale one is pruned by
   // that load, never by this one.
   const keptSalons = new Set<string>();
-  for (const key of [...ctx.conversations.keys()]) {
+  for (const key of Array.from(ctx.conversations.keys())) {
     if (isChannelConversationId(key)) keptSalons.add(key);
     else ctx.conversations.delete(key);
   }
