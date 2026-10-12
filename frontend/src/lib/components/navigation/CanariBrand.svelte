@@ -18,9 +18,13 @@
   let { compact = false, fitContainer = false, subtitle: subtitleProp }: Props = $props();
   const subtitle = $derived(subtitleProp ?? m.brand_subtitle());
 
-  /** Every May 27th, a small tribute replaces the brand name. */
+  /**
+   * Every May 27th, a small tribute replaces the brand name. The tribute is a French motto and stays
+   * French in every locale, but it is a user-visible string, so it lives in the message catalogue.
+   */
   const now = new Date();
-  const brandName = now.getMonth() === 4 && now.getDate() === 27 ? 'À perte !' : 'Canari';
+  const brandName =
+    now.getMonth() === 4 && now.getDate() === 27 ? m.brand_tribute_name() : 'Canari';
 
   let brandRow = $state<HTMLDivElement | null>(null);
   let nameBlock = $state<HTMLDivElement | null>(null);
