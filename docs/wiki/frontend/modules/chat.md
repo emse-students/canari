@@ -2821,6 +2821,32 @@ the kind of thing a later refactor restores in good faith.
 swipe, so removing that gesture left a `$state` nothing ever set to `true` and a block that could
 never render - dead the moment the gesture was.
 
+### A double tap likes and does NOTHING else: the single tap waits out the window (2026-10-12)
+
+*"double tap pour liker ne doit pas aussi faire l'action du simple tap"* (user). On a phone the
+bubble's tap toggles `MessageInfoTooltip` (time, readers) and its double tap sends a heart. Both
+lived in one `onclick`: the first tap opened the panel AT ONCE and stamped `lastTapTime`, the second
+saw the 300 ms window, liked and closed the panel. So every heart flashed the readers' panel, and a
+like was always also a single tap.
+
+**THE STANDARD DISAMBIGUATION, AND ONE IMPLEMENTATION OF IT.** `utils/tapDisambiguator.ts` arms ONE
+timer of `GESTURE.DOUBLE_TAP_MS` (250 ms, the window `isDoubleTap` already read for the media
+viewer) on the first tap; a second tap inside it, within `DOUBLE_TAP_SLOP_PX`, cancels it and runs
+the double action alone. `MediaLightbox` had the same pattern written inline and now uses the same
+helper, so the bubble's private `300` literal is gone and the two surfaces cannot drift apart. The
+wait is paid ONLY where a second tap would change the answer (`heartOnDoubleTap`: a phone, a live
+message, `onReact` wired); a desktop bubble or a tombstone opens its panel immediately, as before.
+
+**AN INNER CONTROL OWNS ITS TAP.** Links, mentions and media buttons already stopped propagation;
+a poll option did not, so two quick votes were also a heart. `tapBelongsToInnerControl` now drops,
+at the bubble, any click whose target sits in a nested `a[href]`, `button`, form control or
+`role="button"`: it acted, and it neither opens the panel nor counts towards a heart. A long press
+that opens the action sheet cancels a pending tap; an unmounted bubble cancels its own.
+
+Pinned with counts on fake timers by `MessageBubble.doubleTap.svelte.test.ts` (single -> 1 open,
+0 likes; double -> 1 like, 0 opens; link and poll option -> 0 likes, 0 opens) and by
+`tapDisambiguator.test.ts`.
+
 ### The edge-swipe-back gesture had no target guard, and the back button sits inside its own edge zone (2026-09-22)
 
 *"you can only swipe page on no elements (if I swipe on a button, it doesn't click it, but doesn't
