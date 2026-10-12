@@ -283,6 +283,30 @@ The post menu's "Supprimer" deletes at once (`PostCard.handleDeletePost` calls t
 
 The slow-link badge (`slow-link-indicator`, `OfflineBanner.svelte`, a 28 px disc at the top right) is drawn over the `EnvironmentBanner` strip that only `dev.canari-emse.fr` shows. Production has no such banner, so no member sees it; it hides the badge from whoever reads a weak-network row on dev.
 
+## Seen in the 2026-10-12 web console log - what the audit left open
+
+Three minutes of a production web client idle on `/communities` ([web-console-log-audit](frontend/web-console-log-audit-2026-10-12.md), the ranked table and the counts). A and B are fixed in their own pull requests; these are not small enough to be.
+
+### P2 - one encrypted MLS checkpoint per inbound application message
+
+39 checkpoints in 197 s, median 348 ms, max 998 ms: `onBulkIngestEnd` marks the state dirty unconditionally, and every WebSocket frame is its own drain. Owed first: a performance trace splitting the WASM export (main thread) from the IndexedDB write, and the answer to what losing an application-only ratchet advance costs once the frame is acked. Only then decide between "flush on a commit, a welcome, hide and logout" and the current per-drain flush ([mlsStatePersister](../../frontend/src/lib/mls-client/mlsStatePersister.ts)).
+
+### P3 - 80 roster reads per connection for the stray-leaf sweep
+
+`removeStrayLeaves` reads `GET /api/mls/groups/<id>/user-members` once per held group (80 in 6.3 s, all `304`). A batched roster read, or a roster version carried by `/mls/users/<me>/groups`, needs a server endpoint.
+
+### P3 - the key-distribution groups are asked about twice per connection
+
+`forgetGroupsAbsentFromServer` runs from `initializeConnection` and from the discovery pass, and each sends `GET /api/mls/groups/<id>` for the same 8 distribution groups the registry restored before the drain already names. A fact held locally is fetched twice (sibling of the cold-start `/groups` item above).
+
+### P3 - an avatar 404 is the only way to learn a person has no photo
+
+10 of 28 avatar reads answered 404 on one load. The client already keeps the absence for the session; removing the first ask needs the user record to say whether a photo exists, which only MiGallery knows.
+
+### P3 - every PDF document opened spawns its own pdf.js worker
+
+`openPdfDocument` passes no `worker`, so each thumbnail and the reader start and tear down a worker of their own. One shared `PDFWorker` would remove the spawn per document; after the refetch fix this costs one spawn per PDF per mount, no longer per refetch.
+
 ## Open defects, in severity order
 
 ### P1 - owed: ONE live reading of the in-session join fix (2026-10-08)

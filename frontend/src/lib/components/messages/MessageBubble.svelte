@@ -4,7 +4,6 @@
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
-  import type { MediaRef } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import {
     logMediaFailure,
@@ -44,7 +43,7 @@
   import MessageMobileActions from './MessageMobileActions.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { settings } from '$lib/stores/settingsStore.svelte';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import {
     getUserDisplayNameSync,
     getUserFirstNameSync,
@@ -636,10 +635,23 @@
   });
   const orphanMedia = $derived(orphanCandidate && outboxHasEntry === false);
 
+  /**
+   * WHICH blob this row shows - a string, so it changes only when the attachment does.
+   *
+   * The download effect below is keyed on it rather than on `mediaRef`, because `mediaRef` is a
+   * fresh object every time the row's message is: a refetch of the thread hands each row a new
+   * message with the same content, the envelope is re-parsed, and an effect that read the OBJECT
+   * tore its blob URL down and downloaded it again. For a PDF that remounted the thumbnail, and
+   * every remount spawned a pdf.js worker - two worker loads per refetch on a salon with two PDFs
+   * ([web-console-log-audit](docs/wiki/frontend/web-console-log-audit-2026-10-12.md)). A media
+   * ref is never edited in place: one `mediaId` is one blob with one key.
+   */
+  const mediaBlobId = $derived(mediaRef?.mediaId || null);
+
   $effect(() => {
     // Empty mediaId = media still queued in the outbox (upload pending): leave blobUrl null
     // so MessageMediaRenderer shows its skeleton/spinner. Don't attempt a download (would 404).
-    if (!mediaRef || !mediaRef.mediaId || !authToken || !isNearViewport) return;
+    if (!mediaBlobId || !authToken || !isNearViewport) return;
     // A reel message's tile downloads nothing: its viewer does, on the tap.
     if (isReelMessageRow) return;
 
@@ -648,7 +660,10 @@
     let acquired = false;
     mediaFailure = null;
 
-    const ref: MediaRef = mediaRef;
+    // Read untracked: the ref of THIS blob, whichever re-parse of the content produced it.
+    const ref = untrack(() => mediaRef);
+    if (!ref) return;
+    Log.d('MESSAGE', `media ${mediaBlobId.slice(0, 8)}: download for row ${messageId.slice(0, 8)}`);
     // Leaves the gate's queue if the row is torn down before its turn comes.
     const abort = new AbortController();
 
