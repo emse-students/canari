@@ -40,13 +40,25 @@ history request answered by somebody else became, on every other open client, a 
 refetch, a re-decrypt of every attachment on screen, and one pdf.js worker per PDF thumbnail. Either
 fix alone removes most of it: A makes a refetch cheap, B makes it rare.
 
+## One worker for every PDF (shipped after the audit)
+
+After A, a PDF still cost one pdf.js worker per MOUNT: `openPdfDocument` handed `getDocument` no
+`worker`, so pdf.js created one per loading task and terminated it in `destroy()` - a fetch of the
+1 MB `pdf.worker.min` script (from cache), its parse and its start-up for a cover that renders in
+55-80 ms. `pdfDocument.ts` now creates ONE `PDFWorker` on the first document and hands it to every
+`getDocument`; pdf.js destroys only a worker it created itself, so `destroy()` frees the document
+and leaves the worker for the next one. A worker whose start-up failed is dropped, so the next
+document can try again. Pinned by a count, not a clock: four documents opened and destroyed start
+one worker ([pdfDocument test](../../../frontend/src/lib/utils/pdfDocument.test.ts)). Found by the 2026-10-12
+performance audit.
+
 ## How to re-measure
 
 Open a salon holding a PDF attachment on the web client with the console persisted, wait for a seed
 bundle on its community (any member returning, or a new member), then count:
 
 ```sh
-grep -c "pdf.worker" console.log                    # expected 1 per PDF per mount, not per refetch
+grep -c "pdf.worker" console.log                    # expected 1 per session, whatever the number of PDFs
 grep -c "/messages?limit" console.log               # expected only for bundles that were new
 grep -o "checkpoint persisted. ([0-9]* ms)" console.log | wc -l
 ```
