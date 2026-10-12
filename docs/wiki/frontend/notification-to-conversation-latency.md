@@ -311,6 +311,30 @@ stub exists would make it readable ~1.2 s sooner, but phase 2 then rewrites the 
 entry, and whether that write can lose a message added in between has not been established - so it
 is written down, not built.
 
+### What is left after F9, F10 and F11, ranked by evidence (2026-10-12)
+
+1. **The notified message waits for the end of the restore** (above): ~1.2 s on a killed open, the
+   largest remaining gap for the row the person tapped for.
+2. **Mounting the thread is ~0.3-0.35 s of main thread, warm or killed.** CPU profiles (CDP
+   `Profiler`, 200 us sampling, one warm and one killed run): the longest busy stretch is the
+   `/chat` route's Svelte flush (~190 ms warm) plus the layout it forces - `offsetHeight` read by
+   the composer-height effect (~35-46 ms) and `scrollHeight` read by the thread's scroll anchoring
+   (~40-55 ms), both simply the first layout of 60 freshly inserted rows (`insertBefore` ~44 ms
+   self). The lever is mounting fewer rows first (the newest screenful, then the rest), not a
+   single slow function.
+3. **Every request to the estate costs ~150-250 ms from the phone against a 25 ms ping to the
+   edge.** `tauri-plugin-http` 2.8.1 builds a new `reqwest` client per `fetch` (no connection
+   reuse, read in its source), but that is NOT the cost: the same GET took 142-251 ms through the
+   plugin and 237-389 ms through the WebView's own pooled `fetch` (`httpprobe`, n=8 each). The floor
+   is the path behind the edge, an infrastructure question.
+4. **Warm, the deep link is parsed 0.1-0.8 s after the tap** and the route renders behind it; the
+   resume preparation (F5) is the same main thread.
+
+**Instrument caveat**: the in-page recorder's PIN-gate predicate reads `document.body.innerText`
+every 16 ms, which the profile shows costing ~100 ms of main thread inside the landing window. It
+weighs on every build equally, so the comparisons hold, but absolute numbers are a little worse
+than a person's.
+
 ## iOS (iPhone 12) - NOT measured
 
 The WebDriverAgent answered, but the installed build is a TestFlight build with no WebKit inspector
