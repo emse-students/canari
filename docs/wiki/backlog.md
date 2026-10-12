@@ -312,10 +312,6 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 10 of 28 avatar reads answered 404 on one load. The client already keeps the absence for the session; removing the first ask needs the user record to say whether a photo exists, which only MiGallery knows.
 
-### P3 - every PDF document opened spawns its own pdf.js worker
-
-`openPdfDocument` passes no `worker`, so each thumbnail and the reader start and tear down a worker of their own. One shared `PDFWorker` would remove the spawn per document; after the refetch fix this costs one spawn per PDF per mount, no longer per refetch.
-
 ## Open defects, in severity order
 
 ### P1 - owed: ONE live reading of the in-session join fix (2026-10-08)
