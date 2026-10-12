@@ -242,7 +242,11 @@ that overlaps it. On a session that expired and on an identity split, the redire
 comes first, the withdrawal second, and the login flag is released last. It also runs in the login's
 `catch`. On the revoked branch it runs first, then the read is allowed to finish (the store is
 already open there, so this cannot hang), and only then does `wipeRevokedDevice` start. Leaving the
-landing before the session is up discards the preview, and so does leaving the chat page while the
+landing before the session is up discards the preview, and so does a SECOND notification tapped
+before it is up: the landing then names another conversation, and the first preview would otherwise
+stay selected under it, open to a reply the reader meant for the other thread (found in review,
+2026-10-13; the effect compares the pending target with the previewed key, not with `null`). So
+does leaving the chat page while the
 preview is selected: the page reports the held sends, discards the preview and clears the landing. The restore that follows a
 successful login keeps that one row's page through its prune of the non-salon rows (`preserveMessagesOf`), so the
 thread does not go blank while Phase 2 waits on the network.

@@ -328,14 +328,23 @@
    * A preview exists only to show the landing's target. If the reader leaves the landing before
    * the session is up (Back out of the thread, another tab), the row comes off the screen: left in
    * place it would be a conversation list of one, open to taps that would act with no session.
+   *
+   * A SECOND notification tapped before the session is up is the same case: the landing now names
+   * another conversation, and the preview drawn for the first one would stay selected under it -
+   * the reader would see, and type into, a thread they did not open. The preview is keyed by the
+   * landing target it was drawn for (`previewLandingTarget` stores `notifNav.pending`), so any other
+   * pending target, or none, ends it.
    */
   $effect(() => {
     const previewed = globalConvs.landingPreviewKey;
     if (previewed === null || globalSession.isLoggedIn) return;
-    if (notifNav.pending !== null) return;
+    const pending = notifNav.pending;
+    if (pending === previewed) return;
     untrack(() =>
       globalConvs.discardLandingPreview(
-        'the landing was left before the session came up',
+        pending === null
+          ? 'the landing was left before the session came up'
+          : `another landing (${pending.slice(0, 8)}) replaced it before the session came up`,
         globalMessaging.messageReactions,
         appendLog
       )

@@ -922,10 +922,18 @@
       if (previewing) return;
       const dropped = heldSends.drop();
       heldCount = 0;
+      // A second notification replaced the landing: the sign-in did not fail, the conversation
+      // changed - which is what the member must be told, not "the sign-in did not complete".
+      const pending = notifNav.pending;
+      const replaced = pending !== null && dropped.some((h) => h.target !== pending);
       reportUnsent(
         dropped,
-        'the preview was withdrawn before the session came up',
-        m.chat_send_held_not_sent({ count: dropped.length })
+        replaced
+          ? `another landing (${pending.slice(0, 8)}) replaced the preview before the session came up`
+          : 'the preview was withdrawn before the session came up',
+        replaced
+          ? m.chat_send_held_misdirected({ count: dropped.length })
+          : m.chat_send_held_not_sent({ count: dropped.length })
       );
     });
   });

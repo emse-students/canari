@@ -104,6 +104,18 @@ describe('the landing effect before the session', () => {
     expect(preSession).toContain('globalConvs.previewSelect(displayedKey)');
     expect(preSession).not.toMatch(/loadHistoryForConversation|selectConversation\(/);
   });
+
+  it('ends the preview when a second landing names another conversation, not only when none is pending', () => {
+    const effect = landing.slice(
+      at(
+        landing,
+        'const previewed = globalConvs.landingPreviewKey;\n    if (previewed === null || globalSession.isLoggedIn) return;'
+      )
+    );
+    const body = effect.slice(0, at(effect, 'discardLandingPreview('));
+    expect(body).toContain('if (pending === previewed) return;');
+    expect(body).not.toContain('if (notifNav.pending !== null) return;');
+  });
 });
 
 describe('the chat page during a local preview', () => {
