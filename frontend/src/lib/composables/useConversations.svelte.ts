@@ -301,22 +301,25 @@ export function useConversations() {
   // ── Derived ───────────────────────────────────────────────────────────────
   /**
    * Resolves the open conversation synchronously.
-   * Iterates the map so Svelte 5 tracks set/delete; shallow-clones the entry so prop
-   * consumers (ChatArea on Android WebView) always see a fresh reference when messages
-   * or flags change.
+   *
+   * READ BY KEY, NEVER BY ITERATION. `SvelteMap.get(key)` tracks that key's own source - bumped when
+   * the key is set to a new value or deleted - plus the map's version while the key is absent, so it
+   * also sees the conversation arrive. Iterating the map, which this used to do, subscribes to EVERY
+   * key's source: a message landing in any of a heavy account's ~220 conversations and salons re-ran
+   * this, handed ChatArea a new object, and regrouped the open thread's whole history (`groupMessages`,
+   * the seen-by pass, the poll parse, the unread count) - several full passes over a 5k-message thread
+   * per frame received elsewhere. Every write path stores a NEW object (`set(key, { ...convo, ... })`),
+   * which is what a key source compares; a same-object `set` never notified anybody, iterated or not.
+   *
+   * Shallow-clones the entry so prop consumers (ChatArea on Android WebView) see a fresh reference
+   * whenever the open conversation itself changes.
    */
   const currentConvo = $derived.by(() => {
     const key = selectedContact;
     if (!key) return null;
-    for (const [k, v] of conversations) {
-      if (k !== key) continue;
-      void v.messages.length;
-      void v.lastMessageAt;
-      void v.lifecycle;
-      void v.unreadCount;
-      return { ...v, messages: v.messages };
-    }
-    return null;
+    const v = conversations.get(key);
+    if (!v) return null;
+    return { ...v, messages: v.messages };
   });
 
   /**

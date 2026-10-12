@@ -990,17 +990,37 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
 
     const terminalId = entry.conversationId;
-    const groupMeta = await mlsService.getGroupMeta(terminalId).catch(() => null);
+    const sendable = deps.isGroupHealthy(terminalId);
 
-    // Group deleted server-side: one of the two permanent failures.
-    if (groupMeta?.deletedAt) {
-      return failPermanently(entry, terminalId, 'group-deleted');
+    // GROUP DELETED SERVER-SIDE - ASKED ONLY WHERE THE ANSWER CHANGES WHAT HAPPENS NEXT.
+    //
+    // `GET /api/mls/groups/:id` was asked before EVERY send, and on a text reply it was the largest
+    // single step of the flush: 148-245 ms of a ~450 ms flush on the Mi 9T (2026-10-12, dev), one
+    // full round trip before the encrypt. For a sendable group the POST asks the same question
+    // atomically - the delivery service refuses a deleted group with a typed 410
+    // (`GroupDeletedError`, the `group-deleted` arm in the catch below), which reaches the same
+    // `failPermanently` with the same cause - and the pre-flight could never be the whole answer
+    // anyway, since a deletion can land inside its round trip. So it is asked where the POST is NOT
+    // the next step:
+    //  - an unsendable group goes to the re-add below, which never reaches the server's refusal: a
+    //    deleted group there would be re-added for ever instead of retired;
+    //  - a media entry uploads its file before the POST, and a deleted group must not cost that.
+    if (!sendable || entry.kind === 'media') {
+      const groupMeta = await mlsService.getGroupMeta(terminalId).catch((e: unknown) => {
+        log(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… group ${terminalId.slice(0, 8)}… unreadable before the send (${String(e).slice(0, 80)}) - the send path decides`
+        );
+        return null;
+      });
+      if (groupMeta?.deletedAt) {
+        return failPermanently(entry, terminalId, 'group-deleted');
+      }
     }
 
     // Group not sendable yet: trigger recovery (external join / welcome_request) and retry later.
     // Logged because this branch holds a message back indefinitely while reporting nothing: a
     // conversation stuck here looks, from the outside, exactly like a message that was delivered.
-    if (!deps.isGroupHealthy(terminalId)) {
+    if (!sendable) {
       await deps
         .requestReAdd(terminalId)
         .catch((e) =>
@@ -1148,14 +1168,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             )
           );
       }
-      // THE GROUP ENDED WHILE THIS FRAME WAS IN FLIGHT, which the pre-flight `deletedAt` check
-      // above cannot catch: it reads that fact over a round trip and the deletion lands inside it.
-      // The same permanent disposition it would have taken, reached from the server's answer
-      // instead of from a local read - one `cause`, so a reader cannot tell the two apart and does
-      // not have to.
+      // THE SERVER SAYS THE GROUP IS GONE. For a sendable text or control entry this is where a
+      // deletion is learnt at all (no pre-flight is asked, see above); for a media entry it is a
+      // deletion that landed after the pre-flight read the group as alive. The same permanent
+      // disposition either way - one `cause`, so a reader cannot tell the seams apart and does not
+      // have to.
       if (kind === 'group-deleted') {
         log(
-          `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED: ${terminalId.slice(0, 8)}… was deleted while this frame was in flight, after the pre-flight check read it as alive`
+          `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED: ${terminalId.slice(0, 8)}… is deleted on the server (410 on this frame)`
         );
         return failPermanently(entry, terminalId, 'group-deleted');
       }
