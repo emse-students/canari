@@ -379,25 +379,29 @@
    * readers' panel. The single tap now waits out the double-tap window in `tapDisambiguator`, and
    * only where a second tap could mean something (`heartOnDoubleTap`); elsewhere it is immediate.
    */
-  const bubbleTaps = createTapDisambiguator({
-    onSingle: () => {
-      Log.d('MESSAGE', `bubble tap on ${messageId.slice(0, 8)}: single, info panel`);
-      emojiPickerOrigin = null;
-      showInfo = !showInfo;
+  const bubbleTaps = createTapDisambiguator(
+    {
+      onSingle: () => {
+        Log.d('MESSAGE', `bubble tap on ${messageId.slice(0, 8)}: single, info panel`);
+        emojiPickerOrigin = null;
+        showInfo = !showInfo;
+      },
+      onDouble: () => {
+        Log.d('MESSAGE', `bubble tap on ${messageId.slice(0, 8)}: double, heart`);
+        showInfo = false;
+        onReact?.(messageId, '❤️');
+        if (
+          settings.vibrationsEnabled &&
+          typeof navigator !== 'undefined' &&
+          'vibrate' in navigator
+        ) {
+          navigator.vibrate(12);
+        }
+      },
     },
-    onDouble: () => {
-      Log.d('MESSAGE', `bubble tap on ${messageId.slice(0, 8)}: double, heart`);
-      showInfo = false;
-      onReact?.(messageId, '❤️');
-      if (
-        settings.vibrationsEnabled &&
-        typeof navigator !== 'undefined' &&
-        'vibrate' in navigator
-      ) {
-        navigator.vibrate(12);
-      }
-    },
-  });
+    // A third quick tap after a heart is part of the same gesture: no panel opens behind the like.
+    { quietAfterDouble: true }
+  );
   // A bubble unmounted mid-window must not open a panel on a component that is gone.
   $effect(() => () => bubbleTaps.cancel());
 
@@ -873,6 +877,8 @@
             ontouchcancel={endSwipeReply}
             oncontextmenu={(e) => {
               e.preventDefault();
+              // The sheet supersedes a tap still waiting out the double-tap window.
+              bubbleTaps.cancel();
               if (isDeleted) return; // see the long-press timer: the sheet has no items on a tombstone
               showMobileActions = true;
             }}

@@ -109,6 +109,29 @@ describe('MessageBubble single tap versus double tap', () => {
     expect(opens).toBe(0);
   });
 
+  it('three quick taps are one like and no panel: tap 3 is swallowed by the like it follows', () => {
+    const bubble = render();
+    tap(bubble);
+    vi.advanceTimersByTime(80);
+    tap(bubble);
+    vi.advanceTimersByTime(80);
+    tap(bubble);
+    vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+    sample();
+    expect(reactions).toEqual([['m1', '❤️']]);
+    expect(opens).toBe(0);
+  });
+
+  it('a context menu (the long press of a phone browser) cancels a pending tap: no panel opens', () => {
+    const bubble = render();
+    tap(bubble);
+    bubble.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+    sample();
+    expect(opens).toBe(0);
+    expect(reactions).toHaveLength(0);
+  });
+
   it('two taps further apart than the window are two single taps, not a like', () => {
     const bubble = render();
     tap(bubble);

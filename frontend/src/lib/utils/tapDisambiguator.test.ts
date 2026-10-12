@@ -32,13 +32,42 @@ describe('createTapDisambiguator', () => {
     expect([singles, doubles]).toEqual([0, 1]);
   });
 
-  it('a second tap too far away settles the first as single and starts a new sequence', () => {
+  it('a second tap too far away REPLACES the pending one: one single, for the newer tap', () => {
+    const seen: number[] = [];
+    const taps = createTapDisambiguator({
+      onSingle: (t) => seen.push(t.x),
+      onDouble: () => (doubles += 1),
+    });
+    taps.tap({ x: 0, y: 0, t: 0 });
+    const far = GESTURE.DOUBLE_TAP_SLOP_PX * 3;
+    taps.tap({ x: far, y: 0, t: 100 });
+    vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+    expect([seen, doubles]).toEqual([[far], 0]);
+  });
+
+  it('without quietAfterDouble, a third quick tap starts a fresh sequence (the viewer)', () => {
     const taps = make();
     taps.tap({ x: 0, y: 0, t: 0 });
-    taps.tap({ x: GESTURE.DOUBLE_TAP_SLOP_PX * 3, y: 0, t: 100 });
-    expect([singles, doubles]).toEqual([1, 0]);
+    taps.tap({ x: 0, y: 0, t: 100 });
+    taps.tap({ x: 0, y: 0, t: 200 });
+    vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+    expect([singles, doubles]).toEqual([1, 1]);
+  });
+
+  it('with quietAfterDouble, a third quick tap is swallowed by the double it follows', () => {
+    const taps = createTapDisambiguator(
+      { onSingle: () => (singles += 1), onDouble: () => (doubles += 1) },
+      { quietAfterDouble: true }
+    );
+    taps.tap({ x: 0, y: 0, t: 0 });
+    taps.tap({ x: 0, y: 0, t: 100 });
+    taps.tap({ x: 0, y: 0, t: 200 });
+    vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+    expect([singles, doubles]).toEqual([0, 1]);
+    // Past that window, a tap is a new sequence again.
+    taps.tap({ x: 0, y: 0, t: 100 + GESTURE.DOUBLE_TAP_MS + 1 });
     vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
-    expect([singles, doubles]).toEqual([2, 0]);
+    expect([singles, doubles]).toEqual([1, 1]);
   });
 
   it('cancel drops a pending single tap', () => {

@@ -2830,22 +2830,36 @@ saw the 300 ms window, liked and closed the panel. So every heart flashed the re
 like was always also a single tap.
 
 **THE STANDARD DISAMBIGUATION, AND ONE IMPLEMENTATION OF IT.** `utils/tapDisambiguator.ts` arms ONE
-timer of `GESTURE.DOUBLE_TAP_MS` (250 ms, the window `isDoubleTap` already read for the media
-viewer) on the first tap; a second tap inside it, within `DOUBLE_TAP_SLOP_PX`, cancels it and runs
-the double action alone. `MediaLightbox` had the same pattern written inline and now uses the same
-helper, so the bubble's private `300` literal is gone and the two surfaces cannot drift apart. The
-wait is paid ONLY where a second tap would change the answer (`heartOnDoubleTap`: a phone, a live
+timer of `GESTURE.DOUBLE_TAP_MS` on the first tap; a second tap inside it, within
+`DOUBLE_TAP_SLOP_PX`, cancels it and runs the double action alone. `MediaLightbox` had the same
+pattern written inline and now uses the same helper, behaviourally unchanged, so the bubble's private
+`300` literal is gone and the two surfaces cannot drift apart. **The window is 250 ms, decided (user,
+2026-10-12)**: the like's tolerance went from 300 to 250 ms, and the single tap answers 50 ms sooner.
+The wait is paid ONLY where a second tap would change the answer (`heartOnDoubleTap`: a phone, a live
 message, `onReact` wired); a desktop bubble or a tombstone opens its panel immediately, as before.
+
+**THE EDGES OF A SEQUENCE, EACH DECIDED.**
+
+- **A second tap too FAR away replaces the pending one**: the single action runs once, for the newer
+  tap. That is what the viewer always did, and it is right for the bubble too: settling the first as
+  single and then the second would toggle the panel open and shut within a quarter second - the very
+  flash this fix removes.
+- **A completed like consumes its window** (`quietAfterDouble`, the bubble only): a third quick tap
+  is IGNORED - no second like, and no pending single that would open the panel behind the heart. Past
+  the window, a tap is a new sequence. The viewer keeps its old behaviour (a third tap starts afresh).
+- **A long press, or the `contextmenu` a phone browser fires for one, cancels a pending tap**: the
+  action sheet supersedes it. An unmounted bubble cancels its own.
 
 **AN INNER CONTROL OWNS ITS TAP.** Links, mentions and media buttons already stopped propagation;
 a poll option did not, so two quick votes were also a heart. `tapBelongsToInnerControl` now drops,
 at the bubble, any click whose target sits in a nested `a[href]`, `button`, form control or
-`role="button"`: it acted, and it neither opens the panel nor counts towards a heart. A long press
-that opens the action sheet cancels a pending tap; an unmounted bubble cancels its own.
+`role="button"`: it acted, and it neither opens the panel nor counts towards a heart.
 
 Pinned with counts on fake timers by `MessageBubble.doubleTap.svelte.test.ts` (single -> 1 open,
-0 likes; double -> 1 like, 0 opens; link and poll option -> 0 likes, 0 opens) and by
-`tapDisambiguator.test.ts`.
+0 likes; double -> 1 like, 0 opens; three quick taps -> 1 like, 0 opens; contextmenu -> 0 opens;
+link and poll option -> 0 likes, 0 opens), by `MediaLightbox.videoTap.svelte.test.ts` (a far second
+tap -> exactly 1 toggle of the bars) and by `tapDisambiguator.test.ts`. The triple-tap, far-tap and
+contextmenu tests were each proven by reverting the behaviour they pin.
 
 ### The edge-swipe-back gesture had no target guard, and the back button sits inside its own edge zone (2026-09-22)
 
