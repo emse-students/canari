@@ -140,11 +140,21 @@ export class SecurityController {
    *   { status: 'registered' }  - first device; verifier stored server-side.
    *   { status: 'ok' }          - verifier matches; PIN is consistent.
    *   { status: 'mismatch' }    - verifier differs; wrong PIN for this user.
+   *   { status: 'stale-salt' }  - the client derived its verifier from a salt this account no
+   *                               longer holds; nothing was compared, stored or reset.
+   *
+   * WHY `stale-salt` EXISTS: the salt only changes when a PIN reset deletes the row and the next
+   * `pin-salt` GET mints a new one. A client that asked for the salt BEFORE that reset (the keypad
+   * asks it while the person types) would otherwise send a verifier that cannot match - a correct
+   * new PIN answered `mismatch` - or, with no row left at all, REGISTER a verifier under a salt the
+   * server never stored, which the next GET then discards as a legacy row. The server is the only
+   * side that knows the salt changed, so it says so, as a status, and the client asks again.
+   * `salt` is optional: a client that does not send it is answered exactly as before.
    */
   @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/security/pin-check')
   async checkPinVerifier(
-    @Body() body: { userId: string; verifier: string; deviceId?: string },
+    @Body() body: { userId: string; verifier: string; deviceId?: string; salt?: string },
     @Headers('x-user-id') headerUserId?: string,
     @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
@@ -158,9 +168,18 @@ export class SecurityController {
       throw new BadRequestException('verifier format invalid');
     }
 
+    const safeSalt = sanitizeOptionalQueryValue(body.salt, 'salt');
+
     const doc = await this.pinVerifierRepo.findOne({
       where: { userId: safeUserId },
     });
+
+    if (safeSalt !== undefined && doc?.salt !== safeSalt) {
+      this.logger.log(
+        `[PIN_VERIFIER] stale salt for ${safeUserId} (row ${doc ? 'holds another salt' : 'absent'}) - nothing compared`
+      );
+      return { status: 'stale-salt', resetRequired: false };
+    }
 
     if (!doc || !doc.verifier || doc.verifier.length === 0) {
       if (doc) {

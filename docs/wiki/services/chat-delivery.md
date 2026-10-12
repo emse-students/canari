@@ -390,6 +390,17 @@ It reconciles against every **live** member, sender included. Reconciling agains
 instead left the sender - and any `excludeDeviceIds` entry - out for ever, which made the repair
 incomplete by construction.
 
+**A frame may narrow the recipient set, never widen it: `recipientDevices` (2026-10-12).** A Graine seed
+answer names the one device that asked, as `userId:deviceId`. `readAddressedDevices` refuses it on
+a commit or a Welcome, as an empty list, above 16 keys or as a malformed key. `sendMessage` also refuses it (`addressed_not_key_group`, 400) on any group that is
+not a key-distribution group: on a conversation group it would let a member show different
+ciphertexts to different members, each kept out of the history stream. `sendMessage` keeps only
+the resolved live members that match (user id compared lower-case) and logs `[SEND][trace]
+ADDRESSED matched=N of M`, or warns `ADDRESSED_NOBODY` when nobody matches. **An addressed frame is
+never appended to the history stream**: that stream is replayed to every member, and the frame
+belongs to one device's queue only. Why and what it costs:
+[channel-encryption §23](../protocols/channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12).
+
 ### The queue is bounded on ONE axis, and observed on the other
 
 `cleanupExpiredQueuedMessages` bounds the queue by AGE, and that is the only axis on which

@@ -31,11 +31,6 @@ export function markEpochGap(groupId: string): number {
   return now;
 }
 
-/** Returns the gap start timestamp (ms) for this group, or `undefined` if it is not in a gap. */
-export function getEpochGapSince(groupId: string): number | undefined {
-  return epochGapSince.get(groupId);
-}
-
 /** Clears a group's gap state (gap resolved by a commit, or escalation triggered). */
 export function clearEpochGap(groupId: string): void {
   epochGapSince.delete(groupId);

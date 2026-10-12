@@ -19,6 +19,13 @@ export interface FrameDelivery {
    * without a peer being online. False only for frames that carry no conversation state.
    */
   durable: boolean;
+  /**
+   * `userId:deviceId` keys the frame is ADDRESSED to, when it is meant for them and nobody else in
+   * the group. The server narrows the group's recipient set to these (never widens it) and keeps the
+   * frame out of the shared log, which every member reads. Absent = the whole group. Built by
+   * {@link addressedKeyMaterial} and nowhere else.
+   */
+  recipients?: readonly string[];
 }
 
 /**
@@ -55,3 +62,19 @@ export const DELIVERY = {
    */
   keyMaterial: { silent: true, durable: true },
 } as const satisfies Record<string, FrameDelivery>;
+
+/**
+ * A Graine answer to ONE device's seed request: key material, delivered to that device and to
+ * nobody else (channel-encryption section 23).
+ *
+ * Durable, for the reason {@link DELIVERY.keyMaterial} is - the requester may have no socket yet
+ * (a cold start asks over HTTP before it has one, COMM-18), and an answer dropped then strands the
+ * session. Addressed, because the answer used to be queued for EVERY seat of the key group: on
+ * production 2026-10-12 a seed bundle cost ~42 rows per payload on a 112-seat community, and bundles
+ * were 70 % of that group's queued bytes, for seeds nobody else had asked for.
+ *
+ * @param device The requesting device as `userId:deviceId`, the user id lower-cased.
+ */
+export function addressedKeyMaterial(device: string): FrameDelivery {
+  return { ...DELIVERY.keyMaterial, recipients: [device] };
+}

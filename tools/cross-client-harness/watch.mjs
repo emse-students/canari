@@ -687,12 +687,13 @@ const SEVERE = [
   // AN `endBulkIngest` WITH NO OPEN PHASE - a pairing defect, and the only line here the app
   // writes at `warn` rather than `error`, so without this rule it sat in `warnings` and never
   // broke `clean`. It is not reachable benignly: the sole pair is `onDrainStart`/`onDrainEnd`
-  // on one drain, kept single by the guard above. Reaching it means some earlier close popped a
-  // phase it did not open, so an observer's window closed against the wrong phase - which is
-  // exactly the state the code's own comment describes as stranding the pipeline for the rest
-  // of the session (`bulkIngestActive` raised, every later message buffered then discarded).
+  // on one drain, kept single by the guard above. Windows are closed BY HANDLE since 2026-10-12,
+  // so reaching it means a window was closed twice, or by a handle it never had - and the close
+  // that should have ended an observer's window did not, which is exactly the state the code's own
+  // comment describes as stranding the pipeline for the rest of the session (`bulkIngestActive`
+  // raised, every later message buffered then discarded).
   // `- ignored` is the disposition that makes it silent; this rule is what makes it audible.
-  /^\[QUEUE\] endBulkIngest without a matching beginBulkIngest - ignored$/,
+  /^\[QUEUE\] endBulkIngest for window \d+, which is not open - ignored \(closed twice\?\)$/,
   // A REPLAY THAT GAVE UP LOSES DURABLE PROGRESS AND SAID SO AT `[WARN]`, WHICH NOTHING READS.
   //
   // `replayConversationHistory` catches everything, logs one line and returns `undefined`, so the

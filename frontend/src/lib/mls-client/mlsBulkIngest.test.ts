@@ -5,12 +5,21 @@ describe('withMlsBulkIngest', () => {
     const calls: string[] = [];
     return {
       calls,
-      beginBulkIngest: vi.fn(() => calls.push('begin')),
-      endBulkIngest: vi.fn(async () => {
+      beginBulkIngest: vi.fn(() => {
+        calls.push('begin');
+        return 7;
+      }),
+      endBulkIngest: vi.fn(async (_handle: number) => {
         calls.push('end');
       }),
     };
   }
+
+  it('closes the window it opened, by its handle', async () => {
+    const svc = makeService();
+    await withMlsBulkIngest(svc, async () => undefined);
+    expect(svc.endBulkIngest).toHaveBeenCalledWith(7);
+  });
 
   it('opens before and closes after fn, returning its value', async () => {
     const svc = makeService();

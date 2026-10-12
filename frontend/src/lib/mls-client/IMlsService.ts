@@ -106,6 +106,13 @@ export interface DistributionFrame {
   groupId: string;
   /** Lower-cased sender user id. */
   sender: string;
+  /**
+   * The sending DEVICE the delivery envelope names, when it names one - what a seed answer is
+   * addressed to (channel-encryption section 23). Self-asserted by the sender, and that is enough
+   * for an address: the server delivers only to a `userId:deviceId` that is a live member of the
+   * group, so a lie about it reaches nobody else.
+   */
+  senderDeviceId?: string;
   /** The decrypted payload - a Graine control message, never a chat message. */
   plaintext: Uint8Array;
 }
@@ -235,8 +242,15 @@ export interface BulkIngestPhase {
 }
 
 /**
+ * Names one open bulk-ingest window: returned by `beginBulkIngest`, handed back to `endBulkIngest`
+ * so the close ends THAT window even when another opened after it is still open.
+ */
+export type BulkIngestHandle = number;
+
+/**
  * Observer of the bulk-ingest window lifecycle. Each `onBulkIngestStart` is paired with exactly
- * one `onBulkIngestEnd` receiving the same {@link BulkIngestPhase}, even when windows nest.
+ * one `onBulkIngestEnd` receiving the same {@link BulkIngestPhase}, even when windows nest or
+ * overlap.
  */
 export interface BulkIngestObserver {
   onBulkIngestStart(phase: BulkIngestPhase): void;
@@ -836,7 +850,12 @@ export interface IMlsService {
    * Decrypts a frame that arrived on a key-distribution group and hands it to the Graine handler.
    * Returns whether the frame may be acknowledged.
    */
-  routeDistributionFrame(groupId: string, sender: string, ciphertext: Uint8Array): Promise<boolean>;
+  routeDistributionFrame(
+    groupId: string,
+    sender: string,
+    ciphertext: Uint8Array,
+    senderDeviceId?: string
+  ): Promise<boolean>;
   /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
   /**
@@ -890,6 +909,20 @@ export interface IMlsService {
    * repeating. Free and silent when nothing was left behind.
    */
   notifyConversationsRestored(): void;
+
+  /**
+   * Tells the service every stored conversation now has a ROW, though none has its history yet.
+   *
+   * THE EARLY HALF OF {@link notifyConversationsRestored}. A frame refused as absent-conversation
+   * only lacked the row to land in, and the restore's first phase creates every row it will ever
+   * create - synchronously, before any history is read. Waiting for the end of the second phase
+   * (seconds of history replay on a cold start) delayed the very message a notification opened the
+   * app for by that much, measured at ~1.2 s on the bench phone. What makes asking this early safe
+   * is the order the second phase keeps with a live delivery: the pull is announced in the same
+   * tick, so each archive replay waits for it at its barrier and skips what it decrypted, and every
+   * later write of a row MERGES into it rather than replacing it.
+   */
+  notifyConversationRowsSeeded(): void;
 
   /**
    * One conversation now EXISTS locally, so any frame buffered for it can be asked for again.
@@ -1083,19 +1116,24 @@ export interface IMlsService {
   addBulkIngestObserver(observer: BulkIngestObserver): void;
 
   /**
-   * Opens a bulk-ingest window with the given {@link BulkIngestPhase}. Pair with
-   * {@link endBulkIngest}; prefer the {@link withMlsBulkIngest} helper which is exception-safe.
-   * Windows nest via an internal phase stack, so the encrypted checkpoint coalesces to one
-   * flush at the outermost close. Omitting `phase` opens a persistence-only window
-   * (no UI buffering, no overlay) - the default for {@link withMlsBulkIngest}.
+   * Opens a bulk-ingest window with the given {@link BulkIngestPhase} and returns the handle that
+   * closes it. Pair with {@link endBulkIngest}; prefer the {@link withMlsBulkIngest} helper which is
+   * exception-safe. The encrypted checkpoint coalesces to one flush when the last open window
+   * closes. Omitting `phase` opens a persistence-only window (no UI buffering, no overlay) - the
+   * default for {@link withMlsBulkIngest}.
    */
-  beginBulkIngest(phase?: BulkIngestPhase): void;
+  beginBulkIngest(phase?: BulkIngestPhase): BulkIngestHandle;
   /**
-   * Closes the innermost bulk-ingest window, replaying the exact {@link BulkIngestPhase} it was
-   * opened with so start and end are symmetric by construction. Resolves only after the encrypted
-   * checkpoint (if any) completes.
+   * Closes the window `handle` names, replaying the exact {@link BulkIngestPhase} it was opened
+   * with. Resolves only after every observer has been told.
+   *
+   * BY HANDLE, NOT "THE INNERMOST": windows OVERLAP, they do not only nest. The restore, a drain
+   * and a selected conversation's history load each open one, and a history load that opened
+   * during a drain and outlived it used to be the window the drain's close ended - the persist-only
+   * phase was replayed instead of the drain's UI one, so the drained message stayed in the UI
+   * buffer until the history load closed, ~0.6 s later on the bench phone (2026-10-12).
    */
-  endBulkIngest(): Promise<void>;
+  endBulkIngest(handle: BulkIngestHandle): Promise<void>;
 
   /**
    * Announce to all online members of `groupId` that this device needs a Welcome.

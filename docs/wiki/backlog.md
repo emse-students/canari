@@ -167,6 +167,10 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
 
+## P2 - Key-group requests sealed 3-6 epochs behind are unreadable by every current member (console export, 2026-10-12)
+
+Four senders' devices sealed seed requests at epochs 135-138 while the key group was at 141. No current member can open them (`max_past_epochs` 2), and each loss drives a re-ask. The drain order was REFUTED as the cause ([channel-encryption §23](protocols/channel-encryption.md#not-the-cause-the-drain-order)). **Candidate**: chat-delivery answers `stale_epoch` to an application frame on a key group whose MLS epoch is below active - 2, so the sender catches up and re-seals instead of sending something nobody can read. **First measure**: the `at epoch E` of the new `[GRAINE] asked` line, on the sender side, to find out which client versions lag.
+
 ## P2 - A notification tap takes 2.7 s to a usable conversation when killed, 5 s behind the PIN (measured 2026-10-11)
 
 **User goal: tap a message notification, be in the conversation, send a reply - extremely fluid, killed or backgrounded.** Mi 9T, `1.2.3-alpha.5`, dev, medians: warm **<= 0.35 s** to a usable composer; killed with "Rester connecte" **2.7 s**; killed behind the PIN **5.0 s** plus the human typing it; a reply is accepted 0.75-1.1 s after the send button. Ranked costs and the plan F1-F8: [notification-to-conversation-latency](frontend/notification-to-conversation-latency.md). **Since (2026-10-12)**: the heartbeat confirmed the feed as the contention and F2 (#1751, composer 5.06 -> 3.83 s) and F3 (#1752, gate 2.19 -> 1.74 s) are open; F5 was REFUTED (#1753: the resume starts ~50 ms after the tap, the warm wait is the `/chat` render). **Next**: F1 (route-first landing, the largest gain and also the warm lever, needs the user's call on drawing local history before the revocation answer); F4 is a user decision. **Owed**: the same readings on the iPhone (bench build with the inspector) and on a production-sized state.
@@ -298,7 +302,7 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 ### P2 - one encrypted MLS checkpoint per inbound application message
 
-39 checkpoints in 197 s, median 348 ms, max 998 ms: `onBulkIngestEnd` marks the state dirty unconditionally, and every WebSocket frame is its own drain. Owed first: a performance trace splitting the WASM export (main thread) from the IndexedDB write, and the answer to what losing an application-only ratchet advance costs once the frame is acked. Only then decide between "flush on a commit, a welcome, hide and logout" and the current per-drain flush ([mlsStatePersister](../../frontend/src/lib/mls-client/mlsStatePersister.ts)).
+39 checkpoints in 197 s, median 348 ms, max 998 ms: `onBulkIngestEnd` marks the state dirty unconditionally, and every WebSocket frame is its own drain. **The split is now measured** ([performance-audit](frontend/performance-audit-2026-10-12.md#finding-2-and-3-read-together---the-checkpoint-question-the-backlog-owed)): on a 7.7 MB state the main-thread export is 2.3 ms, the WASM ChaCha20 seal 141 ms (worker) and the IndexedDB put 31 ms, linear in the whole state. Still owed: what losing an application-only ratchet advance costs once the frame is acked. Only then decide between "flush on a commit, a welcome, hide and logout" and the current per-drain flush ([mlsStatePersister](../../frontend/src/lib/mls-client/mlsStatePersister.ts)).
 
 ### P3 - 80 roster reads per connection for the stray-leaf sweep
 
@@ -311,6 +315,38 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 ### P3 - an avatar 404 is the only way to learn a person has no photo
 
 10 of 28 avatar reads answered 404 on one load. The client already keeps the absence for the session; removing the first ask needs the user record to say whether a photo exists, which only MiGallery knows.
+
+## Seen in the 2026-10-12 heavy-state performance audit - what is open
+
+Ranked, measured and located on [performance-audit-2026-10-12](frontend/performance-audit-2026-10-12.md); five draft pull requests carry the rest (#1771-#1775).
+
+### P2 - the web checkpoint is 82 % WASM ChaCha20 seal
+
+141 ms of 175 ms per 7.7 MB checkpoint in desktop Chrome: `chacha20` has no WASM SIMD backend (~55 MB/s). A WebCrypto seal under the framed `state_blob` V1 version byte would cut it about five-fold with no durability change - a format decision.
+
+### P2 - IndexedDB message pages read the whole conversation
+
+`getMessagesPage` `getAll`s every row to return 50 (28-31 ms for 5000 rows); needs a `[conversationId, timestamp]` index (an IndexedDB version bump) and a reverse cursor. SQLite sorts in a temp B-tree for want of `(conversation_id, timestamp)`.
+
+### P3 - a Welcome re-runs the whole restore
+
+`sessionAuth.ts:1351,1364` call `loadAndRestoreConversations` per Welcome; a new device joining 80 groups restores 80 times.
+
+### P3 - the thread's render window only grows, with listeners per bubble
+
+`renderWindow.ts` never shrinks the mounted range; each `MessageBubble` adds a `matchMedia` and a non-passive `touchmove` listener, each toolbar a window `keydown`. Owed: a DOM-node and listener count on a seeded 5k thread.
+
+### P3 - the seen-cipher ledger is re-stringified per received frame
+
+The microtask flush in `history.ts:190-208` coalesces only marks of one synchronous turn; a drain awaits between frames, so each frame writes the whole set to `localStorage`. Proof owed: a `setItem` count while draining N frames.
+
+### P3 - native checkpoints hold the MLS mutex across export, seal and file write
+
+`src-tauri/src/commands/mls.rs:216-231`: a send or decrypt waits for a whole checkpoint. Snapshot under the lock, seal and write outside it.
+
+### P3 - nothing resets the announcement state at sign-out
+
+`resetAnnouncementState` (`stores/announcement.svelte.ts:126`) says the next account must be asked on its own behalf and has no caller, so a second account in the same tab is probably never shown its announcements.
 
 ## Open defects, in severity order
 
