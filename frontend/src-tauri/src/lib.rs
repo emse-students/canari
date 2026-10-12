@@ -1,5 +1,7 @@
 //! Canari Tauri backend: MLS cryptography, push notifications, and system integration.
 
+#[cfg(target_os = "ios")]
+mod app_group;
 mod commands;
 mod concurrency;
 mod keystore_bridge;

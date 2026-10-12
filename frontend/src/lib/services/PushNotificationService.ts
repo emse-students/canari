@@ -73,6 +73,9 @@ const BACKGROUND_RETRY_DELAY_MS = 5000;
 // Prevents repeated attempts when Google Play Services is unavailable.
 let pushAttempted = false;
 
+// The registration currently talking to the server, if any - see `registerPushToken`.
+let registrationInFlight: Promise<PushRegistrationOutcome> | null = null;
+
 // Whether this process has already told the server that this device has no usable token. Guards the
 // report, NOT the attempts: a device keeps trying on every resume, it just stops repeating itself.
 let pushUnavailableReported = false;
@@ -105,6 +108,26 @@ export async function getFcmToken(): Promise<string | null> {
  *                    Example: (t) => apiClient.post('/push/register', { token: t })
  */
 export async function registerPushToken(
+  registerFn: (token: string) => Promise<void>
+): Promise<PushRegistrationOutcome> {
+  // ONE REGISTRATION AT A TIME, because each one mints a secret and invalidates the previous one.
+  // Login starts this service twice - `sessionAuth` and the root layout's effect, 500 ms apart -
+  // and both passed the skip check below before either had recorded its result, so production
+  // logged two `[PUSH_REGISTER]` a second apart for one device (2026-10-12). The server then keeps
+  // whichever upsert committed last and the device whichever answer it stored last, and nothing
+  // ties those two orders together. A second caller joins the attempt in flight instead.
+  if (registrationInFlight) {
+    console.info('[Push] registration already in flight, joining it');
+    return registrationInFlight;
+  }
+  registrationInFlight = registerPushTokenOnce(registerFn).finally(() => {
+    registrationInFlight = null;
+  });
+  return registrationInFlight;
+}
+
+/** The registration `registerPushToken` serialises. */
+async function registerPushTokenOnce(
   registerFn: (token: string) => Promise<void>
 ): Promise<PushRegistrationOutcome> {
   console.info('[Push] registerPushToken start');
@@ -211,8 +234,10 @@ export async function startPushService(
       }
       const data = await response.json().catch(() => null);
       const pushSecret: string | undefined = data?.pushSecret;
+      // AWAITED, so the secret is stored before this registration counts as finished and the next
+      // one may start: two stores in flight could land in either order.
       if (pushSecret) {
-        invoke('store_push_secret', { secret: pushSecret }).catch((err) =>
+        await invoke('store_push_secret', { secret: pushSecret }).catch((err) =>
           console.warn('[Push] Failed to store push secret', err)
         );
       }
