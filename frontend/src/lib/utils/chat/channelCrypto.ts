@@ -13,6 +13,7 @@ import {
   GraineChannelMismatchError,
   GraineReplayError,
   GraineSessionUnavailableError,
+  GraineV1SessionNotHeldError,
   openChannelMessage,
   sealChannelMessage,
 } from '$lib/utils/graine/channelSeal';
@@ -78,8 +79,9 @@ export interface DecodedChannelReaction {
  * The row is dropped from the render with nothing else to show for it, so the reason is all the
  * loss leaves behind - and the three reasons need three different responses. A MISSING SEED is
  * repairable and is the only one worth asking a peer about; a message below the handover floor is
- * the protocol working, and asking would loop for ever since the answer is the same seed; anything
- * else is a real fault. Decided from the CLASS, never from the sentence.
+ * the protocol working, and asking would loop for ever since the answer is the same seed; an
+ * unsigned row under a session not held needs a v1 seed this device now refuses, so it does not ask
+ * either; anything else is a real fault. Decided from the CLASS, never from the sentence.
  *
  * @param sentAt Server timestamp of the row, passed straight to the repair: under a community that
  *   closes its past it is what says whether this device may ask for the seed at all, and both sides
@@ -100,12 +102,18 @@ export function reportUnreadableChannelMessage(
   const cause =
     err instanceof GraineSessionUnavailableError
       ? `no seed for session ${err.sessionId} (repairable)`
-      : err instanceof GraineBelowFirstIndexError
-        ? `sent before this device was given the seed (index ${err.index} < ${err.firstIndex})`
-        : String(err);
+      : err instanceof GraineV1SessionNotHeldError
+        ? `unsigned row under v1 session ${err.sessionId}, not held here - a v1 seed is no longer accepted, so nothing is asked`
+        : err instanceof GraineBelowFirstIndexError
+          ? `sent before this device was given the seed (index ${err.index} < ${err.firstIndex})`
+          : String(err);
   if (tally) {
     tally.note(rowId, unreadableCauseClass(err), cause, isGraineFault(err));
-  } else if (isGraineFault(err)) {
+  } else if (isGraineFault(err) || err instanceof GraineV1SessionNotHeldError) {
+    // A LIVE unsigned row under a session not held ACCUSES, where the same row in a history page
+    // does not: a page replays rows honest clients wrote before the floor moved, but every client
+    // admitted since `minClientVersion` 1.0.3 signs what it sends now. So a fresh one is a modified
+    // client minting v1, or a server stripping a signature (section 21.7).
     console.error(
       `[CHANNEL] Message ${rowId} of ${channel.slice(0, 8)} is REFUSED and not rendered - ${cause}`
     );
@@ -137,9 +145,16 @@ function isGraineFault(err: unknown): boolean {
   );
 }
 
+/**
+ * The class of an unsigned row under a v1 session this device does not hold (section 21.7). Named
+ * once because the history load reads its ROWS to show the older-messages notice.
+ */
+export const V1_SESSION_NOT_HELD = 'v1 session not held';
+
 /** The class a row's unreadability is counted under - the three responses it needs, never its prose. */
 function unreadableCauseClass(err: unknown): string {
   if (err instanceof GraineSessionUnavailableError) return 'missing seed';
+  if (err instanceof GraineV1SessionNotHeldError) return V1_SESSION_NOT_HELD;
   if (err instanceof GraineBelowFirstIndexError) return 'below the handover floor';
   if (err instanceof GraineAuthorMismatchError) return 'author mismatch';
   if (err instanceof GraineChannelMismatchError) return 'channel mismatch';
@@ -173,6 +188,11 @@ export class UnreadableRowTally {
     entry.rows.push(rowId);
     entry.causes.add(cause);
     this.byClass.set(causeClass, entry);
+  }
+
+  /** The ids of the rows of this page counted under `causeClass` - empty when none were. */
+  rowsOf(causeClass: string): readonly string[] {
+    return this.byClass.get(causeClass)?.rows ?? [];
   }
 
   /**

@@ -488,8 +488,10 @@ export function useConversations() {
     force = false
   ) {
     const { channelService } = await import('$lib/services/ChannelService');
-    const { decodeChannelMessageRow, UnreadableRowTally } =
+    const { decodeChannelMessageRow, UnreadableRowTally, V1_SESSION_NOT_HELD } =
       await import('$lib/utils/chat/channelCrypto');
+    const { olderMessagesNotice, keepNoticeOnTop } =
+      await import('$lib/utils/chat/olderMessagesNotice');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const convo = conversations.get(channelConversationId);
@@ -565,6 +567,14 @@ export function useConversations() {
       }
 
       tally.report();
+      // ONCE per salon, from this load's own count: rows under a v1 session this device does not
+      // hold are gone for good here (section 21.7), and a silent gap reads as a bug.
+      const notice = olderMessagesNotice(
+        channelConversationId,
+        Array.isArray(rows) ? rows : [],
+        tally.rowsOf(V1_SESSION_NOT_HELD)
+      );
+      if (notice) loaded.push(notice);
       loaded.sort(compareMessageOrder);
       const loadedEdited = applyChannelEdits(loaded, edits, ctx.log);
 
@@ -583,7 +593,11 @@ export function useConversations() {
         );
         conversations.set(channelConversationId, {
           ...current,
-          messages: mergeMessagePage(current.messages, loadedEdited),
+          // FIRST after the merge too: a reload can hold rows older than this page (section 21.7).
+          messages: keepNoticeOnTop(
+            mergeMessagePage(current.messages, loadedEdited),
+            channelConversationId
+          ),
           ...(readWatermarks !== undefined ? { readWatermarks } : {}),
         });
         channelHistoryLoadedAt.set(channelConversationId, {
@@ -617,6 +631,7 @@ export function useConversations() {
     const { decodeChannelMessageRow, UnreadableRowTally } =
       await import('$lib/utils/chat/channelCrypto');
     const { getPreviewText, parseEnvelope } = await import('$lib/envelope');
+    const { keepNoticeOnTop } = await import('$lib/utils/chat/olderMessagesNotice');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const meLower = ctx.userId.toLowerCase();
@@ -683,7 +698,11 @@ export function useConversations() {
       const existingIds = new SvelteSet(current.messages.map((m) => m.id));
       const added = decodedAll.filter((m) => !existingIds.has(m.id));
       if (added.length) {
-        const merged = [...current.messages, ...added].sort(compareMessageOrder);
+        // A whole-history sweep brings the oldest rows of all: the notice stays above them.
+        const merged = keepNoticeOnTop(
+          [...current.messages, ...added].sort(compareMessageOrder),
+          channelConversationId
+        );
         conversations.set(channelConversationId, { ...current, messages: merged });
       }
     }

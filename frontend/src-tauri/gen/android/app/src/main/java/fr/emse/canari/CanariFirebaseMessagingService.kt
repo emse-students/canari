@@ -3681,6 +3681,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // notification path reads and this frame must still ring nobody.
                     val seeds = json.optJSONArray("seeds")?.toString() ?: "[]"
                     Log.d(TAG, "$where: graine key material, ${json.optJSONArray("seeds")?.length() ?: 0} seed(s)")
+                    // Rust refused these v1 seeds (channel-encryption 21.7); its own line goes
+                    // nowhere in a killed app, so the reason is said here.
+                    json.optJSONArray("v1Refused")?.let {
+                        Log.w(TAG, "$where: REFUSED ${it.length()} v1 seed(s) $it - a v1 seed is no longer accepted")
+                    }
                     PushDecrypt.KeyMaterial(seeds)
                 }
                 "sender-mismatch" -> {

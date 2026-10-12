@@ -2993,6 +2993,7 @@
   "chat_system_group_photo_changed": "{sender} a changé la photo du groupe",
   "chat_system_group_photo_removed": "{sender} a retiré la photo du groupe",
   "chat_system_member_added": "{sender} a ajouté {members} au groupe",
+  "chat_older_messages_unavailable": "Les messages plus anciens ne sont pas disponibles sur cet appareil.",
   "chat_system_member_removed": "{sender} a retiré {target} du groupe",
   "chat_system_member_left": "{user} a quitté le groupe",
   "chat_system_conversation_deleted": "{sender} a supprimé cette conversation.",

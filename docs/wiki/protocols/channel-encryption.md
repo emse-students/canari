@@ -2929,7 +2929,7 @@ the last v1 session ages out with the v1 reader ([legacy-compatibility](../legac
 ### 21.6 The writer (WP-G2-5)
 
 Every send is v2 from this release on (#1221, first in the stable `v1.0.3`, 2026-10-05). It ships only once `minClientVersion` is R1 (the G2-4
-reader) AND both stores serve R1: a v1 reader shown a v2 row fails to open it (production is at `1.0.0`, 2026-10-04, and the floor is raised by the user only; refusing an ARRIVING v1 seed, G2-5b, waits for a floor >= `1.0.3`). This is the
+reader) AND both stores serve R1: a v1 reader shown a v2 row fails to open it (the floor is raised by the user only; it reached `1.0.3` on 2026-10-11, which let G2-5b refuse an ARRIVING v1 seed, §21.7). This is the
 reader-then-writer order of CORRUPT ([durable-rules](../durable-rules.md)).
 
 **Minting endorses first** (`reserveOutboundSlot` in `utils/graine/sessionManager.ts`). A new
@@ -2955,6 +2955,83 @@ session secret. The `signature` travels in the send body. The server stores it a
 **The v1 writer is deleted.** `sealWithGraine` survives only as a test fixture
 (`crypto/graine.testSeal.ts`), because the v1 reader's tests still need v1 rows. What remains of v1
 is the reader, and its removal condition is in [legacy-compatibility](../legacy-compatibility.md).
+
+### 21.7 An arriving v1 seed is refused (WP-G2-5b) - the floor reached the writer, 2026-10-11
+
+**The precondition.** The user raised production's `minClientVersion` to `1.0.3` (the G2-5 writer) on
+2026-10-11, read back from `GET /api/version`. The gate is hard: a client below it cannot unlock MLS,
+so no honest client can put a v1 seed on the wire. A v1 seed names no minter and its rows carry no
+signature, so a modified client minting one could post under any member's name. That is the case the
+user's 2026-09-28 decision closes.
+
+**What is refused: a NEW v1 seed, on every path a seed arrives by.**
+
+| Path | Where | What happens |
+| --- | --- | --- |
+| A single seed frame on a key group (a fresh distribution, or the durable log replaying one) | `frameHandler.ts` `storeIncomingSeed` -> `'v1-refused'` | nothing stored, nothing mirrored, no salon announced; `[GRAINE] REFUSED v1 seed <id> from <sender> ... (claimed createdAt N)` at WARN |
+| A repair or history bundle | the same call, from `absorbSeedBundle` | the bundle's v2 seeds are stored; its v1 seeds are refused in ONE line per bundle, `[GRAINE] REFUSED N v1 seed(s) relayed by <sender>` |
+| A seed frame attached to a push (native, Android and iOS) | `background.rs` `endorsed_by_tree` | the seed is dropped before Kotlin or the NSE can mirror it. The answer names the refused sessions in `v1Refused`, because the Rust line reaches no logger in a killed app or in the extension: Kotlin logs `REFUSED N v1 seed(s)` at WARN, the NSE `[CanariNSE] openSeedFrame: REFUSED v1 seed(s) ...` through `NSLog` |
+
+"New" means this device does not hold the session. **A v1 session already held is untouched**: its
+own sessions coming back, a copy lowering its floor, and every row under it still open with the v1
+reader. A backup import and a PIN change write held sessions straight to the store and never go
+through `storeIncomingSeed`. The webview mirroring a held session (`store_graine_seed`) does not go
+through the push filter either.
+
+**WARN, not ERROR, on purpose.** The key group's durable log still replays v1 frames that honest
+clients distributed before the floor moved, and an honest answerer relays every v1 session it holds.
+So one refusal accuses nobody. The `createdAt` it prints is the sender's own claim and decides
+nothing. It is there so a reader can tell an old replay from a fresh mint.
+
+**A row that only a v1 seed could open no longer asks for one.** `openChannelMessage` throws
+`GraineV1SessionNotHeldError`, not `GraineSessionUnavailableError`, for an UNSIGNED row under a session
+it does not hold. A v2 session refuses an unsigned row anyway, so only a v1 seed could open it, and
+this device would refuse that seed. `reportUnreadableChannelMessage` calls no `noteMissingSeed` for it.
+In a history page it is counted as `v1 session not held`, a warn once per page, because a page
+replays honest rows written before the floor. **On the LIVE path (`channelEventHandler`, no tally) it
+is an ERROR, `REFUSED`**: every client admitted since the floor signs what it sends now, so a fresh
+unsigned row is a modified client minting v1, or a server stripping a signature. *Never learn by failing
+what a fact could have told you.* If a server strips the signature from a v2 row whose seed this
+device lacks, the row lands here and is not asked for. That makes the row unreadable, which
+withholding it would do just as well.
+
+**What a member sees.**
+
+- **A device already holding a v1 session**: no change. Its v1-era rows stay readable.
+- **A NEW member, a NEW device without a backup, or a returner missing a v1 seed**: salon messages
+  written under a v1 session (sent before the sender's first send on `1.0.3` or later, at most 365
+  days old) are not shown on that device, and nothing asks a peer for them. **The salon says so ONCE (user,
+  2026-10-12)**: when a history load dropped any `v1 session not held` row, `olderMessagesNotice`
+  adds one system notice, `chat_older_messages_unavailable` (Paraglide, fr and en). It is derived from
+  the load's own dropped rows (`UnreadableRowTally.rowsOf`), never a timer, and a SILENT row (a
+  reaction or an edit, `silent` on the server row) does not count, since it drew no bubble. Its id is
+  fixed per salon (`graine-v1-unavailable:<salon>`), so reloads merge into the same notice, and
+  `keepNoticeOnTop` restamps it before the oldest message held after every merge, so a forced reload
+  or a whole-history search never leaves it mid-history. v2-era messages are
+  unaffected. This is the cost of the decision, accepted when the user decided it on 2026-09-28:
+  refusing only "new" v1 sessions by date is impossible, because the date is the sender's claim.
+- **A client at `1.0.3` up to the release before this one** still accepts v1 seeds. It writes v2 and
+  is not the threat: the threat is a modified client, and these refusals sit on the RECEIVING side.
+- **A client below `1.0.3`**: blocked at unlock by the floor (`auth_update_required`), as it already
+  was.
+
+**What it does NOT close.** A member who already HOLDS a v1 seed can still forge an unsigned row
+under that session, naming its minter. The v1 reader opens it until it goes, at the count in
+[legacy-compatibility](../legacy-compatibility.md). The salon-edit trust level of §21.5b is unchanged.
+The dev estate's floor was raised to `1.0.3` as well (2026-10-12), so a pre-release there meets no
+admitted client minting v1.
+
+**Pinned by** `frameHandler.test.ts` (a new v1 seed refused, with nothing mirrored or announced; a mixed
+bundle stores its v2 seeds and refuses its v1 seeds in one line; a held v1 session still lowers its
+floor), `channelSeal.test.ts` (an unsigned row under an unknown session is v1, a signed one is a
+missing seed), `channelCrypto.test.ts` (only the signed one asks), `channelEventHandler.v1Live.test.ts`
+(the live unsigned row is refused at ERROR and asks nobody; the signed control asks), `olderMessagesNotice.test.ts`
+(the notice: absent at a zero count or for silent rows only, sorted to the top, one per salon, kept
+first after a merge), `useConversations.olderNotice.svelte.test.ts` (a real history load: present
+when a v1 message row is dropped, absent otherwise, first after a forced reload), and `background.rs`
+`a_v1_seed_is_refused_by_the_push_path`, which also checks `v1Refused` (the two push seed tests now carry
+an endorsed v2 seed). The Swift and Kotlin log lines are not compiled on a workstation: their
+reading is owed on a device.
 
 ## 22. A key group's backlog was refused on every load - the classification is device state - FIXED 2026-09-28
 

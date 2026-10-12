@@ -58,11 +58,15 @@ export function seedFromWire(graine: canari.GraineMsg.$Properties): IncomingSeed
 
 /** The stored v2 half of an incoming seed. The session secret never travels, so it is never here. */
 export function storedV2Of(seed: IncomingSeed): StoredGraineV2 | undefined {
-  if (!seed.v2) return undefined;
+  return seed.v2 ? storedV2From(seed.v2) : undefined;
+}
+
+/** {@link storedV2Of} for a seed already known to be v2 - the form a newly admitted session stores. */
+export function storedV2From(v2: IncomingSeedV2): StoredGraineV2 {
   return {
-    minterDeviceId: seed.v2.minterDeviceId,
-    signingPublicKeyB64: toBase64(seed.v2.signingPublicKey),
-    endorsementB64: toBase64(seed.v2.endorsement),
+    minterDeviceId: v2.minterDeviceId,
+    signingPublicKeyB64: toBase64(v2.signingPublicKey),
+    endorsementB64: toBase64(v2.endorsement),
   };
 }
 

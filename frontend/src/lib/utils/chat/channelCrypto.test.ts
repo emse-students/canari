@@ -33,6 +33,12 @@ vi.mock('$lib/utils/graine/channelSeal', async (importOriginal) => {
   return { ...actual, sealChannelMessage };
 });
 
+const noteMissingSeed = vi.fn();
+vi.mock('$lib/utils/graine/repair', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/utils/graine/repair')>();
+  return { ...actual, noteMissingSeed };
+});
+
 const { ChannelApiError } = await import('$lib/services/ChannelService');
 const { GraineDistributionUnavailableError } = await import('$lib/utils/graine/seedDistribution');
 const { sendEncryptedChannelMessage, sendChannelReaction } =
@@ -229,6 +235,57 @@ describe('UnreadableRowTally', () => {
     expect(error.mock.calls[0][0]).toContain('author mismatch');
     expect(error.mock.calls[1][0]).toContain('replay');
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('asks a peer for a missing v2 seed, and NEVER for a v1 session not held (section 21.7)', async () => {
+    const { reportUnreadableChannelMessage, UnreadableRowTally } =
+      await import('$lib/utils/chat/channelCrypto');
+    const { GraineSessionUnavailableError, GraineV1SessionNotHeldError } =
+      await import('$lib/utils/graine/channelSeal');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const tally = new UnreadableRowTally(CHANNEL);
+
+    for (let i = 0; i < 5; i++) {
+      reportUnreadableChannelMessage(
+        CHANNEL,
+        `row-${i}`,
+        'bob',
+        undefined,
+        new GraineV1SessionNotHeldError('sess-v1', RAW),
+        tally
+      );
+    }
+    // The control: a signed row's missing seed still asks, so the silence above is the class's.
+    reportUnreadableChannelMessage(
+      CHANNEL,
+      'row-v2',
+      'bob',
+      undefined,
+      new GraineSessionUnavailableError('sess-v2', RAW),
+      tally
+    );
+    tally.report();
+
+    expect(noteMissingSeed).toHaveBeenCalledTimes(1);
+    expect(noteMissingSeed.mock.calls[0][1]).toBe('sess-v2');
+    // Not a fault: an honest pre-floor row is exactly this. A warn, one line for the class.
+    expect(error).not.toHaveBeenCalled();
+    const said = warn.mock.calls.map((c) => String(c[0]));
+    expect(said.some((l) => l.includes('5 message(s)') && l.includes('v1 session not held'))).toBe(
+      true
+    );
+    // The ROWS the history load reads to show the older-messages notice, per class.
+    const { V1_SESSION_NOT_HELD } = await import('$lib/utils/chat/channelCrypto');
+    expect(tally.rowsOf(V1_SESSION_NOT_HELD)).toEqual([
+      'row-0',
+      'row-1',
+      'row-2',
+      'row-3',
+      'row-4',
+    ]);
+    expect(tally.rowsOf('missing seed')).toEqual(['row-v2']);
+    expect(tally.rowsOf('author mismatch')).toEqual([]);
   });
 
   it('says nothing for a page that read whole', async () => {

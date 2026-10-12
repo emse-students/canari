@@ -80,6 +80,30 @@ export class GraineSessionUnavailableError extends Error {
 }
 
 /**
+ * Thrown when an UNSIGNED row names a session this device does not hold.
+ *
+ * An unsigned row can only open under a v1 seed (a v2 session refuses a row with no signature), and
+ * a v1 seed that ARRIVES is refused since `minClientVersion` reached the v2 writer (channel-encryption
+ * section 21.7). So no peer can make this row readable here, and asking one would be learning by
+ * failing what the missing signature already says. Deliberately NOT a
+ * {@link GraineSessionUnavailableError}: that class is the one that asks.
+ *
+ * A server that strips the signature of a v2 row this device lacks the seed for lands here too. It
+ * can only make that row unreadable, which withholding the row would do as well.
+ */
+export class GraineV1SessionNotHeldError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly channelId: string
+  ) {
+    super(
+      `[GRAINE] unsigned row under session ${sessionId} in channel ${channelId.slice(0, 8)}: a v1 session this device does not hold, and a v1 seed is no longer accepted`
+    );
+    this.name = 'GraineV1SessionNotHeldError';
+  }
+}
+
+/**
  * Thrown when a message sits below the first index this device may derive.
  *
  * Deliberately NOT the same failure as a missing seed, though both render the same way. This one
@@ -279,7 +303,12 @@ export async function openChannelMessage(
     session = await storage.getGraineSession(row.senderSessionId, deviceKey());
     if (session) cacheGraineSession(session);
   }
-  if (!session) throw new GraineSessionUnavailableError(row.senderSessionId, channel);
+  if (!session) {
+    // No signature means v1, and a v1 seed is refused on arrival (section 21.7): asking a peer for
+    // it would fetch a seed this device then refuses, for every such row, for ever.
+    if (!row.signature) throw new GraineV1SessionNotHeldError(row.senderSessionId, channel);
+    throw new GraineSessionUnavailableError(row.senderSessionId, channel);
+  }
   if (row.messageIndex < session.firstIndex) {
     throw new GraineBelowFirstIndexError(row.senderSessionId, row.messageIndex, session.firstIndex);
   }
