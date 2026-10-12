@@ -85,15 +85,20 @@ let heldSessions: StoredGraineSession[];
 let ownDevices: string[];
 /** The distribution group's epoch, which is the version of the roster the history ask reads. */
 let distributionEpoch: number;
+/** The key group's tree as this device holds it, `userId:deviceId` per leaf. */
+let treeLeaves: string[];
 
 beforeEach(() => {
   resetGraineRepairState();
   presenceWaiters = [];
+  // Every member online on one device that is a leaf of the key group, which is what a social
+  // service of 1.2.5 answers (`onlineDevices`) and what the tree says (`treeLeaves`).
   const roster = [
-    { userId: 'Bob', online: true },
-    { userId: 'alice', online: true },
-    { userId: 'carol', online: true },
+    { userId: 'Bob', online: true, onlineDevices: ['web-bob'] },
+    { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+    { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
   ];
+  treeLeaves = ['bob:web-bob', 'alice:device-1', 'carol:web-carol'];
   // CLEARED, NOT JUST RE-STUBBED. These two are module-level `vi.fn()`s, so their call lists were
   // accumulating across the whole file - which means no test here could ever assert a call COUNT,
   // and one that tried would read the previous tests' work as its own.
@@ -130,6 +135,7 @@ beforeEach(() => {
       getLocalGroups: () => ['dist-group'],
       isDistributionBaseSettled: () => true,
       getEpoch: () => distributionEpoch,
+      getGroupMemberIdentities: async () => treeLeaves,
     } as never,
   });
   registerChannelWorkspace('chan-1', 'ws-1', false);
@@ -145,8 +151,13 @@ afterEach(() => {
 });
 
 /** The flush is started off a microtask, so a test has to let it run before it asserts. */
+/**
+ * Lets every hop of a flush land. A macrotask rather than a count of microtasks: the election reads
+ * the roster and then the key group's tree, and a fixed count silently stopped covering the walk the
+ * day a hop was added (1.2.5).
+ */
 async function settle() {
-  for (let i = 0; i < 8; i++) await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe('noteMissingSeed', () => {
@@ -812,6 +823,94 @@ describe('a key group behind its epoch', () => {
     await settle();
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
+    info.mockRestore();
+  });
+});
+
+describe('one answering device, and the reason on every ask (section 23)', () => {
+  /** Decodes the request a send carried. */
+  function requestOf(call: unknown[]) {
+    return decodeAppMessage(call[1] as Uint8Array)?.graineRequest;
+  }
+
+  it('names the LOWEST online device of the elected member that is a leaf of the key group', async () => {
+    // Every device of the elected member used to answer: one ask, one bundle per device online
+    // (finding G of the 2026-10-12 web console audit).
+    listMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['tauri-b1', 'web-b2', 'web-b3'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+    ]);
+    // `tauri-b1` is online but never joined this key group, so it could not read the request.
+    treeLeaves = ['bob:web-b2', 'bob:web-b3', 'alice:device-1'];
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+
+    expect(requestOf(sendMessage.mock.calls[0])?.answererUserId).toBe('bob');
+    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceId).toBe('web-b2');
+  });
+
+  it('passes over a member whose only online device is not on the key group', async () => {
+    // Elected anyway, such a member is a request nobody can read - WP-33's silent answerer.
+    listMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-new'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+    ]);
+    treeLeaves = ['carol:web-carol', 'alice:device-1'];
+
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+    await settle();
+
+    expect(requestOf(sendMessage.mock.calls[0])?.answererUserId).toBe('carol');
+    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceId).toBe('web-carol');
+  });
+
+  it('names no device, and says why, when the roster predates per-device presence', async () => {
+    listMembers.mockResolvedValue([
+      { userId: 'bob', online: true },
+      { userId: 'alice', online: true },
+    ]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+
+    // Every device of bob answers, exactly as before 1.2.5 - never a request that reaches nobody.
+    expect(requestOf(sendMessage.mock.calls[0])?.answererUserId).toBe('bob');
+    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceId ?? '').toBe('');
+    expect(warn.mock.calls.flat().join(' ')).toContain('without per-device presence');
+    warn.mockRestore();
+  });
+
+  it('names the answering device on a HISTORY request too', async () => {
+    await requestCommunityHistory('ws-1');
+
+    expect(requestOf(sendMessage.mock.calls[0])?.answererUserId).toBe('bob');
+    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceId).toBe('web-bob');
+  });
+
+  it('says on the ask line WHY it asks, at which epoch, and what the key group lost', async () => {
+    // F3 of the 2026-10-12 queue audit: 185 or more asks in 37 minutes on one key group, against 22
+    // new sessions, and no line could say why.
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+    await settle();
+    const first = info.mock.calls.flat().find((l) => String(l).includes('[GRAINE] asked bob'));
+    expect(String(first)).toContain('at epoch 7');
+    expect(String(first)).toContain('reasons unreadable-row=1');
+    expect(String(first)).toContain('key group lost none this session');
+
+    info.mockClear();
+    noteSeedUnavailable(
+      'sess-1',
+      'bob',
+      String(requestOf(sendMessage.mock.calls.at(-1)!)?.requestId ?? '')
+    );
+    await settle();
+    const second = info.mock.calls.flat().find((l) => String(l).includes('[GRAINE] asked carol'));
+    expect(String(second)).toContain('reasons declined=1');
     info.mockRestore();
   });
 });

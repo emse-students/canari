@@ -440,6 +440,102 @@ describe('MessagingService - visibility vs durability', () => {
   });
 
   /**
+   * A Graine answer to ONE device's seed request (channel-encryption section 23). It used to be
+   * queued for every seat of the key group: measured on production 2026-10-12, a seed bundle was
+   * ~42 rows per payload on a 112-seat group, and bundles were 70 % of that group's queued bytes.
+   */
+  describe('a frame addressed to one device', () => {
+    const groupOfThree = () => {
+      const devices = [
+        { userId: 'u1', deviceId: 'd1' },
+        { userId: 'u2', deviceId: 'dA' },
+        { userId: 'u2', deviceId: 'dB' },
+        { userId: 'u3', deviceId: 'dC' },
+      ];
+      deviceGroupRepo.find.mockResolvedValue(devices);
+      keyPackageRepo.find.mockResolvedValue(devices);
+      jest
+        .spyOn(service as unknown as { scheduleDeferredPush: () => void }, 'scheduleDeferredPush')
+        .mockImplementation(() => {});
+      jest
+        .spyOn(service as unknown as { sendFcmForQueued: () => Promise<void> }, 'sendFcmForQueued')
+        .mockResolvedValue(undefined);
+    };
+    const queuedDevices = () =>
+      (queuedMessageRepo.save.mock.calls[0][0] as unknown as { deviceId: string }[]).map(
+        (q) => q.deviceId
+      );
+
+    it('is queued for the addressed device ONLY, offline included', async () => {
+      groupOfThree();
+
+      await service.sendMessage(send({ silent: true, durable: true, recipientDevices: ['u2:dB'] }));
+
+      expect(queuedDevices()).toEqual(['dB']);
+    });
+
+    it('matches the user id whatever its case, as the client lower-cases it', async () => {
+      groupOfThree();
+
+      await service.sendMessage(send({ silent: true, durable: true, recipientDevices: ['U2:dB'] }));
+
+      expect(queuedDevices()).toEqual(['dB']);
+    });
+
+    it('never reaches a device outside the group, whatever the key names', async () => {
+      groupOfThree();
+
+      await service.sendMessage(
+        send({ silent: true, durable: true, recipientDevices: ['u9:d9', 'u1:d1'] })
+      );
+
+      // `u9:d9` is no member and `u1:d1` is the sender itself: nobody is left to address.
+      expect(queuedMessageRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('is kept OUT of the shared history stream, which every member reads', async () => {
+      groupOfThree();
+
+      await service.sendMessage(send({ silent: true, durable: true, recipientDevices: ['u2:dB'] }));
+
+      expect(redis.xadd).not.toHaveBeenCalled();
+    });
+
+    it('refuses an addressed commit or Welcome, which every member must receive', async () => {
+      groupOfThree();
+
+      await expect(
+        service.sendMessage(send({ isCommit: true, recipientDevices: ['u2:dB'] }))
+      ).rejects.toThrow('refused on a commit or a Welcome');
+      await expect(
+        service.sendMessage(send({ isWelcome: true, recipientDevices: ['u2:dB'] }))
+      ).rejects.toThrow('refused on a commit or a Welcome');
+    });
+
+    it('refuses an empty or malformed list rather than reading it as "the whole group"', async () => {
+      groupOfThree();
+
+      for (const recipientDevices of [[], ['no-colon'], [':dB'], ['u2:'], [42]]) {
+        await expect(
+          service.sendMessage(
+            send({ durable: true, recipientDevices: recipientDevices as unknown as string[] })
+          )
+        ).rejects.toThrow('recipientDevices');
+      }
+      expect(queuedMessageRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('still reaches the whole group when the field is absent, as every older client sends', async () => {
+      groupOfThree();
+
+      await service.sendMessage(send({ silent: true, durable: true }));
+
+      expect(queuedDevices()).toEqual(['dA', 'dB', 'dC']);
+      expect(redis.xadd).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
    * WP-SENDPATH-1a. The proto path used to read `body.recipients` first and keep the membership
    * resolve behind an `ops.length === 0` guard commented "Fallback: recipients not provided (Redis
    * cache miss)". Nothing has ever filled that field - not the client, not the gateway, not either

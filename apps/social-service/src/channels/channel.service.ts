@@ -2954,10 +2954,15 @@ export class ChannelService {
    */
   private async withPresence<T extends { userId: string }>(
     rows: T[]
-  ): Promise<(T & { online: boolean })[]> {
-    const online = await this.redis.onlineUserIds(rows.map((r) => r.userId));
+  ): Promise<(T & { online: boolean; onlineDevices: string[] })[]> {
+    const online = await this.redis.onlineDevicesByUser(rows.map((r) => r.userId));
     this.logger.debug(`[ROSTER] presence read: ${online.size}/${rows.length} member(s) online`);
-    return rows.map((r) => ({ ...r, online: online.has(r.userId.trim().toLowerCase()) }));
+    // `onlineDevices` since 1.2.5: the requester names ONE answering device of the member it elects
+    // (channel-encryption section 23). A client predating it reads `online` only, which is unchanged.
+    return rows.map((r) => {
+      const devices = online.get(r.userId.trim().toLowerCase()) ?? [];
+      return { ...r, online: devices.length > 0, onlineDevices: devices };
+    });
   }
 
   /**

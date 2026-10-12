@@ -230,6 +230,12 @@ message GraineRequestMsg {
   repeated string   session_ids      = 3; // meaningful only for KIND_SESSIONS
   string            answerer_user_id = 4; // every other member ignores the request
   string            request_id       = 5; // echoed by the bundle that answers it
+  // The ONE device of `answerer_user_id` that answers (channel-encryption section 23): the lowest
+  // device id of that user that sits on this key group with a socket open, read by the requester
+  // from the server's per-device presence. Every other device of that user stays silent, so one ask
+  // costs one answer. Empty = every device of that user answers - what a requester before 1.2.5
+  // sends, and what an answerer before 1.2.5 does whatever this says.
+  string            answerer_device_id = 6;
 }
 
 // The answer: seeds in one message, for one channel or for a whole community.

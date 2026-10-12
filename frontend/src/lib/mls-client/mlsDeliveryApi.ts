@@ -1218,6 +1218,9 @@ export class MlsDeliveryApi {
             proto: protoBase64,
             silent: delivery.silent,
             durable: delivery.durable,
+            // Only when addressed: an absent field is "the whole group", which every older server
+            // also reads it as - so a server predating it delivers to everyone, as before.
+            ...(delivery.recipients ? { recipientDevices: delivery.recipients } : {}),
           }),
         },
         { requestClass: 'write' }

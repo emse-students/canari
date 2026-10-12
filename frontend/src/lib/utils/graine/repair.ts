@@ -12,6 +12,8 @@ import { isGraineReady, requireGraineRuntime, scopeForChannel } from './runtime'
 import { historyFloorFor, withinHistoryFloor } from './historyBoundary';
 import { distributionEpochFor, GraineDistributionUnavailableError } from './seedDistribution';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
+import { deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { describeKeyGroupFrameLosses } from '$lib/mls-client/keyGroupFrameLosses';
 
 /**
  * Asking for a seed this device does not hold (WP-33).
@@ -59,7 +61,25 @@ const asked = new Set<string>();
  * the two facts {@link resolveAnswerer} needs - are held here for as long as the session is wanted,
  * and dropped the moment it stops being ({@link forgetAskedSession}, or a roster with nobody left).
  */
-const wants = new Map<string, { channelId: string; senderId: string; sentAt: number }>();
+const wants = new Map<
+  string,
+  { channelId: string; senderId: string; sentAt: number; reason: AskReason }
+>();
+
+/**
+ * WHY a session is being asked for, printed on every request line (F3 of the 2026-10-12 queue
+ * audit: 185 or more requests in 37 minutes on one key group, against 22 new sessions, and nothing
+ * in the log could say why).
+ *
+ * - `unreadable-row`: a row this app session met names a session this device does not hold. On a
+ *   fresh start that includes every session still missing from the last one, since the asked-set is
+ *   in memory - the row's age printed beside it separates that from a live miss.
+ * - `declined`: the member asked before said it does not hold it; the walk moved on.
+ * - `holder-online`: nobody who could answer was online; one of them came back.
+ * - `epoch-left`: the previous ask was sealed at an epoch the key group has since left, so nobody
+ *   could read it.
+ */
+export type AskReason = 'unreadable-row' | 'declined' | 'holder-online' | 'epoch-left';
 
 /**
  * Per session, the members who have answered that they do NOT hold it.
@@ -88,6 +108,8 @@ interface MissingSeed {
    * the ask, and the answerer decides.
    */
   sentAt: number;
+  /** Why it is asked for now - see {@link AskReason}. */
+  reason: AskReason;
 }
 
 /** Communities whose history has been asked for in this app session. Same lifetime, same reason. */
@@ -177,18 +199,19 @@ export function noteMissingSeed(
   channelId: string,
   sessionId: string,
   senderId: string,
-  sentAt: number | undefined
+  sentAt: number | undefined,
+  reason: AskReason = 'unreadable-row'
 ): void {
   if (!sessionId || asked.has(sessionId)) return;
   const perChannel = outstanding.get(channelId) ?? new Map<string, MissingSeed>();
   const sender = senderId.toLowerCase();
   const dated = typeof sentAt === 'number' && Number.isFinite(sentAt) ? sentAt : Infinity;
   const seen = Math.max(dated, perChannel.get(sessionId)?.sentAt ?? 0);
-  perChannel.set(sessionId, { senderId: sender, sentAt: seen });
+  perChannel.set(sessionId, { senderId: sender, sentAt: seen, reason });
   outstanding.set(channelId, perChannel);
   // Kept for the re-ask: the row that named this session has already been dropped from the render,
   // so nothing would come back to supply the channel, the sender and the date a second time.
-  wants.set(sessionId, { channelId, senderId: sender, sentAt: seen });
+  wants.set(sessionId, { channelId, senderId: sender, sentAt: seen, reason });
   if (!flushing) void flushRepairs();
 }
 
@@ -250,6 +273,11 @@ interface RepairTargets {
   online: Set<string>;
   /** Whether another device of OURS sits on the group - see {@link ownDevicesOnTheGroup}. */
   ownOtherDevices: boolean;
+  /**
+   * Per member, the devices that can answer a request on this group right now - see
+   * {@link answeringDevicesOn}. `null` when that could not be told, and then no device is named.
+   */
+  answering: Map<string, string[]> | null;
 }
 
 /** Resolves the community, the group carrying the salon's seeds, and the roster to ask. */
@@ -265,17 +293,88 @@ async function resolveRepairTargets(channelId: string): Promise<RepairTargets> {
   // members, and asking the community's would name an answerer who cannot even see the request -
   // it travels on the salon's group, which they are not in.
   const memberScope = scope.kind === 'channel' ? 'channel' : 'workspace';
-  const { roster, online } = electionRoster(
+  const label = `channel ${channelId.slice(0, 8)}`;
+  const { roster, online, devices } = electionRoster(
     await channels().listMembers(channelId, memberScope, { presence: true }),
-    `channel ${channelId.slice(0, 8)}`
+    label
   );
+  const answering = await answeringDevicesOn(groupId, devices, label);
   return {
     workspaceId,
     groupId,
     roster,
-    online,
+    online: answering ? reachableThroughDevices(online, answering) : online,
     ownOtherDevices: await ownDevicesOnTheGroup(scope),
+    answering,
   };
+}
+
+/**
+ * Per member, the devices that can ANSWER a request on `groupId` right now: online (the roster's
+ * per-device presence) AND a leaf of this device's own copy of the group's tree - sorted, this
+ * device excluded, members with none omitted.
+ *
+ * **Both halves are needed, and each is a fact already held.** A request is transport, so only a
+ * device with a socket open receives it; and it is an MLS frame on this group, so only a leaf can
+ * read it. The roster's presence alone cannot say whether that device ever joined this key group,
+ * and the tree is the only authority on who can read a group (`getGroupMemberIdentities`).
+ *
+ * `null` - "could not tell", so no device is named and every device of the member answers, as before
+ * 1.2.5 - when the social service predates `onlineDevices`, or the tree cannot be read. Each says so:
+ * the first is version skew, the second a group this device does not hold.
+ */
+async function answeringDevicesOn(
+  groupId: string,
+  onlineDevices: Map<string, string[]> | null,
+  label: string
+): Promise<Map<string, string[]> | null> {
+  if (!onlineDevices) {
+    console.warn(
+      `[GRAINE] the roster of ${label} came back without per-device presence - naming no answering ` +
+        `device, so every device of the member asked will answer; the social service predates 1.2.5`
+    );
+    return null;
+  }
+  const { mlsService } = requireGraineRuntime('cannot name an answering device');
+  let leaves: string[];
+  try {
+    leaves = await mlsService.getGroupMemberIdentities(groupId);
+  } catch (e) {
+    console.warn(
+      `[GRAINE] cannot read the tree of key group ${groupId.slice(0, 8)}... (${String(e)}) - naming no answering device`
+    );
+    return null;
+  }
+  const me = mlsService.getDeviceId();
+  const inTree = new Set(leaves.map((leaf) => `${userIdOfLeaf(leaf)}:${deviceIdOfLeaf(leaf)}`));
+  const answering = new Map<string, string[]>();
+  for (const [userId, devices] of onlineDevices) {
+    const usable = devices.filter((d) => d !== me && inTree.has(`${userId}:${d}`)).sort();
+    if (usable.length > 0) answering.set(userId, usable);
+  }
+  return answering;
+}
+
+/**
+ * Of the members the roster calls online, the ones with a device that can answer on this group.
+ *
+ * A member online on a device that is not a leaf of this key group cannot read a request sent on
+ * it, so electing them is the silent answerer WP-33 exists to avoid, one step further down.
+ */
+function reachableThroughDevices(
+  online: ReadonlySet<string>,
+  answering: ReadonlyMap<string, string[]>
+): Set<string> {
+  return new Set([...online].filter((userId) => answering.has(userId)));
+}
+
+/**
+ * The ONE device of `answerer` that answers, or `''` (every device of theirs answers) when none can
+ * be named. The lowest device id - a total order every requester reads identically, no clock and
+ * nothing for a race to decide (section 23).
+ */
+function answeringDeviceOf(answerer: string, answering: Map<string, string[]> | null): string {
+  return answering?.get(answerer.toLowerCase())?.[0] ?? '';
 }
 
 /**
@@ -297,15 +396,20 @@ function electionRoster(
 ): {
   roster: Set<string>;
   online: Set<string>;
+  /** Per member, the devices online; `null` when any row came back without them (older server). */
+  devices: Map<string, string[]> | null;
 } {
   const roster = new Set<string>();
   const online = new Set<string>();
+  let devices: Map<string, string[]> | null = new Map();
   let unanswered = 0;
   for (const row of rows) {
     const id = String(row.userId).toLowerCase();
     roster.add(id);
     if (typeof row.online !== 'boolean') unanswered++;
     if (row.online !== false) online.add(id);
+    if (!Array.isArray(row.onlineDevices)) devices = null;
+    else if (devices && row.onlineDevices.length > 0) devices.set(id, [...row.onlineDevices]);
   }
   if (unanswered > 0) {
     console.warn(
@@ -313,7 +417,7 @@ function electionRoster(
         `electing them as if online; the social service answering it predates the presence field`
     );
   }
-  return { roster, online };
+  return { roster, online, devices };
 }
 
 /**
@@ -369,7 +473,7 @@ async function ownDevicesOnTheGroup(scope: DistributionScope): Promise<boolean> 
 async function requestSeedsForChannel(
   channelId: string,
   sessions: Map<string, MissingSeed>,
-  { workspaceId, groupId, roster, online, ownOtherDevices }: RepairTargets
+  { workspaceId, groupId, roster, online, ownOtherDevices, answering }: RepairTargets
 ): Promise<void> {
   const { mlsService, userId } = requireGraineRuntime('cannot ask for a missing seed');
 
@@ -435,12 +539,16 @@ async function requestSeedsForChannel(
 
   for (const [answerer, sessionIds] of byAnswerer) {
     const requestId = crypto.randomUUID();
+    // ONE DEVICE of the member answers (section 23): every device of theirs used to, so one ask cost
+    // one bundle per device they had online.
+    const answererDevice = answeringDeviceOf(answerer, answering);
     const frame = encodeAppMessage(
       mkGraineRequest({
         workspaceId,
         kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
         sessionIds,
         answererUserId: answerer,
+        answererDeviceId: answererDevice,
         requestId,
       })
     );
@@ -458,9 +566,52 @@ async function requestSeedsForChannel(
       askedOn.set(id, { groupId, epoch: sealedAt });
     });
     console.info(
-      `[GRAINE] asked ${answerer} for ${sessionIds.length} seed(s) in community ${workspaceId.slice(0, 8)}`
+      `[GRAINE] asked ${answerer} (${answererDevice || 'every device'}) for ${sessionIds.length} ` +
+        `seed(s) in community ${workspaceId.slice(0, 8)} at epoch ${sealedAt} - ` +
+        describeAskReasons(sessionIds, sessions, groupId)
     );
   }
+}
+
+/**
+ * WHY these sessions are asked for, as one log fragment (F3 of the 2026-10-12 queue audit): the
+ * reasons tallied, how old the newest row naming them is, and what this device lost on the key group
+ * this session. Read together they separate the candidate causes of a request: a seed frame lost on
+ * arrival (losses beside a young row), a session missing since before this start (an old row, no
+ * losses), or a walk down the roster (`declined`, `epoch-left`).
+ */
+function describeAskReasons(
+  sessionIds: readonly string[],
+  sessions: ReadonlyMap<string, MissingSeed>,
+  groupId: string
+): string {
+  const tally = new Map<AskReason, number>();
+  const ages: number[] = [];
+  const now = Date.now();
+  for (const id of sessionIds) {
+    const seed = sessions.get(id);
+    if (!seed) continue;
+    tally.set(seed.reason, (tally.get(seed.reason) ?? 0) + 1);
+    if (Number.isFinite(seed.sentAt)) ages.push(Math.max(0, now - seed.sentAt));
+  }
+  const reasons = [...tally]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([reason, n]) => `${reason}=${n}`)
+    .join(' ');
+  const rowAge =
+    ages.length === 0
+      ? 'undated'
+      : `${formatAge(Math.min(...ages))}..${formatAge(Math.max(...ages))}`;
+  return `reasons ${reasons || 'none'}, newest row ${rowAge} old, key group lost ${describeKeyGroupFrameLosses(groupId)} this session`;
+}
+
+/** A duration as the one coarse unit a log reader needs: seconds, minutes, hours or days. */
+function formatAge(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 120) return `${s}s`;
+  if (s < 7200) return `${Math.round(s / 60)}min`;
+  if (s < 172_800) return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86_400)}d`;
 }
 
 /**
@@ -624,7 +775,8 @@ function parkUntilOnline(channelId: string, sessions: Map<string, string[]>): vo
     );
     for (const sessionId of stillWanted) {
       const want = wants.get(sessionId);
-      if (want) noteMissingSeed(want.channelId, sessionId, want.senderId, want.sentAt);
+      if (want)
+        noteMissingSeed(want.channelId, sessionId, want.senderId, want.sentAt, 'holder-online');
     }
   });
   parked.set(channelId, { sessions: merged, cancel });
@@ -695,10 +847,14 @@ export async function requestCommunityHistory(
   const epoch = distributionEpochFor(mlsService, scope);
   if (epoch !== null && historyUnanswerableAt.get(workspaceId) === epoch) return;
 
-  const { roster, online } = electionRoster(
+  const label = `community ${workspaceId.slice(0, 8)}`;
+  const read = electionRoster(
     await channels().listWorkspaceMembers(workspaceId, { presence: true }),
-    `community ${workspaceId.slice(0, 8)}`
+    label
   );
+  const { roster } = read;
+  const answering = await answeringDevicesOn(groupId, read.devices, label);
+  const online = answering ? reachableThroughDevices(read.online, answering) : read.online;
   // OUR OWN OTHER DEVICES ARE MEMBERS TOO. A community whose only MEMBER is us is not a community
   // with nobody to ask: the seeds are held by whichever device of ours minted them, and that device
   // is on this very group. Read as "nothing to ask for", this line was the whole of COMM-18's
@@ -730,11 +886,13 @@ export async function requestCommunityHistory(
     return;
   }
 
+  const answererDevice = answeringDeviceOf(answerer, answering);
   const frame = encodeAppMessage(
     mkGraineRequest({
       workspaceId,
       kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
       answererUserId: answerer,
+      answererDeviceId: answererDevice,
       requestId: crypto.randomUUID(),
     })
   );
@@ -746,7 +904,10 @@ export async function requestCommunityHistory(
   // would be a second thing claiming to decide the same question.
   historyUnanswerableAt.delete(workspaceId);
   console.info(
-    `[GRAINE] asked ${answerer} for the history of community ${workspaceId.slice(0, 8)}`
+    `[GRAINE] asked ${answerer} (${answererDevice || 'every device'}) for the history of community ` +
+      `${workspaceId.slice(0, 8)} at epoch ${mlsService.getEpoch(groupId)} - reason ` +
+      `${evenIfSeedsHeld ? 'key-group-rejoined' : 'no-seed-held'}, key group lost ` +
+      `${describeKeyGroupFrameLosses(groupId)} this session`
   );
 }
 
@@ -848,7 +1009,7 @@ export function noteSeedUnavailable(sessionId: string, answerer: string, request
   // exactly where this session still is.
   asked.delete(sessionId);
   askedOn.delete(sessionId);
-  noteMissingSeed(want.channelId, sessionId, want.senderId, want.sentAt);
+  noteMissingSeed(want.channelId, sessionId, want.senderId, want.sentAt, 'declined');
 }
 
 /**
@@ -923,7 +1084,11 @@ export function releaseRequestsHeldForKeyGroup(groupId: string, rejoinedWorkspac
     const want = wants.get(sessionId);
     if (!want) continue;
     const perChannel = outstanding.get(want.channelId) ?? new Map<string, MissingSeed>();
-    perChannel.set(sessionId, { senderId: want.senderId, sentAt: want.sentAt });
+    perChannel.set(sessionId, {
+      senderId: want.senderId,
+      sentAt: want.sentAt,
+      reason: 'epoch-left',
+    });
     outstanding.set(want.channelId, perChannel);
     reasked++;
   }
