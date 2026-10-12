@@ -23,9 +23,10 @@ import type { BulkIngestObserver, BulkIngestPhase } from '$lib/mls-client/IMlsSe
  */
 type BulkIngestApi = {
   bulkIngestObservers: BulkIngestObserver[];
-  bulkIngestPhases: BulkIngestPhase[];
-  beginBulkIngest(phase?: BulkIngestPhase): void;
-  endBulkIngest(): Promise<void>;
+  openBulkIngests: Map<number, BulkIngestPhase>;
+  nextBulkIngestHandle: number;
+  beginBulkIngest(phase?: BulkIngestPhase): number;
+  endBulkIngest(handle: number): Promise<void>;
 };
 
 const PHASE: BulkIngestPhase = { bufferUi: true, showOverlay: true };
@@ -35,7 +36,8 @@ function makeHost(observers: BulkIngestObserver[]): BulkIngestApi {
   const proto = BaseMlsService.prototype as unknown as BulkIngestApi;
   return {
     bulkIngestObservers: observers,
-    bulkIngestPhases: [],
+    openBulkIngests: new Map(),
+    nextBulkIngestHandle: 1,
     beginBulkIngest: proto.beginBulkIngest,
     endBulkIngest: proto.endBulkIngest,
   } as BulkIngestApi;
@@ -60,8 +62,7 @@ describe('BaseMlsService bulk-ingest observers', () => {
     };
     const host = makeHost([persister, ui]);
 
-    host.beginBulkIngest(PHASE);
-    await host.endBulkIngest();
+    await host.endBulkIngest(host.beginBulkIngest(PHASE));
 
     expect(ui.onBulkIngestEnd).toHaveBeenCalledWith(PHASE);
   });
@@ -89,8 +90,7 @@ describe('BaseMlsService bulk-ingest observers', () => {
       },
     ]);
 
-    host.beginBulkIngest(PHASE);
-    await host.endBulkIngest();
+    await host.endBulkIngest(host.beginBulkIngest(PHASE));
 
     expect(console.error).toHaveBeenCalled();
   });
@@ -103,8 +103,7 @@ describe('BaseMlsService bulk-ingest observers', () => {
       },
     ]);
 
-    host.beginBulkIngest(PHASE);
-    await expect(host.endBulkIngest()).resolves.toBeUndefined();
+    await expect(host.endBulkIngest(host.beginBulkIngest(PHASE))).resolves.toBeUndefined();
   });
 
   it('replays the exact phase its matching open used, even after a failure', async () => {
@@ -115,12 +114,44 @@ describe('BaseMlsService bulk-ingest observers', () => {
       ui,
     ]);
 
-    host.beginBulkIngest(PHASE);
-    host.beginBulkIngest(persistOnly);
-    await host.endBulkIngest();
-    await host.endBulkIngest();
+    const outer = host.beginBulkIngest(PHASE);
+    const inner = host.beginBulkIngest(persistOnly);
+    await host.endBulkIngest(inner);
+    await host.endBulkIngest(outer);
 
     expect(ui.onBulkIngestEnd).toHaveBeenNthCalledWith(1, persistOnly);
     expect(ui.onBulkIngestEnd).toHaveBeenNthCalledWith(2, PHASE);
+  });
+
+  /**
+   * WINDOWS OVERLAP, THEY DO NOT ONLY NEST - measured on the Mi 9T, 2026-10-12. A drain opened its
+   * UI window, a history load opened a persist-only one during the drain, and the drain closed
+   * first. Closing "the innermost" replayed the history load's phase for the drain, so the drained
+   * message sat in the UI buffer until the history load closed, ~0.6 s later.
+   */
+  it('closes the window its handle names, when a later one is still open', async () => {
+    const persistOnly: BulkIngestPhase = { bufferUi: false, showOverlay: false };
+    const ui: BulkIngestObserver = { onBulkIngestStart: vi.fn(), onBulkIngestEnd: vi.fn() };
+    const host = makeHost([ui]);
+
+    const drain = host.beginBulkIngest(PHASE);
+    const historyLoad = host.beginBulkIngest(persistOnly);
+    await host.endBulkIngest(drain);
+    expect(ui.onBulkIngestEnd).toHaveBeenNthCalledWith(1, PHASE);
+
+    await host.endBulkIngest(historyLoad);
+    expect(ui.onBulkIngestEnd).toHaveBeenNthCalledWith(2, persistOnly);
+  });
+
+  it('ignores, and says so, a second close of the same window', async () => {
+    const ui: BulkIngestObserver = { onBulkIngestStart: vi.fn(), onBulkIngestEnd: vi.fn() };
+    const host = makeHost([ui]);
+
+    const handle = host.beginBulkIngest(PHASE);
+    await host.endBulkIngest(handle);
+    await host.endBulkIngest(handle);
+
+    expect(ui.onBulkIngestEnd).toHaveBeenCalledTimes(1);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('not open'));
   });
 });

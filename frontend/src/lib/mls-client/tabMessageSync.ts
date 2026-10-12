@@ -10,6 +10,11 @@ export type TabMessageEvent =
       message: ChatMessage;
       lastMessageAt: number;
       unreadCount: number;
+      /**
+       * The client UUID sealed inside an OWN salon message: the tab that composed it is showing an
+       * echo under that id, and settles it here instead of drawing this row beside it (WP-OFF-2).
+       */
+      clientMessageId?: string;
     }
   | {
       type: 'messages_batch';
