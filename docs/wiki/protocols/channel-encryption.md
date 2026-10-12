@@ -830,6 +830,11 @@ re-decrypting the page. The announcement is now HELD while a bulk-ingest window 
 window closes. **The window is the drain itself, not a timer**: `beginBulkIngest`/`endBulkIngest`
 pair exactly, and their close is the one moment after which a re-read sees every seed the drain
 brought. Outside a drain (a live seed on an idle socket) the announcement is immediate, as before.
+**What the hold costs, read on the same console**: the drain ran 4.2 s (`Drain start` +0.91 s ->
+`Drain complete` +5.09 s) and the first re-read went out at +3.27 s, so a salon whose seed comes
+early in a long drain is redrawn up to the drain's length later than before - ~1.8 s on that log
+(the startup timeline of the 2026-10-12 startup-load audit, #1790). A drain shortened by #1768
+shortens this with it.
 **Only the QUEUE DRAIN's window holds** (`graineRepairHoldObserver`, phase `bufferUi: true`): a
 history restore opens a bulk-ingest window too, and the startup one spans every conversation's
 replay, so holding on it would keep a salon opened at startup blank until all of them were replayed.
