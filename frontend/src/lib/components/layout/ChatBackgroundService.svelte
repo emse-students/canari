@@ -796,7 +796,12 @@
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
       beginConversationSource: () => globalConvs.beginConversationSource(),
       endConversationSource: () => globalConvs.endConversationSource(),
-      previewLandingTarget: (input: { storage: IStorage; deviceKeyB64: string; userId: string }) =>
+      previewLandingTarget: (input: {
+        storage: IStorage;
+        deviceKeyB64: string;
+        userId: string;
+        storeOpenMs: number;
+      }) =>
         globalConvs.previewLandingTarget({
           ...input,
           messageReactions: globalMessaging.messageReactions,

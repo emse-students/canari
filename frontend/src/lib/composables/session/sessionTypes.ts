@@ -43,6 +43,8 @@ export interface ChatSessionCallbacks {
     storage: IStorage;
     deviceKeyB64: string;
     userId: string;
+    /** How long the store took to open after the login asked for it - reported on the drawn line. */
+    storeOpenMs: number;
   }) => Promise<void>;
   /** Removes whatever {@link previewLandingTarget} drew: the login that started it did not finish. */
   discardLandingPreview?: (reason: string) => void;

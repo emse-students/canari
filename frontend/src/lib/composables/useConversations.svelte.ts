@@ -754,10 +754,13 @@ export function useConversations() {
     messageReactions: SvelteMap<string, MessageReaction[]>;
     isSessionUp: () => boolean;
     log: (msg: string) => void;
+    /** Reported on the drawn line, beside the read's own duration: the two costs of the preview. */
+    storeOpenMs?: number;
   }): Promise<void> {
     const targetId = notifNav.pending;
     if (!targetId) return;
     if (conversations.has(targetId)) return;
+    const readStart = performance.now();
     const preview = await readLandingPreview({
       storage: input.storage,
       deviceKeyB64: input.deviceKeyB64,
@@ -782,7 +785,9 @@ export function useConversations() {
     if (!sessionUp) landingPreviewKey = targetId;
     input.log(
       `[LANDING_PREVIEW] ${targetId.slice(0, 8)} drawn from the local store ` +
-        `(${preview.messageCount} message(s)) ${sessionUp ? 'after' : 'before'} the session is up`
+        `(${preview.messageCount} message(s); store open ${input.storeOpenMs ?? '?'} ms, ` +
+        `read ${Math.round(performance.now() - readStart)} ms) ${sessionUp ? 'after' : 'before'} ` +
+        'the session is up'
     );
   }
 

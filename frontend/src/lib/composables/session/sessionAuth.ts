@@ -524,8 +524,16 @@ export async function loginImpl(
   const startLandingPreview = (storage: Promise<IStorage>, previewKey: string): void => {
     const preview = cb.previewLandingTarget;
     if (!preview) return;
+    const askedAt = performance.now();
     landingPreview = storage
-      .then((s) => preview({ storage: s, deviceKeyB64: previewKey, userId: ctx.getUserId() }))
+      .then((s) =>
+        preview({
+          storage: s,
+          deviceKeyB64: previewKey,
+          userId: ctx.getUserId(),
+          storeOpenMs: Math.round(performance.now() - askedAt),
+        })
+      )
       .then(() => markBoot('landing-preview-read'))
       .catch((e: unknown) => cb.log(`[LANDING_PREVIEW] local read failed: ${String(e)}`));
   };
