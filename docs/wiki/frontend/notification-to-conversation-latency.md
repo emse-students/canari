@@ -210,6 +210,32 @@ it.** Gains are not additive: 1 and 2 overlap.
 already refuted chunking as the lever twice, and the JavaScript itself is the cost; and the MLS load,
 which is ~10-30 ms here and must be re-read on a production-sized state before anyone touches it.
 
+### F11 - a text reply no longer asks the server whether the group exists before sending it (built, phone before/after PENDING)
+
+**The send path, step by step** (Mi 9T, dev, 2026-10-12, a throwaway `[LATENCY]` build, ms after
+the send click, one warm run; the others agree within ~30 ms):
+
+| step | at | cost |
+| --- | ---: | ---: |
+| message + outbox entry written together (durable before send) | 133 | ~130 |
+| queued, mirror refreshed, flush scheduled | 182 | ~50 |
+| **`getGroupMeta` - `GET /api/mls/groups/:id`** | 330 | **148** (245 in another run) |
+| `isGroupActive`, catch-up gate, epoch barrier | 354 | ~24 |
+| MLS encrypt | 367 | 13 |
+| `POST` (delivery) | 551 | ~185 |
+| `persistSent`, outbox row deleted, `[OUTBOX] ... sent` | 619 | ~70 |
+
+No encrypted checkpoint write sits on this path (the ~345 ms suspected earlier is not there); the
+encrypt is 13 ms. **The one step that answers nothing the send needs is the pre-flight**: for a
+sendable group the delivery service refuses a deleted one with a typed 410 (`GroupDeletedError`,
+the `group-deleted` arm of `flushOne`'s catch), which reaches the same `failPermanently` with the
+same cause - and the pre-flight could never be the whole answer, a deletion landing inside its
+round trip. It is now asked only where the POST is not the next step: **an unsendable group** (its
+next step is the re-add, which would otherwise re-add a deleted group for ever) and **a media entry**
+(its upload precedes the POST). Its failure, swallowed before, is logged. Expected: **~150-250 ms**
+off every text or control send on dev - about a third of the acknowledgement. The durable write is
+kept where it is: it is the outbox's durability rule ([offline-and-weak-network](offline-and-weak-network.md)).
+
 ### F5 - the warm diagnosis was wrong, and the fix it suggested measured to nothing
 
 **The JS foreground verdict is NOT late.** The `[LIFECYCLE] App in foreground` line now carries

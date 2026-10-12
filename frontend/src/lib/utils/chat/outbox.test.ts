@@ -596,17 +596,34 @@ describe('outbox flusher', () => {
     expect(storage._map.get('m1')?.attempts).toBe(1);
   });
 
-  it('marks a deleted-group entry as a permanent error', async () => {
+  /**
+   * A SENDABLE TEXT ENTRY ASKS NO PRE-FLIGHT: the POST is the question. `GET /api/mls/groups/:id`
+   * before every send was the largest step of a text reply's flush (148-245 ms of ~450 on the Mi
+   * 9T, 2026-10-12), and the delivery service already refuses a deleted group with a typed 410.
+   */
+  it('asks the server nothing before sending a text entry into a sendable group', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage, isGroupHealthy: () => true }));
+
+    await outbox.flush();
+
+    expect(mlsService.getGroupMeta).not.toHaveBeenCalled();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storage._map.has('m1')).toBe(false);
+  });
+
+  /**
+   * AN UNSENDABLE GROUP IS STILL ASKED, because its next step is the re-add, which never reaches the
+   * server's refusal: without the question, a deleted group would be re-added for ever.
+   */
+  it('retires an entry of an unsendable group the server reports deleted, without a re-add', async () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     const mlsService = makeMls({
-      meta: (id) => ({
-        groupId: id,
-        name: '',
-        isGroup: true,
-        deletedAt: '2020-01-01',
-      }),
+      meta: (id) => ({ groupId: id, name: '', isGroup: true, deletedAt: '2020-01-01' }),
     });
     const markDeletedRemotely = vi.fn();
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
     const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
     const outbox = createOutbox(
       makeDeps({
@@ -614,28 +631,28 @@ describe('outbox flusher', () => {
         storage,
         conversations,
         markDeletedRemotely,
-        isGroupHealthy: () => true,
+        requestReAdd,
+        isGroupHealthy: () => false,
       })
     );
 
     await outbox.flush();
 
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(requestReAdd).not.toHaveBeenCalled();
     expect(markDeletedRemotely).toHaveBeenCalledWith('g1');
     expect(storage._map.has('m1')).toBe(false);
     expect(conversations.get('g1')!.messages[0].status).toBe('error');
   });
 
   /**
-   * THE SAME DISPOSITION, REACHED FROM THE SERVER INSTEAD OF FROM A LOCAL READ.
-   *
-   * The pre-flight above reads `deletedAt` over a round trip, and a deletion can land inside it -
-   * measured on the local estate 2026-09-05, a delete's sweep running between a send's recipient
-   * resolution and its enqueue. The server refuses that send, and what arrives here is the SAME
-   * permanent failure the pre-flight would have produced. Only the seam differs, and the record
-   * must not be able to tell them apart: one `cause`, one entry kind, one line.
+   * THE SAME DISPOSITION, REACHED FROM THE SERVER'S ANSWER - for a sendable text entry the only
+   * place a deletion is learnt, and for a media entry a deletion that landed after its pre-flight
+   * (measured on the local estate 2026-09-05: a delete's sweep running between a send's recipient
+   * resolution and its enqueue). The record must not be able to tell the seams apart: one `cause`,
+   * one entry kind, one line.
    */
-  it('retires the entry when the group is deleted inside the send that was already in flight', async () => {
+  it('retires the entry when the server refuses the send because the group is deleted', async () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     const mlsService = makeMls({
       // Alive by every local measure - which is the whole population this arm serves.
@@ -673,8 +690,10 @@ describe('outbox flusher', () => {
     expect(recoverRosterDisagreement).not.toHaveBeenCalled();
     expect(requestReAdd).not.toHaveBeenCalled();
     expect(lines.find((l) => l.includes('permanent failure'))).toContain('group-deleted');
-    // The line has to say WHY the pre-flight let it through, or the two seams read as one bug.
-    expect(lines.some((l) => l.includes('while this frame was in flight'))).toBe(true);
+    // The line names the server's answer as the source, so it is not read as a local guess.
+    expect(lines.some((l) => l.includes('is deleted on the server (410 on this frame)'))).toBe(
+      true
+    );
   });
 
   // THE SAME EVENT, THE OPPOSITE SEVERITY, AND ONE LINE FOR BOTH. GRP-7 logged a permanent failure
@@ -695,7 +714,9 @@ describe('outbox flusher', () => {
     };
     const storage = makeStorage([control]);
     const mlsService = makeMls({
-      meta: (id) => ({ groupId: id, name: '', isGroup: true, deletedAt: '2020-01-01' }),
+      send: async () => {
+        throw new GroupDeletedError('g1');
+      },
     });
     const markDeletedRemotely = vi.fn();
     const lines: string[] = [];
@@ -725,7 +746,9 @@ describe('outbox flusher', () => {
   it('and says "text entry" for the one that really is a loss', async () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     const mlsService = makeMls({
-      meta: (id) => ({ groupId: id, name: '', isGroup: true, deletedAt: '2020-01-01' }),
+      send: async () => {
+        throw new GroupDeletedError('g1');
+      },
     });
     const lines: string[] = [];
     const outbox = createOutbox(
@@ -2097,6 +2120,31 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
   };
 
   afterEach(() => clearAllUploads());
+
+  // A media entry still asks before the wire: its upload precedes the POST, and a deleted group
+  // must not cost the file.
+  it('retires a media entry of a deleted group before uploading anything', async () => {
+    const storage = makeStorage([mediaEntry('p1')]);
+    const mls = makeMls({
+      meta: (id) => ({ groupId: id, name: '', isGroup: true, deletedAt: '2020-01-01' }),
+    });
+    const up = hangingUpload();
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: mls,
+        storage,
+        uploadMedia: up.uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(mls.getGroupMeta).toHaveBeenCalledWith('g1');
+    expect(up.uploadMedia).not.toHaveBeenCalled();
+    expect(mls.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('p1')).toBe(false);
+  });
 
   it('mirrors the bytes sent into the bubble, and forgets them once the message is out', async () => {
     const storage = makeStorage([mediaEntry('p1')]);
