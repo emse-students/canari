@@ -10,10 +10,10 @@
  * and the selection watchdog in `useConversations` deselected it on the spot: the row lit up and
  * nothing opened, until a restart ran the two loads in the other order.
  */
-import { SvelteMap } from 'svelte/reactivity';
-import type { Conversation } from '$lib/types';
+import { SvelteMap } from "svelte/reactivity";
+import type { Conversation } from "$lib/types";
 
-vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
+vi.mock("$lib/stores/globalChatSingleton.svelte", () => ({
   globalMessaging: { isMessageCatchupActive: false, resetMessageCatchupState: vi.fn() },
   globalSession: {},
   globalConvs: {},
@@ -22,7 +22,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: vi.fn(),
 }));
 
-import { buildConversationRow, loadExistingConversations } from './conversations';
+import { buildConversationRow, loadExistingConversations } from "./conversations";
 
 function mls() {
   return {
@@ -54,10 +54,10 @@ function restore(conversations: SvelteMap<string, Conversation>, metas: Record<s
     mlsService: mls(),
     conversations,
     messageReactions: new SvelteMap(),
-    userId: 'u1',
-    deviceKeyB64: 'k',
+    userId: "u1",
+    deviceKeyB64: "k",
     archivedConversationIds: [],
-    historyBaseUrl: '',
+    historyBaseUrl: "",
     onArchivedIdsChange: vi.fn(),
     log: vi.fn(),
   } as never);
@@ -67,64 +67,88 @@ function restore(conversations: SvelteMap<string, Conversation>, metas: Record<s
 function salonRow(id: string, name: string): Conversation {
   return buildConversationRow({
     id,
-    lifecycle: 'active',
+    lifecycle: "active",
     identity: { contactName: id, displayName: name },
   });
 }
 
-describe('a restore after the community load', () => {
-  it('keeps the salons storage never held', async () => {
+describe("a restore after the community load", () => {
+  it("keeps the salons storage never held", async () => {
     const conversations = new SvelteMap<string, Conversation>();
-    conversations.set('channel_infos', salonRow('channel_infos', 'infos'));
-    conversations.set('channel_tract', salonRow('channel_tract', 'tract'));
+    conversations.set("channel_infos", salonRow("channel_infos", "infos"));
+    conversations.set("channel_tract", salonRow("channel_tract", "tract"));
 
     await restore(conversations, []);
 
-    expect([...conversations.keys()].sort()).toEqual(['channel_infos', 'channel_tract']);
+    expect([...conversations.keys()].sort()).toEqual(["channel_infos", "channel_tract"]);
   });
 
-  it('keeps what an in-memory salon carries when storage holds a stub of it', async () => {
+  it("keeps what an in-memory salon carries when storage holds a stub of it", async () => {
     const conversations = new SvelteMap<string, Conversation>();
-    const live = salonRow('channel_infos', 'infos');
+    const live = salonRow("channel_infos", "infos");
     live.messages.push({
-      id: 'm1',
-      senderId: 'bob',
-      content: 'hi',
+      id: "m1",
+      senderId: "bob",
+      content: "hi",
       timestamp: new Date(),
     } as never);
-    conversations.set('channel_infos', live);
+    conversations.set("channel_infos", live);
 
     await restore(conversations, [
-      { id: 'channel_infos', name: 'infos', lifecycle: 'active', updatedAt: 1 },
+      { id: "channel_infos", name: "infos", lifecycle: "active", updatedAt: 1 },
     ]);
 
-    expect(conversations.get('channel_infos')?.messages.map((m) => m.id)).toEqual(['m1']);
+    expect(conversations.get("channel_infos")?.messages.map((m) => m.id)).toEqual(["m1"]);
   });
 
-  it('still rebuilds every conversation storage owns, and drops the ones it no longer holds', async () => {
+  it("reads back the persisted state a cold salon row lacks, and lets the live row win", async () => {
+    const conversations = new SvelteMap<string, Conversation>();
+    const live = salonRow("channel_infos", "infos");
+    live.historyFloor = 7 as never;
+    conversations.set("channel_infos", live);
+
+    await restore(conversations, [
+      {
+        id: "channel_infos",
+        name: "infos",
+        lifecycle: "active",
+        updatedAt: 42,
+        readWatermarks: { bob: 30 },
+        historyFloor: 3,
+      },
+    ]);
+
+    const row = conversations.get("channel_infos")!;
+    expect(row.lastMessageAt).toBe(42);
+    expect(row.readWatermarks).toEqual({ bob: 30 });
+    expect(row.historyFloor).toBe(7);
+    expect("startedAt" in row).toBe(false);
+  });
+
+  it("still rebuilds every conversation storage owns, and drops the ones it no longer holds", async () => {
     const conversations = new SvelteMap<string, Conversation>();
     conversations.set(
-      'g-gone',
+      "g-gone",
       buildConversationRow({
-        id: 'g-gone',
-        lifecycle: 'active',
-        identity: { contactName: 'g-gone', displayName: 'gone' },
-      })
+        id: "g-gone",
+        lifecycle: "active",
+        identity: { contactName: "g-gone", displayName: "gone" },
+      }),
     );
 
-    await restore(conversations, [{ id: 'g-kept', name: 'Equipe', lifecycle: 'active' }]);
+    await restore(conversations, [{ id: "g-kept", name: "Equipe", lifecycle: "active" }]);
 
-    expect(conversations.has('g-gone')).toBe(false);
-    expect(conversations.has('g-kept')).toBe(true);
+    expect(conversations.has("g-gone")).toBe(false);
+    expect(conversations.has("g-kept")).toBe(true);
   });
 
-  it('restores a stored salon the map does not hold yet', async () => {
+  it("restores a stored salon the map does not hold yet", async () => {
     const conversations = new SvelteMap<string, Conversation>();
 
     await restore(conversations, [
-      { id: 'channel_infos', name: 'infos', lifecycle: 'active', updatedAt: 1 },
+      { id: "channel_infos", name: "infos", lifecycle: "active", updatedAt: 1 },
     ]);
 
-    expect(conversations.get('channel_infos')?.conversationType).toBe('channel');
+    expect(conversations.get("channel_infos")?.conversationType).toBe("channel");
   });
 });

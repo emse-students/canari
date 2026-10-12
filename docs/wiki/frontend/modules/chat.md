@@ -3178,8 +3178,9 @@ a tap set `selectedChannelConversationId` (the highlight) and `selectedContact`,
 watchdog in `useConversations` dropped the key it could not find in the same frame. A restart ran
 the two loads in the other order, which is why it "healed".
 
-- **The fix:** the restore deletes only the rows it owns (every non-salon key) and skips a stored
-  salon already in memory; a stale salon is pruned by the community load, never by the restore.
+- **The fix:** the restore deletes only the rows it owns (every non-salon key) and does not rebuild a
+  stored salon already in memory - it only reads back the persisted state the live row lacks (read
+  watermarks, history floor, `startedAt`, the sort key), the live row winning; a stale salon is pruned by the community load, never by the restore.
   It logs `[RESTORE] kept N salon row(s)`.
 - **The diagnostic:** the watchdog now says `[SELECT] <key> is not in the conversation map -
   selection dropped` at `warn`, so the next inert tap names itself instead of looking like a tap
