@@ -343,7 +343,10 @@ the accepted consequence of "optional, no default". Either way the server refuse
 `isOwn || canModerate`, the server's pair. The salon's "N sondage actif" shortcut used to count from
 the encrypted message alone, so a poll closed early stayed in it; it now reads this service's
 `closed` and `endsAt` (`utils/chat/activePolls.ts`) and drops an end date the moment it arrives,
-through the same one-timer `pollDeadlineClock` the card uses
+through the same one-timer `pollDeadlineClock` the card uses. That clock measures the next deadline
+from NOW, not from the instant it last moved: `ChatArea` is never remounted, so measured from a stale
+instant a poll posted hours later was scheduled hours late and stayed in the shortcut past its end
+(`pollDeadline.svelte.test.ts`)
 ([chat](../frontend/modules/chat.md#the-jump-is-instant-because-a-smooth-one-was-cancelled-by-the-tap-that-asked-for-it-2026-10-12)).
 
 **What a client is served is not what is stored.** `ServedChannelPollMeta` adds one field,
