@@ -589,6 +589,15 @@ export class SqliteStorage implements IStorage {
     return results;
   }
 
+  /** Rows held for `conversationId`, counted on `idx_messages_conv` - nothing is decrypted. */
+  async countMessages(conversationId: string): Promise<number> {
+    const rows: Array<{ n: number }> = await this.db.select(
+      'SELECT COUNT(*) AS n FROM messages WHERE conversation_id = $1',
+      [conversationId]
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+
   /**
    * Decrypt and return a paginated slice of messages using a server-side LIMIT clause.
    * Rows are fetched in descending timestamp order (most recent first) then re-sorted
