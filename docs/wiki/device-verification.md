@@ -1165,6 +1165,30 @@ PIN. A fresh install then asks for notifications, the microphone and the camera,
 a URL is opened, for iOS 27's default browser, which must be answered (Safari) before `ios.mjs url`
 or a Safari launch is allowed.
 
+## The Mi 9T readings of v1.2.4-alpha.2 (2026-10-12)
+
+Build `1.2.4 (100200402)`, the `v1.2.4-alpha.2` release APK, on `dev.canari-emse.fr`, signed in as
+the `fourth` account (shown as "Canari Test Delta"). It was already installed when the readings
+started, and nothing was reinstalled. The WebView is inspectable, so every number below comes from
+CDP (console, heap, DOM geometry) and screenshots, and every timestamp is the phone's. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1012-alpha2/` (frames, `send13.jsonl`, `slow.jsonl`,
+`dom*.log`). Frames that showed a tester's face were not kept.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| A ~13 MB video, sent in a DM | **`PASS`** | The file was a 12.9 MB, 20 s, 1080x1920 test pattern picked from "Tous les fichiers". `[video-prep]` brought it down to 7.4 MB (720x1280) in 12.1 s, before the send. After the tap on send: the outbox row was durable at +1.4 s (`durable write took 218 ms`), the bubble read `Envoi 24 % - 1,8 Mo sur 7,4 Mo` at about +2.9 s (first byte in under 3 s), and `[OUTBOX] ... sent` came at +6.3 s, with the check mark. No bubble stuck on "Envoi". The JS heap stayed at 18-21 MB throughout. Logcat shows no OOM, no GC storm and no lmk kill. Two things worth noting: the transcode keeps the main thread busy (TaskDuration +7.6 s over 12 s), and the pending tile shows a generic file icon instead of a video thumbnail. The poster appears about 15 s after "sent" |
+| Reel camera, 9:16 full-bleed | **`PASS` (geometry)** | Swiping right from `/posts` opens `/camera`. The preview is `436x775` CSS px at x=0 (full width), exactly 9:16, `object-fit: cover`, with a 12 px radius. The stream is 720x1280 from the FRONT lens by default. The room was dark at 02:00, so what the picture showed was not judged. The first time only, the swipe stopped half-way behind the microphone permission prompt |
+| Reel editor: keyboard, tray, trash, caption against the bar | **`FAIL`, one defect** | The keyboard lifts the text field and the tray above the IME. Dragging an overlay brings up a central trash that turns red, and dropping onto it deletes the overlay (`PASS`). The caption wraps over two lines, and "Publier" sits above the keyboard (`PASS`). **Defect: an overlay is not kept inside the frame.** Dropped on the tool tray, it is drawn OVER the tray icons. Its visible part cannot be grabbed again: a grab from the screen edge fires Android's back gesture, which opens the "Abandonner vos modifications" dialog. It is then baked into the published reel, clipped at the frame edge ("Test reel al" in the thumbnail and in the feed) |
+| Legacy reel in the viewer | **`PASS`** | A reel from before #1742 (588x1040, posted 15 h earlier) opens at `436x771` with `object-fit: contain`: no bars, rounded, on a blurred backdrop, with its controls inside the frame |
+| Feed reel playback start | **`PASS`** | An IntersectionObserver records `play`/`playing` 51 ms after the video reaches 50 % visibility. It plays muted, by itself. It was already cached, so a COLD first fetch was not timed |
+| The slow-link hint is a corner icon, not the "Connexion lente" banner | **`PASS`** | Provoked with no root by `settings put global ingress_rate_limit_bytes_per_second 18000` plus a Wi-Fi cycle. `[CONNECTIVITY] slow link` mounts `slow-link-indicator`: a 28x28 CSS px round badge at the top right (x=400, y=42), opacity 0.8, with the SignalLow glyph, and no strip. The label is in `aria-label`/`title` only. At 8 and 14 KB/s, two 20 s stalls turn it into the "Hors connexion" banner, which is the offline state and the right one for an unreachable server. On dev, the badge sits over the "Environnement de test" banner |
+| Media cards in the dark theme | **`PASS` by eye** | The chat video bubble (dark placeholder, then the poster), the feed image card on its blurred dark backdrop, the link-preview card and the viewer all look right. The light theme was not read |
+
+Also met: in the post composer, "Filmer" opens the SYSTEM camera (`org.lineageos.aperture`), not
+the CanaReels camera. In the reel camera, a TAP on the shutter takes a photo. The capture here was
+therefore a still, so the editor was read on an image and not on a video. Deleting a post from its
+menu asks for no confirmation. The PDF viewer measurement was not taken in this pass.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.
