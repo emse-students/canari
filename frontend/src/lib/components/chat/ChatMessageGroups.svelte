@@ -43,6 +43,12 @@
     onClosePoll?: (messageId: string) => void;
     /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
+    /** Re-sends a salon message whose send failed (WP-OFF-2); the row offers it on `error`. */
+    onRetrySend?: (messageId: string) => void;
+    /** Gives a failed salon message up: removes its row. */
+    onDiscardSend?: (messageId: string) => void;
+    /** Puts an unconfirmed salon message back in the composer (WP-OFF-2). */
+    onTakeBackSend?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
     /** Called when the author chooses to edit a message; the edit happens in the composer. */
@@ -93,6 +99,9 @@
     onVotePoll,
     onClosePoll,
     onDelete,
+    onRetrySend,
+    onDiscardSend,
+    onTakeBackSend,
     canModerate = false,
     onBeginEdit,
     onTogglePin,
@@ -314,16 +323,29 @@
               status={msg.status}
               {groupPosition}
               {onJoinChannel}
-              onReply={onReply ? () => onReply?.(msg) : undefined}
-              onForward={onForward ? () => onForward?.(msg) : undefined}
+              onReply={onReply && !msg.awaitingServerId ? () => onReply?.(msg) : undefined}
+              onForward={onForward && !msg.awaitingServerId ? () => onForward?.(msg) : undefined}
               {onNavigateToMessage}
-              {onReact}
+              onReact={msg.awaitingServerId ? undefined : onReact}
               {onVotePoll}
               {onClosePoll}
-              {onDelete}
+              onDelete={msg.awaitingServerId ? undefined : onDelete}
               {canModerate}
-              {onBeginEdit}
-              onTogglePin={mayPinMessage(pinStanding) ? onTogglePin : undefined}
+              onBeginEdit={msg.awaitingServerId ? undefined : onBeginEdit}
+              onTogglePin={mayPinMessage(pinStanding) && !msg.awaitingServerId
+                ? onTogglePin
+                : undefined}
+              onRetry={msg.awaitingServerId && msg.status === 'error' && onRetrySend
+                ? () => onRetrySend?.(msg.id)
+                : undefined}
+              onDiscard={msg.awaitingServerId &&
+              (msg.status === 'error' || msg.status === 'unconfirmed') &&
+              onDiscardSend
+                ? () => onDiscardSend?.(msg.id)
+                : undefined}
+              onRestore={msg.awaitingServerId && msg.status === 'unconfirmed' && onTakeBackSend
+                ? () => onTakeBackSend?.(msg.id)
+                : undefined}
               pinned={pinnedSet.has(msg.id)}
               {currentUserId}
               shouldAnimate={msg.timestamp.getTime() > switchTime}
