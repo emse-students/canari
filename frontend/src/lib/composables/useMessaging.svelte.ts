@@ -17,6 +17,7 @@ import {
   sendChatMessage,
   retrySalonSend,
   discardSalonSend,
+  takeBackSalonSend,
   type SendMessageDeps,
   addReaction,
   removeReaction,
@@ -549,6 +550,29 @@ export function useMessaging() {
     ctx.log(`[SEND] salon message ${messageId.slice(0, 8)}... discarded by its author`);
   }
 
+  /**
+   * Takes an UNCONFIRMED salon message back: its row goes, and its text is returned for the composer
+   * (the caller restores it as WP-OFF-1 does). `null` when nothing is registered under the id.
+   */
+  function takeBackSend(ctx: MessagingContext, messageId: string): string | null {
+    const key = ctx.selectedContact;
+    const convo = key ? ctx.conversations.get(key) : undefined;
+    if (!key || !convo) return null;
+    const text = takeBackSalonSend(messageId, ctx.userId);
+    if (text === null) {
+      ctx.log(`[SEND] take back ${messageId.slice(0, 8)}...: no salon send registered`);
+      return null;
+    }
+    ctx.conversations.set(key, {
+      ...convo,
+      messages: convo.messages.filter((m) => !(m.id === messageId && m.awaitingServerId)),
+    });
+    ctx.log(
+      `[SEND] unconfirmed salon message ${messageId.slice(0, 8)}... put back in the composer`
+    );
+    return text;
+  }
+
   async function addMessageToChat(
     senderId: string,
     content: string,
@@ -724,6 +748,7 @@ export function useMessaging() {
             message: upgraded,
             lastMessageAt: updatedConvo.lastMessageAt ?? upgraded.timestamp.getTime(),
             unreadCount: updatedConvo.unreadCount ?? 0,
+            ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
           });
         }
         console.log(`[ADD_MSG] ✓ Message upgraded: id=${newMsg.id}…`);
@@ -766,6 +791,7 @@ export function useMessaging() {
         message: newMsg,
         lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
         unreadCount: nextUnreadCount,
+        ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       });
     }
 
@@ -1936,6 +1962,7 @@ export function useMessaging() {
     handleSendChat,
     retrySend,
     discardSend,
+    takeBackSend,
     forwardMessage,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,

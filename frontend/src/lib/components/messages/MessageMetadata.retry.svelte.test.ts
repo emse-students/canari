@@ -59,3 +59,18 @@ describe('MessageMetadata on a failed send', () => {
     expect(plain.querySelector('[data-testid="message-retry"]')).toBeNull();
   });
 });
+
+describe('MessageMetadata on an unconfirmed send', () => {
+  it('reads apart from a failure, wherever it is, and offers put-back and delete but never retry', () => {
+    const onRestore = vi.fn();
+    const onDiscard = vi.fn();
+    const target = render({ status: 'unconfirmed', isLastOwn: false, onRestore, onDiscard });
+
+    expect(target.querySelector('[data-testid="message-unconfirmed"]')).not.toBeNull();
+    expect(target.querySelector('[data-testid="message-retry"]')).toBeNull();
+    target.querySelector<HTMLButtonElement>('[data-testid="message-restore"]')!.click();
+    target.querySelector<HTMLButtonElement>('[data-testid="message-discard"]')!.click();
+    expect(onRestore).toHaveBeenCalledTimes(1);
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+});

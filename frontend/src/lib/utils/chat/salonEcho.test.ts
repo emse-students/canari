@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, Conversation } from '$lib/types';
-import { applySalonEchoChange, nextEchoMessages } from './salonEcho';
+import { applySalonEchoChange, mergeAnnouncedMessage, nextEchoMessages } from './salonEcho';
 
 vi.mock('$lib/mls-client/tabMessageSync', () => ({ publishTabMessageUpdate: vi.fn() }));
 import { publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
@@ -104,6 +104,10 @@ describe('applySalonEchoChange', () => {
       applySalonEchoChange(map, 'channel_c', 'local', { kind: 'settled', serverId: 'srv' }, log)
     ).toBe(true);
     expect(publishTabMessageUpdate).toHaveBeenCalledTimes(1);
+    // ...carrying the client id, so a follower that composed it settles its own echo.
+    expect(vi.mocked(publishTabMessageUpdate).mock.calls[0][0]).toMatchObject({
+      clientMessageId: 'local',
+    });
     expect(map.get('channel_c')?.messages.map((m) => m.id)).toEqual(['srv']);
 
     // The broadcast frame arrives afterwards and finds nothing to settle: no second announcement.
@@ -128,5 +132,43 @@ describe('an echo is settled by a history load too', () => {
   it('a null id (typed: the reply carried none) keeps the row addressable by its client id', () => {
     const next = nextEchoMessages([echo()], 'local', { kind: 'settled', serverId: null });
     expect(next?.[0]).toMatchObject({ id: 'local', status: 'sent', awaitingServerId: true });
+  });
+});
+
+describe('a follower tab that composed a salon message shows ONE row, in both orders', () => {
+  // The follower draws the echo; only the leader receives the frame and announces the server row.
+  const announced = () => row('srv', { serverTimestamp: 2000, timestamp: new Date(2000) });
+  const postReply = { kind: 'settled', serverId: 'srv', serverMs: 2000 } as const;
+
+  it("the leader's announcement first, then the POST reply", () => {
+    const merged = mergeAnnouncedMessage([echo()], announced(), 'local');
+    expect(merged?.settledEcho).toBe(true);
+    expect(merged?.messages.map((m) => m.id)).toEqual(['srv']);
+    expect(merged?.messages[0]).toMatchObject({ status: 'sent', awaitingServerId: undefined });
+
+    // The POST reply finds no echo left: nothing changes.
+    expect(nextEchoMessages(merged!.messages, 'local', postReply)).toBeNull();
+    expect(merged?.messages).toHaveLength(1);
+  });
+
+  it("the POST reply first, then the leader's announcement", () => {
+    const afterReply = nextEchoMessages([echo()], 'local', postReply)!;
+    expect(afterReply.map((m) => m.id)).toEqual(['srv']);
+
+    expect(mergeAnnouncedMessage(afterReply, announced(), 'local')).toBeNull();
+    expect(afterReply).toHaveLength(1);
+  });
+
+  it('an UNCONFIRMED echo is settled by the announcement, never left beside it', () => {
+    const merged = mergeAnnouncedMessage([echo('local', 'unconfirmed')], announced(), 'local');
+    expect(merged?.messages).toHaveLength(1);
+    expect(merged?.messages[0]).toMatchObject({ id: 'srv', status: 'sent' });
+  });
+
+  it('without a client id (old leader, or another author) the row is merged as before', () => {
+    const merged = mergeAnnouncedMessage([echo()], announced());
+    expect(merged?.settledEcho).toBe(false);
+    expect(merged?.messages.map((m) => m.id)).toEqual(['local', 'srv']);
+    expect(mergeAnnouncedMessage(merged!.messages, announced())).toBeNull();
   });
 });

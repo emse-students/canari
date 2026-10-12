@@ -414,20 +414,22 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       // ONLY THE AUTHOR HAS ONE: the frame names its sender in the clear (and Graine v2 proves it),
       // so another member sealing a message under the same client UUID cannot re-key this device's
       // echo - `applySalonEchoChange` would otherwise swap any awaiting row for that id.
-      if (
+      const ownClientId =
         innerMessageId &&
         innerMessageId !== renderedId &&
         String(sender || '').toLowerCase() === ctx.userId.toLowerCase()
-      ) {
+          ? innerMessageId
+          : undefined;
+      if (ownClientId) {
         applySalonEchoChange(
           conversations,
           convoKey,
-          innerMessageId,
+          ownClientId,
           { kind: 'settled', serverId: renderedId, serverMs: channelServerMs },
           log
         );
         // The frame is the proof the server holds it: the unsent ledger must not hand it back.
-        clearUnsentSalonTexts(ctx.userId, [innerMessageId]);
+        clearUnsentSalonTexts(ctx.userId, [ownClientId]);
       }
 
       // A membership notice is attributed to nobody, exactly like `decodeChannelMessageRow` does
@@ -439,6 +441,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         // reconcile can compare with the server's rows (see `reconcileSalonUnread`).
         serverTimestamp: channelServerMs,
         skipDbSave: true,
+        // A follower tab may be the one that composed it: the id lets it settle its echo.
+        ...(ownClientId ? { clientMessageId: ownClientId } : {}),
         ...(isSystemNotice ? { isSystem: true } : {}),
       }).catch((e) => console.error(e));
     } else {

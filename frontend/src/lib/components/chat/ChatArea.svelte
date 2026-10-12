@@ -131,6 +131,8 @@
     onRetrySend?: (messageId: string) => void;
     /** Gives a failed salon message up: removes its row. */
     onDiscardSend?: (messageId: string) => void;
+    /** Puts an unconfirmed salon message back in the composer. */
+    onTakeBackSend?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
     /**
@@ -245,6 +247,7 @@
     onDelete,
     onRetrySend,
     onDiscardSend,
+    onTakeBackSend,
     canModerate = false,
     onEdit,
     onCancelReply,
@@ -1376,6 +1379,7 @@
             {onDelete}
             {onRetrySend}
             {onDiscardSend}
+            {onTakeBackSend}
             {canModerate}
             onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}

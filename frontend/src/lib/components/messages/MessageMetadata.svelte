@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { LoaderCircle, TriangleAlert, Check, Clock } from '@lucide/svelte';
+  import { LoaderCircle, TriangleAlert, Check, Clock, CircleHelp } from '@lucide/svelte';
   import SeenByHeads from './SeenByHeads.svelte';
   import { m } from '$lib/paraglide/messages';
+  import type { MessageSendStatus } from '$lib/types';
 
   interface Props {
     /** When true, shows an "(modifié)" label. */
@@ -13,15 +14,20 @@
     /** When true, shows the read receipt on the last message read by interlocutor(s). */
     isReadReceiptAnchor: boolean;
     /** Current send status of the message. */
-    status?: 'pending' | 'sending' | 'sent' | 'error';
+    status?: MessageSendStatus;
     /** User IDs who have read the message, derived from the conversation's read watermarks. */
     readBy: string[];
     /** When true, renders outside the bubble (delivery/read indicators). */
     outsideBubble?: boolean;
     /** Offered on a FAILED send that can be re-sent (a salon message, WP-OFF-2). */
     onRetry?: () => void;
-    /** Offered beside `onRetry`: gives the failed message up. */
+    /** Offered beside `onRetry`, and on an unconfirmed send: gives the message up. */
     onDiscard?: () => void;
+    /**
+     * Offered on an UNCONFIRMED send (no answer came back): takes the row away and hands its text back
+     * to the composer, the member deciding whether to send it again - a silent retry could post twice.
+     */
+    onRestore?: () => void;
   }
 
   let {
@@ -34,6 +40,7 @@
     outsideBubble = false,
     onRetry,
     onDiscard,
+    onRestore,
   }: Props = $props();
 
   /*
@@ -49,7 +56,9 @@
   const showSendStatus = $derived(
     isOwn &&
       !outsideBubble &&
-      (status === 'error' || (isLastOwn && (status === 'sending' || status === 'pending')))
+      (status === 'error' ||
+        status === 'unconfirmed' ||
+        (isLastOwn && (status === 'sending' || status === 'pending')))
   );
   const showSent = $derived(
     isOwn &&
@@ -57,6 +66,7 @@
       outsideBubble &&
       status !== 'sending' &&
       status !== 'error' &&
+      status !== 'unconfirmed' &&
       status !== 'pending' &&
       readBy.length === 0
   );
@@ -97,6 +107,36 @@
                 e.stopPropagation();
                 onRetry?.();
               }}>{m.common_retry_button()}</button
+            >
+          {/if}
+          {#if onDiscard}
+            <button
+              type="button"
+              class="font-semibold underline"
+              data-testid="message-discard"
+              onclick={(e) => {
+                e.stopPropagation();
+                onDiscard?.();
+              }}>{m.common_delete_button()}</button
+            >
+          {/if}
+        </span>
+      {:else if status === 'unconfirmed'}
+        <span
+          class="text-2xs inline-flex items-center gap-1 font-semibold text-amber-600"
+          data-testid="message-unconfirmed"
+        >
+          <CircleHelp size={12} />
+          {m.msg_non_confirme()}
+          {#if onRestore}
+            <button
+              type="button"
+              class="font-semibold underline"
+              data-testid="message-restore"
+              onclick={(e) => {
+                e.stopPropagation();
+                onRestore?.();
+              }}>{m.msg_remettre_dans_le_champ()}</button
             >
           {/if}
           {#if onDiscard}

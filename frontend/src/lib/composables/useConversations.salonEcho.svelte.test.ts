@@ -101,6 +101,6 @@ describe('a history load and the salon echo', () => {
     const rows = convs.conversations.get(SALON)!.messages;
     expect(rows.map((m) => m.id)).toEqual(['srv-1']);
     expect(rows[0].awaitingServerId).toBeUndefined();
-    expect(takeOrphanedSalonTexts('u1', SALON, new Set())).toEqual([]);
+    expect(await takeOrphanedSalonTexts('u1', SALON, new Set())).toEqual([]);
   });
 });

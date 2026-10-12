@@ -25,7 +25,7 @@
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
   import MessageReactions from './MessageReactions.svelte';
-  import type { MessageReaction } from '$lib/types';
+  import type { MessageReaction, MessageSendStatus } from '$lib/types';
   import { isOrphanMediaCandidate } from '$lib/utils/chat/orphanMedia';
   import { isOutboxEntryQueued } from '$lib/utils/chat/outbox';
   import {
@@ -149,13 +149,15 @@
     /** Active search term for in-message text highlighting. */
     searchTerm?: string;
     /** Delivery status of an outbound message; controls the status indicator icon. */
-    status?: 'pending' | 'sending' | 'sent' | 'error';
+    status?: MessageSendStatus;
     /** When true, enables mobile-specific interactions: long press toolbar, double-tap heart. */
     isMobile?: boolean;
     /** Re-sends this message after a failed send; shown on the `error` status. */
     onRetry?: () => void;
     /** Gives this failed message up; shown beside `onRetry`. */
     onDiscard?: () => void;
+    /** Puts this unconfirmed message back in the composer. */
+    onRestore?: () => void;
   }
 
   let {
@@ -195,6 +197,7 @@
     isMobile = false,
     onRetry,
     onDiscard,
+    onRestore,
   }: Props = $props();
 
   let bubbleAnchor = $state<HTMLElement | null>(null);
@@ -934,6 +937,7 @@
               {readBy}
               {onRetry}
               {onDiscard}
+              {onRestore}
             />
           </div>
 

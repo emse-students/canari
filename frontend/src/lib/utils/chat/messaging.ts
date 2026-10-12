@@ -134,11 +134,20 @@ async function deliverSalonSend(
       return sealUnavailableMessage(error.reason);
     }
     const status = refusalStatus(error);
-    if (status === null) {
+    // NO ANSWER, OR A GATEWAY'S 5xx, IS NOT A REFUSAL. With no status the request may have reached
+    // the server before the link dropped; a 5xx may come from a proxy AFTER the social service
+    // stored the row (a 502/504 on the way back). Either way nobody knows whether the server holds
+    // it, so the row is `unconfirmed`: it offers Delete and "put back in the composer", never a
+    // silent retry, and the frame or the next history page settles it if the server did take it.
+    if (status === null || status >= 500) {
       deps.log(
-        `[SEND] channel send ${messageId.slice(0, 8)}… OUTCOME UNKNOWN (no status): the row stays sending until the frame or a history load settles it: ${String(error)}`
+        `[SEND] channel send ${messageId.slice(0, 8)}… OUTCOME UNKNOWN (status=${status ?? 'none'}): unconfirmed until the frame or a history load settles it: ${String(error)}`
       );
-      return m.chat_send_error_generic();
+      deps.patchSalonEcho(send.conversationKey, messageId, {
+        kind: 'state',
+        status: 'unconfirmed',
+      });
+      return m.chat_send_unconfirmed();
     }
     deps.log(
       `[SEND] channel send ${messageId.slice(0, 8)}… refused (status=${status}): ${String(error)}`
@@ -150,10 +159,16 @@ async function deliverSalonSend(
   }
 }
 
+/** Rows whose retry is on the wire: a second click while one is in flight is refused, not sent. */
+const retrying = new Set<string>();
+
 /**
- * Re-sends a failed salon message from its row's "retry". Same payload, same client id: a repeat
- * the server did take (a reply lost on a weak link) shows twice until the server dedupes on that
- * id (WP-OFF-3).
+ * Re-sends a REFUSED salon message from its row's "retry". Same payload, same client id.
+ *
+ * SAFE BECAUSE IT IS OFFERED ONLY WHERE THE SERVER PROVED IT STORED NOTHING: a 4xx refusal, or a
+ * seal that never left this device (`error`). An `unconfirmed` row - no answer, or a 5xx - gets no
+ * retry, because a repeat the server did take would post twice until the server dedupes on the
+ * client id (WP-OFF-3).
  *
  * @returns the refusal sentence when it failed again, `null` when the server took it, and
  *   `undefined` when nothing is registered under `messageId` (a reload, or already sent).
@@ -167,8 +182,36 @@ export async function retrySalonSend(
     deps.log(`[SEND] retry ${messageId.slice(0, 8)}…: no salon send registered`);
     return undefined;
   }
+  if (retrying.has(messageId)) {
+    deps.log(`[SEND] retry ${messageId.slice(0, 8)}…: one is already in flight - ignored`);
+    return undefined;
+  }
+  retrying.add(messageId);
   deps.log(`[SEND] retrying salon message ${messageId.slice(0, 8)}…`);
-  return deliverSalonSend(messageId, send, deps);
+  try {
+    return await deliverSalonSend(messageId, send, deps);
+  } finally {
+    retrying.delete(messageId);
+  }
+}
+
+/**
+ * Gives an unconfirmed salon send back to its author: forgets it and returns its text for the
+ * composer (WP-OFF-1's draft restore), or `null` when nothing is registered under `messageId`.
+ */
+export function takeBackSalonSend(messageId: string, userId: string): string | null {
+  const send = salonSends.get(messageId);
+  if (!send) return null;
+  discardSalonSend(messageId, userId);
+  return send.text;
+}
+
+/**
+ * Forgets a salon send another tab PROVED delivered (its `message_added` carried this client id):
+ * nothing is left to retry or to hand back.
+ */
+export function forgetDeliveredSalonSend(messageId: string, userId: string): void {
+  if (salonSends.delete(messageId)) clearUnsentSalonText(userId, messageId);
 }
 
 /** Forgets a failed salon send the member discarded: its row is removed by the caller. */

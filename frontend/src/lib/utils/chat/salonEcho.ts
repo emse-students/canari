@@ -1,5 +1,6 @@
 import type { ChatMessage, Conversation } from '$lib/types';
 import { publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
+import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
 
 /**
  * THE LOCAL ROW OF A COMMUNITY-SALON MESSAGE, from the click to the server's row (WP-OFF-2).
@@ -16,7 +17,7 @@ import { publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
  */
 export type SalonEchoChange =
   /** The send is in flight, or the server refused it: the row says so, nothing else moves. */
-  | { kind: 'state'; status: 'sending' | 'error' | 'pending' }
+  | { kind: 'state'; status: 'sending' | 'error' | 'pending' | 'unconfirmed' }
   /**
    * The server has the message. `serverId` is its row id and `serverMs` its `createdAt` when this
    * answer carries them.
@@ -125,8 +126,36 @@ export function applySalonEchoChange(
         message: settled,
         lastMessageAt: convo.lastMessageAt ?? settled.timestamp.getTime(),
         unreadCount: convo.unreadCount ?? 0,
+        clientMessageId: localId,
       });
     }
   }
   return true;
+}
+
+/**
+ * A row another tab announced (`message_added`), merged into this tab's list.
+ *
+ * When it names the client id of an echo THIS tab is still showing - this tab composed it, the leader
+ * received the frame - the echo is settled under the announced server id, never drawn beside it: the
+ * duplicate the follower tab used to show until a reload. Otherwise a row already present is a no-op.
+ *
+ * @returns the next list and whether an echo was settled (the caller then forgets its send), or
+ *   `null` when nothing changed.
+ */
+export function mergeAnnouncedMessage(
+  messages: ChatMessage[],
+  message: ChatMessage,
+  clientMessageId?: string
+): { messages: ChatMessage[]; settledEcho: boolean } | null {
+  if (clientMessageId) {
+    const settled = nextEchoMessages(messages, clientMessageId, {
+      kind: 'settled',
+      serverId: message.id,
+      serverMs: message.serverTimestamp,
+    });
+    if (settled) return { messages: settled, settledEcho: true };
+  }
+  if (messages.some((m) => m.id === message.id)) return null;
+  return { messages: insertMessageOrdered(messages, message), settledEcho: false };
 }

@@ -13,15 +13,60 @@
  *
  * localStorage, one key per user: small, synchronous (it must be written BEFORE the POST leaves), and
  * wrapped so that an unavailable store costs the safety net and nothing else - and says so.
+ *
+ * THE LEDGER IS SHARED BY EVERY TAB OF THE ORIGIN, so "orphaned" cannot mean "not live in THIS tab":
+ * a sibling tab opening the same salon would take, and hand back, a text this tab is still sending.
+ * Each entry therefore names the PAGE LIFE that wrote it, and that page life holds a Web Lock named
+ * after it for as long as it exists. The browser releases a lock when its document goes away - a
+ * kill, a reload, a closed tab - so "the owner's lock is no longer held" IS the proof the owner is
+ * dead: no heartbeat, no clock. Without Web Locks a foreign entry is never taken (nothing proves its
+ * owner dead) and that is logged; an entry of this page life is taken when no live send owns it.
  */
 
 const KEY_PREFIX = 'canari.salon-unsent.';
+const OWNER_LOCK_PREFIX = 'canari.salon-unsent.owner.';
+
+/** This page life's identity, written into every entry it records. */
+export const SALON_UNSENT_PAGE_LIFE = crypto.randomUUID();
+
+let ownerLockClaimed = false;
+
+/** The browser's lock manager, or null where the engine has none. */
+function lockManager(): LockManager | null {
+  return typeof navigator !== 'undefined' && navigator.locks ? navigator.locks : null;
+}
+
+/**
+ * Takes this page life's owner lock, once, and holds it until the document goes away. Claimed on
+ * the first record, which happens before any entry naming this life can be read by another tab.
+ */
+function claimOwnerLock(): void {
+  if (ownerLockClaimed) return;
+  const locks = lockManager();
+  if (!locks) {
+    console.warn(
+      '[SALON-UNSENT] no Web Locks: a sibling tab can never prove this page life dead, so its texts come back only here'
+    );
+    ownerLockClaimed = true;
+    return;
+  }
+  ownerLockClaimed = true;
+  void locks
+    .request(`${OWNER_LOCK_PREFIX}${SALON_UNSENT_PAGE_LIFE}`, () => new Promise<never>(() => {}))
+    .catch((e: unknown) =>
+      console.warn(
+        `[SALON-UNSENT] owner lock not taken - siblings will see this life as dead: ${String(e)}`
+      )
+    );
+}
 
 /** One unanswered salon message. */
 export interface UnsentSalonText {
   messageId: string;
   conversationKey: string;
   text: string;
+  /** The page life that wrote it; absent on an entry written before owners existed. */
+  owner?: string;
 }
 
 function keyFor(userId: string): string {
@@ -50,7 +95,9 @@ function writeAll(userId: string, entries: UnsentSalonText[]): void {
 
 /** Records the text of a salon message about to be sent. */
 export function recordUnsentSalonText(userId: string, entry: UnsentSalonText): void {
-  writeAll(userId, [...readAll(userId).filter((e) => e.messageId !== entry.messageId), entry]);
+  claimOwnerLock();
+  const owned = { ...entry, owner: SALON_UNSENT_PAGE_LIFE };
+  writeAll(userId, [...readAll(userId).filter((e) => e.messageId !== entry.messageId), owned]);
 }
 
 /** Forgets one entry: the server answered, or the member gave the message up. */
@@ -77,19 +124,50 @@ export function clearUnsentSalonTexts(userId: string, messageIds: Iterable<strin
   }
 }
 
+/** The page lives whose owner lock is held or queued right now, or null without Web Locks. */
+async function livePageLives(): Promise<Set<string> | null> {
+  const locks = lockManager();
+  if (!locks) return null;
+  const snapshot = await locks.query();
+  const names = [...(snapshot.held ?? []), ...(snapshot.pending ?? [])]
+    .map((l) => l.name ?? '')
+    .filter((n) => n.startsWith(OWNER_LOCK_PREFIX))
+    .map((n) => n.slice(OWNER_LOCK_PREFIX.length));
+  return new Set(names);
+}
+
 /**
- * Removes and returns the entries of `conversationKey` that no live send in THIS page life owns:
- * the leftovers of a previous life, to hand back to the composer.
+ * Removes and returns the entries of `conversationKey` whose writer is PROVEN gone: the leftovers of
+ * a dead page life, to hand back to the composer. An entry of THIS page life is taken only when no
+ * live send owns it; an entry of another page life only when its owner lock is no longer held.
  *
  * @param live Message ids this page life is still sending or can retry.
  */
-export function takeOrphanedSalonTexts(
+export async function takeOrphanedSalonTexts(
   userId: string,
   conversationKey: string,
   live: ReadonlySet<string>
-): UnsentSalonText[] {
+): Promise<UnsentSalonText[]> {
+  const alive = await livePageLives();
   const all = readAll(userId);
-  const taken = all.filter((e) => e.conversationKey === conversationKey && !live.has(e.messageId));
+  let foreignKept = 0;
+  const taken = all.filter((e) => {
+    if (e.conversationKey !== conversationKey) return false;
+    if (e.owner === SALON_UNSENT_PAGE_LIFE) return !live.has(e.messageId);
+    if (e.owner === undefined) return true;
+    if (alive !== null && !alive.has(e.owner)) return true;
+    foreignKept++;
+    return false;
+  });
+  if (foreignKept > 0) {
+    if (alive === null) {
+      console.warn(
+        `[SALON-UNSENT] ${foreignKept} entr(y/ies) of another page life kept: no Web Locks to prove it dead`
+      );
+    } else {
+      console.debug(`[SALON-UNSENT] ${foreignKept} entr(y/ies) kept: a live sibling tab owns them`);
+    }
+  }
   if (taken.length === 0) return [];
   const takenIds = new Set(taken.map((e) => e.messageId));
   writeAll(

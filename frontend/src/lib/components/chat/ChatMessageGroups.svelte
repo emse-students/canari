@@ -47,6 +47,8 @@
     onRetrySend?: (messageId: string) => void;
     /** Gives a failed salon message up: removes its row. */
     onDiscardSend?: (messageId: string) => void;
+    /** Puts an unconfirmed salon message back in the composer (WP-OFF-2). */
+    onTakeBackSend?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
     /** Called when the author chooses to edit a message; the edit happens in the composer. */
@@ -99,6 +101,7 @@
     onDelete,
     onRetrySend,
     onDiscardSend,
+    onTakeBackSend,
     canModerate = false,
     onBeginEdit,
     onTogglePin,
@@ -335,8 +338,13 @@
               onRetry={msg.awaitingServerId && msg.status === 'error' && onRetrySend
                 ? () => onRetrySend?.(msg.id)
                 : undefined}
-              onDiscard={msg.awaitingServerId && msg.status === 'error' && onDiscardSend
+              onDiscard={msg.awaitingServerId &&
+              (msg.status === 'error' || msg.status === 'unconfirmed') &&
+              onDiscardSend
                 ? () => onDiscardSend?.(msg.id)
+                : undefined}
+              onRestore={msg.awaitingServerId && msg.status === 'unconfirmed' && onTakeBackSend
+                ? () => onTakeBackSend?.(msg.id)
                 : undefined}
               pinned={pinnedSet.has(msg.id)}
               {currentUserId}

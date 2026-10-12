@@ -116,7 +116,7 @@ describe('channelEventHandler - the salon echo', () => {
     });
     const { ctx } = setup();
     await handleChannelEvent(frame('me'), ctx);
-    expect(takeOrphanedSalonTexts('Me', 'channel_c1', new Set())).toEqual([]);
+    expect(await takeOrphanedSalonTexts('Me', 'channel_c1', new Set())).toEqual([]);
   });
 
   it("another member's frame leaves this device's unsent text alone", async () => {
@@ -130,6 +130,6 @@ describe('channelEventHandler - the salon echo', () => {
     });
     const { ctx } = setup();
     await handleChannelEvent(frame('mallory'), ctx);
-    expect(takeOrphanedSalonTexts('Me', 'channel_c1', new Set())).toHaveLength(1);
+    expect(await takeOrphanedSalonTexts('Me', 'channel_c1', new Set())).toHaveLength(1);
   });
 });

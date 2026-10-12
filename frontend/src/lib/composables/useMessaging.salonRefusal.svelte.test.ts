@@ -94,8 +94,8 @@ describe('a salon text send', () => {
   });
 
   it('keeps the text in a failed row, raises the error, and retries the same message', async () => {
-    // A STATUS IS AN ANSWER: the server saw the request and refused, so the row is failed.
-    sendMock.mockRejectedValueOnce(new ApiRefusalError(503, null, 'unavailable'));
+    // A 4xx IS AN ANSWER: the server saw the request and refused it, so the row is failed.
+    sendMock.mockRejectedValueOnce(new ApiRefusalError(422, null, 'refused'));
     const { useMessaging } = await import('./useMessaging.svelte');
     const messaging = useMessaging();
     const ctx = makeContext();
@@ -116,7 +116,7 @@ describe('a salon text send', () => {
     expect(rows(ctx)[0]).toMatchObject({ id: 'server-row-2', status: 'sent' });
   });
 
-  it('a transport failure is an UNKNOWN outcome: the row stays sending, never failed', async () => {
+  it('a transport failure is an UNKNOWN outcome: the row is unconfirmed, never failed', async () => {
     sendMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
     const { useMessaging } = await import('./useMessaging.svelte');
     const messaging = useMessaging();
@@ -125,10 +125,11 @@ describe('a salon text send', () => {
     await messaging.handleSendChat(ctx, 'unknown outcome');
 
     expect(rows(ctx)).toHaveLength(1);
-    expect(rows(ctx)[0]).toMatchObject({ status: 'sending', awaitingServerId: true });
+    expect(rows(ctx)[0]).toMatchObject({ status: 'unconfirmed', awaitingServerId: true });
+    expect(vi.mocked(ctx.setSendError).mock.calls.at(-1)?.[0]).toBeTruthy();
     // ...and the text is still owed to the member should this page die before anything settles it.
     const { takeOrphanedSalonTexts } = await import('$lib/utils/chat/salonUnsent');
-    expect(takeOrphanedSalonTexts('me', CHANNEL, new Set())).toEqual([
+    expect(await takeOrphanedSalonTexts('me', CHANNEL, new Set())).toEqual([
       expect.objectContaining({ text: 'unknown outcome' }),
     ]);
   });
@@ -146,18 +147,18 @@ describe('a salon text send', () => {
     const done = messaging.handleSendChat(ctx, 'ledgered');
     await vi.waitFor(() => expect(sendMock).toHaveBeenCalled());
     // A reload now would find it: peek without consuming by treating it as an orphan, then put it back.
-    const orphans = takeOrphanedSalonTexts('me', CHANNEL, new Set());
+    const orphans = await takeOrphanedSalonTexts('me', CHANNEL, new Set());
     expect(orphans.map((o) => o.text)).toEqual(['ledgered']);
     const { recordUnsentSalonText } = await import('$lib/utils/chat/salonUnsent');
     recordUnsentSalonText('me', orphans[0]);
 
     answer({ id: 'srv' });
     await done;
-    expect(takeOrphanedSalonTexts('me', CHANNEL, new Set())).toEqual([]);
+    expect(await takeOrphanedSalonTexts('me', CHANNEL, new Set())).toEqual([]);
   });
 
   it('a failed row can be discarded', async () => {
-    sendMock.mockRejectedValueOnce(new ApiRefusalError(500, null, 'boom'));
+    sendMock.mockRejectedValueOnce(new ApiRefusalError(403, null, 'boom'));
     const { useMessaging } = await import('./useMessaging.svelte');
     const messaging = useMessaging();
     const ctx = makeContext();
@@ -166,5 +167,51 @@ describe('a salon text send', () => {
     messaging.discardSend(ctx, rows(ctx)[0].id);
 
     expect(rows(ctx)).toHaveLength(0);
+  });
+
+  it('a gateway 5xx after the save is an UNKNOWN outcome too, not a refusal', async () => {
+    // A 502/504 may come from a proxy after the social service stored the row.
+    for (const status of [500, 502, 504]) {
+      sendMock.mockRejectedValueOnce(new ApiRefusalError(status, null, 'gateway'));
+      const { useMessaging } = await import('./useMessaging.svelte');
+      const ctx = makeContext();
+      await useMessaging().handleSendChat(ctx, `five-oh-${status}`);
+      expect(rows(ctx)[0]).toMatchObject({ status: 'unconfirmed', awaitingServerId: true });
+    }
+  });
+
+  it('an unconfirmed row is put back in the composer: its text returned, its row and ledger gone', async () => {
+    sendMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const { takeOrphanedSalonTexts } = await import('$lib/utils/chat/salonUnsent');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    await messaging.handleSendChat(ctx, 'take me back');
+
+    expect(messaging.takeBackSend(ctx, rows(ctx)[0].id)).toBe('take me back');
+
+    expect(rows(ctx)).toHaveLength(0);
+    expect(await takeOrphanedSalonTexts('me', CHANNEL, new Set())).toEqual([]);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a double-click on Retry sends once', async () => {
+    sendMock.mockRejectedValueOnce(new ApiRefusalError(422, null, 'refused'));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    await messaging.handleSendChat(ctx, 'retry me');
+    const localId = rows(ctx)[0].id;
+
+    let answer: (row: { id: string }) => void = () => {};
+    sendMock.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    const first = messaging.retrySend(ctx, localId);
+    const second = messaging.retrySend(ctx, localId);
+    answer({ id: 'srv-once' });
+    await Promise.all([first, second]);
+
+    expect(sendMock).toHaveBeenCalledTimes(2); // the original send and ONE retry
+    expect(rows(ctx)).toHaveLength(1);
+    expect(rows(ctx)[0]).toMatchObject({ id: 'srv-once', status: 'sent' });
   });
 });
