@@ -895,7 +895,7 @@ thread under it, where CSS can only blur it. Android keeps the CSS glass.
 | Concern | Where it lives |
 |---|---|
 | The action that doubles a web piece | `mobile/nativeGlassPiece.svelte.ts` (`use:nativeGlassPiece`), `usesNativeGlassChrome` = the iOS app |
-| The four pieces | `ChatHeader` (back, the centre pill, "..."), `ChatComposer` (the "+") |
+| The four pieces | `ChatHeader` (back, the centre pill, "..."), `ChatComposer` (the "+") - NOT the polls and pinned pills, which stay CSS glass ([why](modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)) |
 | The pill's picture | `mobile/avatarBitmap.ts`, reading the `[data-glass-avatar]` node the web draws |
 | What the plugin lacked | the patch: a button's `menu`, `hidden`, `accessibilityLabel`, `foreground`, `imageSide` |
 
