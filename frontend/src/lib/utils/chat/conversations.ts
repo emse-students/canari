@@ -320,22 +320,6 @@ export function archiveStorageKey(uid: string): string {
   return `canari_archived_conversations_${uid.toLowerCase()}`;
 }
 
-/**
- * Reads the persisted set of archived conversation IDs for a user from localStorage.
- * Returns an empty array if nothing is stored or the stored value is not a valid array.
- */
-export function loadPersistedArchivedIds(uid: string): string[] {
-  try {
-    const raw = localStorage.getItem(archiveStorageKey(uid));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return [...new Set(parsed.map((id) => String(id).toLowerCase()).filter(Boolean))];
-  } catch {
-    return [];
-  }
-}
-
 /** Saves the current set of archived conversation IDs for a user to localStorage. */
 export function persistArchivedConversations(uid: string, ids: string[]) {
   localStorage.setItem(archiveStorageKey(uid), JSON.stringify([...new Set(ids)]));
@@ -833,11 +817,48 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     });
   }
 
-  ctx.conversations.clear();
+  // THE RESTORE REPLACES THE ROWS IT OWNS, AND A SALON'S ROW IS NOT ONE OF THEM. The community load
+  // writes salon rows without persisting them, so storage holds a salon only once something saved
+  // it. This used to `clear()` the whole map: a restore that ran after the community load (the login
+  // path awaits the socket first; `onWelcomeProcessed` restores mid-session) erased every salon
+  // storage lacked while the sidebar still listed it, and the selection watchdog then deselected
+  // every tap on one - lit, never opened, until a restart (`restoreKeepsSalonRows.test.ts`). A
+  // salon row in memory is the community load's, kept with its messages; a stale one is pruned by
+  // that load, never by this one.
+  const keptSalons = new Set<string>();
+  for (const key of Array.from(ctx.conversations.keys())) {
+    if (isChannelConversationId(key)) keptSalons.add(key);
+    else ctx.conversations.delete(key);
+  }
+  if (keptSalons.size > 0) {
+    ctx.log(`[RESTORE] kept ${keptSalons.size} salon row(s) the community load owns`);
+  }
   ctx.messageReactions.clear();
 
   // Phase 1 - fast, immediately usable conversation stubs.
   for (const meta of mergedConvMetas) {
+    if (keptSalons.has(meta.id)) {
+      // KEPT, BUT STILL SEEDED: the community load builds a cold row with none of the state this
+      // device persisted for the salon, and skipping the stored row outright would drop it for the
+      // session - the read watermarks behind "Lu par" and the unread recount, the history floor,
+      // the sort key. What the live row already carries wins; only what it lacks is read back.
+      // Absent stays absent, never `undefined` (the `buildConversationRow` contract).
+      const live = ctx.conversations.get(meta.id);
+      if (live) {
+        const lastMessageAt = live.lastMessageAt ?? meta.updatedAt;
+        const readWatermarks = live.readWatermarks ?? meta.readWatermarks;
+        const historyFloor = live.historyFloor ?? meta.historyFloor;
+        const startedAt = live.startedAt ?? meta.startedAt;
+        ctx.conversations.set(meta.id, {
+          ...live,
+          ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
+          ...(readWatermarks !== undefined ? { readWatermarks } : {}),
+          ...(historyFloor !== undefined ? { historyFloor } : {}),
+          ...(startedAt !== undefined ? { startedAt } : {}),
+        });
+      }
+      continue;
+    }
     const identity = deriveConversationIdentity(meta.name, ctx.userId, meta.id);
     const prev = snapshot.get(meta.id);
     const resolvedName =
@@ -877,6 +898,14 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       })
     );
   }
+
+  // EVERY ROW THIS RESTORE WILL CREATE EXISTS NOW, so a frame refused for lack of one can be asked
+  // for again here rather than after phase 2 - the message a notification opened the app for used
+  // to wait for every conversation's history replay. Phase 2 is safe against what this delivers
+  // because each of its writes below MERGES into the row instead of replacing it, and each archive
+  // replay waits for this pull at its barrier (see `notifyConversationRowsSeeded`).
+  ctx.log(`[RESTORE] ${ctx.conversations.size} conversation row(s) seeded - history follows`);
+  ctx.mlsService.notifyConversationRowsSeeded();
 
   // Phase 2 - decrypt stored messages + replay remote history.
   // Serialised (not parallel) because replayConversationHistory calls the shared
@@ -946,9 +975,18 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
                 ctx.userId,
                 ctx.log
               );
-              if (peer && peer !== self) {
+              // RE-READ AFTER THE AWAIT: a live delivery may have written this row while the roster
+              // was being asked, and spreading the copy read before it would erase that message.
+              const latest = ctx.conversations.get(meta.id);
+              if (!latest) {
+                // Every swallowed branch logs: the row left the map while its roster was asked
+                // (a leave, a delete or an account switch), so there is nothing left to repair.
+                ctx.log(
+                  `[RESTORE] DM repair skipped for ${meta.id} - the conversation vanished while its peer was resolved`
+                );
+              } else if (peer && peer !== self) {
                 ctx.conversations.set(meta.id, {
-                  ...existingConvo,
+                  ...latest,
                   conversationType: 'direct',
                   directPeerId: peer,
                   contactName: peer,
@@ -980,7 +1018,12 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         const preReplayMsgIds = new Set(msgs.map((m) => m.id));
         const existing = ctx.conversations.get(meta.id);
         if (existing && msgs.length > 0) {
-          ctx.conversations.set(meta.id, { ...existing, messages: msgs });
+          // MERGED, NEVER ASSIGNED (`mergeMessagePage`): the rows are seeded before this read, so a
+          // message delivered live since then is already on the row and is not in this page.
+          ctx.conversations.set(meta.id, {
+            ...existing,
+            messages: mergeMessagePage(existing.messages, msgs),
+          });
 
           // Restore reactions into the shared messageReactions map
           for (const m of msgs) {

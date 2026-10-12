@@ -31,11 +31,16 @@ export interface DecodedChannelMessage {
   content: string;
   timestamp: Date;
   /**
-   * The row's own `createdAt` (Unix ms) - the SERVER's clock, which `timestamp` is not when the
-   * author's `sentAt` travelled in the payload. The read receipt names it so the server can compare
-   * a mark with the rows on one clock.
+   * The row's own `createdAt` (Unix ms) - the SERVER's clock, which `timestamp` is too (see
+   * `decodeChannelMessageRow`). The read receipt names it so the server can compare a mark with the
+   * rows on one clock.
    */
   serverTimestamp?: number;
+  /**
+   * The client UUID sealed INSIDE the ciphertext (`AppMessage.messageId`): what the author's own
+   * local echo is keyed by until the server's row id is known (WP-OFF-2).
+   */
+  clientMessageId?: string;
   isOwn: boolean;
   /** True for a membership notice: rendered centred and neutral, attributed to nobody. */
   isSystem: boolean;
@@ -231,9 +236,11 @@ export async function decodeChannelMessageRow(
   let content: string | undefined;
   let timestamp: Date | undefined;
   let isSystem = false;
+  let clientMessageId: string | undefined;
   try {
     const bytes = await openChannelMessage(channel, row);
     const decoded = decodeAppMessage(bytes);
+    clientMessageId = decoded?.messageId ? String(decoded.messageId) : undefined;
     if (decoded?.reaction) {
       // Not a bubble: it changes one. Returned rather than applied here, so this stays a pure
       // decode and the store it feeds has exactly one writer per call site.
@@ -287,6 +294,19 @@ export async function decodeChannelMessageRow(
   // A membership notice belongs to the conversation, not to whoever triggered it: attributing it
   // to the sender would give it an avatar, a name header and a left-aligned bubble.
   const senderId = isSystem ? 'system' : String(row.senderId || 'unknown').toLowerCase();
+  // A SALON ROW IS DATED BY THE SERVER, ON EVERY PATH. The live path (`channel.message.created`)
+  // already dates it by `createdAt`, and every read mark of a salon is on that clock (the server
+  // bounds a mark by its newest row's `createdAt`). Dating the same row by the author's `sentAt` here
+  // made its key flip with whichever path wrote it last: an author whose clock leads the server's
+  // put the row past the marks of everyone who read it, so their "seen by" heads under it vanished at
+  // every history load and came back with the next live write (2026-10-12). The envelope's time is
+  // used only for a row that carries no `createdAt`, which the server never sends.
+  if (serverMs === undefined) {
+    console.warn(
+      `[CHANNEL] row ${String(row.id).slice(0, 8)} of ${channel.slice(0, 8)} has no createdAt -` +
+        ' dated by its author clock, which no read mark of the salon is on'
+    );
+  }
   return {
     kind: 'message',
     message: {
@@ -294,8 +314,9 @@ export async function decodeChannelMessageRow(
       senderId,
       content,
       timestamp:
-        timestamp ?? (serverMs !== undefined ? new SvelteDate(serverMs) : new SvelteDate()),
+        serverMs !== undefined ? new SvelteDate(serverMs) : (timestamp ?? new SvelteDate()),
       ...(serverMs !== undefined ? { serverTimestamp: serverMs } : {}),
+      ...(clientMessageId ? { clientMessageId } : {}),
       isOwn: !isSystem && senderId === userIdLower,
       isSystem,
     },
@@ -325,7 +346,21 @@ export function isChannelConversationId(conversationId: string): boolean {
  * and the only thing that invalidates it - the community's roster moving - is checked before the
  * seal, not discovered by a refusal afterwards. *Never learn by failing what a fact could have
  * told you.*
+ *
+ * Resolves with the row the server created: its id and its `createdAt`, the clock every salon row is
+ * dated by. `null` is a TYPED outcome, not a failure: the server took the message but its reply
+ * carried no id, so the sender's echo stays addressable only by its client id until the broadcast
+ * frame or the next history load brings the other half. It is logged as an error, because the server
+ * always sends one - a reply without it is a contract break.
  */
+/** The server's own row for a salon message it accepted (WP-OFF-2). */
+export interface ChannelRowAck {
+  /** The id the server minted - what react, edit, delete and pin address. */
+  id: string;
+  /** Its `createdAt` in ms, or undefined when the reply did not carry a readable one. */
+  serverMs?: number;
+}
+
 export async function sendEncryptedChannelMessage(
   channelId: string,
   payloadBytes: Uint8Array,
@@ -333,10 +368,10 @@ export async function sendEncryptedChannelMessage(
   poll?: ChannelPollInput,
   mentionedUserIds?: string[],
   options?: { silent?: boolean }
-): Promise<void> {
+): Promise<ChannelRowAck | null> {
   const channel = rawChannelId(channelId);
   const sealed = await sealChannelMessage(channel, payloadBytes);
-  await channelService.sendMessage(channel, {
+  const row = await channelService.sendMessage(channel, {
     ciphertext: sealed.ciphertext,
     nonce: sealed.nonce,
     senderSessionId: sealed.senderSessionId,
@@ -349,6 +384,14 @@ export async function sendEncryptedChannelMessage(
       ? { silent: true }
       : { seedFrame: sealed.seedFrame, seedGroupId: sealed.seedGroupId }),
   });
+  // The id the SERVER gave its row, which the sender's own echo is re-keyed to (WP-OFF-2).
+  if (typeof row?.id === 'string' && row.id) {
+    return { id: row.id, serverMs: parseServerTimestampMs(row.createdAt) };
+  }
+  console.error(
+    `[CHANNEL] send of ${channel.slice(0, 8)} was accepted but the reply carries no row id (got ${typeof row?.id})`
+  );
+  return null;
 }
 
 /**

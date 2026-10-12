@@ -90,6 +90,7 @@ function mls(overrides: Record<string, unknown> = {}) {
     deleteGroupOnServer: vi.fn(async () => {}),
     notifyConversationAvailable: vi.fn(),
     notifyConversationsRestored: vi.fn(),
+    notifyConversationRowsSeeded: vi.fn(),
     beginBulkIngest: vi.fn(),
     endBulkIngest: vi.fn(),
     acquireAddLock: vi.fn(async () => true),

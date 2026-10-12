@@ -87,9 +87,26 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
   centred however wide it is. Its `plain` variant is the same menu without glass: the website's phone
   paperclip. An entry with an on/off state (search, members) is a `menuitemcheckbox`.
 
+- **The polls and pinned bars are glass pills too (user, 2026-10-12)** - they were opaque white
+  full-width bars across the middle of the glass chrome. In the apps' narrow layout each trigger
+  ("N sondages actifs", "N messages epingles") is a pill centred under the title pill: the
+  `.glass-chrome` recipe, the pill corner, one step smaller than the title (13px text, 36px tall),
+  6px apart. The list it opens (navigate to an item, unpin it) is a glass panel at the larger-card
+  corner (`--radius-2xl`), as `GlassMenuButton`'s panel is, and it takes pointer events itself, so a
+  touch between its rows no longer falls through to the thread. All of it is CSS on three class
+  names `ChatArea` puts on the existing markup (`.chat-chrome-strip`, `.chat-chrome-bar`,
+  `.chat-chrome-panel`, styled under `.chat-glass-chrome` in `app.css`); the click handlers are
+  untouched and the website, and the apps' wide layout, keep the opaque bars.
+  `chatChromeBarsGlass.test.ts` reads the rules and the markup. **They stay CSS glass on iOS, by
+  decision:** a native twin is one UIButton, and these open a list with a per-row unpin that no
+  native button can carry - doubling the trigger alone would put native glass beside a CSS panel
+  hanging from it. Measured on the real `ChatArea` at 390x780, light and dark, with two polls and
+  one to three pins; not measured in the apps themselves.
+
 **On iOS the four pieces are real Liquid Glass** (WP-G2): each is doubled by a native glass button
 drawn at its rect, the web piece kept as its invisible geometry, and the menus are native
-([mobile](../mobile.md#the-conversations-native-glass-chrome)).
+([mobile](../mobile.md#the-conversations-native-glass-chrome)). The polls and pinned bars are not
+doubled (above).
 
 **Measured** on the real `ChatArea` with a stand-in group at 390x780, Chromium, light and dark: in
 the glass mode the thread scrolls under the three pieces, the menu hangs from the "..." (right edges
@@ -159,9 +176,11 @@ after every community load and every return of the socket, and `reconcileSalonUn
 count to the server's count PLUS the messages that landed live after the server counted
 (`ChatMessage.serverTimestamp > asOf`: both sides the row's `createdAt`, no device clock). A salon
 opened while the answer was in flight is skipped (a counter, not a timer). The receipt now names the
-row's own `createdAt` (`serverAt`): the author's `sentAt` is always earlier, so the newest message stayed
+row's own `createdAt` (`serverAt`): the author's `sentAt` is usually earlier, so the newest message stayed
 "newer than the mark" for ever - measured, 49 ms on one machine - and would have been counted unread
-right after it was read.
+right after it was read. **Not always earlier**: an author whose clock leads the server's writes a
+`sentAt` past `createdAt`, and since 2026-10-12 a salon row is dated by its `createdAt` on every path,
+the history load included ([social-service](../../services/social-service.md#read-receipts-in-a-salon)).
 
 **Refuted, not to be re-opened** (each read in the code AND measured):
 - *`onSelectChannelConversation` marks on load/visibility.* It runs on a click only; `claimChannelReadSignal`
@@ -695,7 +714,7 @@ ambiguity the split exists to remove. Hence `acquireMlsLock` is called directly 
 
 **It reports; it does not cancel, and the flush stays inside the window.** Moving `onDrainEnd`
 behind `isDraining = false` was the other option this page used to offer, and it is wrong:
-`bulkIngestPhases` is a stack, so a second drain starting during a live `endBulkIngest` would call
+the UI render buffer is ONE buffer, not one per window, so a second drain starting during a live `endBulkIngest` would call
 `beginBulkIngest` across it - a UI buffer cleared without being flushed, which is WP-ECHO-1's exact
 failure and a strictly worse one. **A freeze loses nothing durable; a lost buffer does.** So the
 deadline buys the only thing it safely can, which is evidence.
@@ -2664,6 +2683,23 @@ the socket was down misses what was posted before the reconnect) and, on the rec
 salon on screen. Every other salon reloads on its next selection. Deletion, kick and repair keep
 their own invalidations. Pinned by `useConversations.channelCache.svelte.test.ts`.
 
+## A catch-up batch is merged with ONE sort (2026-10-12)
+
+`mergeMessagesInInputOrder` (`utils/chat/messageOrder.ts`) merges a batch of received messages into a
+conversation's held list - the bulk ingest of `useMessaging` and the background service's batches.
+It used to insert one message at a time, each a copy and a full sort of the conversation: O(K x N)
+for K messages into N held, 18-25 ms for 200 into 5000 on a desktop (vitest, warm), per batch, per
+conversation. It is now one stable sort of `existing ++ incoming`: 0.1 ms on the same input. A stable
+sort of `sort(A) ++ [x]` orders equal elements exactly as a stable sort of `A ++ [x]`, so the two
+give the same array whenever `compareMessageOrder` is a consistent order - pinned against the old
+loop on deterministic random input full of ties ([test](../../../../frontend/src/lib/utils/chat/messageOrder.test.ts)).
+**One edge has no defined answer either way**: messages with the SAME millisecond and MIXED presence
+of `serverTimestamp` / `ingestSequence` make the comparator intransitive, and the old loop's order
+already depended on arrival order there. That is the PRODUCTION shape, not a corner: held messages
+carry a `serverTimestamp` and no `ingestSequence`, a catch-up batch the reverse, so a held and an
+incoming message in the same millisecond compare by id alone and three of them can form a cycle
+(pinned in the test). Such ties may come out in a different order than on the old loop.
+
 ## The workspace list prunes only what existed when it asked
 
 The same seam as the section above, one level up, and it destroyed whole communities rather than
@@ -2697,6 +2733,23 @@ wrong about and nothing to tune. A community that really was deleted elsewhere i
 both prunes now LOG what they spared, because a reconciliation that silently deletes is one nobody
 can attribute.
 
+### The communities are loaded side by side, not one after another (2026-10-12)
+
+The per-community half (key-group join with its roster audit, salon listing, private salon groups)
+ran one community at a time. On a production web console (`v1.2.5`, 7 communities) that was 21+
+requests in a row - `distribution-group`, `members`, `user/me` for each, 50-650 ms apiece - and
+`communities/channels loaded`, which the unread counts wait for, arrived 2.87 s after the first one
+left. Nothing one community does reads another's: the join is coalesced per scope
+(`ensureDistributionGroupFor`) and each community appends only to its own sidebar entry. So
+`executeWorkspaceLoadAttempt` now upserts every community row synchronously, in the server's order,
+then runs `loadCommunitySalons` for all of them with `Promise.allSettled`; the load costs the longest
+chain instead of the sum. **Settled, never raced**: a failed community fails the attempt only once
+its siblings have finished, so the retry never starts beside a chain of the attempt it replaces -
+the overlap `isLoadingWorkspaces` forbids. The prune above (`pruneAfterLoad`) still runs after every
+community has answered. Pinned by counts, not clocks: three listings in flight before any answers,
+sidebar order kept when they answer in reverse, and no retry while a sibling is still loading
+(`useChannelWorkspaces.svelte.test.ts`).
+
 ## UI features
 
 - **Focus writing mode**: header hides when composer is focused on mobile.
@@ -2724,6 +2777,10 @@ can attribute.
   no per-member "hide my read state" setting: what `readWatermarks` holds IS the predicate, so the
   placement never filters a second time. A reader whose watermark is older than the loaded page
   gets no head (every loaded row is one they have not read); one past the newest row sits on it.
+  The placement compares a mark with each row's `timestamp`, so both must be on one clock: a salon
+  row is dated by its server `createdAt` on every path, or the heads under the last message flicker
+  with each history load (2026-10-12,
+  [social-service](../../services/social-service.md#read-receipts-in-a-salon)).
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.
@@ -2978,6 +3035,23 @@ EXISTENCE, so it stays permanent with the `{#if}` inside it, and `archive/type.m
 The permanent wrapper is also what makes the `role="status"` announce reliably: assistive technology
 has to be observing a live region BEFORE the mutation that fills it.
 
+**THE THREAD'S TRAILING SPACE IS ON THIS WRAPPER, because it is always the last row** (user,
+2026-10-12: the bubble cut at the bottom, its avatar on the "+", with the keyboard closed). The
+space above the composer used to be `ChatMessageGroups`' own `pb-4` - ABOVE the indicator - so the
+last message stood 24 px clear of the composer and the bubble, once it showed, 0 px: its bottom edge
+on the composer's top, which in the phone apps is transparent glass with the "+" 8 px below. The
+`pb-4` is now on `.chat-typing-indicator`. Measured on the real `ChatArea`, 390x844, glass chrome
+and the website's layout: last message 24 px clear while nobody types (unchanged), bubble 16 px clear (was 0),
+scroller at its bottom (0 px) in both. On the Mi 9T (read-only, CDP) the same geometry held before
+the fix: composer 76 px, scroller `padding-bottom` 76 px, the empty indicator 1 px under the
+composer's top - the padding was never wrong, the space was on the wrong row.
+
+**What was NOT reproduced:** a FOLLOW failure. Six sequences on the real component (typing alone, a
+message then typing at +50 ms, typing then a message at +80 ms, message + stop + typing, typing
+during a conversation's entry, a switch with typing in flight) all ended at the bottom, as did a
+smooth scroll interrupted by the bubble. If a phone still shows the bubble UNDER the composer
+rather than flush on it, it is a different defect, owed a reading with the keyboard closed.
+
 ### The day label and its floating pill (2026-10-01)
 
 Reported by the user: scrolling a conversation, the floating "Mercredi 23 septembre" was not
@@ -3173,6 +3247,48 @@ Test: `useMessaging.replyScope.svelte.test.ts`.
 ### A refused salon send gives the draft back (WP-OFF-1, 2026-10-09)
 
 A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - only if the same conversation is still selected, and it logs either way. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
+
+### A salon message is shown at once and settled by the server (WP-OFF-2, 2026-10-09)
+
+`sendChatMessage` (channel branch) draws a local ECHO row before the POST - `status: 'pending'`, then `'sending'` while in flight - using the same `ChatMessage.status` union and `MessageMetadata` labels as DMs and groups; no second model. The row is memory only (`skipDbSave`) and flagged `awaitingServerId`, because a salon message has TWO ids: the client UUID it is drawn under, and the one the server mints for its row (R4 in [offline-and-weak-network](../offline-and-weak-network.md)), which react/edit/delete/pin address. `utils/chat/salonEcho.ts` re-keys the echo IN PLACE (no remount) to the server id on whichever answer comes first: the POST reply (`sendEncryptedChannelMessage` now resolves with the row id) or the `channel.message.created` frame, matched on the client UUID sealed inside the ciphertext (`channelEventHandler.ts`). A second answer is a no-op; if the server row is already in the list the echo is dropped, never drawn twice. A refusal sets `error` and the text STAYS in the row, with "Reessayer" (same payload, same client id) and "Supprimer" in the status line, which now shows an `error` on any own message, not only the last. Until re-keyed the row offers no reply/forward/react/edit/delete/pin, and it is not announced to the sibling tabs (`salonEcho` option of `addMessageToChat`); the re-key announces it. The composer keeps nothing once a row exists (`result.echoed`); WP-OFF-1's draft restore now covers only the case where no row could be drawn.
+
+**What settles it, and who may.** The frame re-keys an echo ONLY when its sender is this user (the client UUID inside the ciphertext is author-chosen, so another member could otherwise swap any awaiting row). The outcome of the POST is classified at the throw: a 4xx (`ApiRefusalError`) or an unsendable seal (`GraineSealUnavailableError`, nothing left the device) is an ANSWER and marks the row `error` (Retry/Delete); a throw with NO status, OR A 5xx, is an UNKNOWN outcome - a 502/504 may come from a gateway AFTER the social service stored the row - and the row becomes `unconfirmed` (2026-10-12, review of #1649): its own amber label ("Non confirme"), distinguishable from a failure, offering Delete and "Remettre dans le champ" (`takeBackSalonSend`: the row and its ledger entry go, the text returns to the composer through WP-OFF-1's `restoreFailedDraft`), and NO Retry. No clock, no heal: the frame or the next history load still settles it if the server did take it (`loadChannelHistory` re-keys any own echo whose client UUID, `DecodedChannelMessage.clientMessageId`, appears in the page, whatever its state; this also covers a reply that carried no id, typed `null` from `sendEncryptedChannelMessage` and logged as an error). **The server does NOT dedupe on the client id** (`ChannelService.sendMessage` mints its own row id and never reads `messageId`), which is why an unknown outcome offers no retry: that dedupe is WP-OFF-3. **What makes Retry safe is a proof the server does NOT hold the message** - a 4xx (refused before the insert) or a seal that never left the device; anything else may post it twice until the server dedupes on the client id (WP-OFF-3), and only then may `unconfirmed` offer Retry. A Retry already in flight refuses a second click (`retrying` in `utils/chat/messaging.ts`; test "a double-click on Retry sends once").
+
+**Tabs.** Only the leader receives the frame, so a FOLLOWER that composed the message learns the server row from the leader's `message_added`, which now carries the client UUID (`clientMessageId`, set by `channelEventHandler` for an own frame and by `applySalonEchoChange` on a re-key). The follower settles its echo under that id (`mergeAnnouncedMessage`) and forgets the send (`forgetDeliveredSalonSend`) instead of drawing the server row beside it; test: `salonEcho.test.ts` "shows ONE row, in both orders". **The unsent ledger is shared by every tab**, so each entry names the PAGE LIFE that wrote it, and that page life holds the Web Lock `canari.salon-unsent.owner.<id>` until its document goes away. A leftover is taken only when it is this page life's and no live send owns it, or its owner's lock is no longer held - the browser's release IS the proof of death, no heartbeat. The ledger is read BEFORE the locks are queried and only that read's entries can be taken (an entry is written after its owner's lock is requested, so a living writer is always in the snapshot that follows); read after, an entry a sibling or this life's own send wrote during the query was taken from a living writer. Without Web Locks a foreign entry is never taken, and that is logged; an entry written before owners existed is taken. Test: `salonUnsent.test.ts`.
+
+**The text survives a kill.** The echo is memory only, so the text is also written to the unsent ledger (`utils/chat/salonUnsent.ts`, localStorage per user) before the POST and removed on the server's answer, a discard, or any PROOF the server holds it - the author's frame or a history page carrying that client UUID (`clearUnsentSalonTexts`); without the last two, a send whose reply was lost and that the frame settled handed its delivered text back to the composer at the next start. At the next start, opening that salon hands any leftover back to the composer (`MainChatPage`), never re-sending it. Residual: the reply target is not kept.
+
+**It settles on the server's clock (2026-10-12).** The echo is drawn at the author's `sentAt`, but every salon row is dated by the server's `createdAt` on the live and the history path, and read marks compare against that column. So the settling answer carries it - the POST reply (`ChannelRowAck.serverMs`, read from the row the server returns) or the frame's `createdAt` - and the re-keyed row takes it as `timestamp`/`serverTimestamp` and moves only as far as that time requires (`placeAt`): a message somebody else's device got stamped before ours, already drawn below the echo, ends above it, as on every other device. Test: `salonEcho.test.ts` ("takes the server clock"). **Until then the echo moves no read mark** (`watermarkAfterReading` skips `awaitingServerId`): taken at the author's clock, it put the reader's own mark past every server row whenever the device ran fast, so a message stamped inside that lead read as read. Test: `readState.test.ts`.
+
+**Why it matters, measured (production web console, `v1.2.5`, 2026-10-12).** One salon send: click 17:12:08.052, bubble 17:12:14.191 - **6.1 s with nothing on screen**, because the bubble was the server's broadcast. The time was two round trips in series on a slow link (`[CONNECTIVITY] slow link (latency floor 1123 ms)`): the community's key group had taken a commit 10 s earlier, so the send minted a new Graine session and distributed its seed (`POST /api/mls/send`, 4055 ms) before posting the message (`POST /channels/<id>/messages`, 2049 ms). With the echo the row is on screen at the click and only its status waits for those two. DMs and groups were already drawn at the click (`[ADD_MSG]` at +3 ms, bubble ~+120 ms on the Mi 9T), so both now share one status model.
+
+**What it is not:** durable as a row. A reload loses the echo (WP-OFF-3); the text comes back from the ledger. Tests: `salonUnsent.test.ts`, `salonEcho.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`, `channelEventHandler.salonEcho.test.ts`, `messagingChannelRefusal.test.ts`, `MessageMetadata.retry.svelte.test.ts`.
+
+## The restore keeps the salon rows the community load wrote (2026-10-12)
+
+Reported from an iPhone: after a notification tap into a salon, tapping the other salons lit the
+row and opened nothing, until a restart. **What the code proves** (`restoreKeepsSalonRows.test.ts`,
+two cases red on main): a salon's conversation row is written by `loadChannelWorkspacesFromBackend`,
+which never persists it, and `loadExistingConversations` used to `clear()` the whole map and
+rebuild it from storage. Any restore that ran AFTER the community load - the login path sets
+`isLoggedIn` (which starts the community load) and only restores after the socket opens, and
+`onWelcomeProcessed` restores mid-session - erased every salon storage did not hold, and emptied
+the messages of the ones it did. The sidebar reads `channelWorkspaces`, so the row stayed listed;
+a tap set `selectedChannelConversationId` (the highlight) and `selectedContact`, and the selection
+watchdog in `useConversations` dropped the key it could not find in the same frame. A restart ran
+the two loads in the other order, which is why it "healed".
+
+- **The fix:** the restore deletes only the rows it owns (every non-salon key) and does not rebuild a
+  stored salon already in memory - it only reads back the persisted state the live row lacks (read
+  watermarks, history floor, `startedAt`, the sort key), the live row winning; a stale salon is pruned by the community load, never by the restore.
+  It logs `[RESTORE] kept N salon row(s)`.
+- **The diagnostic:** the watchdog now says `[SELECT] <key> is not in the conversation map -
+  selection dropped` at `warn`, so the next inert tap names itself instead of looking like a tap
+  that never arrived.
+- **Not measured on the device:** the order of the two loads on the reporter's cold start was not
+  observed (no inspectable build on the bench at the time). The press held past the reorder hold
+  ([above](#a-communitys-salons-have-an-order-everyone-shares-and-a-name-that-is-only-a-name-2026-10-05))
+  is the other inert-tap cause, measured on the iPhone.
 
 ## Profile fetches that failed on a device, and the denominator that is owed (2026-08-16)
 

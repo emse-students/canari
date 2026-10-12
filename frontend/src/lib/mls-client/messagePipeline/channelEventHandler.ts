@@ -1,3 +1,5 @@
+import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
+import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
 import { openChannelMessage } from '$lib/utils/graine/channelSeal';
 import { reportUnreadableChannelMessage } from '$lib/utils/chat/channelCrypto';
 import { decodeAppMessage } from '$lib/proto/codec';
@@ -311,6 +313,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     if (convoKey) {
       let content: string | undefined;
       let isSystemNotice = false;
+      // The client UUID sealed INSIDE the ciphertext: what this device's own echo is keyed by.
+      let innerMessageId: string | undefined;
       const channelServerMs = parseServerTimestampMs(data.createdAt);
       try {
         if (data.ciphertext) {
@@ -366,6 +370,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             return;
           }
           if (msg) {
+            innerMessageId = msg.messageId ? String(msg.messageId) : undefined;
             const envelope =
               appMsgToEnvelope(msg, channelServerMs) ??
               appMsgToChannelSystemEnvelope(msg, channelServerMs);
@@ -397,12 +402,35 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
       // Keyed by the SERVER row id, exactly like the history load (`decodeChannelMessageRow`).
       // Every server-side operation on a channel message - delete, pin, poll vote, reaction -
-      // addresses it by that id, and a channel send has no optimistic echo to reconcile
-      // (see `sendChatMessage`), so the AppMessage id would only make the live bubble
-      // unaddressable until the next reload.
+      // addresses it by that id; the author's own echo, shown under the AppMessage id, is
+      // re-keyed to it just below (WP-OFF-2), so the AppMessage id never names a live bubble.
       const renderedId = String(data.messageId || data.id);
       const poll = data.poll as ChannelPollMeta | undefined;
       if (poll) setPollMeta(renderedId, poll);
+
+      // THIS DEVICE'S OWN ECHO of the message, if it is still showing one under the client UUID: it
+      // takes the server's id here instead of being drawn a second time (WP-OFF-2). A no-op for every
+      // message that is not an echo - only a row flagged `awaitingServerId` is ever touched.
+      // ONLY THE AUTHOR HAS ONE: the frame names its sender in the clear (and Graine v2 proves it),
+      // so another member sealing a message under the same client UUID cannot re-key this device's
+      // echo - `applySalonEchoChange` would otherwise swap any awaiting row for that id.
+      const ownClientId =
+        innerMessageId &&
+        innerMessageId !== renderedId &&
+        String(sender || '').toLowerCase() === ctx.userId.toLowerCase()
+          ? innerMessageId
+          : undefined;
+      if (ownClientId) {
+        applySalonEchoChange(
+          conversations,
+          convoKey,
+          ownClientId,
+          { kind: 'settled', serverId: renderedId, serverMs: channelServerMs },
+          log
+        );
+        // The frame is the proof the server holds it: the unsent ledger must not hand it back.
+        clearUnsentSalonTexts(ctx.userId, [ownClientId]);
+      }
 
       // A membership notice is attributed to nobody, exactly like `decodeChannelMessageRow` does
       // on the history path - otherwise the same event reads as a message from its trigger.
@@ -413,6 +441,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         // reconcile can compare with the server's rows (see `reconcileSalonUnread`).
         serverTimestamp: channelServerMs,
         skipDbSave: true,
+        // A follower tab may be the one that composed it: the id lets it settle its echo.
+        ...(ownClientId ? { clientMessageId: ownClientId } : {}),
         ...(isSystemNotice ? { isSystem: true } : {}),
       }).catch((e) => console.error(e));
     } else {

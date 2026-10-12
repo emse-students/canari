@@ -4,6 +4,7 @@ import type {
   GroupMeta,
   UserGroupRow,
   MlsInitOptions,
+  BulkIngestHandle,
   BulkIngestPhase,
   BulkIngestObserver,
 } from '$lib/mls-client';
@@ -73,6 +74,7 @@ import {
   type DeliveryRepeatShape,
 } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
+import { noteKeyGroupFrameLost } from '$lib/mls-client/keyGroupFrameLosses';
 import {
   channelScope,
   sameScope,
@@ -492,8 +494,12 @@ export abstract class BaseMlsService implements IMlsService {
   /** Lifecycle observers of bulk-ingest windows (MLS state persister, UI render buffer). */
   private readonly bulkIngestObservers: BulkIngestObserver[] = [];
 
-  /** Stack of open phases, so {@link endBulkIngest} replays the exact phase its open used. */
-  private readonly bulkIngestPhases: BulkIngestPhase[] = [];
+  /**
+   * Open windows by handle, so {@link endBulkIngest} replays the exact phase ITS open used. A map
+   * and not a stack: windows overlap without nesting (see `IMlsService.endBulkIngest`).
+   */
+  private readonly openBulkIngests = new Map<BulkIngestHandle, BulkIngestPhase>();
+  private nextBulkIngestHandle: BulkIngestHandle = 1;
 
   constructor(platform: 'web' | 'tauri', fetchImpl?: MlsDeliveryFetch) {
     this.platform = platform;
@@ -890,8 +896,9 @@ export abstract class BaseMlsService implements IMlsService {
     this.bulkIngestObservers.push(observer);
   }
 
-  beginBulkIngest(phase: BulkIngestPhase = BaseMlsService.PERSIST_ONLY_PHASE): void {
-    this.bulkIngestPhases.push(phase);
+  beginBulkIngest(phase: BulkIngestPhase = BaseMlsService.PERSIST_ONLY_PHASE): BulkIngestHandle {
+    const handle = this.nextBulkIngestHandle++;
+    this.openBulkIngests.set(handle, phase);
     for (const observer of this.bulkIngestObservers) {
       // Isolated for the same reason as the close below: one observer refusing to OPEN its window
       // must not stop the next from opening one it will be asked to close.
@@ -901,14 +908,18 @@ export abstract class BaseMlsService implements IMlsService {
         console.error('[QUEUE] bulk-ingest observer failed to start:', e);
       }
     }
+    return handle;
   }
 
-  async endBulkIngest(): Promise<void> {
-    const phase = this.bulkIngestPhases.pop();
+  async endBulkIngest(handle: BulkIngestHandle): Promise<void> {
+    const phase = this.openBulkIngests.get(handle);
     if (!phase) {
-      console.warn('[QUEUE] endBulkIngest without a matching beginBulkIngest - ignored');
+      console.warn(
+        `[QUEUE] endBulkIngest for window ${handle}, which is not open - ignored (closed twice?)`
+      );
       return;
     }
+    this.openBulkIngests.delete(handle);
     // Replay the exact phase the matching open used: start and end can never disagree.
     //
     // PER OBSERVER, and that is the whole point. These are independent subscribers - the encrypted
@@ -1407,6 +1418,11 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /** @inheritdoc */
+  notifyConversationRowsSeeded(): void {
+    this.refetchFramesLeftBehind('absent-conversation', 'conversation rows seeded');
+  }
+
+  /** @inheritdoc */
   notifyConversationAvailable(groupId: string): void {
     this.refetchFramesLeftBehind(
       'absent-conversation',
@@ -1728,6 +1744,8 @@ export abstract class BaseMlsService implements IMlsService {
     const ackIds: string[] = [];
     /** Groups whose Welcome landed in this drain: the one event that unblocks an unknown group. */
     const welcomedGroups: string[] = [];
+    /** This drain's own window, closed by handle so an overlapping window cannot be closed instead. */
+    let drainIngest: BulkIngestHandle | null = null;
 
     await this.messageScheduler.drain(
       async (msg) => {
@@ -1864,7 +1882,7 @@ export abstract class BaseMlsService implements IMlsService {
           beginQueueDrainBench(pendingCount);
           // Live drain: buffer decrypted messages for one grouped UI flush; show the overlay
           // only for a multi-message catch-up. endBulkIngest replays this exact phase.
-          this.beginBulkIngest({ bufferUi: true, showOverlay: pendingCount > 1 });
+          drainIngest = this.beginBulkIngest({ bufferUi: true, showOverlay: pendingCount > 1 });
         },
         onDrainEnd: async () => {
           if (ackIds.length > 0) {
@@ -1882,7 +1900,15 @@ export abstract class BaseMlsService implements IMlsService {
           }
 
           finishQueueDrainBench(ackIds.length);
-          await this.endBulkIngest();
+          if (drainIngest === null) {
+            // AT A LEVEL THAT ACCUSES: the scheduler pairs the two callbacks, so an end without its
+            // start is a scheduler that broke that contract - and there is no window to close.
+            console.error('[QUEUE] drain ended without having opened its bulk-ingest window');
+            return;
+          }
+          const closing = drainIngest;
+          drainIngest = null;
+          await this.endBulkIngest(closing);
         },
       }
     );
@@ -1916,13 +1942,6 @@ export abstract class BaseMlsService implements IMlsService {
     // this one has not started. A pull that dies half-way therefore leaves it false.
     this.mailboxEmptiedByAPull = false;
 
-    // A PULL MUST NOT RACE THIS DEVICE'S OWN ACKNOWLEDGEMENT, and this line used to start one that
-    // did: `void`, so the flush of any persisted ack was still in the air when the server answered,
-    // and so was the drain's ack when `refetchFramesLeftBehind` called straight back in here.
-    // Awaiting it is an ORDERING, not a timeout - it resolves the moment the acks land, or once
-    // their retries are exhausted, and in that second case the rows really are still owed.
-    await this.announceAck([]).catch(() => {});
-
     let fetched = 0;
     /** Whether THIS pull listed the whole mailbox - the only kind that may settle the initial drain. */
     let emptied = false;
@@ -1931,8 +1950,21 @@ export abstract class BaseMlsService implements IMlsService {
      * ANNOUNCED WHILE IT RUNS, so the barrier can state a fact about the whole mailbox rather than
      * about whichever pages happen to have landed. Never rejects - every failure is handled below -
      * so nothing waiting on it can be left hanging by a transport error.
+     *
+     * ANNOUNCED IN THE SAME TICK AS THE CALL, which is why the ack ordering below sits INSIDE it. It
+     * used to be awaited before this assignment, so for one ack round trip a pull had been asked for
+     * and the barrier could not see it: an archive replay reaching `waitForGroupQueueIdle` in that
+     * window passed straight through, decrypted the frame, and the pull then delivered it a second
+     * time. The restore now asks for its pull while phase 2 is still to run
+     * (`notifyConversationRowsSeeded`), so that window is one every boot would cross.
      */
     const pull = (async () => {
+      // A PULL MUST NOT RACE THIS DEVICE'S OWN ACKNOWLEDGEMENT, and this line used to start one that
+      // did: `void`, so the flush of any persisted ack was still in the air when the server answered,
+      // and so was the drain's ack when `refetchFramesLeftBehind` called straight back in here.
+      // Awaiting it is an ORDERING, not a timeout - it resolves the moment the acks land, or once
+      // their retries are exhausted, and in that second case the rows really are still owed.
+      await this.announceAck([]).catch(() => {});
       try {
         // The per-page silence deadline is the delivery API's own (`PENDING_PAGE_STALL_MS`): it is a
         // property of that request, and a second copy here is a second number to keep true.
@@ -1972,13 +2004,23 @@ export abstract class BaseMlsService implements IMlsService {
         );
       }
     })();
-    this.pendingPullInFlight = pull;
+    // CHAINED, NEVER OVERWRITTEN. Two pulls can overlap (a reconnect and the restore's seeded-rows
+    // pull), and the barrier must stand until EVERY one of them has landed. Assigning `pull` alone let
+    // the first to finish null the slot while the other was still fetching, so a
+    // `waitForGroupQueueIdle` passed and decrypted a frame that pull then delivered a second time.
+    const previous = this.pendingPullInFlight;
+    const announced = previous ? Promise.all([previous, pull]).then(() => {}) : pull;
+    if (previous) {
+      console.log('[PENDING] A pull is already in flight - the barrier now waits for both');
+    }
+    this.pendingPullInFlight = announced;
     try {
       await pull;
     } finally {
       // CLEARED BEFORE THE BARRIER, deliberately: the line below is that barrier, and a pull still
-      // announcing itself here would be waiting on its own completion.
-      this.pendingPullInFlight = null;
+      // announcing itself here would be waiting on its own completion. ONLY WHEN IT IS STILL OURS: a
+      // later pull chained onto it, and clearing would blind the barrier to that one.
+      if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
     }
     await this.settleMailbox();
     // Only now is the answer complete: the rows were enqueued, not handled, so what the handler
@@ -3720,7 +3762,8 @@ export abstract class BaseMlsService implements IMlsService {
   async routeDistributionFrame(
     groupId: string,
     sender: string,
-    ciphertext: Uint8Array
+    ciphertext: Uint8Array,
+    senderDeviceId?: string
   ): Promise<boolean> {
     const scope = this.distributionScopeByGroup.get(groupId);
     if (scope === undefined) {
@@ -3802,7 +3845,14 @@ export abstract class BaseMlsService implements IMlsService {
     }
 
     try {
-      await handler({ scope, workspaceId, groupId, sender, plaintext });
+      await handler({
+        scope,
+        workspaceId,
+        groupId,
+        sender,
+        plaintext,
+        ...(senderDeviceId ? { senderDeviceId } : {}),
+      });
     } catch (e) {
       // NOT acknowledged, on purpose: the handler is what STORES a seed, so a throw here means the
       // seed did not land, and acknowledging would drop key material nobody can ask for again.
@@ -3892,6 +3942,9 @@ export abstract class BaseMlsService implements IMlsService {
       this.tellEvictedOnce(groupId);
     }
     if (permanent) {
+      // COUNTED for the seed requests that follow, which print it (`keyGroupFrameLosses`). A
+      // device's own frame is not a loss: there was never anything for it to read.
+      if (kind !== 'own-message') noteKeyGroupFrameLost(groupId, kind);
       // ACKNOWLEDGED, and said once. The seed is gone from THIS device for good; what recovers it
       // is a peer answering `requestCommunityHistory`, never the server handing the same
       // undecryptable bytes back. Leaving it queued would cost the line above on every boot and

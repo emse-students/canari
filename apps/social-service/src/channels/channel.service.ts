@@ -2954,10 +2954,15 @@ export class ChannelService {
    */
   private async withPresence<T extends { userId: string }>(
     rows: T[]
-  ): Promise<(T & { online: boolean })[]> {
-    const online = await this.redis.onlineUserIds(rows.map((r) => r.userId));
+  ): Promise<(T & { online: boolean; onlineDevices: string[] })[]> {
+    const online = await this.redis.onlineDevicesByUser(rows.map((r) => r.userId));
     this.logger.debug(`[ROSTER] presence read: ${online.size}/${rows.length} member(s) online`);
-    return rows.map((r) => ({ ...r, online: online.has(r.userId.trim().toLowerCase()) }));
+    // `onlineDevices` since 1.2.5: the requester names ONE answering device of the member it elects
+    // (channel-encryption section 23). A client predating it reads `online` only, which is unchanged.
+    return rows.map((r) => {
+      const devices = online.get(r.userId.trim().toLowerCase()) ?? [];
+      return { ...r, online: devices.length > 0, onlineDevices: devices };
+    });
   }
 
   /**
@@ -3477,11 +3482,12 @@ export class ChannelService {
     if (!Number.isSafeInteger(at) || at <= 0) {
       throw new BadRequestException('at must be a positive integer (epoch ms)');
     }
-    // THE READER'S INSTANT AND THE SERVER'S ARE TWO CLOCKS. `at` is the AUTHOR's `sentAt` of the
-    // newest message read, which is always earlier than the row's `createdAt` (the request travelled)
-    // and by more when the author's clock lags. A mark below the newest `createdAt` leaves that
-    // message "newer than the mark" for the server for good, which `listUnreadCounts` would count as
-    // unread right after the reader had read it. The client therefore adds the row's own `createdAt`
+    // THE READER'S INSTANT AND THE SERVER'S CAN BE TWO CLOCKS. A client before 2026-10-12 sent as
+    // `at` the AUTHOR's `sentAt` of the newest message read, earlier than the row's `createdAt` when
+    // the author's clock lags and LATER when it leads (the bound below then fires); a current client
+    // dates every salon row by its `createdAt`, so `at` is on this clock. A mark below the newest
+    // `createdAt` leaves that message "newer than the mark" for the server for good, which
+    // `listUnreadCounts` would count as unread right after the reader had read it. The client therefore adds the row's own `createdAt`
     // when it knows it, and the mark takes the later of the two. It can only RAISE the mark, and the
     // bound below still caps it at the salon's newest message.
     const wanted =

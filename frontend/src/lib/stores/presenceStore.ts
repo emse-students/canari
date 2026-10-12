@@ -116,11 +116,6 @@ export function unwatchUsers(userIds: string[]) {
   }
 }
 
-/** Returns `true` if the given user is currently marked as online in the local presence map. */
-export function isUserOnline(userId: string): boolean {
-  return get(presenceMap)[userId] || false;
-}
-
 /**
  * Immediately fetches presence status for all watched users from the gateway and
  * merges the result into `presenceMap`. Silently skips non-JSON or 401 responses.
