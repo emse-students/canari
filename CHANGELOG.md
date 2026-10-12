@@ -14,6 +14,93 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-10-12
+
+### Changed - a notification tapped on a killed app opens the conversation ~1.2 s sooner behind the PIN
+
+The feed no longer draws its first answer while a notification landing is taking the reader elsewhere; that draw was what held the PIN unlock and the routing on the Mi 9T ([notification-to-conversation-latency](docs/wiki/frontend/notification-to-conversation-latency.md#f2---the-feed-no-longer-draws-under-a-landing-cause-confirmed-then-measured)).
+
+### Fixed - deleting a form that has answers archives it instead of orphaning its submissions
+
+A form with submissions is now archived (`deletedAt`) and a foreign key forbids a submission naming a missing form; a form with none is still deleted. Migration 081 refuses to run while orphans remain ([forms](docs/wiki/frontend/modules/forms.md#a-form-with-submissions-is-archived-never-removed-2026-10-11)).
+
+### Fixed - a salon ending on membership notices kept a ghost unread badge
+
+The read mark skipped system rows, so "X added Y" notices at the end of a salon were counted by the server for ever and the badge returned at every reload ([chat](docs/wiki/frontend/modules/chat.md#a-salon-read-mark-reaches-its-membership-notices-2026-10-11)).
+
+### Added - an institution's audience can be a union of campuses and formations
+
+The creation form and, for a global admin, the Audience tab of an institution have a **Custom** choice: tick the campuses and formations, written as the spaces grid would write them. The other creation gaps were already closed or are by design, see [associations](docs/wiki/frontend/modules/associations.md#the-audience-tab-and-the-campus-prompt-wp-b-2026-10-08).
+
+### Documented - the iPhone 12 owed-readings inventory on v1.2.3-alpha.5
+
+Every reading owed on the iPhone, classified as read, blocked or waiting for the next pre-release, with the day's verdicts: "Ouvrir dans l'application", the glass chrome and the front-lens camera pass; the keyboard rise fails in a new shape ([device-verification](docs/wiki/device-verification.md#the-iphone-12-owed-readings-inventory-2026-10-11)).
+
+### Fixed - the media index is written atomically, one write at a time
+
+A crash or overlapping writes can no longer leave a truncated `media_metadata.json` that loses every entry at the next boot ([media-service](docs/wiki/services/media-service.md#retention-a-90-day-idle-sweep-on-chat-media-and-nothing-else-deletes-them)).
+
+### Documented - the Mi 9T readings of v1.2.4-alpha.2
+
+The 13 MB send, the 9:16 reel camera, the legacy-reel viewer, feed playback and the slow-link corner icon pass on the Mi 9T; the reel editor fails on one defect, an overlay not kept inside the frame ([device-verification](docs/wiki/device-verification.md#the-mi-9t-readings-of-v124-alpha2-2026-10-12)).
+
+### Documented - the notification tap to reply path, measured on the Mi 9T
+
+Tap to a usable conversation: <= 0.35 s backgrounded, 2.7 s killed, 5 s killed behind the PIN; where the time goes and a ranked fix plan ([notification-to-conversation-latency](docs/wiki/frontend/notification-to-conversation-latency.md)).
+
+### Changed - the 29 orphan form submissions are deleted on dev and prod
+
+Submissions naming a deleted form (5 paid, all old Stripe test charges) were backed up and then deleted in one checked transaction per estate. Migration 081 can now add its foreign key ([backlog](docs/wiki/backlog.md#p3---submissionsformid-names-a-form-nothing-keeps-and-29-rows-point-at-deleted-ones)).
+
+### Fixed - a queued attachment no longer lives inside the outbox row
+
+The bytes of a queued file now sit in the app's own IndexedDB, encrypted under a per-entry key kept in a row of under 1 KB, so a 13 MB attachment no longer crosses the Android SQL bridge three times per send; a file lost by the platform shows the existing error card instead of a silent failure, and a full device says so. Design and crash windows in [offline-and-weak-network 13.7](docs/wiki/frontend/offline-and-weak-network.md).
+
+### Fixed - the PDF reader is fluid on a phone, and its text selection matches the glyphs
+
+Pages are shown as canvases instead of PNG-encoded images, rendered through a bounded, cancellable
+queue with a memory budget; on a Mi 9T an 81-page scan shows its first page in 0.65 s instead of 5 s
+and no longer freezes on zoom. The selectable text was about font-size times too wide on every PDF
+([posts](docs/wiki/frontend/modules/posts.md#making-the-reader-fluid-on-a-phone-2026-10-11)).
+
+### Changed - the PIN screen appears ~0.45 s sooner on a cold start
+
+A device that already enrolled the account draws the PIN gate at once instead of first asking the server whether this is a first setup, a question that waited for the token refresh ([notification-to-conversation-latency](docs/wiki/frontend/notification-to-conversation-latency.md#f3---the-pin-gate-is-drawn-on-the-local-fact-measured)).
+
+### Changed - the camera, the review, the editor and the viewer draw ONE 9:16 reel frame, and the keyboard never moves it
+
+The frame is shown whole (the whole screen when it has its shape, rounded over a blurred backdrop otherwise), the camera records exactly it, and overlays live inside it ([reel-editor](docs/wiki/frontend/modules/reel-editor.md#one-frame-for-capture-edit-and-publish-2026-10-11-replaces-the-cover-and-crop-of-1739)).
+
+### Fixed - a feed reel fetches only what it is about to play, and a failed reel publish leaves no blob
+
+A feed card streams the head of a reel, then only what its playing video needs, and gives the stream
+and its player back off screen; the decrypted media pool is capped by bytes. A reel upload whose post
+was never created is swept a day later ([reels](docs/wiki/frontend/modules/reels.md#watching-the-feed-card-and-the-full-screen-viewer-c7), [media-service](docs/wiki/services/media-service.md#the-reel-pending-class-a-feed-reel-whose-post-does-not-exist-yet-2026-10-11)).
+
+### Fixed - a reel overlay stays whole inside the frame and can always be grabbed again
+
+A text dropped on the editor's tool tray was hidden under it, reachable only through Android's Back edge, and published clipped. Its whole box now stays in the frame and a release settles its centre clear of the controls. The preview's text no longer follows the system text size, which the export ignored ([reel-editor](docs/wiki/frontend/modules/reel-editor.md#the-reach-rule-an-overlay-stays-whole-in-the-frame-and-grabbable-2026-10-12)).
+
+### Changed - the foreground line says what the reconnect waited for
+
+`[LIFECYCLE] App in foreground` now names each resume step's duration. It showed that a warm notification tap's reply waits on the landing's render, not on a late foreground signal. Two silent outbox-reconcile catches now log ([notification-to-conversation-latency](docs/wiki/frontend/notification-to-conversation-latency.md#f5---the-warm-diagnosis-was-wrong-and-the-fix-it-suggested-measured-to-nothing)).
+
+### Fixed - the slow-connection hint is a small icon, and measures the link rather than the server
+
+The "Connexion lente" strip became a discreet icon and no longer fires when only heavy routes are slow: the latency reading is the floor of recent answers, and an unanswered request counts only while nothing else answers. See [offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md).
+
+### Fixed - a parent association onboarded on Lydia can approve a payment delegation, and the dead Stripe names are gone
+
+The delegation state and its approval still tested the Stripe account columns, so a parent that had finished its Lydia onboarding could not approve a request. The unreachable `stripe-*` routes, the unmapped `stripe*` columns in the code, the `MANAGE_STRIPE_CONNECT` name (now `MANAGE_PAYOUT_ACCOUNT`, same bit) are removed, the checkout return deep link is `payment` (the `stripe` host stays read for older builds). No column is dropped: the plan is in [stripe-archive](docs/wiki/stripe-archive.md#the-names-that-outlived-the-processor---what-2026-10-09-renamed-and-what-stays).
+
+### Changed - the user's 2026-10-11 decisions recorded
+
+Standing release authority for the lead agent, the Docker prune above 75 % (images and build cache only), no native camera, CanaReels in chats starting with RC-0, the Pixel 6a as observation only, and Apple's submission order ([backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-11)).
+
+### Changed - release notes of 1.2.4
+
+The store notes of the 1.2.4 stable: a fluid PDF reader, whole reel texts, a discreet slow-link icon, a faster notification landing ([notification-to-conversation-latency](docs/wiki/frontend/notification-to-conversation-latency.md)).
+
 ## [1.2.3] - 2026-10-11
 
 ### Fixed - the standing CodeQL alerts of the nightly gate are closed
