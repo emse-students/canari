@@ -58,7 +58,7 @@
 //! was stored (`exportMlsStateAsHex` -> `saveMlsState`), and restoring a web export on Android must
 //! open it. One parser, one place the shape is decided, on every target - which is what this module
 //! existed for. **The one exception is measured, not convenient**: in a BROWSER the WASM build of
-//! this reader opens v2 with software AES, 2.6x slower than it opens ChaCha (610 ms against 240 ms
+//! this reader opens v2 with software AES, ~2.5x slower than it opens ChaCha (610 ms against 240 ms
 //! on 7.7 MB), so the web's `loadAndInitWasm` opens v2 with WebCrypto and hands this crate the
 //! plain CBOR; every other shape still reaches [`parse`] sealed. Both v2 readers open the same
 //! committed fixture (`tests/state_blob_v2.rs`, `mlsStateSeal.test.ts`) and answer the same codes.

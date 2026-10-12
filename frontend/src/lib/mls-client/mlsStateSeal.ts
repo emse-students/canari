@@ -18,8 +18,8 @@
  * with the 16 header bytes as the AAD and the AES key = HKDF-SHA256(device key, salt, info).
  *
  * WHY THE WEB ALSO OPENS V2 HERE, rather than leaving it to the WASM reader: RustCrypto's AES has no
- * hardware path on `wasm32`, and the bench measured the WASM opening a 7.7 MB v2 blob in 693 ms
- * against 269 ms for the ChaCha one - the checkpoint saving would have been paid back, and more, on
+ * hardware path on `wasm32`, and the bench measured the WASM opening a 7.7 MB v2 blob in 610-618 ms
+ * against 233-240 ms for the ChaCha one - the checkpoint saving would have been paid back, and more, on
  * every cold start. So on the web, v2 is opened by WebCrypto and the WASM is handed the plain CBOR;
  * every OTHER shape (legacy, v1, an unknown version) still goes to `mls-core` sealed, which stays
  * the one place those are decided. The two v2 readers cannot drift silently: both open the same

@@ -87,25 +87,28 @@ Lever one above, built: the framed `state_blob` v2 (AES-256-GCM through WebCrypt
 by `mls-core` everywhere - the design and the downgrade story are in
 [mls-protocol](../protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)).
 Same bench, same states, desktop Chrome, the app's own WASM and the app's own `mlsStateSeal.ts`,
-medians of 5 (loads: of 3), two runs agreeing within ~10 %:
+medians of 5 (loads: of 3) from two runs - a range is the two runs' medians, and the small states
+spread by up to ~40 % (20 groups: load 60-84 ms), so read the 80-group row. "legacy" is the
+unframed `[nonce || ChaCha20-Poly1305]` blob every web client writes today - NOT the framed v1,
+which nothing writes; the bench's own output calls these columns `v1`:
 
-| groups | state | seal v1 (WASM ChaCha) | seal v2 (WebCrypto) | checkpoint v1 | checkpoint v2 | load v1 | load v2 (web) | v2 through the WASM reader |
+| groups | state | seal legacy (WASM ChaCha) | seal v2 (WebCrypto) | checkpoint legacy | checkpoint v2 | load legacy | load v2 (web) | v2 through the WASM reader |
 | ------ | ----- | --------------------- | ------------------- | ------------- | ------------- | ------- | ------------- | -------------------------- |
 | 5      | 0.48 MB | 11 ms               | 0.3-0.5 ms          | 13 ms         | 2-3 ms        | 18-20 ms | 8-9 ms       | 44-52 ms                   |
 | 20     | 1.9 MB  | 40-44 ms            | 3 ms                | 50-60 ms      | 12-16 ms      | 60-84 ms | 25-39 ms     | 152-197 ms                 |
 | 40     | 3.8 MB  | 83 ms               | 6-7 ms              | 101-104 ms    | 22-27 ms      | 129-143 ms | 46-66 ms   | 327-360 ms                 |
 | 80     | 7.7 MB  | 158-163 ms          | 10-11 ms            | 196-200 ms    | **47 ms**     | 233-240 ms | **96-98 ms** | 610-618 ms               |
 
-"checkpoint" = export + (v1 only: the copy for the worker) + seal + IndexedDB put. "load" = what a
+"checkpoint" = export + (legacy only: the copy for the worker) + seal + IndexedDB put. "load" = what a
 cold start pays to construct the client from the stored blob.
 
 - **A 7.7 MB checkpoint goes from ~198 ms to ~47 ms (4.2x); the seal alone from ~160 to ~10 ms.**
   What is left is the IndexedDB put (~34 ms) and the export.
 - **The cold-start load also halves (240 -> 97 ms)**, but ONLY because the web opens v2 with
-  WebCrypto: the WASM reader's software AES took 610 ms, 2.6x WORSE than ChaCha. That column is
+  WebCrypto: the WASM reader's software AES took 610 ms, ~2.5x WORSE than ChaCha. That column is
   why `loadAndInitWasm` dispatches v2 to WebCrypto; it is not a web path.
 - **The main thread's longest stall during the v2 seal read 0.0 ms** (a `MessageChannel` ping loop,
-  resolution ~0.1 ms): Chrome copies and encrypts off the JavaScript thread. The v1 seal ran in the
+  resolution ~0.1 ms): Chrome copies and encrypts off the JavaScript thread. The legacy seal ran in the
   encrypt worker, so its column is CPU and battery, never main-thread time - the v2 win is in the
   durability window, CPU and battery, not in jank.
 - **THE WRITER SHIPS OFF** (`MLS_STATE_SEAL_V2_WRITER_ENABLED = false`, read-first): nothing above
