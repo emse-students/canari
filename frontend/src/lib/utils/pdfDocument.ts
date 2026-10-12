@@ -54,17 +54,35 @@ let sharedWorker: PdfjsWorker | null = null;
  * freed on `destroy()` and the worker stays for the next one.
  *
  * A worker whose start-up FAILED is not kept, for the same reason a failed library load is not:
- * the next document must be able to try again.
+ * the next document must be able to try again. Nor is a READY worker that later raises `error` (a
+ * browser may kill a worker under memory pressure): sharing makes one dead worker every later
+ * PDF's problem, so it is dropped and torn down, and the next document starts a fresh one. A
+ * worker that dies WITHOUT an `error` event cannot be seen from here; documents opened on it would
+ * hang, which is the residual risk of sharing.
  */
 function sharedPdfWorker(lib: PdfjsModule): PdfjsWorker {
   if (sharedWorker) return sharedWorker;
   const worker = new lib.PDFWorker();
   sharedWorker = worker;
   Log.d('pdfDocument:workerCreated');
-  worker.promise.catch((err: unknown) => {
-    Log.d('pdfDocument:workerFailed', { err });
-    if (sharedWorker === worker) sharedWorker = null;
-  });
+  const drop = (reason: string, err: unknown) => {
+    console.warn(
+      `[pdfDocument] the shared pdf.js worker ${reason} - the next PDF starts another`,
+      err
+    );
+    if (sharedWorker !== worker) return;
+    sharedWorker = null;
+    worker.destroy();
+  };
+  worker.promise.then(
+    () => {
+      // `port` is the real `Worker` once ready; pdf.js's in-page fallback is a loopback port with
+      // no `error` event, and nothing can kill it.
+      const port = worker.port as unknown as EventTarget | null;
+      port?.addEventListener?.('error', (event) => drop('raised an error after start-up', event));
+    },
+    (err: unknown) => drop('failed to start', err)
+  );
   return worker;
 }
 

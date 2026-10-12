@@ -79,6 +79,11 @@ const workers = {
 };
 class FakeWorker {
   promise: Promise<void>;
+  port = new EventTarget();
+  destroyed = false;
+  destroy() {
+    this.destroyed = true;
+  }
   constructor() {
     workers.created.push(this);
     this.promise = workers.failNext
@@ -244,6 +249,26 @@ describe('the pdf.js worker', () => {
     expect(workers.created).toHaveLength(1);
     expect(workers.handed).toHaveLength(4);
     expect(new Set(workers.handed)).toEqual(new Set([workers.created[0]]));
+  });
+
+  it('is dropped and torn down when it raises an error after start-up', async () => {
+    vi.resetModules();
+    workers.created = [];
+    workers.handed = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fresh = await import('./pdfDocument');
+    await fresh.openPdfDocument('blob:a');
+    await flush();
+    workers.created[0].port.dispatchEvent(new Event('error'));
+    await fresh.openPdfDocument('blob:b');
+    expect(workers.created).toHaveLength(2);
+    expect(workers.created[0].destroyed).toBe(true);
+    expect(workers.handed).toEqual([workers.created[0], workers.created[1]]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('raised an error'),
+      expect.anything()
+    );
+    warn.mockRestore();
   });
 
   it('is not kept when its start-up failed, so the next document starts another', async () => {

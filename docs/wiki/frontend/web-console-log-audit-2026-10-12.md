@@ -47,8 +47,11 @@ After A, a PDF still cost one pdf.js worker per MOUNT: `openPdfDocument` handed 
 1 MB `pdf.worker.min` script (from cache), its parse and its start-up for a cover that renders in
 55-80 ms. `pdfDocument.ts` now creates ONE `PDFWorker` on the first document and hands it to every
 `getDocument`; pdf.js destroys only a worker it created itself, so `destroy()` frees the document
-and leaves the worker for the next one. A worker whose start-up failed is dropped, so the next
-document can try again. Pinned by a count, not a clock: four documents opened and destroyed start
+and leaves the worker for the next one. A worker whose start-up failed is dropped (logged at
+`warn`), so the next document can try again, and so is a ready worker that later raises `error`
+(a browser may kill one under memory pressure): it is torn down and the next document starts a
+fresh one. **The residual risk of sharing**: a worker that dies WITHOUT an `error` event cannot be
+seen, and every PDF opened on it afterwards would hang where, unshared, only one would. Pinned by a count, not a clock: four documents opened and destroyed start
 one worker ([pdfDocument test](../../../frontend/src/lib/utils/pdfDocument.test.ts)). Found by the 2026-10-12
 performance audit.
 
