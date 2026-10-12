@@ -3056,6 +3056,8 @@
   "chat_channel_make_public_confirm": "Rendre ce canal public ? Tous les membres de la communauté pourront y accéder, y compris ceux qui n'étaient pas sur la liste autorisée.",
   "auth_pin_salt_unreachable": "Impossible de récupérer le sel du PIN (serveur injoignable).",
   "auth_pin_check_unreachable": "Impossible de vérifier le PIN (serveur injoignable).",
+  "auth_pin_salt_rotated": "Votre PIN a été réinitialisé entre-temps. Saisissez-le à nouveau.",
+  "auth_pin_check_unexpected": "Le serveur a répondu de façon inattendue à la vérification du PIN. Réessayez dans un instant.",
   "auth_pin_mismatch": "PIN incorrect : ce PIN ne correspond pas à celui enregistré pour ce compte. Tous vos appareils utilisent le même PIN.",
   "auth_pin_recovery_login_failed": "La connexion n'a pas abouti après la récupération.",
   "auth_pin_recovery_failed": "La récupération du PIN n'a pas abouti. Réessayez dans un instant.",

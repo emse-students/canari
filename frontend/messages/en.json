@@ -3056,6 +3056,8 @@
   "chat_channel_make_public_confirm": "Make this channel public? Every community member will be able to access it, including anyone not on the allowed list.",
   "auth_pin_salt_unreachable": "Cannot fetch the PIN salt (server unreachable).",
   "auth_pin_check_unreachable": "Cannot verify the PIN (server unreachable).",
+  "auth_pin_salt_rotated": "Your PIN was reset in the meantime. Enter it again.",
+  "auth_pin_check_unexpected": "The server gave an unexpected answer to the PIN check. Try again in a moment.",
   "auth_pin_mismatch": "Incorrect PIN: this PIN does not match the one registered for this account. All your devices use the same PIN.",
   "auth_pin_recovery_login_failed": "Sign-in did not complete after the recovery.",
   "auth_pin_recovery_failed": "PIN recovery did not complete. Try again in a moment.",
