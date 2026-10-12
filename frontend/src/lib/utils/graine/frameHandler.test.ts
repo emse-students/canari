@@ -16,6 +16,7 @@ import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEn
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
 import {
+  graineRepairHoldObserver,
   holdGraineRepairs,
   registerCommunityHistoryVisibility,
   releaseGraineRepairs,
@@ -448,6 +449,30 @@ describe('a seed arriving on the distribution group', () => {
     await handleDistributionFrame(frame(await v2SeedFor('chan-2', 'sess-b', 0)));
     expect(repaired).toEqual([['chan-1'], ['chan-2']]);
     warn.mockRestore();
+    setGraineRepairListener(null);
+  });
+
+  // A history restore is a bulk-ingest window too, and the startup one spans every conversation's
+  // replay. Holding on it kept a live seed's salon blank until all of them had been replayed.
+  it('only the queue drain holds: a history-restore window announces at once', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+    const restore = { bufferUi: false, showOverlay: false };
+    const drain = { bufferUi: true, showOverlay: true };
+
+    graineRepairHoldObserver.onBulkIngestStart(restore);
+    await handleDistributionFrame(frame(await v2SeedFor('chan-1', 'sess-r', 0)));
+    expect(repaired).toEqual([['chan-1']]);
+
+    graineRepairHoldObserver.onBulkIngestStart(drain);
+    await handleDistributionFrame(frame(await v2SeedFor('chan-2', 'sess-d', 0)));
+    expect(repaired).toEqual([['chan-1']]);
+    await graineRepairHoldObserver.onBulkIngestEnd(drain);
+    expect(repaired).toEqual([['chan-1'], ['chan-2']]);
+    await graineRepairHoldObserver.onBulkIngestEnd(restore);
+    expect(repaired).toEqual([['chan-1'], ['chan-2']]);
     setGraineRepairListener(null);
   });
 

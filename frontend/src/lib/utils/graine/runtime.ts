@@ -1,5 +1,5 @@
 import { GraineSealUnavailableError } from './sealUnavailable';
-import type { IMlsService } from '$lib/mls-client/IMlsService';
+import type { BulkIngestObserver, IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { resetChannelReadSignals } from '$lib/utils/chat/channelReadSignal';
@@ -189,6 +189,27 @@ export function releaseGraineRepairs(): void {
   );
   deliverRepair(channelIds);
 }
+
+/**
+ * The hold, wired to the MLS service's bulk-ingest windows - but ONLY to the queue drain's.
+ *
+ * A bulk-ingest window is not always a drain. A history restore opens one too
+ * (`withMlsBulkIngest`, `bufferUi: false`), and the startup restore wraps every conversation's
+ * replay in ONE window that lasts as long as all of them - minutes on an account rejoining many
+ * conversations. Holding on that window kept a salon's repair from a live seed until every
+ * conversation had been replayed, so a salon opened at startup stayed blank for all that time
+ * although its seed had arrived. The drain is the window that carries the seeds, and it is the one
+ * that buffers the UI (`bufferUi: true`), so that flag - on BOTH sides, since a close replays the
+ * exact phase its open used - is what names it.
+ */
+export const graineRepairHoldObserver: BulkIngestObserver = {
+  onBulkIngestStart(phase) {
+    if (phase.bufferUi) holdGraineRepairs();
+  },
+  onBulkIngestEnd(phase) {
+    if (phase.bufferUi) releaseGraineRepairs();
+  },
+};
 
 /**
  * Announces repaired channels, if anyone is listening - or, inside a drain, notes them for its end.

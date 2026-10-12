@@ -830,8 +830,11 @@ re-decrypting the page. The announcement is now HELD while a bulk-ingest window 
 window closes. **The window is the drain itself, not a timer**: `beginBulkIngest`/`endBulkIngest`
 pair exactly, and their close is the one moment after which a re-read sees every seed the drain
 brought. Outside a drain (a live seed on an idle socket) the announcement is immediate, as before.
-Pinned by a count: 26 seeds for 3 salons inside one window -> one announcement naming 3 salons
-(`frameHandler.test.ts`).
+**Only the QUEUE DRAIN's window holds** (`graineRepairHoldObserver`, phase `bufferUi: true`): a
+history restore opens a bulk-ingest window too, and the startup one spans every conversation's
+replay, so holding on it would keep a salon opened at startup blank until all of them were replayed.
+Pinned by a count: 26 seeds for 3 salons inside one window -> one announcement naming 3 salons, and a
+restore window announces at once (`frameHandler.test.ts`).
 
 **A seed arriving disarms its ask.** `forgetAskedSession` is called on every path that ends with the
 device holding the session, so the asked-set holds only requests still outstanding. It existed with

@@ -58,11 +58,7 @@ import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { canSendInGroup } from '$lib/utils/chat/groupUsability';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
-import {
-  holdGraineRepairs,
-  releaseGraineRepairs,
-  setGraineRuntime,
-} from '$lib/utils/graine/runtime';
+import { graineRepairHoldObserver, setGraineRuntime } from '$lib/utils/graine/runtime';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
 import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
 import { sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
@@ -1042,11 +1038,8 @@ export async function loginImpl(
     mlsService.onDistributionFrame(handleDistributionFrame);
     // A drain re-reads each salon its seeds repaired ONCE, at its end, instead of once per seed.
     // Registered before the inbound gate opens below, so no window can close that this did not see
-    // open.
-    mlsService.addBulkIngestObserver({
-      onBulkIngestStart: () => holdGraineRepairs(),
-      onBulkIngestEnd: () => releaseGraineRepairs(),
-    });
+    // open. Only the drain's window holds - see `graineRepairHoldObserver`.
+    mlsService.addBulkIngestObserver(graineRepairHoldObserver);
     // Who acts on a key group found behind its epoch: rung 2 through the loader, and the requests
     // held while it was behind. Wired with the frame handler, before the drain can produce one.
     mlsService.onDistributionGapVerdict(
