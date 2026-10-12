@@ -30,6 +30,7 @@
     type LoginErrorCode,
     provesLocalStateExists,
   } from '$lib/composables/session/loginErrors';
+  import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
   import {
     getToken,
     clearAuth,
@@ -108,6 +109,8 @@
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
+  import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
+  import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
 
   /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
   function buildRemoteCallParticipants(): CallParticipant[] {
@@ -369,6 +372,24 @@
   function applyPinFailure(uid: string, code: LoginErrorCode | undefined) {
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
     void evaluateRecoverable(uid, code);
+    askSaltForNextTry(code);
+  }
+
+  /**
+   * The last submit consumed its salt; the next one gets its own, asked while the person retypes.
+   *
+   * ONE PLACE FOR EVERY FAILED UNLOCK THAT LEAVES THE KEYPAD UP, which is why it is called from
+   * `applyPinFailure`: the keypad's own wrong-PIN handler, the saved-PIN path and the biometric
+   * button all pass through there. NOT after a revocation - the device has just been returned to a
+   * fresh install, there is no session to ask the salt with, and the request could only fail.
+   */
+  function askSaltForNextTry(code: LoginErrorCode | undefined) {
+    if (code === 'device_revoked') {
+      appendLog('[PIN] No salt asked for a next try - the device was revoked and wiped.');
+      return;
+    }
+    if (isFirstPinSetup) return;
+    globalSession.prefetchPinSalt(appendLog);
   }
 
   /** Opens the recovery modal (old PIN → new PIN, no data loss). */
@@ -483,6 +504,9 @@
     } else {
       isFirstPinSetup = await detectFirstPinSetup(uid);
     }
+    // The salt does not depend on the PIN, so it is asked while the person types. A first setup
+    // is excluded: on a user without a salt that GET is a write (see `prefetchPinSaltImpl`).
+    if (!isFirstPinSetup) globalSession.prefetchPinSalt(appendLog);
     showPinModal = true;
   }
 
@@ -623,6 +647,7 @@
 
   /** Closes PIN/biometric modals as soon as MLS unlocks; catch-up continues in the background. */
   function dismissAuthPrompts() {
+    forgetPinSaltAhead('keypad closed', appendLog);
     showBiometricSheet = false;
     showPinModal = false;
     pinLoading = false;
@@ -1213,10 +1238,21 @@
     const isOpenHere = isReadingConversationNow(event.conversationId, globalConvs.selectedContact);
 
     if (event.type === 'message_added') {
-      if (convo.messages.some((m) => m.id === event.message.id)) return;
+      const merged = mergeAnnouncedMessage(convo.messages, event.message, event.clientMessageId);
+      if (!merged) return;
+      if (merged.settledEcho && event.clientMessageId) {
+        // This tab composed it and the leader received the frame: the send is proven delivered.
+        forgetDeliveredSalonSend(
+          event.clientMessageId,
+          globalSession.userId || currentUserId() || ''
+        );
+        console.debug(
+          `[TAB-SYNC] own salon echo ${event.clientMessageId.slice(0, 8)}... settled by the leader as ${event.message.id.slice(0, 8)}...`
+        );
+      }
       globalConvs.conversations.set(event.conversationId, {
         ...convo,
-        messages: insertMessageOrdered(convo.messages, event.message),
+        messages: merged.messages,
         lastMessageAt: event.lastMessageAt,
         unreadCount: isOpenHere ? 0 : event.unreadCount,
       });
@@ -1717,6 +1753,8 @@
     pinLoading = true;
     pinStep = m.auth_pin_step_resetting();
     appendLog(`[PIN_RESET] Starting for userId=${uid.slice(0, 8)}…`);
+    // The reset deletes the account's salt; one asked before it can only be stale.
+    forgetPinSaltAhead('PIN reset', appendLog);
     try {
       const token = await getToken();
       const res = await fetch(`${deliveryUrl()}/api/mls/security/pin-reset`, {
@@ -1800,6 +1838,7 @@
   open={showPinModal}
   onSubmit={handlePinSubmit}
   onClose={() => {
+    forgetPinSaltAhead('keypad closed', appendLog);
     showPinModal = false;
     _loginInProgress = false;
     globalSession.isLoginInProgress = false;

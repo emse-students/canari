@@ -190,6 +190,16 @@ describe('the watermark reading a conversation produces', () => {
     expect(watermarkAfterReading(messages, 0)).toBe(4000);
   });
 
+  it('a salon echo awaiting its server row does not move the read point (WP-OFF-2)', () => {
+    // The echo is dated by the author's clock, 900 ms ahead of the server here; a mark taken from it
+    // would read as "read" a message the server stamps inside that lead.
+    const echo = msg('local-uuid', 5900, ME, { awaitingServerId: true });
+    expect(watermarkAfterReading([msg('a', 5000), echo], 0, true)).toBe(5000);
+
+    const settled = msg('srv-1', 5001, ME);
+    expect(watermarkAfterReading([msg('a', 5000), settled], 0, true)).toBe(5001);
+  });
+
   it('a salon read point reaches a trailing membership notice, a DM one does not', () => {
     // Prod 2026-10-11: a salon whose newest rows were two "X added Y" notices could never be marked
     // read, because the notices were skipped - the server kept counting them at every reload.

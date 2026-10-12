@@ -341,7 +341,7 @@ const CASES = [
   // it sat in `warnings` and never broke `clean` - a silent close against the wrong phase. `severe`.
   [
     'warning',
-    '[01:40:12] [QUEUE] endBulkIngest without a matching beginBulkIngest - ignored',
+    '[01:40:12] [QUEUE] endBulkIngest for window 7, which is not open - ignored (closed twice?)',
     'severe',
   ],
   // A REPLAY THAT GAVE UP. It logs once at `[WARN]` and returns `undefined`, so the caller's commit -
