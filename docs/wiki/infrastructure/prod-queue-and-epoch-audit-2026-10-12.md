@@ -392,6 +392,36 @@ awk -F, 'NR>1 {print "SADD group:members:"$4" "$2":"$3}' dm_device_group_members
   | docker exec -i canari-prod-redis-1 redis-cli
 ```
 
+## Second pass - 2026-10-12
+
+**The user gave the go in chat for the second stage of F4**: predicate R in full (section 8), with
+no 30-day limit.
+
+**The candidates.** R named **131 devices**. **13 were excluded** because they had sent a frame
+since 2026-09-28. That is stricter than the first pass, which kept a device that had sent 24 days
+before. **118 devices were reaped.**
+
+**The mechanism is the first pass's**: `DELETE /api/mls/devices/:userId/:deviceId`, called from
+inside the `chat-delivery-service` container. The first device went alone and was checked, then the
+other 117. **All 118 calls answered HTTP 200**, and the delivery log holds **0 error lines**.
+
+| What | Removed |
+| --- | --- |
+| Queued rows of the 118 devices | **30 940** |
+| Seats (`dm_device_group_memberships`) | **329** |
+| One-time key packages | about 4 000 |
+
+**The queue total went from 336 539 to 305 535.** OPEN QUESTION: the morning audit (section 1)
+measured 93 580 rows, and the first pass saw 117 641. Nothing here explains how the queue reached
+336 539 by the second pass. It is not established whether that is fan-out from the community of
+section 2, a different count, or something new. It must be measured before the next reading of
+this page is believed.
+
+**The backup** is on the Portail-etu host, in `~/canari-reaper-pass2-2026-10-12/` of the operator account,
+mode `700`, files `600`, with `SHA256SUMS`. It holds one CSV per table, filtered to the 118 devices.
+**To restore**, `\copy` each table's CSV back into its table, as the first pass's procedure above
+does, from this directory.
+
 ## How to re-measure
 
 Run section 8's totals, kind and seat queries again after each fix. F1 is working when a new

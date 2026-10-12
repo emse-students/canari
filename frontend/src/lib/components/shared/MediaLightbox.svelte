@@ -40,12 +40,12 @@
     dismissProgress,
     dismissScale,
     dragOffset,
-    isDoubleTap,
     isTap,
     releaseVelocity,
     type GestureKind,
     type Sample,
   } from '$lib/utils/viewerGestures';
+  import { createTapDisambiguator } from '$lib/utils/tapDisambiguator';
   import {
     dimensionsParts,
     formatViewerDateTitle,
@@ -175,8 +175,14 @@
     dragStartX = 0,
     dragStartY = 0;
   let lastPinchDist = 0;
-  let lastTap: Sample | null = null;
-  let tapTimer: ReturnType<typeof setTimeout> | null = null;
+  /** A single tap toggles the chrome once the double-tap window has passed; a double tap zooms. */
+  const viewerTaps = createTapDisambiguator({
+    onSingle: () => {
+      chromeHidden = !chromeHidden;
+      Log.d('mediaLightbox.chrome', { hidden: chromeHidden });
+    },
+    onDouble: (tap) => toggleZoomAt({ clientX: tap.x, clientY: tap.y }),
+  });
 
   let transformEl = $state<HTMLDivElement | null>(null);
 
@@ -228,11 +234,7 @@
     dismissDy = 0;
     settling = false;
     afterSettle = null;
-    if (tapTimer) {
-      clearTimeout(tapTimer);
-      tapTimer = null;
-    }
-    lastTap = null;
+    viewerTaps.cancel();
   }
 
   function showIndicator() {
@@ -385,21 +387,7 @@
 
   /** A single tap, confirmed once the double-tap window has passed without a second one. */
   function handleTap(tap: Sample) {
-    if (isDoubleTap(lastTap, tap)) {
-      if (tapTimer) clearTimeout(tapTimer);
-      tapTimer = null;
-      lastTap = null;
-      toggleZoomAt({ clientX: tap.x, clientY: tap.y });
-      return;
-    }
-    lastTap = tap;
-    if (tapTimer) clearTimeout(tapTimer);
-    tapTimer = setTimeout(() => {
-      tapTimer = null;
-      lastTap = null;
-      chromeHidden = !chromeHidden;
-      Log.d('mediaLightbox.chrome', { hidden: chromeHidden });
-    }, GESTURE.DOUBLE_TAP_MS);
+    viewerTaps.tap(tap);
   }
 
   function openInfo() {
@@ -715,11 +703,11 @@
    * never runs. Its timers go with it here, so none fires on a component that no longer exists.
    */
   $effect(() => () => {
-    if (!tapTimer && !zoomTimeout) return;
-    Log.d('mediaLightbox.destroy', { tapPending: !!tapTimer, zoomPending: !!zoomTimeout });
-    if (tapTimer) clearTimeout(tapTimer);
+    const tapPending = viewerTaps.pending();
+    if (!tapPending && !zoomTimeout) return;
+    Log.d('mediaLightbox.destroy', { tapPending, zoomPending: !!zoomTimeout });
+    viewerTaps.cancel();
     if (zoomTimeout) clearTimeout(zoomTimeout);
-    tapTimer = null;
     zoomTimeout = null;
   });
 </script>
