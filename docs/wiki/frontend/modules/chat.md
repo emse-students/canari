@@ -2664,6 +2664,23 @@ the socket was down misses what was posted before the reconnect) and, on the rec
 salon on screen. Every other salon reloads on its next selection. Deletion, kick and repair keep
 their own invalidations. Pinned by `useConversations.channelCache.svelte.test.ts`.
 
+## A catch-up batch is merged with ONE sort (2026-10-12)
+
+`mergeMessagesInInputOrder` (`utils/chat/messageOrder.ts`) merges a batch of received messages into a
+conversation's held list - the bulk ingest of `useMessaging` and the background service's batches.
+It used to insert one message at a time, each a copy and a full sort of the conversation: O(K x N)
+for K messages into N held, 18-25 ms for 200 into 5000 on a desktop (vitest, warm), per batch, per
+conversation. It is now one stable sort of `existing ++ incoming`: 0.1 ms on the same input. A stable
+sort of `sort(A) ++ [x]` orders equal elements exactly as a stable sort of `A ++ [x]`, so the two
+give the same array whenever `compareMessageOrder` is a consistent order - pinned against the old
+loop on deterministic random input full of ties ([test](../../../../frontend/src/lib/utils/chat/messageOrder.test.ts)).
+**One edge has no defined answer either way**: messages with the SAME millisecond and MIXED presence
+of `serverTimestamp` / `ingestSequence` make the comparator intransitive, and the old loop's order
+already depended on arrival order there. That is the PRODUCTION shape, not a corner: held messages
+carry a `serverTimestamp` and no `ingestSequence`, a catch-up batch the reverse, so a held and an
+incoming message in the same millisecond compare by id alone and three of them can form a cycle
+(pinned in the test). Such ties may come out in a different order than on the old loop.
+
 ## The workspace list prunes only what existed when it asked
 
 The same seam as the section above, one level up, and it destroyed whole communities rather than
