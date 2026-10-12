@@ -81,3 +81,43 @@ describe('mergeMessagesInInputOrder - one sort, the same order as one insert per
     expect(mergeMessagesInInputOrder(existing, [])).toBe(existing);
   });
 });
+
+describe('mergeMessagesInInputOrder - the production shape', () => {
+  // What the two callers actually hold: messages already in the conversation carry a
+  // `serverTimestamp` (persisted queue time) and no `ingestSequence`; a catch-up batch carries an
+  // `ingestSequence` (this session's order) and no `serverTimestamp`.
+  const held = (id: string, ts: number, serverTimestamp: number): ChatMessage => ({
+    ...msg(id, ts),
+    serverTimestamp,
+  });
+  const incoming = (id: string, ts: number, seq: number): ChatMessage => msg(id, ts, seq);
+  const oneSortPerMessage = (existing: ChatMessage[], batch: ChatMessage[]) => {
+    let merged = existing;
+    for (const m of batch) merged = [...merged, m].sort(compareMessageOrder);
+    return merged;
+  };
+
+  it('gives the same order as the per-message loop whenever no two messages share a millisecond', () => {
+    const existing = Array.from({ length: 40 }, (_, i) => held(`h${i}`, 1000 + i * 7, i));
+    const batch = Array.from({ length: 40 }, (_, i) => incoming(`n${i}`, 1003 + i * 5, i));
+    expect(mergeMessagesInInputOrder(existing, batch).map((m) => m.id)).toEqual(
+      oneSortPerMessage(existing, batch).map((m) => m.id)
+    );
+  });
+
+  it('has NO total order for three or more messages in one millisecond, so such ties may swap vs the old loop', () => {
+    // Held vs held compare by server time, incoming vs incoming by sequence, and held vs incoming
+    // share neither, so they fall to the id - which can close a cycle:
+    const h1 = held('z', 1000, 1);
+    const h2 = held('a', 1000, 2);
+    const n = incoming('m', 1000, 0);
+    expect(compareMessageOrder(h1, h2)).toBeLessThan(0); // server time 1 < 2
+    expect(compareMessageOrder(h2, n)).toBeLessThan(0); // 'a' < 'm'
+    expect(compareMessageOrder(n, h1)).toBeLessThan(0); // 'm' < 'z'
+    // h1 < h2 < n < h1: any order of the three violates one comparison, so neither the old loop
+    // nor one sort has a "right" answer, and the two may legitimately differ here. What both
+    // keep is the set of messages.
+    const merged = mergeMessagesInInputOrder([h1, h2], [n]);
+    expect(merged.map((m) => m.id).sort()).toEqual(['a', 'm', 'z']);
+  });
+});

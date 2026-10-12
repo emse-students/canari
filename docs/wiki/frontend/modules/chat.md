@@ -2676,7 +2676,10 @@ give the same array whenever `compareMessageOrder` is a consistent order - pinne
 loop on deterministic random input full of ties ([test](../../../../frontend/src/lib/utils/chat/messageOrder.test.ts)).
 **One edge has no defined answer either way**: messages with the SAME millisecond and MIXED presence
 of `serverTimestamp` / `ingestSequence` make the comparator intransitive, and the old loop's order
-already depended on arrival order there.
+already depended on arrival order there. That is the PRODUCTION shape, not a corner: held messages
+carry a `serverTimestamp` and no `ingestSequence`, a catch-up batch the reverse, so a held and an
+incoming message in the same millisecond compare by id alone and three of them can form a cycle
+(pinned in the test). Such ties may come out in a different order than on the old loop.
 
 ## The workspace list prunes only what existed when it asked
 
