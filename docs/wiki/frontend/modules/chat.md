@@ -176,9 +176,11 @@ after every community load and every return of the socket, and `reconcileSalonUn
 count to the server's count PLUS the messages that landed live after the server counted
 (`ChatMessage.serverTimestamp > asOf`: both sides the row's `createdAt`, no device clock). A salon
 opened while the answer was in flight is skipped (a counter, not a timer). The receipt now names the
-row's own `createdAt` (`serverAt`): the author's `sentAt` is always earlier, so the newest message stayed
+row's own `createdAt` (`serverAt`): the author's `sentAt` is usually earlier, so the newest message stayed
 "newer than the mark" for ever - measured, 49 ms on one machine - and would have been counted unread
-right after it was read.
+right after it was read. **Not always earlier**: an author whose clock leads the server's writes a
+`sentAt` past `createdAt`, and since 2026-10-12 a salon row is dated by its `createdAt` on every path,
+the history load included ([social-service](../../services/social-service.md#read-receipts-in-a-salon)).
 
 **Refuted, not to be re-opened** (each read in the code AND measured):
 - *`onSelectChannelConversation` marks on load/visibility.* It runs on a click only; `claimChannelReadSignal`
@@ -2775,6 +2777,10 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
   no per-member "hide my read state" setting: what `readWatermarks` holds IS the predicate, so the
   placement never filters a second time. A reader whose watermark is older than the loaded page
   gets no head (every loaded row is one they have not read); one past the newest row sits on it.
+  The placement compares a mark with each row's `timestamp`, so both must be on one clock: a salon
+  row is dated by its server `createdAt` on every path, or the heads under the last message flicker
+  with each history load (2026-10-12,
+  [social-service](../../services/social-service.md#read-receipts-in-a-salon)).
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.
