@@ -9,6 +9,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import CanariBrand from './CanariBrand.svelte';
+import { Log } from '$lib/utils/Log';
 
 let roomWidth = 0;
 let nameWidth = 0;
@@ -64,6 +65,16 @@ describe('CanariBrand fitContainer', () => {
     flushSync();
     expect(nameBlock().classList.contains('invisible')).toBe(true);
     expect(nameBlock().getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('takes no verdict and logs nothing in a room that is not laid out (md:hidden on desktop)', () => {
+    roomWidth = 0;
+    nameWidth = 127;
+    const debug = vi.spyOn(Log, 'd');
+    component = mount(CanariBrand, { target: host, props: { fitContainer: true, subtitle: '' } });
+    flushSync();
+    expect(nameBlock().classList.contains('invisible')).toBe(false);
+    expect(debug.mock.calls.filter(([line]) => String(line).startsWith('CanariBrand'))).toEqual([]);
   });
 
   it('never hides the name of a brand that does not ask to fit', () => {

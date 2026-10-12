@@ -2778,9 +2778,20 @@ phones, or the profile page alone. **They chose the launcher, links in a NEW TAB
 **The fifth control cost the phone brand its name at 360px, and that is by design.** On `/posts` the
 header already carried `+`, search and the bell. With the launcher and the avatar that makes five
 44px controls, leaving the brand 100px against its measured 127px. The wordmark would have run
-under the `+`. `CanariBrand`'s `fitContainer` draws the name only when its `@container` (the brand
-link, now `flex-1`) is at least 8rem wide. Measured on 2026-09-27: at 360px, bird only; at 390px,
-name drawn with 3px to spare; on every non-feed tab, name drawn.
+under the `+`. `CanariBrand`'s `fitContainer` draws the name only when its room (the brand link,
+now `flex-1`) holds the bird, the gap and the name's MEASURED width, re-measured by a
+`ResizeObserver`. It was a container query at 8rem until #1272 (2026-10-01), which kept answering "it fits"
+once Android's 200 % system text had grown the name to 146px (the component's doc carries the
+measurement). Measured on 2026-09-27: at 360px, bird only; at 390px, name drawn with 3px to spare;
+on every non-feed tab, name drawn.
+
+**A room of 0px takes no verdict (2026-10-12).** `MobileHeader` is `md:hidden` and is re-mounted every
+time a conversation closes, so on a desktop each re-mount measured a `display: none` header and
+logged `CanariBrand: name does not fit in 0px`. In the owner's export of an inert salon tap that line
+sat beside every tap and read as a layout fault; it was only the witness of the selection being
+dropped, which `[SELECT] ... selection dropped` now names (see
+[chat](modules/chat.md)). The measure now returns while the room has no width, and the
+`ResizeObserver` decides once the header is shown (`CanariBrand.svelte.test.ts`).
 
 **Its hover painted the bar's own colour, and four other buttons did the same (user, 2026-09-29).**
 The class said `hover:text-text hover:bg-cn-surface`. `text-text` names no token (the scale is
