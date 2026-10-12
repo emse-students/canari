@@ -993,3 +993,29 @@ task.
 
 The second finding of the same map - one MLS implementation per build, resolved at BUILD time - is
 shipped ([mobile](mobile.md)), and saved 13 846 B: not to be quoted as the cold start.
+
+## The restore decrypted every stored message to read a length (2026-10-12)
+
+Found by the heavy-state performance audit. `replayConversationHistory` (`utils/chat/history.ts`)
+runs for every conversation in the restore loop of `loadExistingConversations`, serially, on every
+cold start. When a history cursor exists - every conversation after its first sync - it checked that
+the store had not been wiped under the cursor with `storage.getMessages(id).length === 0`.
+`getMessages` decrypts the WHOLE conversation, one AES-GCM call per row, so a device holding 20k
+messages paid 20k decrypts at every cold start before any network page was asked for.
+
+The check is now `storage.countMessages(id) === 0`: an index count in IndexedDB, a `COUNT(*)` on
+`idx_messages_conv` in SQLite, nothing decrypted. Measured identically on a desktop (vitest, fake
+IndexedDB, 5000 rows of one conversation, three runs): `getMessages` 158-190 ms, `countMessages`
+2.6-2.9 ms. A phone WebView is slower per decrypt, and the restore pays this once per conversation.
+
+One semantic edge, chosen deliberately: a row that does NOT decrypt now counts as "something is
+stored". It used to read as a wipe and reset the cursor; refetching an archive whose ratchet keys are
+spent only produces the `TooDistantInThePast` errors the cursor exists to avoid.
+
+Pinned by a count, not a clock: [history.cursorCheck test](../../../frontend/src/lib/utils/chat/history.cursorCheck.test.ts)
+asserts the replay calls `countMessages` once and `getMessages` never.
+
+The two OTHER full reads in the same replay (`existingById` before the batch save, the post-update
+pass) only run when the replay produced rows, and IndexedDB's `getMessagesPage` still `getAll`s the
+whole conversation to return a page (30 ms for 5000 rows in the same bench) - both are open on the
+2026-10-12 performance audit.

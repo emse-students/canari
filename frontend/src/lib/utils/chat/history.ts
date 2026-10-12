@@ -542,8 +542,9 @@ export async function replayConversationHistory(params: {
     const cursorBeforeDbCheck = afterStreamId;
     if (afterStreamId && storage) {
       try {
-        const storedMsgs = await storage.getMessages(id, deviceKey());
-        if (storedMsgs.length === 0) {
+        // A COUNT, NEVER A READ: this runs for every conversation on every cold start, and
+        // `getMessages` decrypted the whole conversation to answer it (see `countMessages`).
+        if ((await storage.countMessages(id)) === 0) {
           try {
             localStorage.removeItem(lastStreamIdKey(userId, id));
           } catch (err) {

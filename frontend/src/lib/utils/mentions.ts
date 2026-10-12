@@ -24,9 +24,6 @@ export function isMentionUserId(value: string): boolean {
   return new RegExp(`^${MENTION_USER_ID_PATTERN}$`, 'i').test(normalizeMentionUserId(value));
 }
 
-/** @deprecated use {@link isMentionUserId} */
-export const isUserUuid = isMentionUserId;
-
 /** Extracts user IDs from `@[id]` tokens (deduplicated, normalized). */
 export function extractMentionUserIds(text: string): string[] {
   const ids = new Set<string>();

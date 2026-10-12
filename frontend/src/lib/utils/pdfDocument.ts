@@ -37,6 +37,55 @@ async function loadPdfjs(): Promise<PdfjsModule> {
   return pdfjsPromise;
 }
 
+type PdfjsWorker = InstanceType<PdfjsModule['PDFWorker']>;
+
+let sharedWorker: PdfjsWorker | null = null;
+
+/**
+ * The ONE pdf.js worker every open document runs on, created on the first document.
+ *
+ * Left to itself, `getDocument` creates a worker per loading task and terminates it in
+ * `destroy()`, so every thumbnail and every reader open started a module worker of its own: a
+ * fetch of the 1 MB worker script (from cache), its parse and its start-up, for a cover rendered in
+ * ~55-80 ms. The 2026-10-12 console audit counted 36 such loads in 3 min for two PDFs on screen
+ * ([web-console-log-audit](../../../../docs/wiki/frontend/web-console-log-audit-2026-10-12.md)).
+ * A worker handed in through `worker` is not the task's to destroy - pdf.js only tears down the one
+ * it created (`PDFDocumentLoadingTask.destroy`, `this._worker`) - so the document's own state is
+ * freed on `destroy()` and the worker stays for the next one.
+ *
+ * A worker whose start-up FAILED is not kept, for the same reason a failed library load is not:
+ * the next document must be able to try again. Nor is a READY worker that later raises `error` (a
+ * browser may kill a worker under memory pressure): sharing makes one dead worker every later
+ * PDF's problem, so it is dropped and torn down, and the next document starts a fresh one. A
+ * worker that dies WITHOUT an `error` event cannot be seen from here; documents opened on it would
+ * hang, which is the residual risk of sharing.
+ */
+function sharedPdfWorker(lib: PdfjsModule): PdfjsWorker {
+  if (sharedWorker) return sharedWorker;
+  const worker = new lib.PDFWorker();
+  sharedWorker = worker;
+  Log.d('pdfDocument:workerCreated');
+  const drop = (reason: string, err: unknown) => {
+    console.warn(
+      `[pdfDocument] the shared pdf.js worker ${reason} - the next PDF starts another`,
+      err
+    );
+    if (sharedWorker !== worker) return;
+    sharedWorker = null;
+    worker.destroy();
+  };
+  worker.promise.then(
+    () => {
+      // `port` is the real `Worker` once ready; pdf.js's in-page fallback is a loopback port with
+      // no `error` event, and nothing can kill it.
+      const port = worker.port as unknown as EventTarget | null;
+      port?.addEventListener?.('error', (event) => drop('raised an error after start-up', event));
+    },
+    (err: unknown) => drop('failed to start', err)
+  );
+  return worker;
+}
+
 /**
  * The rejection of a render that was cancelled - a TYPE, so a caller tells "nobody wants this page
  * any more" from a real failure without reading a message.
@@ -125,7 +174,7 @@ export interface PdfDocument {
    * which is what makes it affordable to have for a page that is merely on screen.
    */
   getPageText(pageNumber: number): Promise<PdfTextRun[]>;
-  /** Tears the worker down. Safe to call twice. */
+  /** Frees the document in the shared worker; the worker itself stays. Safe to call twice. */
   destroy(): Promise<void>;
 }
 
@@ -143,7 +192,12 @@ export async function openPdfDocument(source: string): Promise<PdfDocument> {
   //
   // Range requests and streaming would buy nothing: the source is a blob already decrypted in
   // memory, read whole in ~60 ms for 13 MB on a Mi 9T, and the document opens in ~220 ms.
-  const task = lib.getDocument({ url: source, disableAutoFetch: true, disableStream: true });
+  const task = lib.getDocument({
+    url: source,
+    disableAutoFetch: true,
+    disableStream: true,
+    worker: sharedPdfWorker(lib),
+  });
   const doc = await task.promise;
   let destroyed = false;
 
@@ -240,8 +294,8 @@ export async function openPdfDocument(source: string): Promise<PdfDocument> {
     async destroy(): Promise<void> {
       if (destroyed) return;
       destroyed = true;
-      // Destroying the LOADING TASK is what tears the worker down; the document proxy has
-      // no destroy of its own.
+      // Destroying the LOADING TASK is what frees the document in the worker; the document proxy
+      // has no destroy of its own. The shared worker is not the task's, so it survives this.
       await task.destroy();
     },
   };

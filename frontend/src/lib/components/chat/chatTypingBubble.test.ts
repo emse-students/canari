@@ -39,7 +39,7 @@ describe('the typing indicator lives in the thread', () => {
   it('sits inside the scroller, after the message groups', () => {
     const body = read(CHAT_AREA);
     const groups = body.indexOf('<ChatMessageGroups');
-    const indicator = body.indexOf('class="chat-typing-indicator"');
+    const indicator = body.indexOf('class="chat-typing-indicator pb-4"');
     const scrollerEnd = body.indexOf('bind:this={composerBand}');
     expect(groups).toBeGreaterThan(0);
     expect(indicator).toBeGreaterThan(groups);
@@ -48,7 +48,9 @@ describe('the typing indicator lives in the thread', () => {
 
   it('keeps the live region permanent, with the condition inside it', () => {
     const body = read(CHAT_AREA);
-    const region = body.indexOf('class="chat-typing-indicator" role="status" aria-live="polite"');
+    const region = body.indexOf(
+      'class="chat-typing-indicator pb-4" role="status" aria-live="polite"'
+    );
     expect(region).toBeGreaterThan(0);
     // The `{#if}` opens AFTER the wrapper, never around it.
     expect(body.slice(region, region + 200)).toMatch(/\{#if typingUserIds\.length > 0\}/);
@@ -57,6 +59,20 @@ describe('the typing indicator lives in the thread', () => {
   it('still renders the localized prose, so the rig can read innerText', () => {
     expect(read(BUBBLE)).toContain('sr-only');
     expect(read(CHAT_AREA)).toContain('label={typingLabel}');
+  });
+});
+
+describe("the thread's trailing space belongs to its last row", () => {
+  /**
+   * MEASURED, 390x844 glass chrome, 2026-10-12: with the space on the message groups the last
+   * message stood 24px above the composer and the typing bubble, once it showed, 0px - its bottom
+   * on the composer's top edge, the avatar on the "+". The wrapper is permanent and always last, so
+   * the space goes on IT: the same 24px while nobody types, 16px under the bubble when somebody does.
+   */
+  it('is on the permanent typing wrapper and no longer on the message groups', () => {
+    expect(read(CHAT_AREA)).toContain('class="chat-typing-indicator pb-4"');
+    expect(read(GROUPS)).toContain('<div class="flex flex-col gap-1">');
+    expect(read(GROUPS)).not.toContain('<div class="flex flex-col gap-1 pb-4">');
   });
 });
 

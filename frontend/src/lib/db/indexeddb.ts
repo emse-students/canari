@@ -600,6 +600,20 @@ export class IndexedDbStorage implements IStorage {
     return results.sort((a, b) => a.timestamp - b.timestamp);
   }
 
+  /** Rows held for `conversationId`, counted on the index - nothing is read or decrypted. */
+  async countMessages(conversationId: string): Promise<number> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('messages', 'readonly');
+      const req = tx
+        .objectStore('messages')
+        .index('byConversation')
+        .count(IDBKeyRange.only(conversationId));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
   /**
    * Decrypt and return a paginated slice of messages for `conversationId`.
    * Rows are sorted descending by timestamp, the most recent `limit` rows are taken,

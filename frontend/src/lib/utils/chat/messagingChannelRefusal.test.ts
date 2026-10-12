@@ -44,6 +44,7 @@ describe('a refused channel send is described from its status, never from its bo
       mlsService: {} as unknown,
       log,
       addMessageToChat: async () => {},
+      patchSalonEcho: () => {},
     } as never;
   }
 
@@ -105,11 +106,39 @@ describe('a refused channel send is described from its status, never from its bo
 
     const result = await sendChatMessage('hello', 'channel_c1', null, deps(log));
 
+    // The row was drawn before the seal was attempted, so the refusal lands on it (echoed).
     expect(result).toEqual({
       success: false,
       error: m.chat_send_error_seal_key_group_catching_up(),
+      echoed: true,
     });
     expect(result.error).not.toBe(m.chat_send_error_generic());
     expect(log).toHaveBeenCalledWith(expect.stringContaining('reason=key-group-catching-up'));
+  });
+
+  it('sends nothing and reports "not echoed" when the local row cannot be drawn', async () => {
+    // The composer's draft is the only copy then: `echoed` absent is what tells the page to put
+    // it back (WP-OFF-1), and the POST must not have run behind a row nobody can see.
+    const result = await sendChatMessage('hello', 'channel_c1', null, {
+      ...(deps() as object),
+      addMessageToChat: async () => {
+        throw new Error('storage gone');
+      },
+    } as never);
+
+    expect(sendEncryptedChannelMessage).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.echoed).toBeUndefined();
+  });
+
+  it('reports a refusal AFTER the row was drawn as echoed, so nothing is restored twice', async () => {
+    sendEncryptedChannelMessage.mockImplementation(() =>
+      Promise.reject(new ChannelApiError(500, null, SERVER_WORDS))
+    );
+
+    const result = await sendChatMessage('hello', 'channel_c1', null, deps());
+
+    expect(result.success).toBe(false);
+    expect(result.echoed).toBe(true);
   });
 });

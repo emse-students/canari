@@ -108,6 +108,8 @@
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
+  import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
+  import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
 
   /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
   function buildRemoteCallParticipants(): CallParticipant[] {
@@ -1213,10 +1215,21 @@
     const isOpenHere = isReadingConversationNow(event.conversationId, globalConvs.selectedContact);
 
     if (event.type === 'message_added') {
-      if (convo.messages.some((m) => m.id === event.message.id)) return;
+      const merged = mergeAnnouncedMessage(convo.messages, event.message, event.clientMessageId);
+      if (!merged) return;
+      if (merged.settledEcho && event.clientMessageId) {
+        // This tab composed it and the leader received the frame: the send is proven delivered.
+        forgetDeliveredSalonSend(
+          event.clientMessageId,
+          globalSession.userId || currentUserId() || ''
+        );
+        console.debug(
+          `[TAB-SYNC] own salon echo ${event.clientMessageId.slice(0, 8)}... settled by the leader as ${event.message.id.slice(0, 8)}...`
+        );
+      }
       globalConvs.conversations.set(event.conversationId, {
         ...convo,
-        messages: insertMessageOrdered(convo.messages, event.message),
+        messages: merged.messages,
         lastMessageAt: event.lastMessageAt,
         unreadCount: isOpenHere ? 0 : event.unreadCount,
       });

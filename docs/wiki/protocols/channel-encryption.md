@@ -209,7 +209,10 @@ needed: **the session's own sender always holds its seed**, so the request is ad
 they have left the community or have no device online, it is addressed to the ONLINE member with the
 lowest user id; with nobody online, the request waits for one to come back. Both rules are
 deterministic, need no clock and no coordination, and leave nothing for a race to decide - see
-[WP-33](#wp-33-and-the-answerer-nobody-elects) for why presence is part of the rule.
+[WP-33](#wp-33-and-the-answerer-nobody-elects) for why presence is part of the rule. Since
+2026-10-12 the request also names the devices of that user that can read it, and each answer goes to the
+requesting device only, never to the whole group
+([section 23](#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)).
 
 ### 4.6 Ordering rule: remove, THEN distribute
 
@@ -3231,3 +3234,135 @@ asks to join, so refusing a "redundant" external join would leave a device holdi
 scope, which is worse than one extra epoch. Making the replay from 0 "succeed" would mean the server
 answering a question the client did not ask. The churn ends as the store floor
 (`minClientVersion`) reaches the release that carries this.
+
+## 23. A seed answer goes only to the device that asked - FIXED 2026-10-12
+
+Measured in the [production queue audit](../infrastructure/prod-queue-and-epoch-audit-2026-10-12.md)
+(findings F1-F3): in the community created that morning, about 184 seed answers made up roughly 28 k
+of the 35 k rows the key group queued and about 180 of its 194 MB. Every answer (`graineBundle`) was
+sent with `DELIVERY.keyMaterial`, so it was queued for EVERY seat of the key group (about 100), and
+every online device of the elected user answered it (finding G of the web console audit).
+
+**What the broadcast was for.** Nothing in the protocol depends on a third party reading an answer.
+The requester is the only device that named the sessions. The others got two side effects: a
+member missing the same seed absorbed it for free, and a shut phone absorbed it through the push
+mirror. The audit's finding B shows these absorptions are mostly seeds already held. Each one cost
+a salon refetch until #1761.
+
+### What changed on the wire
+
+| Field | Where | Meaning |
+|---|---|---|
+| `recipientDevices: string[]` | `POST /api/mls/send` body | 1 to 16 `userId:deviceId` keys. The frame is queued only for those devices among the group's LIVE members (the same membership query as every send), and it is NEVER appended to the history stream. Refused (400) on a commit or a Welcome, on any group that is not a key-distribution group (a member could otherwise equivocate in a conversation), as an empty list, as more than 16 keys or as a malformed key. If the field is absent, the frame goes to the whole group, as before. |
+| `answerer_device_ids` (field 6, repeated) | `GraineRequestMsg` | The devices of the elected answerer that answer: every one that is online and a leaf of the requester's tree, at most 16. If it is empty, every device answers (pre-1.2.5 requesters). |
+| `onlineDevices: string[]` | social-service roster `?presence=1` | Each member's online device ids, sorted, from the same single SCAN as `online`. |
+
+The answer is still a `graineBundle` sealed by the key group, still durable and silent. Only its
+fan-out changed: `addressedKeyMaterial(requester)` in `frameHandler.ts`, where `requester` is the
+request envelope's `sender:senderDeviceId`. The envelope device is self-asserted, but the server
+delivers only to a live member's device, so naming a device can only narrow delivery, never widen
+it. If the envelope carries no device, the answerer refuses at `error` and sends nothing. It does
+not fall back to a broadcast.
+
+### Who answers: every device that can, each to the requester alone
+
+The election (`resolveAnswerer`, section 4.5 and WP-33) still picks a USER. `answeringDevicesOn`
+then takes that user's online devices from the roster and intersects them with the LEAVES of this
+device's copy of the key group's tree (`getGroupMemberIdentities`). The request names EVERY such
+device, sorted, at most 16 (`answerer_device_ids`). A device that is online but not a leaf cannot
+open the request, so it is never named. A member whose online devices are all non-leaves no longer
+counts as reachable. On the answering user's devices, `answerSeedRequest` answers if the list is
+empty or contains this device. Otherwise it says so at `debug` and stays silent.
+
+**Why every device and not one (review of #1768).** The first version of this PR named only the
+lowest device id. That was wrong twice:
+
+- **D1.** `tauri-` sorts before `web-`, so the device it named was usually a backgrounded phone. Its
+  socket stays open while its script does not run. A silent named device is a walk that never moves.
+- **D2.** The other devices of that member stayed silent, though one of them could hold the session.
+  A phone that joined last week does not hold what the laptop minted.
+
+Naming every device keeps the cost bounded. Each answer still goes to the requesting device alone,
+so one ask costs one addressed frame per named device (1-3 in practice), never one per seat.
+
+**The FIRST decline from a named device strikes the member.** `askedRequest` records, per session,
+the request id, the member asked and the devices named (`named`). A decline is checked against them:
+
+- one that quotes another request, or comes from another member, is ignored (a replay, or an ask
+  since superseded);
+- one from a device that was not named is ignored at `debug`;
+- a second decline from the same member changes nothing;
+- the first accepted decline strikes the member and moves the walk to the next one.
+
+A second iteration waited for EVERY named device to decline. The re-review refuted it (D-A): it
+re-created the stall, because a named phone that stays silent held the walk and nothing woke it.
+
+Striking early loses nothing. A device of the struck member that does hold the seed and answers
+later still lands it: a bundle's seeds are stored whoever asked, and storing one ends the walk
+(`forgetAskedSession`). The cost of a decline from a device that does not hold the seed, while
+another device of the same member does, is ONE extra ask to the next member.
+
+**Termination, without a clock.** Each accepted decline strikes one member off a finite roster, so
+the walk ends on the seed arriving or on `exhausted`, which is logged. The walk stops only if every
+named device of the elected member stays silent. That is the same residue as a silent elected
+member before this change, and it takes ALL of that member's online leaves being frozen.
+
+### The reason on every ask (F3)
+
+`[GRAINE] asked <user> (<device,device... | every device>) for N seed(s) in community X at epoch E - reasons
+unreadable-row=a,declined=b,holder-online=c,epoch-left=d, newest row A..B old, key group lost
+<cause:n | none> this session`. `epoch` is this device's key-group epoch. The reasons say why each
+seed was asked for: a row it could not read, a decline from the previous answerer, a holder that
+came online, or a request held while the device left an epoch. The losses are key-group frames this
+device could not open, counted by `noteKeyGroupFrameLost` (`keyGroupFrameLosses.ts`) per
+classification (for example `past-epoch-application`). The history request line carries
+`reason key-group-rejoined|no-seed-held` and the same loss count.
+
+### Old clients (floor 1.0.3), side by side
+
+| Case | What happens |
+|---|---|
+| New requester, old answerer | The old answerer ignores field 6 and answers to the whole group from every device, as it does today. |
+| Old requester, new answerer | No device is named, so every device of the answerer answers, but each answer is addressed to the requester only. |
+| Old client that is not the requester | It no longer receives other devices' answers. It skips that sender's generations, which OpenMLS derives forward (see the risks). |
+| Old social-service (no `onlineDevices`) | No device is named and the ask warns once. Every device answers, each answer addressed. |
+| Old chat-delivery (ignores `recipientDevices`) | The answer reaches the whole group and the history stream, as today. |
+
+### How a returning member still gets its seeds
+
+The durable key-group log replays the ORIGINAL distributions to it. Its own requests are answered
+with a durable frame queued for its device even if it went offline in between. The history request
+is unchanged. What it loses is only the chance of finding someone else's answer in its
+queue.
+
+### Expected effect, and how to read it
+
+On a community in its first hours, about -80 % rows and -90 % bytes: each answer reaches 1 seat
+instead of about 100. Bundles of 16 KB or more drop from about 42 copies per payload to 1 per
+answering device. A member with 2-3 devices online still answers 2-3 times. Each of those answers is
+one row, not one per seat, and that is the price of D1 and D2 above. To read it on prod: the
+per-group copies-per-payload query of the audit, and the `[SEND][trace] ADDRESSED` lines in
+chat-delivery (`ADDRESSED_NOBODY` warns when the device that asked is no longer a member).
+
+### Risks, stated
+
+- **Forward distance.** A non-recipient skips the addressed frame's generation. OpenMLS allows 2 000
+  generations forward per sender per epoch. Transport frames (requests) already skip offline
+  devices the same way. An answerer would need 2 000 consecutive addressed frames within ONE epoch
+  for this to bite.
+- **Frozen-online devices.** A backgrounded Android can keep its socket open without running. The
+  walk waits only if EVERY named device of the member stays silent. One seed ends the walk, and one
+  decline moves it on. It waits until a frozen device resumes and answers, or until the next start.
+- **Early strike.** A device without the seed may decline while another device of the same member
+  holds it. That costs one extra ask down the roster, and the holder's late answer still lands.
+- **Refined reachability.** A member online only on a device that is not a leaf of this tree is not
+  asked. Before, they were asked and could not have opened the request anyway.
+
+### Not the cause: the drain order
+
+The 2026-10-12 console export showed past-epoch frames (epochs 135-138 while the group was at 141).
+`mlsPerGroupScheduler` was suspected of applying commits before queued application frames. It does
+not: commits and application frames share one per-group FIFO, and its `control` tier holds only
+the native `group_reset`. The frames were LIVE requests (339-469 B) sealed by other members' devices
+3-6 epochs behind, so every up-to-date member found them unreadable, and each loss drives a re-ask.
+The sender side is open in the [backlog](../backlog.md).
