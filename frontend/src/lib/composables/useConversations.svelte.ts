@@ -419,8 +419,15 @@ export function useConversations() {
     if (isSelected) isLoadingHistory = true;
     try {
       // Fast-path: when user clicks a conversation, probe the server cursor with `limit=1`.
-      // If there is nothing new, skip the heavy decrypt/replay and just render the latest
-      // IndexedDB page we already have.
+      // If there is nothing new, skip the heavy decrypt/replay.
+      //
+      // THE STORED PAGE IS DRAWN BEFORE THE PROBE, NOT AFTER IT. The probe answers "is there
+      // anything newer than what this device holds", and a notification tap is exactly the case
+      // where the answer is yes - so the page waited for the probe AND the whole replay behind it,
+      // and the reader looked at an empty thread over history that was already on disk (Mi 9T,
+      // cold landing: ~0.7 s between the pane and its first row, docs/wiki/frontend/
+      // notification-to-conversation-latency.md). The replay below merges what it adds into this
+      // page (`mergeMessagePage`), so drawing first changes WHEN the held rows appear, never which.
       if (!options?.force && ctx.storage) {
         const cursor = readHistoryStreamCursor(ctx.userId, id);
         if (cursor) {
@@ -431,14 +438,21 @@ export function useConversations() {
           );
           // If local DB is empty, let `replayConversationHistory` handle cursor reset safely.
           if (existingPage.length > 0) {
+            await renderStoredPage(contactName, id, ctx, existingPage);
+            ctx.log(
+              `[HISTORY] ${id.slice(0, 8)}… stored page drawn (${existingPage.length} row(s)) before the server probe`
+            );
             try {
               const probe = await ctx.ensureMls().fetchHistory(id, cursor, 1);
               if (probe.rows.length === 0) {
-                await renderStoredPage(contactName, id, ctx, existingPage);
                 return;
               }
-            } catch {
-              /* non-blocking: fallback to full replay */
+            } catch (e) {
+              // Not a decision: the replay below asks the server itself and reports its own
+              // failure. This line is all that is left of the probe's.
+              ctx.log(
+                `[HISTORY] ${id.slice(0, 8)}… probe failed (${String(e)}), replaying in full`
+              );
             }
           }
         }

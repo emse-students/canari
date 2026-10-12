@@ -240,6 +240,59 @@ before the flusher), so the lever is the `/chat` render on the warm landing, whi
 | socket connected | 931 | ~920 |
 | reply accepted, after the click | 839 | 911 |
 
+## The whole cycle, tap to delivered reply (2026-10-12)
+
+**A second instrument, end to end on one clock.** `cycle.mjs` (scratch, not committed) sends the
+message from the other account's dev tab (gamma, `chrome-w2`), fires the notification's exact
+`PendingIntent` on the Mi 9T, waits for the composer, taps it for real, types a fixed marker with
+`adb input text`, clicks send, and reads the reply's arrival on the sender's tab. The phone's epoch
+and the workstation's are tied by an `adb shell date` round trip (skew error ~+-25 ms). Warm =
+backgrounded for 6 s (a 1.5 s park, used before, let the feed's progressive mount resume under the
+landing and polluted the reading). Killed = `force-stop`, then the PIN typed by the instrument.
+
+**DEV HAS NO PUSH, so T1 (notification shown) is not measured**: `DEV_FIREBASE_SERVICE_ACCOUNT_JSON`
+is absent ([dev-environment](../infrastructure/dev-environment.md)), so the tap is synthesised.
+Two facts from the same session matter for a real tap: a FORCE-STOPPED app receives no FCM at all
+(Android's stopped state) while a recents swipe does; and the delivery service holds a push 10 s
+when the recipient's presence is alive (`scheduleDeferredPush`).
+
+| ms after the tap, medians (n=6) | alpha warm | alpha killed | F1 warm | F1 killed |
+| --- | ---: | ---: | ---: | ---: |
+| app first line | - | 985 | - | 914 |
+| deep link parsed | 496 [162-769] | 1226 | 314 [95-729] | 1180 |
+| `MLS ready` (PIN typed in ~130 ms) | - | 2899 | - | 3000 |
+| route is `/chat` | 1193 | 3121 | 900 | 1967 |
+| composer usable | 1193 [709-1430] | 3632 [3529-3924] | 900 [752-1458] | 3586 [3301-4094] |
+| the notified message's row drawn | 1882 | 4606 | 1628 | 4435 |
+| send click -> outbox `sent` | +610 | +655 | +672 | +695 |
+| send click -> on the other client | +558 | +601 | +625 | +661 |
+
+`alpha` = `1.2.5-alpha.1`'s CI artifact, `F1` = PR #1770's (`0d7da4e6a`). What it says:
+
+1. **The row the person tapped for comes 0.73-0.95 s AFTER the composer, in every column.** The
+   stored page was drawn only after the server probe AND the replay behind it - a notification tap
+   is precisely the case where the probe says "newer rows exist". **Fixed (F10, below).**
+2. **Warm is ~1.2 s, not the <= 0.35 s recorded above** - that figure came from the 1.5 s park. The
+   deep link itself is parsed 0.1-0.8 s after the tap, behind main-thread work (`import.then`, a
+   ~0.95 s long frame on the first resume after an install).
+3. **The PIN path is ~0.93 s in series** (salt 350, verifier 117, device id 44, check 253, device
+   key 166) - F9.
+4. **The send is ~0.65 s to the ack**: ~125 ms to the outbox (its durable write), ~55 ms to the
+   flush, ~450 ms of flush (group meta pre-flight, encrypt, POST). The receiver has the message
+   ~50 ms before the sender's outbox logs it.
+5. **F1 routes ~1.15 s sooner when killed but the composer does not move** (3.63 -> 3.59 s): the
+   pane still waits for `MLS ready`.
+
+### F10 - the stored page is drawn before the server probe (built, phone before/after PENDING)
+
+`loadHistoryForConversation`'s fast path probes the server cursor (`limit=1`) and, when nothing is
+newer, draws the stored page and stops. When something IS newer it went straight to the full replay,
+and the stored page - already read - was drawn only by the replay's end. The page is now drawn
+first; the replay merges what it adds into it (`mergeMessagePage`), so drawing first changes WHEN the
+held rows appear, never which. A failed probe, previously swallowed, is logged. Expected: the
+held rows at the composer instead of ~0.7-0.9 s after it; the notified message itself still comes
+with the replay.
+
 ## iOS (iPhone 12) - NOT measured
 
 The WebDriverAgent answered, but the installed build is a TestFlight build with no WebKit inspector
