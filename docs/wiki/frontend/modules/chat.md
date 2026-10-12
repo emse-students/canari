@@ -3374,6 +3374,19 @@ the two loads in the other order, which is why it "healed".
   observed (no inspectable build on the bench at the time). The press held past the reorder hold
   ([above](#a-communitys-salons-have-an-order-everyone-shares-and-a-name-that-is-only-a-name-2026-10-05))
   is the other inert-tap cause, measured on the iPhone.
+- **Reproduced on a desktop the same day, then refuted on main.** The owner hit it on Firefox
+  (`v1.2.5`, which carries neither fix): three salon clicks, each followed by `GET .../members` and
+  `GET .../pins` (the two `MainChatPage` effects keyed on `selectedContact`) and by NO `/messages`
+  (`loadChannelHistory` returns on a missing row, silently), and from the second click on a
+  `CanariBrand: name does not fit in 0px` - the hidden phone header re-mounting because the selection
+  had gone back to `null`. On the local estate with W1, a salon created through the API (so this
+  device never saved it) and the gateway socket held back 8 s on reload: the community load landed at
+  `+0.7 s`, the restore at `+8 s`, and the click gave exactly that signature with the row
+  `aria-current` and no composer. Same steps on a build of main (`bb95de309`):
+  `[RESTORE] kept 57 salon row(s)`, the salon opened and its `/messages` was fetched. **What to read
+  in the next export:** `[SELECT] ... selection dropped, nothing opens` means a row is missing from
+  the map again, and the `[WORKSPACE-LOAD] communities/channels loaded` / `[RESTORE]` /
+  `[SYNC] Welcome processed` lines before it date the two loads.
 
 ## Profile fetches that failed on a device, and the denominator that is owed (2026-08-16)
 
