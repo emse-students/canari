@@ -288,6 +288,19 @@ no run of the fix overlaps the baseline's range. The warm path never had the def
 One killed run's reply ack took 2.1 s: the flush waited behind the post-login KeyPackage publication,
 the F8 item, unrelated to this change.
 
+### F13 - drawing only the newest screenful on entry: measured, no gain, not shipped
+
+The next lead after F12 was the thread mount (~0.3 s in the profile). Tried 2026-10-12: the entry
+window cut from 60 groups to 24 (one phone pane), with `fillViewportThenPin` widening one entry
+window per pass instead of a 140-group page. Same tree with and without, n=6 each on the Mi 9T:
+**warm tap -> composer 919 [798-1001] vs 920 [845-1278]**, and the killed pane-open and
+pane -> history phases indistinguishable once two runs disturbed by the dev server are set aside
+(`mls-ready` at 6.7 s in one). Not opened as a pull request. Unverified reason, the first thing to
+check before trying again: the bench DM's bubbles are one line, so 24 groups may not fill the pane
+and the fill loop widens back towards the old size, paying an extra layout pass on the way. The
+patch is not kept; the two lines it changes are `INITIAL_RENDER_GROUPS` and the fill step in
+`ChatArea.svelte`.
+
 ## iOS (iPhone 12) - NOT measured
 
 The WebDriverAgent answered, but the installed build is a TestFlight build with no WebKit inspector
