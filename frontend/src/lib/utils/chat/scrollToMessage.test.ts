@@ -24,17 +24,18 @@ describe('scrollMessageIntoList', () => {
 
     expect(scrollIntoView).not.toHaveBeenCalled();
     // content offset 100 + (550 - 50) = 600; centred: 600 - (400 - 40) / 2 = 420
-    expect(scrollTo).toHaveBeenCalledWith({ top: 420, behavior: 'smooth' });
+    // Instant: a smooth jump is cancelled by the anchor observer's first scrollTop write.
+    expect(scrollTo).toHaveBeenCalledWith({ top: 420, behavior: 'auto' });
   });
 
-  it('clamps at the top of the list', () => {
+  it('clamps at the top of the list, and passes an explicit behaviour through', () => {
     const container = document.createElement('div');
     const target = document.createElement('div');
     container.scrollTo = vi.fn();
     Object.defineProperty(container, 'clientHeight', { value: 400 });
     container.getBoundingClientRect = () => rect(0, 400);
     target.getBoundingClientRect = () => rect(10, 40);
-    scrollMessageIntoList(container, target, 'auto');
-    expect(container.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' });
+    scrollMessageIntoList(container, target, 'smooth');
+    expect(container.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
   });
 });

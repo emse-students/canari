@@ -42,6 +42,10 @@
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
   import { scrollMessageIntoList } from '$lib/utils/chat/scrollToMessage';
+  import { openSalonPolls, salonPolls } from '$lib/utils/chat/activePolls';
+  import { getPollMeta } from '$lib/stores/pollStore.svelte';
+  import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
+  import { Log } from '$lib/utils/Log';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
 
@@ -123,7 +127,7 @@
     onReact?: (messageId: string, emoji: string) => void;
     /** Callback fired when the user votes on a poll message (channels only). */
     onVotePoll?: (messageId: string, optionIds: string[]) => void;
-    /** Callback fired when the poll author closes their poll early (channels only). */
+    /** Callback fired when the poll's author or a moderator closes it early (channels only). */
     onClosePoll?: (messageId: string) => void;
     /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
@@ -523,20 +527,17 @@
   const pinnedIds = $derived(chatView ? pinnedMessageIds(chatView.conversation.id) : []);
   let showPinned = $state(false);
 
-  /** Open polls in the active channel (no deadline, or deadline not yet reached). */
+  /**
+   * Open polls in the active channel: not closed by the server (an early close by the author or a
+   * moderator included), and no deadline reached. The deadline is judged against
+   * `pollDeadlineClock`, which moves when one arrives - `Date.now()` in a `$derived` never re-ran.
+   */
   let showPolls = $state(false);
-  const activePolls = $derived.by<{ id: string; question: string }[]>(() => {
-    if (!chatView || !isChannel) return [];
-    const now = Date.now();
-    const out: { id: string; question: string }[] = [];
-    for (const m of chatView.conversation.messages) {
-      const env = parseEnvelope(m.content);
-      if (env.kind !== 'poll') continue;
-      if (env.endsAt && new Date(env.endsAt).getTime() <= now) continue;
-      out.push({ id: m.id, question: env.question });
-    }
-    return out;
-  });
+  const threadPolls = $derived(
+    chatView && isChannel ? salonPolls(chatView.conversation.messages, getPollMeta) : []
+  );
+  const pollShortcutClock = pollDeadlineClock(() => threadPolls);
+  const activePolls = $derived(openSalonPolls(threadPolls, pollShortcutClock.at));
 
   /** Resolves a short preview for a pinned message, or null when it isn't loaded in memory. */
   /**
@@ -725,6 +726,8 @@
 
     const targetElement = document.getElementById(`msg-${messageId}`);
     if (targetElement && chatContainer) {
+      Log.d('chat.jumpToMessage', `${messageId.slice(0, 8)} at group ${targetIndex}`);
+      // Instant, never smooth: see `scrollMessageIntoList` for the anchor write that cancelled it.
       scrollMessageIntoList(chatContainer, targetElement);
       targetElement.classList.add('chat-message-jump-highlight');
       setTimeout(() => {

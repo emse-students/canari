@@ -3027,6 +3027,38 @@ function, which now calls `scrollMessageIntoList` (`utils/chat/scrollToMessage.t
 computed against the list container and applied with `container.scrollTo`, so nothing else can move.
 Not driven in a browser by the agent that wrote it; owed a look at 390 and 1280 px.
 
+### The jump is instant, because a smooth one was cancelled by the tap that asked for it (2026-10-12)
+
+Reported by the user (phone app, salon): tapping the poll in the "1 sondage actif" shortcut did not
+scroll to it. The shortcut already called `navigateToMessageEnsureLoaded`, like the pinned banner -
+and **the pinned banner failed the same way** in the phone apps; only the website worked. Measured in
+a scratch preview at 390 px with the glass chrome on, by trapping every `scrollTop` write: the jump's
+`scrollTo({ behavior: 'smooth' })` started, then seven writes from `threadGrowthObserver`'s
+`ResizeObserver` followed within 120 ms, each `scrollTop += shift`, and the pane ended at its bottom.
+
+The chain: closing the dropdown (`showPolls = false`, `showPinned = false`) shrinks the chrome over its
+150 ms `slide`; in the phone apps the chrome FLOATS and its height is the list's `padding-top`
+(`--chat-header-height`), so every row's `offsetTop` moves; the observer reads that as a change above
+its anchor row and compensates with a plain `scrollTop` write - and **any plain write aborts a smooth
+scroll in flight**. The anchor was still the row from before the jump, so the compensation was
+computed from the bottom of the thread and put the reader back there. On the website the chrome is
+in the flow, the list's BOX shrinks instead of its padding, no row moves, nothing is written, and the
+smooth jump survived - which is why only the phone saw it.
+
+**The fix is in `scrollMessageIntoList`: the jump is `behavior: 'auto'`.** An instant jump has
+nothing in flight to abort, and the compensations that follow then do exactly their job (the padding
+moved every row by the same amount, so they keep the target where it landed). Measured after: the
+target lands at the same place with and without the glass chrome, poll and pinned alike, and carries
+`chat-message-jump-highlight`. Delaying the jump until the chrome settles was refused: it waits on an
+animation, and any other growth during a smooth scroll (a medium settling, the typing bubble) would
+abort it the same way. `scrollToMessage.test.ts` pins the default.
+
+**One thing seen and not changed:** the observer's anchor is captured only when it fires, never on
+a user scroll, so after a long scroll it is a row far from the viewport. A size change BETWEEN that
+row and the reader would move the reader. Recapturing on `scroll` would race the observer's own
+`ResizeObserver` delivery (a scroll event can land after a mutation and before the callback, erasing
+the shift), so it wants a bench of its own, not a line in this fix.
+
 ## Routes
 
 | Route | Description |

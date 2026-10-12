@@ -331,6 +331,21 @@ retracts), closing is `PATCH .../poll/close`, which stamps `endsAt = now`, unpin
 broadcasts the new state on `channel.poll.vote` - the same frame a vote publishes, because both say
 the same thing: here is the poll as it now stands.
 
+**HOW A POLL ENDS - TWO WAYS, DECIDED BY THE USER 2026-10-12.** (1) An OPTIONAL end date chosen at
+creation (`PollComposerModal`'s deadline field, cleared by default; no maximum and no default
+duration), stored as `endsAt`. (2) A manual close, `PATCH .../poll/close`, by the poll's AUTHOR or
+anyone holding `channel.moderate` (or `channel.manage` / `workspace.manage`) - the salon's admins;
+anybody else gets a 403. A poll with no end date and nobody closing it stays open for ever, which is
+the accepted consequence of "optional, no default". Either way the server refuses votes from then on
+(`pollIsOver`), serves `closed: true`, and the card shows its results with no vote form. Until
+2026-10-12 the client offered "Clore le sondage" to the author ONLY (`MessageBubble` gated it on
+`isOwn`), so a moderator could close through the API but not from the app; it now reads
+`isOwn || canModerate`, the server's pair. The salon's "N sondage actif" shortcut used to count from
+the encrypted message alone, so a poll closed early stayed in it; it now reads this service's
+`closed` and `endsAt` (`utils/chat/activePolls.ts`) and drops an end date the moment it arrives,
+through the same one-timer `pollDeadlineClock` the card uses
+([chat](../frontend/modules/chat.md#the-jump-is-instant-because-a-smooth-one-was-cancelled-by-the-tap-that-asked-for-it-2026-10-12)).
+
 **What a client is served is not what is stored.** `ServedChannelPollMeta` adds one field,
 `closed`, and it is the server's own answer to "is this over?" rather than the input a client would
 need to compute it. `endsAt` is an instant on the SERVER's clock; a client comparing it to `Date.now()`

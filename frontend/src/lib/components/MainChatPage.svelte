@@ -1081,10 +1081,14 @@
     }
   }
 
-  /** Closes the caller's own channel poll early (server forces the deadline). */
+  /**
+   * Closes a channel poll now (server forces the deadline and unpins it). Offered to the poll's
+   * author and to a salon moderator - the same pair the server's `closePoll` accepts.
+   */
   async function handleClosePoll(messageId: string) {
     const channelId = convs.selectedContact;
     if (!channelId) return;
+    log(`[POLL] closing ${messageId.slice(0, 8)} in ${channelId.slice(0, 8)}`);
     try {
       const meta = await channelService.closePoll(channelId, messageId);
       setPollMeta(messageId, meta);
