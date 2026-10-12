@@ -3015,8 +3015,8 @@ withholding it would do just as well.
 **What it does NOT close.** A member who already HOLDS a v1 seed can still forge an unsigned row
 under that session, naming its minter. The v1 reader opens it until it goes, at the count in
 [legacy-compatibility](../legacy-compatibility.md). The salon-edit trust level of §21.5b is unchanged.
-**The dev estate's floor is still `1.0.0`**, so a pre-release there refuses v1 seeds that dev clients
-on `1.0.0`-`1.0.2` may still mint.
+The dev estate's floor was raised to `1.0.3` as well (2026-10-12), so a pre-release there meets no
+admitted client minting v1.
 
 **Pinned by** `frameHandler.test.ts` (a new v1 seed refused, with nothing mirrored or announced; a mixed
 bundle stores its v2 seeds and refuses its v1 seeds in one line; a held v1 session still lowers its
