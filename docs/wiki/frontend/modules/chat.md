@@ -2995,6 +2995,23 @@ EXISTENCE, so it stays permanent with the `{#if}` inside it, and `archive/type.m
 The permanent wrapper is also what makes the `role="status"` announce reliably: assistive technology
 has to be observing a live region BEFORE the mutation that fills it.
 
+**THE THREAD'S TRAILING SPACE IS ON THIS WRAPPER, because it is always the last row** (user,
+2026-10-12: the bubble cut at the bottom, its avatar on the "+", with the keyboard closed). The
+space above the composer used to be `ChatMessageGroups`' own `pb-4` - ABOVE the indicator - so the
+last message stood 24 px clear of the composer and the bubble, once it showed, 0 px: its bottom edge
+on the composer's top, which in the phone apps is transparent glass with the "+" 8 px below. The
+`pb-4` is now on `.chat-typing-indicator`. Measured on the real `ChatArea`, 390x844, glass chrome
+and the website's layout: last message 24 px clear while nobody types (unchanged), bubble 16 px clear (was 0),
+scroller at its bottom (0 px) in both. On the Mi 9T (read-only, CDP) the same geometry held before
+the fix: composer 76 px, scroller `padding-bottom` 76 px, the empty indicator 1 px under the
+composer's top - the padding was never wrong, the space was on the wrong row.
+
+**What was NOT reproduced:** a FOLLOW failure. Six sequences on the real component (typing alone, a
+message then typing at +50 ms, typing then a message at +80 ms, message + stop + typing, typing
+during a conversation's entry, a switch with typing in flight) all ended at the bottom, as did a
+smooth scroll interrupted by the bubble. If a phone still shows the bubble UNDER the composer
+rather than flush on it, it is a different defect, owed a reading with the keyboard closed.
+
 ### The day label and its floating pill (2026-10-01)
 
 Reported by the user: scrolling a conversation, the floating "Mercredi 23 septembre" was not

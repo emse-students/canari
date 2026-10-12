@@ -1390,8 +1390,15 @@
              it gains text is announced unreliably: assistive technology has to be watching the
              region BEFORE the mutation. It is also the cross-client rig's only hook on this
              indicator - `state.mjs` tests its existence and `archive/type.mjs` reads its
-             `innerText` - so the class name is load-bearing beyond this file. -->
-        <div class="chat-typing-indicator" role="status" aria-live="polite">
+             `innerText` - so the class name is load-bearing beyond this file.
+
+             AND IT CARRIES THE THREAD'S TRAILING SPACE (`pb-4`), because it is ALWAYS the last row.
+             That space used to be the message groups' own `pb-4`, which put it ABOVE this row: the
+             last message stood 24px clear of the composer and the bubble, once it showed, stood 0px
+             clear - flush on the composer's top edge, its avatar on the "+" (user, 2026-10-12).
+             Moved here, nothing changes while nobody types (8px gap + 16px = the same 24px) and the
+             bubble gets the clearance the last message had. -->
+        <div class="chat-typing-indicator pb-4" role="status" aria-live="polite">
           {#if typingUserIds.length > 0}
             <div transition:slide={{ duration: 150, axis: 'y' }} class="pt-1">
               <ChatTypingBubble userIds={typingUserIds} label={typingLabel} />
