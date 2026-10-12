@@ -1,3 +1,3 @@
-version: 1.2.3
+version: 1.2.4
 
-L'envoi de pièces jointes lourdes est réparé : plus de gel de l'application, essais bornés avec un message clair et un bouton pour réessayer ou supprimer, envoi bien moins gourmand en mémoire. Les fichiers de plus de 10 Mo partent par morceaux. L'état d'un envoi dit la vérité, et les cartes de fichier sont lisibles en thème sombre.
+Le lecteur de PDF est beaucoup plus fluide : première page en moins d'une seconde, zoom sans gel. L'éditeur de reels garde vos textes entiers dans le cadre, et la connexion lente s'affiche en petite icône discrète au lieu d'un gros bandeau. Ouvrir une notification vous amène plus vite dans la conversation, et les messages et fichiers lourds sont envoyés plus sûrement.
