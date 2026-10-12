@@ -34,6 +34,15 @@ describe('TransformGesture', () => {
     expect([t.x, t.y]).toEqual([1, 0]);
   });
 
+  it('applies the caller constraint on every step and continues from it, with no dead zone', () => {
+    const g = new TransformGesture(() => ({ width: 200, height: 400 }));
+    g.begin(START, (next) => ({ ...next, x: Math.min(next.x, 0.7) }));
+    g.down(1, { x: 100, y: 100 });
+    expect(g.move(1, { x: 200, y: 100 })!.x).toBe(0.7);
+    // Pushed 60 px past the limit, the first move back moves the element at once.
+    expect(g.move(1, { x: 180, y: 100 })!.x).toBeCloseTo(0.6);
+  });
+
   it('resizes with the ratio of the two fingers distance', () => {
     const g = gesture();
     g.down(1, { x: 80, y: 100 });

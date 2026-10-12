@@ -5,7 +5,7 @@
  * that the layout is one column with nothing floating over the stage.
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { flushSync, mount, unmount } from 'svelte';
+import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelEditor from './ReelEditor.svelte';
 import { QUICK_EMOJI } from '$lib/reels/reelOverlays';
 
@@ -28,6 +28,9 @@ const mounted: Record<string, unknown>[] = [];
 
 const FRAME = { left: 0, top: 0, right: 200, bottom: 400, width: 200, height: 400 };
 const TRASH = { left: 80, top: 330, right: 120, bottom: 390, width: 40, height: 60 };
+const NOWHERE = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+/** The tool tray's box: not laid out (covers nothing) unless a test places it. */
+const tray = vi.fn(() => NOWHERE);
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -41,10 +44,20 @@ beforeEach(() => {
       ? TRASH
       : this.hasAttribute('data-reel-surface')
         ? FRAME
-        : { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+        : this.hasAttribute('data-reel-tray')
+          ? tray()
+          : NOWHERE;
     return { ...box, x: box.left, y: box.top, toJSON: () => box } as DOMRect;
   });
+  // The reach rule reads the tray's HEIGHT (its top edge measures the keyboard), from the same box.
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (
+    this: HTMLElement
+  ) {
+    return this.hasAttribute('data-reel-tray') ? tray().height : 0;
+  });
   HTMLElement.prototype.setPointerCapture = vi.fn();
+  tray.mockReset();
+  tray.mockReturnValue(NOWHERE);
   localStorage.clear();
   showConfirm.mockReset();
   render.mockReset();
@@ -92,6 +105,9 @@ function addEmoji(target: HTMLElement, index = 0) {
 }
 
 const overlay = (target: HTMLElement) => target.querySelector<HTMLElement>('[data-overlay-id]')!;
+/** An overlay's `left` or `top`, in percent of the frame. */
+const at = (el: HTMLElement, axis: 'left' | 'top') =>
+  Number(new RegExp(`${axis}: ([0-9.]+)%`).exec(el.getAttribute('style')!)![1]);
 
 it('lays the editor out full-bleed: the stage is the whole box, the header and tools float over it', () => {
   const target = mountEditor();
@@ -165,6 +181,96 @@ it('deletes an overlay released over the trash, and not one released elsewhere',
   fire(frame, 'pointermove', 1, 100, 360);
   fire(frame, 'pointerup', 1, 100, 360); // inside the trash rect
   expect(target.querySelectorAll('[data-overlay-id]')).toHaveLength(0);
+});
+
+it('keeps a dragged overlay whole inside the frame, and settles one released on the tray above it', () => {
+  const target = mountEditor();
+  addEmoji(target);
+  const frame = target.querySelector('[data-reel-surface]')!;
+  // Off the left edge and down onto the tray (300..400), away from the trash: the emoji (40 px in a
+  // 200 px wide frame) stops with its box 4 px short of the edge (the inset, 2 % of the short side),
+  // and its centre settles at the tray's top.
+  tray.mockReturnValue({ left: 0, top: 300, right: 200, bottom: 400, width: 200, height: 100 });
+  fire(overlay(target), 'pointerdown', 1, 100, 200);
+  fire(frame, 'pointermove', 1, -200, 395);
+  expect(at(overlay(target), 'left')).toBeCloseTo(12);
+  expect(at(overlay(target), 'top')).toBeCloseTo(94);
+  fire(frame, 'pointerup', 1, -200, 395);
+  expect(at(overlay(target), 'top')).toBeCloseTo(75);
+  expect(target.querySelectorAll('[data-overlay-id]')).toHaveLength(1);
+});
+
+function writeText(target: HTMLElement, text: string) {
+  const input = target.querySelector<HTMLInputElement>('form input')!;
+  input.value = text;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  target
+    .querySelector('form')!
+    .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  flushSync();
+}
+
+it('draws the text at a size that undoes the system text size, as the export never applies it', () => {
+  const target = mountEditor();
+  target.querySelector<HTMLButtonElement>('[data-reel-tool-text]')!.click();
+  flushSync();
+  writeText(target, 'salut');
+  const style = overlay(target).querySelector('span')!.getAttribute('style')!;
+  // 7 % of the short side at scale 1, divided by the measured factor (7.000000000000001 in floats).
+  const size = /font-size: calc\(([0-9.]+)cqmin \/ var\(--text-zoom, 1\)\)/.exec(style);
+  expect(Number(size?.[1])).toBeCloseTo(7);
+});
+
+it('never settles a text against the keyboard: a restyle while typing leaves it, the commit uses the tray height', async () => {
+  const target = mountEditor();
+  target.querySelector<HTMLButtonElement>('[data-reel-tool-text]')!.click();
+  flushSync();
+  writeText(target, 'salut');
+  expect(at(overlay(target), 'top')).toBeCloseTo(30);
+  // Reword it: the keyboard is up, the tray rides above it (top 40 of 400) at its usual 100 px.
+  const frame = target.querySelector('[data-reel-surface]')!;
+  fire(overlay(target), 'pointerdown', 1, 100, 120);
+  fire(frame, 'pointerup', 1, 100, 120);
+  tray.mockReturnValue({ left: 0, top: 40, right: 200, bottom: 140, width: 200, height: 100 });
+  target.querySelector<HTMLButtonElement>('[data-reel-pill]')!.click();
+  await tick();
+  flushSync();
+  expect(at(overlay(target), 'top')).toBeCloseTo(30);
+  writeText(target, 'salut encore');
+  await tick();
+  flushSync();
+  // The settle measured the tray as 100 px against the frame's bottom (band 0.25), not from its top.
+  expect(at(overlay(target), 'top')).toBeCloseTo(30);
+});
+
+it('a tap on a stroke drawn to the edge moves nothing and takes no undo step; a drag never makes it jump', () => {
+  const target = mountEditor();
+  const frame = target.querySelector('[data-reel-surface]')!;
+  tool(target, 'draw').click();
+  flushSync();
+  fire(frame, 'pointerdown', 1, 0, 100);
+  fire(frame, 'pointermove', 1, 30, 100);
+  fire(frame, 'pointermove', 1, 60, 100);
+  fire(frame, 'pointerup', 1, 60, 100);
+  tool(target, 'draw').click();
+  flushSync();
+  // Centred at x 30 of 200: its cap and the inset stick out of the reach bounds from the start.
+  expect(at(strokes(target)[0], 'left')).toBeCloseTo(15);
+  fire(strokes(target)[0], 'pointerdown', 1, 30, 100);
+  fire(frame, 'pointerup', 1, 30, 100);
+  expect(at(strokes(target)[0], 'left')).toBeCloseTo(15);
+  // Moved 20 px inwards it follows the finger, and pushed back out it stops where it began.
+  fire(strokes(target)[0], 'pointerdown', 1, 30, 100);
+  fire(frame, 'pointermove', 1, 50, 100);
+  expect(at(strokes(target)[0], 'left')).toBeCloseTo(25);
+  fire(frame, 'pointermove', 1, -50, 100);
+  expect(at(strokes(target)[0], 'left')).toBeCloseTo(15);
+  fire(frame, 'pointerup', 1, -50, 100);
+  expect(at(strokes(target)[0], 'left')).toBeCloseTo(15);
+  // The tap took no step and the drag ended where it began: undo removes the stroke itself.
+  tool(target, 'undo').click();
+  flushSync();
+  expect(strokes(target)).toHaveLength(0);
 });
 
 it('a cancelled gesture never deletes', () => {
