@@ -165,6 +165,74 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
     expect(store.channelWorkspaces[0].channels[0].id).toBe('channel_ch1');
   });
 
+  // Production web console 2026-10-12 (v1.2.5): 7 communities walked one after another, 21+
+  // requests in a row, 2.87 s before `communities/channels loaded`. They now run side by side.
+  it('asks every community for its salons before ANY of them has answered', async () => {
+    listUserWorkspaces.mockResolvedValue([
+      makeWorkspaceDto('ws1', 'One', 'one'),
+      makeWorkspaceDto('ws2', 'Two', 'two'),
+      makeWorkspaceDto('ws3', 'Three', 'three'),
+    ]);
+    const pending = new Map<string, (rows: ChannelDto[]) => void>();
+    listChannels.mockImplementation(
+      (workspaceId: string) =>
+        new Promise<ChannelDto[]>((resolve) => pending.set(workspaceId, resolve))
+    );
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const promise = store.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+
+    // Three listings in flight at once; the serial walk had exactly one here.
+    expect(listChannels).toHaveBeenCalledTimes(3);
+    // Every community row is already in the sidebar, in the server's order.
+    expect(store.channelWorkspaces.map((ws) => ws.id)).toEqual(['one', 'two', 'three']);
+
+    // Answered in REVERSE order: the sidebar order is still the server's.
+    pending.get('ws3')!([makeChannelDto('c3', 'trois')]);
+    pending.get('ws2')!([makeChannelDto('c2', 'deux')]);
+    pending.get('ws1')!([makeChannelDto('c1', 'un')]);
+    await promise;
+
+    expect(store.channelWorkspaces.map((ws) => ws.id)).toEqual(['one', 'two', 'three']);
+    expect(store.channelWorkspaces.map((ws) => ws.channels.map((c) => c.id))).toEqual([
+      ['channel_c1'],
+      ['channel_c2'],
+      ['channel_c3'],
+    ]);
+    expect(store.workspacesLoadError).toBeNull();
+  });
+
+  it('a community that fails fails the attempt only once every sibling has settled', async () => {
+    listUserWorkspaces.mockResolvedValue([
+      makeWorkspaceDto('ws1', 'One', 'one'),
+      makeWorkspaceDto('ws2', 'Two', 'two'),
+    ]);
+    let releaseSibling: (rows: ChannelDto[]) => void = () => {};
+    listChannels.mockImplementation((workspaceId: string) =>
+      workspaceId === 'ws1'
+        ? Promise.reject(new SessionExpiredError())
+        : new Promise<ChannelDto[]>((resolve) => (releaseSibling = resolve))
+    );
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    let settled = false;
+    const promise = store.loadChannelWorkspacesFromBackend(ctx).then(() => (settled = true));
+    await tick();
+
+    // ws1 has already failed, but ws2 is still loading: no retry may start beside it.
+    expect(settled).toBe(false);
+    expect(store.isLoadingWorkspaces).toBe(true);
+
+    releaseSibling([makeChannelDto('c2', 'deux')]);
+    await promise;
+    expect(ctx.log).toHaveBeenCalledWith('[WORKSPACE-LOAD] 1/2 community(ies) failed to load');
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    expect(store.workspacesLoadError).not.toBeNull();
+  });
+
   it('refreshes a channel already in the sidebar rather than ignoring it (COMM-13)', async () => {
     // THE ADMINISTRATOR JOIN, WHICH THE SERVER COMPLETED AND THE SCREEN NEVER SHOWED. The re-read
     // after `joinPrivateChannelAsAdmin` calls into the sidebar for every channel it just fetched,

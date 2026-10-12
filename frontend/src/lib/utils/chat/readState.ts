@@ -266,13 +266,20 @@ export function countUnreadForUser(
  * never be marked read: the badge came back at every reload (prod, 2026-10-11).
  */
 export function watermarkAfterReading(
-  msgs: Array<Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp'>>,
+  msgs: Array<
+    Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'awaitingServerId'>
+  >,
   current: number,
   includeSystem = false
 ): number {
   let highest = current;
   for (const msg of msgs) {
     if (!includeSystem && (msg.isSystem || msg.senderId === 'system')) continue;
+    // A SALON ECHO IS DATED BY THE AUTHOR'S CLOCK until the server's row settles it (WP-OFF-2), and
+    // a salon mark is on the server's `createdAt` clock: counting it would push this reader's own
+    // mark past every row the server holds whenever the device runs fast - the permanent
+    // over-read described above. The settled row, server-dated, moves the mark instead.
+    if (msg.awaitingServerId) continue;
     const key = readOrderKey(msg);
     if (key > highest) highest = key;
   }
