@@ -1189,6 +1189,29 @@ the CanaReels camera. In the reel camera, a TAP on the shutter takes a photo. Th
 therefore a still, so the editor was read on an image and not on a video. Deleting a post from its
 menu asks for no confirmation. The PDF viewer measurement was not taken in this pass.
 
+## The Mi 9T readings of v1.2.4-alpha.3 (2026-10-12)
+
+Build `1.2.4 (100200403)`, the `v1.2.4-alpha.3` release APK (`app-universal-release.apk` from the
+GitHub release), installed with `adb install -r` over alpha.2. Play Protect's upload prompt was
+declined. The enrolment survived the upgrade, so there was no new sign-in: same `fourth` account
+("Canari Test Delta") on `dev.canari-emse.fr`. Every number comes from CDP on the inspectable
+WebView, and every timestamp is the phone's. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1012-alpha3/` (frames `a3_*.png`, `a3_pdfm.json`,
+`a3-cold-*.json`, `tap-summary.ndjson`).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| Reel editor: a text overlay dropped on the tool tray (#1755) | **`PASS`** | A photo was taken in `/camera` and a text "Canari bord TEST" was dragged from the middle to the bottom-right, onto the tray (`input swipe`, real touches). The box settled at x 424-1078 of a 1079 px screen, its centre above the tool row and clear of it, and no glyph was cut. It was grabbed again from its centre and moved to the middle with no back gesture. Dropped on the tray a second time, it landed in the same place. The export (718x1278) and the published feed card show the whole caption with about 20 px of margin |
+| Restyle with the keyboard up | **`PASS`, one thing to know** | With the field open and the keyboard up, changing the font (serif) and then the background style left the centre exactly where it was (751, 1883). But the restyled box got WIDER than the space left (its right edge went to 1106, then 1150, past the 1079 px screen), so during the edit "TEST" was cut at the screen edge. It is pulled back inside only at "OK" (right edge 1077, centre moved 73 px to the left), and that is the state that publishes. A tap on a style also hid the ADB keyboard (the viewport went from 2116 back to 2339 px) |
+| A tap on a stroke | **`PASS`** | A pencil stroke, then two taps on it: the stroke is selected (dashed box) and stays where it was, and the text overlay stays at 424/1818/1078/1949 |
+| PDF reader in the app: `pic86.pdf` (81-page 14 MB scan, the owner's file, read with permission), sent in the BenchR1 DM from "Tous les fichiers" | **`PASS`, one defect** | Sent with its check mark. The first-page thumbnail on the card took ~25 s to replace the spinner. Times measured by CDP from a scripted click on "Ouvrir le document" (blob already decrypted by an earlier open): **first page painted at 663 ms, sharp at 852 ms**. **Seven real flings** (`input swipe`, 60 ms each): the landing pages (80-81) were sharp **1.08 s** after the last one, with 7 long tasks over the fling, 758 ms in total, the longest 221 ms. **Page 40**, reached by setting `scrollTop` (the reader has no page-jump control): drawn at **28 ms**, sharp at **609 ms**. **Text selection**: a long press on the OCR layer selects the word ("les", highlighted on the glyph) with the system menu (Copier / Partager / Tout sélectionner). Dragging a handle extends the selection across lines. The copied text joins two lines with no space ("les**autres** Grandes Ecoles"). **Defect, zoom loses the reading position:** zooming in from page 80 (x3, scripted) landed on pages 26-27. A REAL tap on "Agrandir" from page 40 (printed page 39) landed on page 27 (printed page 26). `scrollTop` stays the same while every page gets taller, so the reader ends up at page / zoom. The pinch anchors on its page ([posts](frontend/modules/posts.md#the-pinch-and-why-it-needs-a-focal-point)), but the buttons do not. Sharp after the last of three clicks: 1.49 s, longest task 404 ms |
+| Notification tap to conversation, cold, behind the PIN (n=5) | **`PASS`** | Same method and instrument as [notification-to-conversation-latency](frontend/notification-to-conversation-latency.md) (the exact PendingIntent `am start`, then the PIN typed by the instrument). Medians [range], in ms after the tap: PIN gate 1665 [1627-1749], PIN submitted 1953 [1920-2130], `MLS ready` 2749 [2667-2905], route `/chat` 2965 [2870-3125], **pane + composer usable 3296 [3191-3449]**, first history row 3880 [3796-4107]. PBKDF2 106-136 ms, `mls-init` 28-48 ms. That is **0.53 s better than F2 (3825)** and **1.77 s better than the `main` baseline (5063)**. The gate matches F3 (1741). The feed's 20-card mount never ran under the landing. **Back from the conversation**: Back opens the conversation list. The feed tab then shows its posts (no stuck skeletons) |
+| Quick regression: a text, then a ~14 MB video in BenchR1 | **`PASS`** | The text was `msg-status-sent` within 3 s. The video was a 14.5 MB, 9 s cut of the 12 Mbit/s test pattern from "Tous les fichiers". After "Préparation de la vidéo", the bubble showed a placeholder and then its poster, with the check mark, within 30 s of the tap. The staged tile still shows a generic file icon. **Slow-link badge: not provoked.** On fast Wi-Fi the `slow-link-indicator` never mounted and no banner appeared over the 180 s of polling. The corner-icon form was read on alpha.2 with the rate limit (above), and nothing between the two builds touches it |
+
+Also met: swiping right on `/posts` (three `input swipe` attempts, on the media and on the post
+header) did not open `/camera` in this pass. The camera was reached through a link click. In the
+post composer, "Appareil photo" opens the system camera.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.
