@@ -5,9 +5,10 @@
 // directly. The caller provides the device key derived from the PIN by
 // `$lib/crypto/deviceKey` (PBKDF2-SHA256), and the wire format carries no salt.
 //
-// Legacy API: encrypt_with_pin / decrypt_with_pin — reads ONLY pre-v0.11.0 backup files,
-// which are sealed with Argon2id and a 16-byte salt prefix. Do not use for new data; the
-// single caller is the v1 branch of `restoreBackup` in `$lib/backup`.
+// Legacy API: decrypt_with_pin ONLY — it reads pre-v0.11.0 MLS snapshots, sealed with Argon2id
+// and a 16-byte salt prefix, so they can be re-sealed under the device key (`mlsWasmLoader.ts`).
+// Nothing writes that format any more: its writer, `encrypt_with_pin`, had no caller and was
+// deleted on 2026-10-12.
 
 use wasm_bindgen::prelude::*;
 
