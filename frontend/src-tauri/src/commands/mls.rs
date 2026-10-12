@@ -577,23 +577,6 @@ pub(crate) fn trailer_welcome(
 }
 
 #[tauri::command]
-pub(crate) fn envoyer_message(
-    group_id: String,
-    message: String,
-    state: tauri::State<AppState>,
-) -> Result<Vec<u8>, String> {
-    let mut lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
-
-    manager
-        .send_message(&group_id, message.as_bytes())
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub(crate) fn envoyer_message_bytes(
     group_id: String,
     message_bytes: Vec<u8>,

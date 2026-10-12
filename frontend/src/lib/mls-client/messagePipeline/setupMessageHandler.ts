@@ -196,7 +196,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       // reading none of them. `handleUnknownGroup` would ask for a Welcome nobody sends, this group
       // being joined by external commit.
       if (mlsService.isDistributionGroup(groupId)) {
-        return mlsService.routeDistributionFrame(groupId, senderNorm, content);
+        // The sending DEVICE travels with it: a seed answer is addressed to the device that asked.
+        return mlsService.routeDistributionFrame(
+          groupId,
+          senderNorm,
+          content,
+          deliveryMeta?.senderDeviceId
+        );
       }
 
       // ── Unknown group (not in the local WASM) ─────────────────────────────

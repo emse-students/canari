@@ -190,6 +190,62 @@ PIN takes longer than the refresh, so the PIN check still finds its token ready.
 is not quoted for this build: it still carries the feed contention F2 removes, which scatters it by
 ±0.9 s run to run.
 
+### F9 - the PIN salt is asked while the keypad is up, and the device key is derived during the check (measured: submit to `MLS ready` -0.3 s)
+
+**The spans of a cold PIN open after F2 and F3** (Mi 9T, `1.2.4`, 2026-10-12, one run shown, the
+other five within ~30 ms): `pin-salt-fetch` **350 ms**, `pin-verifier-pbkdf2` 117, `resolve-device-id`
+44, `pin-check-request` 253, `device-key-pbkdf2` **166** - ~0.93 s from the submit to `mls-init`,
+all of it in series. Two of those steps wait on nothing they need:
+
+- **The salt does not depend on the PIN.** It was asked at submit, after the person had typed, and on
+  a fresh process it is also the request that opens the connection. `openPinModal` now starts it
+  (`pinSaltAhead.ts`, `prefetchPinSaltImpl`) and `loginImpl` consumes it. An entry is used ONCE (a
+  retry after a failed unlock gets its own round trip, asked again from `applyPinFailure` - the
+  keypad's own wrong-PIN handler, the saved-PIN path and the biometric button all pass through it -
+  and NOT after a `device_revoked` wipe, which leaves no session to ask with). The salt lives in
+  memory only, as it already did for the length of every login. **A first setup is excluded**:
+  `GET pin-salt` WRITES a placeholder row for a user with no salt, which `pin-status` then reads as
+  "registered", so asking it ahead could turn an abandoned keypad into a skipped PIN choice.
+- **What the review found, and how each is closed** (2026-10-12):
+  - *A failure is a value, not a rejection.* An entry settles to `{ failure }`, so a submit that took
+    it before it failed is never handed the prefetch's exception: `unlockWithPin` logs the failure
+    and asks the salt at submit with that login's own token - the round trip every submit made
+    before - whose failure is its own (`auth_pin_salt_unreachable`).
+  - *Forgotten when the keypad ends* (`forgetPinSaltAhead`): any unlock (PIN, biometrics, vault), the
+    keypad closing, `clearAuth` (sign-out, session expiry, revocation wipe) and a PIN reset.
+  - *A salt made stale by a PIN reset is never a wrong PIN.* A reset deletes the row and the next GET
+    mints another salt, so a keypad's salt can be stale. `pin-check` is now sent the salt the verifier
+    came from and answers **`stale-salt`** without comparing, storing or resetting anything - which
+    also closes the case where, with no row left, the old code REGISTERED a verifier under a salt the
+    server never stored. The client asks the salt again and checks once more; a second `stale-salt`
+    is refused by name (`pin_salt_rotated`). A client that sends no salt is answered as before.
+  - *The key is installed on an ALLOWLIST of answers*: only `ok` and `registered`. It used to be
+    installed for anything that was not `mismatch` or `stale-salt`, so a `200 {}` unlocked; any other
+    answer is now logged and refused (`other`, `auth_pin_check_unexpected`) with the key unread.
+  - *Behavioural tests, not regexes*: the PIN half moved to `pinUnlock.ts` (`unlockWithPin`, every
+    dependency passed in), and `pinUnlock.test.ts` answers `mismatch`, `resetRequired` and a double
+    `stale-salt` and watches `installDeviceKey` stay uncalled.
+- **The device key does not depend on the PIN check.** It was derived AFTER `pin-check`, "on purpose".
+  The purpose is a rule about USING the key - nothing is decrypted with a key from an unproven PIN -
+  and that rule is kept: the derivation now starts once the verifier is computed, runs during the
+  check's round trip, and its result is awaited and installed (`ctx.setDeviceKey`) only after the
+  check answered and after the `mismatch` and `resetRequired` branches. On a mismatch it is dropped
+  unread (`pinUnlock.test.ts` asserts it by behaviour). `resolveDeviceId` (a stored id, nothing
+  decrypted) joins the verifier.
+- **After the verifier, not beside it - and that was measured, not assumed.** The first version
+  started both derivations together: they share the WebCrypto worker, the verifier went from ~112 to
+  **215 ms** and delayed the check it feeds by as much, so it gained ~0.1 s less.
+
+| killed, PIN typed by the instrument ~130 ms after the gate (n=6 each) | without (4 builds, n=24) | beside the verifier | **during the check** |
+| --- | ---: | ---: | ---: |
+| `pin-salt-fetch` at submit | 212-239 | 76 | **27** |
+| `pin-verifier-pbkdf2` | 53-112 | 215 | 112 |
+| submit -> `MLS ready` | 742-886 (median per build) | 584 | **489** [433-975] |
+| composer usable | 3543-4117 | 3426 | **3266** |
+
+**~0.3 s off a PIN unlock with a keypad typed in 130 ms**; a person typing for 1.5-3 s leaves the salt
+fully absorbed, so the gain is at least that.
+
 ## The ranked fix plan
 
 **Each line names its expected gain on THIS bench and the risk that decides whether it is worth
@@ -286,6 +342,71 @@ before the flusher), so the lever is the `/chat` render on the warm landing, whi
 | `[LIFECYCLE] App in foreground` | 615 | 646 |
 | socket connected | 931 | ~920 |
 | reply accepted, after the click | 839 | 911 |
+
+### F12 - the notified message is asked for when the rows exist, not after the history restore
+
+**What the killed timeline showed** (Mi 9T, 2026-10-12): the socket's first pull lands before the
+restore has seeded a single row, so the notified frame is refused `absent-conversation` and left in
+the server queue. It was asked for again only by `notifyConversationsRestored`, at the END of
+`loadExistingConversations` phase 2 - after `getUserGroups`, the batch history, and every
+conversation's stored page and archive replay. The conversation pane and its composer were up
+~1.0 s before the message they were opened for.
+
+**The fix is an earlier trigger, and what had to be proven is phase 2's side of it.** Phase 1 creates
+every row the restore will ever create, synchronously, so right after it
+`notifyConversationRowsSeeded` re-fetches the refused frames. A live decrypt can now land while phase
+2 still runs, and four things decide whether that is safe:
+
+- **The archive replay must not deliver the frame a second time.** It pins its head, then waits for
+  the mailbox at `waitForGroupQueueIdle`, which awaits `pendingPullInFlight`. That pull used to be
+  announced only AFTER `fetchPendingMessages` had awaited its ack ordering, so for one ack round trip
+  a pull existed that no barrier could see. It is now announced in the tick it is asked for (the ack
+  ordering moved inside it, still before the request). The live decrypt then lands first, is
+  ledgered, and the replay skips it - the reverse order is the `Duplicate delivery` noise. Two
+  pulls can now overlap (a reconnect and this one), so the slot is CHAINED rather than overwritten
+  and cleared only by the pull that still owns it: before the review, the first pull to finish
+  nulled it while the other was still fetching, and the barrier passed (found in review, covered by
+  `BaseMlsService.ackBarrier.test.ts`).
+- **Phase 2 must not erase what a live delivery wrote.** Its stored-page write ASSIGNED `messages`
+  (now `mergeMessagePage`, the rule every other history write already follows), and the DM repair
+  spread a copy of the row read before an `await` (now re-read after it).
+- **A bulk flush must not either.** `batchAddMessages` yields every 50 messages and wrote back the row
+  it had read before its loop; it now merges into the row as it is when it writes, without adding a
+  message twice.
+- **Durability is unchanged.** Live drains already ran inside phase 2's persist-only window for any
+  frame arriving during it; this change makes that overlap routine, not new.
+
+**And measuring it found a second delay, in a mechanism nothing watched.** Half the runs still drew
+the message ~1 s late. Bulk-ingest windows were closed as a LIFO stack, but they overlap: a selected
+conversation's history load opened one DURING the drain and outlived it, so the drain's close ended
+the history load's persist-only window and the drained message waited in the UI buffer until the
+history load closed (`bulk ingest depth=3` opening 60 ms after `Drain start`, the batch flush 630 ms
+after `Drain complete`). `beginBulkIngest` now returns a handle and `endBulkIngest(handle)` closes
+that window.
+
+| Mi 9T, killed, local APKs against dev, n=6 each, ms after the tap | without | rows-seeded trigger only | **F12** (with handles) |
+| --- | ---: | ---: | ---: |
+| notified message drawn | 4557 [4449-5041] | 4362 [4029-4992] | **4090** [3927-4405] |
+| composer usable -> notified message drawn | 1002 [948-1051] | 768 [500-1060], bimodal | **396** [365-609] |
+| warm (bg): notified message drawn | 1750 [1555-1925] | 1609 [1557-2101] | 1789 [1504-2240] (unchanged, expected) |
+
+**~0.47 s off the killed open, and the message now follows the composer by ~0.4 s instead of ~1.0 s**;
+no run of the fix overlaps the baseline's range. The warm path never had the defect (its rows exist).
+One killed run's reply ack took 2.1 s: the flush waited behind the post-login KeyPackage publication,
+the F8 item, unrelated to this change.
+
+### F13 - drawing only the newest screenful on entry: measured, no gain, not shipped
+
+The next lead after F12 was the thread mount (~0.3 s in the profile). Tried 2026-10-12: the entry
+window cut from 60 groups to 24 (one phone pane), with `fillViewportThenPin` widening one entry
+window per pass instead of a 140-group page. Same tree with and without, n=6 each on the Mi 9T:
+**warm tap -> composer 919 [798-1001] vs 920 [845-1278]**, and the killed pane-open and
+pane -> history phases indistinguishable once two runs disturbed by the dev server are set aside
+(`mls-ready` at 6.7 s in one). Not opened as a pull request. Unverified reason, the first thing to
+check before trying again: the bench DM's bubbles are one line, so 24 groups may not fill the pane
+and the fill loop widens back towards the old size, paying an extra layout pass on the way. The
+patch is not kept; the two lines it changes are `INITIAL_RENDER_GROUPS` and the fill step in
+`ChatArea.svelte`.
 
 ## iOS (iPhone 12) - NOT measured
 
