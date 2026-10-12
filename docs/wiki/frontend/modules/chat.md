@@ -2731,6 +2731,23 @@ wrong about and nothing to tune. A community that really was deleted elsewhere i
 both prunes now LOG what they spared, because a reconciliation that silently deletes is one nobody
 can attribute.
 
+### The communities are loaded side by side, not one after another (2026-10-12)
+
+The per-community half (key-group join with its roster audit, salon listing, private salon groups)
+ran one community at a time. On a production web console (`v1.2.5`, 7 communities) that was 21+
+requests in a row - `distribution-group`, `members`, `user/me` for each, 50-650 ms apiece - and
+`communities/channels loaded`, which the unread counts wait for, arrived 2.87 s after the first one
+left. Nothing one community does reads another's: the join is coalesced per scope
+(`ensureDistributionGroupFor`) and each community appends only to its own sidebar entry. So
+`executeWorkspaceLoadAttempt` now upserts every community row synchronously, in the server's order,
+then runs `loadCommunitySalons` for all of them with `Promise.allSettled`; the load costs the longest
+chain instead of the sum. **Settled, never raced**: a failed community fails the attempt only once
+its siblings have finished, so the retry never starts beside a chain of the attempt it replaces -
+the overlap `isLoadingWorkspaces` forbids. The prune above (`pruneAfterLoad`) still runs after every
+community has answered. Pinned by counts, not clocks: three listings in flight before any answers,
+sidebar order kept when they answer in reverse, and no retry while a sibling is still loading
+(`useChannelWorkspaces.svelte.test.ts`).
+
 ## UI features
 
 - **Focus writing mode**: header hides when composer is focused on mobile.
