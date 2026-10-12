@@ -245,8 +245,8 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
  *
  * Every member of the community receives the frame, and every member but one must ignore it. The
  * requester names its answerer precisely so that a salon of three hundred does not pay three
- * hundred bundles for one missing session - and, since 1.2.5, the one DEVICE of that member that
- * answers, and the answer goes back to the one device that asked (channel-encryption section 23).
+ * hundred bundles for one missing session - and, since 1.2.5, the DEVICES of that member that
+ * answer, each answer going back to the one device that asked (channel-encryption section 23).
  */
 async function answerSeedRequest(
   frame: DistributionFrame,
@@ -256,12 +256,19 @@ async function answerSeedRequest(
     'cannot answer a seed request'
   );
   if (String(request.answererUserId ?? '').toLowerCase() !== userId) return;
-  // ONE DEVICE OF THAT USER ANSWERS, the one the requester named (section 23). Every device of the
-  // elected user used to answer, so one ask cost one bundle per device online (finding G of the web
-  // console audit, 2026-10-12). An empty field is a requester before 1.2.5, which named nobody, and
-  // every device answers as it always did.
-  const namedDevice = String(request.answererDeviceId ?? '');
-  if (namedDevice && namedDevice !== mlsService.getDeviceId()) return;
+  // ONLY THE DEVICES THE REQUESTER NAMED ANSWER (section 23): those of this user it saw online AND
+  // as leaves of its own tree. A device it did not name cannot be told apart from a device that never
+  // received the request, so its answer would only duplicate. An empty list is a requester before
+  // 1.2.5, or one whose roster had no per-device presence, and every device answers as it always did.
+  const named = (request.answererDeviceIds ?? []).map(String);
+  if (named.length > 0 && !named.includes(mlsService.getDeviceId())) {
+    console.debug(
+      `[GRAINE] not answering ${frame.sender}'s request ${String(request.requestId ?? '')} in community ` +
+        `${frame.workspaceId.slice(0, 8)}: it names ${named.join(',')}, not this device - the requester ` +
+        `saw it offline or outside the key group's tree`
+    );
+    return;
+  }
 
   // THE ANSWER GOES TO THE DEVICE THAT ASKED, AND TO NOBODY ELSE. A request is transport, so it only
   // ever arrives live, and the live envelope always names its device: reaching here without one is a
@@ -527,7 +534,12 @@ async function absorbSeedBundle(
   // an unlucky election costs a round trip instead of costing the session for the whole app session.
   for (const sessionId of bundle.missingSessionIds ?? []) {
     if (sessionId)
-      noteSeedUnavailable(String(sessionId), frame.sender, String(bundle.requestId ?? ''));
+      noteSeedUnavailable(
+        String(sessionId),
+        frame.sender,
+        String(bundle.requestId ?? ''),
+        frame.senderDeviceId ?? ''
+      );
   }
 
   // The rows this repairs were rendered unreadable and dropped minutes ago; nothing else would go

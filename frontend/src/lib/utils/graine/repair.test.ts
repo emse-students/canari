@@ -645,7 +645,7 @@ describe('noteSeedUnavailable', () => {
 
     // Without this the session was unreadable for the WHOLE app session: bob is elected by every
     // device alike, so a silent "I don't have it" stranded it for good.
-    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!));
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!), 'web-bob');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
@@ -656,9 +656,14 @@ describe('noteSeedUnavailable', () => {
     noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
 
-    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!));
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!), 'web-bob');
     await settle();
-    noteSeedUnavailable('sess-1', 'carol', requestIdOf(sendMessage.mock.calls.at(-1)!));
+    noteSeedUnavailable(
+      'sess-1',
+      'carol',
+      requestIdOf(sendMessage.mock.calls.at(-1)!),
+      'web-carol'
+    );
     await settle();
 
     // Two members, two asks, then nothing: the walk ends on a PROOF that nobody holds it - not on a
@@ -668,14 +673,22 @@ describe('noteSeedUnavailable', () => {
     warn.mockRestore();
   });
 
-  it('takes ONE answer per member - a second device of the same member declining changes nothing', async () => {
+  it('with no device named, takes ONE answer per member - a second device declining changes nothing', async () => {
+    // A roster without per-device presence names nobody, so every device of bob answers and nobody
+    // can tell how many will: the first "no" strikes him, as before 1.2.5.
+    listMembers.mockResolvedValue([
+      { userId: 'Bob', online: true },
+      { userId: 'alice', online: true },
+      { userId: 'carol', online: true },
+    ]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
 
-    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!));
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!), 'web-bob');
     await settle();
-    noteSeedUnavailable('sess-1', 'BOB', requestIdOf(sendMessage.mock.calls.at(-1)!));
+    noteSeedUnavailable('sess-1', 'BOB', requestIdOf(sendMessage.mock.calls.at(-1)!), 'tauri-bob');
     await settle();
 
     // bob's laptop and phone both said no: one line, one move down the roster to carol.
@@ -684,6 +697,46 @@ describe('noteSeedUnavailable', () => {
       1
     );
     info.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('strikes a member only once EVERY device named has declined (review of #1768, D2)', async () => {
+    // bob's phone joined last week and does not hold what his laptop minted: its "no" alone used to
+    // strike bob off the roster while the laptop held the seed.
+    listMembers.mockResolvedValue([
+      { userId: 'Bob', online: true, onlineDevices: ['tauri-bob', 'web-bob'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+    ]);
+    treeLeaves = ['bob:tauri-bob', 'bob:web-bob', 'alice:device-1', 'carol:web-carol'];
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+    await settle();
+    const ask = requestIdOf(sendMessage.mock.calls[0]);
+
+    noteSeedUnavailable('sess-1', 'bob', ask, 'tauri-bob');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    // The same device saying no twice is not a second device.
+    noteSeedUnavailable('sess-1', 'bob', ask, 'tauri-bob');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    noteSeedUnavailable('sess-1', 'bob', ask, 'web-bob');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
+    info.mockRestore();
+  });
+
+  it('ignores a decline from a device of the member that the request did not name', async () => {
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+    await settle();
+
+    // Only `web-bob` was named; another device of bob has no standing in this walk.
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls[0]), 'tauri-other');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it('asks nobody on behalf of a session that is no longer wanted', async () => {
@@ -693,7 +746,7 @@ describe('noteSeedUnavailable', () => {
     await settle();
     forgetAskedSession('sess-1');
 
-    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!));
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls.at(-1)!), 'web-bob');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
@@ -718,7 +771,7 @@ describe('noteSeedUnavailable', () => {
     expect(answererOf(sendMessage.mock.calls[0])).toBe('bob');
 
     // carol was never elected: she may not strike herself off the roster and trigger a re-ask.
-    noteSeedUnavailable('sess-1', 'carol', requestIdOf(sendMessage.mock.calls[0]));
+    noteSeedUnavailable('sess-1', 'carol', requestIdOf(sendMessage.mock.calls[0]), 'web-carol');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
@@ -730,12 +783,12 @@ describe('noteSeedUnavailable', () => {
     await settle();
     expect(answererOf(sendMessage.mock.calls[0])).toBe('bob');
 
-    noteSeedUnavailable('sess-1', 'bob', 'a-request-from-a-past-walk');
+    noteSeedUnavailable('sess-1', 'bob', 'a-request-from-a-past-walk', 'web-bob');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
 
     // The real answer to the ask in flight still moves the walk on.
-    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls[0]));
+    noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls[0]), 'web-bob');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
@@ -827,15 +880,15 @@ describe('a key group behind its epoch', () => {
   });
 });
 
-describe('one answering device, and the reason on every ask (section 23)', () => {
+describe('the answering devices, and the reason on every ask (section 23)', () => {
   /** Decodes the request a send carried. */
   function requestOf(call: unknown[]) {
     return decodeAppMessage(call[1] as Uint8Array)?.graineRequest;
   }
 
-  it('names the LOWEST online device of the elected member that is a leaf of the key group', async () => {
-    // Every device of the elected member used to answer: one ask, one bundle per device online
-    // (finding G of the 2026-10-12 web console audit).
+  it('names EVERY online device of the elected member that is a leaf of the key group', async () => {
+    // Every one, never the lowest: the lowest was a backgrounded phone whose socket stays open and
+    // whose script does not run, and a silent named device never moves the walk (review of #1768).
     listMembers.mockResolvedValue([
       { userId: 'bob', online: true, onlineDevices: ['tauri-b1', 'web-b2', 'web-b3'] },
       { userId: 'alice', online: true, onlineDevices: ['device-1'] },
@@ -847,7 +900,21 @@ describe('one answering device, and the reason on every ask (section 23)', () =>
     await settle();
 
     expect(requestOf(sendMessage.mock.calls[0])?.answererUserId).toBe('bob');
-    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceId).toBe('web-b2');
+    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceIds).toEqual(['web-b2', 'web-b3']);
+  });
+
+  it('names at most 16 devices, the limit the delivery service accepts on an addressed frame', async () => {
+    const many = Array.from({ length: 20 }, (_, i) => `web-${String(i).padStart(2, '0')}`);
+    listMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: many },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+    ]);
+    treeLeaves = [...many.map((d) => `bob:${d}`), 'alice:device-1'];
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+
+    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceIds).toEqual(many.slice(0, 16));
   });
 
   it('passes over a member whose only online device is not on the key group', async () => {
@@ -863,7 +930,7 @@ describe('one answering device, and the reason on every ask (section 23)', () =>
     await settle();
 
     expect(requestOf(sendMessage.mock.calls[0])?.answererUserId).toBe('carol');
-    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceId).toBe('web-carol');
+    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceIds).toEqual(['web-carol']);
   });
 
   it('names no device, and says why, when the roster predates per-device presence', async () => {
@@ -878,7 +945,7 @@ describe('one answering device, and the reason on every ask (section 23)', () =>
 
     // Every device of bob answers, exactly as before 1.2.5 - never a request that reaches nobody.
     expect(requestOf(sendMessage.mock.calls[0])?.answererUserId).toBe('bob');
-    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceId ?? '').toBe('');
+    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceIds ?? []).toEqual([]);
     expect(warn.mock.calls.flat().join(' ')).toContain('without per-device presence');
     warn.mockRestore();
   });
@@ -887,7 +954,7 @@ describe('one answering device, and the reason on every ask (section 23)', () =>
     await requestCommunityHistory('ws-1');
 
     expect(requestOf(sendMessage.mock.calls[0])?.answererUserId).toBe('bob');
-    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceId).toBe('web-bob');
+    expect(requestOf(sendMessage.mock.calls[0])?.answererDeviceIds).toEqual(['web-bob']);
   });
 
   it('says on the ask line WHY it asks, at which epoch, and what the key group lost', async () => {
@@ -906,7 +973,8 @@ describe('one answering device, and the reason on every ask (section 23)', () =>
     noteSeedUnavailable(
       'sess-1',
       'bob',
-      String(requestOf(sendMessage.mock.calls.at(-1)!)?.requestId ?? '')
+      String(requestOf(sendMessage.mock.calls.at(-1)!)?.requestId ?? ''),
+      'web-bob'
     );
     await settle();
     const second = info.mock.calls.flat().find((l) => String(l).includes('[GRAINE] asked carol'));

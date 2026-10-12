@@ -399,7 +399,7 @@ the resolved live members that match (user id compared lower-case) and logs `[SE
 ADDRESSED matched=N of M`, or warns `ADDRESSED_NOBODY` when nobody matches. **An addressed frame is
 never appended to the history stream**: that stream is replayed to every member, and the frame
 belongs to one device's queue only. Why and what it costs:
-[channel-encryption §23](../protocols/channel-encryption.md#23-a-seed-answer-goes-to-the-device-that-asked-from-one-device---fixed-2026-10-12).
+[channel-encryption §23](../protocols/channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12).
 
 ### The queue is bounded on ONE axis, and observed on the other
 

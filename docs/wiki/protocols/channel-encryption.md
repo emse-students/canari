@@ -210,9 +210,9 @@ they have left the community or have no device online, it is addressed to the ON
 lowest user id; with nobody online, the request waits for one to come back. Both rules are
 deterministic, need no clock and no coordination, and leave nothing for a race to decide - see
 [WP-33](#wp-33-and-the-answerer-nobody-elects) for why presence is part of the rule. Since
-2026-10-12 the request also names ONE device of that user, and the answer is addressed to the
+2026-10-12 the request also names the devices of that user that can read it, and each answer goes to the
 requesting device only, never to the whole group
-([section 23](#23-a-seed-answer-goes-to-the-device-that-asked-from-one-device---fixed-2026-10-12)).
+([section 23](#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)).
 
 ### 4.6 Ordering rule: remove, THEN distribute
 
@@ -3158,7 +3158,7 @@ scope, which is worse than one extra epoch. Making the replay from 0 "succeed" w
 answering a question the client did not ask. The churn ends as the store floor
 (`minClientVersion`) reaches the release that carries this.
 
-## 23. A seed answer goes to the device that asked, from one device - FIXED 2026-10-12
+## 23. A seed answer goes only to the device that asked - FIXED 2026-10-12
 
 Measured in the [production queue audit](../infrastructure/prod-queue-and-epoch-audit-2026-10-12.md)
 (findings F1-F3): in the community created that morning, about 184 seed answers made up roughly 28 k
@@ -3177,7 +3177,7 @@ a salon refetch until #1761.
 | Field | Where | Meaning |
 |---|---|---|
 | `recipientDevices: string[]` | `POST /api/mls/send` body | 1 to 16 `userId:deviceId` keys. The frame is queued only for those devices among the group's LIVE members (the same membership query as every send), and it is NEVER appended to the history stream. Refused (400) on a commit or a Welcome, on any group that is not a key-distribution group (a member could otherwise equivocate in a conversation), as an empty list, as more than 16 keys or as a malformed key. If the field is absent, the frame goes to the whole group, as before. |
-| `answerer_device_id` (field 6) | `GraineRequestMsg` | The one device of the elected answerer that must answer. If it is empty, every device answers (pre-1.2.5 requesters). |
+| `answerer_device_ids` (field 6, repeated) | `GraineRequestMsg` | The devices of the elected answerer that answer: every one that is online and a leaf of the requester's tree, at most 16. If it is empty, every device answers (pre-1.2.5 requesters). |
 | `onlineDevices: string[]` | social-service roster `?presence=1` | Each member's online device ids, sorted, from the same single SCAN as `online`. |
 
 The answer is still a `graineBundle` sealed by the key group, still durable and silent. Only its
@@ -3187,19 +3187,48 @@ delivers only to a live member's device, so naming a device can only narrow deli
 it. If the envelope carries no device, the answerer refuses at `error` and sends nothing. It does
 not fall back to a broadcast.
 
-### Who answers: one device, chosen without a clock
+### Who answers: every device that can, each to the requester alone
 
 The election (`resolveAnswerer`, section 4.5 and WP-33) still picks a USER. `answeringDevicesOn`
-then takes that user's online devices from the roster, intersects them with the LEAVES of this
-device's copy of the key group's tree (`getGroupMemberIdentities`), and names the LOWEST device id.
-A device that is online but not a leaf cannot open the request, so it is never named. A member
-whose online devices are all non-leaves no longer counts as reachable. On every device of the
-answering user, `answerSeedRequest` returns silently unless the request names nobody or names this
-very device. Both sides read the same facts, so no race decides anything.
+then takes that user's online devices from the roster and intersects them with the LEAVES of this
+device's copy of the key group's tree (`getGroupMemberIdentities`). The request names EVERY such
+device, sorted, at most 16 (`answerer_device_ids`). A device that is online but not a leaf cannot
+open the request, so it is never named. A member whose online devices are all non-leaves no longer
+counts as reachable. On the answering user's devices, `answerSeedRequest` answers if the list is
+empty or contains this device. Otherwise it says so at `debug` and stays silent.
+
+**Why every device and not one (review of #1768).** The first version of this PR named only the
+lowest device id. That was wrong twice:
+
+- **D1.** `tauri-` sorts before `web-`, so the device it named was usually a backgrounded phone. Its
+  socket stays open while its script does not run. A silent named device is a walk that never moves.
+- **D2.** The first device to decline struck the whole member, though another of their devices may
+  hold the session. A phone that joined last week does not hold what the laptop minted.
+
+Naming every device keeps the cost bounded: each answer still goes to the requesting device alone,
+so one ask costs one addressed frame per named device (1-3 in practice), never one per seat.
+
+**A member is declined only when every named device has declined.** `askedRequest` keeps, per
+session, the named devices that have not declined yet (`awaiting`). The declining bundle's envelope
+device is checked against it:
+
+- a device that was not named is ignored at `debug`;
+- a repeated decline from the same device changes nothing;
+- the set emptying strikes the member and moves the walk to the next member.
+
+If the request named nobody (an older social service), nobody can tell how many devices will
+answer. Then the first decline strikes the member, as before 1.2.5.
+
+**Termination, without a clock.** Each decline removes one device from a finite set. The set
+emptying removes one member from a finite roster. The walk therefore ends on the seed arriving or on
+`exhausted`, which is logged. The one way it does not end is a named device that never processes
+the request. That is the same as a silent elected member before this change, and it now needs EVERY
+named device of that member to be silent, not just the lowest one. A frozen phone that resumes
+processes the transport frame buffered on its socket, and then it answers.
 
 ### The reason on every ask (F3)
 
-`[GRAINE] asked <user> (<device | every device>) for N seed(s) in community X at epoch E - reasons
+`[GRAINE] asked <user> (<device,device... | every device>) for N seed(s) in community X at epoch E - reasons
 unreadable-row=a,declined=b,holder-online=c,epoch-left=d, newest row A..B old, key group lost
 <cause:n | none> this session`. `epoch` is this device's key-group epoch. The reasons say why each
 seed was asked for: a row it could not read, a decline from the previous answerer, a holder that
@@ -3228,10 +3257,11 @@ queue.
 ### Expected effect, and how to read it
 
 On a community in its first hours, about -80 % rows and -90 % bytes: each answer reaches 1 seat
-instead of about 100. Bundles of 16 KB or more drop from about 42 copies per payload to 1. One
-device answers instead of 2-3, so duplicate answers fall to 0. To read it on prod: the per-group
-copies-per-payload query of the audit, and `[SEND][trace] ADDRESSED` lines in chat-delivery
-(`ADDRESSED_NOBODY` warns when the named device is no longer a member).
+instead of about 100. Bundles of 16 KB or more drop from about 42 copies per payload to 1 per
+answering device. A member with 2-3 devices online still answers 2-3 times. Each of those answers is
+one row, not one per seat, and that is the price of D1 and D2 above. To read it on prod: the
+per-group copies-per-payload query of the audit, and the `[SEND][trace] ADDRESSED` lines in
+chat-delivery (`ADDRESSED_NOBODY` warns when the device that asked is no longer a member).
 
 ### Risks, stated
 
@@ -3239,9 +3269,10 @@ copies-per-payload query of the audit, and `[SEND][trace] ADDRESSED` lines in ch
   generations forward per sender per epoch. Transport frames (requests) already skip offline
   devices the same way. An answerer would need 2 000 consecutive addressed frames within ONE epoch
   for this to bite.
-- **Frozen-online device.** A backgrounded Android can keep its socket, so the named device may not
-  answer. The request then waits as it did for a frozen elected user, until a decline or the next
-  start. `tauri-` sorts before `web-`, so a phone is preferred over a browser of the same user.
+- **Frozen-online devices.** A backgrounded Android can keep its socket open without running. The walk
+  waits only if EVERY named device of the member stays silent: a device that answers with the seed
+  ends the walk, and one that declines leaves the walk waiting on the silent one. The walk moves once
+  the frozen device resumes and answers, or at the next start.
 - **Refined reachability.** A member online only on a device that is not a leaf of this tree is not
   asked. Before, they were asked and could not have opened the request anyway.
 

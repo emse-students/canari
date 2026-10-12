@@ -657,7 +657,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     warn.mockRestore();
   });
 
-  describe('one answer, to one device (section 23)', () => {
+  describe('answers from the named devices, to one device (section 23)', () => {
     const sessionsRequest = (extra: Partial<Parameters<typeof mkGraineRequest>[0]> = {}) =>
       requestFrame({
         workspaceId: 'ws-1',
@@ -679,21 +679,31 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       expect(sendMessage.mock.calls[0][3].recipients).toEqual(['bob:bob-phone']);
     });
 
-    it('stays silent when the request names ANOTHER device of this user as the answerer', async () => {
+    it('stays silent, and says so at debug, when the request names only OTHER devices of this user', async () => {
       // Every device of the elected user used to answer - one bundle per device online (finding G).
       const { storage } = fakeStorage([heldSeed('sess-1', 0)]);
       const sendMessage = wireWithMls(storage);
 
-      await handleDistributionFrame(sessionsRequest({ answererDeviceId: 'alice-phone' }));
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(
+        sessionsRequest({ answererDeviceIds: ['alice-phone', 'alice-tablet'] })
+      );
 
       expect(sendMessage).not.toHaveBeenCalled();
+      expect(debug.mock.calls.flat().join(' ')).toContain(
+        'names alice-phone,alice-tablet, not this device'
+      );
+      debug.mockRestore();
     });
 
-    it('answers when the request names THIS device', async () => {
+    it('answers when THIS device is among those named', async () => {
       const { storage } = fakeStorage([heldSeed('sess-1', 0)]);
       const sendMessage = wireWithMls(storage);
 
-      await handleDistributionFrame(sessionsRequest({ answererDeviceId: 'alice-laptop' }));
+      await handleDistributionFrame(
+        sessionsRequest({ answererDeviceIds: ['alice-phone', 'alice-laptop'] })
+      );
 
       expect(sendMessage).toHaveBeenCalledTimes(1);
     });
@@ -730,6 +740,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       workspaceId: 'ws-1',
       groupId: 'g-1',
       sender: 'bob',
+      senderDeviceId: 'bob-phone',
       plaintext: encodeAppMessage(
         mkGraineBundle({
           workspaceId: 'ws-1',
@@ -741,8 +752,9 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       ),
     });
 
-    // Dropping or emptying the id here would make every decline a no-op in the walk.
-    expect(noteSeedUnavailableSpy).toHaveBeenCalledWith('sess-9', 'bob', 'r-7');
+    // Dropping or emptying the id here would make every decline a no-op in the walk, and the device
+    // is what the walk counts a named device's "no" by (section 23).
+    expect(noteSeedUnavailableSpy).toHaveBeenCalledWith('sess-9', 'bob', 'r-7', 'bob-phone');
   });
 
   it('says which sessions it does not hold, rather than answering an empty hand with silence', async () => {

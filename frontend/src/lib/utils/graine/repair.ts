@@ -170,8 +170,16 @@ const askedOn = new Map<string, { groupId: string; epoch: number }>();
  * group's log - possibly after the ask it answered was superseded by a newer one for the same
  * session. Counting it against the newer ask would strike a member who was never asked in this walk.
  * The request id is the durable fact that says WHICH ask a decline belongs to; no clock is involved.
+ *
+ * `awaiting` is the named devices of that member that have NOT declined yet (section 23). A member
+ * is struck off only when it empties, because one device of theirs saying "not held" says nothing
+ * about the others. `null` when the request named no device (an older social service): then nobody
+ * can tell how many devices will answer, and the first decline strikes the member, as before 1.2.5.
  */
-const askedRequest = new Map<string, { requestId: string; answerer: string }>();
+const askedRequest = new Map<
+  string,
+  { requestId: string; answerer: string; awaiting: Set<string> | null }
+>();
 
 /**
  * Requests not sent because their key group was behind its epoch, by group, then channel.
@@ -369,12 +377,28 @@ function reachableThroughDevices(
 }
 
 /**
- * The ONE device of `answerer` that answers, or `''` (every device of theirs answers) when none can
- * be named. The lowest device id - a total order every requester reads identically, no clock and
- * nothing for a race to decide (section 23).
+ * At most this many devices of one member are named on a request: the delivery service refuses an
+ * addressed frame naming more (`MAX_ADDRESSED_DEVICES`), and a member past it is an anomaly.
  */
-function answeringDeviceOf(answerer: string, answering: Map<string, string[]> | null): string {
-  return answering?.get(answerer.toLowerCase())?.[0] ?? '';
+const MAX_NAMED_ANSWERERS = 16;
+
+/**
+ * EVERY device of `answerer` that can answer, sorted and capped at {@link MAX_NAMED_ANSWERERS}, or
+ * `[]` (every device of theirs answers) when none can be named.
+ *
+ * **All of them, never one** (review of #1768): naming the lowest id named a backgrounded phone whose
+ * socket stays open and whose script does not run (`tauri-` sorts before `web-`), and a silent named
+ * device is a walk that never moves. Naming every device costs one addressed answer per device - to
+ * the requesting device only - and the member counts as declined only once each named device has
+ * said no ({@link noteSeedUnavailable}).
+ */
+function answeringDevicesOf(answerer: string, answering: Map<string, string[]> | null): string[] {
+  return (answering?.get(answerer.toLowerCase()) ?? []).slice(0, MAX_NAMED_ANSWERERS);
+}
+
+/** How a request's named devices read in a log line. */
+function describeNamedDevices(devices: readonly string[]): string {
+  return devices.length > 0 ? devices.join(',') : 'every device';
 }
 
 /**
@@ -539,22 +563,26 @@ async function requestSeedsForChannel(
 
   for (const [answerer, sessionIds] of byAnswerer) {
     const requestId = crypto.randomUUID();
-    // ONE DEVICE of the member answers (section 23): every device of theirs used to, so one ask cost
-    // one bundle per device they had online.
-    const answererDevice = answeringDeviceOf(answerer, answering);
+    // The member's devices that can read this group, each answering to our device alone (section 23).
+    const answererDevices = answeringDevicesOf(answerer, answering);
     const frame = encodeAppMessage(
       mkGraineRequest({
         workspaceId,
         kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
         sessionIds,
         answererUserId: answerer,
-        answererDeviceId: answererDevice,
+        answererDeviceIds: answererDevices,
         requestId,
       })
     );
-    // Recorded BEFORE the send: the answer may land before `sendMessage` resolves.
+    // Recorded BEFORE the send: the answer may land before `sendMessage` resolves. One awaiting set
+    // PER SESSION: a device may hold some of the sessions asked and decline the others.
     sessionIds.forEach((id) =>
-      askedRequest.set(id, { requestId, answerer: answerer.toLowerCase() })
+      askedRequest.set(id, {
+        requestId,
+        answerer: answerer.toLowerCase(),
+        awaiting: answererDevices.length > 0 ? new Set(answererDevices) : null,
+      })
     );
     // Transport, never durable: a request restates state held elsewhere, so replaying it from the
     // shared log would be circular - and that log is capped per group, so writing requests into it
@@ -566,7 +594,7 @@ async function requestSeedsForChannel(
       askedOn.set(id, { groupId, epoch: sealedAt });
     });
     console.info(
-      `[GRAINE] asked ${answerer} (${answererDevice || 'every device'}) for ${sessionIds.length} ` +
+      `[GRAINE] asked ${answerer} (${describeNamedDevices(answererDevices)}) for ${sessionIds.length} ` +
         `seed(s) in community ${workspaceId.slice(0, 8)} at epoch ${sealedAt} - ` +
         describeAskReasons(sessionIds, sessions, groupId)
     );
@@ -886,13 +914,13 @@ export async function requestCommunityHistory(
     return;
   }
 
-  const answererDevice = answeringDeviceOf(answerer, answering);
+  const answererDevices = answeringDevicesOf(answerer, answering);
   const frame = encodeAppMessage(
     mkGraineRequest({
       workspaceId,
       kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
       answererUserId: answerer,
-      answererDeviceId: answererDevice,
+      answererDeviceIds: answererDevices,
       requestId: crypto.randomUUID(),
     })
   );
@@ -904,7 +932,7 @@ export async function requestCommunityHistory(
   // would be a second thing claiming to decide the same question.
   historyUnanswerableAt.delete(workspaceId);
   console.info(
-    `[GRAINE] asked ${answerer} (${answererDevice || 'every device'}) for the history of community ` +
+    `[GRAINE] asked ${answerer} (${describeNamedDevices(answererDevices)}) for the history of community ` +
       `${workspaceId.slice(0, 8)} at epoch ${mlsService.getEpoch(groupId)} - reason ` +
       `${evenIfSeedsHeld ? 'key-group-rejoined' : 'no-seed-held'}, key group lost ` +
       `${describeKeyGroupFrameLosses(groupId)} this session`
@@ -962,8 +990,10 @@ export function forgetAskedSession(sessionId: string): void {
  * asked for again in the whole app session.
  *
  * Driven entirely by the ARRIVAL of a declining bundle, so there is no cycle to bound and no clock
- * to be wrong: no answer, no re-ask. Each pass strikes one member off a finite roster, so the walk
- * ends either on the seed or on {@link resolveAnswerer} returning null, which is reported.
+ * to be wrong: no answer, no re-ask. Each decline removes one named device from a finite set, and
+ * the set emptying strikes one member off a finite roster, so the walk ends either on the seed or on
+ * {@link resolveAnswerer} returning null, which is reported. A named device that never answers holds
+ * the walk where it is - the same as a silent member before, and the only non-termination left.
  *
  * @param sessionId Session the answerer turned out not to hold.
  * @param answerer Who declined, lower-cased by the caller or here.
@@ -971,8 +1001,15 @@ export function forgetAskedSession(sessionId: string): void {
  *   `answerer`. A decline of any OTHER request (replayed
  *   from the log, or answering an ask since superseded) is ignored: the walk counts answers to the
  *   ask in flight, not every "no" ever said.
+ * @param answererDevice The device the declining bundle came from, from its envelope. Must be one
+ *   the request named, when it named any.
  */
-export function noteSeedUnavailable(sessionId: string, answerer: string, requestId: string): void {
+export function noteSeedUnavailable(
+  sessionId: string,
+  answerer: string,
+  requestId: string,
+  answererDevice: string
+): void {
   const want = wants.get(sessionId);
   if (!want) {
     // Nothing is waiting on it: the seed landed by another path between the ask and this answer, or
@@ -994,10 +1031,30 @@ export function noteSeedUnavailable(sessionId: string, answerer: string, request
     return;
   }
 
+  // A MEMBER IS DECLINED WHEN EVERY DEVICE NAMED HAS DECLINED (section 23). One device not holding
+  // a session says nothing about the member's other devices - a phone that joined last week does
+  // not hold what the laptop minted - so striking the member on the first "no" lost the holder.
+  if (inFlight.awaiting) {
+    if (!inFlight.awaiting.has(answererDevice)) {
+      console.debug(
+        `[GRAINE] ignoring a decline of session ${sessionId} from ${answerer}:${answererDevice || '(no device)'}: ` +
+          `not a device request ${requestId} is still waiting on`
+      );
+      return;
+    }
+    inFlight.awaiting.delete(answererDevice);
+    if (inFlight.awaiting.size > 0) {
+      console.info(
+        `[GRAINE] ${answerer}:${answererDevice} does not hold session ${sessionId} - waiting on ` +
+          `${[...inFlight.awaiting].join(',')} before asking the next member`
+      );
+      return;
+    }
+  }
+
   const tried = declined.get(sessionId) ?? new Set<string>();
-  // ONE ANSWER PER MEMBER, HOWEVER MANY DEVICES THEY HAVE. A request goes to a USER and every device
-  // of theirs may decline it; the first "no" already moved the ask to the next member, so a second
-  // one from the same member would print the same line and send a duplicate request down the roster.
+  // ONE STRIKE PER MEMBER. With no device named, every device of theirs may decline and the first
+  // "no" already moved the ask on, so a second one would send a duplicate request down the roster.
   if (tried.has(answerer.toLowerCase())) return;
   tried.add(answerer.toLowerCase());
   declined.set(sessionId, tried);
