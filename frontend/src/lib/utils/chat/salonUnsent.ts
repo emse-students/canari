@@ -141,6 +141,12 @@ async function livePageLives(): Promise<Set<string> | null> {
  * a dead page life, to hand back to the composer. An entry of THIS page life is taken only when no
  * live send owns it; an entry of another page life only when its owner lock is no longer held.
  *
+ * THE LEDGER IS READ BEFORE THE LOCKS ARE QUERIED, and only what that read held can be taken. An
+ * entry is written after its owner's lock is requested, so every entry of the first read has its
+ * owner in the snapshot that follows if that owner lives. Read after the query, an entry a page life
+ * wrote meanwhile - a sibling tab opened during the query, or this life's own send leaving while it
+ * ran, absent from `live` - would be taken from a writer that is very much alive.
+ *
  * @param live Message ids this page life is still sending or can retry.
  */
 export async function takeOrphanedSalonTexts(
@@ -148,10 +154,10 @@ export async function takeOrphanedSalonTexts(
   conversationKey: string,
   live: ReadonlySet<string>
 ): Promise<UnsentSalonText[]> {
+  const candidates = readAll(userId);
   const alive = await livePageLives();
-  const all = readAll(userId);
   let foreignKept = 0;
-  const taken = all.filter((e) => {
+  const decided = candidates.filter((e) => {
     if (e.conversationKey !== conversationKey) return false;
     if (e.owner === SALON_UNSENT_PAGE_LIFE) return !live.has(e.messageId);
     if (e.owner === undefined) return true;
@@ -168,6 +174,12 @@ export async function takeOrphanedSalonTexts(
       console.debug(`[SALON-UNSENT] ${foreignKept} entr(y/ies) kept: a live sibling tab owns them`);
     }
   }
+  if (decided.length === 0) return [];
+  // Re-read: during the query an owner may have cleared an entry (its send was answered), and a
+  // text it no longer holds must not come back.
+  const decidedIds = new Set(decided.map((e) => e.messageId));
+  const all = readAll(userId);
+  const taken = all.filter((e) => decidedIds.has(e.messageId));
   if (taken.length === 0) return [];
   const takenIds = new Set(taken.map((e) => e.messageId));
   writeAll(

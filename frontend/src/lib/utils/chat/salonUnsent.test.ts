@@ -79,6 +79,40 @@ describe('the unsent ledger across tabs', () => {
     expect(await ledger.takeOrphanedSalonTexts('me', SALON, new Set())).toHaveLength(0);
   });
 
+  it('an entry written while the locks are queried is never taken: its writer was not in the snapshot', async () => {
+    const { held, manager } = fakeLocks();
+    installLocks(manager);
+    const ledger = await load();
+    // During the query a sibling tab opens and records (its lock lands after the snapshot), and this
+    // life's own send leaves - absent from the `live` set the caller computed before.
+    manager.query.mockImplementationOnce(async () => {
+      const snapshot = { held: [...held].map((name) => ({ name })), pending: [] };
+      held.add(`${OWNER_LOCK_PREFIX}newcomer`);
+      writeForeign('newcomer', 'theirs');
+      ledger.recordUnsentSalonText('me', { messageId: 'mine', conversationKey: SALON, text: 'x' });
+      return snapshot;
+    });
+
+    expect(await ledger.takeOrphanedSalonTexts('me', SALON, new Set())).toHaveLength(0);
+    const kept = JSON.parse(localStorage.getItem('canari.salon-unsent.me') ?? '[]') as {
+      messageId: string;
+    }[];
+    expect(kept.map((e) => e.messageId).sort()).toEqual(['mine', 'theirs']);
+  });
+
+  it('an entry its owner cleared while the locks were queried does not come back', async () => {
+    const { manager } = fakeLocks();
+    installLocks(manager);
+    writeForeign('dead', 'answered');
+    const ledger = await load();
+    manager.query.mockImplementationOnce(async () => {
+      ledger.clearUnsentSalonText('me', 'answered');
+      return { held: [], pending: [] };
+    });
+
+    expect(await ledger.takeOrphanedSalonTexts('me', SALON, new Set())).toHaveLength(0);
+  });
+
   it("this page life's own entry comes back only when no live send owns it", async () => {
     const { manager } = fakeLocks();
     installLocks(manager);
