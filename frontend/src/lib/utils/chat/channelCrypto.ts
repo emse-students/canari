@@ -147,7 +147,7 @@ function isGraineFault(err: unknown): boolean {
 
 /**
  * The class of an unsigned row under a v1 session this device does not hold (section 21.7). Named
- * once because the history load reads its COUNT to show the older-messages notice.
+ * once because the history load reads its ROWS to show the older-messages notice.
  */
 export const V1_SESSION_NOT_HELD = 'v1 session not held';
 
@@ -190,9 +190,9 @@ export class UnreadableRowTally {
     this.byClass.set(causeClass, entry);
   }
 
-  /** How many rows of this page were counted under `causeClass` - 0 when none were. */
-  count(causeClass: string): number {
-    return this.byClass.get(causeClass)?.rows.length ?? 0;
+  /** The ids of the rows of this page counted under `causeClass` - empty when none were. */
+  rowsOf(causeClass: string): readonly string[] {
+    return this.byClass.get(causeClass)?.rows ?? [];
   }
 
   /**

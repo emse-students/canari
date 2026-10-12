@@ -32,8 +32,8 @@ vi.mock('$lib/utils/chat/channelCrypto', () => {
     UnreadableRowTally: class {
       report() {}
       // Every row decodes here, so no row is ever dropped and no older-messages notice is added.
-      count() {
-        return 0;
+      rowsOf() {
+        return [];
       }
     },
     V1_SESSION_NOT_HELD: 'v1 session not held',

@@ -3002,9 +3002,12 @@ withholding it would do just as well.
   written under a v1 session (sent before the sender's first send on `1.0.3` or later, at most 365
   days old) are not shown on that device, and nothing asks a peer for them. **The salon says so ONCE (user,
   2026-10-12)**: when a history load dropped any `v1 session not held` row, `olderMessagesNotice`
-  adds one system notice, `chat_older_messages_unavailable` (Paraglide, fr and en), timed just before
-  the page's oldest row. Its count is the load's own `UnreadableRowTally.count`, never a timer, and its
-  id is fixed per salon (`graine-v1-unavailable:<salon>`), so reloads merge into the same notice. v2-era messages are
+  adds one system notice, `chat_older_messages_unavailable` (Paraglide, fr and en). It is derived from
+  the load's own dropped rows (`UnreadableRowTally.rowsOf`), never a timer, and a SILENT row (a
+  reaction or an edit, `silent` on the server row) does not count, since it drew no bubble. Its id is
+  fixed per salon (`graine-v1-unavailable:<salon>`), so reloads merge into the same notice, and
+  `keepNoticeOnTop` restamps it before the oldest message held after every merge, so a forced reload
+  or a whole-history search never leaves it mid-history. v2-era messages are
   unaffected. This is the cost of the decision, accepted when the user decided it on 2026-09-28:
   refusing only "new" v1 sessions by date is impossible, because the date is the sender's claim.
 - **A client at `1.0.3` up to the release before this one** still accepts v1 seeds. It writes v2 and
@@ -3023,7 +3026,9 @@ bundle stores its v2 seeds and refuses its v1 seeds in one line; a held v1 sessi
 floor), `channelSeal.test.ts` (an unsigned row under an unknown session is v1, a signed one is a
 missing seed), `channelCrypto.test.ts` (only the signed one asks), `channelEventHandler.v1Live.test.ts`
 (the live unsigned row is refused at ERROR and asks nobody; the signed control asks), `olderMessagesNotice.test.ts`
-(the notice: absent at a zero count, sorted to the top, one per salon across loads), and `background.rs`
+(the notice: absent at a zero count or for silent rows only, sorted to the top, one per salon, kept
+first after a merge), `useConversations.olderNotice.svelte.test.ts` (a real history load: present
+when a v1 message row is dropped, absent otherwise, first after a forced reload), and `background.rs`
 `a_v1_seed_is_refused_by_the_push_path`, which also checks `v1Refused` (the two push seed tests now carry
 an endorsed v2 seed). The Swift and Kotlin log lines are not compiled on a workstation: their
 reading is owed on a device.

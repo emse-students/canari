@@ -275,11 +275,17 @@ describe('UnreadableRowTally', () => {
     expect(said.some((l) => l.includes('5 message(s)') && l.includes('v1 session not held'))).toBe(
       true
     );
-    // The COUNT the history load reads to show the older-messages notice, per class.
+    // The ROWS the history load reads to show the older-messages notice, per class.
     const { V1_SESSION_NOT_HELD } = await import('$lib/utils/chat/channelCrypto');
-    expect(tally.count(V1_SESSION_NOT_HELD)).toBe(5);
-    expect(tally.count('missing seed')).toBe(1);
-    expect(tally.count('author mismatch')).toBe(0);
+    expect(tally.rowsOf(V1_SESSION_NOT_HELD)).toEqual([
+      'row-0',
+      'row-1',
+      'row-2',
+      'row-3',
+      'row-4',
+    ]);
+    expect(tally.rowsOf('missing seed')).toEqual(['row-v2']);
+    expect(tally.rowsOf('author mismatch')).toEqual([]);
   });
 
   it('says nothing for a page that read whole', async () => {
