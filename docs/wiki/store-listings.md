@@ -22,12 +22,13 @@ the scope is `androidpublisher`, so they are expected to work and the first real
 Current image counts: fr-FR 5 phone, 3 seven-inch, 0 ten-inch, 1 feature graphic, 1 icon;
 en-US 0 phone, 0 ten-inch, 0 feature graphic, 1 icon (seven-inch unreadable at the time).
 
-**App Store Connect** - NOT READABLE from this box. The key `AuthKey_U7X7X373G5.p8` is in
-`~/.appstoreconnect/`, but an ES256 token needs the team ISSUER ID, which exists only as the GitHub
-secret `APP_STORE_CONNECT_ISSUER_ID` (unreadable). An individual-key token (no issuer) was refused
-401. **Owed (one-off, user):** export `ASC_ISSUER_ID` (App Store Connect > Users and Access >
-Integrations, not a secret) plus `ASC_KEY_ID=U7X7X373G5` and `ASC_API_KEY_P8` locally; then the same
-read (appInfoLocalizations, appStoreVersionLocalizations, appScreenshotSets) is one script.
+**App Store Connect** - READABLE since 2026-10-12. The issuer ID is
+`b0bcfe88-4988-4f78-a80d-84c17642c7fc` (App Store Connect > Users and Access > Integrations; NOT a
+secret - it identifies the team, and the `.p8` is what signs), the key is `U7X7X373G5`, and its
+`.p8` sits in `~/.appstoreconnect/` on the workstation. That is all an ES256 token needs (an
+individual-key token, without the issuer, was refused 401). The app id is `6793060521`
+(`fr.emse.canari`). On 2026-10-12 only `fr-FR` existed on the version localizations, and the
+description named no platform.
 
 ## 2. The current Play texts and what is stale (2026-10-09)
 

@@ -24,6 +24,8 @@ import {
   classifyBuildState,
   classifyVersionState,
   versionIsAlreadySubmissionItem,
+  rejectedItemsOfVersion,
+  describeAppleErrors,
   readWhatsNew,
   mintToken,
   shouldRetry,
@@ -159,7 +161,11 @@ try {
     file: notes(`version: 0.16.0\n${'x'.repeat(501)}\n`),
     version: '0.16.0',
   });
-  eq('501 characters are refused, because Google Play refuses them at validate time', over500.ok, false);
+  eq(
+    '501 characters are refused, because Google Play refuses them at validate time',
+    over500.ok,
+    false
+  );
   // `eq` AND NOT `ok`: `ok` takes ONE argument and prints it as the label, so a two-argument call
   // asserts nothing and goes green - a trap this suite has already sprung once in one session.
   eq(
@@ -173,6 +179,35 @@ try {
     version: '0.16.0',
   });
   eq('notes past every limit are refused', long.ok, false);
+
+  // ONE TEXT, TWO STORES. The 1.2.0 notes said "sur Android" and Apple rejected the submission that
+  // carried them under guideline 2.3.10 (2026-10-12).
+  const android = readWhatsNew({
+    file: notes('version: 0.16.0\nLes notifications ouvrent la bonne page sur Android.\n'),
+    version: '0.16.0',
+  });
+  eq('notes naming Android are refused', android.ok, false);
+  eq(
+    'and the refusal quotes the word',
+    android.ok === false && android.why.includes('Android'),
+    true
+  );
+  for (const word of ['iOS', 'iPhone', 'iPad', 'Google Play', 'App Store', 'play store'])
+    eq(
+      `notes naming ${word} are refused`,
+      readWhatsNew({
+        file: notes(`version: 0.16.0\nPlus rapide sur ${word}.\n`),
+        version: '0.16.0',
+      }).ok,
+      false
+    );
+  // WORD-BOUNDED: a French word that merely contains the letters must pass.
+  eq(
+    'a word that only contains "ios" is not a platform',
+    readWhatsNew({ file: notes('version: 0.16.0\nDes studios plus curieux.\n'), version: '0.16.0' })
+      .ok,
+    true
+  );
 
   process.stdout.write('\nthe token is the shape App Store Connect accepts\n');
   // A GENERATED KEY, so the test carries no credential. The assertion is on the SIGNATURE LENGTH:
@@ -297,6 +332,69 @@ process.stdout.write('\nis the version already an item of a review submission?\n
   );
 }
 
+process.stdout.write('\na submission App Review sent back is resent with its rejection resolved\n');
+{
+  const item = (id, state, versionId) => ({
+    id,
+    attributes: { state },
+    relationships: { appStoreVersion: { data: { id: versionId } } },
+  });
+  // THE 2026-10-12 SHAPE: one submission, UNRESOLVED_ISSUES, one REJECTED item for the version
+  // this release has just renamed. Without resolving it, `submitted: true` is refused 409 for ever.
+  eq(
+    'the rejected item of this version is resolved',
+    rejectedItemsOfVersion({ items: [item('i1', 'REJECTED', 'v')], versionId: 'v' }),
+    ['i1']
+  );
+  eq(
+    "another resource's rejection is a human's, never this script's",
+    rejectedItemsOfVersion({ items: [item('i2', 'REJECTED', 'other')], versionId: 'v' }),
+    []
+  );
+  eq(
+    'an item that is not rejected is left alone',
+    rejectedItemsOfVersion({ items: [item('i3', 'READY_FOR_REVIEW', 'v')], versionId: 'v' }),
+    []
+  );
+  eq('no items, nothing to resolve', rejectedItemsOfVersion({ versionId: 'v' }), []);
+}
+
+process.stdout.write("\nApple's nested errors reach the log\n");
+{
+  // VERBATIM the body of 2026-10-12, where the only actionable line was the nested one.
+  const body = {
+    errors: [
+      {
+        status: '409',
+        title: "appStoreVersions with id 'f64e' is not in valid state.",
+        detail: 'This resource cannot be reviewed, please check associated errors to see why.',
+        meta: {
+          associatedErrors: {
+            '/v1/appStoreVersions/f64e': [
+              {
+                title: 'The request cannot be fulfilled because of the state of another resource.',
+                detail: 'Version is not ready to be submitted yet, please try again later.',
+              },
+            ],
+          },
+        },
+      },
+    ],
+  };
+  eq(
+    'the associated error is in the line',
+    describeAppleErrors(body).includes('Version is not ready to be submitted yet'),
+    true
+  );
+  eq('and so is the outer one', describeAppleErrors(body).includes('cannot be reviewed'), true);
+  eq(
+    'a plain error keeps its old shape',
+    describeAppleErrors({ errors: [{ title: 'T', detail: 'D' }] }),
+    'T: D'
+  );
+  eq('a body with no errors defers to the raw text', describeAppleErrors({}), null);
+}
+
 process.stdout.write('\nwhich version slot does this release belong in?\n');
 {
   const V = (versionString, appStoreState, id) => ({
@@ -381,13 +479,25 @@ process.stdout.write('\nwhich version slot does this release belong in?\n');
   // attached, notes written - with `PATCH /v1/reviewSubmissions/{id} -> 500 An unexpected error
   // occurred on the server side`. That is not a decision about our request; it is Apple saying it
   // never reached one.
-  eq('a 500 on a PATCH is Apple failing to answer, so it is retried', shouldRetry('PATCH', 500), true);
-  eq('so is a 502, a 503 and a 504', [502, 503, 504].every((s) => shouldRetry('GET', s)), true);
+  eq(
+    'a 500 on a PATCH is Apple failing to answer, so it is retried',
+    shouldRetry('PATCH', 500),
+    true
+  );
+  eq(
+    'so is a 502, a 503 and a 504',
+    [502, 503, 504].every((s) => shouldRetry('GET', s)),
+    true
+  );
   eq('and a 429, which is Apple asking for less, not answering', shouldRetry('PATCH', 429), true);
   eq('a request that got no response at all is retried too', shouldRetry('PATCH', 0), true);
 
   // A STATUS CODE IS AN ANSWER. Retrying one changes nothing and hides what it said.
-  eq('a 409 is an ANSWER - the app already has a non-terminal version', shouldRetry('PATCH', 409), false);
+  eq(
+    'a 409 is an ANSWER - the app already has a non-terminal version',
+    shouldRetry('PATCH', 409),
+    false
+  );
   eq('a 401 is an ANSWER - the key or the JWT is wrong', shouldRetry('PATCH', 401), false);
   eq('a 422 is an ANSWER', shouldRetry('PATCH', 422), false);
 
@@ -405,7 +515,11 @@ process.stdout.write('\nwhich version slot does this release belong in?\n');
   // question and the answer. What makes a repeat safe is not the verb but whether APPLE REFUSES
   // THE DUPLICATE, which it does here (unique on submission+version) and does not for
   // `reviewSubmissions` (a second create simply succeeds, leaving two open submissions).
-  eq('a POST whose duplicate Apple refuses IS retried on a 500', shouldRetry('POST', 500, true), true);
+  eq(
+    'a POST whose duplicate Apple refuses IS retried on a 500',
+    shouldRetry('POST', 500, true),
+    true
+  );
   eq('and on a 503', shouldRetry('POST', 503, true), true);
   eq(
     'and when it got no response at all - not knowing is what the refusal makes survivable',
@@ -415,7 +529,11 @@ process.stdout.write('\nwhich version slot does this release belong in?\n');
 
   // The declaration widens WHICH METHODS may repeat. It must not widen which STATUSES are worth
   // repeating, or it becomes a way to retry an answer.
-  eq('a 409 on such a POST is Apple ANSWERING, and is not retried', shouldRetry('POST', 409, true), false);
+  eq(
+    'a 409 on such a POST is Apple ANSWERING, and is not retried',
+    shouldRetry('POST', 409, true),
+    false
+  );
   eq('nor is a 401', shouldRetry('POST', 401, true), false);
   eq('nor a 422', shouldRetry('POST', 422, true), false);
 }
@@ -474,12 +592,20 @@ process.stdout.write('\nwhich version slot does this release belong in?\n');
   // GUARANTEED whenever we release faster than Apple reviews.
   const held = exitFor(new SlotHeldError("version 0.16.4 occupies the app's only version slot"));
   eq('a held slot leaves by its own exit code, not 1', held.code, EXIT_SLOT_HELD);
-  eq('and says so as a notice, so the job does not go red', held.line.startsWith('::notice::'), true);
+  eq(
+    'and says so as a notice, so the job does not go red',
+    held.line.startsWith('::notice::'),
+    true
+  );
   eq('while still naming what holds the slot', held.line.includes('0.16.4'), true);
 
   const broken = exitFor(new Error('the key or the JWT is wrong'));
   eq('anything else still exits 1', broken.code, 1);
-  eq('and is an error, because somebody has to act on it', broken.line.startsWith('::error::'), true);
+  eq(
+    'and is an error, because somebody has to act on it',
+    broken.line.startsWith('::error::'),
+    true
+  );
 
   // A REJECTION IS NOT ALWAYS AN `Error`. Whatever reaches the handler has to leave through a code
   // the shell can read, rather than throwing inside the handler itself.
@@ -489,7 +615,6 @@ process.stdout.write('\nwhich version slot does this release belong in?\n');
   // THE ONE THING A LATER EDIT COULD UNDO WITHOUT ANY OTHER ASSERTION NOTICING.
   eq('the two doors are different doors', EXIT_SLOT_HELD !== 1, true);
 }
-
 
 process.stdout.write('\n');
 if (fail !== 0) {
