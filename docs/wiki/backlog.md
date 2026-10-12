@@ -304,7 +304,7 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 ### P2 - one encrypted MLS checkpoint per inbound application message
 
-39 checkpoints in 197 s, median 348 ms, max 998 ms: `onBulkIngestEnd` marks the state dirty unconditionally, and every WebSocket frame is its own drain. The heavy-state audit and its checkpoint bench are #1776 (open, `docs/wiki/frontend/performance-audit-2026-10-12.md` once merged); #1774 already merges a received batch with one sort. The WebCrypto seal option is a design only, see [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open). Owed first: a performance trace splitting the WASM export (main thread) from the IndexedDB write, and the answer to what losing an application-only ratchet advance costs once the frame is acked. Only then decide between "flush on a commit, a welcome, hide and logout" and the current per-drain flush ([mlsStatePersister](../../frontend/src/lib/mls-client/mlsStatePersister.ts)).
+39 checkpoints in 197 s, median 348 ms, max 998 ms: `onBulkIngestEnd` marks the state dirty unconditionally, and every WebSocket frame is its own drain. **The split is now measured** ([performance-audit](frontend/performance-audit-2026-10-12.md#finding-2-and-3-read-together---the-checkpoint-question-the-backlog-owed)): on a 7.7 MB state the main-thread export is 2.3 ms, the WASM ChaCha20 seal 141 ms (worker) and the IndexedDB put 31 ms, linear in the whole state. #1774 already merges a received batch with one sort. The WebCrypto seal option is a design only, see [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open). Still owed: what losing an application-only ratchet advance costs once the frame is acked. Only then decide between "flush on a commit, a welcome, hide and logout" and the current per-drain flush ([mlsStatePersister](../../frontend/src/lib/mls-client/mlsStatePersister.ts)).
 
 ### P3 - 80 roster reads per connection for the stray-leaf sweep
 
@@ -317,6 +317,38 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 ### P3 - an avatar 404 is the only way to learn a person has no photo
 
 10 of 28 avatar reads answered 404 on one load. The client already keeps the absence for the session; removing the first ask needs the user record to say whether a photo exists, which only MiGallery knows.
+
+## Seen in the 2026-10-12 heavy-state performance audit - what is open
+
+Ranked, measured and located on [performance-audit-2026-10-12](frontend/performance-audit-2026-10-12.md); five draft pull requests carry the rest (#1771-#1775).
+
+### P2 - the web checkpoint is 82 % WASM ChaCha20 seal
+
+141 ms of 175 ms per 7.7 MB checkpoint in desktop Chrome: `chacha20` has no WASM SIMD backend (~55 MB/s). A WebCrypto seal under the framed `state_blob` V1 version byte would cut it about five-fold with no durability change - a format decision.
+
+### P2 - IndexedDB message pages read the whole conversation
+
+`getMessagesPage` `getAll`s every row to return 50 (28-31 ms for 5000 rows); needs a `[conversationId, timestamp]` index (an IndexedDB version bump) and a reverse cursor. SQLite sorts in a temp B-tree for want of `(conversation_id, timestamp)`.
+
+### P3 - a Welcome re-runs the whole restore
+
+`sessionAuth.ts:1351,1364` call `loadAndRestoreConversations` per Welcome; a new device joining 80 groups restores 80 times.
+
+### P3 - the thread's render window only grows, with listeners per bubble
+
+`renderWindow.ts` never shrinks the mounted range; each `MessageBubble` adds a `matchMedia` and a non-passive `touchmove` listener, each toolbar a window `keydown`. Owed: a DOM-node and listener count on a seeded 5k thread.
+
+### P3 - the seen-cipher ledger is re-stringified per received frame
+
+The microtask flush in `history.ts:190-208` coalesces only marks of one synchronous turn; a drain awaits between frames, so each frame writes the whole set to `localStorage`. Proof owed: a `setItem` count while draining N frames.
+
+### P3 - native checkpoints hold the MLS mutex across export, seal and file write
+
+`src-tauri/src/commands/mls.rs:216-231`: a send or decrypt waits for a whole checkpoint. Snapshot under the lock, seal and write outside it.
+
+### P3 - nothing resets the announcement state at sign-out
+
+`resetAnnouncementState` (`stores/announcement.svelte.ts:126`) says the next account must be asked on its own behalf and has no caller, so a second account in the same tab is probably never shown its announcements.
 
 ## Open defects, in severity order
 
@@ -1068,9 +1100,7 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 | #1777 PIN salt asked ahead | draft | a phone reading; kept out of a stable while the user is away |
 | #1778 history drawn first, #1779 no group check before a send | drafts | #1779 under adversarial review |
 | #1773 the open conversation read by its own key | draft, conflicting | a rebase |
-| #1785 a salon re-read once per drain, #1786 communities loaded side by side | drafts | review |
+| #1785 a salon re-read once per drain | draft | review |
 | #1783 polls, #1784 double tap | drafts | review |
 | #1781 "seen by" heads stop flickering | ready | CI and the merge |
-| #1776 the heavy-state performance audit | ready | CI and the merge |
-| #1649 salon optimistic row (WP-OFF-2) | draft, conflicting | a rebase, then review |
 | #1542 the run-locally rule | conflicting | a rebase |
