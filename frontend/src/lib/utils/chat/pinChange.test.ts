@@ -58,6 +58,7 @@ function makeEncryptedStorage(): IStorage & {
     // `getAllEncryptedRows`, and never looks one up by id.
     getMessage: vi.fn().mockResolvedValue(null),
     getMessages: vi.fn(),
+    countMessages: vi.fn(),
     getMessagesPage: vi.fn(),
     deleteOldMessages: vi.fn().mockResolvedValue(0),
     getAllEncryptedRows: vi.fn(async () => rows.slice()),

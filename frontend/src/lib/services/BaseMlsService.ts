@@ -73,6 +73,7 @@ import {
   type DeliveryRepeatShape,
 } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
+import { noteKeyGroupFrameLost } from '$lib/mls-client/keyGroupFrameLosses';
 import {
   channelScope,
   sameScope,
@@ -3720,7 +3721,8 @@ export abstract class BaseMlsService implements IMlsService {
   async routeDistributionFrame(
     groupId: string,
     sender: string,
-    ciphertext: Uint8Array
+    ciphertext: Uint8Array,
+    senderDeviceId?: string
   ): Promise<boolean> {
     const scope = this.distributionScopeByGroup.get(groupId);
     if (scope === undefined) {
@@ -3802,7 +3804,14 @@ export abstract class BaseMlsService implements IMlsService {
     }
 
     try {
-      await handler({ scope, workspaceId, groupId, sender, plaintext });
+      await handler({
+        scope,
+        workspaceId,
+        groupId,
+        sender,
+        plaintext,
+        ...(senderDeviceId ? { senderDeviceId } : {}),
+      });
     } catch (e) {
       // NOT acknowledged, on purpose: the handler is what STORES a seed, so a throw here means the
       // seed did not land, and acknowledging would drop key material nobody can ask for again.
@@ -3892,6 +3901,9 @@ export abstract class BaseMlsService implements IMlsService {
       this.tellEvictedOnce(groupId);
     }
     if (permanent) {
+      // COUNTED for the seed requests that follow, which print it (`keyGroupFrameLosses`). A
+      // device's own frame is not a loss: there was never anything for it to read.
+      if (kind !== 'own-message') noteKeyGroupFrameLost(groupId, kind);
       // ACKNOWLEDGED, and said once. The seed is gone from THIS device for good; what recovers it
       // is a peer answering `requestCommunityHistory`, never the server handing the same
       // undecryptable bytes back. Leaving it queued would cost the line above on every boot and

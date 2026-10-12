@@ -478,6 +478,16 @@ export interface IStorage {
   getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null>;
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
+  /**
+   * How many rows the store holds for a conversation, decrypting NONE of them.
+   *
+   * It exists for the question "is anything stored here at all", which the history replay asks of
+   * every conversation on every cold start. It used to be answered with {@link getMessages}, which
+   * decrypts the whole conversation one AES-GCM call per row to read a `length` - every message the
+   * device holds, at every cold start. A row that does not decrypt still counts: it is a store that
+   * holds something, not a store that was wiped.
+   */
+  countMessages(conversationId: string): Promise<number>;
   /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */
   getMessagesPage(
     conversationId: string,

@@ -114,7 +114,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala` (the repository answers `404`). Nothing runs from it; it is somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
 | **decide whether the host-update report gets a runner key on `mitv`, `cercle`, `miconnect`** (your own old VMs; without it they are unreported) | 1 decision | [the P2](#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
 | **decide whether `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App itself** (a lockfile-refresh superseding a Dependabot pull request, which is how the last class of dependency update that needs a person would merge unattended) | 1 decision | [the P2](#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix) |
-| **go or no-go for revoking replaced device generations (predicate R)**, staged: first the 43 devices whose oldest undelivered row is older than 30 days, then the other 122 after a re-measure. Each one has no session, no push token, and a newer device on the same platform with a live session. A person who goes back to that old browser has to register it again | 1 decision | [the P1](#p1---a-community-key-group-sends-every-repair-answer-to-every-seat-and-42--of-seats-have-no-device-behind-them-production-2026-10-12) |
+| **go or no-go for revoking the REST of the replaced device generations (predicate R in full)**. The first stage (43 devices with a queue older than 30 days) was approved and done on 2026-10-12 ([first reaper pass](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#first-reaper-pass---2026-10-12-0920-utc)); R in full re-measured right after names 126 devices and 30 751 rows. Each one has no session, no push token, and a newer device on the same platform with a live session. A person who goes back to that old browser has to register it again | 1 decision | [the P1](#p1---a-community-key-group-sends-every-repair-answer-to-every-seat-and-42--of-seats-have-no-device-behind-them-production-2026-10-12) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **raise `minClientVersion` to `1.2.1` once BOTH stores serve `1.2.1`** - `1.0.3`-`1.1.2` keep the native key-group epoch bug (a cold start arms an epoch gap, salon sends are refused, the device re-joins 45 s later); the floor is `1.0.3` since 2026-10-11; Apple's order is to wait for 1.2.1's review, then submit 1.2.4 | 1 gesture | [channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09), [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
@@ -166,6 +166,10 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 ## Asked by the USER on 2026-10-09 - CanaReels in a conversation, a design study, not built
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
+
+## P2 - Key-group requests sealed 3-6 epochs behind are unreadable by every current member (console export, 2026-10-12)
+
+Four senders' devices sealed seed requests at epochs 135-138 while the key group was at 141. No current member can open them (`max_past_epochs` 2), and each loss drives a re-ask. The drain order was REFUTED as the cause ([channel-encryption §23](protocols/channel-encryption.md#not-the-cause-the-drain-order)). **Candidate**: chat-delivery answers `stale_epoch` to an application frame on a key group whose MLS epoch is below active - 2, so the sender catches up and re-seals instead of sending something nobody can read. **First measure**: the `at epoch E` of the new `[GRAINE] asked` line, on the sender side, to find out which client versions lag.
 
 ## P2 - A notification tap takes 2.7 s to a usable conversation when killed, 5 s behind the PIN (measured 2026-10-11)
 
@@ -311,10 +315,6 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 ### P3 - an avatar 404 is the only way to learn a person has no photo
 
 10 of 28 avatar reads answered 404 on one load. The client already keeps the absence for the session; removing the first ask needs the user record to say whether a photo exists, which only MiGallery knows.
-
-### P3 - every PDF document opened spawns its own pdf.js worker
-
-`openPdfDocument` passes no `worker`, so each thumbnail and the reader start and tear down a worker of their own. One shared `PDFWorker` would remove the spawn per document; after the refetch fix this costs one spawn per PDF per mount, no longer per refetch.
 
 ## Seen in the 2026-10-12 heavy-state performance audit - what is open
 

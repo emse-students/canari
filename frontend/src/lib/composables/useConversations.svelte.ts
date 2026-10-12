@@ -333,6 +333,12 @@ export function useConversations() {
       if (!key) return;
       if (!conversations.has(key)) {
         if (notifNav.pending === key) return;
+        // SAID OUT LOUD, because from the outside this is a tap that did nothing: a salon row the
+        // sidebar still lists, selected and dropped in the same frame. A selection of a key the map
+        // never had is the visible end of a row lost upstream (`restoreKeepsSalonRows.test.ts`).
+        console.warn(
+          `[SELECT] ${key.slice(0, 16)} is not in the conversation map - selection dropped, nothing opens`
+        );
         selectedContact = null;
         sendError = '';
       }

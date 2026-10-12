@@ -3,7 +3,7 @@ import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { canari } from '$lib/proto/canari';
 import { canari as canariRuntime } from '$lib/proto/canari';
 import { decodeAppMessage, encodeAppMessage, mkGraineBundle } from '$lib/proto/codec';
-import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { addressedKeyMaterial } from '$lib/mls-client/frameDelivery';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
 import { toBase64 } from '$lib/utils/hex';
 import {
@@ -283,7 +283,8 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
  *
  * Every member of the community receives the frame, and every member but one must ignore it. The
  * requester names its answerer precisely so that a salon of three hundred does not pay three
- * hundred bundles for one missing session.
+ * hundred bundles for one missing session - and, since 1.2.5, the DEVICES of that member that
+ * answer, each answer going back to the one device that asked (channel-encryption section 23).
  */
 async function answerSeedRequest(
   frame: DistributionFrame,
@@ -293,6 +294,31 @@ async function answerSeedRequest(
     'cannot answer a seed request'
   );
   if (String(request.answererUserId ?? '').toLowerCase() !== userId) return;
+  // ONLY THE DEVICES THE REQUESTER NAMED ANSWER (section 23): those of this user it saw online AND
+  // as leaves of its own tree. A device it did not name cannot be told apart from a device that never
+  // received the request, so its answer would only duplicate. An empty list is a requester before
+  // 1.2.5, or one whose roster had no per-device presence, and every device answers as it always did.
+  const named = (request.answererDeviceIds ?? []).map(String);
+  if (named.length > 0 && !named.includes(mlsService.getDeviceId())) {
+    console.debug(
+      `[GRAINE] not answering ${frame.sender}'s request ${String(request.requestId ?? '')} in community ` +
+        `${frame.workspaceId.slice(0, 8)}: it names ${named.join(',')}, not this device - the requester ` +
+        `saw it offline or outside the key group's tree`
+    );
+    return;
+  }
+
+  // THE ANSWER GOES TO THE DEVICE THAT ASKED, AND TO NOBODY ELSE. A request is transport, so it only
+  // ever arrives live, and the live envelope always names its device: reaching here without one is a
+  // broken invariant upstream, and answering the whole key group instead would be the very fan-out
+  // this exists to end (section 23). Refused out loud; the requester asks again on its next start.
+  if (!frame.senderDeviceId) {
+    console.error(
+      `[GRAINE] NOT answering ${frame.sender} in community ${frame.workspaceId.slice(0, 8)}: the request's envelope named no device, and an answer is addressed to the device that asked`
+    );
+    return;
+  }
+  const requester = `${frame.sender}:${frame.senderDeviceId}`;
 
   const kinds = canariRuntime.GraineRequestKind;
   if (
@@ -349,9 +375,15 @@ async function answerSeedRequest(
   // answer is ONE message whatever it carries, with one delivery. The cost is a few bytes in the
   // capped log; a decline replayed from it is idempotent (`noteSeedUnavailable` binds it to the
   // request it answers).
-  await mlsService.sendMessage(frame.groupId, bundle, undefined, DELIVERY.keyMaterial);
+  //
+  // ADDRESSED TO THE DEVICE THAT ASKED (section 23, 2026-10-12). Key material on the key group was
+  // queued for every seat of it, offline ones included: on production a 112-seat community paid ~42
+  // rows per bundle and bundles were 70 % of its queued bytes, for seeds nobody else had asked for.
+  // Still durable for the requester - the COMM-18 reason above holds for it - and kept out of the
+  // group's shared log, which every member reads.
+  await mlsService.sendMessage(frame.groupId, bundle, undefined, addressedKeyMaterial(requester));
   console.info(
-    `[GRAINE] answered ${frame.sender} with ${seeds.length} seed(s)` +
+    `[GRAINE] answered ${requester} with ${seeds.length} seed(s)` +
       (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '')
   );
 }
@@ -552,7 +584,12 @@ async function absorbSeedBundle(
   // an unlucky election costs a round trip instead of costing the session for the whole app session.
   for (const sessionId of bundle.missingSessionIds ?? []) {
     if (sessionId)
-      noteSeedUnavailable(String(sessionId), frame.sender, String(bundle.requestId ?? ''));
+      noteSeedUnavailable(
+        String(sessionId),
+        frame.sender,
+        String(bundle.requestId ?? ''),
+        frame.senderDeviceId ?? ''
+      );
   }
 
   // The rows this repairs were rendered unreadable and dropped minutes ago; nothing else would go

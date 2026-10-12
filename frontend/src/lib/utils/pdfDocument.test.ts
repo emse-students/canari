@@ -71,13 +71,39 @@ const page = {
   },
 };
 
+/** Every worker pdf.js was asked to start, and the worker each `getDocument` was handed. */
+const workers = {
+  created: [] as FakeWorker[],
+  handed: [] as unknown[],
+  failNext: false,
+};
+class FakeWorker {
+  promise: Promise<void>;
+  port = new EventTarget();
+  destroyed = false;
+  destroy() {
+    this.destroyed = true;
+  }
+  constructor() {
+    workers.created.push(this);
+    this.promise = workers.failNext
+      ? Promise.reject(new Error('worker failed'))
+      : Promise.resolve();
+    workers.failNext = false;
+  }
+}
+
 vi.mock('pdfjs-dist', () => ({
   GlobalWorkerOptions: { workerSrc: '' },
   RenderingCancelledException: FakeCancelled,
-  getDocument: () => ({
-    promise: Promise.resolve({ numPages: 3, getPage: () => state.getPage.promise }),
-    destroy: async () => {},
-  }),
+  PDFWorker: FakeWorker,
+  getDocument: (params: { worker?: unknown }) => {
+    workers.handed.push(params.worker);
+    return {
+      promise: Promise.resolve({ numPages: 3, getPage: () => state.getPage.promise }),
+      destroy: async () => {},
+    };
+  },
 }));
 vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: 'worker.mjs' }));
 
@@ -206,5 +232,55 @@ describe('PdfDocument.getPageText', () => {
       ['Grandes Ecoles', true],
       ['fin', false],
     ]);
+  });
+});
+
+describe('the pdf.js worker', () => {
+  it('is ONE for every document, and outlives each document destroyed on it', async () => {
+    vi.resetModules();
+    workers.created = [];
+    workers.handed = [];
+    const fresh = await import('./pdfDocument');
+    // Three thumbnails and a reader, opened and closed the way a salon with PDFs does.
+    for (let i = 0; i < 4; i += 1) {
+      const doc = await fresh.openPdfDocument(`blob:${i}`);
+      await doc.destroy();
+    }
+    expect(workers.created).toHaveLength(1);
+    expect(workers.handed).toHaveLength(4);
+    expect(new Set(workers.handed)).toEqual(new Set([workers.created[0]]));
+  });
+
+  it('is dropped and torn down when it raises an error after start-up', async () => {
+    vi.resetModules();
+    workers.created = [];
+    workers.handed = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fresh = await import('./pdfDocument');
+    await fresh.openPdfDocument('blob:a');
+    await flush();
+    workers.created[0].port.dispatchEvent(new Event('error'));
+    await fresh.openPdfDocument('blob:b');
+    expect(workers.created).toHaveLength(2);
+    expect(workers.created[0].destroyed).toBe(true);
+    expect(workers.handed).toEqual([workers.created[0], workers.created[1]]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('raised an error'),
+      expect.anything()
+    );
+    warn.mockRestore();
+  });
+
+  it('is not kept when its start-up failed, so the next document starts another', async () => {
+    vi.resetModules();
+    workers.created = [];
+    workers.handed = [];
+    workers.failNext = true;
+    const fresh = await import('./pdfDocument');
+    await fresh.openPdfDocument('blob:a');
+    await flush();
+    await fresh.openPdfDocument('blob:b');
+    expect(workers.created).toHaveLength(2);
+    expect(workers.handed).toEqual([workers.created[0], workers.created[1]]);
   });
 });

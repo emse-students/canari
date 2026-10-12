@@ -228,6 +228,12 @@ export interface ChannelMemberDto {
    * `presence: true` - the Graine repair election, which must not address an offline member.
    */
   online?: boolean;
+  /**
+   * The member's devices online right now, sorted. Present only with `presence: true`, and only from
+   * a social service of 1.2.5 or later: a seed request names ONE of them as the device that answers
+   * (channel-encryption section 23). Absent is "not answered", never "none".
+   */
+  onlineDevices?: string[];
 }
 
 /**

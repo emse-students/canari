@@ -87,9 +87,26 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
   centred however wide it is. Its `plain` variant is the same menu without glass: the website's phone
   paperclip. An entry with an on/off state (search, members) is a `menuitemcheckbox`.
 
+- **The polls and pinned bars are glass pills too (user, 2026-10-12)** - they were opaque white
+  full-width bars across the middle of the glass chrome. In the apps' narrow layout each trigger
+  ("N sondages actifs", "N messages epingles") is a pill centred under the title pill: the
+  `.glass-chrome` recipe, the pill corner, one step smaller than the title (13px text, 36px tall),
+  6px apart. The list it opens (navigate to an item, unpin it) is a glass panel at the larger-card
+  corner (`--radius-2xl`), as `GlassMenuButton`'s panel is, and it takes pointer events itself, so a
+  touch between its rows no longer falls through to the thread. All of it is CSS on three class
+  names `ChatArea` puts on the existing markup (`.chat-chrome-strip`, `.chat-chrome-bar`,
+  `.chat-chrome-panel`, styled under `.chat-glass-chrome` in `app.css`); the click handlers are
+  untouched and the website, and the apps' wide layout, keep the opaque bars.
+  `chatChromeBarsGlass.test.ts` reads the rules and the markup. **They stay CSS glass on iOS, by
+  decision:** a native twin is one UIButton, and these open a list with a per-row unpin that no
+  native button can carry - doubling the trigger alone would put native glass beside a CSS panel
+  hanging from it. Measured on the real `ChatArea` at 390x780, light and dark, with two polls and
+  one to three pins; not measured in the apps themselves.
+
 **On iOS the four pieces are real Liquid Glass** (WP-G2): each is doubled by a native glass button
 drawn at its rect, the web piece kept as its invisible geometry, and the menus are native
-([mobile](../mobile.md#the-conversations-native-glass-chrome)).
+([mobile](../mobile.md#the-conversations-native-glass-chrome)). The polls and pinned bars are not
+doubled (above).
 
 **Measured** on the real `ChatArea` with a stand-in group at 390x780, Chromium, light and dark: in
 the glass mode the thread scrolls under the three pieces, the menu hangs from the "..." (right edges
@@ -2664,6 +2681,23 @@ the socket was down misses what was posted before the reconnect) and, on the rec
 salon on screen. Every other salon reloads on its next selection. Deletion, kick and repair keep
 their own invalidations. Pinned by `useConversations.channelCache.svelte.test.ts`.
 
+## A catch-up batch is merged with ONE sort (2026-10-12)
+
+`mergeMessagesInInputOrder` (`utils/chat/messageOrder.ts`) merges a batch of received messages into a
+conversation's held list - the bulk ingest of `useMessaging` and the background service's batches.
+It used to insert one message at a time, each a copy and a full sort of the conversation: O(K x N)
+for K messages into N held, 18-25 ms for 200 into 5000 on a desktop (vitest, warm), per batch, per
+conversation. It is now one stable sort of `existing ++ incoming`: 0.1 ms on the same input. A stable
+sort of `sort(A) ++ [x]` orders equal elements exactly as a stable sort of `A ++ [x]`, so the two
+give the same array whenever `compareMessageOrder` is a consistent order - pinned against the old
+loop on deterministic random input full of ties ([test](../../../../frontend/src/lib/utils/chat/messageOrder.test.ts)).
+**One edge has no defined answer either way**: messages with the SAME millisecond and MIXED presence
+of `serverTimestamp` / `ingestSequence` make the comparator intransitive, and the old loop's order
+already depended on arrival order there. That is the PRODUCTION shape, not a corner: held messages
+carry a `serverTimestamp` and no `ingestSequence`, a catch-up batch the reverse, so a held and an
+incoming message in the same millisecond compare by id alone and three of them can form a cycle
+(pinned in the test). Such ties may come out in a different order than on the old loop.
+
 ## The workspace list prunes only what existed when it asked
 
 The same seam as the section above, one level up, and it destroyed whole communities rather than
@@ -2978,6 +3012,23 @@ EXISTENCE, so it stays permanent with the `{#if}` inside it, and `archive/type.m
 The permanent wrapper is also what makes the `role="status"` announce reliably: assistive technology
 has to be observing a live region BEFORE the mutation that fills it.
 
+**THE THREAD'S TRAILING SPACE IS ON THIS WRAPPER, because it is always the last row** (user,
+2026-10-12: the bubble cut at the bottom, its avatar on the "+", with the keyboard closed). The
+space above the composer used to be `ChatMessageGroups`' own `pb-4` - ABOVE the indicator - so the
+last message stood 24 px clear of the composer and the bubble, once it showed, 0 px: its bottom edge
+on the composer's top, which in the phone apps is transparent glass with the "+" 8 px below. The
+`pb-4` is now on `.chat-typing-indicator`. Measured on the real `ChatArea`, 390x844, glass chrome
+and the website's layout: last message 24 px clear while nobody types (unchanged), bubble 16 px clear (was 0),
+scroller at its bottom (0 px) in both. On the Mi 9T (read-only, CDP) the same geometry held before
+the fix: composer 76 px, scroller `padding-bottom` 76 px, the empty indicator 1 px under the
+composer's top - the padding was never wrong, the space was on the wrong row.
+
+**What was NOT reproduced:** a FOLLOW failure. Six sequences on the real component (typing alone, a
+message then typing at +50 ms, typing then a message at +80 ms, message + stop + typing, typing
+during a conversation's entry, a switch with typing in flight) all ended at the bottom, as did a
+smooth scroll interrupted by the bubble. If a phone still shows the bubble UNDER the composer
+rather than flush on it, it is a different defect, owed a reading with the keyboard closed.
+
 ### The day label and its floating pill (2026-10-01)
 
 Reported by the user: scrolling a conversation, the floating "Mercredi 23 septembre" was not
@@ -3173,6 +3224,32 @@ Test: `useMessaging.replyScope.svelte.test.ts`.
 ### A refused salon send gives the draft back (WP-OFF-1, 2026-10-09)
 
 A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - only if the same conversation is still selected, and it logs either way. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
+
+## The restore keeps the salon rows the community load wrote (2026-10-12)
+
+Reported from an iPhone: after a notification tap into a salon, tapping the other salons lit the
+row and opened nothing, until a restart. **What the code proves** (`restoreKeepsSalonRows.test.ts`,
+two cases red on main): a salon's conversation row is written by `loadChannelWorkspacesFromBackend`,
+which never persists it, and `loadExistingConversations` used to `clear()` the whole map and
+rebuild it from storage. Any restore that ran AFTER the community load - the login path sets
+`isLoggedIn` (which starts the community load) and only restores after the socket opens, and
+`onWelcomeProcessed` restores mid-session - erased every salon storage did not hold, and emptied
+the messages of the ones it did. The sidebar reads `channelWorkspaces`, so the row stayed listed;
+a tap set `selectedChannelConversationId` (the highlight) and `selectedContact`, and the selection
+watchdog in `useConversations` dropped the key it could not find in the same frame. A restart ran
+the two loads in the other order, which is why it "healed".
+
+- **The fix:** the restore deletes only the rows it owns (every non-salon key) and does not rebuild a
+  stored salon already in memory - it only reads back the persisted state the live row lacks (read
+  watermarks, history floor, `startedAt`, the sort key), the live row winning; a stale salon is pruned by the community load, never by the restore.
+  It logs `[RESTORE] kept N salon row(s)`.
+- **The diagnostic:** the watchdog now says `[SELECT] <key> is not in the conversation map -
+  selection dropped` at `warn`, so the next inert tap names itself instead of looking like a tap
+  that never arrived.
+- **Not measured on the device:** the order of the two loads on the reporter's cold start was not
+  observed (no inspectable build on the bench at the time). The press held past the reorder hold
+  ([above](#a-communitys-salons-have-an-order-everyone-shares-and-a-name-that-is-only-a-name-2026-10-05))
+  is the other inert-tap cause, measured on the iPhone.
 
 ## Profile fetches that failed on a device, and the denominator that is owed (2026-08-16)
 

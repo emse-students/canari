@@ -312,6 +312,86 @@ The log counts in section 2 came from
 `START ... isCommit=false isWelcome=false` per sender and joining `TRANSPORT_SKIPPED_OFFLINE` on
 the `[SEND][trace]` id.
 
+## First reaper pass - 2026-10-12, 09:20 UTC
+
+**The user gave the go for the first stage of F4** (2026-10-12): predicate R (section 8, unchanged)
+restricted to devices whose oldest queued row is older than 30 days. The other stage, R in full,
+still waits for its own go.
+
+**The candidates.** Section 8's R query, plus `oldest < now() - 30 days`, run read-only at 09:15:
+**43 devices** (14 tauri, 29 web), the audit's count exactly. Before anything was written, a second
+read-only query checked each one again: 0 had a session row, 0 had a push token, 0 had a queued
+row younger than 30 days, and all 43 had another device of the same user and platform with an
+unexpired session. None was already revoked, and no row of theirs was addressed to another user.
+One of them had sent a frame 24 days before; the other 42 had sent nothing for at least 59 days.
+Oldest rows: 2026-07-28 to 2026-09-11.
+
+**The mechanism is the product's own.** Each device went through `DELETE
+/api/mls/devices/:userId/:deviceId` on `chat-delivery-service` (`deleteDevice` in
+`devices.controller.ts`). That is `purgeDeviceFootprint` (memberships, the Redis routing set
+`group:members:<groupId>`, the static key package, one-time prekeys, push tokens, queued rows),
+then the `revoked_device` row, then the `device_revoked` signal. A short script inside the
+container called the route on `127.0.0.1:3010` as each device's owner, signed the way nginx signs
+it, one device at a time, and stopped on any status other than 200. One device went first and was
+checked, then the other 42. The script was deleted from the container afterwards. No SQL was
+written by hand.
+
+| What | Before | Removed | After |
+| --- | --- | --- | --- |
+| Queued rows of the 43 devices | 5 771 | **5 771** (sum of `queuedMessagesDeleted`) | 0 |
+| Seats (`dm_device_group_memberships`, all active) | 1 953 | **173** | 1 780 |
+| Redis `group:members` entries of the 43 | 173 | 173 | 0 |
+| `key_package` | 1 088 | 43 | 1 045 |
+| `one_time_key_package` | 48 276 | 122 | 48 154 |
+| `push_token` | 247 | 0 | 247 |
+| `revoked_device` | 260 | +43 | 303 |
+
+The queue total went from 117 641 to 113 567 while the pass ran, because fan-out kept writing.
+
+**Nothing else lost a row.** 288 other devices have queued rows and no session, so nothing can
+acknowledge their rows. All 288 had the same count or more afterwards. The delivery log holds 43
+`[DELETE_DEVICE]` lines, no `ERROR` line, and no `[SEND]` line naming one of the 43 after 09:21:30.
+`chat-gateway` and `core-service` logged no error in the same window. The hourly report at 09:26
+read as before: no stranded membership, no stale base, no single-holder conversation, and the same
+11 commit-log holes as section 5.
+
+**Re-measured right after.** The share of active seats with no session went from 42 % to **36 %**
+(648 of 1 785). R in full now names 126 devices and 30 751 rows. One of them crossed 30 days since
+the morning and was left alone, because it was not in the list the user approved.
+
+### The backup and how to restore it
+
+The backup is on the Portail-etu host, in `~/canari-reaper-2026-10-12/` of the operator account,
+mode `700`, files `600`. It was written at 09:18, before the pass. It holds one CSV per table,
+each filtered to the 43 `(userId, deviceId)` pairs, plus `candidates.csv` and `SHA256SUMS`:
+
+| File | Rows |
+| --- | --- |
+| `queued_message.csv` (13 MB) | 5 771 |
+| `dm_device_group_memberships.csv` | 173 |
+| `key_package.csv` | 43 |
+| `one_time_key_package.csv` | 122 |
+| `push_token.csv`, `revoked_device.csv` | 0 (header only) |
+
+**Restoring a device makes sense only if its owner really goes back to that browser and wants its
+queue.** Otherwise registering again is the designed path. To restore all of them, or one after
+filtering the CSVs by `deviceId`:
+
+```sh
+ssh portail-etu-direct
+cd ~/canari-reaper-2026-10-12 && sha256sum -c SHA256SUMS
+PSQL='docker exec -i canari-prod-postgres-1 psql -U canari -d auth_db -X -v ON_ERROR_STOP=1'
+# 1. lift the ban, or the device cannot register again
+awk -F, '{printf "DELETE FROM revoked_device WHERE \"userId\"=%c%s%c AND \"deviceId\"=%c%s%c;\n",39,$1,39,39,$2,39}' candidates.csv | $PSQL
+# 2. put the rows back
+for t in key_package one_time_key_package dm_device_group_memberships queued_message; do
+  $PSQL -c "\copy $t FROM STDIN WITH (FORMAT csv, HEADER)" < $t.csv
+done
+# 3. put the seats back in the Redis routing set (columns: id, userId, deviceId, groupId, ...)
+awk -F, 'NR>1 {print "SADD group:members:"$4" "$2":"$3}' dm_device_group_memberships.csv \
+  | docker exec -i canari-prod-redis-1 redis-cli
+```
+
 ## How to re-measure
 
 Run section 8's totals, kind and seat queries again after each fix. F1 is working when a new
