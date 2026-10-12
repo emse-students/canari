@@ -31,9 +31,9 @@ export interface DecodedChannelMessage {
   content: string;
   timestamp: Date;
   /**
-   * The row's own `createdAt` (Unix ms) - the SERVER's clock, which `timestamp` is not when the
-   * author's `sentAt` travelled in the payload. The read receipt names it so the server can compare
-   * a mark with the rows on one clock.
+   * The row's own `createdAt` (Unix ms) - the SERVER's clock, which `timestamp` is too (see
+   * `decodeChannelMessageRow`). The read receipt names it so the server can compare a mark with the
+   * rows on one clock.
    */
   serverTimestamp?: number;
   isOwn: boolean;
@@ -287,6 +287,19 @@ export async function decodeChannelMessageRow(
   // A membership notice belongs to the conversation, not to whoever triggered it: attributing it
   // to the sender would give it an avatar, a name header and a left-aligned bubble.
   const senderId = isSystem ? 'system' : String(row.senderId || 'unknown').toLowerCase();
+  // A SALON ROW IS DATED BY THE SERVER, ON EVERY PATH. The live path (`channel.message.created`)
+  // already dates it by `createdAt`, and every read mark of a salon is on that clock (the server
+  // bounds a mark by its newest row's `createdAt`). Dating the same row by the author's `sentAt` here
+  // made its key flip with whichever path wrote it last: an author whose clock leads the server's
+  // put the row past the marks of everyone who read it, so their "seen by" heads under it vanished at
+  // every history load and came back with the next live write (2026-10-12). The envelope's time is
+  // used only for a row that carries no `createdAt`, which the server never sends.
+  if (serverMs === undefined) {
+    console.warn(
+      `[CHANNEL] row ${String(row.id).slice(0, 8)} of ${channel.slice(0, 8)} has no createdAt -` +
+        ' dated by its author clock, which no read mark of the salon is on'
+    );
+  }
   return {
     kind: 'message',
     message: {
@@ -294,7 +307,7 @@ export async function decodeChannelMessageRow(
       senderId,
       content,
       timestamp:
-        timestamp ?? (serverMs !== undefined ? new SvelteDate(serverMs) : new SvelteDate()),
+        serverMs !== undefined ? new SvelteDate(serverMs) : (timestamp ?? new SvelteDate()),
       ...(serverMs !== undefined ? { serverTimestamp: serverMs } : {}),
       isOwn: !isSystem && senderId === userIdLower,
       isSystem,
