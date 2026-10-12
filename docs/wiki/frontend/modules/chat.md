@@ -3091,6 +3091,16 @@ already delete the salons. This is NOT the community rail's order, which is pers
   wrapper). Keyboard: Alt + ArrowUp/ArrowDown on a focused row (`moveById`), announced in a live
   region. Only when `viewerCanManageChannels`. Optimistic, rolled back and logged on refusal
   (`useChannelWorkspaces.reorderChannels`).
+- **A press held past the 350 ms is still a tap (2026-10-12).** Once the hold elapses the library
+  starts a drag with NO movement: it lifts the row from under the finger and drops it back on
+  release, so the browser's `click` never reaches the row. Measured on the iPhone 12 bench as a
+  community manager: holds of 60, 150 and 300 ms opened the salon, 400, 600 and 900 ms opened
+  nothing, every time - the *"je clique sur le salon mais rien ne se passe"* report. The verdict is
+  read from where the library's placeholder went, never from a clock
+  (`utils/chat/channelPressGesture.ts`): a drag whose shadow never left its starting index was a
+  press, and `handleChannelDndFinalize` delivers it as the row's own tap (`activateChannelRow`) and
+  persists no order; a drag that moved, even back home, or left the list, stays a reorder. A
+  member who cannot reorder never had a drag zone, so never had the defect.
 
 **Name.** A salon name is a DISPLAY string, stored as typed (case, accents, emoji, spaces). Server
 `validateChannelName` refuses only: empty after trim, over 80 characters (code points), a control
