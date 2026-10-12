@@ -146,4 +146,62 @@ describe('SecurityController - checkPinVerifier', () => {
 
     expect(result).toEqual({ status: 'mismatch', resetRequired: false });
   });
+
+  /**
+   * The salt the client derived from, checked BEFORE anything is compared or stored.
+   *
+   * A keypad asks the salt while the person types; a PIN reset in that window deletes the row and the
+   * next GET mints another salt. A verifier from the old salt is then neither a wrong PIN nor a
+   * registration - it is a stale input, and is answered as one.
+   */
+  it('answers stale-salt for a salt the row no longer holds, and compares nothing', async () => {
+    pinVerifierRepo.findOne.mockResolvedValue({
+      id: 'existing-id',
+      userId: 'u1',
+      verifier: 'a'.repeat(64),
+      salt: 'new-salt',
+    });
+
+    const result = await controller.checkPinVerifier(
+      { userId: 'u1', verifier: 'a'.repeat(64), salt: 'old-salt' },
+      'u1',
+      'false'
+    );
+
+    expect(result).toEqual({ status: 'stale-salt', resetRequired: false });
+    expect(revokedDeviceRepo.findOne).not.toHaveBeenCalled();
+    expect(pinVerifierRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('answers stale-salt instead of registering when a reset deleted the row', async () => {
+    pinVerifierRepo.findOne.mockResolvedValue(null);
+
+    const result = await controller.checkPinVerifier(
+      { userId: 'u1', verifier: 'a'.repeat(64), salt: 'old-salt' },
+      'u1',
+      'false'
+    );
+
+    expect(result).toEqual({ status: 'stale-salt', resetRequired: false });
+    expect(pinVerifierRepo.create).not.toHaveBeenCalled();
+    expect(pinVerifierRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('compares as before when the salt sent is the one the row holds', async () => {
+    const verifier = 'a'.repeat(64);
+    pinVerifierRepo.findOne.mockResolvedValue({
+      id: 'existing-id',
+      userId: 'u1',
+      verifier,
+      salt: 'the-salt',
+    });
+
+    const result = await controller.checkPinVerifier(
+      { userId: 'u1', verifier, salt: 'the-salt' },
+      'u1',
+      'false'
+    );
+
+    expect(result).toEqual({ status: 'ok', resetRequired: false });
+  });
 });

@@ -93,7 +93,8 @@ import {
   finishBootBench,
 } from '$lib/mls-client/bootBenchmark';
 import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/deviceKeyVault';
-import { askPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
+import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
+import { unlockWithPin, type PinCheckAnswer } from './pinUnlock';
 import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
@@ -647,80 +648,40 @@ export async function loginImpl(
       //  - a wrong PIN is rejected without ever touching the device's identity or state;
       //  - a revoked device is matched on its real deviceId (not the 'pending' placeholder),
       //    so the one-shot reset fires instead of leaving it banned forever.
-      // The per-user random salt - usually already in hand, asked while the keypad was up
-      // (`prefetchPinSaltImpl`). The span says which, so a cold open shows what it waited for.
-      beginBootSpan('pin-salt-fetch');
-      const saltAhead = takePinSaltAhead(ctx.getUserId());
-      const salt = await (saltAhead ?? fetchPinSalt(ctx, ctx.getUserId(), accessToken));
-      endBootSpan('pin-salt-fetch', { ahead: saltAhead !== undefined });
-      cb.log(`[PIN] Salt ${saltAhead ? 'asked while the keypad was up' : 'asked at submit'}.`);
-      // THE DEVICE KEY IS DERIVED DURING THE PIN CHECK, AND ONLY ITS USE WAITS FOR THE ANSWER. The
-      // rule the old sequence enforced - nothing is decrypted with a key from an unproven PIN - is a
-      // rule about USING the key, and it still holds: `deviceKeyAhead` is awaited and stored only
-      // after `pin-check` answered and after the mismatch and revocation branches. On a mismatch it
-      // is dropped unread.
-      //
-      // AFTER THE VERIFIER, NOT BESIDE IT - measured, not assumed (Mi 9T, 2026-10-12, n=6): started
-      // together, the two PBKDF2 runs shared the WebCrypto worker and the verifier went from 112 to
-      // 215 ms, delaying the check it feeds by the same amount. Started once the verifier is in, the
-      // 310k-iteration derivation overlaps only the check's round trip, which waits on the network.
-      // `resolveDeviceId` reads a stored id and decrypts nothing, so it joins the verifier.
-      // PBKDF2-SHA256: 100k iterations for the verifier, 310k for the device key.
-      const [verifier, deviceId] = await Promise.all([
-        timeBootSpan(
-          'pin-verifier-pbkdf2',
-          computePinVerifier(ctx.getUserId(), ctx.getPin(), salt)
-        ),
-        timeBootSpan('resolve-device-id', mlsService.resolveDeviceId(ctx.getUserId())),
-      ]);
-      const deviceKeyAhead = timeBootSpan(
-        'device-key-pbkdf2',
-        deriveDeviceKeyB64(ctx.getUserId(), pin, salt)
-      );
-      // A wrong PIN or a refused check throws below before this promise is read; its own failure
-      // must still leave a line rather than an unhandled rejection.
-      deviceKeyAhead.catch((e: unknown) =>
-        cb.log(`[PIN] Device key derivation failed: ${String(e)}`)
-      );
-      const verifierHeaders: Record<string, string> = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      };
-      const verifierPayload = JSON.stringify({ userId: ctx.getUserId(), verifier, deviceId });
-      beginBootSpan('pin-check-request');
-      const pinCheckRes = await fetchOrUnreachable(
-        `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
-        { method: 'POST', headers: verifierHeaders, body: verifierPayload },
-        m.auth_pin_check_unreachable()
-      );
-      if (!pinCheckRes.ok) {
-        throw new LocalizedError(m.auth_pin_check_unreachable());
-      }
-      const pinCheckData = (await pinCheckRes.json()) as {
-        status: string;
-        resetRequired?: boolean;
-      };
-      endBootSpan('pin-check-request');
-
-      if (pinCheckData.status === 'mismatch') {
-        throw new LoginFailure('pin_mismatch', m.auth_pin_mismatch());
-      }
-      if (pinCheckData.resetRequired === true) {
-        // A REVOKED DEVICE IS RETURNED TO A FRESH INSTALL, not merely stripped of its MLS state.
-        // Its owner declared it lost or stolen, so leaving its cached media, its drafts, its
-        // conversation list and its signed-in session behind answers the wrong question.
-        await wipeRevokedDevice(ctx, cb);
-        cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
-        throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
-      }
-      if (pinCheckData.status === 'registered') cb.log('First device: PIN registered.');
-
-      // PIN accepted: only now is this device's at-rest key read and installed. It was derived
-      // during the check from the same server salt as the verifier (see above); nothing used it
-      // before this line, which is the ordering that matters.
-      deviceKeyB64 = await deviceKeyAhead;
-      ctx.setDeviceKey(deviceKeyB64);
+      // The per-user random salt is usually already in hand, asked while the keypad was up
+      // (`prefetchPinSaltImpl`); the check, the derivations and the order between them are
+      // `unlockWithPin`'s, where they are exercised on their own (`pinUnlock.test.ts`).
+      const userIdForPin = ctx.getUserId();
+      deviceKeyB64 = await unlockWithPin({
+        saltAhead: takePinSaltAhead(userIdForPin),
+        fetchSalt: () => fetchPinSalt(ctx, userIdForPin, accessToken),
+        computeVerifier: (salt) => computePinVerifier(userIdForPin, pin, salt),
+        deriveDeviceKey: (salt) => deriveDeviceKeyB64(userIdForPin, pin, salt),
+        resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
+        checkPin: async ({ verifier, deviceId, salt }) => {
+          const res = await fetchOrUnreachable(
+            `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt }),
+            },
+            m.auth_pin_check_unreachable()
+          );
+          if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
+          return (await res.json()) as PinCheckAnswer;
+        },
+        wipeRevokedDevice: () => wipeRevokedDevice(ctx, cb),
+        installDeviceKey: (key) => ctx.setDeviceKey(key),
+        log: cb.log,
+      });
+      // Unlocked: any round trip a retry asked meanwhile belongs to a keypad that is gone.
+      forgetPinSaltAhead('unlocked with the PIN', cb.log);
     } else {
+      forgetPinSaltAhead(isVaultLogin ? 'unlocked by the vault' : 'unlocked by biometrics', cb.log);
       cb.log(
         isVaultLogin
           ? 'Initialising MLS (vault device key path)...'

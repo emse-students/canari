@@ -200,19 +200,35 @@ all of it in series. Two of those steps wait on nothing they need:
 - **The salt does not depend on the PIN.** It was asked at submit, after the person had typed, and on
   a fresh process it is also the request that opens the connection. `openPinModal` now starts it
   (`pinSaltAhead.ts`, `prefetchPinSaltImpl`) and `loginImpl` consumes it. An entry is used ONCE (a
-  retry after a wrong PIN gets its own round trip, started again when the keypad reopens), a failed
-  one is evicted and named in the log, so the submit asks the server itself and surfaces its answer,
-  and the salt lives in memory only, as it already did for the length of every login. **A first
-  setup is excluded**: `GET pin-salt` WRITES a placeholder row for a user with no salt, which
-  `pin-status` then reads as "registered", so asking it ahead could turn an abandoned keypad into a
-  skipped PIN choice.
+  retry after a failed unlock gets its own round trip, asked again from `applyPinFailure` - the
+  keypad's own wrong-PIN handler, the saved-PIN path and the biometric button all pass through it -
+  and NOT after a `device_revoked` wipe, which leaves no session to ask with). The salt lives in
+  memory only, as it already did for the length of every login. **A first setup is excluded**:
+  `GET pin-salt` WRITES a placeholder row for a user with no salt, which `pin-status` then reads as
+  "registered", so asking it ahead could turn an abandoned keypad into a skipped PIN choice.
+- **What the review found, and how each is closed** (2026-10-12):
+  - *A failure is a value, not a rejection.* An entry settles to `{ failure }`, so a submit that took
+    it before it failed is never handed the prefetch's exception: `unlockWithPin` logs the failure
+    and asks the salt at submit with that login's own token - the round trip every submit made
+    before - whose failure is its own (`auth_pin_salt_unreachable`).
+  - *Forgotten when the keypad ends* (`forgetPinSaltAhead`): any unlock (PIN, biometrics, vault), the
+    keypad closing, `clearAuth` (sign-out, session expiry, revocation wipe) and a PIN reset.
+  - *A salt made stale by a PIN reset is never a wrong PIN.* A reset deletes the row and the next GET
+    mints another salt, so a keypad's salt can be stale. `pin-check` is now sent the salt the verifier
+    came from and answers **`stale-salt`** without comparing, storing or resetting anything - which
+    also closes the case where, with no row left, the old code REGISTERED a verifier under a salt the
+    server never stored. The client asks the salt again and checks once more; a second `stale-salt`
+    is refused by name (`pin_salt_rotated`). A client that sends no salt is answered as before.
+  - *Behavioural tests, not regexes*: the PIN half moved to `pinUnlock.ts` (`unlockWithPin`, every
+    dependency passed in), and `pinUnlock.test.ts` answers `mismatch`, `resetRequired` and a double
+    `stale-salt` and watches `installDeviceKey` stay uncalled.
 - **The device key does not depend on the PIN check.** It was derived AFTER `pin-check`, "on purpose".
   The purpose is a rule about USING the key - nothing is decrypted with a key from an unproven PIN -
   and that rule is kept: the derivation now starts once the verifier is computed, runs during the
   check's round trip, and its result is awaited and installed (`ctx.setDeviceKey`) only after the
   check answered and after the `mismatch` and `resetRequired` branches. On a mismatch it is dropped
-  unread. A source guard (`pinSaltAhead.test.ts`) pins that order. `resolveDeviceId` (a stored id,
-  nothing decrypted) joins the verifier.
+  unread (`pinUnlock.test.ts` asserts it by behaviour). `resolveDeviceId` (a stored id, nothing
+  decrypted) joins the verifier.
 - **After the verifier, not beside it - and that was measured, not assumed.** The first version
   started both derivations together: they share the WebCrypto worker, the verifier went from ~112 to
   **215 ms** and delayed the check it feeds by as much, so it gained ~0.1 s less.
