@@ -64,7 +64,7 @@
    */
   let feedDrawn = $state(false);
   const heldForLanding = $derived(
-    feedHeldForLanding({ landingPending: notifNav.pending !== null, feedDrawn })
+    feedHeldForLanding({ landingEnRoute: notifNav.enRoute, feedDrawn })
   );
   $effect(() => {
     if (heldForLanding) {

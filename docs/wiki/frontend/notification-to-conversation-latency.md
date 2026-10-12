@@ -127,10 +127,16 @@ of 681-703 ms starting ~0.65 s into the device-key PBKDF2, attributed to the con
 100-200 ms from the posts route's `requestAnimationFrame` (the progressive mount) across `mls-init`
 and the routing. The correlation was the cause.
 
-**The fix** (`feedHeldForLanding`, `routes/posts/+page.svelte`): while `notifNav.pending` names a
-target, the feed's FIRST draw is held (skeletons, nothing to mount). A feed already on screen is
-never blanked, and an abandoned landing releases the hold. The requests still go out - they cost the
-network, not the main thread.
+**The fix** (`feedHeldForLanding`, `routes/posts/+page.svelte`): while a landing is ON ITS WAY
+(`notifNav.enRoute`: a target is pending and its route has not been reached), the feed's FIRST draw
+is held (skeletons, nothing to mount). The landing effect calls `notifNav.markArrived()` the moment
+`landingStep` answers `select`, and an abandoned landing clears the target, so either ends the hold.
+**`pending` alone is the wrong release** - the first version used it, and review caught it: the
+target stays pending while displayed and, on a wide screen, after the reader leaves `/chat`, so a
+feed reached afterwards would have shown skeletons for ever. A feed already on screen is never
+blanked. The requests still go out - they cost the network, not the main thread. The measurement
+below was taken on the first version; the two hold identically until the route is reached, which on
+a phone is when the feed is unmounted, and the phone was handed to another session before a rebuild.
 
 | cold, PIN (n=6, medians, ms after the tap) | baseline (`main`) | F2 |
 | --- | ---: | ---: |

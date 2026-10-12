@@ -238,6 +238,8 @@
       void goto(resolve(targetRoute));
     }
     if (step !== 'select') return;
+    // The route is reached: whatever waited for the landing to LEAVE (the feed's first draw) may go.
+    notifNav.markArrived();
     // Already on screen: the landing is done and must stay idle until the target is lost. The
     // selection is a map key and the target is a group id, so they are only ever equal for a
     // channel - matched raw, a landed DM never looked landed, and every mutation of the map
