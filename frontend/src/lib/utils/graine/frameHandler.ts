@@ -15,7 +15,7 @@ import {
 import { historyFloorsFor } from './historyBoundary';
 import { mirrorGraineSeed } from './graineMirror';
 import { forgetAskedSession, noteSeedUnavailable } from './repair';
-import { seedFromWire, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
+import { seedFromWire, storedV2From, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
 import { checkSeedEndorsement } from './endorsement';
 
 /**
@@ -34,7 +34,10 @@ import { checkSeedEndorsement } from './endorsement';
  *
  * `stored` - a new session, or a lower floor on a held one: rows that could not be read now can.
  * `already-held` - a copy of what this device holds; nothing new is readable.
- * `refused` - malformed, a replacement, or an endorsement that did not hold; nothing was stored.
+ * `declined` - malformed, a replacement, or an endorsement that did not hold; nothing was stored.
+ * `v1-refused` - a NEW v1 seed (section 21.7); nothing was stored. Apart from `declined` because its
+ *   CALLER says it: an honest peer relays every v1 session it holds, so the refusal is said once per
+ *   bundle, not once per seed. Never folded into `already-held`: it repairs nothing.
  *
  * A boolean used to fold the first two together ("held, including when it already was"), and a seed
  * bundle travels on the community's distribution group, so EVERY member receives the answer to
@@ -42,10 +45,16 @@ import { checkSeedEndorsement } from './endorsement';
  * repaired and re-read its history: 18 refetches of one salon in three minutes on a client that had
  * asked for nothing ([channel-encryption](docs/wiki/protocols/channel-encryption.md#the-repair-that-worked-said-nothing---fixed-2026-08-20)).
  */
-export type SeedStoreOutcome = 'stored' | 'already-held' | 'refused';
+export type SeedStoreOutcome = 'stored' | 'already-held' | 'declined' | 'v1-refused';
 
 /**
  * Stores an incoming Graine seed, or explains why it was ignored.
+ *
+ * **A NEW v1 seed is refused** (channel-encryption section 21.7, user decision 2026-09-28): since
+ * `minClientVersion` reached the v2 writer (`1.0.3`, raised 2026-10-11) no honest client mints one,
+ * and a v1 seed names no minter, so a modified client could mint one to post under any member's
+ * name. A v1 session ALREADY HELD stays held - its floor may still be lowered by a copy - and keeps
+ * opening its rows until the v1 reader goes (`docs/wiki/legacy-compatibility.md`).
  *
  * @param keyGroupId The distribution group the frame arrived on - whose tree names a v2 minter.
  * @returns what storing it CHANGED - see {@link SeedStoreOutcome}.
@@ -56,12 +65,12 @@ export async function storeIncomingSeed(
   seed: IncomingSeed,
   keyGroupId: string
 ): Promise<SeedStoreOutcome> {
-  const { storage, deviceKey, mlsService } = requireGraineRuntime('cannot store an incoming seed');
+  const { storage, deviceKey } = requireGraineRuntime('cannot store an incoming seed');
   if (!seed.sessionId || seed.seed.length === 0 || !seed.channelId) {
     console.warn(
       `[GRAINE] ignoring a malformed seed frame from ${senderId} in community ${workspaceId.slice(0, 8)}`
     );
-    return 'refused';
+    return 'declined';
   }
 
   const existing = await storage.getGraineSession(seed.sessionId, deviceKey());
@@ -77,7 +86,7 @@ export async function storeIncomingSeed(
       console.error(
         `[GRAINE] REFUSED seed replacement: ${senderId} sent session ${seed.sessionId} with a different ${conflict} than the one held (from ${existing.senderId}) in community ${workspaceId.slice(0, 8)}`
       );
-      return 'refused';
+      return 'declined';
     }
     // OUR OWN SESSION, COMING BACK. The frame is durable, so this device meets its own seed again
     // on every fresh start. Writing it would drop `sentCount` - the count that decides the next
@@ -89,49 +98,14 @@ export async function storeIncomingSeed(
     if (existing.firstIndex <= seed.firstIndex) return nowHeld(seed.sessionId, 'already-held');
   }
 
-  // A NEW v2 SESSION IS STORED ONLY ONCE ITS MINTER'S DEVICE IS SHOWN TO HAVE ENDORSED IT - this key
-  // and this seed (section 21). A copy of a HELD session needs no second check: `seedConflict`
-  // above already proved it byte-identical to the one that passed.
-  if (!existing && seed.v2) {
-    const verdict = await checkSeedEndorsement(mlsService, keyGroupId, seed);
-    if (verdict.kind === 'refused') {
-      console.error(
-        `[GRAINE] REFUSED v2 seed ${seed.sessionId} from ${senderId} in community ${workspaceId.slice(0, 8)}: ${verdict.why}`
-      );
-      return 'refused';
-    }
-    if (verdict.kind === 'unanswered') {
-      // Not a refusal: nothing is known against the seed. Not stored either - a half-checked
-      // session is what "never stored half" forbids - and a later row under it is a missing seed,
-      // which asks again.
-      console.warn(
-        `[GRAINE] v2 seed ${seed.sessionId} from ${senderId} NOT stored yet: ${verdict.why}`
-      );
-      return 'refused';
-    }
-  }
-
-  const session: StoredGraineSession = existing
+  const session = existing
     ? // THE FLOOR IS THE ONLY THING A SECOND COPY MAY MOVE. Who the session is recorded under stays
       // who it was first recorded under: a repair bundle is sent by whoever ANSWERED, and writing
       // that answerer over the row would re-attribute a session to somebody who never minted it.
       { ...existing, firstIndex: seed.firstIndex }
-    : {
-        workspaceId,
-        channelId: seed.channelId,
-        sessionId: seed.sessionId,
-        // A v2 session is recorded under the minter its endorsement NAMES - never the frame's
-        // sender, who on a relay is whoever answered. Kept exactly as signed: the endorsement is
-        // verified over these bytes, and a case-folded copy would stop matching them.
-        senderId: seed.v2 ? seed.v2.minterUserId : senderId.toLowerCase(),
-        seedB64: toBase64(seed.seed),
-        firstIndex: seed.firstIndex,
-        createdAt: seed.createdAt || Date.now(),
-        v2: storedV2Of(seed),
-        // Neither is ours to know. `sentCount` is what makes a session THIS device's outbound one,
-        // and `distributionEpoch` is the roster it was minted under - a judgement only its sender
-        // may make.
-      };
+    : await admitNewSession(workspaceId, senderId, seed, keyGroupId);
+  if (session === null) return 'declined';
+  if (session === 'v1-refused') return 'v1-refused';
   await storage.saveGraineSession(session, deviceKey());
   cacheGraineSession(session);
   // Mirrored so a push arriving with the app killed can still be opened. Not awaited for
@@ -139,6 +113,60 @@ export async function storeIncomingSeed(
   // mirror would degrade for no reason.
   await mirrorGraineSeed(session);
   return nowHeld(seed.sessionId, 'stored');
+}
+
+/**
+ * The stored form of a session this device does not hold yet, or why it may not be stored.
+ *
+ * **Only a v2 session is ever admitted.** A NEW v1 session is refused (section 21.7): after the
+ * held-session exits on purpose, since a v1 session already held is not ARRIVING and a copy of it
+ * may still lower its floor; and before anything is written, so a refused seed leaves nothing in the
+ * store or the native mirror. Not logged here: the caller says it, once per frame or per bundle.
+ *
+ * **A new v2 session is admitted only once its minter's device is shown to have endorsed this key
+ * and this seed** (section 21). `null` is a refused or unanswered endorsement, already logged.
+ */
+async function admitNewSession(
+  workspaceId: string,
+  senderId: string,
+  seed: IncomingSeed,
+  keyGroupId: string
+): Promise<StoredGraineSession | 'v1-refused' | null> {
+  const v2 = seed.v2;
+  if (!v2) return 'v1-refused';
+  const { mlsService } = requireGraineRuntime('cannot admit an incoming seed');
+  const verdict = await checkSeedEndorsement(mlsService, keyGroupId, seed);
+  if (verdict.kind === 'refused') {
+    console.error(
+      `[GRAINE] REFUSED v2 seed ${seed.sessionId} from ${senderId} in community ${workspaceId.slice(0, 8)}: ${verdict.why}`
+    );
+    return null;
+  }
+  if (verdict.kind === 'unanswered') {
+    // Not a refusal: nothing is known against the seed. Not stored either - a half-checked
+    // session is what "never stored half" forbids - and a later row under it is a missing seed,
+    // which asks again.
+    console.warn(
+      `[GRAINE] v2 seed ${seed.sessionId} from ${senderId} NOT stored yet: ${verdict.why}`
+    );
+    return null;
+  }
+  return {
+    workspaceId,
+    channelId: seed.channelId,
+    sessionId: seed.sessionId,
+    // Recorded under the minter its endorsement NAMES - never the frame's sender, who on a relay is
+    // whoever answered. Kept exactly as signed: the endorsement is verified over these bytes, and a
+    // case-folded copy would stop matching them.
+    senderId: v2.minterUserId,
+    seedB64: toBase64(seed.seed),
+    firstIndex: seed.firstIndex,
+    createdAt: seed.createdAt || Date.now(),
+    v2: storedV2From(v2),
+    // Neither is ours to know. `sentCount` is what makes a session THIS device's outbound one,
+    // and `distributionEpoch` is the roster it was minted under - a judgement only its sender
+    // may make.
+  };
 }
 
 /**
@@ -176,7 +204,7 @@ function seedConflict(
  * miss on the same session has to get past, so leaving it in place would silence the one request
  * that could still widen a floor.
  */
-function nowHeld<O extends Exclude<SeedStoreOutcome, 'refused'>>(sessionId: string, outcome: O): O {
+function nowHeld<O extends 'stored' | 'already-held'>(sessionId: string, outcome: O): O {
   forgetAskedSession(sessionId);
   return outcome;
 }
@@ -203,6 +231,16 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
       seedFromWire(msg.graine),
       frame.groupId
     );
+    if (outcome === 'v1-refused') {
+      // A warn, not an ERROR: the distribution group's durable log still replays v1 frames an honest
+      // client distributed before the floor moved, so this line alone accuses nobody. Its date is
+      // the sender's claim and decides nothing; it is printed so a reader can tell an old replay
+      // from a fresh mint.
+      console.warn(
+        `[GRAINE] REFUSED v1 seed ${msg.graine.sessionId} from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} (claimed createdAt ${String(msg.graine.createdAt ?? 0)}): a v1 seed is no longer accepted`
+      );
+      return;
+    }
     if (outcome === 'already-held') {
       console.debug(
         `[GRAINE] seed ${msg.graine.sessionId} from ${frame.sender} already held - nothing to re-read`
@@ -460,6 +498,7 @@ async function absorbSeedBundle(
   bundle: canari.GraineBundleMsg.$Properties
 ): Promise<void> {
   const repaired = new Set<string>();
+  const refusedV1: string[] = [];
   let absorbed = 0;
   let alreadyHeld = 0;
   for (const seed of bundle.seeds ?? []) {
@@ -477,7 +516,18 @@ async function absorbSeedBundle(
       if (seed.channelId) repaired.add(String(seed.channelId));
     } else if (outcome === 'already-held') {
       alreadyHeld++;
+    } else if (outcome === 'v1-refused') {
+      refusedV1.push(String(seed.sessionId ?? ''));
     }
+  }
+
+  if (refusedV1.length > 0) {
+    // ONE line per bundle: an honest answerer relays every v1 session it holds, so a joiner's
+    // history bundle can carry dozens. Those rows stay unreadable here and are not asked for again
+    // (`GraineV1SessionNotHeldError`).
+    console.warn(
+      `[GRAINE] REFUSED ${refusedV1.length} v1 seed(s) relayed by ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - a v1 seed is no longer accepted (${refusedV1.slice(0, 3).join(', ')}${refusedV1.length > 3 ? ', ...' : ''})`
+    );
   }
 
   // THE REPAIR PATH IS THE ONE THAT MUST SPEAK, and until 2026-08-20 it was the only inbound seed

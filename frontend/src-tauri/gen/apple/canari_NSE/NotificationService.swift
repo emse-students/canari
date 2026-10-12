@@ -1001,6 +1001,12 @@ class NotificationService: UNNotificationServiceExtension {
         NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=unknown -> nothing established")
       }
     }
+    // A v1 seed is refused by Rust since the floor reached the v2 writer (channel-encryption 21.7);
+    // its own log line reaches no logger in the extension, so the reason is said here.
+    let v1Refused = Self.v1RefusedSessions(json)
+    if !v1Refused.isEmpty {
+      NSLog("[CanariNSE] openSeedFrame: REFUSED v1 seed(s) \(v1Refused.joined(separator: ",")) group=\(groupId.prefix(8)) - a v1 seed is no longer accepted")
+    }
     guard let seedsJson = Self.keyMaterialSeeds(json) else {
       NSLog("[CanariNSE] openSeedFrame: frame did not yield key material reason=\(Self.refusalReason(json) ?? "none") group=\(groupId.prefix(8)) channel=\(channelId)")
       return nil
@@ -1053,6 +1059,15 @@ class NotificationService: UNNotificationServiceExtension {
       (dict["ok"] as? Bool) != true
     else { return nil }
     return dict["reason"] as? String
+  }
+
+  /// The sessions whose v1 seed Rust refused in a `graine-key-material` answer (`v1Refused`).
+  private static func v1RefusedSessions(_ json: String?) -> [String] {
+    guard let json = json, let data = json.data(using: .utf8),
+      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let ids = dict["v1Refused"] as? [Any]
+    else { return [] }
+    return ids.compactMap { $0 as? String }
   }
 
   /// The `seeds` array of a `graine-key-material` answer, re-serialised for the native writer.

@@ -488,8 +488,10 @@ export function useConversations() {
     force = false
   ) {
     const { channelService } = await import('$lib/services/ChannelService');
-    const { decodeChannelMessageRow, UnreadableRowTally } =
+    const { decodeChannelMessageRow, UnreadableRowTally, V1_SESSION_NOT_HELD } =
       await import('$lib/utils/chat/channelCrypto');
+    const { olderMessagesNotice, oldestServerMs } =
+      await import('$lib/utils/chat/olderMessagesNotice');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const convo = conversations.get(channelConversationId);
@@ -565,6 +567,14 @@ export function useConversations() {
       }
 
       tally.report();
+      // ONCE per salon, from this load's own count: rows under a v1 session this device does not
+      // hold are gone for good here (section 21.7), and a silent gap reads as a bug.
+      const notice = olderMessagesNotice(
+        channelConversationId,
+        tally.count(V1_SESSION_NOT_HELD),
+        oldestServerMs(Array.isArray(rows) ? rows : [])
+      );
+      if (notice) loaded.push(notice);
       loaded.sort(compareMessageOrder);
       const loadedEdited = applyChannelEdits(loaded, edits, ctx.log);
 
