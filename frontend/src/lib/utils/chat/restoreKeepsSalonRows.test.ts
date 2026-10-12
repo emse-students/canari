@@ -29,6 +29,7 @@ function mls() {
     getLocalGroups: vi.fn(() => []),
     getUserGroups: vi.fn(async () => []),
     notifyConversationsRestored: vi.fn(),
+    notifyConversationRowsSeeded: vi.fn(),
     beginBulkIngest: vi.fn(),
     endBulkIngest: vi.fn(),
     persistCheckpoint: vi.fn(async () => {}),

@@ -714,7 +714,7 @@ ambiguity the split exists to remove. Hence `acquireMlsLock` is called directly 
 
 **It reports; it does not cancel, and the flush stays inside the window.** Moving `onDrainEnd`
 behind `isDraining = false` was the other option this page used to offer, and it is wrong:
-`bulkIngestPhases` is a stack, so a second drain starting during a live `endBulkIngest` would call
+the UI render buffer is ONE buffer, not one per window, so a second drain starting during a live `endBulkIngest` would call
 `beginBulkIngest` across it - a UI buffer cleared without being flushed, which is WP-ECHO-1's exact
 failure and a strictly worse one. **A freeze loses nothing durable; a lost buffer does.** So the
 deadline buys the only thing it safely can, which is evidence.
