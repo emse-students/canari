@@ -71,6 +71,7 @@ import {
   toConversationMeta,
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
+import { readLandingPreview } from '$lib/utils/chat/landingPreview';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
@@ -189,6 +190,15 @@ export function useConversations() {
    * predicate still requires the restore.
    */
   let pendingConversationSources = $state(0);
+  /**
+   * The conversation drawn from the LOCAL store while the session is not up yet - the notification
+   * landing's target (F1, `landingPreview.ts`). Null whenever a session owns the map, or when there
+   * is nothing to preview. While it is set the chat page is drawn without a session, so it is the
+   * one fact every pre-session render decision reads, and it is cleared by the three events that end
+   * it: the session coming up (`endLandingPreview`), the login failing or the landing being left
+   * (`discardLandingPreview`), and the restore that rebuilds the map.
+   */
+  let landingPreviewKey = $state<string | null>(null);
   let sendError = $state('');
 
   // ── Input state ───────────────────────────────────────────────────────────
@@ -698,8 +708,13 @@ export function useConversations() {
   /** Reads all saved conversations from IndexedDB, verifies MLS state consistency, and populates the conversations map. */
   async function loadAndRestoreConversations(ctx: ConversationContext) {
     if (!ctx.storage) return;
+    // The restore supersedes any local preview: from here the map is the session's.
+    landingPreviewKey = null;
     try {
       await loadExistingConversations({
+        // The landing target stays pending while it is displayed, so this keeps the thread on
+        // screen through the rebuild - see `preserveMessagesOf`.
+        preserveMessagesOf: notifNav.pending,
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
         storage: ctx.storage,
@@ -718,6 +733,104 @@ export function useConversations() {
       // trigger to ask again - there is no timer waiting to notice.
       ctx.ensureMls().notifyConversationsRestored();
     }
+  }
+
+  /**
+   * Draws the pending landing target from the LOCAL store, before the session is up (F1).
+   *
+   * Called by the login the moment it holds both the device key and the open store - on the vault
+   * path that is BEFORE the token refresh and the revocation answer, which the user decided to
+   * allow (2026-10-12) on the condition that a refused login removes everything drawn
+   * ({@link discardLandingPreview}). It reads, it never sends or writes: see `landingPreview.ts`.
+   *
+   * It only ever ADDS a row the map does not hold: a warm session, or a restore that already ran,
+   * owns the row and is left alone. And it marks the row as a preview only while no session owns
+   * the map - `isSessionUp` is read after the read, because the read is what took time.
+   */
+  async function previewLandingTarget(input: {
+    storage: IStorage;
+    deviceKeyB64: string;
+    userId: string;
+    messageReactions: SvelteMap<string, MessageReaction[]>;
+    isSessionUp: () => boolean;
+    log: (msg: string) => void;
+  }): Promise<void> {
+    const targetId = notifNav.pending;
+    if (!targetId) return;
+    if (conversations.has(targetId)) return;
+    const preview = await readLandingPreview({
+      storage: input.storage,
+      deviceKeyB64: input.deviceKeyB64,
+      userId: input.userId,
+      targetId,
+    });
+    if (typeof preview === 'string') {
+      input.log(`[LANDING_PREVIEW] nothing drawn for ${targetId.slice(0, 8)} (${preview})`);
+      return;
+    }
+    // The landing may have been left, or another source may have written the row, while the store
+    // was being read: either way the row is no longer this preview's to add.
+    if (notifNav.pending !== targetId || conversations.has(targetId)) {
+      input.log(`[LANDING_PREVIEW] ${targetId.slice(0, 8)} superseded during the read - not drawn`);
+      return;
+    }
+    conversations.set(targetId, preview.row);
+    for (const m of preview.row.messages) {
+      if (m.reactions && m.reactions.length > 0) input.messageReactions.set(m.id, m.reactions);
+    }
+    const sessionUp = input.isSessionUp();
+    if (!sessionUp) landingPreviewKey = targetId;
+    input.log(
+      `[LANDING_PREVIEW] ${targetId.slice(0, 8)} drawn from the local store ` +
+        `(${preview.messageCount} message(s)) ${sessionUp ? 'after' : 'before'} the session is up`
+    );
+  }
+
+  /**
+   * Selects the previewed target WITHOUT any of a selection's side effects (F1).
+   *
+   * No read mark, no member load, no history request: each of those acts on the server, and the
+   * session that would carry them does not exist yet. The overlay entry IS pushed - the Back press
+   * must behave as it will once the session is up, and the landing only calls this once the router
+   * has reached the target's page (`landingStep`), the same precondition the real selection has.
+   * When the session comes up the landing runs the real selection over it ({@link endLandingPreview}).
+   */
+  function previewSelect(key: string) {
+    if (landingPreviewKey !== key) return;
+    selectedContact = key;
+    ensureMobileConvoHistory();
+  }
+
+  /** The session is up and now owns the previewed row: it stays, and stops being a preview. */
+  function endLandingPreview() {
+    landingPreviewKey = null;
+  }
+
+  /**
+   * Removes everything the local preview drew (F1): the login failed, the device was revoked, or
+   * the reader left the landing before the session came up. The row was put in the map by the
+   * preview alone, so removing it restores the pre-session state exactly.
+   */
+  function discardLandingPreview(
+    reason: string,
+    messageReactions: SvelteMap<string, MessageReaction[]>,
+    log: (msg: string) => void
+  ) {
+    const key = landingPreviewKey;
+    if (key === null) return;
+    landingPreviewKey = null;
+    const row = conversations.get(key);
+    for (const m of row?.messages ?? []) messageReactions.delete(m.id);
+    conversations.delete(key);
+    if (selectedContact === key) {
+      if (mobileConvoHistoryClose) {
+        const ref = mobileConvoHistoryClose;
+        mobileConvoHistoryClose = null;
+        abandonHistoryOverlay(ref);
+      }
+      selectedContact = null;
+    }
+    log(`[LANDING_PREVIEW] ${key.slice(0, 8)} removed from screen: ${reason}`);
   }
 
   /**
@@ -1590,6 +1703,14 @@ export function useConversations() {
     endConversationSource() {
       pendingConversationSources = Math.max(0, pendingConversationSources - 1);
     },
+    /** The conversation drawn from the local store before the session is up, or null (F1). */
+    get landingPreviewKey() {
+      return landingPreviewKey;
+    },
+    previewLandingTarget,
+    previewSelect,
+    endLandingPreview,
+    discardLandingPreview,
 
     // UI state
     /** Currently selected conversation name (null when no conversation is open). */

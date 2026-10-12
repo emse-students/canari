@@ -1,0 +1,99 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+/**
+ * F1 - THE ORDER THAT MAKES THE LOCAL PREVIEW SAFE, PINNED IN THE SOURCE.
+ *
+ * Every property below is an ORDER between statements of `loginImpl` or of the landing effect, and
+ * none of them is visible to a behavioural test: the preview and the token race on a real device
+ * and never in a mock. Same technique and reasoning as `startupOrder.test.ts`.
+ */
+const read = (p: string) => readFileSync(join(process.cwd(), p), 'utf8');
+const auth = read('src/lib/composables/session/sessionAuth.ts');
+const landing = read('src/lib/components/layout/ChatBackgroundService.svelte');
+const page = read('src/lib/components/MainChatPage.svelte');
+
+const loginBody = auth.slice(auth.indexOf('export async function loginImpl('));
+
+function at(haystack: string, needle: string): number {
+  const i = haystack.indexOf(needle);
+  expect(i, `missing: ${needle}`).toBeGreaterThan(-1);
+  return i;
+}
+
+describe('loginImpl and the landing preview', () => {
+  it('starts the vault preview BEFORE the token is awaited (the decision of 2026-10-12)', () => {
+    const vault = at(loginBody, 'if (isVaultLogin) {');
+    const start = at(loginBody, 'startLandingPreview(storageOpen, deviceKeyB64);');
+    const token = at(loginBody, 'accessToken = await getToken();');
+    expect(vault).toBeLessThan(start);
+    expect(start).toBeLessThan(token);
+  });
+
+  it('starts the PIN preview only after pin-check proved the PIN and the device', () => {
+    const check = at(loginBody, 'if (pinCheckData.resetRequired === true) {');
+    const derive = at(loginBody, 'deviceKeyB64 = await deriveDeviceKeyB64(');
+    const starts = [
+      ...loginBody.matchAll(/startLandingPreview\(storageOpen, deviceKeyB64\);/g),
+    ].map((m) => m.index ?? -1);
+    expect(starts).toHaveLength(2);
+    expect(starts[1]).toBeGreaterThan(check);
+    expect(starts[1]).toBeGreaterThan(derive);
+  });
+
+  it('removes the preview BEFORE the revocation wipe', () => {
+    const revoked = at(loginBody, 'if (revoked) {');
+    const block = loginBody.slice(revoked, revoked + 600);
+    expect(at(block, "await withdrawLandingPreview('device revoked');")).toBeLessThan(
+      at(block, 'await wipeRevokedDevice(ctx, cb);')
+    );
+  });
+
+  it('removes the preview on every exit without a session', () => {
+    for (const reason of ["'session expired'", "'identity split'", 'login did not complete']) {
+      at(
+        loginBody,
+        `await withdrawLandingPreview(${reason.startsWith("'") ? reason : '`' + reason}`
+      );
+    }
+  });
+
+  it('lets the preview land before the restore rebuilds the map', () => {
+    expect(at(loginBody, 'if (landingPreview) await landingPreview;')).toBeLessThan(
+      at(loginBody, 'await cb.loadAndRestoreConversations();')
+    );
+  });
+
+  it('registers the outbox in the same synchronous run that sets isLoggedIn (held sends rely on it)', () => {
+    const between = loginBody.slice(
+      at(loginBody, 'ctx.setIsLoggedIn(true);'),
+      at(loginBody, 'registerOutbox(makeOutboxDeps(ctx, cb));')
+    );
+    // A statement of the try block itself (four spaces deep); the `void (async () => ...)()` that
+    // saves the device key awaits inside its own closure, which does not suspend this function.
+    expect(between).not.toMatch(/^ {4}(?:const [^=]+= |let [^=]+= )?await /m);
+  });
+});
+
+describe('the landing effect before the session', () => {
+  const effect = landing.slice(landing.indexOf('const id = notifNav.pending;'));
+  it('selects only the preview before the session, and returns before anything that acts', () => {
+    const preSession = effect.slice(
+      at(effect, 'if (!sessionUp) {'),
+      at(effect, 'openNotificationTarget(')
+    );
+    expect(preSession).toContain('globalConvs.previewSelect(displayedKey)');
+    expect(preSession).not.toMatch(/loadHistoryForConversation|selectConversation\(/);
+  });
+});
+
+describe('the chat page during a local preview', () => {
+  it('does not mount the conversation list, whose rows act when tapped', () => {
+    const sidebar = at(page, '<Sidebar {...makeSidebarCommonProps()}');
+    expect(page.slice(sidebar - 120, sidebar)).toContain('{#if session.isLoggedIn}');
+  });
+  it('sends no typing frame without a session', () => {
+    const typing = page.slice(at(page, 'function handleTyping('));
+    expect(typing.slice(0, 300)).toContain('if (!session.isLoggedIn) return;');
+  });
+});

@@ -9,7 +9,7 @@ import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
 import { SvelteSet } from 'svelte/reactivity';
-import { getStorage } from '$lib/db';
+import { getStorage, type IStorage } from '$lib/db';
 import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import {
@@ -504,8 +504,46 @@ export async function loginImpl(
 
   ctx.setTabLeaderSessionCb(cb);
 
+  // ── THE NOTIFICATION LANDING'S LOCAL PREVIEW (F1, decided by the user 2026-10-12) ──
+  //
+  // The landing's target is drawn from the local store the moment this login holds the device key
+  // AND the open store - on the vault path that is HERE, before the token refresh and the
+  // revocation answer, which is the one thing the user decided to allow: a conversation the device
+  // already holds is SHOWN before the server has confirmed the device, and if the server then says
+  // it is revoked (or the login fails for any other reason) everything drawn is removed and the
+  // ordinary consequence follows. It reads and never acts - no request, no write, no MLS
+  // (`landingPreview.ts`). The PIN path cannot start it before the PIN is proven: its device key is
+  // derived from the server's salt AFTER `pin-check`, so nothing is decryptable before then, which
+  // is what keeps the PIN gate's promise by construction rather than by a flag.
+  //
+  // THE PROMISE IS HELD, NEVER RACED. Every exit that ends this login without a session awaits it
+  // before removing what it drew, so a read still in flight cannot land after the removal; and the
+  // restore awaits it before rebuilding the map, so it cannot land after the rebuild either.
+  let landingPreview: Promise<void> | null = null;
+  let storageOpen: Promise<IStorage> | null = null;
+  const startLandingPreview = (storage: Promise<IStorage>, previewKey: string): void => {
+    const preview = cb.previewLandingTarget;
+    if (!preview) return;
+    landingPreview = storage
+      .then((s) => preview({ storage: s, deviceKeyB64: previewKey, userId: ctx.getUserId() }))
+      .then(() => markBoot('landing-preview-read'))
+      .catch((e: unknown) => cb.log(`[LANDING_PREVIEW] local read failed: ${String(e)}`));
+  };
+  const withdrawLandingPreview = async (reason: string): Promise<void> => {
+    if (!landingPreview) return;
+    await landingPreview;
+    cb.discardLandingPreview?.(reason);
+  };
+
   try {
     const mlsService = ctx.ensureMls();
+    if (isVaultLogin) {
+      // The vault returned the device key before this function was called, so the store can be
+      // opened and read now - nothing about either needs the token. `getStorage` shares one handle
+      // per user, and the init below awaits this same promise instead of opening a second one.
+      storageOpen = getStorage(ctx.getUserId());
+      startLandingPreview(storageOpen, deviceKeyB64);
+    }
     if (isBiometric) {
       cb.log('[BIOMETRIC] Skipping PIN verification - using device keystore...');
     } else {
@@ -557,6 +595,7 @@ export async function loginImpl(
       // as "no network".
       if (err instanceof SessionExpiredError) {
         ctx.setIsLoginInProgress(false);
+        await withdrawLandingPreview('session expired');
         if (cb.onSessionExpired) cb.onSessionExpired();
         else void goto(resolve('/login'), { replaceState: true });
         return;
@@ -568,6 +607,7 @@ export async function loginImpl(
       // nothing to add, and the MLS state is left untouched.
       if (err instanceof IdentitySplitError) {
         ctx.setIsLoginInProgress(false);
+        await withdrawLandingPreview('identity split');
         cb.log(
           `[LOGIN] IDENTITY SPLIT (token ${err.split.tokenSub} vs local ${err.split.localId}) - login stopped, sign-out required.`
         );
@@ -708,6 +748,11 @@ export async function loginImpl(
       deviceKeyB64 = await deriveDeviceKeyB64(ctx.getUserId(), pin, salt);
       endBootSpan('device-key-pbkdf2', { iterations: 310_000 });
       ctx.setDeviceKey(deviceKeyB64);
+      // The first instant this path can decrypt anything: the PIN is proven and the device is not
+      // revoked (`pin-check` answered both above). Still under the gate, which stays up until the
+      // session is.
+      storageOpen = getStorage(ctx.getUserId());
+      startLandingPreview(storageOpen, deviceKeyB64);
     } else {
       cb.log(
         isVaultLogin
@@ -786,7 +831,7 @@ export async function loginImpl(
           unattendedKeyRead: isBiometric && opts?.unattendedKeyRead === true,
         })
       ),
-      timeBootSpan('storage-open', getStorage(ctx.getUserId())),
+      timeBootSpan('storage-open', storageOpen ?? getStorage(ctx.getUserId())),
     ]);
     // THE GATE, AND IT IS READ BEFORE THE INIT VERDICT ON PURPOSE. A device that is both revoked
     // and carrying an unopenable state has exactly one correct answer, and it is not "enter the PIN
@@ -802,6 +847,9 @@ export async function loginImpl(
     const revoked = revocationAnswer !== null && (await revocationAnswer);
     endBootSpan('revocation-gate', { asked: revocationAnswer !== null });
     if (revoked) {
+      // What the local preview drew comes off the screen BEFORE the wipe, and only once the read is
+      // over - the wipe deletes the store that read was reading.
+      await withdrawLandingPreview('device revoked');
       await wipeRevokedDevice(ctx, cb);
       cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
       throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
@@ -844,6 +892,9 @@ export async function loginImpl(
         throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
       }
       ctx.setDeviceKey(sessionKey);
+      // The keystore path learns its key only here, behind the single prompt and after the gate.
+      // Not awaited before the session flips: the landing selects the row whenever it arrives.
+      startLandingPreview(Promise.resolve(storageSettled.value), sessionKey);
     }
 
     ctx.setStorage(storageSettled.value);
@@ -1220,6 +1271,10 @@ export async function loginImpl(
     // awaits, and a gap between them is the whole defect in miniature.
     cb.beginConversationSource();
     try {
+      // The local preview's write lands BEFORE the rebuild, never after it: a row it added after
+      // the restore would be a stale copy the restore no longer knows about. Long settled by now
+      // on every path - it is one store read, and the gateway was awaited since.
+      if (landingPreview) await landingPreview;
       // Load conversations first: consumeFcmCache can access
       // the conversations Map via addMessageToChat once it is populated.
       beginStartupCatchupPhase('load_conversations');
@@ -1614,6 +1669,9 @@ export async function loginImpl(
     startConnectionWatchdogImpl(ctx, cb);
   } catch (_e: unknown) {
     cancelStartupCatchupBench();
+    // A login that failed shows nothing it drew before the session: the PIN gate, the recovery
+    // modal or the login page come back over the same screen they would have without F1.
+    await withdrawLandingPreview(`login did not complete (${loginErrorCode(_e)})`);
     // THE SHOWN SENTENCE AND THE LOGGED ONE ARE NOT THE SAME STRING, which is the whole of the
     // defect this closes. Six of the throws below this catch are `LoginFailure(code, m.auth_...())`
     // and their message IS the French line the member must read; everything else - a

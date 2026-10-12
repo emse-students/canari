@@ -141,8 +141,15 @@
    * outbox flusher's `waitForMessageQueueIdle` barrier, which is what stops a message being
    * encrypted at a stale epoch and silently dropped by up-to-date peers.
    */
+  /**
+   * The notification landing's target, drawn from the local store while the session is not up yet
+   * (F1, `landingPreview.ts`). The page is shown for it, read-only but for the composer, whose sends
+   * are held until the session is up ({@link whenSessionUp}).
+   */
+  const isLocalPreview = $derived(!session.isLoggedIn && convs.landingPreviewKey !== null);
+
   const isMessagingBlocked = $derived(
-    !session.isLoggedIn || (isSyncing && !hasCachedConversations)
+    (!session.isLoggedIn && !isLocalPreview) || (isSyncing && !hasCachedConversations)
   );
 
   const messagingOverlayMessage = $derived(
@@ -834,6 +841,54 @@
    * goes to the log, where English is correct and where the cause is still recoverable.
    */
   function sendText(text: string, onRefused?: () => void) {
+    whenSessionUp(`text (${text.length} chars)`, () => sendTextNow(text, onRefused));
+  }
+
+  /**
+   * Sends made while the page shows a LOCAL PREVIEW (F1), waiting for the session to come up.
+   *
+   * WHY HELD, AND WHY IN MEMORY. The send path is unchanged and so is its rule: the optimistic echo
+   * and the outbox entry are written in ONE transaction (`saveMessageWithOutboxEntry`), encrypted
+   * before it opens, and only then is anything flushed. That write needs the session's store and
+   * the outbox controller, which `loginImpl` registers in the same synchronous run that sets
+   * `isLoggedIn` - so a send pressed before that instant cannot be made durable yet, and handing it
+   * to the outbox early would be a send with no queue. It is held here instead, in order, and
+   * replayed through the ordinary path by the session coming up (an event, not a timer). If the
+   * preview is withdrawn instead - the login failed, the device was revoked - nothing is sent and
+   * the loss is logged.
+   */
+  let heldSends: Array<{ what: string; run: () => void }> = [];
+
+  function whenSessionUp(what: string, run: () => void) {
+    if (session.isLoggedIn) {
+      run();
+      return;
+    }
+    heldSends.push({ what, run });
+    log(`[LANDING_PREVIEW] ${what} held until the session is up`);
+  }
+
+  $effect(() => {
+    const up = session.isLoggedIn;
+    const previewing = isLocalPreview;
+    if (heldSends.length === 0) return;
+    if (up) {
+      const queued = heldSends;
+      heldSends = [];
+      log(`[LANDING_PREVIEW] session up - sending ${queued.length} held send(s)`);
+      untrack(() => queued.forEach((h) => h.run()));
+      return;
+    }
+    if (previewing) return;
+    const dropped = heldSends;
+    heldSends = [];
+    log(
+      `[LANDING_PREVIEW] preview withdrawn before the session - ${dropped.length} held send(s) NOT sent: ` +
+        dropped.map((h) => h.what).join(', ')
+    );
+  });
+
+  function sendTextNow(text: string, onRefused?: () => void) {
     void messaging
       .handleSendChat(msgCtx(), text)
       .then((delivered) => {
@@ -866,7 +921,9 @@
 
   /** Forwards selected files to the messaging composable for upload. */
   function handleFilesSelected(files: File[]) {
-    void messaging.handleFilesSelected(files, msgCtx());
+    whenSessionUp(`${files.length} file(s)`, () => {
+      void messaging.handleFilesSelected(files, msgCtx());
+    });
   }
 
   /**
@@ -878,9 +935,11 @@
    * nothing ever received.
    */
   function handleSendVoiceNote(file: File) {
-    void messaging.sendVoiceNote(file, msgCtx()).catch((e: unknown) => {
-      convs.sendError = m.chat_send_error_generic();
-      log(`[SEND] sendVoiceNote threw - the recording was NOT queued: ${String(e)}`);
+    whenSessionUp('a voice note', () => {
+      void messaging.sendVoiceNote(file, msgCtx()).catch((e: unknown) => {
+        convs.sendError = m.chat_send_error_generic();
+        log(`[SEND] sendVoiceNote threw - the recording was NOT queued: ${String(e)}`);
+      });
     });
   }
 
@@ -935,6 +994,8 @@
   function handleTyping(isTyping: boolean) {
     const key = convs.selectedContact;
     if (!key) return;
+    // A typing signal is a frame on the session's socket; a local preview has neither (F1).
+    if (!session.isLoggedIn) return;
     if (isSelectedChannel) {
       void channelService.sendTyping(key, isTyping);
       return;
@@ -1136,7 +1197,7 @@
   (`openChannel`, 2026-09-05). Same one-attribute cost as `data-conversation-tile`, same reason.
 -->
 <div class="app-layout" data-route-mode={routeMode} in:fade>
-  {#if session.isLoggedIn}
+  {#if session.isLoggedIn || isLocalPreview}
     <!-- NO BANNERS HERE ANY MORE, and the two that were are why this comment exists. Both said what
          another banner was already saying: "En attente de connexion" duplicated `OfflineBanner` at
          the window scale (offline raised BOTH, three seconds apart), and the synchronisation strip
@@ -1146,7 +1207,10 @@
          at a channel row to the button below it. One fact, one banner, at one scale. -->
     <main class="main-content">
       <!-- Desktop sidebar (always mounted, hidden on mobile when chat is open) -->
-      <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
+      <!-- Not during a local preview: the list is the session's, and its rows act when tapped. -->
+      {#if session.isLoggedIn}
+        <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
+      {/if}
 
       <svelte:boundary onerror={(e) => appendLog(`[UI] ChatArea error recovered: ${e}`)}>
         {#snippet failed(_error, reset)}
@@ -1166,6 +1230,7 @@
         <ChatArea
           currentUserId={session.userId}
           conversation={activeConversation}
+          localPreview={isLocalPreview}
           {messageText}
           isChannel={isSelectedChannel ?? false}
           imageMediaId={activeConversation?.imageMediaId ?? null}

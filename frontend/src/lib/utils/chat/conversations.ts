@@ -781,6 +781,61 @@ export interface LoadConversationsContext {
   log: (msg: string) => void;
   /** Called when the archived-ID set is pruned to remove stale entries. */
   onArchivedIdsChange: (ids: string[]) => void;
+  /**
+   * The one conversation whose in-memory page survives the rebuild's `clear` - the notification
+   * landing's target, drawn from the local store before the session was up. Null keeps none.
+   */
+  preserveMessagesOf?: string | null;
+}
+
+/**
+ * The row a stored conversation is restored as, before any of its messages are read.
+ *
+ * Shared by the startup restore's Phase 1 and the notification landing's local preview, so the
+ * conversation drawn before the session is up is the row the restore then rebuilds - one
+ * derivation, never two that could disagree about its name or its type.
+ *
+ * @param prev what the map already held for this id (UI fields kept across a reload), if anything
+ */
+export function restoredConversationRow(
+  meta: ConversationMeta,
+  userId: string,
+  prev?: Pick<Conversation, 'name' | 'imageMediaId' | 'conversationType' | 'directPeerId'>
+): Conversation {
+  const identity = deriveConversationIdentity(meta.name, userId, meta.id);
+  const resolvedName =
+    prev?.name &&
+    prev.name.trim() &&
+    prev.name !== identity.displayName &&
+    identity.conversationType === 'group'
+      ? prev.name
+      : identity.conversationType === 'direct' && identity.directPeerId
+        ? identity.directPeerId
+        : identity.displayName;
+  return buildConversationRow({
+    id: meta.id,
+    lifecycle: meta.lifecycle,
+    identity: {
+      conversationType: prev?.conversationType ?? identity.conversationType,
+      contactName:
+        identity.conversationType === 'direct' && identity.directPeerId
+          ? identity.directPeerId
+          : identity.contactName,
+      displayName: resolvedName,
+      directPeerId: prev?.directPeerId ?? identity.directPeerId,
+    },
+    imageMediaId: prev?.imageMediaId ?? meta.imageMediaId ?? null,
+    // Seed from DB so the sidebar can sort before messages are loaded.
+    lastMessageAt: meta.updatedAt,
+    // The conversation-level state, restored from the row it was written to. This seed is the
+    // mirror of `toConversationMeta` and has to carry everything that projection writes: a field
+    // persisted but never read back is worse than one that was never stored, because the write
+    // succeeds and the value is silently absent for the rest of the session - the unread recount
+    // below would then count messages this user has already read on another device.
+    readWatermarks: meta.readWatermarks,
+    historyFloor: meta.historyFloor,
+    startedAt: meta.startedAt,
+  });
 }
 
 /**
@@ -833,48 +888,25 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     });
   }
 
+  // THE LANDING TARGET KEEPS THE PAGE ALREADY ON SCREEN (F1, 2026-10-12). A notification landing
+  // draws its conversation from the local store before the session is up, and this rebuild runs
+  // after it: without this, the thread the reader is looking at went blank at the `clear` below and
+  // stayed blank until Phase 2 reached it behind two network round trips. Only that one row, and
+  // only until Phase 2 replaces the page with the same stored one.
+  const keptPage =
+    ctx.preserveMessagesOf && !isChannelConversationId(ctx.preserveMessagesOf)
+      ? ctx.conversations.get(ctx.preserveMessagesOf)?.messages
+      : undefined;
+
   ctx.conversations.clear();
   ctx.messageReactions.clear();
 
   // Phase 1 - fast, immediately usable conversation stubs.
   for (const meta of mergedConvMetas) {
-    const identity = deriveConversationIdentity(meta.name, ctx.userId, meta.id);
-    const prev = snapshot.get(meta.id);
-    const resolvedName =
-      prev?.name &&
-      prev.name.trim() &&
-      prev.name !== identity.displayName &&
-      identity.conversationType === 'group'
-        ? prev.name
-        : identity.conversationType === 'direct' && identity.directPeerId
-          ? identity.directPeerId
-          : identity.displayName;
+    const row = restoredConversationRow(meta, ctx.userId, snapshot.get(meta.id));
     ctx.conversations.set(
       meta.id,
-      buildConversationRow({
-        id: meta.id,
-        lifecycle: meta.lifecycle,
-        identity: {
-          conversationType: prev?.conversationType ?? identity.conversationType,
-          contactName:
-            identity.conversationType === 'direct' && identity.directPeerId
-              ? identity.directPeerId
-              : identity.contactName,
-          displayName: resolvedName,
-          directPeerId: prev?.directPeerId ?? identity.directPeerId,
-        },
-        imageMediaId: prev?.imageMediaId ?? meta.imageMediaId ?? null,
-        // Seed from DB so the sidebar can sort before messages are loaded.
-        lastMessageAt: meta.updatedAt,
-        // The conversation-level state, restored from the row it was written to. This seed is the
-        // mirror of `toConversationMeta` and has to carry everything that projection writes: a field
-        // persisted but never read back is worse than one that was never stored, because the write
-        // succeeds and the value is silently absent for the rest of the session - the unread recount
-        // below would then count messages this user has already read on another device.
-        readWatermarks: meta.readWatermarks,
-        historyFloor: meta.historyFloor,
-        startedAt: meta.startedAt,
-      })
+      keptPage && meta.id === ctx.preserveMessagesOf ? { ...row, messages: keptPage } : row
     );
   }
 

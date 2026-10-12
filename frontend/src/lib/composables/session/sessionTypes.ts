@@ -34,6 +34,18 @@ export interface ChatSessionCallbacks {
    */
   beginConversationSource: () => void;
   endConversationSource: () => void;
+  /**
+   * Draws the notification landing's target from the local store (F1). Called with the open store
+   * and the device key the moment the login holds both - on the vault path, before the token and
+   * the revocation answer. Reads only; see `landingPreview.ts`.
+   */
+  previewLandingTarget?: (input: {
+    storage: IStorage;
+    deviceKeyB64: string;
+    userId: string;
+  }) => Promise<void>;
+  /** Removes whatever {@link previewLandingTarget} drew: the login that started it did not finish. */
+  discardLandingPreview?: (reason: string) => void;
   addMessageToChat: (
     senderId: string,
     content: string,
