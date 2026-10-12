@@ -318,10 +318,6 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 10 of 28 avatar reads answered 404 on one load. The client already keeps the absence for the session; removing the first ask needs the user record to say whether a photo exists, which only MiGallery knows.
 
-## P3 - an expired poll stays in the open-poll list until the conversation changes (found reviewing #1773, 2026-10-12)
-
-`ChatArea.svelte` `activePolls` (~:528) compares each poll's `endsAt` with `Date.now()` inside a `$derived`; a clock is not a dependency, so the list only refreshes when its inputs change. Before #1773 any message in ANY conversation re-ran it, which hid this; once the open conversation is read by its own key, a poll whose deadline passes stays listed until the open conversation itself changes. **Closed by draft #1783** (`utils/chat/activePolls.ts` on `pollDeadlineClock`, one timer armed from the stored end date): delete this entry when #1783 lands.
-
 ## Seen in the 2026-10-12 heavy-state performance audit - what is open
 
 Ranked, measured and located on [performance-audit-2026-10-12](frontend/performance-audit-2026-10-12.md); five draft pull requests carry the rest (#1771-#1775).
@@ -1103,7 +1099,7 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 | #1770 F1, a notification opens from the local store | draft, conflicting | PIN-adjacent: a phone reading; kept out of a stable while the user is away |
 | #1777 PIN salt asked ahead | draft | a phone reading; kept out of a stable while the user is away |
 | #1778 history drawn first, #1779 no group check before a send | drafts | #1779 under adversarial review |
-| #1773 the open conversation read by its own key | draft, conflicting | a rebase |
+| #1773 the open conversation read by its own key | draft, merged with main | adversarial review |
 | #1785 a salon re-read once per drain | draft | review |
 | #1783 polls, #1784 double tap | drafts | review |
 | #1542 the run-locally rule | conflicting | a rebase |
