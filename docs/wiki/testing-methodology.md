@@ -1994,7 +1994,8 @@ So when a line lands in `unexplained`, the unit of work is its SITE, never the l
 **And check the LEVEL the app writes it at.** `console.warn` has its own bucket, reported but
 non-breaking by design, so a line that names a defect and is written at `warn` is silent until a
 `SEVERE` rule claims it. `[QUEUE] endBulkIngest without a matching beginBulkIngest - ignored` sat
-there: an unpaired close means an observer's window shut against a phase it did not open, which the
+there (spelled `[QUEUE] endBulkIngest for window N, which is not open - ignored (closed twice?)`
+since windows close by handle, 2026-10-12 - the rule moved with it): an unpaired close means an observer's window shut against a phase it did not open, which the
 code's own comment describes as stranding the message pipeline for the rest of the session.
 
 ### AND IT APPLIES TO EVERY CHECK OF EVERY PHASE - which was measured, and was not true

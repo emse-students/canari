@@ -899,6 +899,14 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     );
   }
 
+  // EVERY ROW THIS RESTORE WILL CREATE EXISTS NOW, so a frame refused for lack of one can be asked
+  // for again here rather than after phase 2 - the message a notification opened the app for used
+  // to wait for every conversation's history replay. Phase 2 is safe against what this delivers
+  // because each of its writes below MERGES into the row instead of replacing it, and each archive
+  // replay waits for this pull at its barrier (see `notifyConversationRowsSeeded`).
+  ctx.log(`[RESTORE] ${ctx.conversations.size} conversation row(s) seeded - history follows`);
+  ctx.mlsService.notifyConversationRowsSeeded();
+
   // Phase 2 - decrypt stored messages + replay remote history.
   // Serialised (not parallel) because replayConversationHistory calls the shared
   // WASM MLS client which is not safe to invoke concurrently.
@@ -967,9 +975,18 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
                 ctx.userId,
                 ctx.log
               );
-              if (peer && peer !== self) {
+              // RE-READ AFTER THE AWAIT: a live delivery may have written this row while the roster
+              // was being asked, and spreading the copy read before it would erase that message.
+              const latest = ctx.conversations.get(meta.id);
+              if (!latest) {
+                // Every swallowed branch logs: the row left the map while its roster was asked
+                // (a leave, a delete or an account switch), so there is nothing left to repair.
+                ctx.log(
+                  `[RESTORE] DM repair skipped for ${meta.id} - the conversation vanished while its peer was resolved`
+                );
+              } else if (peer && peer !== self) {
                 ctx.conversations.set(meta.id, {
-                  ...existingConvo,
+                  ...latest,
                   conversationType: 'direct',
                   directPeerId: peer,
                   contactName: peer,
@@ -1001,7 +1018,12 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         const preReplayMsgIds = new Set(msgs.map((m) => m.id));
         const existing = ctx.conversations.get(meta.id);
         if (existing && msgs.length > 0) {
-          ctx.conversations.set(meta.id, { ...existing, messages: msgs });
+          // MERGED, NEVER ASSIGNED (`mergeMessagePage`): the rows are seeded before this read, so a
+          // message delivered live since then is already on the row and is not in this page.
+          ctx.conversations.set(meta.id, {
+            ...existing,
+            messages: mergeMessagePage(existing.messages, msgs),
+          });
 
           // Restore reactions into the shared messageReactions map
           for (const m of msgs) {

@@ -563,6 +563,19 @@ channel id, migration 066), one instant per reader, only ever raised.
 The client merges both into the conversation's `readWatermarks`, so "Lu par", the avatars and `+N`
 render through exactly the group code. No read tone for a salon.
 
+**A salon row is dated by its `createdAt` on EVERY client path (2026-10-12)**, because every mark is
+on that clock. Until then the live path (`channel.message.created`) dated a row by `createdAt` and the
+history load (`decodeChannelMessageRow`) dated the SAME row by the author's `sentAt`; the merge takes
+the page's copy, so the row's key flipped with whichever path wrote it last. When the author's clock
+LEADS the server's, `sentAt > createdAt` and the row lands past the mark of everyone who read it (the
+server bounds a mark by the newest row's `createdAt`): the "seen by" heads under the last message
+vanished at every history load and came back with the next live write - the flicker the user
+reported. Measured in prod the same day: 207 `[CHANNEL_READ] mark past the newest message bounded`
+in seven days, 26 distinct messages, 59 readers, gap 0.1 s to over 10 s (193 under 1 s). The same
+skew made the reader's own device re-POST the identical mark at every load, since its own mark (the
+server's, `createdAt`) never reached the row's `sentAt` key. Pinned by `salonRowClock.test.ts` (heads
+under the last message: 2 before the reload, 2 after; 0 before the fix).
+
 **"Mark as read" from a salon NOTIFICATION, app shut (Android, 2026-10-10).** A shut phone has no session, so the two public calls above are out of reach. Its action calls chat-delivery's `POST /api/mls/push/channel-read` `{ userId, deviceId, channelId, at }` under `Authorization: PushSecret` (which proves the caller is a device of `userId`); chat-delivery forwards it with `x-internal-secret` to `POST /api/internal/channels/:channelId/read` (`InternalChannelReadController`, never exposed by the edge), which runs `advanceChannelReadMark` (membership still checked here, `at` bounded by the newest message) and then `markChannelRead` so the user's other devices clear their banner. `at` is the notification's own `createdAt`, never the phone's clock. A refused or failed call is logged on both sides (`[CHANNEL_READ_PUSH]`) and never retried: the banner is already gone locally and the receipt rises the next time the salon is opened. Reply is NOT offered on a salon: see [mobile](../frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android).
 
 **Unread counts (2026-10-08).** `GET /api/channels/unread-counts` answers `{ asOf, counts: { [channelId]: n } }`

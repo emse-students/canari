@@ -26,6 +26,7 @@ export type { ChatSessionCallbacks } from './session/sessionTypes';
 
 import {
   loginImpl,
+  prefetchPinSaltImpl,
   logoutImpl,
   nativeStorageLoginImpl,
   biometricLoginImpl,
@@ -421,6 +422,11 @@ export function useChatSession() {
     ensureMls,
     /** Runs the full login flow (PIN verify, MLS init, DB open, WS connect). */
     login: (cb: import('./session/sessionTypes').ChatSessionCallbacks) => loginImpl(ctx, cb),
+    /**
+     * Starts the PIN salt round trip while the keypad is up, so the submit does not wait for it.
+     * Only for a returning user: see {@link prefetchPinSaltImpl}.
+     */
+    prefetchPinSalt: (log: (msg: string) => void) => prefetchPinSaltImpl(ctx, log),
     /** On Tauri/Android without biometrics, reads PIN from push_context.json and logs in silently. */
     nativeStorageLogin: (
       cb: import('./session/sessionTypes').ChatSessionCallbacks,
