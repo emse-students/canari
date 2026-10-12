@@ -87,9 +87,26 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
   centred however wide it is. Its `plain` variant is the same menu without glass: the website's phone
   paperclip. An entry with an on/off state (search, members) is a `menuitemcheckbox`.
 
+- **The polls and pinned bars are glass pills too (user, 2026-10-12)** - they were opaque white
+  full-width bars across the middle of the glass chrome. In the apps' narrow layout each trigger
+  ("N sondages actifs", "N messages epingles") is a pill centred under the title pill: the
+  `.glass-chrome` recipe, the pill corner, one step smaller than the title (13px text, 36px tall),
+  6px apart. The list it opens (navigate to an item, unpin it) is a glass panel at the larger-card
+  corner (`--radius-2xl`), as `GlassMenuButton`'s panel is, and it takes pointer events itself, so a
+  touch between its rows no longer falls through to the thread. All of it is CSS on three class
+  names `ChatArea` puts on the existing markup (`.chat-chrome-strip`, `.chat-chrome-bar`,
+  `.chat-chrome-panel`, styled under `.chat-glass-chrome` in `app.css`); the click handlers are
+  untouched and the website, and the apps' wide layout, keep the opaque bars.
+  `chatChromeBarsGlass.test.ts` reads the rules and the markup. **They stay CSS glass on iOS, by
+  decision:** a native twin is one UIButton, and these open a list with a per-row unpin that no
+  native button can carry - doubling the trigger alone would put native glass beside a CSS panel
+  hanging from it. Measured on the real `ChatArea` at 390x780, light and dark, with two polls and
+  one to three pins; not measured in the apps themselves.
+
 **On iOS the four pieces are real Liquid Glass** (WP-G2): each is doubled by a native glass button
 drawn at its rect, the web piece kept as its invisible geometry, and the menus are native
-([mobile](../mobile.md#the-conversations-native-glass-chrome)).
+([mobile](../mobile.md#the-conversations-native-glass-chrome)). The polls and pinned bars are not
+doubled (above).
 
 **Measured** on the real `ChatArea` with a stand-in group at 390x780, Chromium, light and dark: in
 the glass mode the thread scrolls under the three pieces, the menu hangs from the "..." (right edges
