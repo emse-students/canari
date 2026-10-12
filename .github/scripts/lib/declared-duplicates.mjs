@@ -90,12 +90,21 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
-    what: 'the Stripe callback URL allowlist',
+    what: 'the rendering of a failed outbound HTTP call for a log line, and its spec',
     compare: 'exact',
-    why: 'an allowlist deciding where a payment may return to; two services build those URLs and a divergence would let one accept a destination the other refuses',
+    why: 'an AxiosError carries the x-internal-secret header of the call; both services call each other and a divergence would let one of them log it again. No shared TS package exists, so the copies and the spec that proves they leak nothing are identical.',
     files: [
-      'apps/core-service/src/payment/stripe-callback-url.ts',
-      'apps/social-service/src/common/stripe-callback-url.ts',
+      'apps/core-service/src/common/http-error-log.ts',
+      'apps/social-service/src/common/http-error-log.ts',
+    ],
+  },
+  {
+    what: 'the spec of the failed-call log renderer',
+    compare: 'exact',
+    why: 'a copied module needs a copied test beside it, or one service asserts the no-leak property and the other only inherits the file',
+    files: [
+      'apps/core-service/src/common/http-error-log.spec.ts',
+      'apps/social-service/src/common/http-error-log.spec.ts',
     ],
   },
   {

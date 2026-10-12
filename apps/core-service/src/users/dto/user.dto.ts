@@ -76,11 +76,6 @@ export class CreateUserDto {
   @IsString()
   @IsOptional()
   formation?: string;
-
-  /** Stripe customer ID, set on first payment. */
-  @IsString()
-  @IsOptional()
-  stripeCustomerId?: string;
 }
 
 /**
@@ -98,11 +93,6 @@ export class UpdateUserDto {
   @MaxLength(500)
   @IsOptional()
   bio?: string;
-
-  /** Stripe customer ID, updated when a new Stripe customer is created. */
-  @IsString()
-  @IsOptional()
-  stripeCustomerId?: string;
 }
 
 /** Payload for updating the caller's private personal notepad. */

@@ -1,6 +1,8 @@
 import {
   computeSnapshot,
   hasVirtualKeyboard,
+  keyboardSafeAreaBottomOverride,
+  pinSafeAreaBottom,
   type ViewportMeasurement,
 } from './keyboardViewport.svelte';
 
@@ -121,5 +123,72 @@ describe('computeSnapshot - keyboardHeight', () => {
     expect(
       computeSnapshot(measure({ vvHeight: 400, scale: 2 }), baseline, IOS_THRESHOLD).keyboardHeight
     ).toBe(0);
+  });
+});
+
+describe('computeSnapshot - the Android double report (Mi 9T, 2026-10-02)', () => {
+  const ANDROID_THRESHOLD = 160;
+  const androidBaseline = 945;
+
+  it('reads a visual viewport that counts the keyboard again as the layout viewport', () => {
+    // 945 - 357 = 588: the layout already gave up the keyboard's room; the visual viewport then
+    // read 230 = 588 - 358 for 60-100 ms. Trusted, it pinned the shell at 230 and the composer
+    // jumped 358 px up and back.
+    const snap = computeSnapshot(
+      { winH: 588, vvHeight: 230, offsetTop: 0, scale: 1 },
+      androidBaseline,
+      ANDROID_THRESHOLD
+    );
+    expect(snap.isOpen).toBe(true);
+    expect(snap.viewportHeight).toBe(588);
+    expect(snap.insetBottom).toBe(0);
+    expect(snap.layoutInsetBottom).toBe(0);
+    expect(snap.keyboardHeight).toBe(357);
+  });
+
+  it('gives the same snapshot before and during the double report', () => {
+    const settled = computeSnapshot(
+      { winH: 588, vvHeight: 588, offsetTop: 0, scale: 1 },
+      androidBaseline,
+      ANDROID_THRESHOLD
+    );
+    const doubled = computeSnapshot(
+      { winH: 588, vvHeight: 230, offsetTop: 0, scale: 1 },
+      androidBaseline,
+      ANDROID_THRESHOLD
+    );
+    expect(doubled).toEqual(settled);
+  });
+
+  it('leaves a pan alone: the layout did not shrink, so a short visual viewport is real', () => {
+    const snap = computeSnapshot(
+      { winH: androidBaseline, vvHeight: 588, offsetTop: 0, scale: 1 },
+      androidBaseline,
+      ANDROID_THRESHOLD
+    );
+    expect(snap.viewportHeight).toBe(588);
+    expect(snap.insetBottom).toBe(357);
+  });
+});
+
+describe('keyboardSafeAreaBottomOverride and pinSafeAreaBottom - the iOS stale inset', () => {
+  it('pins 0 only while an iOS keyboard is open', () => {
+    expect(keyboardSafeAreaBottomOverride(true, 'ios')).toBe('0px');
+    expect(keyboardSafeAreaBottomOverride(false, 'ios')).toBeNull();
+    expect(keyboardSafeAreaBottomOverride(true, 'android')).toBeNull();
+  });
+
+  it('puts back the inline value it replaced (app.html pins 0px outside Tauri)', () => {
+    const root = document.createElement('div').style;
+    root.setProperty('--safe-area-inset-bottom', '12px');
+    pinSafeAreaBottom(root, '0px');
+    expect(root.getPropertyValue('--safe-area-inset-bottom')).toBe('0px');
+    pinSafeAreaBottom(root, null);
+    expect(root.getPropertyValue('--safe-area-inset-bottom')).toBe('12px');
+
+    const bare = document.createElement('div').style;
+    pinSafeAreaBottom(bare, '0px');
+    pinSafeAreaBottom(bare, null);
+    expect(bare.getPropertyValue('--safe-area-inset-bottom')).toBe('');
   });
 });

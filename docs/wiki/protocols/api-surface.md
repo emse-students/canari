@@ -304,7 +304,7 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | POST | `/api/payments/onboarding` | JWT | Start Stripe Connect onboarding |
 | GET | `/api/payments/connect-status/:associationId` | JWT | Stripe Connect status |
 | POST | `/api/payments/connect-dashboard-link/:associationId` | JWT | Stripe Dashboard link |
-| POST | `/api/payments/create-checkout-session` | JWT | Create Checkout session |
+| POST | `/api/payments/create-checkout-session` | InternalSecret | Create Checkout session (social-service only) |
 | POST | `/api/payments/verify-session` | JWT | Verify completed checkout |
 | POST | `/api/payments/cancel-session` | JWT | Cancel unpaid checkout |
 | POST | `/api/payments/setup-payment-method` | JWT | Setup saved card |

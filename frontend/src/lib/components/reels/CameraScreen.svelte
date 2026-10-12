@@ -1,7 +1,8 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   /**
-   * The CanaReels camera tab (C5): a full-screen preview, the app's own - never the system camera.
+   * The CanaReels camera tab (C5): the app's own preview - never the system camera - in the ONE reel frame (`ReelFrame`, 9:16),
+   * so the recorded file has the ratio the review, the editor and the viewer draw.
    *
    * It owns the preview and the three states around it (opening, refused, live); recording is the
    * `controls` snippet's, so the shutter can be built and tested apart from the device.
@@ -24,6 +25,7 @@
   import type { CameraFault } from '$lib/reels/cameraAccess';
   import {
     FramedStream,
+    shouldMirrorCapture,
     takeFramedPhoto,
     type CameraCapture,
     type PreviewBox,
@@ -31,6 +33,7 @@
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
+  import ReelFrame from './ReelFrame.svelte';
 
   interface Props {
     /** The session, injectable for tests; the route lets the component make its own. */
@@ -92,12 +95,13 @@
       width: el.clientWidth,
       height: el.clientHeight,
       dpr: window.devicePixelRatio || 1,
+      mirror: shouldMirrorCapture(session.facing),
     };
   }
 
   /**
-   * What the shutter can take. Both captures are the PREVIEW'S crop and are never mirrored (the
-   * mirror is a CSS transform on the element, which a canvas read of its frame ignores).
+   * What the shutter can take. Both captures are the PREVIEW'S crop, drawn mirrored on the front lens
+   * exactly as the preview is (the CSS mirror is invisible to a canvas read, so the capture does it).
    */
   capture = {
     get ready() {
@@ -215,31 +219,33 @@
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
 >
-  <!-- The front lens is mirrored as every camera app shows it; the saved photo and take are not (they
-       are drawn from the decoded frame, which this CSS transform never touches, framedCapture.ts).
+  <!-- The front lens is mirrored as every camera app shows it; the saved photo and take are drawn
+       mirrored too (a canvas read of the decoded frame ignores this CSS transform, framedCapture.ts).
        THE ELEMENT IS KEYED BY THE STREAM: WKWebView keeps a <video> element's media layer at the size
        of its FIRST layout, so an element handed a second stream after the app came back from the
        background drew a ~65 % letterboxed rectangle while its CSS box stayed 390x844 and
        `object-fit: cover` - any style change healed it, a fresh element never had it (iPhone 12,
        2026-10-02, reproduced 5 of 5 on a home-and-return, 0 of 40 without). One element per stream
        is the state the engine gets right. -->
-  {#key session.stream}
-    <video
-      bind:this={video}
-      class="absolute inset-0 h-full w-full object-cover {session.facing === 'user'
-        ? '-scale-x-100'
-        : ''} {session.phase === 'live' && frameReady
-        ? 'opacity-100'
-        : 'opacity-0'} transition-opacity duration-200 motion-reduce:transition-none"
-      poster={TRANSPARENT_VIDEO_POSTER}
-      onloadeddata={onFrame}
-      onplaying={onFrame}
-      autoplay
-      muted
-      playsinline
-      aria-hidden="true"
-    ></video>
-  {/key}
+  <ReelFrame>
+    {#key session.stream}
+      <video
+        bind:this={video}
+        class="absolute inset-0 h-full w-full object-cover {session.facing === 'user'
+          ? '-scale-x-100'
+          : ''} {session.phase === 'live' && frameReady
+          ? 'opacity-100'
+          : 'opacity-0'} transition-opacity duration-200 motion-reduce:transition-none"
+        poster={TRANSPARENT_VIDEO_POSTER}
+        onloadeddata={onFrame}
+        onplaying={onFrame}
+        autoplay
+        muted
+        playsinline
+        aria-hidden="true"
+      ></video>
+    {/key}
+  </ReelFrame>
 
   <!-- Canari's stand-in for everything between the swipe and the first frame: a dark surface of the
        app's own, so the engine's placeholder is never seen. It stays mounted and fades out as the

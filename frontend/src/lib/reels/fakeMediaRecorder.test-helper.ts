@@ -5,7 +5,11 @@
 import { vi } from 'vitest';
 
 export class FakeMediaRecorder {
-  static supported = new Set<string>(['video/webm;codecs=vp9,opus', 'video/mp4;codecs=avc1,mp4a']);
+  static supported = new Set<string>([
+    'video/webm;codecs=h264,opus',
+    'video/webm;codecs=vp9,opus',
+    'video/mp4;codecs=avc1,mp4a',
+  ]);
   static instances: FakeMediaRecorder[] = [];
   static isTypeSupported(type: string): boolean {
     return FakeMediaRecorder.supported.has(type);

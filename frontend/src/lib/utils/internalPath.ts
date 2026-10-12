@@ -60,3 +60,36 @@ export function appPathFromPathname(pathname: string): string {
 export function loginReturningTo(pathname: string, search: string, hash: string): string {
   return `/login?returnTo=${encodeURIComponent(appPathFromPathname(pathname) + search + hash)}`;
 }
+
+/**
+ * Whether a base-less app path is one a signed-out visitor may stand on: the sign-in flow, the
+ * legal pages and a public form's guest page (`/f/`). The root layout's guard skips them, and the
+ * login redirect must never carry one as its `returnTo` (it would bounce back to itself).
+ */
+export function isSignedOutPath(path: string): boolean {
+  return (
+    path.startsWith('/login') ||
+    path.startsWith('/auth') ||
+    path.startsWith('/legal') ||
+    path.startsWith('/f/')
+  );
+}
+
+/**
+ * Where a DEAD session sends the user: `/login`, carrying the page the user was going to.
+ *
+ * `target` is the page being navigated TO when a navigation is in flight (a tapped notification
+ * publishes its route with `goto`, and the layout's `load` is what discovers the 401), otherwise the
+ * page shown. Reading only the page shown lost a post push tapped from a killed app whose session
+ * was gone: the refresh answered 401 while the deep link's navigation was still pending, the handler
+ * went to a bare `/login`, and the target was dropped (Mi 9T, 2026-10-08). The root and the sign-in
+ * pages have nothing worth returning to, so they stay bare.
+ */
+export function loginAfterSessionExpiry(
+  target: { pathname: string; search: string; hash: string } | null | undefined
+): string {
+  if (!target) return '/login';
+  const path = appPathFromPathname(target.pathname);
+  if (path === '/' || isSignedOutPath(path)) return '/login';
+  return loginReturningTo(target.pathname, target.search, target.hash);
+}

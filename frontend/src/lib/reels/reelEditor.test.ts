@@ -24,9 +24,7 @@ describe('renderEditedReelMedia', () => {
       translate: vi.fn(),
       rotate: vi.fn(),
     } as unknown as CanvasRenderingContext2D);
-    vi.spyOn(canvas, 'toBlob').mockImplementation((callback) =>
-      callback(new Blob(['edited'], { type: 'image/webp' }))
-    );
+    vi.spyOn(canvas, 'toDataURL').mockReturnValue(`data:image/webp;base64,${btoa('edited')}`);
     const image = { naturalWidth: 120, naturalHeight: 80 } as HTMLImageElement;
     vi.stubGlobal(
       'Image',

@@ -7,6 +7,7 @@ import { nearViewport } from './nearViewport';
  */
 class FakeObserver {
   static last: FakeObserver | null = null;
+  static all: FakeObserver[] = [];
   observed: Element[] = [];
   disconnected = 0;
 
@@ -15,6 +16,7 @@ class FakeObserver {
     readonly options?: IntersectionObserverInit
   ) {
     FakeObserver.last = this;
+    FakeObserver.all.push(this);
   }
 
   observe(el: Element) {
@@ -46,6 +48,7 @@ const realObserver = globalThis.IntersectionObserver;
 
 function useFakeObserver() {
   FakeObserver.last = null;
+  FakeObserver.all = [];
   vi.stubGlobal('IntersectionObserver', FakeObserver);
 }
 
@@ -130,6 +133,71 @@ describe('nearViewport', () => {
 
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * TWO-WAY WHEN THE CALLER HAS SOMETHING TO GIVE BACK: a feed video releases its stream and its
+   * decoder on leaving the band, and takes them again on return (reels audit, 2026-10-11).
+   */
+  it('with onleave, stays connected and reports each entry and each exit once', () => {
+    useFakeObserver();
+    const onnear = vi.fn();
+    const onleave = vi.fn();
+    nearViewport(document.createElement('a'), { onnear, onleave });
+    const [near, far] = FakeObserver.all;
+
+    far.leave();
+    expect(onleave).not.toHaveBeenCalled();
+
+    near.enter();
+    near.enter();
+    far.leave();
+    far.leave();
+    near.enter();
+
+    expect(onnear).toHaveBeenCalledTimes(2);
+    expect(onleave).toHaveBeenCalledTimes(1);
+    expect(near.disconnected + far.disconnected).toBe(0);
+  });
+
+  /**
+   * HYSTERESIS (review of #1744): with one edge, a card resting on it reopened its stream and
+   * refetched its 2 MiB head on every small scroll. It leaves only past a FARTHER edge.
+   */
+  it('leaves only past a farther edge than the one it entered by', () => {
+    useFakeObserver();
+    const onnear = vi.fn();
+    const onleave = vi.fn();
+    nearViewport(document.createElement('a'), { onnear, onleave });
+    const [near, far] = FakeObserver.all;
+
+    expect(near.options?.rootMargin).toBe('400px');
+    expect(far.options?.rootMargin).toBe('1200px');
+
+    near.enter();
+    // Back out past the entry edge, still inside the exit edge: the near observer reports it,
+    // and nothing is given back.
+    near.leave();
+    near.enter();
+    expect(onleave).not.toHaveBeenCalled();
+    expect(onnear).toHaveBeenCalledTimes(1);
+
+    far.leave();
+    expect(onleave).toHaveBeenCalledTimes(1);
+  });
+
+  it('observes in the scrolling box the node moves in, so the margin is not clipped away', () => {
+    useFakeObserver();
+    const scroller = document.createElement('div');
+    scroller.style.overflowY = 'auto';
+    const node = document.createElement('a');
+    scroller.appendChild(node);
+    document.body.appendChild(scroller);
+
+    nearViewport(node, { onnear: () => {} });
+
+    expect(FakeObserver.last?.options?.root).toBe(scroller);
+    scroller.remove();
   });
 
   /**

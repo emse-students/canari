@@ -307,6 +307,48 @@ can name a device, and a holder who never unlocks MLS never names one at all - w
 stolen cookie takes. The settings panel gives such a row its own entry instead of hiding it under a
 device it cannot claim.
 
+## A dead session sends the user to `/login` carrying where they were going (2026-10-09)
+
+A post push tapped from a KILLED app whose session had been deleted server-side landed on a bare
+`/login` (Mi 9T, 2026-10-08): the deep link's `goto('/post/<id>')` ran the root layout's `load`, whose
+refresh answered 401, and `handleSessionExpired` (`ChatBackgroundService`) then went to `/login`
+without a `returnTo` - and while that navigation is in flight the page SHOWN is still `/`. The
+handler now reads `navigating.to?.url` (else the current location) through `loginAfterSessionExpiry`
+(`utils/internalPath.ts`, tested) BEFORE `clearAuth` awaits, so the same `returnTo` the layout's own
+redirect would have built survives; the root and the sign-in pages stay bare. Source guard:
+`sessionExpiredRelease.test.ts`. The hardware reading is [check H](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android), step 4.
+
+## A token that names another account than the local identity is refused (2026-10-10)
+
+The MLS identity (`canari_saved_user`, the `userId` the WASM client is initialised with) comes from
+local state; the session the server sees is the access token's `sub`. Two writers, nothing
+comparing them: a bench phone ran with Alpha's identity and Delta's credential, the gateway
+registered the socket as Delta carrying Alpha's device id, every send/history/seed request answered
+`403 AUTHZ FAIL caller != requester`, and live frames were routed to an offline account.
+
+**One comparison, where a token is obtained** (`_doRefresh` in `stores/auth.ts`, through
+`checkTokenIdentity` in `stores/tokenIdentity.svelte.ts`, ids compared case-insensitively). With no
+local id, or an unreadable token, there is nothing to compare and the token is used. On a mismatch:
+
+- the token is **not published** (no memory copy, no `canari_ws_token` cookie) and the rotation is
+  still persisted, so the sign-out that follows can revoke the session;
+- the verdict is **latched** and `refresh()` throws `IdentitySplitError` without asking the server
+  again (a request would only rotate the credential for the same verdict); `apiFetch` does not
+  retry anonymously, the reconnect ladder stops, `loginImpl` stops, `promoteOfflineSession` stays
+  offline, and the outbox's `canFlush` gate reads it;
+- the console line **accuses** with both ids and nothing else (`IDENTITY SPLIT: ...`);
+- **nothing is wiped.** The MLS state belongs to whoever signs in as the right account;
+- `IdentitySplitOverlay` (mounted in the root layout) blocks the app with ONE action, the ordinary
+  sign-out (`clearAuth()` then `/login`). `clearAuth` and a new OIDC callback lift the latch.
+
+**A 403 on a send is an answer, classified at the throw.** `postApplicationMessage` raises
+`SendForbiddenError` (an `ApiRefusalError`, status 403) for every 403 that is not
+`sender_not_active`; the outbox reads the status from the type, keeps the entry (nothing the user
+wrote is lost), parks it for that controller's life and logs it as an error. A restart earns one more
+attempt per entry, a sign-in builds a new controller. A 5xx still climbs the backoff ladder. Tests:
+`auth.test.ts`, `tokenIdentity.svelte.test.ts`, `mlsDeliveryApi.forbidden.test.ts`,
+`outbox.test.ts`. HOW the split is produced is open: [backlog](backlog.md).
+
 ## Keys
 
 - **An empty key can fail OPEN or CLOSED and you cannot guess which.** `crypto.createHmac('sha256','')`
@@ -321,6 +363,12 @@ device it cannot claim.
 - **Never `JWT_OLD_SECRET`.** Its second step - removing the old value - is invisible and never
   taken, and it is backwards for the case you rotate in. Rotating the signing secret is the hard cut;
   the everyday lever is the session row.
+
+## The native refresh credential could live in the platform keychain, on both platforms (2026-08-27)
+
+Not a defect, a strict improvement deliberately not bundled with the fix that needed shipping; the open line is in [backlog](backlog.md). Today the credential sits in a file inside the app sandbox - the Chromium cookie file on Android, a `@tauri-apps/plugin-store` file on `tauri://localhost` (see the credential section above). Both are protected by the OS at the container level and neither is encrypted as a secret. iOS Keychain and Android Keystore / `EncryptedSharedPreferences` are better, and the same argument applies to each.
+
+**What blocks it from being trivial**: `patches/tauri-plugin-keystore` already reaches the iOS keychain, but builds `SecAccessControlCreateWithFlags` with BIOMETRIC flags because it guards the MLS device key - reading it raises Face ID, which cannot sit in front of every cold start. It needs a second, non-biometric command in the vendored plugin (`kSecAttrAccessibleAfterFirstUnlock`), Kotlin parity so the Android build still links, a permission entry and an iOS build to verify - none of it measurable from a workstation. **Do not start it as a security fix**: the current posture is the one Android has always had and the user has accepted; do it when native work is happening anyway.
 
 ## Impersonation
 
@@ -338,3 +386,12 @@ design. An audit trail names the account that ACTED, so it reads the real user, 
   `synchronize` in dev and the prod migration stop describing the same table. Generate it in Node.
 - **Take the client IP from the LAST `X-Forwarded-For` entry.** nginx APPENDS the connecting address
   to whatever the client sent, so the head of the list is attacker-controlled.
+- **An upload that meets a 401 refreshes and retries ONCE; it never ends the session.** The media
+  upload takes a token its caller read BEFORE a long encryption, so a 401 is usually a stale copy.
+  `fetchUpload` in `frontend/src/lib/media.ts` (every `MediaService` upload route) renews through the
+  single-flight `refresh()` and resends; only a 401 on the FRESH token throws `SessionExpiredError`,
+  and a failed refresh is rethrown as it came. Prod 2026-10-06: 9 `POST /api/media/upload` 401 in 30 h
+  from a web client, each followed by logout and sign-in. The salon branch's stale `ctx.authToken`
+  copy (#1472) and the post forms (#1477) fixed WHO hands the token; this fixes the token expiring
+  between the hand-over and the request, for every caller including reels and avatars. Test:
+  `media.uploadRefreshRetry.test.ts`.

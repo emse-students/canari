@@ -30,30 +30,20 @@ const blobs = new BlobUrlPool({ evictDelayMs: 0, maxEntries: Infinity });
 const inFlightByUrl = new Map<string, Promise<AvatarDisplay>>();
 
 /**
- * How long a 404 is believed. It is the `max-age` the server itself puts on an absence
- * (`users.controller.ts`, `absent`), not a number chosen here: the browser's HTTP cache was meant to
- * honour it and measurably did not (HAR 2026-10-05: 80 repeated 404s for 7 users, 11-12 times
- * each), so this module keeps the SAME answer for the SAME lifetime.
+ * The avatar URLs the server answered 404 for: there is no photo, and nobody is asked again.
+ *
+ * NO TIMER, BY DECISION (user, 2026-10-06; production 2026-10-04..06: 5121 of 6587 avatar requests
+ * in 30 h were 404 retries). A 10-minute lifetime used to bound it, mirroring the server's own
+ * `max-age`, and it was a clock deciding whether to send traffic: a wrong clock meant more requests.
+ * An absence now lives until the page does, or until the signed-in reader changes
+ * ({@link registerPerReaderCache} clears it) - the two events this client actually sees.
  *
  * WHAT WOULD MAKE A HELD ABSENCE WRONG: the user adds a photo. That happens in MiGallery, outside
- * Canari - no Canari screen uploads a user photo and nothing here is told - so there is no event
- * to invalidate on, and the lifetime is the whole bound: the same 10 minutes the server already
- * declared. The reader changing is the one event this client does see ({@link
- * registerPerReaderCache}), and it clears the map.
+ * Canari, and nothing here is told; the initials stay until the next load of the app, which is the
+ * accepted cost. The id changing needs no event: the URL is the key.
  */
-const ABSENCE_TTL_MS = 10 * 60 * 1000;
-/** Canonical avatar URL -> when the server's "there is no photo" stops being believed. */
-const absentUntilByUrl = new Map<string, number>();
-registerPerReaderCache(() => absentUntilByUrl.clear());
-
-/** True while the server's 404 for this URL is still inside {@link ABSENCE_TTL_MS}. */
-function isKnownAbsent(url: string): boolean {
-  const until = absentUntilByUrl.get(url);
-  if (until === undefined) return false;
-  if (until > Date.now()) return true;
-  absentUntilByUrl.delete(url);
-  return false;
-}
+const absentUrls = new Set<string>();
+registerPerReaderCache(() => absentUrls.clear());
 
 /**
  * What to draw for one avatar, and where the bytes are.
@@ -88,10 +78,8 @@ async function loadAvatar(url: string, subjectUserId: string | undefined): Promi
       // ONLY A 404 IS AN ANSWER ABOUT THE PHOTO. A 502 `unavailable` says nothing about whether there
       // is one, so remembering it would turn an outage into minutes of initials.
       if (fetched.status === 404) {
-        const now = Date.now();
-        for (const [held, until] of absentUntilByUrl)
-          if (until <= now) absentUntilByUrl.delete(held);
-        absentUntilByUrl.set(url, now + ABSENCE_TTL_MS);
+        absentUrls.add(url);
+        Log.d('AvatarCache', `404 for ${url}: absent for the rest of the session`);
       }
       return { kind: 'none' };
     }
@@ -135,7 +123,7 @@ export async function resolveUserAvatarDisplayUrl(
 
   // A FACE KNOWN TO HAVE NO PHOTO COSTS NOTHING TO REMOUNT. `none` used to be dropped with the mount
   // that received it, so every conversation switch or list redraw asked again.
-  if (isKnownAbsent(url)) return { kind: 'none' };
+  if (absentUrls.has(url)) return { kind: 'none' };
 
   const held = blobs.tryRetain(url);
   if (held) return { kind: 'blob', url: held };

@@ -8,6 +8,8 @@ import { notifNav } from '$lib/stores/notifNav.svelte';
 import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
+import { playTone } from '$lib/utils/toneOutput';
+import { scoreSound } from '$lib/utils/soundPalette';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 import {
   postNativeMessageNotification,
@@ -59,7 +61,13 @@ import {
  */
 export const NOTIFICATION_ICON = 'ic_notification';
 
-export const CHANNEL_MESSAGES = 'canari_messages';
+/**
+ * THE `_v2` CHANNELS CARRY THE PALETTE-A SOUNDS (2026-10-09). A channel's sound is IMMUTABLE once
+ * Android has created it, so changing the sound meant new ids; `CanariApplication` deletes the old
+ * `canari_messages` / `canari_mentions` / `canari_reactions` at startup. The ids are the same
+ * strings in Kotlin, the manifest and here, pinned by `notificationChannels.test.ts`.
+ */
+export const CHANNEL_MESSAGES = 'canari_messages_v2';
 export const CHANNEL_CALLS = 'canari_calls';
 /**
  * The channel a message that NAMES the reader is filed on - `CanariApplication.ensureChannels`.
@@ -76,7 +84,7 @@ export const CHANNEL_CALLS = 'canari_calls';
  * decided by nothing the reader can see. Measured as NOTIF-16 on 2026-09-08: a mention over the
  * WebSocket landed on `canari_messages`, the same mention pushed landed on `canari_mentions`.
  */
-export const CHANNEL_MENTIONS = 'canari_mentions';
+export const CHANNEL_MENTIONS = 'canari_mentions_v2';
 
 /** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
 function stableNotifId(conversationId: string): number {
@@ -87,8 +95,44 @@ function stableNotifId(conversationId: string): number {
   return Math.abs(hash) || 1;
 }
 
+/** The shape of one synthesised voice; every time is in seconds after the voice's start. */
+interface SweepShape {
+  type: OscillatorType;
+  /** Frequency at the start, in Hz. */
+  from: number;
+  /** Frequency reached at `glideEnd` (equal to `from` for a steady pitch). */
+  to: number;
+  glideEnd: number;
+  /** Gain at the top of the attack. */
+  peak: number;
+  attackEnd: number;
+  decayEnd: number;
+  stopAt: number;
+}
+
+/**
+ * Schedules one voice - an exponential pitch glide under an attack/decay envelope - and returns its
+ * oscillator, already started and stopped, so `toneOutput` can release the output on its `ended`.
+ */
+function sweepVoice(ctx: AudioContext, startAt: number, shape: SweepShape): OscillatorNode {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = shape.type;
+  osc.frequency.setValueAtTime(shape.from, startAt);
+  if (shape.to !== shape.from) {
+    osc.frequency.exponentialRampToValueAtTime(shape.to, startAt + shape.glideEnd);
+  }
+  gain.gain.setValueAtTime(0.0001, startAt);
+  gain.gain.exponentialRampToValueAtTime(shape.peak, startAt + shape.attackEnd);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + shape.decayEnd);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startAt);
+  osc.stop(startAt + shape.stopAt);
+  return osc;
+}
+
 export function useNotifications() {
-  let audioContext = $state<AudioContext | null>(null);
   let lastNotificationAt = $state(0);
   let lastSendToneAt = $state(0);
   let lastReadToneAt = $state(0);
@@ -206,53 +250,24 @@ export function useNotifications() {
 
   // ---------- Audio ----------
 
-  /**
-   * Returns the shared {@link AudioContext}, creating it on first use and resuming it if the
-   * browser parked it.
-   *
-   * The resume is the point. A context constructed before the page has had a user gesture is born
-   * `suspended`, and a suspended context accepts every scheduling call without complaint and makes
-   * no sound - so the surrounding try/catch sees nothing to catch and the tone is dropped in
-   * silence. That is the ordinary case for a tab left alone: a message arrives, this is the first
-   * audio the page ever asked for, and it is inaudible. `resume()` may legitimately reject when no
-   * gesture has ever happened, which is the browser's decision to make and not an error to report.
-   */
-  function getAudioContext(): AudioContext {
-    audioContext = audioContext ?? new AudioContext();
-    if (audioContext.state === 'suspended') void audioContext.resume().catch(() => {});
-    return audioContext;
-  }
+  // The output itself - opened for a tone, suspended when the last one ends, closed when the app
+  // leaves the screen - is `toneOutput`'s; every tone below only schedules its oscillators.
 
-  /** Plays a two-note descending chime (rate-limited to one every 600 ms) when an incoming message arrives. */
-  function playNotificationTone() {
+  /**
+   * Plays the "message" trill (palette A) when an incoming message arrives, rate-limited to one every
+   * 600 ms. A mention has its own sound and shares this limit, so a burst never stacks the two.
+   */
+  function playNotificationTone(sound: 'message' | 'mention' = 'message') {
     if (typeof window === 'undefined') return;
     if (!settings.soundsEnabled) return;
     const now = Date.now();
     if (now - lastNotificationAt < 600) return;
     lastNotificationAt = now;
 
-    try {
-      const ctx = getAudioContext();
-      const startAt = ctx.currentTime + 0.01;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(920, startAt);
-      osc.frequency.exponentialRampToValueAtTime(680, startAt + 0.11);
-      gain.gain.setValueAtTime(0.0001, startAt);
-      gain.gain.exponentialRampToValueAtTime(0.08, startAt + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.14);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(startAt);
-      osc.stop(startAt + 0.16);
-    } catch {
-      // Browser/autoplay restriction - silently ignored.
-    }
+    playTone(sound, (ctx, startAt) => scoreSound(sound, ctx, startAt));
   }
 
-  /** Plays a short ascending chirp when the user sends a message (rate-limited to one every 200 ms). */
+  /** Plays the "send" trill (palette A) when the user sends a message (rate-limited to one every 200 ms). */
   function playSendTone() {
     if (typeof window === 'undefined') return;
     if (!settings.soundsEnabled) return;
@@ -260,30 +275,12 @@ export function useNotifications() {
     if (now - lastSendToneAt < 200) return;
     lastSendToneAt = now;
 
-    try {
-      const ctx = getAudioContext();
-      const startAt = ctx.currentTime + 0.01;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(740, startAt);
-      osc.frequency.exponentialRampToValueAtTime(980, startAt + 0.08);
-      gain.gain.setValueAtTime(0.0001, startAt);
-      gain.gain.exponentialRampToValueAtTime(0.05, startAt + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.11);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(startAt);
-      osc.stop(startAt + 0.12);
-    } catch {
-      // Browser/autoplay restriction - silently ignored.
-    }
+    playTone('send', (ctx, startAt) => scoreSound('send', ctx, startAt));
   }
 
-  /** Alias for playNotificationTone - used when a message is received from another user. */
-  function playReceiveTone() {
-    playNotificationTone();
+  /** Plays the received-message trill: the "mention" one when the message names the reader. */
+  function playReceiveTone(mentionsMe = false) {
+    playNotificationTone(mentionsMe ? 'mention' : 'message');
   }
 
   /** Plays one cycle of a classic dual-tone ring (best-effort; respects soundsEnabled). */
@@ -291,29 +288,23 @@ export function useNotifications() {
     if (typeof window === 'undefined') return;
     if (!settings.soundsEnabled) return;
 
-    try {
-      const ctx = getAudioContext();
-      const startAt = ctx.currentTime + 0.01;
-
-      for (const [freq, offset] of [
+    playTone('incoming-call ring', (ctx, startAt) =>
+      [
         [440, 0],
         [480, 0.25],
-      ] as const) {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, startAt + offset);
-        gain.gain.setValueAtTime(0.0001, startAt + offset);
-        gain.gain.exponentialRampToValueAtTime(0.12, startAt + offset + 0.03);
-        gain.gain.exponentialRampToValueAtTime(0.0001, startAt + offset + 0.22);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(startAt + offset);
-        osc.stop(startAt + offset + 0.24);
-      }
-    } catch {
-      /* autoplay restriction */
-    }
+      ].map(([freq, offset]) =>
+        sweepVoice(ctx, startAt + offset, {
+          type: 'sine',
+          from: freq,
+          to: freq,
+          glideEnd: 0,
+          peak: 0.12,
+          attackEnd: 0.03,
+          decayEnd: 0.22,
+          stopAt: 0.24,
+        })
+      )
+    );
   }
 
   /** Starts repeating the incoming-call ring until {@link stopIncomingCallRingtone}. */
@@ -522,7 +513,7 @@ export function useNotifications() {
     }
   }
 
-  /** Plays a subtle descending tick when messages are marked as read (rate-limited to one every 250 ms). */
+  /** Plays the "read" trill (palette A) when messages are marked as read (rate-limited to one every 250 ms). */
   function playReadTone() {
     if (typeof window === 'undefined') return;
     if (!settings.soundsEnabled) return;
@@ -530,25 +521,7 @@ export function useNotifications() {
     if (now - lastReadToneAt < 250) return;
     lastReadToneAt = now;
 
-    try {
-      const ctx = getAudioContext();
-      const startAt = ctx.currentTime + 0.01;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(1080, startAt);
-      osc.frequency.exponentialRampToValueAtTime(820, startAt + 0.07);
-      gain.gain.setValueAtTime(0.0001, startAt);
-      gain.gain.exponentialRampToValueAtTime(0.04, startAt + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.09);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(startAt);
-      osc.stop(startAt + 0.1);
-    } catch {
-      // Browser/autoplay restriction - silently ignored.
-    }
+    playTone('read', (ctx, startAt) => scoreSound('read', ctx, startAt));
   }
 
   // ---------- System (OS-level) notifications ----------
@@ -796,7 +769,7 @@ export function useNotifications() {
             notifNav.navigate(conversationId);
             try {
               const { goto } = await import('$app/navigation');
-              await goto('/chat');
+              await goto(chatDeepLinkRoute(conversationId));
             } catch {
               /* ignore */
             }

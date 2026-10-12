@@ -97,6 +97,27 @@ describe('ChannelService - salon read marks', () => {
     expect(qb.setParameters).toHaveBeenCalledWith({ channelId: CH, at: NEWEST.getTime() });
   });
 
+  // The reader's instant is the AUTHOR's clock, always earlier than the row's createdAt. Left alone
+  // the newest message stays "newer than the mark" for ever and the unread count calls it unread
+  // right after it was read (measured 2026-10-08: 49 ms on one machine).
+  it('takes the later of the author instant and the row createdAt the client names', async () => {
+    const { service, qb } = makeService();
+    const at = NEWEST.getTime() - 49;
+
+    await service.advanceChannelReadMark(CH, READER, at, NEWEST.getTime());
+
+    expect(qb.setParameters).toHaveBeenCalledWith({ channelId: CH, at: NEWEST.getTime() });
+  });
+
+  it('never lets serverAt lower the mark, and still bounds it by the newest message', async () => {
+    const { service, qb } = makeService();
+    const at = NEWEST.getTime() - 10;
+    await service.advanceChannelReadMark(CH, READER, at, 5);
+    expect(qb.setParameters).toHaveBeenLastCalledWith({ channelId: CH, at });
+    await service.advanceChannelReadMark(CH, READER, at, NEWEST.getTime() + 86_400_000);
+    expect(qb.setParameters).toHaveBeenLastCalledWith({ channelId: CH, at: NEWEST.getTime() });
+  });
+
   // The WHERE carries the comparison, so "not ahead" is the row count - and nobody is told.
   it('tells nobody when the mark did not move', async () => {
     const { service, redis } = makeService({ affected: 0 });

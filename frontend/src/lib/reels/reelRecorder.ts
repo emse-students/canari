@@ -11,7 +11,7 @@
 
 import { pausePlayback } from '$lib/actions/playbackArbiter';
 import { pickReelRecorderMime } from './reelCapture';
-import { REEL_RECORD_BITRATE_MAX } from './framedCapture';
+import { REEL_RECORD_AUDIO_BITRATE, REEL_RECORD_BITRATE_MAX } from './framedCapture';
 
 /** How often the recorder hands over a chunk, so a long take is not one buffer at the end. */
 const CHUNK_MS = 1000;
@@ -88,6 +88,7 @@ export class ReelRecorder {
       const recorder = new MediaRecorder(stream, {
         mimeType: mime,
         videoBitsPerSecond: bitrate,
+        audioBitsPerSecond: REEL_RECORD_AUDIO_BITRATE,
       });
       console.debug(`[reel-recorder] recording ${mime} at ${bitrate} b/s`);
       return new ReelRecorder(recorder, mime);

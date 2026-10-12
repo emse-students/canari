@@ -800,6 +800,39 @@ mod tests {
         }
     }
 
+    /// A reel message (CanaReels in a conversation): a segmented VIDEO that also declares `intent`
+    /// (14), `duration_ms` (15) and `expires_at_ms` (16). This reader knows none of the three.
+    fn reel_message_app_message() -> Vec<u8> {
+        let mut media = Vec::new();
+        write_tag(&mut media, 1, 0);
+        write_varint(&mut media, 2); // MEDIA_KIND_VIDEO
+        write_string_field(&mut media, 2, "reel-1");
+        write_bytes_field(&mut media, 3, &[7u8; 32]);
+        write_bytes_field(&mut media, 4, &[9u8; 12]);
+        write_string_field(&mut media, 5, "video/mp4");
+        write_tag(&mut media, 12, 0);
+        write_varint(&mut media, 1); // SEGMENTED_V1
+        write_tag(&mut media, 14, 0);
+        write_varint(&mut media, 1); // MEDIA_INTENT_REEL_MESSAGE
+        write_tag(&mut media, 15, 0);
+        write_varint(&mut media, 42_000);
+        write_tag(&mut media, 16, 0);
+        write_varint(&mut media, 1_790_000_000_000);
+        wrap_app_message(4, &media, "msg-reel", 1)
+    }
+
+    #[test]
+    fn a_reel_message_is_read_as_a_plain_video_by_a_reader_that_ignores_its_declaration() {
+        // The fields are skipped by number, so the banner reads "video", and a segmented blob still
+        // withholds its key: the push never tries to decrypt a reel for a thumbnail.
+        let info = extract_full_message_info(&reel_message_app_message());
+        assert_eq!(info["type"], "media");
+        assert_eq!(info["mediaKind"], "video");
+        assert_eq!(info["mediaId"], "reel-1");
+        assert_eq!(info["mediaKey"], "");
+        assert_eq!(info["mimeType"], "video/mp4");
+    }
+
     #[test]
     fn build_text_app_message_roundtrips_through_extract() {
         let bytes = build_text_app_message("msg-123", 1_700_000_000_000, "hello quick reply");

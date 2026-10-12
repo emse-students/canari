@@ -1,4 +1,5 @@
 import { coreUrl } from '$lib/utils/apiUrl';
+import { MOBILE_APP_PACKAGE } from '$lib/mobile/appSiteAssociation';
 import { platform } from '@tauri-apps/plugin-os';
 
 import { isTauriRuntime, openExternal } from '$lib/utils/openExternal';
@@ -17,7 +18,7 @@ export const CANARI_RELEASE_APK_FILENAME = 'app-universal-release.apk';
  * used over `market://details?id=...` because the Play Store app intercepts it on
  * device, it stays valid in a desktop browser, and it needs no `opener` ACL change.
  */
-export const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=fr.emse.canari';
+export const PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${MOBILE_APP_PACKAGE}`;
 
 /**
  * App Store listing URL for the iOS build.
@@ -238,17 +239,6 @@ export function buildAppVersionCheckResult(
     belowMinVersion,
     maintenance,
   };
-}
-
-/**
- * Returns whether the running client is at least as new as the server deployment.
- * `upToDate` is true when the server version is unknown (offline) or client >= server.
- */
-export async function checkAppVersion(
-  fetchFn: typeof fetch = fetch
-): Promise<AppVersionCheckResult> {
-  const server = await fetchServerAppVersionReliable(fetchFn);
-  return buildAppVersionCheckResult(server);
 }
 
 /** True when maintenance is active and the caller is not a global admin. */

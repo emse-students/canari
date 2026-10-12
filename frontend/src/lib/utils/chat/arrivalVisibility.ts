@@ -42,14 +42,36 @@ export type ArrivalContext = {
   narrowLayout: boolean;
 };
 
+/**
+ * True when the reader is READING this conversation right now: it is the selected one, the app is in
+ * front of them, and the route they are on is one that draws a conversation.
+ *
+ * THE THIRD TERM WAS MISSING, AND THE SELECTION OUTLIVES THE SCREEN. `selectedContact` lives in a
+ * global singleton, and leaving `/communities` for `/posts` does not clear it - only a switch
+ * between the two messaging routes does. So a salon stayed "open" for as long as the app lived, and
+ * everything keyed on "open" went on being said about a screen nobody could see: no unread badge, no
+ * notification, and a read signal POSTed to the server that clears this account's banners on its
+ * other devices for a message nobody read (measured on the local estate, 2026-10-10).
+ * "Selected" is a fact about the store; "open" is a fact about the SCREEN, and this is where the
+ * two are joined.
+ *
+ * ONE PREDICATE FOR EVERY CONSUMER: the unread count, the read signal, the tone and the notification
+ * all ask it, so there is no second place to get it wrong.
+ */
+export function readerIsReadingConversation(ctx: ArrivalContext): boolean {
+  if (!ctx.appOnScreen) return false;
+  const selected = ctx.selectedConversationKey ?? '';
+  return selected !== '' && selected === ctx.conversationKey && isMessagingRoute(ctx.pathname);
+}
+
 /** True when the reader is looking at the place this message just appeared. */
 export function readerCanSeeArrival(ctx: ArrivalContext): boolean {
   // Nothing on screen can be seen if the app is not.
   if (!ctx.appOnScreen) return false;
 
   // The conversation itself being open is the one case that holds at every width.
+  if (readerIsReadingConversation(ctx)) return true;
   const selected = ctx.selectedConversationKey ?? '';
-  if (selected !== '' && selected === ctx.conversationKey) return true;
 
   // Everything else depends on the list being rendered, and the list only exists on the chat route.
   if (!isChatRoute(ctx.pathname)) return false;
@@ -68,4 +90,17 @@ export function readerCanSeeArrival(ctx: ArrivalContext): boolean {
  */
 export function isChatRoute(pathname: string): boolean {
   return pathname === '/chat' || pathname.startsWith('/chat/');
+}
+
+/**
+ * Whether this path renders a CONVERSATION: the chat route and the communities route, and anything
+ * under either. A selection that survives a visit to any other route is not on screen there.
+ */
+export function isMessagingRoute(pathname: string): boolean {
+  return (
+    pathname === '/chat' ||
+    pathname.startsWith('/chat/') ||
+    pathname === '/communities' ||
+    pathname.startsWith('/communities/')
+  );
 }

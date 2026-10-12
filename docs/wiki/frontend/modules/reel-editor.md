@@ -55,9 +55,9 @@ re-encodes it AGAIN at publish. Two lossy encodes, real-time duration, and the a
   over it (plus a 12 px margin) deletes the overlay. A cancelled gesture never deletes.
 - **The helper applies increments**, so a finger lifting or landing mid-gesture does not jump the
   element, and a twist past half a turn keeps turning. Pointer events with pointer capture on the
-  frame; `touch-action: none` there. The centre is clamped to the frame so an element cannot be lost
-  off-screen.
-- **Safe areas**: the header pads the top inset, the tool tray the bottom one; the stage is the
+  frame; `touch-action: none` there. Where an overlay may be is the reach rule (last section): its
+  whole box stays inside the frame, and a release settles its centre clear of the controls.
+- **Safe areas** (layout superseded 2026-10-11, see the last section): the header pads the top inset, the tool tray the bottom one; the stage was the
   space between, so nothing overlaps and the keyboard (which resizes the layout viewport on both
   platforms, [durable-rules](../../durable-rules.md)) only shortens the stage.
 - **Drawing is a mode**, not a gesture: while it is on, overlays do not take pointers.
@@ -164,3 +164,119 @@ tab is re-rendered rather than restored. **NOT reproduced:** the discard itself 
 navigates in code, and a jsdom replay of the overlay stack (sheet Back, Back, re-arm, X) stays on `/camera`;
 the Dashboard landing was reached through the camera's own close. Owed ONE re-read on the phone: discard
 stays on the camera, the camera's X returns to the tab it came from.
+
+## One frame for capture, edit and publish (2026-10-11, replaces the cover-and-crop of #1739)
+
+User report (Android WebView): the preview was letterboxed, and when the text field took focus it SHRANK
+to a small centred box. Cause: the editor was a flex column and the stage a `flex-1` slot; the keyboard
+shrinks the layout viewport on both platforms ([durable-rules](../../durable-rules.md)), so the stage and
+the frame (a contain fit in container-query units) shrank with it. #1739 fixed the shrink with a cover
+fit, which cropped a sliver the export still kept. **The owner then decided FULL PARITY: what the camera
+shows is what the editor shows and what viewers see; no crop that differs, no overlay off-screen.**
+
+- **ONE canonical frame, 9:16** (`REEL_FRAME_RATIO`, `reels/reelFrame.ts`). The camera asks the sensor
+  for that frame as large as the screen shows it (`cameraAccess`), previews it `object-cover` INSIDE the
+  frame, and the capture crop is the frame element's own box (`framedCapture`, unchanged), so the
+  recorded file IS 9:16 whatever the phone's screen. A gallery import keeps its own ratio, and the
+  review and the editor wear it (`setRatio`). **The viewer passes the reel's recorded width / height**
+  (`media.width/height`) so a legacy reel (captured to a screen box, ~0.46 on a 20:9 phone) and an import
+  are not pillarboxed in a small 9:16 frame; 9:16 only when the size is unknown.
+- **`ReelFrame.svelte` is the one component** used by `CameraScreen`, `ReelReview`, `ReelEditor` and
+  `ReelSlide`. `containFrame`: the frame is shown WHOLE (contain, never cropped) and centred with
+  `rounded-2xl` (`--radius-2xl`, 12 px, "the larger card": the scale has no larger media step) over the
+  backdrop; **within 2 % of the screen's shape it is the WHOLE stage instead - cover ON PURPOSE**, square
+  corners, no backdrop sliver, the media cropped by at most 1 % per side (`data-reel-frame-fills`).
+- **`ReelBackdrop`**: a 24 px canvas copy of the frame's own video or image, upscaled by the browser
+  (that IS the blur: no CSS filter re-applied per repaint) and dimmed - NO second decoder (5.6 GB
+  phones). It exists and samples ONLY when the frame leaves stage uncovered; a still image once, a video
+  only while it plays on a visible tab; listeners and timer are released with the effect.
+- **The keyboard cannot move the frame, and the camera sees what is visible**: `stageStep` makes the stage
+  FOLLOW the measured box, except while `latch` is set - the editor passes `composing !== null`, the text
+  field being open - when it keeps the largest height seen; on release it holds until the box grows back
+  (the keyboard closing) so the frame does not jump. Every other surface follows the box, so
+  `CameraScreen.previewBox` records the visible box. The editor's header and tool tray are overlays on
+  `cn-scrim` gradients that let touches through (`pointer-events-none`, only their controls take them),
+  and the tray rides above the keyboard (the scrims alone did NOT keep a dropped overlay grabbable: see
+  the next section). The trash
+  circle sits in the editor root at `z-20`, above the tray.
+- **Overlays live inside the frame**: `x`, `y` are 0..1 of it, kept in by the reach rule (next section), and the
+  export paints at `frameToPixels(overlay, media size)` (`drawDecorations`, tested), the same share the
+  preview writes as `left`/`top` percentages. **A new text starts at y = 0.3** (`TEXT_START_Y`): the
+  member has just typed it under the keyboard and tray, so the centre would be hidden. The viewer's
+  caption sits INSIDE the frame above the player's bar, so the two never overlap.
+
+**Not verified (no device, no browser run):** the camera's real recorded size (the constraint is
+`ideal`; the track may answer another mode, and the crop then still yields 9:16); the backdrop on the
+Android WebView; the viewer with a legacy reel and the caption over the bar on 360x800; a real soft
+keyboard (the stage latch follows the box, not `visualViewport`, so an engine that does NOT shrink the
+layout viewport is unreleased by that path); the iPhone's `<video>` layer inside a rounded
+`overflow-hidden` box (a WebKit clip bug is possible).
+
+## The reach rule: an overlay stays whole in the frame and grabbable (2026-10-12)
+
+Read on the Mi 9T (`v1.2.4-alpha.2`, [device-verification](../../device-verification.md)): a text
+dropped on the tool tray was drawn over the tray icons, could not be grabbed again (the only free
+part was at the screen edge, where Android takes a grab as its Back gesture and the editor asked
+"Abandonner vos modifications"), and was published clipped at the frame edge ("Test reel al").
+
+**Causes.** (1) The gesture clamped only the CENTRE to 0..1 of the frame (`clampCentre`), so half an
+overlay could sit outside it, and the export, which paints into the frame's pixels, cut it there.
+(2) The tray's scrim lets touches through, but its rows do not: the tool row is a full-width child
+with `pointer-events: auto`, so an overlay under it was covered everywhere but the 12 px gutters.
+(3) Nothing decided what a release over the tray means. (4) **Found on the phone while fixing it:
+the preview's text was smaller than the published text.** The Mi 9T runs `font_scale` 0.85, and
+Android's WebView multiplies FONT sizes by the system text size (lengths stay as they are:
+[textZoom](../../../../frontend/src/lib/utils/textZoom.ts)). So `7cqmin` drew at 25.9 px instead of 30.5 px,
+while the export's canvas `700 50.4px` is never scaled: the caption came out 18 % wider than the
+screen showed it (measured 244 vs 287 CSS px). A text placed flush with the edge on screen would
+still have been published clipped, and at 200 % text it would come out half the size it showed.
+
+**The rule (`reels/overlayReach.ts`, pure, tested):**
+
+- **Inside the frame, always**: every gesture step goes through `keptInFrame`, handed to
+  `TransformGesture.begin` as its constraint. The scale is capped at `fitScale` (the largest at which
+  the TURNED box fits) and the centre is held so the whole box is in, less an inset of 2 % of the
+  short side on every edge (`OVERLAY_EDGE_INSET`): the frame's 12 px corners and a width rounded to
+  whole pixels must not decide whether the last glyph is published. The gesture continues from the
+  constrained result, so pushing past an edge and coming back has no dead zone. What the member sees
+  during the drag is what the export paints. **The cost of having no dead zone: a turn that shrank
+  a wide text keeps it shrunk when it is turned back** (the scale continues from the cap); a pinch
+  regrows it.
+- **The bounds include where the gesture began** (`from`): a gesture never pushes an overlay further
+  out than it was, and never makes it jump. A stroke drawn to the frame's edge has its round cap and
+  the inset outside the strict bounds from the start; without this, its first move snapped it inwards.
+- **One rule for a release**: on the trash it is deleted; ANYWHERE ELSE (the tray, the header, a
+  cancelled gesture such as the system Back) it stays and settles with `settledClearOfControls`: its
+  centre moved vertically to the nearest place clear of the header and the tray (a selected text's
+  style rows are already part of the tray). **Only a gesture that changed the layout settles**
+  (`settlesOnRelease`): a tap moves nothing and takes no undo step. **Never while the text field is
+  open**: a restyle while typing is not settled against the controls, and the commit settles once.
+  **But it IS kept in the frame** (`placedAfterResize`, 2026-10-12): a restyle to a wider face
+  (serif, the pill) used to push the box past the screen edge for the whole edit, and "OK" then
+  moved it at once (Mi 9T on `alpha.3`: right edge 1094 then 1138 px of a 1079 px screen, 61-73 px
+  jump at "OK"). With the field open, only `keptInFrame` applies, never the bands, because the
+  keyboard has shrunk the stage the tray rides on; the commit then has no width left to correct
+  (same pass on the fix: right edge 1077 after each restyle, 0 px at "OK"). **The bands are the
+  ones the keyboard does not move** (`controlBands`): the header's bottom edge, and the tray's HEIGHT
+  laid against the bottom of the latched stage. The tray rides above the keyboard, so its top edge
+  measures the keyboard; read that way, it pushed a caption up for good. The centre is the point a finger grabs, and it is then never under a control nor only at
+  the screen edge. If the controls leave no room, the centre takes the middle between them, still
+  inside the frame: never clipped does not give way.
+- **Extent**: an emoji's and a stroke's box come from the data; a text's is its span as the screen drew
+  it (`offsetWidth/offsetHeight`, untransformed, the same font the export measures). A text whose words
+  or face change settles again once redrawn, so a long caption is shrunk to fit at creation.
+- **The text's size undoes the system text size**: `font-size: calc(7cqmin * scale / var(--text-zoom, 1))`,
+  the factor `publishTextZoom` already measures for the avatar initials. The text is part of the
+  picture, not reading text, and the export never scales it; the span's measured width then equals
+  the canvas's `measureText` (287 vs 287.4 px on the Mi 9T).
+
+**Read on the Mi 9T (2026-10-12)**, with the REAL editor component served to the installed
+`alpha.2` app's own WebView over `adb reverse` from a temporary route (never committed), and real
+touches (`input swipe`), before the review's fixes (keyboard bands, taps, `from`). A text was dragged from the middle to the bottom-right corner, onto the tray.
+It stopped with its box 8.6 px short of the right edge, and its centre settled at the top of the tray
+(top 85.09 %, the tray's edge). It was grabbed again from its centre, away from the screen edge, and
+moved. The exported 720x1280 picture shows the whole caption ("Test reel alpha deux") with its
+margin. After the review's fixes, same rig: a caption at 69.3 % stayed at 69.3 % through a tap to
+reword, a pill switched on with the keyboard up (the tray's top raised from 761 to 383 px) and the
+commit. **Not read:** the iPhone, a video take, and the signed-in app shell (a build carrying this
+change is needed for both).

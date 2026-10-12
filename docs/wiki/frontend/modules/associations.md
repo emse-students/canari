@@ -39,11 +39,48 @@
 | Route | Description |
 |---|---|
 | `/associations` | Public association directory |
+| `/lists`, `/institutions` | The list and institution directories (same API, narrowed by type) |
+| `/associations/new`, `/lists/new`, `/institutions/new` | ONE creation flow, three types (`/institutions/new`: global admin only) |
 | `/associations/[id]` | Association detail page |
 | `/associations/[id]/edit` | Admin edit (profile, members, forms, payments, boutique, cotisations) |
 | `/dashboard` | Association admin dashboard |
 | `/lists/[slug]` | Member list public page |
 | `/lists/[slug]/edit` | Edit member list |
+
+## One header and one creation flow for the three directories (2026-10-07)
+
+Audited on 2026-10-07 after a screenshot of `/associations`: four buttons of two kinds (three links to
+directories, one creation) drawn alike, and **`/institutions` had NO creation button**. What existed
+before: creation was a checkbox on `/associations/new` visible to a global admin; the reach was only
+editable on the `/admin/spaces` grid (`PUT /api/associations/:id/audiences`, global admin); members were
+added on the generic members tab as `Membre` (0) or `Admin`, so a new institution member could not
+publish in its name until a flag was ticked by hand.
+
+Now:
+
+- `AssociationsHeader.svelte` is the heading of the three directories. NAVIGATION is a row of outlined
+  pills under the title (Associations, Listes, Institutions, Agenda global) with the current directory
+  filled and `aria-current="page"`; the single PRIMARY action, yellow, sits on the title line and names what
+  THAT directory creates (`Créer l'association`, `Créer une liste`, `Créer une institution`). The lists and
+  institutions pages lost their "back to Associations" link: the nav carries it.
+- `AssociationCreatePage.svelte` is the one creation flow, `kind = association | list | institution`; the
+  three `/new` routes are three lines. A list adds campaign and parent fields; an institution adds an
+  **audience choice**: none (default, D36 - visible to its members only), the whole School, one campus, or one
+  campus x formation (`reachChoiceToRules` in `audienceRules.ts`; a half-filled choice yields no rule and the
+  submit is disabled, never a wider reach). The rule is written right after the creation with the grid's own
+  `setAssociationAudiences`, and the creator lands on the members tab of the new institution. A non-admin
+  opening `/institutions/new` is sent back to `/institutions`.
+- The members tab offers a third access level, `Publie en son nom` (`PUBLISHER_PRESET` =
+  `POST_AS_ASSO | PROPOSE_EVENT`), which is the DEFAULT when the association is an institution.
+- Test: `associationsHeader.test.ts` (wiring), `audienceRules.test.ts` (`reachChoiceToRules`). Read on the
+  local estate at 390 and 1280 (no horizontal scroll, nav wraps cleanly).
+
+## The audience tab and the campus prompt (WP-B, 2026-10-08)
+
+The edit page has an **Audience** tab (`EditAudienceTab.svelte`) for a global admin and a BDE star of the association: two presets (my campus; my campus and chosen formations), a third (everyone) for an institution only, the grid link for admins. The creation page shows `ProfileCampusPrompt` instead of the form when the creator's profile has no campus, and maps the five typed server refusals through `audienceRefusal.ts`. Mechanism, limits (a star cannot read the current audience) and tests: [profiles-and-access](../../profiles-and-access.md#audiences-client-presets-as-built-wp-b-2026-10-08).
+
+
+**What closed the institution creation gaps (2026-10-09).** (1) Members are NOT asked for on the creation form: the creator lands on the members tab, where `Publie en son nom` is already the default for an institution, and an institution with no member is a state of one click, not a defect. (2) An institution's reach IS editable on its own edit page: the Audience tab is drawn for a global admin (`editRights.audience`), with the `everyone` preset. (3) A union of several campuses or formations - which three presets cannot say - is the **Custom** choice: `CellPicker.svelte` (one block per campus, a parent box and one box per formation, built on the `/admin/spaces` helpers), offered on the creation form of an institution and, to a GLOBAL ADMIN only, as a fourth preset on the Audience tab of an INSTITUTION (`offeredPresets(type, gridAllowed)`); never for an association or a list, which address ONE campus (decision 3 of the audiences chantier); the rules written are `toRules(cells)`, the smallest equivalent set, and an empty picker cannot be submitted. A union already stored on an institution opens the tab on Custom with its pairs ticked. Tests: `CellPicker.svelte.test.ts`, `reachChoiceToRules('custom', ...)` in `audienceRules.test.ts`, `offeredPresets` in `audiencePresets.test.ts`.
 
 ## Promo lists, and the second theme
 
@@ -161,3 +198,30 @@ Associations that want to accept online payments must complete Stripe Connect on
 3. Displaying the Stripe Dashboard link for reporting.
 
 Forms with `basePrice > 0` show a warning if Connect is not yet configured.
+
+## An institution is not called an association (2026-10-07)
+
+The edit page is shared by the three kinds and said "association" to an institution in the tab title,
+the Danger tab, the delete confirmation and the Lydia card, and sent a deleted institution to
+`/associations`. `lib/associations/kindWording.ts` is now the ONE table of nouns per kind
+(`association | list | institution`: edit title, danger panel, Lydia card, the directory to land on
+after a delete); components call `wordingFor(kind)` and never ternary over a sentence
+(`EditDangerTab` takes the full `AssociationKind`, the Lydia form reads `asso.type`). A new kind is a
+new row, and `kindWording.test.ts` fails if an institution sentence says association or club.
+The document title cannot come from the path (`/associations/<slug>/edit` does not say the type), so
+the page hands it to `SeoHead` through `lib/seo/pageTitle.svelte.ts`, which stays the only writer of
+`<title>`. Lists already redirected to `/lists`.
+
+### The tab title on a DIRECT load, and three sentences that still said "association" (2026-10-07, dev read)
+
+Direct load of an institution's edit page read "Associations" in `document.title` and `og:title`:
+`SeoHead` merges the server-injected head LAST, and the server resolved the path to the generic
+`/associations` title, so it beat the page's own `pageTitle` hand-off (in-app navigation was right,
+nothing was injected). `serverSeo.ts` now has an enricher for `/associations/<slug>/edit`
+(`ASSOCIATION_EDIT_PATH`, exported from `resolve.ts`): it reads `type` from the public association
+projection and returns `wordingFor(type).editTitle()` - the SAME row the page reads, so the two
+cannot disagree. The edit path is `noindex` in `resolveSeoForPath` (it was crawlable under the
+generic title). An unknown slug keeps the path's association wording; no kind is ever guessed.
+`kindWording.ts` also carries `manageButton`, `descriptionPlaceholder` and `boutiqueSubtitle` now
+(the public-page button, the Profil placeholder, the Boutique intro). Tests: `serverSeo.test.ts`,
+`kindWording.test.ts`.

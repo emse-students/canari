@@ -16,10 +16,10 @@
  * reader had asked to be at the bottom.
  */
 export interface ThreadGrowth {
-  /** `scrollHeight` before the change. */
-  previousHeight: number;
-  /** `scrollHeight` after it. */
-  currentHeight: number;
+  /** How far the pane could scroll before the change - {@link threadReach}, not `scrollHeight`. */
+  previousReach: number;
+  /** The same quantity after the change. */
+  currentReach: number;
   /**
    * Whether the reader was at the bottom BEFORE the growth.
    *
@@ -34,13 +34,28 @@ export interface ThreadGrowth {
 }
 
 /**
+ * THE QUANTITY "THE BOTTOM MOVED" IS MEASURED IN: the largest `scrollTop`, `scrollHeight -
+ * clientHeight`.
+ *
+ * `scrollHeight` alone sees the content (and the composer's `padding-bottom`) grow, and the bottom
+ * of a thread also moves when the PANE'S OWN BOX shrinks under unchanged content - the soft keyboard
+ * rising, a side panel opening, a window resize. The box lost its height, `scrollHeight` did not
+ * move, nothing "grew", the reader kept their `scrollTop` and the last messages ended under the
+ * keyboard (production 1.1.2, Android, user 2026-10-09). A viewport change is a change of extent
+ * like any other, and this is the one number all of them move.
+ */
+export function threadReach(metrics: ThreadScrollMetrics): number {
+  return metrics.scrollHeight - metrics.clientHeight;
+}
+
+/**
  * Whether the pane should be pinned back to its bottom after a change in content height.
  *
  * Only growth counts. A row SHRINKING (a reaction removed, a preview collapsing) already pulls the
  * bottom up on its own, and pinning there would move a reader who is reading history.
  */
 export function shouldFollowThreadBottom(growth: ThreadGrowth): boolean {
-  if (growth.currentHeight <= growth.previousHeight) return false;
+  if (growth.currentReach <= growth.previousReach) return false;
   // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader and
   // restores `scrollTop` by exactly that much; following the bottom here would throw away the
   // history it had just fetched and land them where they already were.

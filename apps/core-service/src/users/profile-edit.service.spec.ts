@@ -24,6 +24,13 @@ const EDIT = {
 };
 
 describe('validateProfileEdit', () => {
+  it('accepts every formation the enrolment offers, PDIS included', () => {
+    for (const formation of ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre']) {
+      const r = validateProfileEdit({ ...EDIT, cursus: [{ formation, promo: 2024 }] });
+      expect(r.ok).toBe(true);
+    }
+  });
+
   it('accepts a complete profile and trims the names', () => {
     const r = validateProfileEdit({ ...EDIT, firstName: '  Camille ' });
     expect(r).toEqual({ ok: true, profile: { version: 1, ...EDIT } });

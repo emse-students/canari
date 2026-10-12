@@ -8,6 +8,7 @@ import {
   Headers,
   Logger,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Put,
@@ -34,6 +35,7 @@ import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
 import { assertInternalSecret } from '../internal/internal-secret.util';
 import { FollowsService } from '../follows/follows.service';
+import { AssociationPushMutesService } from '../follows/association-push-mutes.service';
 import {
   AddMemberDto,
   CreateAssociationDto,
@@ -65,11 +67,17 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
-import { assertAgendaSelected, parseDirectoryQuery, parseSpaceSelection } from './directory-query';
+import {
+  AGENDA_SELECTION_REQUIRED,
+  assertAgendaAccess,
+  parseDirectoryQuery,
+  parseSpaceSelection,
+} from './directory-query';
+import { isInternalSecret } from '../internal/is-internal-secret.util';
 
 const LOGO_UPLOAD_MB = 2;
 
-/** Manages association resources including membership, logo, Stripe onboarding, follow relationships, and boutique products. */
+/** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
 @Controller('associations')
 export class AssociationsController {
   private readonly logger = new Logger(AssociationsController.name);
@@ -80,7 +88,8 @@ export class AssociationsController {
     private readonly partnershipsService: PartnershipsService,
     private readonly followsService: FollowsService,
     private readonly userTagService: UserTagService,
-    private readonly userProfileService: UserProfileService
+    private readonly userProfileService: UserProfileService,
+    private readonly pushMutes: AssociationPushMutesService
   ) {}
 
   // ── Document reviewers & cross-association review ────────────────────────────
@@ -142,7 +151,7 @@ export class AssociationsController {
   // ── Association reads (logged-in members) ─────────────────────────────────
   //
   // These three answer the FULL row minus the two secrets `toSafeAssociation` strips - which still
-  // leaves `stripeAccountId`, `createdBy`, the document quota and the cotisation configuration.
+  // leaves `lydiaAccountId`, `createdBy`, the document quota and the cotisation configuration.
   // None of that belongs to an anonymous caller, and nginx does not stop one: `/api/associations`
   // sits behind `auth_request`, but `AuthController.check()` answers 200 for anonymous (it only
   // sets `X-Logged-In: false`), so the guard has to be here.
@@ -218,6 +227,13 @@ export class AssociationsController {
     return this.followsService.listFollowedAssociations(userId);
   }
 
+  /** The associations the calling user muted (push only) - the notification settings list. */
+  @UseGuards(NginxAuthGuard)
+  @Get('me/push-mutes')
+  myPushMutes(@Headers('x-user-id') userId: string) {
+    return this.pushMutes.listMuted(userId);
+  }
+
   /** Public - current association memberships for a user profile. */
   @Get('users/:userId/memberships')
   listUserMemberships(@Param('userId') userId: string) {
@@ -273,13 +289,17 @@ export class AssociationsController {
     @Headers('x-user-id') userId?: string,
     @Headers('x-global-admin') ga?: string,
     @Query('campus') campus?: string,
-    @Query('formation') formation?: string
+    @Query('formation') formation?: string,
+    @Query('sig') sig?: string,
+    @Headers('x-internal-secret') internalSecret?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
-    assertAgendaSelected({
+    assertAgendaAccess({
       selection,
       associationId,
+      sig,
       signedIn: Boolean(userId?.trim()),
+      trusted: isInternalSecret(internalSecret),
     });
     // includePending is opt-in (the PDF export does not set it -> validated events only).
     // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
@@ -323,11 +343,12 @@ export class AssociationsController {
     @Query('eventId') eventId: string | undefined,
     @Res({ passthrough: true }) res: Response,
     @Query('campus') campus?: string,
-    @Query('formation') formation?: string
+    @Query('formation') formation?: string,
+    @Query('sig') sig?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
     // `.ics` is always anonymous: a calendar app sends no identity.
-    assertAgendaSelected({ selection, associationId, eventId, signedIn: false });
+    assertAgendaAccess({ selection, associationId, eventId, sig, signedIn: false });
     const all = await this.service.listAggregatedCalendarFeed(from, to, associationId, {
       selection,
     });
@@ -343,6 +364,28 @@ export class AssociationsController {
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=120');
     return body;
+  }
+
+  /**
+   * The signature a subscription URL needs (D40 amended 2026-10-06): signed-in readers only, and
+   * only for a selection inside their own spaces (403 `AGENDA_SELECTION_FORBIDDEN` otherwise; 400
+   * `AGENDA_SELECTION_REQUIRED` for an empty one). The result names no one, see `agenda-signature.ts`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('calendar/feed-signature')
+  async signCalendarFeedSelection(
+    @Headers('x-user-id') userId: string,
+    @Body() body: { campus?: string; formation?: string; associationId?: string }
+  ) {
+    const selection = parseSpaceSelection({ campus: body?.campus, formation: body?.formation });
+    const associationId = body?.associationId?.trim() || null;
+    if (selection.campus === null && selection.formation === null && !associationId) {
+      throw new BadRequestException({
+        code: AGENDA_SELECTION_REQUIRED,
+        message: 'Name a campus, a formation or an association to sign',
+      });
+    }
+    return this.service.signAgendaFeedSelection(userId, selection, associationId);
   }
 
   /**
@@ -448,7 +491,7 @@ export class AssociationsController {
   }
 
   /**
-   * Returns whether the calling user may manage Stripe Connect for the association.
+   * Returns whether the calling user may manage the payout account of the association.
    * Used by core-service before starting Connect onboarding.
    */
   @UseGuards(NginxAuthGuard)
@@ -458,7 +501,7 @@ export class AssociationsController {
     @Headers('x-global-admin') ga: string | undefined,
     @Param('id') id: string
   ) {
-    const ok = await this.service.canManageStripeConnect(userId, id, {
+    const ok = await this.service.canManagePayoutAccount(userId, id, {
       isGlobalAdmin: ga === 'true',
     });
     return { ok };
@@ -470,6 +513,36 @@ export class AssociationsController {
   @Get(':id/link-candidates')
   linkCandidates(@Param('id') id: string) {
     return this.service.getCalendarLinkCandidates(id);
+  }
+
+  /** Whether the calling user muted this association's push notifications. */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/push-mute')
+  async pushMuteStatus(
+    @Headers('x-user-id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string
+  ) {
+    return { muted: await this.pushMutes.isMuted(userId, id) };
+  }
+
+  /** Silences this association's PUSH for the caller only; the feed is untouched. Idempotent. */
+  @UseGuards(NginxAuthGuard)
+  @Put(':id/push-mute')
+  muteAssociationPush(
+    @Headers('x-user-id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string
+  ) {
+    return this.pushMutes.mute(userId, id);
+  }
+
+  /** Lifts the caller's mute of this association. Idempotent. */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/push-mute')
+  unmuteAssociationPush(
+    @Headers('x-user-id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string
+  ) {
+    return this.pushMutes.unmute(userId, id);
   }
 
   /** Returns a single association by its ID. Logged-in callers only - see the note on `list`. */
@@ -523,7 +596,7 @@ export class AssociationsController {
         throw new ForbiddenException('Global admin or BDE MANAGE_ASSO permission required');
       }
     }
-    return this.service.create(dto, userId);
+    return this.service.create(dto, userId, isGlobalAdmin);
   }
 
   /**
@@ -1216,7 +1289,7 @@ export class AssociationsController {
 
   /**
    * Creates a new product in the association's boutique.
-   * Requires MANAGE_PRODUCTS flag. Product is inactive until Stripe Connect onboarding is complete.
+   * Requires MANAGE_PRODUCTS flag. Product is inactive until the payout account onboarding is complete.
    * `balance_topup` (Cercle) products additionally require a platform global admin (D7) -
    * enforced in the service, not just this guard.
    */
@@ -1291,7 +1364,7 @@ export class AssociationsController {
   }
 
   /**
-   * Creates a Stripe Checkout session for a product purchase (login required).
+   * Creates a checkout session for a product purchase (login required).
    * Optional body: `{ customAmountCents: number }` for products allowing custom amounts.
    */
   @UseGuards(NginxAuthGuard)
@@ -1464,7 +1537,7 @@ export class AssociationsController {
     return this.productsService.deleteWebhookDelivery(id, deliveryId);
   }
 
-  // ── Payment delegation (parent-association Stripe routing) ─────────────────
+  // ── Payment delegation (parent-association payment routing) ─────────────────
 
   /** Returns this association's payment-delegation state. Requires MANAGE_PRODUCTS flag. */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
@@ -1475,7 +1548,7 @@ export class AssociationsController {
   }
 
   /**
-   * Requests that this association's payments route to a parent association's Stripe account.
+   * Requests that this association's payments route to a parent association's payout account.
    * Creates a `pending` link the parent must approve. Requires MANAGE_PRODUCTS flag.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
@@ -1563,45 +1636,6 @@ export class AssociationsController {
   // payout accounts, so each verifies the shared X-Internal-Secret (timing-safe) and
   // only accepts genuine server-to-server calls from core-service.
 
-  /** Sets the Stripe account ID for an association; called internally by core-service. */
-  @Post(':id/stripe-account')
-  setStripeAccount(
-    @Param('id') id: string,
-    @Body() body: { stripeAccountId: string },
-    @Headers('x-internal-secret') internalSecret: string
-  ) {
-    assertInternalSecret(internalSecret);
-    return this.service.setStripeAccountId(id, body.stripeAccountId);
-  }
-
-  /**
-   * Marks Stripe onboarding as complete for an association; called internally by core-service.
-   *
-   * This is the instant the association can take money, so it is also the instant its withheld
-   * products go on sale - and its approved delegating clubs' too, since the account that just
-   * became ready is the one serving them. Nothing did this before, which is how a fully onboarded
-   * BDE ended up with a 170 EUR cotisation nobody could buy.
-   */
-  @Post(':id/stripe-complete')
-  async markStripeComplete(
-    @Param('id') id: string,
-    @Headers('x-internal-secret') internalSecret: string
-  ) {
-    assertInternalSecret(internalSecret);
-    await this.service.markStripeOnboardingComplete(id);
-    await this.productsService.releaseWithheldForAssociationAndDelegates(id);
-  }
-
-  /** Unlinks the association's Stripe Connect account; called internally by core-service. */
-  @Post(':id/stripe-disconnect')
-  disconnectStripeAccount(
-    @Param('id') id: string,
-    @Headers('x-internal-secret') internalSecret: string
-  ) {
-    assertInternalSecret(internalSecret);
-    return this.service.clearStripeAccount(id);
-  }
-
   /**
    * Sets the Lydia Business vendor_token (and dashboard URL, if given) for an association; called
    * internally by core-service.
@@ -1619,7 +1653,7 @@ export class AssociationsController {
   /**
    * Marks Lydia onboarding as complete for an association; called internally by core-service.
    *
-   * Releases withheld products exactly like `stripe-complete`: which provider is active decides
+   * Releases withheld products exactly like the removed `stripe-complete` did: which provider is active decides
    * which pair of columns `resolvePaymentTarget` reads, never whether a product waiting on an
    * account should be released.
    */
@@ -1643,7 +1677,7 @@ export class AssociationsController {
     return this.service.clearLydiaAccount(id);
   }
 
-  /** Called by core-service Stripe webhook when a product purchase completes. */
+  /** Called by core-service when a product purchase completes. */
   @Post('products/:productId/purchase-completed')
   purchaseCompleted(
     @Param('productId') productId: string,

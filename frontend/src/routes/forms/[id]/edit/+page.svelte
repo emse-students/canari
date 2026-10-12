@@ -10,6 +10,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import {
+    FormNotFoundError,
     getForm,
     updateForm,
     uploadFormImage,
@@ -170,7 +171,10 @@
         // The formation criterion offers nothing, and says so. Every other criterion still works.
       }
     } catch (e: any) {
-      loadError = e.message || m.form_edit_load_error();
+      loadError =
+        e instanceof FormNotFoundError
+          ? m.form_view_not_found()
+          : e.message || m.form_edit_load_error();
     }
   });
 

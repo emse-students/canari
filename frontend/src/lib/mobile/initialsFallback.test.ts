@@ -73,7 +73,11 @@ describe('the initials disc, across the three notification implementations', () 
     // arrived over the WebSocket now asks the same builder a push does
     // (`notifyMessageFromWebSocket`), so it fetches the same avatar and owes the same fallback.
     // iOS has no such trigger - its WebView still posts through the plugin.
-    expect(kotlin.match(/generateInitialsBitmap\(/g)).toHaveLength(6); // 5 calls + the definition
+    //
+    // AND A SIXTH SINCE 2026-10-08: the per-post reaction notification draws each of its up to three
+    // faces through the same fetch and owes each the same initials disc (iOS has no such grouped
+    // notification; its social push attaches the one actor's face through `attachSocialIcon`).
+    expect(kotlin.match(/generateInitialsBitmap\(/g)).toHaveLength(7); // 6 calls + the definition
     expect(swift.match(/attachInitials\(/g)).toHaveLength(5); // 4 calls + the definition
     // The ObjC trunk is the IN-APP path and serves the message AND the salon paths, so it has two
     // call sites, not three - and no social one: a social push in the foreground is a banner the

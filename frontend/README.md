@@ -30,7 +30,7 @@ Module de création de post. Permet d'ajouter :
 - Titres, contenus Markdown
 - Images (upload via Media Service)
 - Sondages
-- Événements (avec prix Stripe optionnel)
+- Événements (avec prix optionnel)
 - **Formulaires attachés** (sélection parmi les formulaires existants).
 
 ### 📝 Form System (Nouveau)

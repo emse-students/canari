@@ -15,7 +15,9 @@
   import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
-  import { sendReadWatermark } from '$lib/utils/chat/messaging';
+  import { sendReadWatermark, liveSalonSendIds } from '$lib/utils/chat/messaging';
+  import { recordUnsentSalonText, takeOrphanedSalonTexts } from '$lib/utils/chat/salonUnsent';
+  import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { isAppInForeground } from '$lib/utils/appForeground';
   import {
     watermarkAfterReading,
@@ -30,6 +32,7 @@
     type ChannelPollDraft,
   } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
+  import { flushSalonReadMarks, recordSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { mayPinMessage } from '$lib/utils/chat/pinPermission';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
@@ -503,6 +506,32 @@
     };
   }
 
+  // ─── A salon message left unanswered by a PREVIOUS page life goes back to the composer ─────────
+  // The echo is memory only and the composer was cleared at the click, so a kill or reload while it
+  // was sending would have lost the text. It is handed back, never re-sent (WP-OFF-2). Only texts
+  // whose writer is PROVEN dead come back - a sibling tab still sending its own keeps them.
+  $effect(() => {
+    const contact = convs.selectedContact;
+    const userId = session.userId;
+    if (!contact || !userId || !isChannelConversationId(contact)) return;
+    void untrack(async () => {
+      const orphans = await takeOrphanedSalonTexts(userId, contact, liveSalonSendIds());
+      if (orphans.length > 0 && convs.selectedContact !== contact) {
+        // The member left the salon while the owner check ran: the texts belong to ITS composer,
+        // so they go back in the ledger, owned by this page life, for the next visit.
+        log(`[SEND] ${orphans.length} restorable salon text(s) kept: the salon was left meanwhile`);
+        for (const o of orphans) recordUnsentSalonText(userId, o);
+        return;
+      }
+      for (const o of orphans) {
+        messageText = restoreFailedDraft(messageText, o.text);
+        log(
+          `[SEND] unanswered salon message ${o.messageId.slice(0, 8)}... of a past session restored to the composer`
+        );
+      }
+    });
+  });
+
   // ─── Load group members when selected conversation changes ────────────────
   $effect(() => {
     const contact = convs.selectedContact;
@@ -537,7 +566,16 @@
 
   // ─── Read watermark (debounced 2 s) ───────────────────────────────────────
   let pendingReadWatermark = 0;
+  /** The newest `createdAt` among what the pending salon receipt covers - the server's own clock. */
+  let pendingReadServerAt = 0;
   let readReceiptTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Delivers every owed salon read mark; a refusal keeps it owed (see `salonReadMarkQueue.ts`). */
+  function flushOwedSalonMarks(): Promise<number> {
+    return flushSalonReadMarks(session.userId, (id, at, serverAt) =>
+      channelService.advanceReadMark(id, at, serverAt)
+    );
+  }
 
   $effect(() => {
     if (!convs.selectedContact || !session.isLoggedIn) return;
@@ -554,7 +592,7 @@
 
     const meNorm = session.userId.toLowerCase();
     const held = watermarkFor(convo.readWatermarks, meNorm);
-    const target = watermarkAfterReading(convo.messages, held);
+    const target = watermarkAfterReading(convo.messages, held, isSelectedChannel);
     if (target <= held) return;
 
     const currentContact = convs.selectedContact;
@@ -588,25 +626,53 @@
     // transport differs - `advanceReadMark`, which the server stores and fans out as `channel.read`.
     const channelReceipt = isSelectedChannel;
 
+    // A SALON'S MARK IS WRITTEN DOWN BEFORE ANY NETWORK. The debounce below can be cut short (the
+    // reader leaves, the page reloads) and the POST can fail (a deploy, a dead link); the owed mark
+    // survives both and is delivered by the next flush. See `salonReadMarkQueue.ts`.
+    if (channelReceipt) {
+      let newestServerAt = 0;
+      for (const msg of convo.messages) {
+        // System rows included: the server counts a membership notice until a mark reaches it.
+        if (msg.serverTimestamp !== undefined) {
+          newestServerAt = Math.max(newestServerAt, msg.serverTimestamp);
+        }
+      }
+      recordSalonReadMark(session.userId, currentContact, target, newestServerAt || undefined);
+    }
+
     pendingReadWatermark = Math.max(pendingReadWatermark, target);
+    for (const msg of convo.messages) {
+      if (msg.serverTimestamp !== undefined) {
+        pendingReadServerAt = Math.max(pendingReadServerAt, msg.serverTimestamp);
+      }
+    }
 
     if (!readReceiptTimer) {
       readReceiptTimer = setTimeout(() => {
         untrack(() => {
           const toSend = pendingReadWatermark;
+          const toSendServerAt = pendingReadServerAt;
           pendingReadWatermark = 0;
+          pendingReadServerAt = 0;
           readReceiptTimer = null;
           if (toSend <= 0) return;
           if (channelReceipt) {
-            channelService
-              .advanceReadMark(currentContact, toSend)
-              .catch((e) =>
-                console.warn(
-                  `[READ] salon mark ${toSend} for ${currentContact} was not sent - its senders keep` +
-                    ' seeing it unread by this user until they read again:',
-                  e
-                )
-              );
+            // The mark was recorded durably when it was decided; this only delivers it.
+            void flushOwedSalonMarks();
+            // THE BANNER SIGNAL FOLLOWS THE READING, NOT THE ARRIVAL. A message that landed while the
+            // reader was elsewhere (another route, a hidden tab) is deliberately NOT announced as
+            // read on arrival (`isReadingConversationNow`), so nothing has yet told this account's
+            // other devices to drop its banner. The marker is shared with the arrival path: a message
+            // already signalled is not signalled twice.
+            // The newest FOREIGN message, not `toSend`: the watermark also advances over this user's
+            // own sends, and signalling those would be a self-push after every message written.
+            const readUpTo = newestForeignMessageAt(
+              convs.conversations.get(currentContact)?.messages ?? [],
+              session.userId
+            );
+            if (claimChannelReadSignal(currentContact, readUpTo)) {
+              void channelService.markChannelRead(currentContact);
+            }
             return;
           }
           // THREE WAYS OUT OF HERE AND ALL THREE USED TO BE SILENT. The debounce has already zeroed
@@ -654,11 +720,14 @@
     // not cancel the pending timer - that was the root cause of receipts never firing.
     return () => {
       if (convs.selectedContact !== currentContact) {
+        // Leaving inside the debounce window must not cost the mark: it is already owed, so deliver now.
+        if (channelReceipt) void flushOwedSalonMarks();
         if (readReceiptTimer) {
           clearTimeout(readReceiptTimer);
           readReceiptTimer = null;
         }
         pendingReadWatermark = 0;
+        pendingReadServerAt = 0;
       }
     };
   });
@@ -750,6 +819,7 @@
         readReceiptTimer = null;
       }
       pendingReadWatermark = 0;
+      pendingReadServerAt = 0;
       convs.selectedContact = null;
       channels.selectedChannelConversationId = '';
       convs.closeSidePanel();
@@ -790,16 +860,34 @@
    * path to say anything sharper. The banner therefore carries the generic line, and the exception
    * goes to the log, where English is correct and where the cause is still recoverable.
    */
-  function sendText(text: string) {
-    void messaging.handleSendChat(msgCtx(), text).catch((e: unknown) => {
-      convs.sendError = m.chat_send_error_generic();
-      log(`[SEND] handleSendChat threw - the message was NOT queued: ${String(e)}`);
-    });
+  function sendText(text: string, onRefused?: () => void) {
+    void messaging
+      .handleSendChat(msgCtx(), text)
+      .then((delivered) => {
+        if (delivered === false) onRefused?.();
+      })
+      .catch((e: unknown) => {
+        convs.sendError = m.chat_send_error_generic();
+        log(`[SEND] handleSendChat threw - the message was NOT queued: ${String(e)}`);
+      });
   }
 
-  /** Sends the current messageText via MLS then clears the input. */
+  /**
+   * Sends the current messageText, then clears the input - and GIVES THE TEXT BACK if the send was
+   * refused with no bubble and no queue entry (a community salon, offline: WP-OFF-1). The restore
+   * only happens in the conversation the text was written in; the error banner stays.
+   */
   function handleSendChat() {
-    sendText(messageText);
+    const text = messageText;
+    const contact = convs.selectedContact;
+    sendText(text, () => {
+      if (convs.selectedContact !== contact) {
+        log(`[SEND] draft not restored: the conversation changed (${text.length} chars dropped)`);
+        return;
+      }
+      messageText = restoreFailedDraft(messageText, text);
+      log(`[SEND] refused: draft restored to the composer (${text.length} chars)`);
+    });
     messageText = '';
   }
 
@@ -1142,8 +1230,8 @@
           onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
           onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
           messageReactions={isSelectedChannel ? channelReactions : messaging.messageReactions}
-          replyingTo={messaging.replyingTo}
-          onReply={messaging.handleReply}
+          replyingTo={messaging.replyFor(convs.selectedContact)}
+          onReply={(message) => messaging.handleReply(convs.selectedContact ?? '', message)}
           onForward={handleForward}
           onReact={isSelectedChannel
             ? (msgId, emoji) =>
@@ -1155,6 +1243,12 @@
                 )
             : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
           canModerate={canModerateSelectedChannel}
+          onRetrySend={(msgId) => void messaging.retrySend(msgCtx(), msgId)}
+          onDiscardSend={(msgId) => messaging.discardSend(msgCtx(), msgId)}
+          onTakeBackSend={(msgId) => {
+            const text = messaging.takeBackSend(msgCtx(), msgId);
+            if (text !== null) messageText = restoreFailedDraft(messageText, text);
+          }}
           onDelete={isSelectedChannel
             ? (msgId) =>
                 void channels.deleteChannelMessage(
@@ -1173,7 +1267,7 @@
                 )
             : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
           onTogglePin={handleTogglePinMessage}
-          onCancelReply={messaging.cancelReply}
+          onCancelReply={() => messaging.cancelReply(convs.selectedContact ?? '')}
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}
           onSendVoiceNote={handleSendVoiceNote}

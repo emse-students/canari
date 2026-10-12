@@ -24,7 +24,7 @@
  * the difference is what makes a codemod dangerous.
  *
  * WHAT THE EXCEPTIONS ARE FOR, and each is measured against a neighbour rather than against this
- * scale: a cross on a 64px thumbnail, a zoom control floating over the minesweeper board, the
+ * scale: a cross on a 64px thumbnail, the
  * camera badge on an avatar, the 48px community rail, a play button matched to the height of its
  * own bubble. Held BY FILE AND BY COUNT so the list cannot go stale in either direction - a new
  * unswept button in one of these files fails, and so does an entry whose buttons have gone.
@@ -93,10 +93,6 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     count: 2,
     why: "the sound toggle overlaying a playing video - Instagram-sized so it does not cover the picture, the download moved into the viewer - and a conversation video's play button, the one big target on a paused first frame (VideoPlayer's disc, 3.5rem)",
   },
-  'lib/components/settings/MinesweeperModal.svelte': {
-    count: 3,
-    why: 'zoom controls floating over the board',
-  },
   'lib/components/shared/PermissionGrid.svelte': { count: 1, why: 'a cell of a grid' },
   'lib/components/reels/ReelCapture.svelte': {
     count: 1,
@@ -107,7 +103,7 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     why: 'the 80px shutter and its ring, the one target of the capture screen',
   },
   'lib/components/sidebar/Sidebar.svelte': { count: 2, why: 'the 48px community rail tiles' },
-  'routes/profile/+page.svelte': { count: 1, why: 'the camera badge pinned to the avatar' },
+  'routes/profile/(me)/+page.svelte': { count: 1, why: 'the camera badge pinned to the avatar' },
 };
 
 /** Classes that declare a box in `app.css` under their own name. */

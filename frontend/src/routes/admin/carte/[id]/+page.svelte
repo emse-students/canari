@@ -43,7 +43,6 @@
   import { createSerialSaver, layoutFingerprint } from '$lib/carte/editorPersistence';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import {
-    ArrowLeft,
     Download,
     Save,
     ImagePlus,
@@ -583,14 +582,6 @@
 
 {#if ready}
   <div class="space-y-6">
-    <a
-      href={resolve('/admin/carte')}
-      class="text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
-    >
-      <ArrowLeft size={14} />
-      {m.carte_editor_back()}
-    </a>
-
     {#if loading}
       <div class="flex justify-center py-16">
         <div
@@ -621,7 +612,7 @@
             type="button"
             class="group text-text-main hover:text-cn-yellow flex items-center gap-2 text-lg font-bold transition-colors"
             onclick={startRenamingName}
-            title="Renommer le projet"
+            title={m.admin_carte_rename_project_title()}
           >
             {project.name}
             <Pencil size={14} class="opacity-0 transition-opacity group-hover:opacity-60" />

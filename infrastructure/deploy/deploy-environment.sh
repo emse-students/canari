@@ -20,7 +20,7 @@
 # tag that already exists in the registry and makes the estate run it.
 #
 # Usage:
-#   deploy-environment.sh --environment prod|dev --path /srv/canari --tag latest \
+#   deploy-environment.sh --environment prod|dev --path /srv/canari --tag v1.0.4 \
 #     [--pull-services "core-service frontend"] [--registry ghcr.io] [--image-prefix owner/repo]
 #
 # GHCR_USERNAME and GHCR_TOKEN are read from the environment when present; without them the script
@@ -222,6 +222,56 @@ else
   printf '\nno service image changes were reported - not pulling\n'
 fi
 
+# ── The database first, and its migrations BEFORE any application service ──────
+# Services used to start first and migrate after, so a deploy had a window in which new code met the
+# old schema: `relation "spaces" does not exist` and `column "Post.publishedAt" does not exist`
+# were logged by production at 12:16:59 on 2026-10-07, the release that shipped migration 074-075.
+# Only postgres is brought up here; the rest of the estate follows once the schema is current.
+# ── Keep the logs of what this deploy is about to replace ────────────────────
+# `up -d` RECREATES a container, and a container's log dies with it. This is the last moment the
+# old containers exist; docs/wiki/infrastructure/logging.md.
+# shellcheck source-path=SCRIPTDIR source=../lib/archive-logs.sh
+. "$DEPLOY_PATH/infrastructure/lib/archive-logs.sh"
+archive_logs "$DOCKER_CLI" "$PROJECT" "${CANARI_LOG_ARCHIVE:-$HOME/deploy-log-archive}" 10
+
+dc up -d postgres
+
+# POSTGRES_USER comes from the .env this estate was just rendered with, not from a second copy of the
+# secret: two sources for one value is two things to keep in step.
+POSTGRES_USER="$(grep -E '^POSTGRES_USER=' "$ENV_FILE" | tail -1 | cut -d= -f2- || true)"
+[ -n "$POSTGRES_USER" ] || {
+  printf '::error::POSTGRES_USER is absent from %s, so no migration can be run\n' "$ENV_FILE" >&2
+  exit 1
+}
+
+printf '\nwaiting for PostgreSQL\n'
+pg_ready=0
+for i in $(seq 1 30); do
+  if dc exec -T postgres pg_isready -U "$POSTGRES_USER" -d auth_db >/dev/null 2>&1; then
+    pg_ready=1
+    break
+  fi
+  printf '  not ready yet (%s/30)\n' "$i"
+  sleep 2
+done
+if [ "$pg_ready" -ne 1 ]; then
+  printf '::error::PostgreSQL did not accept a connection within 60s\n' >&2
+  dc logs --tail 50 postgres || true
+  exit 1
+fi
+printf 'PostgreSQL is ready\n'
+
+psql() {
+  dc exec -T postgres psql -U "$POSTGRES_USER" -d auth_db -v ON_ERROR_STOP=1 "$@"
+}
+
+# The ledger, its precondition and the loop live in `infrastructure/lib/migrations.sh`, shared with
+# the dev refresh, which replaces this database and must end on the same schema a deploy leaves.
+# shellcheck source-path=SCRIPTDIR source=../lib/migrations.sh
+. "$DEPLOY_PATH/infrastructure/lib/migrations.sh"
+
+apply_migrations
+
 # ── Up, with the one retry that is a REPAIR and not a hope ───────────────────
 # A stale container of THIS estate's own frontend can hold the host port after a previous deploy was
 # killed. That is the only conflict this script may resolve by itself, and the allowlist is narrow on
@@ -266,42 +316,6 @@ if ! dc up -d --remove-orphans; then
 fi
 printf 'containers started\n'
 
-# ── Migrations ───────────────────────────────────────────────────────────────
-# POSTGRES_USER comes from the .env this estate was just rendered with, not from a second copy of the
-# secret: two sources for one value is two things to keep in step.
-POSTGRES_USER="$(grep -E '^POSTGRES_USER=' "$ENV_FILE" | tail -1 | cut -d= -f2- || true)"
-[ -n "$POSTGRES_USER" ] || {
-  printf '::error::POSTGRES_USER is absent from %s, so no migration can be run\n' "$ENV_FILE" >&2
-  exit 1
-}
-
-printf '\nwaiting for PostgreSQL\n'
-pg_ready=0
-for i in $(seq 1 30); do
-  if dc exec -T postgres pg_isready -U "$POSTGRES_USER" -d auth_db >/dev/null 2>&1; then
-    pg_ready=1
-    break
-  fi
-  printf '  not ready yet (%s/30)\n' "$i"
-  sleep 2
-done
-if [ "$pg_ready" -ne 1 ]; then
-  printf '::error::PostgreSQL did not accept a connection within 60s\n' >&2
-  dc logs --tail 50 postgres || true
-  exit 1
-fi
-printf 'PostgreSQL is ready\n'
-
-psql() {
-  dc exec -T postgres psql -U "$POSTGRES_USER" -d auth_db -v ON_ERROR_STOP=1 "$@"
-}
-
-# The ledger, its precondition and the loop live in `infrastructure/lib/migrations.sh`, shared with
-# the dev refresh, which replaces this database and must end on the same schema a deploy leaves.
-# shellcheck source-path=SCRIPTDIR source=../lib/migrations.sh
-. "$DEPLOY_PATH/infrastructure/lib/migrations.sh"
-
-apply_migrations
 
 # ── Every service must be running ────────────────────────────────────────────
 # THE LIST IS DERIVED FROM THE COMPOSE FILE, AND WHAT IS WRITTEN DOWN IS WHAT MAY BE ABSENT. The

@@ -9,7 +9,7 @@
 
 import { version } from '$app/environment';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
-import { appRouteForDeepLink } from '$lib/mobile/deepLinkRoutes';
+import { appRouteForDeepLink, proposalQueueAssociationId } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { createStaleBuildRecovery } from '$lib/utils/staleBuild';
@@ -18,7 +18,10 @@ import { prefetchMlsWasmAtBoot } from '$lib/mls-client/wasmPrefetch';
 import { openClaimedAppLink } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
-import { fetchInputUrl, shouldUseNativeFetch } from '$lib/utils/fetchRouting';
+import { apiServiceOrigins } from '$lib/utils/apiUrl';
+import { createRoutedFetch } from '$lib/utils/fetchRouting';
+import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
+import { CHECKOUT_RETURN_HOSTS } from '$lib/utils/checkoutCallbacks';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones.
@@ -147,7 +150,7 @@ if (isTauriRuntime()) {
             // fr.emse.canari://open?url=<public Canari URL> (`$lib/mobile/openInApp`). Opened only
             // if it is a CLAIMED Canari page, exactly as the Universal Link would have been - anyone
             // can write this URL, so it must not reach anything a Universal Link cannot.
-            if (u.protocol === 'fr.emse.canari:' && u.host === 'open') {
+            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'open') {
               const target = u.searchParams.get('url') ?? '';
               if (!openClaimedAppLink(target)) {
                 console.warn('[hooks] open link names no claimed Canari page, ignoring:', target);
@@ -157,7 +160,7 @@ if (isTauriRuntime()) {
 
             // Chat conversation deep link: fr.emse.canari://chat/{groupId}
             // A community channel target (`channel_<uuid>`) opens under /communities, not /chat.
-            if (u.protocol === 'fr.emse.canari:' && u.host === 'chat') {
+            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'chat') {
               const groupId = u.pathname.replace(/^\//, '');
               // WP-XP-5: the user answered an incoming call from a system surface (Android
               // CallStyle notification / iOS CallKit). Record the intent; CallService
@@ -206,6 +209,31 @@ if (isTauriRuntime()) {
             // Page deep links a notification tap lands on: post/{id}, form/{id}, posts, calendar,
             // admin-agenda. The table is `appRouteForDeepLink`; a host it does not own falls through
             // to the handlers below.
+            // A proposal push (repost, co-organisation): its page is reached by SLUG, so the
+            // association is looked up first - the path the notifications page takes for the same
+            // row. A lookup that fails is logged, never replaced by another destination.
+            const queueAssociationId = proposalQueueAssociationId(u);
+            if (queueAssociationId) {
+              Promise.all([
+                import('$app/navigation'),
+                import('$lib/stores/globalChatSingleton.svelte'),
+                import('$lib/posts/notificationTarget'),
+                import('$lib/associations/api'),
+              ])
+                .then(async ([{ goto }, { appendLog }, { resolveNotificationHref }, assos]) => {
+                  appendLog(
+                    `[notifNav] deep link received: ${url} -> proposals ${queueAssociationId}`
+                  );
+                  const route = await resolveNotificationHref(
+                    { type: 'repost_proposed', postId: queueAssociationId },
+                    async (id) => (await assos.getAssociation(id)).slug
+                  );
+                  return goto(route);
+                })
+                .catch((err) => console.error('[hooks] Proposal queue navigation failed', err));
+              continue;
+            }
+
             const pageRoute = appRouteForDeepLink(u);
             if (pageRoute) {
               Promise.all([
@@ -221,14 +249,14 @@ if (isTauriRuntime()) {
               continue;
             }
 
-            // Stripe Checkout return: fr.emse.canari://stripe/success|cancel?…
-            if (u.protocol === 'fr.emse.canari:' && u.host === 'stripe') {
+            // Checkout return: fr.emse.canari://payment/success|cancel?… A build older than the
+            // payment host still sends `stripe` (docs/wiki/legacy-compatibility.md), so both are read.
+            if (u.protocol === MOBILE_APP_PROTOCOL && CHECKOUT_RETURN_HOSTS.has(u.host)) {
               const path = u.pathname.replace(/\/$/, '') || '/';
               const sessionId = u.searchParams.get('session_id');
               const submissionId = u.searchParams.get('submission_id');
               const registered = u.searchParams.get('registered');
               const postId = u.searchParams.get('post_id');
-              const paymentSetup = u.searchParams.get('payment_setup');
 
               const navigate = (target: string) => {
                 import('$app/navigation')
@@ -250,8 +278,6 @@ if (isTauriRuntime()) {
                   navigate(`/forms/success?submission_id=${encodeURIComponent(submissionId)}`);
                 } else if (sessionId) {
                   navigate(`/forms/success?session_id=${encodeURIComponent(sessionId)}`);
-                } else if (paymentSetup) {
-                  navigate(`/settings?payment_setup=${encodeURIComponent(paymentSetup)}`);
                 } else if (registered) {
                   const q = new URLSearchParams({ registered });
                   if (postId) q.set('post_id', postId);
@@ -266,8 +292,6 @@ if (isTauriRuntime()) {
                   navigate(`/forms/cancel?submission_id=${encodeURIComponent(submissionId)}`);
                 } else if (sessionId) {
                   navigate(`/forms/cancel?session_id=${encodeURIComponent(sessionId)}`);
-                } else if (paymentSetup) {
-                  navigate(`/settings?payment_setup=${encodeURIComponent(paymentSetup)}`);
                 } else {
                   navigate('/forms');
                 }
@@ -276,7 +300,7 @@ if (isTauriRuntime()) {
             }
 
             // Only handle OIDC callback scheme
-            if (u.protocol !== 'fr.emse.canari:' || u.host !== 'callback') {
+            if (u.protocol !== MOBILE_APP_PROTOCOL || u.host !== 'callback') {
               console.log('[hooks] URL is not our deep link, ignoring');
               continue;
             }
@@ -430,14 +454,15 @@ if (isTauriRuntime()) {
   import('@tauri-apps/plugin-http')
     .then(({ fetch: tauriFetch }) => {
       const originalFetch = window.fetch;
-      window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
-        // The plugin is a network client and answers `http(s)` alone; everything else is the
-        // WebView's own. `shouldUseNativeFetch` carries the reasoning and its tests.
-        if (shouldUseNativeFetch(fetchInputUrl(input), init)) {
-          return originalFetch.call(window, input, init);
-        }
-        return tauriFetch(input, init) as ReturnType<typeof window.fetch>;
-      } as typeof window.fetch;
+      // The plugin is a network client and answers `http(s)` alone; everything else is the
+      // WebView's own, and so is a BINARY BODY to Canari's own API (the plugin inflates every body
+      // byte ~85x in Rust and ~45-50x in the renderer; 50 MB crashed the app on the Mi 9T).
+      // `createRoutedFetch` carries the reasoning and its tests.
+      window.fetch = createRoutedFetch(
+        (input, init) => originalFetch.call(window, input, init),
+        tauriFetch as typeof window.fetch,
+        () => apiServiceOrigins()
+      );
     })
     .catch(() => {
       // May fail during an in-flight page reload; the next load will retry.

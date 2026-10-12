@@ -166,7 +166,7 @@
         <p class="text-text-muted text-sm">{m.shop_login_required_desc()}</p>
         <a
           href="/login"
-          class="bg-cn-accent inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-opacity"
         >
           {m.shop_login_button()}
         </a>

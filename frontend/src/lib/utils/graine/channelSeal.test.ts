@@ -16,6 +16,7 @@ import {
   GraineReplayError,
   GraineSessionUnavailableError,
   GraineUnknownChannelError,
+  GraineV1SessionNotHeldError,
   openChannelMessage,
   sealChannelMessage,
 } from './channelSeal';
@@ -227,17 +228,40 @@ describe('opening', () => {
     const { storage } = fakeStorage();
     wire(storage, fakeMls(4).mls);
 
+    // SIGNED: only a v2 row can be helped by a peer, since a v1 seed is refused on arrival.
     const err = await openChannelMessage(CHANNEL, {
       id: 'row-1',
       senderId: 'bob',
       ciphertext: 'x',
       nonce: 'y',
+      signature: 'c2ln',
       senderSessionId: 'sess-unknown',
       messageIndex: 0,
     }).catch((e) => e);
 
     expect(err).toBeInstanceOf(GraineSessionUnavailableError);
     expect(err.sessionId).toBe('sess-unknown');
+  });
+
+  it('reports an UNSIGNED row under a session not held as v1, which no repair can open (section 21.7)', async () => {
+    const { storage } = fakeStorage();
+    wire(storage, fakeMls(4).mls);
+
+    // A v1 seed is refused on arrival, so asking a peer for this one would fetch a seed this
+    // device then refuses - for every such row, for ever.
+    const err = await openChannelMessage(CHANNEL, {
+      id: 'row-1',
+      senderId: 'bob',
+      ciphertext: 'x',
+      nonce: 'y',
+      signature: null,
+      senderSessionId: 'sess-v1',
+      messageIndex: 0,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(GraineV1SessionNotHeldError);
+    expect(err).not.toBeInstanceOf(GraineSessionUnavailableError);
+    expect(err.sessionId).toBe('sess-v1');
   });
 
   it('reports a row that names no session as a missing seed, not as an empty message', async () => {
@@ -354,6 +378,10 @@ describe('a private salon seals on its OWN group', () => {
     await expect(sealChannelMessage(CHANNEL, new Uint8Array([1]))).rejects.toBeInstanceOf(
       GraineDistributionUnavailableError
     );
+    // And it says WHICH fact was missing, for the toast and the log (production 2026-10-09).
+    await expect(sealChannelMessage(CHANNEL, new Uint8Array([1]))).rejects.toMatchObject({
+      reason: 'key-group-unsettled',
+    });
     expect(sent).toHaveLength(0);
   });
 });

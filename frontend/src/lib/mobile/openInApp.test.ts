@@ -1,4 +1,4 @@
-import { detectInAppBrowser, openInAppOffer } from './openInApp';
+import { detectInAppBrowser, loginOpenInAppOffer, openInAppOffer } from './openInApp';
 import { isClaimedAppLinkPath } from './appSiteAssociation';
 import { APP_STORE_URL, PLAY_STORE_URL } from '$lib/utils/appVersion';
 
@@ -95,5 +95,30 @@ describe('isClaimedAppLinkPath', () => {
     expect(isClaimedAppLinkPath('/admin')).toBe(false);
     // `/posts` alone is not claimed: only `/posts/*` is.
     expect(isClaimedAppLinkPath('/posts')).toBe(false);
+  });
+});
+
+describe('loginOpenInAppOffer', () => {
+  it('offers the app home from a bare /login, in a real browser, per system', () => {
+    const android = loginOpenInAppOffer('https://canari.emse.fr/login', UA.chromeAndroid);
+    expect(android?.openHref).toContain('intent://canari.emse.fr/chat#Intent;scheme=https;');
+    const ios = loginOpenInAppOffer('https://canari.emse.fr/login', UA.safariIos);
+    expect(ios?.openHref).toBe(
+      `fr.emse.canari://open?url=${encodeURIComponent('https://canari.emse.fr/chat')}`
+    );
+  });
+
+  it('prefers the claimed page behind returnTo', () => {
+    const offer = loginOpenInAppOffer(
+      'https://canari.emse.fr/login?returnTo=%2Fposts%2F42',
+      UA.safariIos
+    );
+    expect(offer?.openHref).toContain(encodeURIComponent('https://canari.emse.fr/posts/42'));
+  });
+
+  it('offers nothing on a desktop, or on a host no App Link filter names', () => {
+    const desktop = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0 Safari/537.36';
+    expect(loginOpenInAppOffer('https://canari.emse.fr/login', desktop)).toBeNull();
+    expect(loginOpenInAppOffer('https://dev.canari-emse.fr/login', UA.chromeAndroid)).toBeNull();
   });
 });

@@ -134,6 +134,8 @@ export interface PostEntity {
    * has not republished it yet. Which one is chosen in `RepublishDialog`; the server checks it again.
    */
   canRepublish?: boolean;
+  /** The poll may be voted: false for a reader who sees the post only through a read grant. */
+  canVote?: boolean;
   /** "Proposer a une association": the reader publishes in this post's association's name. */
   canProposeRepublication?: boolean;
   /** The republishers (ids in `republishedBy`) whose republication this reader may withdraw. */
@@ -367,32 +369,6 @@ export async function fetchFeedAudience(): Promise<{ inAudience: boolean }> {
 /** The server's reel numbers (`ReelLimits`). */
 export async function getReelLimits(): Promise<ReelLimits> {
   return request<ReelLimits>('/api/posts/reel-limits');
-}
-
-/** One of the caller's own live reels, with what saving it before its deletion needs (C6). */
-export interface MyReel {
-  id: string;
-  createdAt: string;
-  expiresAt: string;
-  durationMs: number;
-  /** `expiresAt - serverNow <= warningWindowDays`, decided by the server's clock. */
-  expiringSoon: boolean;
-  markdown: string;
-  /** `media[0]` is the video, with its key: this route is the author's alone. */
-  media: PostMediaRef[];
-}
-
-/** `GET /api/posts/my-reels`: the caller's live reels, soonest expiry first. */
-export interface MyReelsAnswer {
-  /** The server's clock, so a phone with a skewed one still counts the days right. */
-  serverNow: string;
-  warningWindowDays: number;
-  reels: MyReel[];
-}
-
-/** The caller's own live reels, including those published as an association or anonymously. */
-export async function getMyReels(): Promise<MyReelsAnswer> {
-  return request<MyReelsAnswer>('/api/posts/my-reels');
 }
 
 export async function createPost(payload: CreatePostPayload): Promise<PostEntity> {

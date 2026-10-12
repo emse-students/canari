@@ -10,6 +10,7 @@ import {
   formatTakeTime,
   pickReelRecorderMime,
   ringFraction,
+  shutterRingFraction,
   type CaptureState,
   type ReelClip,
 } from './reelCapture';
@@ -92,7 +93,13 @@ describe('pickReelRecorderMime', () => {
   const everything = () => true;
   it('records MP4 on iOS and WebM elsewhere (read on the phones 2026-10-01)', () => {
     expect(pickReelRecorderMime(true, everything)).toBe('video/mp4;codecs=avc1,mp4a');
-    expect(pickReelRecorderMime(false, everything)).toBe('video/webm;codecs=vp9,opus');
+    expect(pickReelRecorderMime(false, everything)).toBe('video/webm;codecs=h264,opus');
+  });
+
+  it('prefers hardware H.264 over software VP9 on Android, VP9 only without it (2026-10-09)', () => {
+    expect(pickReelRecorderMime(false, (t) => t !== 'video/webm;codecs=h264,opus')).toBe(
+      'video/webm;codecs=vp9,opus'
+    );
   });
 
   it('takes the first the engine records, and none is null', () => {
@@ -123,5 +130,18 @@ describe('classifyLimitsFault', () => {
     expect(classifyLimitsFault(500)).toBe('refused');
     expect(classifyLimitsFault(400)).toBe('refused');
     expect(classifyLimitsFault(404)).toBe('refused');
+  });
+});
+
+describe('shutterRingFraction', () => {
+  it('follows the take while it records and while it finishes', () => {
+    expect(shutterRingFraction({ kind: 'recording', pressedAt: 0 }, 45_000, 90_000)).toBe(0.5);
+    expect(shutterRingFraction({ kind: 'finishing' }, 90_000, 90_000)).toBe(1);
+  });
+
+  it('is EMPTY in every other state, whatever the clock still holds (a cancelled take)', () => {
+    for (const state of [ready, pressing, { kind: 'photo' }, { kind: 'review', clip }] as const) {
+      expect(shutterRingFraction(state, 60_000, 90_000)).toBe(0);
+    }
   });
 });

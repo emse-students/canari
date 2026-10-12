@@ -241,12 +241,10 @@
     <h3>Traitement des paiements</h3>
     <p>
       Certaines fonctionnalités de Canari (billetterie événements, formulaires payants) impliquent
-      des transactions financières traitées par <strong>Stripe, Inc.</strong>
-      (prestataire de paiement certifié PCI DSS niveau 1). En effectuant un paiement, vous acceptez également
-      les
-      <a href="https://stripe.com/fr/legal/end-users" target="_blank" rel="noopener"
-        >conditions d'utilisation de Stripe</a
-      >. Canari ne stocke jamais vos coordonnées bancaires.
+      des transactions financières traitées par <strong>Lydia</strong>
+      (prestataire de paiement français, présenté dans l'application sous le nom « Paiement Canari »).
+      En effectuant un paiement, vous acceptez également les conditions d'utilisation de ce prestataire,
+      affichées sur sa page de paiement. Canari ne stocke jamais vos coordonnées bancaires.
     </p>
 
     <h3>Politique de remboursement</h3>
@@ -364,7 +362,7 @@
       <li>Des dommages résultant d'une utilisation inappropriée du Service</li>
       <li>De la perte de données consécutive à une réinitialisation volontaire de l'appareil</li>
       <li>
-        Des actes ou omissions des sous-traitants (Firebase, Stripe) dans les limites de la loi
+        Des actes ou omissions des sous-traitants (Firebase, Lydia) dans les limites de la loi
         applicable
       </li>
     </ul>

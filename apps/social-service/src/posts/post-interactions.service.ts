@@ -17,6 +17,7 @@ import { PostMediaRetentionService, commentMediaIds } from './post-media-retenti
 import { isExpiredReel } from './reel.constants';
 import {
   reactionContent,
+  reactionTypeToEmoji,
   commentContent,
   replyContent,
   mentionContent,
@@ -81,10 +82,19 @@ export class PostInteractionsService {
             text: reactionType,
             skipPush: true,
           });
-          await this.push.notifyContent(post.authorId, reactionContent(actorName, reactionType), {
-            type: 'social',
-            postId,
-          });
+          // THE ACTOR'S FACE, AND THE EMOJI RATHER THAN THE STORED LABEL: this push carried
+          // neither (user, 2026-10-08 - six faceless "a réagi Marteau" for one post).
+          await this.push.notifyContent(
+            post.authorId,
+            reactionContent(actorName, reactionTypeToEmoji(reactionType), {
+              kind: 'user',
+              userId,
+            }),
+            {
+              type: 'social',
+              postId,
+            }
+          );
         } catch (e) {
           this.logger.warn(
             `[NOTIFY] reaction notification failed for post.authorId=${post.authorId}`,
@@ -171,7 +181,8 @@ export class PostInteractionsService {
     post.comments = [...existingComments, comment];
     await this.postRepo.save(post);
 
-    // Fire-and-forget: notify post author, parent comment author, and mentioned users.
+    // Fire-and-forget: notify the post author (also for an association post), the parent comment
+    // author, and mentioned users.
     // Each recipient is isolated in its own try/catch so that a DB failure for one
     // recipient does not prevent the others from being notified.
     void (async () => {
@@ -182,7 +193,7 @@ export class PostInteractionsService {
       const actorName = await this.notifications.resolveActorName(data.userId);
       const alreadyNotified = new Set<string>([data.userId]);
 
-      if (post.authorId && !post.associationId && !alreadyNotified.has(post.authorId)) {
+      if (post.authorId && !alreadyNotified.has(post.authorId)) {
         alreadyNotified.add(post.authorId);
         try {
           await this.notifications.createNotification({

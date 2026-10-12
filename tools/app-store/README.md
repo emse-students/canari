@@ -79,6 +79,15 @@ Two decisions are worth knowing because their failure mode is silence:
   must not become a green submission. `ApiError` carries the status as a fact so none of this is
   decided by matching Apple's prose. `v0.16.1` and `v0.18.10` each cost a production deploy to the
   two halves of this, one call apart in the same chain.
+- **A submission App Review sent back is resent, not left stuck.** A rejection leaves the
+  submission open as `UNRESOLVED_ISSUES` with its item `REJECTED`; the version is editable again,
+  so the next release renames it and writes its build and notes, and `submitted: true` is then
+  refused 409 *"Version is not ready to be submitted yet"* however long it waits. The script marks
+  the rejected item of THIS version `resolved: true` (the API side of "Resubmit to App Review") and
+  never touches another resource's rejection. Found 2026-10-12, when the 1.2.1 rejection would have
+  turned every later stable's iOS arm red, and the production deploy with it.
+- **Apple's nested errors are printed.** A 409 is often a wrapper whose reason sits under
+  `meta.associatedErrors`; `describeAppleErrors` puts it in the log line.
 
 ## Tests
 

@@ -2,13 +2,17 @@
   import { resolve } from '$app/paths';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
+  import { page as routePage } from '$app/state';
+  import { parseTab, tabUrl } from '$lib/admin/tabQuery';
+  import { internalPath } from '$lib/utils/internalPath';
   import { isGlobalAdmin } from '$lib/stores/user';
   import {
     listLegacyCotisations,
     type LegacyCotisationAdminItem,
     type LegacyCotisationStatus,
   } from '$lib/associations/api';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { RefreshCw, Search, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -17,7 +21,16 @@
   const SEARCH_DEBOUNCE_MS = 300;
 
   let ready = $state(false);
-  let tab = $state<LegacyCotisationStatus>('pending');
+  const TAB_KEYS = [
+    'pending',
+    'claimed',
+    'collisions',
+    'all',
+  ] as const satisfies readonly LegacyCotisationStatus[];
+  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  let tab = $state<LegacyCotisationStatus>(
+    parseTab(routePage.url.searchParams.get('tab'), TAB_KEYS, 'pending')
+  );
   let search = $state('');
   let items = $state<LegacyCotisationAdminItem[]>([]);
   let total = $state(0);
@@ -65,6 +78,7 @@
   function switchTab(next: LegacyCotisationStatus) {
     if (tab === next) return;
     tab = next;
+    replaceState(resolve(internalPath(tabUrl(routePage.url, next, 'pending'))), routePage.state);
     void load(0, true);
   }
 
@@ -136,19 +150,13 @@
     </div>
   {/if}
 
-  <div class="border-cn-border flex gap-1 rounded-xl border bg-(--cn-surface) p-1">
-    {#each tabs as t (t.key)}
-      <button
-        onclick={() => switchTab(t.key)}
-        class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
-        t.key
-          ? 'bg-cn-yellow text-cn-ink shadow-sm'
-          : 'text-text-muted hover:text-text-main'}"
-      >
-        {t.label()}
-      </button>
-    {/each}
-  </div>
+  <SegmentedControl
+    items={tabs.map((t) => ({ key: t.key, label: t.label() }))}
+    value={tab}
+    onSelect={switchTab}
+    label={m.admin_legacy_title()}
+    tone="yellow"
+  />
 
   <div class="relative">
     <span class="text-text-muted pointer-events-none absolute top-1/2 left-3 -translate-y-1/2">

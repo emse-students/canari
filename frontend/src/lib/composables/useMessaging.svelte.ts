@@ -15,12 +15,17 @@ import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotific
 import { extractMentionUserIds, normalizeMentionUserId } from '$lib/utils/mentions';
 import {
   sendChatMessage,
+  retrySalonSend,
+  discardSalonSend,
+  takeBackSalonSend,
+  type SendMessageDeps,
   addReaction,
   removeReaction,
   editMessage,
   deleteMessage,
   setMessagePinned,
 } from '$lib/utils/chat/messaging';
+import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { applyPin, isMessagePinned } from '$lib/stores/pinStore.svelte';
 import {
@@ -37,8 +42,7 @@ import {
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
-import { readerCanSeeArrival } from '$lib/utils/chat/arrivalVisibility';
-import { isNarrowChatLayout } from '$lib/utils/viewport';
+import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
   activeReactions,
@@ -53,6 +57,7 @@ import { getUserDisplayNameSync, notificationSenderName } from '$lib/utils/users
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import { MediaService } from '$lib/media';
+import { isReelMessage } from '$lib/reels/chatReel';
 import {
   applyEditToBody,
   getPreviewText,
@@ -77,7 +82,8 @@ import type {
 import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
-import { enqueueOutboxMessage } from '$lib/utils/chat/outbox';
+import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/outbox';
+import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { ChannelService } from '$lib/services/ChannelService';
 import {
   isChannelConversationId,
@@ -113,7 +119,8 @@ export interface MessagingContext {
   verifyCurrentUserMembership: (contactName: string) => Promise<boolean>;
   playNotificationTone: () => void;
   playSendTone?: () => void;
-  playReceiveTone?: () => void;
+  /** `mentionsMe` selects the mention trill over the message one. */
+  playReceiveTone?: (mentionsMe?: boolean) => void;
   playReadTone?: () => void;
   sendSystemNotification: (
     title: string,
@@ -151,7 +158,12 @@ function mediaKindFromEnvelope(type: string): number {
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
-  let replyingTo = $state<ChatMessage | null>(null);
+  /**
+   * The reply armed in each conversation, keyed by conversation id. A reply belongs to ONE
+   * conversation: the composer shows (and a send consumes) only the entry of the conversation
+   * that is open, so opening another one never carries the quote along.
+   */
+  const replyByConversation = new SvelteMap<string, ChatMessage>();
   let pendingMediaFiles = $state<import('$lib/media').PendingMediaFile[]>([]);
   /** A picked video being re-encoded on the device before it joins the queue (decision C3). */
   const videoPreparation = new VideoPreparationState();
@@ -365,17 +377,7 @@ export function useMessaging() {
    * backgrounded Tauri app reports `visible`/`hasFocus` exactly as a foregrounded one does.
    */
   function canSeeArrival(ctx: MessagingContext, conversationKey: string): boolean {
-    if (typeof document === 'undefined') return false;
-    const mobile = isMobileTauriRuntime();
-    return readerCanSeeArrival({
-      conversationKey,
-      selectedConversationKey: ctx.selectedContact,
-      pathname: window.location.pathname,
-      appOnScreen: mobile
-        ? isAppInForeground()
-        : document.visibilityState === 'visible' && document.hasFocus(),
-      narrowLayout: isNarrowChatLayout(),
-    });
+    return canSeeArrivalNow(conversationKey, ctx.selectedContact);
   }
 
   function notifyInbound(
@@ -394,7 +396,9 @@ export function useMessaging() {
     isSystem: boolean,
     isOwn: boolean,
     /** The SENDER's instant in ms - what lets the native builder recognise one message. */
-    sentAt: number
+    sentAt: number,
+    /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
+    covers: number
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
@@ -500,7 +504,73 @@ export function useMessaging() {
       body: notificationBody,
       mentionsMe,
       sentAt,
+      covers,
     });
+  }
+
+  /**
+   * What `sendChatMessage` needs from this composable: the echo writer and the one that moves a salon
+   * echo along. One place, so the composer, a forward and a retry cannot disagree on either.
+   */
+  function makeSendDeps(ctx: MessagingContext, convo: Conversation): SendMessageDeps {
+    return {
+      userId: ctx.userId,
+      conversation: convo,
+      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
+        addMessageToChat(sid, content, contactName, ctx, options),
+      patchSalonEcho: (key, id, change) =>
+        void applySalonEchoChange(ctx.conversations, key, id, change, ctx.log),
+      log: ctx.log,
+    };
+  }
+
+  /**
+   * Retries a salon message whose send was refused (the "Reessayer" of its row). The refusal is
+   * shown on the same banner the first attempt used; the row itself carries the state.
+   */
+  async function retrySend(ctx: MessagingContext, messageId: string): Promise<void> {
+    const key = ctx.selectedContact;
+    const convo = key ? ctx.conversations.get(key) : undefined;
+    if (!key || !convo) return;
+    ctx.setSendError('');
+    const refusal = await retrySalonSend(messageId, makeSendDeps(ctx, convo));
+    if (refusal) ctx.setSendError(refusal);
+  }
+
+  /** Drops a failed salon message the member gave up on: its registration and its row. */
+  function discardSend(ctx: MessagingContext, messageId: string): void {
+    const key = ctx.selectedContact;
+    const convo = key ? ctx.conversations.get(key) : undefined;
+    if (!key || !convo) return;
+    discardSalonSend(messageId, ctx.userId);
+    ctx.conversations.set(key, {
+      ...convo,
+      messages: convo.messages.filter((m) => !(m.id === messageId && m.awaitingServerId)),
+    });
+    ctx.log(`[SEND] salon message ${messageId.slice(0, 8)}... discarded by its author`);
+  }
+
+  /**
+   * Takes an UNCONFIRMED salon message back: its row goes, and its text is returned for the composer
+   * (the caller restores it as WP-OFF-1 does). `null` when nothing is registered under the id.
+   */
+  function takeBackSend(ctx: MessagingContext, messageId: string): string | null {
+    const key = ctx.selectedContact;
+    const convo = key ? ctx.conversations.get(key) : undefined;
+    if (!key || !convo) return null;
+    const text = takeBackSalonSend(messageId, ctx.userId);
+    if (text === null) {
+      ctx.log(`[SEND] take back ${messageId.slice(0, 8)}...: no salon send registered`);
+      return null;
+    }
+    ctx.conversations.set(key, {
+      ...convo,
+      messages: convo.messages.filter((m) => !(m.id === messageId && m.awaitingServerId)),
+    });
+    ctx.log(
+      `[SEND] unconfirmed salon message ${messageId.slice(0, 8)}... put back in the composer`
+    );
+    return text;
   }
 
   async function addMessageToChat(
@@ -628,6 +698,7 @@ export function useMessaging() {
       status: options.status,
       isFcmPreview: options.isFcmPreview,
       serverTimestamp: options.serverTimestamp,
+      ...(options.salonEcho ? { awaitingServerId: true } : {}),
     };
 
     const dupIdx = convo.messages.findIndex((m) => m.id === newMsg.id);
@@ -677,6 +748,7 @@ export function useMessaging() {
             message: upgraded,
             lastMessageAt: updatedConvo.lastMessageAt ?? upgraded.timestamp.getTime(),
             unreadCount: updatedConvo.unreadCount ?? 0,
+            ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
           });
         }
         console.log(`[ADD_MSG] ✓ Message upgraded: id=${newMsg.id}…`);
@@ -686,7 +758,9 @@ export function useMessaging() {
       return;
     }
 
-    const isConversationOpen = ctx.selectedContact === normalized;
+    // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
+    // to another route or put the window away, which counted a message nobody saw as read.
+    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedContact);
     // The same question the batch path asks, which until 2026-08-30 it did not: this one forgot
     // the watermark AND counted system messages, so a replayed frame taking the single path could
     // still raise a badge for something already read, and a "X joined" notice raised one for
@@ -708,20 +782,25 @@ export function useMessaging() {
     });
     console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id}…`);
 
-    publishTabMessageUpdate({
-      type: 'message_added',
-      conversationId: normalized,
-      message: newMsg,
-      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
-      unreadCount: nextUnreadCount,
-    });
+    // A salon echo has no server id yet: announced to the sibling tabs now, it would be a row they
+    // can never reconcile. `applySalonEchoChange` announces it once it is re-keyed.
+    if (!options.salonEcho) {
+      publishTabMessageUpdate({
+        type: 'message_added',
+        conversationId: normalized,
+        message: newMsg,
+        lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+        unreadCount: nextUnreadCount,
+        ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
+      });
+    }
 
     // AND THE ONE ANNOUNCEMENT THAT TRAVELS THE OTHER WAY. The call above is leader-only, because
     // only the leader receives inbound frames and only it can speak for the conversation's counts.
     // A message composed HERE is the exception: whichever tab composed it is the only one that
     // knows, and a follower composing one used to tell nobody - TAB-4b, 2026-09-05. `isOwn` is the
     // discriminator and it is already computed above.
-    if (isOwn) {
+    if (isOwn && !options.salonEcho) {
       publishComposedMessage({
         type: 'own_message_composed',
         conversationId: normalized,
@@ -753,7 +832,13 @@ export function useMessaging() {
       !isStaleInboundMessage(resolvedTimestamp) &&
       canSeeArrival(ctx, normalized)
     ) {
-      (ctx.playReceiveTone ?? ctx.playNotificationTone)();
+      if (ctx.playReceiveTone) {
+        ctx.playReceiveTone(
+          extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId))
+        );
+      } else {
+        ctx.playNotificationTone();
+      }
     }
 
     // ONE DECISION, ASKED BY BOTH INBOUND PATHS - see `notifyInbound`.
@@ -765,7 +850,8 @@ export function useMessaging() {
       content,
       isSystem,
       isOwn,
-      resolvedTimestamp.getTime()
+      resolvedTimestamp.getTime(),
+      1
     );
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
@@ -914,7 +1000,9 @@ export function useMessaging() {
       return;
     }
 
-    const isConversationOpen = ctx.selectedContact === normalized;
+    // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
+    // to another route or put the window away, which counted a message nobody saw as read.
+    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedContact);
     // COUNTED AGAINST THIS USER'S OWN WATERMARK, not against "arrived just now". The two are the
     // same thing only for live traffic; a reconciliation delivers frames that are new to THIS
     // device and were read long ago on another one, and counting those raised a badge the next
@@ -1002,7 +1090,9 @@ export function useMessaging() {
         lastInbound.content,
         false,
         false,
-        lastInbound.timestamp.getTime()
+        lastInbound.timestamp.getTime(),
+        // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
+        brandNew.filter((msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId)).length
       );
     }
 
@@ -1043,7 +1133,7 @@ export function useMessaging() {
     ctx: MessagingContext,
     messageText: string,
     opts?: { files?: import('$lib/media').PendingMediaFile[] }
-  ) {
+  ): Promise<boolean | undefined> {
     const text = messageText.trim();
     const sendsQueue = !opts?.files;
     const filesToSend = opts?.files ?? [...pendingMediaFiles];
@@ -1100,8 +1190,8 @@ export function useMessaging() {
       }
     }
 
-    const currentReplyingTo = replyingTo;
-    replyingTo = null;
+    const currentReplyingTo = replyByConversation.get(ctx.selectedContact) ?? null;
+    replyByConversation.delete(ctx.selectedContact);
     ctx.setSendError('');
     const channelSvc = isChannel ? new ChannelService() : null;
 
@@ -1183,34 +1273,61 @@ export function useMessaging() {
                 captionForFile
               )
             );
-            await addMessageToChat(ctx.userId, placeholder, ctx.selectedContact!, ctx, {
-              messageId,
-              status: 'pending',
-              timestamp: new SvelteDate(sentAt),
-            });
-            const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
-            const outboxEntry: OutboxEntry = {
-              id: messageId,
-              conversationId: convo.id,
-              sentAt,
-              kind: 'media',
-              media: {
-                kind: mediaKindFromEnvelope(type),
-                mimeType: entry.file.type,
-                size: entry.file.size,
-                fileName: entry.file.name,
-                width: entry.width,
-                height: entry.height,
-                ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
-                caption: captionForFile,
-                ...(entry.voiceNote ? { voiceNote: true } : {}),
-                fileBytes,
-              },
-              status: 'pending',
-              attempts: 0,
-              createdAt: sentAt,
-            };
-            await enqueueOutboxMessage(outboxEntry);
+            // READ BEFORE THE PLACEHOLDER IS WRITTEN: a read that throws (revoked file, no memory)
+            // after it left a `mediaId: ''` row with no outbox entry - an orphan the bubble could only
+            // draw as a spinner for ever. The catch below re-stages the file when this throws.
+            // IN FLIGHT FROM BEFORE THE PLACEHOLDER: the bubble must not read the outbox's "absent"
+            // during the durable INSERT as an orphan (outboxActivity).
+            const endInflight = beginOutboxEnqueue(messageId);
+            try {
+              const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
+              await addMessageToChat(ctx.userId, placeholder, ctx.selectedContact!, ctx, {
+                messageId,
+                status: 'pending',
+                timestamp: new SvelteDate(sentAt),
+              });
+              const outboxEntry: OutboxEntry = {
+                id: messageId,
+                conversationId: convo.id,
+                sentAt,
+                kind: 'media',
+                media: {
+                  kind: mediaKindFromEnvelope(type),
+                  mimeType: entry.file.type,
+                  size: entry.file.size,
+                  fileName: entry.file.name,
+                  width: entry.width,
+                  height: entry.height,
+                  ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
+                  caption: captionForFile,
+                  ...(entry.voiceNote ? { voiceNote: true } : {}),
+                  fileBytes,
+                },
+                status: 'pending',
+                attempts: 0,
+                createdAt: sentAt,
+              };
+              try {
+                await enqueueOutboxMessage(outboxEntry);
+              } catch (enqueueError) {
+                // The placeholder is on screen and in the store, and the catch below re-stages the
+                // file: leaving the row would be an orphan that a second Send then duplicates.
+                ctx.log(
+                  `[MEDIA] ${messageId.slice(0, 8)}… not queued, withdrawing its placeholder: ${String(enqueueError)}`
+                );
+                const current = ctx.conversations.get(ctx.selectedContact!);
+                if (current) {
+                  ctx.conversations.set(ctx.selectedContact!, {
+                    ...current,
+                    messages: current.messages.filter((m) => m.id !== messageId),
+                  });
+                }
+                await forgetLocalMessage(messageId, convo.id, ctx);
+                throw enqueueError;
+              }
+            } finally {
+              endInflight();
+            }
           }
           sentMediaMessageCount++;
         }
@@ -1231,7 +1348,9 @@ export function useMessaging() {
         const status = refusalStatus(error);
         ctx.setSendError(
           describeApiRefusal(status, m.chat_media_action_send()) ??
-            m.chat_media_send_error_generic()
+            (isEnqueueQuotaFailure(error)
+              ? m.chat_media_send_error_storage_full()
+              : m.chat_media_send_error_generic())
         );
         ctx.log(
           `[MEDIA] send failed (status=${status ?? 'none'}), ${fileEntries.length - sentMediaMessageCount} file(s) re-staged: ${String(error)}`
@@ -1243,13 +1362,12 @@ export function useMessaging() {
 
     if (sentMediaMessageCount > 0 || !text) return;
 
-    const result = await sendChatMessage(text, ctx.selectedContact!, currentReplyingTo, {
-      userId: ctx.userId,
-      conversation: convo,
-      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
-        addMessageToChat(sid, content, contactName, ctx, options),
-      log: ctx.log,
-    });
+    const result = await sendChatMessage(
+      text,
+      ctx.selectedContact!,
+      currentReplyingTo,
+      makeSendDeps(ctx, convo)
+    );
 
     // Text/reply now always succeed (captured into the outbox); only a hard block
     // (deleted group) or a channel error surfaces a message to the user.
@@ -1258,11 +1376,20 @@ export function useMessaging() {
         ctx.setSendError(result.error);
         ctx.log(`[SEND] Failed: ${result.error}`);
       }
-      return;
+      // THE TEXT LIVES IN A ROW (failed, with its retry) when the send was echoed: the composer has
+      // nothing to take back, and restoring it would put the message in the thread twice (WP-OFF-2).
+      if (result.echoed) return true;
+      // Nothing was drawn: the reply target goes back too, so the caller can restore the draft and
+      // lose nothing (WP-OFF-1).
+      if (isChannel && currentReplyingTo) {
+        replyByConversation.set(ctx.selectedContact, currentReplyingTo);
+      }
+      return false;
     }
 
     ctx.log('[SEND] handleSendChat completed (message queued).');
     ctx.playSendTone?.();
+    return true;
   }
 
   // ── File handling ─────────────────────────────────────────────────────────
@@ -1645,13 +1772,25 @@ export function useMessaging() {
   // ── Reply ─────────────────────────────────────────────────────────────────
 
   /** Sets the message the user is replying to, which will be embedded as a quote preview in the next send. */
-  function handleReply(message: ChatMessage) {
-    replyingTo = message;
+  function handleReply(conversationKey: string, message: ChatMessage) {
+    if (!conversationKey) {
+      console.log('[REPLY] handleReply ignored: no conversation is open');
+      return;
+    }
+    console.log(`[REPLY] armed in "${conversationKey}" on message ${message.id}`);
+    replyByConversation.set(conversationKey, message);
   }
 
-  /** Clears the pending reply state (user dismissed the reply banner). */
-  function cancelReply() {
-    replyingTo = null;
+  /** The reply armed in `conversationKey`, or null: what that conversation's composer shows. */
+  function replyFor(conversationKey: string | null | undefined): ChatMessage | null {
+    return conversationKey ? (replyByConversation.get(conversationKey) ?? null) : null;
+  }
+
+  /** Clears the pending reply of ONE conversation (user dismissed its reply banner). */
+  function cancelReply(conversationKey: string) {
+    if (!conversationKey) return;
+    console.log(`[REPLY] cancelled in "${conversationKey}"`);
+    replyByConversation.delete(conversationKey);
   }
 
   /**
@@ -1677,6 +1816,13 @@ export function useMessaging() {
     if (!convo) return { success: false, error: m.chat_forward_error_conversation_missing() };
 
     const env = parseEnvelope(sourceContent);
+
+    // A reel message is never relayed: the forward would copy its key and ref into a conversation
+    // that outlives the reel's 30-day audience. The bubble hides the button; THIS is the rule.
+    if (env.kind === 'media' && isReelMessage(env.media)) {
+      ctx.log(`[FORWARD] refused: a reel message is never forwarded (target "${targetName}")`);
+      return { success: false, error: m.chat_forward_error_reel() };
+    }
 
     // Channels are server-authoritative and always sendable: no MLS group, no outbox, and no
     // local echo (the `channel.message.created` broadcast is what renders the bubble).
@@ -1711,13 +1857,7 @@ export function useMessaging() {
         const channelText = env.kind === 'text' ? env.text.trim() : '';
         if (!channelText)
           return { success: false, error: m.chat_forward_error_nothing_to_forward() };
-        return await sendChatMessage(channelText, targetName, null, {
-          userId: ctx.userId,
-          conversation: convo,
-          addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
-            addMessageToChat(sid, content, contactName, ctx, options),
-          log: ctx.log,
-        });
+        return await sendChatMessage(channelText, targetName, null, makeSendDeps(ctx, convo));
       } catch (e) {
         // `sendChatMessage` RETURNS its refusal, already localized, rather than throwing it - so
         // anything reaching this catch is unexpected and has nothing to add beyond "it failed".
@@ -1760,13 +1900,7 @@ export function useMessaging() {
 
       const text = env.kind === 'text' ? env.text.trim() : '';
       if (!text) return { success: false, error: m.chat_forward_error_nothing_to_forward() };
-      return await sendChatMessage(text, targetName, null, {
-        userId: ctx.userId,
-        conversation: convo,
-        addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
-          addMessageToChat(sid, content, contactName, ctx, options),
-        log: ctx.log,
-      });
+      return await sendChatMessage(text, targetName, null, makeSendDeps(ctx, convo));
     } catch (e) {
       // Same as the channel branch above, and for the same reason.
       ctx.log(`[FORWARD] MLS forward failed for "${targetName}": ${String(e)}`);
@@ -1780,10 +1914,8 @@ export function useMessaging() {
     /** Reactive map of emoji reactions keyed by message ID. */
     messageReactions,
 
-    /** Message the user is currently replying to (null when no reply is pending). */
-    get replyingTo() {
-      return replyingTo;
-    },
+    /** The message the user is replying to IN a given conversation (null when none is pending there). */
+    replyFor,
     /** Files staged for sending in the next handleSendChat call. */
     get pendingMediaFiles() {
       return pendingMediaFiles;
@@ -1828,6 +1960,9 @@ export function useMessaging() {
     batchAddMessages,
     /** Main send handler: uploads pending media then sends a text message. */
     handleSendChat,
+    retrySend,
+    discardSend,
+    takeBackSend,
     forwardMessage,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,

@@ -1,3 +1,4 @@
+import { fromBase64, toBase64 } from '$lib/utils/hex';
 import type { OutboxEntry } from './types';
 
 // ---------------------------------------------------------------------------
@@ -24,18 +25,25 @@ export interface OutboxClearColumns {
   createdAt: number;
 }
 
-/** Encode a binary buffer as a base64 string for JSON-safe storage in the encrypted payload. */
-function uint8ToBase64(arr: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-  return btoa(binary);
+/**
+ * The payload of a queued row could not be decrypted or parsed. Typed so the outbox can tell a row
+ * this device will NEVER read (a key that no longer matches, a damaged blob) from an absent one,
+ * without matching a message.
+ */
+export class OutboxPayloadUnreadableError extends Error {
+  readonly entryId: string;
+  constructor(entryId: string, cause: unknown) {
+    super(`outbox payload of ${entryId} is unreadable`, { cause });
+    this.name = 'OutboxPayloadUnreadableError';
+    this.entryId = entryId;
+  }
 }
 
 /** Decode a base64 string back to a Uint8Array; returns an empty array on failure. */
 function base64ToUint8(val: unknown): Uint8Array {
   if (typeof val !== 'string') return new Uint8Array(0);
   try {
-    return Uint8Array.from(atob(val), (c) => c.charCodeAt(0));
+    return fromBase64(val);
   } catch {
     return new Uint8Array(0);
   }
@@ -56,28 +64,49 @@ export function outboxClearColumns(entry: OutboxEntry): OutboxClearColumns {
   };
 }
 
-/** Build the sensitive payload object to encrypt (file bytes base64-encoded). */
-export function encodeOutboxSensitive(entry: OutboxEntry): Record<string, unknown> {
+/**
+ * Build the sensitive payload object to encrypt. THE FILE BYTES ARE NEVER IN IT: a queued attachment
+ * lives in the blob store ({@link ./outboxBlob}), and the payload keeps only `media.blob.keyB64`, so
+ * a row stays under ~1 KB however large the file is.
+ *
+ * `blobKeyB64` is the key of a blob the storage layer has JUST committed for this entry. Without
+ * one, an existing `media.blob` reference is carried over unless the file has been uploaded
+ * (`uploadedRef`): from then on nothing reads the bytes, and the reference is dropped so the
+ * caller can delete the blob. Rows written before this format held the bytes inline as
+ * `fileBytesB64`; they are still READ ({@link decodeOutboxEntry}) and never written again.
+ */
+export function encodeOutboxSensitive(
+  entry: OutboxEntry,
+  blobKeyB64?: string
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (entry.text !== undefined) payload.text = entry.text;
   if (entry.replyTo) payload.replyTo = entry.replyTo;
   if (entry.media) {
-    const { fileBytes, ...rest } = entry.media;
-    payload.media = {
-      ...rest,
-      ...(fileBytes && fileBytes.length > 0 ? { fileBytesB64: uint8ToBase64(fileBytes) } : {}),
-    };
+    const { fileBytes: _bytes, blob, ...rest } = entry.media;
+    const keep = blobKeyB64
+      ? { blob: { keyB64: blobKeyB64 } }
+      : blob && !rest.uploadedRef
+        ? { blob }
+        : {};
+    payload.media = { ...rest, ...keep };
   }
   if (entry.controlProto && entry.controlProto.length > 0) {
-    payload.controlProtoB64 = uint8ToBase64(entry.controlProto);
+    payload.controlProtoB64 = toBase64(entry.controlProto);
   }
   return payload;
 }
 
-/** Reconstruct a full {@link OutboxEntry} from its clear columns and decrypted payload. */
-export function decodeOutboxEntry(clear: OutboxClearColumns, payload: any): OutboxEntry {
+/**
+ * Reconstruct an {@link OutboxEntry} from its clear columns and decrypted payload. With no payload
+ * (`undefined`) the entry carries its scheduling columns only: that is what a queue READ returns for
+ * a media row, whose payload is the whole file.
+ */
+export function decodeOutboxEntry(clear: OutboxClearColumns, payload?: any): OutboxEntry {
   let media: OutboxEntry['media'];
   if (payload?.media) {
+    // `fileBytesB64` is the pre-blob inline format, read lazily here so a row queued by an older
+    // build is still sent; a `blob` reference is left for the storage layer to resolve.
     const { fileBytesB64, ...rest } = payload.media;
     media = {
       ...rest,
@@ -102,6 +131,21 @@ export function decodeOutboxEntry(clear: OutboxClearColumns, payload: any): Outb
         ? base64ToUint8(payload.controlProtoB64)
         : undefined,
   };
+}
+
+/**
+ * True when a patch touches ONLY the clear scheduling columns (status, attempts, lastAttemptAt,
+ * nextAttemptAt), so a store can update them in place without decoding or re-encrypting the
+ * payload - which for a media entry holds the whole file.
+ */
+export function isOutboxClearPatch(patch: Partial<OutboxEntry>): boolean {
+  const keys = Object.keys(patch).filter(
+    (k) => (patch as Record<string, unknown>)[k] !== undefined
+  );
+  return (
+    keys.length > 0 &&
+    keys.every((k) => ['status', 'attempts', 'lastAttemptAt', 'nextAttemptAt'].includes(k))
+  );
 }
 
 /** Apply a partial patch to an entry, returning a new merged entry. */

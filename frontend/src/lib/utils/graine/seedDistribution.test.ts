@@ -1,6 +1,6 @@
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
-import { distributionEpochFor } from './seedDistribution';
+import { distributionEpochFor, readDistributionEpoch } from './seedDistribution';
 import { markEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapRegistry';
 
 /**
@@ -72,5 +72,32 @@ describe('a key group behind its server', () => {
     markEpochGap(GROUP);
 
     expect(distributionEpochFor(stub(), WS)).toBeNull();
+  });
+});
+
+/**
+ * WHICH fact is missing, kept rather than folded into one null. The seal's refusal is shown to a
+ * member and logged, and on production 2026-10-09 the one sentence it had - "has no distribution
+ * group on this device" - was false for the case that actually fired: a group held, whose catch-up
+ * gap stood armed.
+ */
+describe('the reason a scope cannot mint', () => {
+  afterEach(() => resetEpochGapRegistry());
+
+  it.each([
+    ['key-group-unregistered', { distributionGroupFor: vi.fn().mockReturnValue(null) }],
+    ['key-group-not-held', { getLocalGroups: vi.fn().mockReturnValue([]) }],
+    ['key-group-unsettled', { isDistributionBaseSettled: vi.fn().mockReturnValue(false) }],
+  ] as const)('names %s', (reason, overrides) => {
+    expect(readDistributionEpoch(stub(overrides), WS)).toEqual({ unavailable: reason });
+  });
+
+  it('names key-group-catching-up while the gap is armed', () => {
+    markEpochGap(GROUP);
+    expect(readDistributionEpoch(stub(), WS)).toEqual({ unavailable: 'key-group-catching-up' });
+  });
+
+  it('answers the epoch when nothing is missing', () => {
+    expect(readDistributionEpoch(stub(), WS)).toEqual({ epoch: 4 });
   });
 });

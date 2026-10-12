@@ -493,3 +493,50 @@ ordering is the guarantee.
 - [`mls-recovery-ladder.md`](mls-recovery-ladder.md) — Recovery steps after desync is detected
 - [`mls-protocol.md`](mls-protocol.md) — MLS protocol overview, invariants, data model
 - [`services/chat-delivery.md`](../services/chat-delivery.md) — Backend commit validation and epoch management
+
+## The resume reload re-installed a receive ratchet behind the live one - the 2026-09-08 captures (Mi 9T)
+
+Moved here from the backlog when the defect was fixed (#1527, [above](#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)). Two defects, one capture.
+
+**The symptom**, read off W1 and W2 as `severe` during NOTIF-1b:
+
+```
+[MLS] LOST frame for 2bd5add9... from f7a9bb80...: generation consumed but this frame
+      was never processed - the sender's ratchet rewound (SecretReuseError, frame 5p:1rurzth)
+MLS decryption failed at exactly its own epoch, so no redelivery can help:
+      group=2bd5add9... msg_epoch=139 group_epoch=139 err=SecretReuseError
+```
+
+`f7a9bb80...` is the PHONE, and the frame was its read receipt for the warm-up message. Same epoch on
+both sides, so this is not an epoch gap: a generation the peers had already consumed was re-issued.
+Both peers then paid a full history reconciliation to discover they already agreed.
+
+**Four decryptions of the same two frames, one epoch, one sender leaf:**
+
+| # | time | driver | generations | result |
+| --- | --- | --- | --- | --- |
+| 1 | 09:33:24.66 | FCM JNI push (`load_or_create`, then `decryptProto`) | 43 | OK, `writeFcmCache` |
+| 2 | 09:33:30.564 | `recevoir_messages_batch group=2bd5add9... count=2` | 43, 44 | OK |
+| 3 | 09:33:30.647 | `recevoir_messages_batch group=2bd5add9... count=2` **again, 83 ms later** | 43, 44 | **`SecretReuseError`** |
+| 4 | 09:33:36.098 | `[PENDING] Fetched 2 pending` -> `[QUEUE] Drain` | 43, 44 | **OK AGAIN** |
+
+Rows 2-3 are defect A (the archive-replay barrier read `isIdle` as "the group is quiet"; it now awaits `waitForCatchUpIdle()`, #435, `v0.16.6`). Row 4 is defect B: the same generations decrypting a third time can only mean the secret tree went backwards, and the only event between rows 3 and 4 is `[MLS][Tauri] mls.bin reloaded on resume (C2)`. The epoch never moved, so the epoch comparison could not see it.
+
+**B isolated to the millisecond on a build without A (2026-09-08 09:53):**
+
+```
+09:53:03.355  gen 45
+09:53:11.397  gen 45      09:53:11.438  gen 46
+09:53:16.801  [MLS][Tauri] mls.bin reloaded on resume (C2) - group cache refreshed
+09:53:16.913  gen 45      09:53:16.973  gen 46      <- both derived again, both succeed
+```
+
+**The key-package accusation fired in the same run** (09:51:43, `error` level, 13 ms before the reload installed): `[RESUME] reload DROPS KEY MATERIAL - live keystore holds 2625 key package(s), the mls.bin being loaded holds 2624`. Two ledgers, one mechanism: the reload puts back both the receive ratchet and the keystore, and that instrument counts only the second; it needs a mint between the last checkpoint and the resume, and a checkpoint cost 8.8-23 s on that device.
+
+**What it did not cost the user:** the FCM cache pre-injected the message, the row landed, NOTIF-7 was `PASS`. The send-side rewind of 2026-09-06 (the phone's read receipt at epoch 139) is a different defect sharing only the error string.
+
+## The checkpoint window, and the per-document snapshot counter (moved from the backlog, 2026-10-08)
+
+**The checkpoint window.** The outbound checkpoint in `emitFrame` deliberately does not await, sized for 1.5 s in August, and costs 17-20 s on a 19.5 MB `mls.bin`, so any death of the process in that window restores a state behind frames that left. **Do NOT "fix" it by awaiting the checkpoint** (refuted in August at 1.7 s per send, seventeen now): the invariant is that a state restored behind a frame that left is RECOGNISED and repaired, which is a counter and a burn.
+
+**The snapshot version is a per-document counter compared across documents (measured on TAB-4, 2026-09-05).** `saveMlsStateEncrypted` refuses any tagged write whose version is not strictly newer than the stored one. The version comes from `tagMlsSnapshot`, `++_snapshotSeq` - a module-level counter, so ONE COUNTER PER DOCUMENT, seeded from the persisted version by `seedMlsSnapshotSeq` on load. Within one tab that is right (a slow off-thread Argon2 flush finishing after a fresher one must not clobber it). Across two tabs both seed from stored version N and both produce N+1 with different bytes, so the guard sees `version <= stored` and drops the second: `Skipping stale MLS state write (v3294 <= stored v3294)` on an ordinary TAB-4 run. Whether anything is LOST is unanswered: a later flush from either tab carries a higher number and lands, so the state is expected to converge, untested and unmeasured. **A clock written by one writer is not evidence about another's ordering.** The wording is fixed (the collision case says so instead of claiming staleness, `hex.mlsVersion.test.ts` pins both branches); deciding it means a shared counter (a `BroadcastChannel` claim, or an IndexedDB read-modify-write in the same transaction as the put) or establishing that convergence always happens and how long it takes.

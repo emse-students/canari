@@ -45,7 +45,7 @@ agenda route, so the shell refuses that account as well. `access.test.ts` pins t
 | `/admin/moderation` | Reports, hidden posts, mutes | Content moderator or platform admin |
 | `/admin/document-reviewers` | Public-document reviewer grants | BDE super-admin or platform admin |
 | `/admin/carte` | Carte de la Vie Asso | BDE super-admin or platform admin |
-| `/admin/associations` | Association list and creation | Platform admin |
+| `/admin/spaces` | Spaces & audiences: three sections (associations, lists, institutions), the BDE star | Platform admin |
 | `/admin/platform` | Maintenance, minimum client version | Platform admin |
 | `/admin/users` | User list, admin flag | Platform admin |
 | `/admin/status` | Presence and connections | Platform admin |

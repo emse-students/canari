@@ -21,7 +21,7 @@ import { CallService } from '$lib/services/CallService';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { requestLeadershipTakeover } from '$lib/utils/chat/connection';
 
-import type { SessionContext } from './session/sessionTypes';
+import type { MlsFatalErrorKind, SessionContext } from './session/sessionTypes';
 export type { ChatSessionCallbacks } from './session/sessionTypes';
 
 import {
@@ -108,7 +108,7 @@ export function useChatSession() {
 
   // ── Fatal MLS errors ──────────────────────────────────────────────────────
   /** Unrecoverable MLS error requiring user action (OOM, private mode, keystore lost). */
-  let mlsFatalError = $state<'oom' | 'private_mode' | 'keystore_lost' | null>(null);
+  let mlsFatalError = $state<MlsFatalErrorKind | null>(null);
 
   // Through `apiUrl.ts` rather than re-deriving it: a browser must address its own origin, and
   // this was the third copy of that decision written with the old polarity.
@@ -389,7 +389,7 @@ export function useChatSession() {
     },
 
     // fatal MLS errors
-    /** Unrecoverable MLS error: 'oom' (reload required), 'private_mode' (ephemeral storage), 'keystore_lost' (reconnect required). */
+    /** Unrecoverable MLS error: 'oom' (reload required), 'private_mode' (ephemeral storage), 'keystore_lost' (reconnect required), 'restore_shortfall' (rows restored without their MLS group). */
     get mlsFatalError() {
       return mlsFatalError;
     },
@@ -442,8 +442,10 @@ export function useChatSession() {
     /** Pauses WebSocket and clears background timers when the app is backgrounded. */
     pauseConnection: () => pauseConnectionImpl(ctx),
     /** Resumes WebSocket after app comes back to foreground. */
-    resumeConnection: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
-      resumeConnectionImpl(ctx, cb),
+    resumeConnection: (
+      cb: import('./session/sessionTypes').ChatSessionCallbacks,
+      prepared?: string
+    ) => resumeConnectionImpl(ctx, cb, prepared),
     /** Schedules an exponential-backoff WebSocket reconnect attempt. */
     scheduleReconnect: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       scheduleReconnectImpl(ctx, cb),

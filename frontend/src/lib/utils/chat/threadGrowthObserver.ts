@@ -4,7 +4,7 @@
  * bench, docs/wiki/frontend/media-frame.md). The judgements are `threadAnchor.ts`'s; this is only
  * the wiring that feeds them the numbers.
  */
-import { anchorShift, firstRowBelow, shouldFollowThreadBottom } from './threadAnchor';
+import { anchorShift, firstRowBelow, shouldFollowThreadBottom, threadReach } from './threadAnchor';
 
 /** What the pane knows about itself at the moment a change is observed. */
 export interface ThreadGrowthState {
@@ -40,7 +40,9 @@ export function observeThreadGrowth(
   // and wrong on an Android phone. One mechanism, identical everywhere: this one.
   const previousAnchoring = scroller.style.overflowAnchor;
   scroller.style.overflowAnchor = 'none';
-  let previousHeight = scroller.scrollHeight;
+  // THE REACH, NOT THE HEIGHT: the bottom also moves when the pane's own box shrinks under
+  // unchanged content (the soft keyboard rising) - see `threadReach`.
+  let previousReach = threadReach(scroller);
   /**
    * THE ROW AT THE TOP OF THE VIEWPORT, and where it was the last time this fired (2026-10-02).
    *
@@ -66,10 +68,10 @@ export function observeThreadGrowth(
 
   const follow = () => {
     const now = state();
-    const currentHeight = scroller.scrollHeight;
+    const currentReach = threadReach(scroller);
     const shouldFollow = shouldFollowThreadBottom({
-      previousHeight,
-      currentHeight,
+      previousReach,
+      currentReach,
       wasNearBottom: now.wasNearBottom,
       isLoadingOlder: now.isLoadingOlder,
       isEntering: now.isEntering,
@@ -81,8 +83,8 @@ export function observeThreadGrowth(
           currentTop: anchor?.row.isConnected ? anchor.row.offsetTop : null,
           isEntering: now.isEntering,
         });
-    previousHeight = currentHeight;
-    if (shouldFollow) scroller.scrollTop = currentHeight;
+    previousReach = currentReach;
+    if (shouldFollow) scroller.scrollTop = scroller.scrollHeight;
     // `loadOlderGroups` also restores the IndexedDB page's position, by absolute assignment after
     // its own `await tick()`. That assignment is computed from its own captured `scrollTop` and
     // therefore lands on the same pixel whether or not this ran first - it cannot double-count.

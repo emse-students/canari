@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+
+import { MOBILE_APP_PACKAGE, OIDC_MOBILE_REDIRECT_URI } from './appSiteAssociation';
 
 /**
  * THE CUSTOM SCHEME THE LOGIN COMES BACK ON MUST BE ONE THE APP ACTUALLY REGISTERS.
@@ -14,9 +16,9 @@ import { describe, expect, it } from 'vitest';
  * build could ever send. Somebody wrote a `.dev` scheme into the IdP expecting the app to follow it,
  * and nothing anywhere disagreed.
  *
- * WHAT IT ASSERTS. `oidcRedirectUri()` in `$lib/stores/auth.ts` hard-codes the mobile return URI.
- * Every `scheme://host` literal in that function must appear in `plugins.deep-link.mobile` of
- * `tauri.conf.json`, with that exact host. A scheme the OS never routes is a login that dead-ends
+ * WHAT IT ASSERTS. `oidcRedirectUri()` in `$lib/stores/auth.ts` returns `OIDC_MOBILE_REDIRECT_URI`
+ * on mobile, derived from the identifier in `$lib/mobile/appSiteAssociation.ts`. That URI must
+ * appear in `plugins.deep-link.mobile` of `tauri.conf.json`, with that exact host. A scheme the OS never routes is a login that dead-ends
  * on the device, and the runtime symptom names the IdP rather than the app - which is why it reads
  * as a server fault and gets diagnosed on the wrong box.
  *
@@ -56,13 +58,8 @@ function declaredMobileLinks(): { scheme: string; host: string }[] {
   return out;
 }
 
-/**
- * The `scheme://host` literals `oidcRedirectUri()` can return.
- *
- * Anchored on the function body rather than the whole file: `auth.ts` mentions the deep link in
- * prose elsewhere, and a comment is not a return value.
- */
-function redirectLiteralsInOidcRedirectUri(): string[] {
+/** The body of `oidcRedirectUri()` in `auth.ts`, read from the source. */
+function oidcRedirectUriBody(): string {
   const src = readFileSync(AUTH_STORE, 'utf8');
   const start = src.indexOf('function oidcRedirectUri()');
   expect(
@@ -71,51 +68,72 @@ function redirectLiteralsInOidcRedirectUri(): string[] {
   ).toBeGreaterThan(-1);
   const end = src.indexOf('\n}', start);
   expect(end, 'could not find the end of oidcRedirectUri()').toBeGreaterThan(start);
-  const body = src.slice(start, end);
-
-  const found = new Set<string>();
-  // A custom scheme, never `http(s)`: those are the web branch, built from window.location.
-  for (const m of body.matchAll(/'([a-z][a-z0-9.+-]*):\/\/([a-z0-9-]+)'/gi)) {
-    if (m[1] === 'http' || m[1] === 'https') continue;
-    found.add(`${m[1]}://${m[2]}`);
-  }
-  return [...found];
+  return src.slice(start, end);
 }
 
+const conf = JSON.parse(readFileSync(TAURI_CONF, 'utf8')) as { identifier?: string };
+
 describe('the OIDC redirect scheme is one the app registers', () => {
-  it('finds at least one custom-scheme literal in oidcRedirectUri()', () => {
-    // A zero here would make every assertion below vacuously true, which is how this test would
-    // stop catching anything the day the literal moves into a constant.
-    expect(redirectLiteralsInOidcRedirectUri().length).toBeGreaterThan(0);
+  it('oidcRedirectUri() returns the shared constant and spells no scheme of its own', () => {
+    // A literal in the function would be a second copy this file no longer reads.
+    const body = oidcRedirectUriBody();
+    expect(body).toContain('OIDC_MOBILE_REDIRECT_URI');
+    const literals = [...body.matchAll(/'([a-z][a-z0-9.+-]*):\/\//gi)].filter(
+      (m) => m[1] !== 'http' && m[1] !== 'https'
+    );
+    expect(literals.map((m) => m[0])).toEqual([]);
   });
 
-  it('declares every scheme:host it returns in tauri.conf.json deep-link mobile', () => {
-    const declared = declaredMobileLinks();
-    const declaredKeys = new Set(declared.map((d) => `${d.scheme}://${d.host}`));
-    for (const literal of redirectLiteralsInOidcRedirectUri()) {
-      expect(
-        declaredKeys.has(literal),
-        `oidcRedirectUri() returns ${literal}, which tauri.conf.json does not register. ` +
-          `Declared: ${[...declaredKeys].join(', ')}. The OS will never route this back to the ` +
-          `app, and the IdP reports it as "Redirect URI Error" - see ` +
-          `docs/wiki/infrastructure/authentik.md.`
-      ).toBe(true);
-    }
+  it('declares the scheme:host it returns in tauri.conf.json deep-link mobile', () => {
+    const declaredKeys = new Set(declaredMobileLinks().map((d) => `${d.scheme}://${d.host}`));
+    expect(
+      declaredKeys.has(OIDC_MOBILE_REDIRECT_URI),
+      `oidcRedirectUri() returns ${OIDC_MOBILE_REDIRECT_URI}, which tauri.conf.json does not register. ` +
+        `Declared: ${[...declaredKeys].join(', ')}. The OS will never route this back to the ` +
+        `app, and the IdP reports it as "Redirect URI Error" - see ` +
+        `docs/wiki/infrastructure/authentik.md.`
+    ).toBe(true);
   });
 
   it('returns a callback host, not some other deep link', () => {
-    for (const literal of redirectLiteralsInOidcRedirectUri()) {
-      expect(literal.endsWith('://callback'), `${literal} is not a callback deep link`).toBe(true);
-    }
+    expect(OIDC_MOBILE_REDIRECT_URI.endsWith('://callback')).toBe(true);
   });
 
   it('uses the app identifier as its scheme, so dev and prod builds share it', () => {
     // The dev and prod builds differ by client_id and API URL, NEVER by identifier: a separate
     // `.dev` scheme would need its own bundle id, provisioning profile and store record. This
     // pins that decision, which is the one the 2026-09-06 outage was made of.
-    const conf = JSON.parse(readFileSync(TAURI_CONF, 'utf8')) as { identifier?: string };
-    for (const literal of redirectLiteralsInOidcRedirectUri()) {
-      expect(literal.split('://')[0]).toBe(conf.identifier);
-    }
+    expect(MOBILE_APP_PACKAGE).toBe(conf.identifier);
+    expect(OIDC_MOBILE_REDIRECT_URI.split('://')[0]).toBe(conf.identifier);
+  });
+});
+
+describe('the identifier is spelled once in the frontend source', () => {
+  it('no other module writes it as a literal', () => {
+    // The scheme is derived from MOBILE_APP_PACKAGE so a second package id is one change. A literal
+    // elsewhere is a deep link that would keep pointing at the old app. Comments and tests are
+    // allowed to name it.
+    const SRC = resolve(here, '../..');
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== 'paraglide' && e.name !== 'wasm' && e.name !== 'proto') walk(full);
+          continue;
+        }
+        if (!/\.(ts|svelte)$/.test(e.name) || e.name.endsWith('.test.ts')) continue;
+        if (full.endsWith(join('mobile', 'appSiteAssociation.ts'))) continue;
+        const code = readFileSync(full, 'utf8')
+          .split('\n')
+          .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+          .join('\n');
+        if (/fr\.emse\.canari(:\/\/|:?['"`])/.test(code) || /id=fr\.emse\.canari/.test(code)) {
+          offenders.push(relative(SRC, full));
+        }
+      }
+    };
+    walk(SRC);
+    expect(offenders).toEqual([]);
   });
 });

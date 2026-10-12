@@ -39,7 +39,12 @@ describe('PostNotificationsService - mentions in a push', () => {
         return Promise.resolve();
       },
     };
-    return new PostNotificationsService(notifRepo as never, postRepo as never, push as never);
+    return new PostNotificationsService(
+      notifRepo as never,
+      postRepo as never,
+      push as never,
+      { mutedAmong: () => Promise.resolve(new Set<string>()) } as never
+    );
   }
 
   beforeEach(() => {

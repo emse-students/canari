@@ -1,14 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { createProductCheckout, type AssociationProduct } from '$lib/associations/api';
-  import {
-    listPaymentMethods,
-    chargeProductWithSavedMethod,
-    type PaymentMethod,
-  } from '$lib/stores/user';
-  import { shopCheckoutCallbacks } from '$lib/utils/stripeCallbacks';
+  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { shopCheckoutCallbacks } from '$lib/utils/checkoutCallbacks';
   import { showToast } from '$lib/stores/toast.svelte';
-  import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
   import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
   import {
     activePaymentProvider,
@@ -22,7 +17,6 @@
     customAmountEuros?: number;
     /** Override the default action label (Cotiser / Recharger / Acheter). */
     label?: string;
-    variant?: 'accent' | 'yellow';
     class?: string;
     disabled?: boolean;
   }
@@ -31,17 +25,11 @@
     product,
     customAmountEuros,
     label,
-    variant = 'accent',
     class: className = '',
     disabled = false,
   }: Props = $props();
 
   let checkingOut = $state(false);
-  let paymentMethods = $state<PaymentMethod[]>([]);
-  let showPaymentModal = $state(false);
-  let pendingCheckoutUrl = $state('');
-  let pendingAmountCents = $state(0);
-  let pendingCurrency = $state('eur');
   let askingPayerEmail = $state(false);
 
   const buttonLabel = $derived(
@@ -61,13 +49,8 @@
         (customAmountEuros == null || customAmountEuros <= 0))
   );
 
-  onMount(async () => {
+  onMount(() => {
     void loadActivePaymentProvider();
-    try {
-      paymentMethods = await listPaymentMethods();
-    } catch {
-      // Stripe may not be configured
-    }
   });
 
   /** Resolves custom amount in cents when applicable. */
@@ -103,40 +86,15 @@
         shopCheckoutCallbacks(product.id),
         payerEmail
       );
-      if (paymentMethods.length > 0 && res.amountCents > 0) {
-        pendingCheckoutUrl = res.checkoutUrl;
-        pendingAmountCents = res.amountCents;
-        pendingCurrency = res.currency ?? product.currency;
-        showPaymentModal = true;
-      } else {
-        const { navigateExternal } = await import('$lib/utils/openExternal');
-        await navigateExternal(res.checkoutUrl);
-      }
+      const { navigateExternal } = await import('$lib/utils/openExternal');
+      await navigateExternal(res.checkoutUrl);
     } catch (err) {
-      showToast(m.shop_payment_error());
+      // A provider refusal (Lydia: blocked venue, bad phone...) is an answer about THIS purchase and
+      // carries a readable reason; every other failure keeps the generic line.
+      showToast(providerRefusalMessage(err) ?? m.shop_payment_error());
     } finally {
       checkingOut = false;
     }
-  }
-
-  async function handlePayWithSaved(paymentMethodId: string) {
-    const result = await chargeProductWithSavedMethod(
-      product.associationId,
-      product.id,
-      paymentMethodId,
-      resolveCustomCents()
-    );
-    if (result.ok) {
-      showPaymentModal = false;
-      showToast(m.shop_purchase_success());
-    }
-    return result;
-  }
-
-  async function handlePayWithNew() {
-    showPaymentModal = false;
-    const { navigateExternal } = await import('$lib/utils/openExternal');
-    await navigateExternal(pendingCheckoutUrl);
   }
 </script>
 
@@ -144,9 +102,7 @@
   type="button"
   onclick={handlePurchase}
   disabled={isDisabled}
-  class="{variant === 'yellow'
-    ? 'bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover'
-    : 'bg-cn-accent text-white hover:opacity-90'} inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-opacity disabled:cursor-not-allowed disabled:opacity-50 {className}"
+  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-opacity disabled:cursor-not-allowed disabled:opacity-50 {className}"
 >
   {#if checkingOut}
     <span
@@ -164,16 +120,5 @@
       void runCheckout(email);
     }}
     onClose={() => (askingPayerEmail = false)}
-  />
-{/if}
-
-{#if showPaymentModal}
-  <PaymentModal
-    {paymentMethods}
-    totalCents={pendingAmountCents}
-    currency={pendingCurrency}
-    onPayWithSaved={handlePayWithSaved}
-    onPayWithNew={handlePayWithNew}
-    onClose={() => (showPaymentModal = false)}
   />
 {/if}

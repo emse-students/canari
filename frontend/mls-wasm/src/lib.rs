@@ -100,40 +100,6 @@ pub fn encrypt_mls_state_blob_with_key(
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-/// ChaCha20 decrypt of an MLS CBOR snapshot (produced by `encrypt_mls_state_blob_with_key`).
-/// Wire format: `[nonce (12) || ciphertext]` — no salt prefix.
-#[wasm_bindgen]
-pub fn decrypt_mls_state_blob_with_key(
-    encrypted: &[u8],
-    key_b64: &str,
-) -> Result<Vec<u8>, JsValue> {
-    let key =
-        mls_core::crypto::decode_base64_to_32_bytes(key_b64).map_err(|e| JsValue::from_str(&e))?;
-    // THE THIRD READER OF THIS BLOB, AND IT GOES THROUGH THE SAME PARSER AS THE OTHER TWO. It used
-    // to carry its own `len() >= 12`, which is the check a framed blob passes while carrying four
-    // bytes of body - three independent floors for one format is how they drift.
-    let sealed = match mls_core::state_blob::parse(encrypted)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?
-    {
-        mls_core::state_blob::Framed::Legacy(body) => body,
-        mls_core::state_blob::Framed::V1 {
-            key_fingerprint,
-            sealed,
-        } => {
-            if key_fingerprint != mls_core::state_blob::key_fingerprint(&key) {
-                return Err(JsValue::from_str(
-                    &mls_core::MlsError::StateSealedUnderAnotherKey(
-                        "the state's header names a different device key".into(),
-                    )
-                    .to_string(),
-                ));
-            }
-            sealed
-        }
-    };
-    mls_core::security::decrypt_blob(&key, sealed).map_err(|e| JsValue::from_str(&e))
-}
-
 // ----------------------------------------------------
 
 /// `{ data: Uint8Array, sender: string | null }` for one decrypted application message - the ONE
@@ -366,14 +332,6 @@ impl WasmMlsClient {
         }
     }
 
-    #[wasm_bindgen]
-    pub fn generate_key_package(&self) -> Result<Vec<u8>, JsValue> {
-        log::info!("generate_key_package");
-        self.manager
-            .generate_key_package()
-            .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
     /// The device's STATIC fallback. Reusable: the delivery service serves this one package to
     /// every peer that finds the one-time pool empty, and an ordinary KeyPackage would be consumed
     /// by the first Welcome built on it.
@@ -444,35 +402,6 @@ impl WasmMlsClient {
             outcome.unreadable
         );
         Ok(outcome.forgotten)
-    }
-
-    #[wasm_bindgen]
-    pub fn add_member(
-        &mut self,
-        group_id: String,
-        key_package_bytes: Vec<u8>,
-    ) -> Result<js_sys::Array, JsValue> {
-        log::info!(
-            "add_member to group: {} ({} bytes)",
-            group_id,
-            key_package_bytes.len()
-        );
-        // C7-A stage-only: returns [commit, welcome]. The commit is NOT merged; the caller
-        // validates it server-side, then merge_pending_commit / clear_pending_commit, and reads
-        // the post-merge ratchet tree via export_ratchet_tree.
-        let (commit, welcome) = self
-            .manager
-            .add_member(&group_id, &key_package_bytes)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-        let array = js_sys::Array::new();
-        array.push(&js_sys::Uint8Array::from(&commit[..]));
-        if let Some(w) = welcome {
-            array.push(&js_sys::Uint8Array::from(&w[..]));
-        } else {
-            array.push(&JsValue::UNDEFINED);
-        }
-        Ok(array)
     }
 
     /// Add multiple members in a single commit (single epoch increment). Stage-only (C7-A): the
@@ -566,18 +495,6 @@ impl WasmMlsClient {
         log::info!("process_welcome ({} bytes)", welcome_bytes.len());
         self.manager
             .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
-            .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
-    #[wasm_bindgen]
-    pub fn send_message(&mut self, group_id: String, message: String) -> Result<Vec<u8>, JsValue> {
-        log::info!(
-            "send_message to group: {} (len: {})",
-            group_id,
-            message.len()
-        );
-        self.manager
-            .send_message(&group_id, message.as_bytes())
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 

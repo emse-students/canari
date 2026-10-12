@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     Settings,
     Users,
@@ -674,51 +675,20 @@
   <div class="flex h-full min-h-0 flex-col">
     <!-- Tab strip: a real tab set, so a screen reader announces it as one (seen on the Mi 9T). -->
     <div
-      role="tablist"
-      aria-label={m.chat_community_settings_title()}
-      class="bg-cn-surface flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
+      class="bg-cn-surface shrink-0 border-b border-black/5 px-(--side-panel-inset) py-3 dark:border-white/10"
     >
-      <button
-        type="button"
-        role="tab"
-        aria-selected={activeTab === 'overview'}
-        onclick={() => (activeTab = 'overview')}
-        class="flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
-        'overview'
-          ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
-          : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
-      >
-        <Settings size={16} />
-        {m.chat_community_overview_tab()}
-      </button>
-      {#if canManage}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'roles'}
-          onclick={() => (activeTab = 'roles')}
-          class="flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
-          'roles'
-            ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
-            : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
-        >
-          <Shield size={16} />
-          {m.chat_community_roles_tab_short()}
-        </button>
-      {/if}
-      <button
-        type="button"
-        role="tab"
-        aria-selected={activeTab === 'members'}
-        onclick={() => (activeTab = 'members')}
-        class="flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
-        'members'
-          ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
-          : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
-      >
-        <Users size={16} />
-        {m.common_members_label()}
-      </button>
+      <SegmentedControl
+        items={[
+          { key: 'overview', label: m.chat_community_overview_tab(), icon: Settings },
+          ...(canManage
+            ? [{ key: 'roles' as const, label: m.chat_community_roles_tab_short(), icon: Shield }]
+            : []),
+          { key: 'members', label: m.common_members_label(), icon: Users },
+        ]}
+        value={activeTab}
+        onSelect={(key) => (activeTab = key)}
+        label={m.chat_community_settings_title()}
+      />
     </div>
 
     <!-- Tab content. -->

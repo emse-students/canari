@@ -2,13 +2,16 @@
  * What is saved is what the preview showed: the crop rectangle, the saved size, the constraints asked
  * of the camera and the bitrate that follows the pixels. All pure - no camera, no canvas.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   REEL_CAPTURE_MAX_LONG_SIDE,
   REEL_RECORD_BITRATE_MAX,
   cameraVideoConstraints,
   coverCropRect,
+  draw,
   framedOutputSize,
+  shouldMirrorCapture,
+  takeFramedPhoto,
   videoBitrateFor,
 } from './framedCapture';
 
@@ -141,5 +144,67 @@ describe('videoBitrateFor', () => {
     const small = videoBitrateFor({ width: 360, height: 640 });
     expect(small).toBeLessThan(REEL_RECORD_BITRATE_MAX);
     expect(small).toBe(Math.round(360 * 640 * 30 * 0.15));
+  });
+});
+
+describe('mirroring of the capture', () => {
+  it('mirrors exactly the lens whose preview is mirrored', () => {
+    expect(shouldMirrorCapture('user')).toBe(true);
+    expect(shouldMirrorCapture('environment')).toBe(false);
+  });
+
+  function recordingContext() {
+    const calls: string[] = [];
+    const context = {
+      save: () => calls.push('save'),
+      restore: () => calls.push('restore'),
+      translate: (x: number, y: number) => calls.push(`translate ${x} ${y}`),
+      scale: (x: number, y: number) => calls.push(`scale ${x} ${y}`),
+      drawImage: () => calls.push('drawImage'),
+    } as unknown as CanvasRenderingContext2D;
+    return { calls, context };
+  }
+  const crop = { sx: 0, sy: 0, sw: 720, sh: 1280 };
+  const out = { width: 360, height: 640 };
+  const video = {} as HTMLVideoElement;
+
+  it('flips horizontally around the frame width, draws, then undoes the flip', () => {
+    const { calls, context } = recordingContext();
+    draw(context, video, crop, out, true);
+    expect(calls).toEqual(['save', 'translate 360 0', 'scale -1 1', 'drawImage', 'restore']);
+  });
+
+  it('draws the rear lens untouched', () => {
+    const { calls, context } = recordingContext();
+    draw(context, video, crop, out, false);
+    expect(calls).toEqual(['drawImage']);
+  });
+});
+
+describe('takeFramedPhoto', () => {
+  it('encodes synchronously, never through the idle-scheduled toBlob (4 s on the Android WebView)', async () => {
+    const toBlob = vi.fn();
+    const toDataURL = vi.fn(() => `data:image/jpeg;base64,${btoa('jpeg')}`);
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({
+        save: vi.fn(),
+        restore: vi.fn(),
+        translate: vi.fn(),
+        scale: vi.fn(),
+        drawImage: vi.fn(),
+      }),
+      toBlob,
+      toDataURL,
+    };
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas as unknown as HTMLElement);
+    const video = { videoWidth: 590, videoHeight: 1280 } as HTMLVideoElement;
+    const blob = await takeFramedPhoto(video, { width: 393, height: 851, dpr: 2.75, mirror: true });
+    expect(blob?.type).toBe('image/jpeg');
+    expect(blob?.size).toBe(4);
+    expect(toDataURL).toHaveBeenCalledWith('image/jpeg', 0.92);
+    expect(toBlob).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 });

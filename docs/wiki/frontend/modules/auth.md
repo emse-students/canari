@@ -196,6 +196,20 @@ dans l'App Store") and `google-play-badge.png` (play.google.com, `fr_badge_web_g
 (29px above and below on the French one); it is cropped to its real content so both badges share
 one visual height side by side (`h-10` on both `<img>` tags).
 
+### Open in the app, from the login page (2026-10-08)
+
+The 2026-09-25 audit also found no "Ouvrir dans l'application" on `/login`. `LoginPage` now computes
+`loginOpenInAppOffer` (`lib/mobile/openInApp.ts`) beside the badges, so it shows only on a
+phone-sized web visit, never in the native app. `/login` is not a path the app claims, so the
+target is the page behind `returnTo` when claimed, else `/chat` (the app's home, which asks for a
+sign-in itself). Android: the `intent://` URL on the https App Link filter (Play listing as
+fallback); iOS: `fr.emse.canari://open?url=...` (nothing happens without the app - the badges sit
+right below). Hosts outside `MOBILE_APP_LINK_HOSTS` (dev) get no link. Same builder as the in-app
+browser banner ([mobile](../mobile.md#leaving-an-in-app-browser-for-the-app)). The English-badge
+half of that audit entry had already shipped on 2026-10-01 (above). **Owed: one tap on each phone
+with the app installed** - measured only as the rendered link in a headless Chrome with an Android
+user agent (local host temporarily whitelisted), never followed into the app.
+
 **The card is FLAT** (same audit, checklist line 1 of
 [ecosystem-convergence §12](../../ecosystem-convergence.md#12-the-interface-bar---one-checklist-for-every-site-each-rule-tied-to-a-measurement-2026-09-25)):
 the sign-in button's yellow glow, the logo tile's 32px shadow, the card's `shadow-2xl` and the
@@ -774,6 +788,25 @@ the change drops was only ever shown in a modal the app abandoned two seconds la
 user could read is lost. Pinned in `offlineUnlock.test.ts` by two guards on the handler's own text:
 the handover comes after the wipe, and it is not the retry seam.
 
+### A restore that comes back partial says so (2026-10-08)
+
+A device that signs back in after a revocation, a wipe or a lost MLS store restores its conversation
+ROWS from the local store and its MLS GROUPS from the persisted state, and the two can disagree: a
+row restored as `active` promises that this device can read and write it. A user once reconnected
+and got some conversations back and not others, with nothing saying which - the restore looked
+complete, so nobody knew to act.
+
+`measureRestoreShortfall` (`utils/chat/restoreShortfall.ts`) compares them at the source and returns a
+typed `RestoreShortfall` (`expected`, `restored`, `missingIds`) or `null`. Only `active` non-channel
+rows are OWED a group: `pending` rows already say they wait for a Welcome, so a backup restored on
+another device reports nothing, and a row demoted by an earlier startup is not re-reported for ever.
+`startSession` takes the measure BEFORE its lifecycle reconciliation demotes the rows (afterwards the
+evidence is gone), logs `[ERROR] Partial restore: n/m ...` and `console.error`, and raises
+`restore_shortfall` on the existing `mlsFatalError` banner (`MlsFatalErrorBanner`, Paraglide
+`mls_error_restore_shortfall_text`, dismissible). No retry or repair was added: the demotion to
+`pending` and the re-add that follow are the existing recovery, and this is only its report.
+
+
 ### The same erasure when the USER asks, and the three things the button never did
 
 **REMOVED 2026-09-25, by the user's decision: a developer tool had no place under the sign-in
@@ -1122,3 +1155,21 @@ of that test did not have, and why the symptom survived it.**
 to `onLoginFailed(message, code)`. **Branch on the code, never on the message**: the message is
 localized, so a regex over it silently stops matching in another locale - that is exactly how the
 cross-device recovery link once became unreachable in French.
+
+### Two iPhone 12 findings of 2026-10-07: a name saved for the previous account, and a reset button under the footer
+
+**The composer avatar read "Avatar de <previous user>" after a switch.** `saveUserLocally` only wrote
+`canari_user_display_name` when the caller carried a `displayName`, and the token refresh and the
+session restore carry none. After gamma then delta the key still held gamma's name, and
+`getUserDisplayNameSync` caches the saved name AGAINST THE CURRENT ID, so delta's avatar was labelled
+gamma. The key is now dropped when the stored id differs from the incoming one, beside the other
+account-scoped verdicts (`user.saveUserLocally.test.ts`). The avatar and `PostIdentityPicker` were
+never at fault: the id they passed was right, the saved name was not.
+
+**"Reinitialiser mon PIN" sat under the unlock footer.** The forgot box opens below the fold of the
+form's scroll region, and the footer lives OUTSIDE that region (it must not scroll), so on 390x844
+the button was only reachable by a drag started on the keypad, and a tap at its position hit
+"Deverrouiller". Opening the box now scrolls it to the end of the region (`scrollIntoView`).
+Measured in headless Chrome at 390x844 with `--safe-area-inset-top/bottom` 47/34 px: the button ends
+at y=645, the footer starts at 706, and `elementFromPoint` on its centre is the button. No real
+iPhone read of the fix: only WebKit's own scrolling settles that.

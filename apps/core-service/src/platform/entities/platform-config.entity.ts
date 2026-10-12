@@ -29,7 +29,7 @@ export class PlatformConfig {
     name: 'payment_provider',
     type: 'varchar',
     length: 16,
-    default: 'stripe',
+    default: 'disabled',
   })
-  paymentProvider!: 'stripe' | 'lydia' | 'disabled';
+  paymentProvider!: 'lydia' | 'disabled';
 }

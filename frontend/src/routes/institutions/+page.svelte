@@ -2,14 +2,14 @@
   import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
-  import PageHeader from '$lib/components/layout/PageHeader.svelte';
+  import AssociationsHeader from '$lib/components/associations/AssociationsHeader.svelte';
   import { onMount } from 'svelte';
   import {
     listAssociationDirectory,
     listMyAssociations,
     type Association,
   } from '$lib/associations/api';
-  import { currentUserId } from '$lib/stores/user';
+  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import AssociationTile from '$lib/components/associations/AssociationTile.svelte';
   import { ChevronDown } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -20,6 +20,8 @@
   let error = $state('');
   let showArchived = $state(false);
   let isLoggedIn = $derived(!!currentUserId());
+  /** D20/D24: only a global admin creates an institution. */
+  const canCreate = $derived(isGlobalAdmin());
 
   // The same directory as /associations and /lists, narrowed by type: a reader sees the
   // institutions whose rules reach their spaces plus those they belong to (D37). A new institution
@@ -46,11 +48,11 @@
 </script>
 
 <PageContainer width="grid">
-  <PageHeader
+  <AssociationsHeader
+    section="institutions"
     title={m.inst_heading()}
     subtitle={m.inst_subtitle()}
-    backHref="/associations"
-    backLabel={m.assoc_list_heading()}
+    {canCreate}
   />
 
   <div class="space-y-8">

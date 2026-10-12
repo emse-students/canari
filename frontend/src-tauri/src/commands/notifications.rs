@@ -40,6 +40,8 @@
 /// Mirrors what the push payload carries, so that both triggers render the same notification:
 /// `group_name` is EMPTY for a direct message, and `sent_at` is the sender's own instant in
 /// milliseconds (0 when unknown, which costs the de-duplication of a message arriving both ways).
+/// `covers` is how many inbound messages this one banner stands for (a catch-up flush raises one
+/// banner for N), which the Kotlin `GenericBannerLedger` credits against refused pushes.
 #[tauri::command]
 pub(crate) fn notifier_message_natif(
     group_id: String,
@@ -49,6 +51,7 @@ pub(crate) fn notifier_message_natif(
     body: String,
     mentions_me: bool,
     sent_at: i64,
+    covers: i32,
 ) -> bool {
     #[cfg(target_os = "android")]
     {
@@ -99,7 +102,7 @@ pub(crate) fn notifier_message_natif(
             .call_static_method(
                 &class,
                 "notifyMessageFromWebSocket",
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJ)Z",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJI)Z",
                 &[
                     (&args[0]).into(),
                     (&args[1]).into(),
@@ -108,13 +111,14 @@ pub(crate) fn notifier_message_natif(
                     (&args[4]).into(),
                     JValue::Bool(u8::from(mentions_me)),
                     JValue::Long(sent_at),
+                    JValue::Int(covers),
                 ],
             )
             .and_then(|v| v.z())
         {
             Ok(accepted) => {
                 log::debug!(
-                    "[NOTIF] native builder {} for {}",
+                    "[NOTIF] native builder {} for {} (covers {covers})",
                     if accepted { "queued" } else { "refused" },
                     group_id.chars().take(8).collect::<String>()
                 );
@@ -136,6 +140,7 @@ pub(crate) fn notifier_message_natif(
             body,
             mentions_me,
             sent_at,
+            covers,
         );
         false
     }

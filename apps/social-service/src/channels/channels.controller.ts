@@ -63,6 +63,16 @@ export class ChannelsController {
     };
   }
 
+  /**
+   * How many unread messages each of the caller's salons holds, `{ asOf, counts: { [channelId]: n } }`.
+   * Declared among the single-segment routes so no `:channelId` pattern can swallow it.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('unread-counts')
+  listUnreadCounts(@Headers('x-user-id') xUserId: string) {
+    return this.service.listUnreadCounts(xUserId.trim().toLowerCase());
+  }
+
   /** Creates a new workspace owned by the calling user. */
   @UseGuards(NginxAuthGuard)
   @Post('workspaces')
@@ -708,20 +718,21 @@ export class ChannelsController {
   }
 
   /**
-   * The salon's read receipt: raises how far the caller has read it to `at` (a message's server
-   * `createdAt`, epoch ms) and tells the salon's readers when it moved. `{ at: null }` = unchanged.
+   * The salon's read receipt: raises how far the caller has read it to `at` (the newest read
+   * message's instant, epoch ms; `serverAt` is that row's own `createdAt` when the client knows it) and tells the salon's readers when it moved. `{ at: null }` = unchanged.
    */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/read-mark')
   async advanceReadMark(
     @Headers('x-user-id') xUserId: string,
     @Param('channelId') channelId: string,
-    @Body() body: { at?: unknown }
+    @Body() body: { at?: unknown; serverAt?: unknown }
   ) {
     const moved = await this.service.advanceChannelReadMark(
       channelId,
       xUserId.trim().toLowerCase(),
-      Number(body?.at)
+      Number(body?.at),
+      body?.serverAt === undefined || body?.serverAt === null ? undefined : Number(body.serverAt)
     );
     return { at: moved?.at ?? null };
   }

@@ -43,6 +43,7 @@ export function isSystemSender(senderId: string): boolean {
 }
 import {
   mediaEncodingFromProto,
+  mediaReelFromProto,
   mediaKindToType,
   mediaPlaceholderFromProto,
   type IAppMessage,
@@ -219,6 +220,8 @@ export function appMsgToEnvelope(
             ...(msg.media.voiceNote ? { voiceNote: true } : {}),
             // Absent for the single block, so a legacy message stays the envelope it always was.
             ...(msg.media.encoding ? { encoding: mediaEncodingFromProto(msg.media.encoding) } : {}),
+            // A reel message's declaration (intent, length, expiry hint); empty for anything else.
+            ...mediaReelFromProto(msg.media),
           },
           msg.media.caption || undefined
         )

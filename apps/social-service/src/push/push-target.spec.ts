@@ -19,6 +19,12 @@ describe('socialDeepLink - the payload contract of a tap', () => {
     }
   });
 
+  it('a repost or co-organisation proposal opens the queue of the receiving association, not the feed', () => {
+    expect(socialDeepLink({ type: 'social', queueAssociationId: 'a1' })).toBe(
+      'fr.emse.canari://proposals/a1'
+    );
+  });
+
   it('a payload naming nothing opens the posts list', () => {
     expect(socialDeepLink({ type: 'social' })).toBe('fr.emse.canari://posts');
   });

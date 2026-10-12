@@ -40,6 +40,14 @@ export function holdsBdeFlagOverSql(user: string, association: string, flag: str
       AND ${ruleReachesSpaceSql('bde_reach', 'bde_governed')})`;
 }
 
+/**
+ * The campuses of the spaces whose BDE user `$1` holds flag `$2` in - the borders of a BDE star's
+ * audience powers (decision 7 of the audiences chantier). Answers `campus`.
+ */
+export const BDE_GOVERNED_CAMPUSES_SQL = `SELECT DISTINCT bde_space.campus FROM association_members bde_star
+  JOIN spaces bde_space ON bde_space."bdeAssociationId" = bde_star."associationId"
+  WHERE bde_star."userId" = $1 AND (bde_star.permissions & $2) <> 0 ORDER BY bde_space.campus`;
+
 /** Does user `$1` hold flag `$3` in a BDE governing association `$2`? Answers `holds`. */
 export const HOLDS_BDE_FLAG_OVER_SQL = `SELECT ${holdsBdeFlagOverSql('$1', '$2', '$3')} AS "holds"`;
 

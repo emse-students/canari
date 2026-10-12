@@ -1,7 +1,3 @@
-version: 1.0.3
+version: 1.2.5
 
-Les videos longues se lisent maintenant pendant leur envoi et leur telechargement, et l'on peut avancer dans la video sans attendre la fin.
-
-L'editeur de photo arrive dans la camera. Sous le dernier message lu par chaque membre, de petits avatars montrent qui l'a vu.
-
-Les notifications des communautes ne se melangent plus aux discussions, et celles des publications sont regroupees. Plusieurs corrections d'affichage et de stabilite.
+Les aperçus de PDF ne clignotent plus dans les conversations, et le zoom du lecteur PDF garde la page où vous êtes. Les textes copiés d'un PDF gardent leurs retours à la ligne. Dans l'éditeur de reels, un texte restylé reste dans le cadre. Les salons ne se rechargent plus inutilement quand une clé déjà connue arrive, ce qui allège les communautés très actives.

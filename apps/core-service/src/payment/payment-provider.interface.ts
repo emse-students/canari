@@ -36,8 +36,8 @@ export interface CheckoutLineItem {
 
 /**
  * The association's legal profile, required upfront by Lydia's `business/create` (no hosted
- * collection page exists on Lydia's side, unlike Stripe's `accountLinks`). Ignored by
- * StripePaymentProvider; LydiaPaymentProvider rejects an onboarding call missing any of these.
+ * collection page exists on Lydia's side). LydiaPaymentProvider rejects an onboarding call
+ * missing any of these.
  */
 export interface BusinessLegalProfile {
   name: string;
@@ -62,8 +62,7 @@ export interface OnboardingResult {
   accountId: string;
 }
 
-/** Identifies the payer up front. Stripe Checkout never needed this (anyone with the link could
- *  pay); Lydia's request/do requires it (see LydiaPaymentProvider). Ignored by StripePaymentProvider. */
+/** Identifies the payer up front: Lydia's request/do requires it (see LydiaPaymentProvider). */
 export interface PayerRecipient {
   value: string;
   type: 'email' | 'phone';
@@ -75,8 +74,6 @@ export interface CreateCheckoutSessionParams {
   cancelUrl: string;
   metadata?: Record<string, string>;
   connectAccountId?: string;
-  customerId?: string;
-  saveForFuture?: boolean;
   payerRecipient?: PayerRecipient;
   /** Stable key for idempotency; derived from submission ID or a client-supplied UUID. */
   idempotencyKey?: string;
@@ -94,15 +91,6 @@ export interface CheckoutSessionInfo {
   metadata: Record<string, string | undefined>;
 }
 
-export interface ChargeResult {
-  ok: boolean;
-  requiresAction?: boolean;
-  clientSecret?: string;
-  error?: string;
-  /** Set when the charge succeeded (used to fulfill boutique purchases). */
-  paymentReference?: string;
-}
-
 /** Collect balance snapshot for a connected account (single currency). */
 export interface ConnectBalanceSummary {
   availableCents: number;
@@ -110,31 +98,12 @@ export interface ConnectBalanceSummary {
   currency: string;
 }
 
-export interface SavedPaymentMethod {
-  id: string;
-  brand: string;
-  last4: string;
-  expMonth: number;
-  expYear: number;
-}
-
-export interface ChargeWithSavedMethodParams {
-  customerId: string;
-  paymentMethodId: string;
-  amountCents: number;
-  currency: string;
-  metadata?: Record<string, string>;
-  connectAccountId?: string;
-  /** Stable key for idempotency - prevents double-charge on network retry. */
-  idempotencyKey?: string;
-}
-
 /**
- * Provider-agnostic surface for Connect-style onboarding, one-off checkout, and saved-method
- * charging. `StripePaymentProvider` is the current implementation; a `LydiaPaymentProvider` is
- * being added alongside it (see docs/wiki - WP-LYDIA-1). `PaymentService` is the only caller.
+ * Provider-agnostic surface for Connect-style onboarding and one-off checkout. `Lydia` is the only
+ * live implementation since Stripe left the product (docs/wiki/stripe-archive.md); `disabled`
+ * refuses everything. `PaymentService` is the only caller.
  */
-export type PaymentProviderId = 'stripe' | 'lydia' | 'disabled';
+export type PaymentProviderId = 'lydia' | 'disabled';
 
 export interface PaymentProvider {
   readonly id: PaymentProviderId;
@@ -149,17 +118,17 @@ export interface PaymentProvider {
 
   createCheckoutSession(params: CreateCheckoutSessionParams): Promise<CheckoutSessionResult>;
   retrieveSession(sessionId: string): Promise<CheckoutSessionInfo>;
+}
 
-  getOrCreateCustomer(
-    existingCustomerId: string | null | undefined,
-    meta: { userId: string; displayName?: string | null }
-  ): Promise<string>;
-  createSetupCheckoutSession(params: {
-    customerId: string;
-    successUrl: string;
-    cancelUrl: string;
-  }): Promise<{ url: string; sessionId: string }>;
-  listPaymentMethods(customerId: string): Promise<SavedPaymentMethod[]>;
-  detachPaymentMethod(paymentMethodId: string): Promise<void>;
-  chargeWithSavedMethod(params: ChargeWithSavedMethodParams): Promise<ChargeResult>;
+/**
+ * The line-item shape social-service sends over the internal wire (`price_data` naming, kept from
+ * the Stripe era so no caller changed). Collapsed into a `CheckoutLineItem` by `PaymentService`.
+ */
+export interface WireLineItem {
+  quantity?: number;
+  price_data?: {
+    currency: string;
+    unit_amount?: number | null;
+    product_data?: { name?: string };
+  };
 }

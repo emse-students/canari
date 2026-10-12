@@ -128,8 +128,18 @@ describe('one post the reader may not see', () => {
     );
   });
 
+  it('counts a nominative read grant for READ_OR_REACT and NEVER for a VOTE (WP7)', async () => {
+    const { service, calls } = makeService({ visible: true });
+    await service.assertVisible('p1', VIEWER, 'READ_OR_REACT');
+    await service.assertVisible('p1', VIEWER, 'VOTE');
+    expect(calls[0].sql).toContain('read_grants');
+    expect(calls[1].sql).not.toContain('read_grants');
+  });
+
   it('is a 404 for the calendar-link read as well', async () => {
     const { service } = makeService({ visible: false });
-    await expect(service.assertVisible('p1', VIEWER)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.assertVisible('p1', VIEWER, 'READ_OR_REACT')).rejects.toBeInstanceOf(
+      NotFoundException
+    );
   });
 });

@@ -2,7 +2,7 @@
   import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
-  import PageHeader from '$lib/components/layout/PageHeader.svelte';
+  import AssociationsHeader from '$lib/components/associations/AssociationsHeader.svelte';
   import { onMount } from 'svelte';
   import {
     listAssociationDirectory,
@@ -60,23 +60,12 @@
 </script>
 
 <PageContainer width="grid">
-  <PageHeader
+  <AssociationsHeader
+    section="lists"
     title={m.list_heading()}
     subtitle={m.list_subtitle()}
-    backHref="/associations"
-    backLabel={m.assoc_list_heading()}
-  >
-    {#snippet actions()}
-      {#if canCreate}
-        <a
-          href="/lists/new"
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-sm transition-all"
-        >
-          {m.list_new_create_btn()}
-        </a>
-      {/if}
-    {/snippet}
-  </PageHeader>
+    {canCreate}
+  />
 
   <div class="space-y-8">
     {#if loading}

@@ -7,6 +7,7 @@ import {
   setEventValidator,
 } from '$lib/stores/userState.svelte';
 import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
@@ -27,7 +28,7 @@ export enum AssociationPermissionFlag {
   MANAGE_ASSO = 1 << 6,
   MODERATE = 1 << 7,
   MANAGE_PRODUCTS = 1 << 8,
-  MANAGE_STRIPE_CONNECT = 1 << 9,
+  MANAGE_PAYOUT_ACCOUNT = 1 << 9,
   MANAGE_PARTNERSHIPS = 1 << 10,
 }
 
@@ -46,7 +47,15 @@ export const ALL_CORE_FLAGS =
 
 /** Default admin preset when adding a member (core flags + Stripe Connect). */
 export const ASSOCIATION_ADMIN_PRESET =
-  ALL_CORE_FLAGS | AssociationPermissionFlag.MANAGE_STRIPE_CONNECT;
+  ALL_CORE_FLAGS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT;
+
+/**
+ * A member who speaks for the association without administering it: publishes in its name and
+ * proposes its events. What an institution's members need (D20, WP6e), since being personnel gives
+ * no right to publish through one.
+ */
+export const PUBLISHER_PRESET =
+  AssociationPermissionFlag.POST_AS_ASSO | AssociationPermissionFlag.PROPOSE_EVENT;
 
 /** Returns true if `permissions` includes `flag`. */
 export function hasPermissionFlag(permissions: number, flag: AssociationPermissionFlag): boolean {
@@ -60,7 +69,7 @@ export function hasPermissionFlag(permissions: number, flag: AssociationPermissi
  * account nor its voice is administration.
  */
 export const SUPER_ADMIN_EXCLUDED_FLAGS =
-  AssociationPermissionFlag.MANAGE_STRIPE_CONNECT | AssociationPermissionFlag.POST_AS_ASSO;
+  AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT | AssociationPermissionFlag.POST_AS_ASSO;
 
 /**
  * Flags that only mean anything inside a BDE association - the server enforces `a.isBDE = true`
@@ -142,9 +151,7 @@ export interface Association {
   description: string | null;
   bioMarkdown: string | null;
   logoUrl: string | null;
-  stripeAccountId: string | null;
-  stripeOnboardingComplete: boolean;
-  /** Lydia Business vendor_token - own column, independent from the Stripe pair above. */
+  /** Lydia Business vendor_token. */
   lydiaAccountId: string | null;
   lydiaOnboardingComplete: boolean;
   /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
@@ -387,58 +394,62 @@ export function associationLogoSrc(logoUrl: string | null | undefined): string |
  * therefore treat an unknown or absent code as "something went wrong" in its own language, never
  * by falling back to printing `message`.
  */
-export class SocialApiError extends Error {
-  constructor(
-    message: string,
-    readonly code: string | null,
-    /**
-     * The HTTP status the refusal carried.
-     *
-     * IT IS REQUIRED, BECAUSE IT WAS THROWN AWAY AND THAT COST A SCREEN ITS ONLY DISCRIMINATOR.
-     * `code` is null for most refusals - a guard's bare `ForbiddenException` carries none - so a
-     * caller holding one of these could not tell "you are not allowed" from "the server broke"
-     * from "the date is wrong", and every one of them read as the same generic line. The status is
-     * the coarse answer that is always present; the code is the precise one that usually is not.
-     * See {@link describeApiRefusal} for the sentence each becomes.
-     */
-    readonly status: number
-  ) {
-    super(message);
+export class SocialApiError extends ApiRefusalError {
+  /**
+   * `status` IS REQUIRED, BECAUSE IT WAS THROWN AWAY AND THAT COST A SCREEN ITS ONLY DISCRIMINATOR.
+   * `code` is null for most refusals - a guard's bare `ForbiddenException` carries none - so a
+   * caller holding one of these could not tell "you are not allowed" from "the server broke"
+   * from "the date is wrong", and every one of them read as the same generic line. The status is
+   * the coarse answer that is always present; the code is the precise one that usually is not.
+   * See {@link describeApiRefusal} for the sentence each becomes. Extending {@link ApiRefusalError}
+   * is what lets `refusalStatus` / `refusalCode` read it without importing this module.
+   */
+  constructor(message: string, code: string | null, status: number) {
+    super(status, code, message);
     this.name = 'SocialApiError';
   }
+}
+
+/**
+ * Types a refused response at the THROW: the status always, the server's `code` when its JSON body
+ * carries one. Every non-`request` call here (multipart uploads through a bare `fetch`, the xlsx
+ * export, the provider lookup) threw `new Error('... ' + res.status)` instead, which spelt the
+ * number into a sentence nobody could read back - so a refused logo upload and a refused card icon
+ * were indistinguishable from a dead network. Use it as `throw await socialRefusal(res)`.
+ */
+export async function socialRefusal(res: Response): Promise<SocialApiError> {
+  const raw = await res.text().catch(() => '');
+  let message = raw || res.statusText;
+  let code: string | null = null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'message' in parsed &&
+      typeof (parsed as Record<string, unknown>).message === 'string'
+    ) {
+      message = (parsed as Record<string, string>).message;
+    }
+    // Nest serialises `throw new XException({ code, message })` as the body itself, so the code
+    // sits beside the message rather than under an envelope.
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof (parsed as Record<string, unknown>).code === 'string'
+    ) {
+      code = (parsed as Record<string, string>).code;
+    }
+  } catch {
+    // Ignore JSON parse failure: message is the raw error text and there is no code to read
+  }
+  return new SocialApiError(message, code, res.status);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const base = socialUrl();
   const res = await apiFetch(`${base}${path}`, init as any);
-  if (!res.ok) {
-    const raw = await res.text().catch(() => '');
-    let message = raw || res.statusText;
-    let code: string | null = null;
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        'message' in parsed &&
-        typeof (parsed as Record<string, unknown>).message === 'string'
-      ) {
-        message = (parsed as Record<string, string>).message;
-      }
-      // Nest serialises `throw new XException({ code, message })` as the body itself, so the code
-      // sits beside the message rather than under an envelope.
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        typeof (parsed as Record<string, unknown>).code === 'string'
-      ) {
-        code = (parsed as Record<string, string>).code;
-      }
-    } catch {
-      // Ignore JSON parse failure: message is the raw error text and there is no code to read
-    }
-    throw new SocialApiError(message, code, res.status);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   // A successful response is not always JSON: DELETEs and void POSTs answer 204, or 200 with an
   // empty body. `res.json()` on those throws "unexpected end of data", turning a call that WORKED
   // into a visible error - and, worse, skipping whatever the caller does after it (a revoked
@@ -586,6 +597,30 @@ export async function listAggregatedCalendarFeed(opts: {
   return request<AssociationCalendarFeedEvent[]>(`/api/associations/calendar/feed?${q.toString()}`);
 }
 
+/** The selection a subscription URL is signed for: a side left empty is "any". */
+export interface AgendaFeedSelection {
+  campus?: Campus | '' | null;
+  formation?: Formation | '' | null;
+  associationId?: string;
+}
+
+/**
+ * Asks the server to SIGN a feed selection (D40 amended 2026-10-06): it answers only for the
+ * reader's OWN campus, formations and pairs of them (403 `AGENDA_SELECTION_FORBIDDEN` otherwise), or
+ * for an association, and the `sig` it returns goes into the `.ics` URL unchanged. Needs a session.
+ */
+export async function signAgendaFeed(selection: AgendaFeedSelection): Promise<string> {
+  const body: Record<string, string> = {};
+  if (selection.campus) body.campus = selection.campus;
+  if (selection.formation) body.formation = selection.formation;
+  if (selection.associationId?.trim()) body.associationId = selection.associationId.trim();
+  const res = await request<{ sig: string }>('/api/associations/calendar/feed-signature', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  return res.sig;
+}
+
 /**
  * Default window for an `.ics` subscription link: 3 months back to the end of the 12th month
  * ahead. The backend defaults to the same range when `from`/`to` are omitted, but a subscribe
@@ -609,6 +644,8 @@ export function aggregatedCalendarFeedIcsPath(opts: {
   /** D40: the public feed is one per selection; the server REFUSES a bare one. */
   campus?: Campus | null;
   formation?: Formation | null;
+  /** The server's signature of that selection (`signAgendaFeed`); a selection feed is refused without it. */
+  sig?: string;
 }): string {
   const q = new URLSearchParams();
   q.set('from', opts.from);
@@ -617,6 +654,7 @@ export function aggregatedCalendarFeedIcsPath(opts: {
   if (opts.campus) q.set('campus', opts.campus);
   if (opts.formation) q.set('formation', opts.formation);
   if (opts.eventId?.trim()) q.set('eventId', opts.eventId.trim());
+  if (opts.sig?.trim()) q.set('sig', opts.sig.trim());
   return `/api/associations/calendar/feed.ics?${q.toString()}`;
 }
 
@@ -630,6 +668,7 @@ export function aggregatedCalendarFeedIcsAbsoluteUrl(opts: {
   eventId?: string;
   campus?: Campus | null;
   formation?: Formation | null;
+  sig?: string;
 }): string {
   const path = aggregatedCalendarFeedIcsPath(opts);
   const base = socialUrl();
@@ -726,10 +765,7 @@ export async function uploadCalendarEventImage(
     `${base}/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/image`,
     { method: 'POST', headers, body: fd }
   );
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`upload ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   return (await res.json()) as AssociationCalendarEvent;
 }
 
@@ -970,6 +1006,42 @@ export async function unfollowAssociation(associationId: string): Promise<{ ok: 
   });
 }
 
+/**
+ * The PUSH mute of one association: it silences that association's push notifications for the
+ * caller and nothing else - the post stays in the feed and the bell. A separate fact from
+ * following, which only decides what the feed's "followed" view shows.
+ */
+export async function getAssociationPushMuteStatus(
+  associationId: string
+): Promise<{ muted: boolean }> {
+  return request<{ muted: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/push-mute`
+  );
+}
+
+export async function muteAssociationPush(associationId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/push-mute`,
+    { method: 'PUT' }
+  );
+}
+
+export async function unmuteAssociationPush(associationId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/push-mute`,
+    { method: 'DELETE' }
+  );
+}
+
+/** The associations the caller muted - the unmute list of the notification settings. */
+export async function listMutedAssociations(): Promise<
+  Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]
+> {
+  return request<Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]>(
+    '/api/associations/me/push-mutes'
+  );
+}
+
 export async function createAssociation(payload: CreateAssociationPayload): Promise<Association> {
   const created = await request<Association>('/api/associations', {
     method: 'POST',
@@ -1035,10 +1107,7 @@ export async function uploadAssociationLogo(
       body: fd,
     }
   );
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`associations ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   invalidateAssociationDirectory();
   return (await res.json()) as Association;
 }
@@ -1312,6 +1381,48 @@ export async function removeDocumentReviewer(userId: string): Promise<{ ok: bool
   );
 }
 
+// ── Nominative read grants (WP7, global admins only) ───────────────────────────
+
+/** One cell granted to a named account; a null formation is the whole campus. */
+export interface ReadGrant {
+  userId: string;
+  campus: string;
+  formation: string | null;
+  grantedBy: string;
+  createdAt: string;
+}
+
+/** One line of the journal of grants and revocations. */
+export interface ReadGrantJournalEntry {
+  userId: string;
+  campus: string;
+  formation: string | null;
+  action: 'grant' | 'revoke';
+  actor: string;
+  at: string;
+}
+
+/** Current read grants and the recent journal. Global admins only. */
+export async function listReadGrants(): Promise<{
+  grants: ReadGrant[];
+  journal: ReadGrantJournalEntry[];
+}> {
+  return request('/api/associations/read-grants');
+}
+
+/** Grants or revokes one (account x campus x formation) cell. Idempotent; global admins only. */
+export async function setReadGrant(
+  userId: string,
+  campus: string,
+  formation: string | null,
+  granted: boolean
+): Promise<void> {
+  await request('/api/associations/read-grants', {
+    method: 'PUT',
+    body: JSON.stringify({ userId, campus, formation, granted }),
+  });
+}
+
 // ── Cotisation tags ─────────────────────────────────────────────────────────
 
 /** A membership/cotisation tag granted to a user by an association. */
@@ -1528,9 +1639,7 @@ export async function grantCotisant(
  */
 async function downloadXlsxFromApi(path: string, fallbackName: string): Promise<void> {
   const res = await apiFetch(`${socialUrl()}${path}`);
-  if (!res.ok) {
-    throw new Error(`Failed to export (${res.status})`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   const blob = await res.blob();
   const disposition = res.headers.get('Content-Disposition') ?? '';
   const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
@@ -1668,7 +1777,8 @@ export interface AssociationPurchase {
   formId: string | null;
   productName: string;
   amountCents: number;
-  paymentMethod: 'stripe' | 'cash';
+  /** `stripe` is the historic value of rows written before the processor left: it means online. */
+  paymentMethod: 'online' | 'stripe' | 'cash';
   paidAt: string;
   firstName: string | null;
   lastName: string | null;
@@ -1815,7 +1925,7 @@ export async function listProductPurchases(
 
 /**
  * A club association's payment-delegation state: whether it routes its online payments to a
- * parent association's Stripe Connect account and, if so, the lifecycle status and whether the
+ * parent association's payout account and, if so, the lifecycle status and whether the
  * chosen parent can currently receive payments.
  */
 export interface PaymentDelegationState {
@@ -1824,7 +1934,7 @@ export interface PaymentDelegationState {
   parentAssociationId: string | null;
   /** Display name of the chosen parent, resolved server-side. */
   parentName: string | null;
-  /** True when the parent has completed its own Stripe Connect onboarding (can receive payments). */
+  /** True when the parent has completed its own payout account onboarding (can receive payments). */
   parentReady: boolean;
 }
 
@@ -1967,10 +2077,7 @@ export async function uploadProductIcon(
     `${base}/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/icon`,
     { method: 'POST', headers, body: fd }
   );
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`associations ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   return (await res.json()) as AssociationProduct;
 }
 
@@ -1986,8 +2093,8 @@ export async function deleteProductIcon(
 }
 
 /**
- * Creates a Stripe Checkout session for a product purchase.
- * Returns the Stripe-hosted checkout URL to redirect the user to.
+ * Creates a checkout session for a product purchase.
+ * Returns the payment-provider-hosted checkout URL to redirect the user to.
  */
 export async function createProductCheckout(
   associationId: string,
@@ -2088,68 +2195,16 @@ export async function listAssociationForms(associationId: string): Promise<Assoc
   return request<AssociationForm[]>(`/api/associations/${encodeURIComponent(associationId)}/forms`);
 }
 
-// ── Stripe Connect status ───────────────────────────────────────────────────
-
-/** Treasurer-facing Stripe Connect lifecycle (mirrors core-service). */
-export type ConnectAccountStatus =
-  | 'not_started'
-  | 'onboarding_required'
-  | 'pending'
-  | 'active'
-  | 'restricted'
-  | 'unavailable';
-
-/** Stripe Connect balance for a connected association account. */
-export interface ConnectAccountBalance {
-  availableCents: number;
-  pendingCents: number;
-  currency: string;
-}
-
-export interface ConnectAccountStatusResult {
-  status: ConnectAccountStatus;
-  chargesEnabled?: boolean;
-  payoutsEnabled?: boolean;
-  detailsSubmitted?: boolean;
-  currentlyDue?: string[];
-  pendingVerification?: string[];
-  disabledReason?: string | null;
-  stripeAccountId?: string | null;
-  dbOnboardingComplete?: boolean;
-  balance?: ConnectAccountBalance | null;
-  message?: string;
-}
-
-/** Formats a Connect balance amount for display. */
-export function formatConnectAccountAmount(cents: number, currency: string): string {
-  return new Intl.NumberFormat('fr-FR', {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-  }).format(cents / 100);
-}
-
-/** True when the association can accept online payments (live or DB flag). */
-export function isConnectAccountReady(
-  status: ConnectAccountStatusResult | null | undefined
-): boolean {
-  if (!status) return false;
-  return status.status === 'active' || !!status.dbOnboardingComplete;
-}
-
 /**
- * True when the association's account at ONE provider is ready - the flag of that provider, since
- * Stripe and Lydia keep independent account ids and flags (migration 037). Reading the Stripe
- * flag while Lydia is active showed every Lydia association as incomplete for ever (2026-10-03).
- * `null` is a provider not yet known, and `disabled` is payments switched off platform-wide: neither
- * is ever ready.
+ * True when the association's Lydia account is ready. `null` is a provider not yet known, and
+ * `disabled` is payments switched off platform-wide: neither is ever ready. The historic
+ * `stripeOnboardingComplete` flag is no longer even on the type: the server stopped mapping it.
  */
 export function isPaymentAccountReady(
-  asso: Pick<Association, 'stripeOnboardingComplete' | 'lydiaOnboardingComplete'>,
+  asso: Pick<Association, 'lydiaOnboardingComplete'>,
   provider: PaymentProviderId | null
 ): boolean {
-  if (provider === 'lydia') return asso.lydiaOnboardingComplete === true;
-  if (provider === 'stripe') return asso.stripeOnboardingComplete === true;
-  return false;
+  return provider === 'lydia' && asso.lydiaOnboardingComplete === true;
 }
 
 /**
@@ -2163,62 +2218,8 @@ export function canAssociationReceiveFormPayments(
   return isPaymentAccountReady(asso, provider);
 }
 
-/** Fetches live Stripe Connect status (requires MANAGE_STRIPE_CONNECT). */
-export async function fetchConnectAccountStatus(
-  associationId: string
-): Promise<ConnectAccountStatusResult> {
-  const base = coreUrl();
-  const res = await apiFetch(
-    `${base}/api/payments/connect-status/${encodeURIComponent(associationId)}`
-  );
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`connect-status ${res.status}: ${details || res.statusText}`);
-  }
-  return (await res.json()) as ConnectAccountStatusResult;
-}
-
 /**
- * Opens the association's Stripe Connect dashboard (payouts, bank account).
- * Requires MANAGE_STRIPE_CONNECT.
- */
-export async function openConnectAccountDashboard(associationId: string): Promise<string> {
-  const base = coreUrl();
-  const res = await apiFetch(
-    `${base}/api/payments/connect-dashboard-link/${encodeURIComponent(associationId)}`,
-    { method: 'POST' }
-  );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(
-      (body as { message?: string })?.message || `Dashboard link failed (${res.status})`
-    );
-  }
-  const data = (await res.json()) as { url: string };
-  if (!data.url) throw new Error('Stripe did not return a dashboard URL');
-  return data.url;
-}
-
-/**
- * Unlinks the association's Stripe Connect account from Canari (MANAGE_STRIPE_CONNECT).
- * Local unlink only - the Stripe account itself is untouched and onboarding can be restarted.
- */
-export async function disconnectConnectAccount(associationId: string): Promise<void> {
-  const base = coreUrl();
-  const res = await apiFetch(
-    `${base}/api/payments/disconnect-connect-account/${encodeURIComponent(associationId)}`,
-    { method: 'POST' }
-  );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(
-      (body as { message?: string })?.message || `Stripe disconnect failed (${res.status})`
-    );
-  }
-}
-
-/**
- * Unlinks the association's Lydia Business from Canari (MANAGE_STRIPE_CONNECT).
+ * Unlinks the association's Lydia Business from Canari (MANAGE_PAYOUT_ACCOUNT).
  * Local unlink only - the Lydia Business itself is untouched and onboarding can be restarted.
  */
 export async function disconnectLydiaConnect(associationId: string): Promise<void> {
@@ -2253,50 +2254,23 @@ export async function validateLydiaOnboarding(associationId: string): Promise<vo
   }
 }
 
-// ── Stripe onboarding ───────────────────────────────────────────────────────
-
-export async function startConnectAccountOnboarding(
-  associationId: string,
-  existingAccountId?: string,
-  opts?: { returnUrl?: string; refreshUrl?: string }
-): Promise<{ url: string; accountId: string }> {
-  const base = coreUrl();
-  const res = await apiFetch(`${base}/api/payments/onboarding`, {
-    method: 'POST',
-    body: JSON.stringify({
-      associationId,
-      existingAccountId,
-      returnUrl: opts?.returnUrl,
-      refreshUrl: opts?.refreshUrl,
-    }),
-  });
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`onboarding ${res.status}: ${details || res.statusText}`);
-  }
-  return (await res.json()) as { url: string; accountId: string };
-}
-
 // ── Payment provider (WP-LYDIA-1) ───────────────────────────────────────────
 
 /** `disabled` is the platform declaring payments OFF: no provider, nothing is ever ready. */
-export type PaymentProviderId = 'stripe' | 'lydia' | 'disabled';
+export type PaymentProviderId = 'lydia' | 'disabled';
 
 /** Which payment provider core-service is currently configured to use. */
 export async function fetchActivePaymentProvider(): Promise<PaymentProviderId> {
   const base = coreUrl();
   const res = await apiFetch(`${base}/api/payments/provider`);
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`provider ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   const data = (await res.json()) as { provider: PaymentProviderId };
   return data.provider;
 }
 
 /**
  * The association's legal profile, required upfront by Lydia's business/create - Lydia has no
- * hosted collection page like Stripe's accountLinks, so Canari collects it itself.
+ * hosted collection page, so Canari collects it itself.
  */
 export interface LydiaBusinessLegalProfile {
   name: string;
@@ -2700,10 +2674,7 @@ export async function uploadPartnershipIcon(
     `${base}/api/associations/${encodeURIComponent(associationId)}/partnerships/${encodeURIComponent(cardId)}/icon`,
     { method: 'POST', headers, body: fd }
   );
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`associations ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await socialRefusal(res);
   return (await res.json()) as PartnershipCard;
 }
 
@@ -2766,6 +2737,16 @@ export function listSpaces(): Promise<SpaceRow[]> {
 /** The audience rules of EVERY association, in one call: the admin grid draws itself from them. */
 export function listAllAudiences(): Promise<AssociationRuleRow[]> {
   return request<AssociationRuleRow[]>('/api/associations/spaces/audiences');
+}
+
+/**
+ * The audience rules of ONE association: a global admin's, or a BDE star's for an entity whose
+ * rules lie within the campuses it governs (the server refuses the rest with a typed code).
+ */
+export function getAssociationAudiences(associationId: string): Promise<AudienceRule[]> {
+  return request<AudienceRule[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/audiences`
+  );
 }
 
 /** Designates, or clears with `null`, the BDE of a space (D22). */

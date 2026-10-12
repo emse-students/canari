@@ -211,3 +211,20 @@ iOS app kept Apple's glyphs, for one of two causes nothing here could separate -
 pictures replaced it. The whole mechanism (provenance, sha256s, the derivation's measurements, the
 format-14 loss the gate caught) is in this page's history at `5041d12de`, the last commit that shipped
 the fonts: `git show 5041d12de:docs/wiki/frontend/emoji.md`.
+
+## What a future campaign owes - the twelve rows (moved from the backlog, 2026-10-08)
+
+Rows for the **second campaign** ([cross-client-campaign](../cross-client-campaign.md#the-second-campaign-for-everything-that-is-not-chat---asked-2026-08-16)), asked for by the user on 2026-08-23 and rewritten for pictures on 2026-09-25. Every one names the evidence it rests on, because "the emoji looked fine" is not an observation.
+
+1. **Pictures, not glyphs**, per platform, on W1, W2 and A1 - and the iPhone, where the font never drew: every emoji of a message is an `img.emoji` with `naturalWidth > 0`, read from the DOM.
+2. **The same codepoint is the same picture on every device.** One message carrying a v1 emoji, a country flag, a ZWJ family, a skin-toned person, an Emoji 16 and an Emoji 17 addition, and one sent WITHOUT U+FE0F; compare the rendered bubble across the clients.
+3. **A flag and a ZWJ sequence are ONE picture**, not two letters or five people.
+4. **The whole set is reachable in the picker**: scroll to the last row of the last category, on a short viewport, with the recents row both empty and full.
+5. **The panel is entirely inside the viewport** at each anchor: first message, last message, a row at the top edge, one at the bottom, on the own side and the peer side.
+6. **French search finds things with a typo** ("ceour") **and English search works with the network off** once the dataset is cached.
+7. **Pick, send, peer**: the codepoint the peer receives equals the one picked, and it is still a CODEPOINT on the wire - copy the text out and assert on it. **WebKit's copy is the unmeasured one** (Chromium carries the `alt`, measured).
+8. **A reaction** carrying a flag and a ZWJ sequence survives the round trip, including the distinct-reaction limit path.
+9. **The notification shade is drawn by the OS**, so an emoji in a notification body is the SYSTEM glyph. Assert what it does; do not assert that it matches.
+10. **Exported artefacts**: an emoji in a poster, a calendar and a trombinoscope PDF is a picture in the raster (measured in Chromium through snapdom; owed on the phones that export).
+11. **Cold start, offline, on A1**: open the picker with no network and confirm the set is complete AND that no request left the device.
+12. **The composer on the iPhone**: its emoji keyboard, a paste and an IME commit each turn into a picture with the caret after it, and Backspace removes the emoji whole (measured in Chromium only).

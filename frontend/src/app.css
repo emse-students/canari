@@ -1266,8 +1266,54 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
     pointer-events: none;
   }
 
-  .chat-glass-chrome .chat-chrome-slot :is(button, input, a, .chat-search-panel) {
+  /* `.chat-chrome-panel` is a SURFACE (the pinned / polls list), not a gap: left `none`, a tap or a
+     drag on its padding, between its rows, went through to the thread under it. */
+  .chat-glass-chrome
+    .chat-chrome-slot
+    :is(button, input, a, .chat-search-panel, .chat-chrome-panel) {
     pointer-events: auto;
+  }
+
+  /* THE POLLS AND PINNED BARS ARE GLASS PIECES OF THE HEADER, NOT WHITE BARS ACROSS IT (user,
+     2026-10-12). Each trigger is a compact pill centred under the title pill - the same recipe and
+     corner (the pill meaning, like the day pill), one step smaller (13px, 36px tall) since it is
+     secondary to the title, 6px apart - and the list it
+     opens is a glass panel hanging from it at the larger-card corner, as `GlassMenuButton`'s panel
+     is. Unlayered, so it beats the website's utilities on the same elements; the website, and the
+     apps' wide layout, keep the opaque bar. CSS glass on iOS too: a native twin cannot carry a list
+     with a per-row unpin, and these are not doubled by `nativeGlassPiece`. */
+  .chat-glass-chrome .chat-chrome-bar,
+  .chat-glass-chrome .chat-chrome-panel {
+    background: var(--glass-chrome-bg);
+    -webkit-backdrop-filter: blur(18px) saturate(180%);
+    backdrop-filter: blur(18px) saturate(180%);
+    border: 1px solid var(--glass-chrome-edge);
+    box-shadow: 0 4px 20px var(--glass-chrome-shadow);
+  }
+
+  .chat-glass-chrome .chat-chrome-strip {
+    padding-top: 0.375rem;
+  }
+
+  .chat-glass-chrome .chat-chrome-bar {
+    width: fit-content;
+    max-width: 100%;
+    min-height: 2.25rem;
+    margin-inline: auto;
+    padding-inline: 0.875rem 0.625rem;
+    border-radius: 9999px;
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    transition: transform 0.15s ease;
+  }
+
+  .chat-glass-chrome .chat-chrome-bar:active {
+    transform: scale(0.98);
+  }
+
+  .chat-glass-chrome .chat-chrome-panel {
+    margin-top: 0.375rem;
+    border-radius: var(--radius-2xl);
   }
 
   .chat-glass-chrome .chat-messages-scroll {
@@ -2003,13 +2049,16 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   letter-spacing: normal;
   text-transform: uppercase;
   color: var(--text-main);
-  background: var(--cn-surface);
-  border: 1px solid var(--cn-border);
-  /* A HALO IN THE PAGE'S OWN COLOUR, NOT A DROP SHADOW. The pill floats over the thread, so a
-     bubble's line can run under it: opaque, the pill hides the middle of that line, and the halo
-     fades the letters either side of it into the background instead of leaving them cut off hard
-     against its edge - the day stays readable and nothing reads as text printed over text. */
-  box-shadow: 0 0 0.75rem 0.375rem color-mix(in srgb, var(--cn-bg) 85%, transparent);
+  /* THE PILL IS GLASS (`.glass-chrome`'s recipe), NOT AN OPAQUE CHIP WITH A HALO. It floats over the
+     thread while content moves under it - the chrome the glass exists for - so a sender name or a
+     bubble line passing under it is BLURRED through it instead of cut hard at its edge and read as
+     text printed over text. The opaque chip with a page-colour halo was not enough on the iPhone
+     (2026-10-09: the name read "Canari Test De", then the chip). */
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%);
+  background: var(--glass-chrome-bg);
+  border: 1px solid var(--glass-chrome-edge);
+  box-shadow: 0 4px 20px var(--glass-chrome-shadow);
   animation: fadeInOut 0.22s ease;
 }
 

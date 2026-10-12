@@ -61,6 +61,49 @@ describe('CoorganisationService.sync', () => {
     });
   });
 
+  it('proposes three co-organisers (four associations in total) and refuses a fourth, typed', async () => {
+    const three = make([]);
+    await three.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3'] });
+    expect(three.proposals.propose).toHaveBeenCalledTimes(3);
+
+    const four = make([]);
+    await expect(
+      four.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] })
+    ).rejects.toMatchObject({ response: { code: 'CALENDAR_COORGANISER_CAP' } });
+    expect(four.proposals.propose).not.toHaveBeenCalled();
+  });
+
+  it('counts the pending seats too, never the refused one', async () => {
+    const held = make([
+      { associationId: 'a1', status: 'accepted' },
+      { associationId: 'a2', status: 'pending' },
+      { associationId: 'a3', status: 'pending' },
+    ]);
+    await expect(
+      held.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] })
+    ).rejects.toMatchObject({ response: { code: 'CALENDAR_COORGANISER_CAP' } });
+
+    const withRefused = make([
+      { associationId: 'a1', status: 'accepted' },
+      { associationId: 'a2', status: 'pending' },
+      { associationId: 'a3', status: 'refused' },
+    ]);
+    await withRefused.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] });
+    expect(withRefused.proposals.propose).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets an event already over the cap be edited without adding', async () => {
+    const legacy = make(
+      ['a1', 'a2', 'a3', 'a4', 'a5'].map((associationId) => ({
+        associationId,
+        status: 'accepted' as const,
+      }))
+    );
+    await legacy.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] });
+    expect(legacy.proposals.propose).not.toHaveBeenCalled();
+    expect(legacy.proposals.withdrawBySubject).toHaveBeenCalledTimes(1);
+  });
+
   it('changes nothing for an unchanged list, and never asks a refused association again', async () => {
     const { service, proposals } = make([
       { associationId: 'a1', status: 'accepted' },

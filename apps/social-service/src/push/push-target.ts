@@ -11,7 +11,8 @@
  * form, an event proposal opens the validation queue, every other agenda notice opens the calendar,
  * and a post notice opens the post. The hosts are resolved by `appRouteForDeepLink` in the frontend.
  *
- * @param data - The flat push data the caller built (`postId`, `formId`, `action`, `associationId`).
+ * @param data - The flat push data the caller built (`postId`, `formId`, `action`, `associationId`,
+ *   `queueAssociationId`).
  */
 export function socialDeepLink(data: Record<string, string>): string {
   const formId = data.formId;
@@ -22,6 +23,12 @@ export function socialDeepLink(data: Record<string, string>): string {
     return data.action === 'proposed'
       ? 'fr.emse.canari://admin-agenda'
       : 'fr.emse.canari://calendar';
+  }
+  // A republication or co-organisation PROPOSAL: its `postId` is the receiving association, and the
+  // page that matters is that association's proposal queue, which the app reaches by slug (see
+  // `proposalQueueAssociationId` in the frontend). Without this the push landed on the feed.
+  if (data.queueAssociationId) {
+    return `fr.emse.canari://proposals/${encodeURIComponent(data.queueAssociationId)}`;
   }
   const postId = data.postId;
   if (postId) return `fr.emse.canari://post/${encodeURIComponent(postId)}`;

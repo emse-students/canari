@@ -4,6 +4,7 @@
   import { injectedSeoForPath } from '$lib/seo/injectedSeo';
   import { buildSiteJsonLd, renderJsonLdScript } from '$lib/seo/jsonLd';
   import { formatDocumentTitle, mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
+  import { pageTitle } from '$lib/seo/pageTitle.svelte';
   import { SITE, siteAssetUrl, siteOrigin } from '$lib/seo/site';
   import type { SeoMeta } from '$lib/seo/types';
 
@@ -28,8 +29,11 @@
   const resolved = $derived(
     mergeSeo(
       mergeSeo(
-        resolveSeoForPath(pathname),
-        seoOverride ?? (page.data?.seo as Partial<SeoMeta> | undefined)
+        mergeSeo(
+          resolveSeoForPath(pathname),
+          seoOverride ?? (page.data?.seo as Partial<SeoMeta> | undefined)
+        ),
+        { title: pageTitle.current ?? '' }
       ),
       injectedSeoForPath(pathname)
     )

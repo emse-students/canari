@@ -60,7 +60,7 @@ function makeService(seed: Record<string, Partial<Association>>) {
   return { service, db };
 }
 
-const ready = { stripeOnboardingComplete: true, stripeAccountId: 'acct_x' };
+const ready = { lydiaOnboardingComplete: true, lydiaAccountId: 'vendor_x' };
 
 describe('AssociationsService payment delegation', () => {
   describe('requestPaymentDelegation', () => {
@@ -81,6 +81,19 @@ describe('AssociationsService payment delegation', () => {
         parentAssociationId: 'parent',
         parentReady: true,
       });
+    });
+
+    it.each([
+      ['no Lydia account', { lydiaOnboardingComplete: false, lydiaAccountId: null }],
+      [
+        'an account whose onboarding is not complete',
+        { lydiaOnboardingComplete: false, lydiaAccountId: 'vendor_x' },
+      ],
+      ['a complete flag with no account', { lydiaOnboardingComplete: true, lydiaAccountId: null }],
+    ])('reports the parent as not ready with %s', async (_name, parent) => {
+      const { service } = makeService({ club: {}, parent });
+      const state = await service.requestPaymentDelegation('club', 'parent');
+      expect(state.parentReady).toBe(false);
     });
 
     it('rejects a parent that itself delegates (no chains)', async () => {
@@ -106,7 +119,7 @@ describe('AssociationsService payment delegation', () => {
   });
 
   describe('approvePaymentDelegation', () => {
-    it('approves a pending request when the parent is stripe-ready', async () => {
+    it('approves a pending request when the parent has a ready payout account', async () => {
       const { service, db } = makeService({
         club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'pending' },
         parent: { ...ready },
@@ -119,10 +132,10 @@ describe('AssociationsService payment delegation', () => {
     it('rejects approving when the parent has not finished onboarding', async () => {
       const { service } = makeService({
         club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'pending' },
-        parent: { stripeOnboardingComplete: false, stripeAccountId: null },
+        parent: { lydiaOnboardingComplete: false, lydiaAccountId: null },
       });
       await expect(service.approvePaymentDelegation('parent', 'club')).rejects.toThrow(
-        /Stripe Connect onboarding/
+        /payment account onboarding/
       );
     });
 

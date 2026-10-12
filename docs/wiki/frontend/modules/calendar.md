@@ -209,6 +209,23 @@ accept. The form reads the states from `GET .../events/:eventId/co-organisers` a
 sends `coOwnerIds` only once they arrived (`coOwnersLoad`), because the event's own `coOwners` names
 only the accepted ones ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
 
+**The detail modal and the picker (2026-10-10).** The modal lists every organiser as a pill chip
+(logo, name, link to its page) and, to whoever may edit the event, one quiet "n pending" line read
+from the states endpoint (a reader without the right gets none: the endpoint refuses, and the modal
+logs it). The picker counts `n / 4` (the owner included), stops offering associations at three picks
+and says why; `coOrganiserCap.ts` mirrors the server's constant.
+
+**UP TO FOUR ORGANISERS, AND WHAT A ROW SHOWS OF THEM (user, 2026-10-10).** The cap is four
+associations in total ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
+Nothing in the interface capped at two; what LOOKED like a limit was that a pending proposal is
+invisible until accepted, and that the list and day rows drew only the organiser's logo beside the
+names joined with " + " in one truncating span. Those rows now draw `OrganiserFaces`: at most three
+circular `AssociationAvatar` faces ringed in the surface colour, then a `+N` pill, carrying the full
+list as its `aria-label` and title. The label is `eventOwnersLabel`: `A`, `A + B`, then `A + N others`
+from three on (`organisersLabel`); the full list is `organisersFullList` and the detail modal.
+**Nothing was rendered on a phone**: the stack's ring and overlap, and its look on the row's hover
+background, are owed one reading.
+
 The same fact decides what a row says: the day panel takes `ownAssociationId` (not a
 `hideAssociationName` boolean) and the dialog is told `showAssociation` per event, so a row the page
 merely co-owns still names, colours and badges its real owner.
@@ -537,6 +554,21 @@ as a static TTF for jsPDF (`@expo-google-fonts/*`, in `$lib/pdf/appFonts.ts`). `
 names every face it draws with in its `fonts:` wait list; a face missing there is rasterised in
 whatever the browser had ready.
 
+### THE OUTLINE HAS ROOM AND THE SLOTS SUM TO THE CELL (2026-10-07)
+
+Two defects reproduced by rendering October with two half-day events on the 13th (before/after in
+`F:/Programmation/canari-export-preview/export-bugs-*.png`, outside the repo).
+
+- **The outline was cut left and right.** A title is `overflow:hidden` for its line clamp, which clips
+  at the padding box, while `paint-order:stroke fill` paints the stroke's outer half beyond the glyph.
+  `outlineRoomCss(fontSize)` pads the title by `ceil(strokeWidth / 2)` and cancels it with the same
+  negative margin, so the wrapping width is unchanged. The room is derived from `outlineWidth`, the
+  same number `textOutlineCss` strokes with.
+- **A grey sliver under the cell.** `floor(CELL_H / nSlots)` per slot left up to `nSlots - 1` px of the
+  cell unpainted. `slotHeights(cellH, n)` returns integers that sum exactly to the cell (the remainder
+  goes to the last slots) and every row, blank halves and the "+N" row included, takes the next one.
+- **Resolution.** `rasterScale` went from 2 to 3 (3240 px wide instead of 2160 for the A4 page).
+
 ### THE PDF AND ITS PREVIEW DIVERGED THREE WAYS (2026-09-27)
 
 Reported on prod for October 2026 and reproduced offline by rendering the preview and the exported
@@ -635,6 +667,20 @@ fact. When omitted, `AssociationsService.defaultCalendarFeedRange()` supplies a 
 3-months-back/12-months-forward window - the same window the frontend computes for the link it
 builds (`icsSubscriptionRangeISO()` in `frontend/src/lib/associations/api.ts`, shared by
 `AssociationCalendarSection.svelte` and `routes/calendar/+page.svelte`).
+
+## The subscription link is SIGNED, and the selector offers only the reader's own spaces (2026-10-06)
+
+`feed.ics` refuses a campus / formation / association selection without the `sig` the server made for
+it, and signs only the reader's own spaces (design and codes:
+[profiles-and-access, D40 amended](../../profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
+In the frontend: `signAgendaFeed` (`associations/api.ts`) calls `POST /api/associations/calendar/feed-signature`;
+`createFeedSigner` (`calendar/signedFeedUrl.svelte.ts`) asks while the subscribe modal is open and holds
+`sig` apart from the selection it was made for, so a URL is never built from the PREVIOUS choice;
+`/calendar` and the association's calendar section pass `sig` to `aggregatedCalendarFeedIcsAbsoluteUrl`.
+`CalendarSubscribeModal` takes `signing` and states that links saved before 2026-10-06 stopped working.
+`AgendaSelectionFields` takes the `reader` and offers `campusSelectOptions(reader)` /
+`formationSelectOptions(reader)` - "any" plus the reader's own values - on both the modal and the PDF export.
+The one-event link (`eventIcsAbsoluteUrl`) stays unsigned.
 
 ## A post links an event; the event does not link a post
 

@@ -1,6 +1,6 @@
 [package]
 name = "canari"
-version = "1.0.4-alpha.3"
+version = "1.2.5-alpha.1"
 description = "Le réseau des marteaux"
 authors = ["Léon Muselli / Jolan Boudin"]
 edition = "2021"
@@ -18,10 +18,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
+tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
 tauri-plugin-localhost = "2"
 tauri-plugin-notification = "2"
-tauri-plugin-opener = "2"
+tauri-plugin-opener = "2.7"
 tauri-plugin-sql = { version = "2.4", features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -30,13 +30,13 @@ tauri-plugin-biometric = "2"
 tauri-plugin-keystore = "2.1.0-alpha.1"
 tauri-plugin-customtabs = { path = "plugins/tauri-plugin-customtabs" }
 tauri-plugin-gallery = { path = "plugins/tauri-plugin-gallery" }
-tauri-plugin-http = { version = "2", default-features = false, features = ["rustls-tls"] }
+tauri-plugin-http = { version = "2.8", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2.7"
 tauri-plugin-websocket = "2.4.2"
 tauri-plugin-log = "2"
-tauri-plugin-store = "2"
+tauri-plugin-store = "2.5"
 tauri-plugin-os = "2"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
 base64 = "0.22"
@@ -52,9 +52,6 @@ log = "0.4"
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread"] }
 
 [patch.crates-io]
-# tao 0.35.0 panics with NullPtr("get_object_class") when intent.getType() returns null
-# (e.g. deep links like fr.emse.canari://callback). Fixed by adding a null guard.
-tao = { path = "patches/tao" }
 # tauri-plugin-keystore upstream only stores ONE secret behind a hardcoded English prompt. The
 # local patch adds the whole *_key_bytes API (an alias-addressed MLS device key), the second
 # background-readable item the iOS notification extension needs, and caller-supplied prompt text.
@@ -72,17 +69,18 @@ tauri-plugin-system-components = { path = "patches/tauri-plugin-system-component
 # `[patch.crates-io]` above.
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri-plugin-system-components = "=0.1.8"
-# The App Group path for the BENCH command (`commands::bench`), asked of Foundation through the
-# Objective-C runtime. Optional, and pulled in only by `bench-observables`: a store build links
-# nothing of it. Already in the tree through wry, so this names a version the lock carries.
-objc2 = { version = "0.6", optional = true }
+# The App Group path (`app_group.rs`), asked of Foundation through the Objective-C runtime. Every
+# iOS build needs it since `store_push_secret` writes the notification extension's copy of the push
+# secret there; the bench command uses the same function. Already in the tree through wry, so this
+# names a version the lock carries.
+objc2 = "0.6"
 
 # A BENCH build for the phone on the bench (`ios.yml` with `local_url`), and NOTHING else: the
 # `bench_native_store` command the cross-client rig asks the iPhone's native stores through
 # (docs/wiki/cross-client-ios.md, O5/O15). No release path enables it, and every store archive is
 # asserted to carry none of it (`.github/scripts/bench-observables.sh`).
 [features]
-bench-observables = ["dep:objc2"]
+bench-observables = []
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", default-features = false }

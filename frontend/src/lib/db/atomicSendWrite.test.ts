@@ -44,7 +44,7 @@ describe('saveMessageWithOutboxEntry', () => {
     await storage.saveMessageWithOutboxEntry(message('m-1'), entry('m-1'), KEY);
 
     const messages = await storage.getMessages('group-1', KEY);
-    const queued = await storage.getOutboxEntries(KEY);
+    const queued = await storage.getOutboxEntriesForConversation('group-1', KEY);
     expect(messages.map((m) => m.id)).toEqual(['m-1']);
     expect(queued.map((e) => e.id)).toEqual(['m-1']);
     storage.close();

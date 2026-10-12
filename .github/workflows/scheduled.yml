@@ -106,7 +106,13 @@ jobs:
       # on 2026-09-03 - it grants nothing an account already in `sudo` and `docker` did not have,
       # and without it the script's ERROR arm is blind. Losing the group again is itself reported,
       # rather than making the check quietly stop working.
+      # THIS RUNNER'S HOST IS THE SHARED ONE, whose unattended-upgrades policy is its
+      # administrators' (full stable, packagecloud, an automatic 02:00 reboot, a log the runner
+      # cannot read) and is not ours to change: the report judges what is OUR question there
+      # (timer ran, nothing security pending, no reboot owed) and only prints the policy.
       - name: Read the host and judge it
+        env:
+          POLICY_OWNER: host-admins
         run: bash infrastructure/deploy/host-update-report.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -279,9 +285,10 @@ jobs:
   # commit or version tag moved onto a newer push) - and no job anywhere has ever deleted one.
   # Every other of the 8 services accumulates the same way.
   #
-  # KEEP is a rollback margin, not a guess at what is deployed: both estates are always pinned to
-  # an explicit `TAG=<sha>` (docs/wiki/infrastructure/estate-migration.md), so whatever is
-  # currently running is always among the newest few pushes and survives by construction. 30 covers
+  # KEEP is a rollback margin, not a guess at what is deployed: production is deployed by its
+  # release's `v<version>` tag (`serve-prod.yml`), one push per service per release (pre-releases
+  # included), so what is running is always among the newest few pushes and survives by
+  # construction, and a rollback to a recent release still finds its images. 30 covers
   # months of release cadence at this project's rate without ever approaching a number that would
   # make "can I still reach last month's build" a real question.
   #

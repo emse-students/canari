@@ -633,6 +633,20 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
     expect(out).toContain('284');
   });
 
+  it.each(['own_key_package_unverified', 'key_package_round_failed'] as const)(
+    'asks NOBODY when the own KeyPackage of this device is not published (%s)',
+    async (reason) => {
+      // A Welcome is built from the requester's own KeyPackage: no member can answer until it exists.
+      const deps = makeDeps();
+      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: false, reason });
+
+      await requestReAdd('g1', deps);
+
+      expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+      expect(deps.mlsService.sendBaseRefreshRequest).not.toHaveBeenCalled();
+    }
+  );
+
   it('still asks for a Welcome when NO base is published - that one a member CAN answer', async () => {
     // The two refusals are not the same question: nothing published means nothing to republish, and
     // a Welcome is then exactly the right favour to ask for.

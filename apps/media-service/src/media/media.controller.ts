@@ -6,6 +6,11 @@
  *   POST /media/upload  - Receive an encrypted blob, store it, return { mediaId }
  *   GET  /media/:id     - Return the encrypted blob (client decrypts it), or one byte range of it
  *                         (206 + Content-Range) - how a segmented video is read while it plays
+ *   POST   /media/upload/session            - open a resumable streamed upload (WP-S1)
+ *   PUT    /media/upload/session/:id/parts/:index - one raw part, streamed to disk, never over 8 MiB
+ *   GET    /media/upload/session/:id        - the parts the server holds (the resume fact)
+ *   POST   /media/upload/session/:id/complete - assemble; idempotent
+ *   DELETE /media/upload/session/:id        - cancel, release the budget now
  *   POST /media/touch   - Refresh the retention clock for media the client had cached locally
  *   DELETE /media/:id   - Remove a blob (server-to-server only: valid JWT + X-Internal-Secret)
  *   POST /media/internal/retention-class - set an object's retention class (X-Internal-Secret)
@@ -25,7 +30,9 @@ import {
   Controller,
   Post,
   Get,
+  Put,
   Delete,
+  HttpCode,
   Param,
   Body,
   Res,
@@ -35,6 +42,8 @@ import {
   UploadedFile,
   NotFoundException,
   GoneException,
+  ForbiddenException,
+  InternalServerErrorException,
   PayloadTooLargeException,
   UnauthorizedException,
   BadRequestException,
@@ -51,6 +60,7 @@ import {
   type ReelPurgeOutcome,
   type RetentionClass,
 } from './media.service';
+import { UploadSessionService } from './upload-session.service';
 import { assertInternalSecret } from './internal-secret.util';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
@@ -83,7 +93,10 @@ const RETENTION_CLASS_MAX_IDS = 500;
 export class MediaController {
   private readonly logger = new Logger(MediaController.name);
 
-  constructor(private readonly mediaService: MediaService) {}
+  constructor(
+    private readonly mediaService: MediaService,
+    private readonly uploadSessions: UploadSessionService
+  ) {}
 
   // ---------------------------------------------------------------------------
   // Auth helper - validates the shared HS256 JWT (same secret as chat-gateway)
@@ -257,10 +270,24 @@ export class MediaController {
   // ---------------------------------------------------------------------------  // POST /media/upload/chunk/init
   // ---------------------------------------------------------------------------
   @Post('upload/chunk/init')
-  async initChunkedUpload(@Req() req: Request): Promise<{ uploadId: string }> {
-    this.verifyToken(req);
-    const uploadId = await this.mediaService.initChunkedUpload();
-    this.logger.log(`Initialized chunked upload: ${uploadId}`);
+  async initChunkedUpload(
+    @Body() body: { retentionClass?: unknown; totalBytes?: unknown } | undefined,
+    @Req() req: Request
+  ): Promise<{ uploadId: string }> {
+    const ownerId = this.verifyToken(req);
+    // A `chat-reel` declares its class and total HERE so the daily budget is reserved before any
+    // byte is staged; every other caller sends no body and is unchanged.
+    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+    const totalBytes = typeof body?.totalBytes === 'number' ? body.totalBytes : undefined;
+    const uploadId = await this.mediaService.initChunkedUpload(
+      ownerId,
+      retentionClass,
+      totalBytes,
+      MAX_BYTES
+    );
+    this.logger.log(
+      `Initialized chunked upload: ${uploadId} (retention=${retentionClass ?? 'unclassified'})`
+    );
     return { uploadId };
   }
 
@@ -279,10 +306,22 @@ export class MediaController {
     @UploadedFile() file: unknown,
     @Req() req: Request
   ): Promise<{ ok: boolean }> {
-    this.verifyToken(req);
+    const ownerId = this.verifyToken(req);
     const buffer = uploadedFileBuffer(file);
-    await this.mediaService.appendChunk(id, buffer, MAX_BYTES);
+    await this.mediaService.appendChunk(id, buffer, MAX_BYTES, ownerId);
     return { ok: true };
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE /media/upload/chunk/:id - a client abandons ITS OWN staged session (cancel, refusal, a
+  // stalled attempt it is replacing). Idempotent, owner-checked, 204 either way. LEGACY: retired
+  // with the chunk routes (media-streaming-upload WP-S6).
+  // ---------------------------------------------------------------------------
+  @Delete('upload/chunk/:id')
+  @HttpCode(204)
+  async abortChunkedUpload(@Param('id') id: string, @Req() req: Request): Promise<void> {
+    const ownerId = this.verifyToken(req);
+    await this.mediaService.abortChunkedUpload(id, ownerId);
   }
 
   // ---------------------------------------------------------------------------
@@ -308,6 +347,70 @@ export class MediaController {
       `Completed chunked upload: ${id} -> ${mediaId} (retention=${retentionClass ?? 'unclassified'})`
     );
     return { mediaId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Upload sessions: streamed, resumable, every request body under 8 MiB.
+  // docs/wiki/services/media-streaming-upload.md. NONE of these routes declares a FileInterceptor:
+  // a part is the raw request stream, piped to disk, never a buffer of the body.
+  // ---------------------------------------------------------------------------
+  @Post('upload/session')
+  async initUploadSession(
+    @Body()
+    body:
+      | { retentionClass?: unknown; totalBytes?: unknown; partBytes?: unknown; header?: unknown }
+      | undefined,
+    @Req() req: Request
+  ) {
+    const ownerId = this.verifyToken(req);
+    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+    return this.uploadSessions.init(
+      ownerId,
+      {
+        retentionClass,
+        totalBytes: body?.totalBytes,
+        partBytes: body?.partBytes,
+        header: body?.header,
+      },
+      MAX_BYTES
+    );
+  }
+
+  @Put('upload/session/:id/parts/:index')
+  async putUploadPart(
+    @Param('id') id: string,
+    @Param('index') index: string,
+    @Req() req: Request
+  ): Promise<{ index: number; receivedCount: number }> {
+    const ownerId = this.verifyToken(req);
+    // Digits only: `Number('')` and `Number('0x10')` would otherwise pass for indexes.
+    if (!/^[0-9]{1,6}$/.test(index)) throw new BadRequestException('Invalid part index');
+    const header = req.headers['content-length'];
+    const contentLength =
+      typeof header === 'string' && /^[0-9]+$/.test(header) ? Number(header) : undefined;
+    return this.uploadSessions.putPart(ownerId, id, Number(index), req, contentLength);
+  }
+
+  @Get('upload/session/:id')
+  async uploadSessionStatus(@Param('id') id: string, @Req() req: Request) {
+    return this.uploadSessions.status(this.verifyToken(req), id);
+  }
+
+  @Post('upload/session/:id/complete')
+  async completeUploadSession(
+    @Param('id') id: string,
+    @Req() req: Request
+  ): Promise<{ mediaId: string }> {
+    return this.uploadSessions.complete(this.verifyToken(req), id);
+  }
+
+  @Delete('upload/session/:id')
+  async cancelUploadSession(
+    @Param('id') id: string,
+    @Req() req: Request
+  ): Promise<{ ok: boolean }> {
+    await this.uploadSessions.cancel(this.verifyToken(req), id);
+    return { ok: true };
   }
 
   // ---------------------------------------------------------------------------
@@ -391,6 +494,14 @@ export class MediaController {
     if (retentionClass === 'reel') {
       throw new BadRequestException(
         "class 'reel' is set by POST internal/reel-claim, with an owner"
+      );
+    }
+    // `chat-reel` and `reel-pending` are attached AT UPLOAD, where the owner (and for a chat-reel
+    // the size) are known: applying either to an existing id would make that object sweepable by
+    // age - a claimed reel's blob deleted under its live post.
+    if (retentionClass === 'chat-reel' || retentionClass === 'reel-pending') {
+      throw new BadRequestException(
+        `class '${retentionClass}' is set by the upload that creates the object`
       );
     }
 
@@ -643,6 +754,28 @@ export class MediaController {
     assertInternalSecret(internalSecret);
     const { deleted, failed } = await this.mediaService.removeAllOwnedBy(userId);
     return { ok: true, deleted, failed };
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE /media/chat-reel/:id - the SENDER takes back a reel sent in a conversation
+  //
+  // A user route (JWT, no internal secret), unlike `DELETE /media/:id`: it is safe to expose because
+  // the service allows exactly one thing - the caller's OWN object of class `chat-reel`
+  // (`removeChatReel`). A reel message cannot be forwarded, so no other conversation can cite the
+  // blob. Two segments, so it never collides with the catch-all `@Delete(':id')` below.
+  // ---------------------------------------------------------------------------
+  @Delete('chat-reel/:id')
+  async removeChatReel(@Param('id') id: string, @Req() req: Request): Promise<{ ok: boolean }> {
+    const ownerId = this.verifyToken(req);
+    const outcome = await this.mediaService.removeChatReel(id, ownerId);
+    if (outcome === 'refused') {
+      throw new ForbiddenException('Not a reel you sent');
+    }
+    if (outcome === 'failed') {
+      throw new InternalServerErrorException('The reel could not be deleted. Try again.');
+    }
+    this.logger.log(`Chat-reel ${id}: ${outcome} for its sender`);
+    return { ok: true };
   }
 
   // ---------------------------------------------------------------------------

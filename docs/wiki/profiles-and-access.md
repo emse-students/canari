@@ -93,8 +93,10 @@ criterion, hard-coded three times, and every admin flag is local:
 - **D4 - Formations: ICM, ISMIN, FSSS (formation sous statut salarie), PDIS, Autre** - one bucket for
   masters, doctorates and the rest, no sub-values. **PDIS added 2026-10-04 (user), same shape as the
   others and nobody in it yet**: the list lives in `SPACE_FORMATIONS` + migration 071 (social-service),
-  `FORMATIONS` (frontend) and the enrolment prompt of `20-enrollment.yaml` (authentik); core-service
-  stores a formation as free text and needs no change.
+  `FORMATIONS` (frontend, ONE list: `profileEdit.ts` re-exports it), `FORMATIONS` in core-service
+  `miconnect-profile.ts` (it VALIDATES a profile edit's cursus - a person in PDIS would be refused
+  without it) and the enrolment prompt of `20-enrollment.yaml` (authentik). The blueprint reaches
+  production by itself: every stable release runs `apply-blueprints.sh apply` (`serve-prod.yml`).
 - **D5 - Promo is the ENTRY year**, the School's and the alumni network's convention alike.
 - **D6 - ONE campus per person**, Gardanne or Saint-Etienne, staff included.
 - **D7 - The provider is only a way in.** CAS and Alumni SSO both give a name, a first name and an
@@ -187,7 +189,8 @@ built.
 - **D29 - WP0 builds a keyless avatar URL FIRST**, then switches MinoWiki and Archives to it, then
   revokes the key - no avatar is lost, and the key stays exposed until then.
 - **D30 - The agenda stays PUBLIC, per space**: each open space has its own anonymous feed and
-  `.ics`, as today's single feed.
+  `.ics`, as today's single feed. **Amended 2026-10-06 (D40): the feed of a selection needs a link the
+  server SIGNED for the reader's own spaces** ([D40 amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
 - **D31 - A personal post inherits its AUTHOR's spaces**; someone with no space (a staff post only)
   cannot publish one, and publishes through an institution instead. **Closed as MEMBERSHIP ONLY
   (user, 2026-10-05)**: through institutions they are a member of, nothing more.
@@ -593,7 +596,7 @@ has no star.
 definition: an association is a BDE exactly when it is the BDE of at least one space. The three BDE
 queries (`isUserBdeAdmin`, `callerHasAnyBdeFlag`, the proposal notification) use it; the entity's `isBDE`
 is a read-only `VirtualColumn` derived from it, so every API and the frontend keep reading the same
-field; the toggle on `/admin/associations` is now a read-only badge. Migration `072_drop_is_bde.sql`
+field; the toggle that sat on the former `/admin/associations` page was a read-only badge, and that page was deleted 2026-10-07 (the star on `/admin/spaces` designates). Migration `072_drop_is_bde.sql`
 drops the column and REFUSES while a flagged association governs no space (071 seeds a BDE only when
 exactly one was flagged), so no one silently loses VALIDATE_EVENTS / MANAGE_ASSO / MODERATE. Tried on a
 throwaway Postgres: drop, replay, refusal; the virtual column read against real rows.
@@ -738,7 +741,7 @@ box no longer defines anything.
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; never a personal post; card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
-| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | built, bare URL refused ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05)); "mine" is the signed-in agenda only |
+| Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | built, bare URL refused, **selection SIGNED since 2026-10-06** ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05), [amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)); "mine" is the signed-in agenda only |
 | Association directory (D37) | associations reaching one's spaces, or one belongs to | built |
 | Association page | NOT LISTED for a reader outside its audience, but reachable by a link (user, 2026-10-04); the member list does NOT follow the audience | existing |
 | Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
@@ -771,7 +774,7 @@ box no longer defines anything.
 
 ### D36 and D37 as built (2026-10-04)
 
-**D36 - a new association reaches its creator's spaces** (a list too; **an institution does NOT**, user
+**D36 - a new association reaches its creator's spaces** (SUPERSEDED 2026-10-08: it now reaches its creator's CAMPUS, see [audiences policy](#audiences-policy-as-built-wp-a-2026-10-08); a list too; **an institution does NOT**, user
 2026-10-05 - it starts with no rule, see WP6e below). `AssociationsService.create` (the one path
 for an association AND a list, `POST /api/associations`) writes, in the SAME transaction as the row,
 the creator's spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`) as the smallest equivalent
@@ -786,7 +789,7 @@ the grid. The creator is the caller, who need not become a member.
 | `scope` | Lists | Read by |
 | --- | --- | --- |
 | `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role) - `associationVisibleToViewerSql`, the agenda's predicate; a global admin is an ordinary reader | `/associations`, `/lists` (`listAssociationDirectory`) |
-| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/associations`, `/admin/spaces`, `/admin/cercle`, `/admin/carte` |
+| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/spaces`, `/admin/cercle`, `/admin/carte` |
 
 **`scope=all` is open to any signed-in caller, NOT admin-only, and that is deliberate**: half the
 pickers belong to non-admins (a co-organiser from the other campus, a past role in an association one
@@ -953,6 +956,17 @@ A pending or refused co-organiser lives only in `proposals`, so it has no right 
     names only the accepted ones and a list seeded from it would withdraw every pending proposal;
   - the receiving side decides in the proposal queue, renamed "Propositions" for both kinds.
 
+**The cap: FOUR associations in total, the organiser and three co-organisers (user, 2026-10-10).**
+Accepted and pending both count (a pending proposal holds its seat), a refused one holds nothing.
+`CoorganisationService.sync` refuses an ADDITION that would pass three, and `createCalendarEvent`
+checks the same count before it saves (a refusal after the save would leave an event the caller was
+told failed); both throw `CALENDAR_COORGANISER_CAP`, which `calendarErrorMessage` names. The DTO's
+`@ArrayMaxSize(10)` stays a transport bound ON PURPOSE: a DTO at 3 would answer a generic
+validation error and make the typed code unreachable. Only an addition is refused, so an event over
+the cap could still be edited and shrunk - none exists: **prod, read-only, 2026-10-10: 9 events with
+co-organisers, the most on one event is 1, 2 proposals pending.** Nothing was grandfathered, nothing
+deleted. The picker stops the overflow first (counter `n / 4`, [calendar](frontend/modules/calendar.md)).
+
 **Migration 074 (`074_coorganise.sql`), replay-safe** (every statement guarded; the spec runs it twice):
 
 1. `coorganise` is added to the kind CHECK.
@@ -1001,6 +1015,8 @@ against real PostgreSQL, plus the service and controller specs.
   selection) or an `eventId` (the single-evening link) is enough; a signed-in JSON read is narrowed
   to the reader's spaces and is not refused. The user took the cost knowing it: subscriptions saved
   before this release stop working ([legacy-compatibility](legacy-compatibility.md#nothing-to-remove---a-calendar-subscription-saved-before-d40-now-gets-a-400-2026-10-05)).
+- **AMENDED 2026-10-06 - read [D40 amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06): the selection is signed, and the selector below
+  now offers only the reader's own spaces.**
 - **The selector** (`AgendaSelectionFields`, `lib/calendar/agendaSelection.ts`) sits in the subscribe
   modal and on the PDF export page. It defaults to the reader's own campus and first cursus formation
   (`defaultAgendaSelection`); a reader with no space gets nothing and must choose (no link, no month
@@ -1009,13 +1025,71 @@ against real PostgreSQL, plus the service and controller specs.
   does not appear in that JSON-LD.
 - **`GET /api/public/associations`** (the sitemap) stays COMPLETE, unchanged.
 
+### D40 amended - the selection is SIGNED, and only the reader's own spaces are signed (2026-10-06)
+
+**Decided by the user (2026-10-06, four answers):** the subscription selector offers *the reader's OWN
+spaces only* (own campus, own formations; an association from its own page); the restriction is a
+**stateless signed URL that carries no identity**; an individual event link (`eventId`) stays open
+like an SEO page; and *"no need to be a member of an association to see/access an event; any
+constraint on that has no reason to exist"* - so membership gates nothing here, and an association
+with no audience rule is NOT "members only" for its feed. The anonymous `associationId` feed
+returning every event of such an association is therefore **intended**; the leak this closes is the
+one that remained: ANY campus or formation could be named in a URL by anyone.
+
+**Tightened 2026-10-07 (user: *"les gens d'un campus ou d'une formation ne devraient pas pouvoir faire ca"*):** a student is signed ONE space, a campus AND a formation of theirs - never a campus alone, a formation alone or "all campuses"; the selector offers no "any" once the reader has a campus. Staff keep their own campus whole. An event across campuses reaches both agendas through a co-organiser partnership (D39), not through a wider subscription. Links already saved keep working: verification never reads the reader.
+
+**As built:**
+
+- `POST /api/associations/calendar/feed-signature` (signed-in only; body `{campus?, formation?,
+  associationId?}`) answers `{ sig }`: base64url HMAC-SHA256 of the canonical selection
+  `v1|campus=..|formation=..|association=..` under **`AGENDA_SIGNING_KEY`** (`agenda-signature.ts`).
+  It signs a campus the reader's spaces contain, a formation their spaces contain, or a pair that is
+  one of their spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`); anything else is a 403
+  `AGENDA_SELECTION_FORBIDDEN`, an empty body a 400 `AGENDA_SELECTION_REQUIRED`. An association
+  needs only to exist. **A reader with a campus but a cursus with no entry (EMSE staff, 11 prod accounts on 2026-10-07; user decision the same day) has no space, yet is signed `campus=<own campus>` with no formation - and nothing else** (another campus, any formation: 403). A reader with a cursus keeps own-spaces exactly; a reader with no campus is signed nothing. The canonical string is unchanged (`v1|campus=saint-etienne|formation=-|association=-`), so the URL stays stateless. The feed of a campus-only selection is what it always was: every event whose organiser's (or accepted co-organiser's) rules reach ANY space of that campus, i.e. every formation of it plus the campus-wide and EMSE-wide audiences (`eventReachesSpaceMatchingSql`, a null formation = any). `campusWideReaderCampus` (`reader-spaces.ts`) is the one predicate, asked only when the reader has no space.
+- `feed.ics` and the ANONYMOUS JSON `feed` take `&sig=`. A `campus` / `formation` /
+  `associationId` selection without it is a **403 `AGENDA_SIGNATURE_REQUIRED`**; with a signature made
+  for another selection (another campus, a widened or narrowed one, an association) or a tampered one,
+  a **403 `AGENDA_SIGNATURE_INVALID`** (constant-time compare, logged `[AGENDA_SIG]`); no selection at
+  all stays the 400 `AGENDA_SELECTION_REQUIRED`. `from`/`to` are NOT signed, so the window stays free.
+  `assertAgendaAccess` (`directory-query.ts`) replaced `assertAgendaSelected`.
+- **Open on purpose:** `eventId` (the one-evening link, no signature), a **signed-in** JSON read (already
+  narrowed to the reader's spaces by `restrictToViewerSpaces`), and a **server-internal** read.
+- **The SEO agenda page** (`serverSeo`) keeps its per-campus reads unchanged and passes its existing
+  `X-Internal-Secret` (`internalHeaders()`): the JSON feed treats a valid internal secret as trusted
+  and skips the signature (`isInternalSecret`, timing-safe, `internal/is-internal-secret.util.ts`). No second secret, no public bypass; the
+  public JSON-LD is untouched.
+- **Fails closed:** with `AGENDA_SIGNING_KEY` unset or under 32 characters the signing route and every
+  signed selection answer **503**; nothing is ever served unchecked.
+  **Refused at deploy since 2026-10-06**: `render-env.sh` fails the deploy naming the secret when the
+  value is blank or under 32 characters (`min_length`, asserted in `deploy-env.test.sh`), because the
+  iPhone reading on dev found the runtime 503 was the first place a short key showed. **The modal tells
+  the two apart**: `createFeedSigner` reports `error` only for a 4xx refusal (campus text) and
+  `unavailable` for a 5xx or a transport failure (its own "try later" text), classified by
+  `SocialApiError` type and status, never by message.
+- **Rotation is the revocation:** a new key invalidates every saved subscription URL at once. The
+  signature names no one, so no single URL can be revoked. Procedure: replace the GitHub secret
+  (`AGENDA_SIGNING_KEY`, dev `DEV_AGENDA_SIGNING_KEY`) and deploy; readers re-subscribe from
+  `/calendar` ([MIGRATION](../../infrastructure/MIGRATION.md)).
+- **Frontend:** `AgendaSelectionFields` offers "any" plus the reader's OWN campus and cursus formations
+  (`campusSelectOptions(reader)`, `formationSelectOptions(reader)`) in the subscribe modal and the PDF
+  export; `createFeedSigner` (`calendar/signedFeedUrl.svelte.ts`) asks for the signature while the
+  modal is open and the URL carries it; the modal states that links saved before 2026-10-06 stopped
+  working. A staff reader (campus, empty cursus: `isCampusWideReader`) sees their campus and "all formations"; the "complete your profile" text stays for a reader with neither a campus nor a cursus.
+- **Known cost:** an anonymous visitor on an association's PUBLIC page cannot obtain a subscription
+  link - signing needs a session. A calendar subscription needs an account.
+- **Proof:** controller and signature specs (other campus, tampered, unsigned, `eventId` unsigned,
+  another selection's signature, rotated key, unset key, internal caller), and a run against the local
+  estate's real PostgreSQL.
+- **Staff reading, as verified (2026-10-07, local estate rebuilt at `62a02ba0d`, real PostgreSQL and a real session):** a sandbox reader with campus `saint-etienne` and `cursus = []` was signed `campus=saint-etienne` with no formation (201); `campus=gardanne` and `campus=saint-etienne&formation=ICM` were each a 403 `AGENDA_SELECTION_FORBIDDEN`. The signed `feed.ics` answered 200 `text/calendar` and the unsigned one 403 `AGENDA_SIGNATURE_REQUIRED`. The feed held the events of several formations of the campus (organisers whose audiences were ICM and ISMIN of that campus). The subscribe modal offered Campus "Saint-Etienne" and "Toutes les formations", carried `campus=saint-etienne&sig=` in its link and did not show the complete-your-profile text. The sandbox user's cursus was restored afterwards. Not read: a gardanne-only event staying out of the feed (no such organiser existed locally).
+
 ### WP6e institutions as built (2026-10-05)
 
 Migration `075_institution_type.sql` (replay-safe) adds `CHK_associations_type` over `association | list | institution`.
 An institution is an `associations` row of that type, so it reuses every mechanism rather than adding a second one:
 
 - **Created by a global admin only** (D20, D24): `POST /api/associations` with `type: 'institution'` is a 403 for a BDE
-  member holding MANAGE_ASSO, before any write. The form `/associations/new` shows the checkbox to global admins only.
+  member holding MANAGE_ASSO, before any write. Since 2026-10-07 the UI is `/institutions/new` (button "Créer une institution" on `/institutions`, global admin only; the checkbox of `/associations/new` is gone), see [associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07).
 - **Members are added nominatively** by the existing member admin; **publishing in its name needs membership of it**
   with `POST_AS_ASSO`, exactly as for an association (being personnel gives no right, D34-D36). Events are proposed with
   `PROPOSE_EVENT` the same way; the post composer and the event picker are type-agnostic.
@@ -1036,6 +1110,77 @@ An institution is an `associations` row of that type, so it reuses every mechani
 - **D31 closes as "membership only"** (user, 2026-10-05): a person with no space publishes through the institutions they
   are a MEMBER of, with `POST_AS_ASSO`. Nothing to build; no way to pick an institution one does not belong to.
 
+### Audiences policy as built (WP-A, 2026-10-08)
+
+Server half of the seven decisions of [the decisions](#the-audiences-chantier---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08); the client presets (WP-B) come after. One module, `spaces/audience-policy.ts`, holds the rules and the typed codes (classified at the throw: a client reads `code`, never the message).
+
+- **Default at creation replaces D36's "creator's spaces"**: `AssociationsService.create` writes, in the transaction of the row, ONE rule `(formation NULL, campus = the creator's profile campus)` for an association AND a list. A creator with no valid campus is refused `400 AUDIENCE_CREATOR_CAMPUS_REQUIRED` and the row rolls back (decision 5, never guessed). An institution still gets NO rule: the creating global admin ticks its audience afterwards (`PUT /api/associations/:id/audiences`).
+- **`everyone` refused outside institutions** (decision 6): `setAudiences`, the one write path of the audience (the admin grid and the BDE both call it), refuses any rule with `campus` NULL - a formation across campuses included, which is the multi-campus audience decision 3 rules out - with `400 AUDIENCE_EVERYONE_INSTITUTION_ONLY`, for a global admin too. Creation writes only a campus rule, and `PATCH` cannot change an entity's type, so nothing else writes a rule. Existing everyone rules stay until someone edits that entity.
+- **The BDE star** (decision 7): `PUT /api/associations/:id/audiences` is open to a global admin OR the holder of MANAGE_ASSO in a BDE (`BDE_GOVERNED_CAMPUSES_SQL`: the campuses of the spaces that BDE governs). A star is refused `403` when it is not a star (`AUDIENCE_ADMIN_OR_BDE_REQUIRED`), when the target is an institution (`AUDIENCE_INSTITUTION_ADMIN_ONLY`), or when EITHER what the entity addresses now OR what is submitted leaves its campuses, or the entity has no rule at all (`AUDIENCE_OUTSIDE_BDE_CAMPUS`). `PUT /api/associations/spaces/:id/bde` (the BDE flag) stays global-admin only. `GET .../audiences` is open to a star on the same bound since 2026-10-08 (see WP-B below).
+- **A change applies to everything, past posts included** (decision 4): visibility is computed from the CURRENT rules at read time and nothing is stored on a post (D38). Proof: `reader-spaces.integration.spec.ts` moves an association's audience under a stored post and the post follows (skipped without `SOCIAL_IT_DATABASE_URL`).
+- **No back-fill migration.** `users` belongs to core-service, so a social migration reading `users.campus` would fail on a fresh database, and an entity D36 left rule-less (creator with no space) was left so on purpose. Measure first, read-only (never run by an agent against production), then decide with the user:
+
+```sql
+SELECT a.type, count(*) AS no_rule, count(u.campus) AS creator_has_campus
+FROM associations a
+LEFT JOIN users u ON u.id = a."createdBy"
+WHERE a.type IN ('association', 'list')
+  AND NOT EXISTS (SELECT 1 FROM association_audiences r WHERE r."associationId" = a.id)
+GROUP BY a.type;
+```
+
+Closed by WP-B (2026-10-08): `AssociationsService.create` refuses a NON-admin creator `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` when the default campus is not one `BDE_GOVERNED_CAMPUSES_SQL` returns for them, inside the transaction (the row rolls back; `assertCreatorCampusGoverned` in `audience-policy.ts`). A global admin is unchanged and runs no governed-campus query. Cases in `associations.service.create-default-audience.spec.ts`.
+
+### Audiences client presets as built (WP-B, 2026-10-08)
+
+Client half of the seven decisions. Files: `lib/associations/audiencePresets.ts` (pure: `offeredPresets`, `presetToRules`, `readPreset`), `audienceRefusal.ts` (the five codes), `components/associations/edit/EditAudienceTab.svelte`, `components/profile/ProfileCampusPrompt.svelte`.
+
+- **Three presets, and `everyone` only for an institution.** Decision 1 lists three presets but also says `everyone` is for institutions, so an association or a list is offered TWO (`campus`, `formations`) and an institution THREE. `presetToRules` maps them to `(null, campus)`, `(formation, campus)` per ticked formation, and `(null, null)`; a half-filled choice yields NO rule, never a wider one. The server stays the rule (`AUDIENCE_EVERYONE_INSTITUTION_ONLY`).
+- **Where.** An "Audience" tab on the association edit page, for a global admin, or a BDE star of THIS association (`me/bde-reach`) when it is not an institution. A member of the association alone does not see it: the server refuses them (`AUDIENCE_ADMIN_OR_BDE_REQUIRED`), so offering it would be a button that can only fail. The global admin keeps the campus picker and a link to the `/admin/spaces` grid.
+- **A star READS the current audience, inside its campus (user, 2026-10-08: "campus de l'etoile seulement").** `GET /api/associations/:id/audiences` is a global admin's, or a star's for an entity whose CURRENT rules all lie within the campuses it governs (`assertBdeMayReadAudience`, the read half of the write check: same codes `AUDIENCE_OUTSIDE_BDE_CAMPUS` / `AUDIENCE_INSTITUTION_ADMIN_ONLY` / `AUDIENCE_ADMIN_OR_BDE_REQUIRED`, an unruled entity refused). The editor reads it with `getAssociationAudiences` for both roles and preselects the matching preset (a custom, grid-edited audience is reported as custom); only when the read is refused does it open with no preset ticked and the "saving replaces what is in force" warning.
+- **Typed refusals.** `audienceRefusalCode` reads `SocialApiError.code` (set by `request()` from the body), never the message; each of the five codes has a Paraglide sentence (`audience_err_*`).
+- **No campus: the profile prompt** (decision 5). `AssociationCreatePage` reads the own profile on mount and, for an association or a list with no valid campus, shows `ProfileCampusPrompt` instead of the form; a stale profile that the server still refuses (`AUDIENCE_CREATOR_CAMPUS_REQUIRED`) lands on the same prompt. The campus is MiConnect's and only an admin edits it, so "complete the profile" is the EXISTING correction request (`ProfileCorrectionRequest`) plus the link to `/profile`.
+- Tests: `audiencePresets.test.ts`, `audienceRefusal.test.ts`; server `associations.service.create-default-audience.spec.ts`.
+
+### Nominative read grants as built (WP-C, 2026-10-08)
+
+The seven decisions of [the decisions](#the-nominative-read-grants---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08), WP7 of D24.
+
+- **Model** (migration `078_read_grants.sql`): `read_grants(user_id, campus, formation NULL = whole campus, granted_by, created_at)`, unique per cell (`COALESCE(formation, '')`, so NULL repeats are refused), no end date; `read_grant_journal` is append-only (`grant`/`revoke`, `actor`, `at`). A revocation deletes the grant row and writes the journal line in one transaction; setting a state already held writes nothing, so the journal records changes only. API: `GET`/`PUT /api/associations/read-grants` (`read-grants/read-grants.*`), GLOBAL ADMIN ONLY on both - the list is internal, a grantee cannot even read their own row. Granting to an unknown account is a 404.
+- **Visibility plugs into the one predicate**: `readGrantReachesAssociationSql` in `spaces/reader-spaces.ts` - a grant cell contains the OPEN spaces it matches, and an association is reached when one of ITS RULES reaches such a space (any type; an institution addressing Gardanne is reached by a Gardanne cell whatever campus the grantee has). It is spliced through `ReadOpts.readGrants`, which only the `*ToViewerSql` read paths turn on (feed, search, one post, comments, reactions, votes, signed-in agenda, calendar link) and the feed gate (`IN_FEED_AUDIENCE_SQL`, so a named reader with no space and no membership opens the feed). It goes into the ASSOCIATION branch of `postVisibleToUserSql` (and the republisher's), never the personal-post branch: personal posts stay invisible by construction.
+- **Not widened**: `announceRecipientsSql` and `NEWLY_REACHED_BY_REPUBLICATION_SQL` use the plain predicate, so a grantee is NEVER notified; the directory (`associationVisibleToViewerSql`) is unchanged; the agenda signing (D40, `signAgendaFeedSelection`, `READER_SPACES_SQL`) signs the reader's OWN spaces only, a grant adds none, and the anonymous selection has no reader. Publishing is untouched: a grantee publishes through an institution they belong to (D31).
+- **UI**: `/admin/read-access` replaces `/admin/document-reviewers`: a person x (campus x whole-campus/ICM/ISMIN/FSSS/PDIS/Autre) grid of checkboxes (ISTP is FSSS, noted on the page), the journal, and below them the document-reviewer section unchanged (its `document_reviewer_grants` rows were NOT moved: it is a different capability - public documents - and still open to BDE super-admins, who do not see the grid).
+- **Proof**: `spaces/read-grants.integration.spec.ts` (real PostgreSQL, `SOCIAL_IT_DATABASE_URL`): per-post matrix over four named readers, personal posts never visible (even with `adminSeesAll`), no-grant readers unchanged, gate, agenda, no notification, directory unwidened, revocation, unique key, idempotent migration; `read-grants.service.spec.ts` for the writes.
+- **THE WRITE BOUNDARY (review of 2026-10-08, user decision "read + react/comment")**: a grant lets its holder **read, react, comment and like a comment: YES; vote in a poll, republish, publish: NO.** `postVisibleToViewerSql` counts the grant by default (every read) and takes an explicit `readGrants: false` for the writes a grant never opened. `PostsService.assertVisible(postId, viewer, intent)` has a REQUIRED intent: `'READ_OR_REACT'` (post by id, calendar link, reaction, comment, comment like) or `'VOTE'` (the poll vote, grant-free). `RepublicationsService.assertVisibleTo` is grant-free: a grantee who also publishes as some association X cannot republish into X a post only the grant shows them (404, like any post they cannot see). Publishing a post is unchanged and stays through an institution (D31). Proof: `read-grants.integration.spec.ts` (read-or-react vs vote over every post and reader), `republications.integration.spec.ts` (a grantee who is POST_AS of an association is refused, no row written), `posts.service.visibility.spec.ts` (the SQL of `'VOTE'` has no `read_grants`), `posts.controller.visibility.spec.ts` (each route passes its intent).
+- **Ids**: `users.id` is the OIDC subject lowercased (`NginxAuthGuard` lowercases `x-user-id`; core-service does the same), so the controller lowercases the grantee id and the actor before storing. No foreign key crosses services, so the account-deletion hook (`InternalController.deleteUserData`) deletes the account's grants and anonymises it (`[deleted]`) in the journal, both as grantee and as actor.
+- **Cost, measured** (throwaway PostgreSQL 16, 50,000 posts over 300 associations, 20,000 users, 40,000 requested grants = 8,000 grantees with a few cells each - a real grantee holds at most 12 cells, so "20k grants on 200 users" cannot exist; `EXPLAIN (ANALYZE, BUFFERS)` of `postVisibleToViewerSql` as a filter, `ORDER BY createdAt DESC LIMIT 20`, 3rd run, JIT off): a reader with NO grant 600 ms / 198k buffers before this change, 670 ms / 268k buffers with it (+10%, the per-row grant lookup finding no row); a grantee 1,060 ms / 464k buffers. With JIT on the same queries are 930 / 1,180 / 1,500 ms. The baseline itself is a nested loop over every post (the predicate is evaluated per row), which is the pre-existing shape of the feed predicate, not this change. **No index added**: `CREATE INDEX ON association_audiences ("associationId")` was tried and the planner kept the sequential scan of a 300-row table in all six plans; `read_grants` is already served by `idx_read_grants_user` (bitmap index scan).
+- **Owed**: one look at the grid signed in. The feed cache is dropped on every real change.
+
+#### The eight dev checks (2026-10-09, `dev.canari-emse.fr` on `1.2.1-alpha.1`, same code as `v1.2.1`)
+
+Set up through the API as the dev global admin (`canari-test-delta`): two throwaway associations, one with the audience `(campus gardanne, every formation)` holding a post and a poll post, one saint-etienne control. Grantee: `canari-test-gamma` (ICM, saint-etienne), granted the whole gardanne campus with `PUT /api/associations/read-grants`. Every fixture, the grant, the membership and the BDE flag were removed afterwards (re-read in the dev database: 0 left).
+
+| # | Check | Verdict | Evidence |
+|---|---|---|---|
+| 1 | a grantee sees the association posts of the granted campus | PASS | before the grant `GET /api/posts/:id` 404 for both posts; after it 200, and both are in `GET /api/posts?limit=50` |
+| 2 | no personal post of that campus | PASS, on the predicate | dev has NO personal post by a gardanne author and `canari-test-epsilon`'s credentials are not in `test-accounts.json`, so no end-to-end post. The shipped `postVisibleToViewerSql` was run read-only on the dev database with the grant live, over a personal post by each of the 8 gardanne users: `false` for all 8, `true` for the association post |
+| 3 | can react | PASS | `POST /reactions` 201 |
+| 4 | can comment | PASS | `POST /comments` 201 |
+| 5 | cannot vote through the grant | PASS | `POST /polls/:pollId/vote` 404 `Post not found`; the stored poll keeps zero votes |
+| 6 | cannot republish through the grant | PASS | the grantee, `POST_AS` of a saint-etienne association, gets 404 `Post not found` and no row is written; control: the same grantee republishes a post it sees natively, 201 |
+| 7 | a revoke restores the baseline | PASS | after the revoke: post 404, reaction 404, comment 404, the posts gone from the feed, `Publication introuvable` on screen |
+| 8 | a star reads audiences of its own campus only | PASS | before: 403 `AUDIENCE_ADMIN_OR_BDE_REQUIRED`; as `MANAGE_ASSO` of a saint-etienne BDE: own-campus association 200 `[{campus: saint-etienne}]`, the gardanne association 403 `AUDIENCE_OUTSIDE_BDE_CAMPUS` |
+
+Two P3 client defects were found on the way, both in the [backlog](backlog.md#audiences-of-associations-lists-and-institutions---built-in-production-since-v120).
+
 ### FEED_GATE - a 403 is a verdict, not a failure (2026-10-06)
 
 Proven cause: `FeedAudienceGuard` answers a signed-in reader with no space and no association `403` (by design, tested in `feed-audience.guard.spec.ts`), and `routes/posts/+page.svelte` mapped EVERY rejected posts read to `posts_load_error_title`. The redirect to `/chat` only fires on a KNOWN `false` verdict, so an unknown or stale `true` verdict (revalidated behind the render, no redirect) landed on the error. Fix on the client, by status: `isFeedAudienceRefusal` / `isOutsideFeedAudience` (`lib/posts/feedAudience.ts`) classify a 403, correct the remembered verdict, and the page renders the `posts_no_audience_*` empty state; 401/5xx/transport keep the generic error and its retry. Test: `feedAudienceRefusal.test.ts`.
+
+### The audiences chantier - the decisions (user, 2026-10-07; moved from the backlog 2026-10-08)
+
+Seven decisions on the audience of associations, lists and institutions (the last was Master's recommendation, accepted): (1) the manager chooses among THREE presets, never the raw grid - my campus; my campus plus the formations I name; everyone (offered to institutions only; the global admin keeps the full grid in Espaces & audiences); (2) default at creation is the association's campus, every formation, applied automatically and editable, a list likewise; (3) an association present on two campuses is TWO associations, partners on a shared event (D39, migration 074), with no multi-campus audience on one entity; (4) a change of audience applies to everything, past posts included; (5) a manager with no campus completes their profile first; (6) only institutions, created by a global admin, may target everyone, and the SERVER refuses `everyone` elsewhere; (7) the star (space BDE) may set the audience of the associations of ITS campus only. As built: WP-A, WP-B and the star's read above.
+
+### The nominative read grants - the decisions (user, 2026-10-07; moved from the backlog 2026-10-08)
+
+WP7 of this plan (D24: grants only ADD, a global admin grants across spaces). Cases named: the director of the ME, the ME communication and the School's student liaison reading the posts of associations but not the personal posts of students; a director of formations reading the associations of Saint-Etienne and Gardanne. Decisions: (1) a grid of checkboxes per person shaped like `/admin/spaces` (campus x formation, and whole campus); (2) it covers the posts of associations, lists AND institutions of the ticked spaces - an institution of ANOTHER campus too - with comments, reactions, events and agenda; (3) NEVER the personal posts of students; (4) readers may react and comment; (5) a global admin grants, the grant ADDS and never removes; (6) staff without a cursus see nothing more by default, the named ones do (closes the staff-feed question); (7) no end date, the list of named readers is internal (global admins only), and a journal keeps who granted what to whom and when. The user's "ISTP" is FSSS. Named readers only READ and react, and get NO notifications for their perimeter (answers of 2026-10-07). As built: WP-C above.

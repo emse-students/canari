@@ -27,7 +27,6 @@ type ServiceInternals = {
     getRange: (id: string, offset: number, length: number) => Promise<unknown>;
   };
   persistMetadata: () => Promise<void>;
-  purgeExpiredMedia: () => Promise<void>;
   logger: { warn: (m: string) => void; log: (m: string) => void; debug: (m: string) => void };
 };
 
@@ -64,7 +63,6 @@ function serviceWith(items: Record<string, MetaEntry>) {
     persistCalls += 1;
     return Promise.resolve();
   };
-  internals.purgeExpiredMedia = () => Promise.resolve();
   internals.logger = { warn: () => {}, log: () => {}, debug: () => {} };
   return { service, reads, persisted: () => persistCalls, items };
 }
@@ -121,6 +119,22 @@ describe('MediaService.downloadRange', () => {
     expect(await service.downloadRange(UUID_MISSING, 'bytes=0-9')).toEqual({
       status: 'not_found',
     });
+  });
+
+  it('classifies a whole download: tombstone is purged, no object and no entry is not_found', async () => {
+    // The two answers the client tells apart (410 -> expired, 404 -> not-found, both permanent and
+    // never retried). A tombstone trimmed after its own window leaves nothing to tell a purge from
+    // an id that never existed, so that case is a 404 by construction, not by a lost file.
+    const { service } = serviceWith({
+      [UUID_PURGED]: {
+        createdAt: OLD,
+        lastAccessAt: OLD,
+        purgedAt: OLD,
+        purgeReason: 'retention_expired',
+      },
+    });
+    expect(await service.download(UUID_PURGED)).toEqual({ status: 'purged' });
+    expect(await service.download(UUID_MISSING)).toEqual({ status: 'not_found' });
   });
 
   it('moves the access clock on the opening part only, not on every segment', async () => {

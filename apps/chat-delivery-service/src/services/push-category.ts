@@ -45,6 +45,12 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   social_reaction: 'reactions',
   social_association_post: 'posts',
   social_followed_post: 'posts',
+  // The republication and co-organisation notices had NO entry, so `categoryOfDataPush` answered null
+  // and no switch could ever silence them (2026-10-08 audit): a republished post is a post notice, a
+  // repost proposal is a post matter, and a co-organisation proposal is an agenda one.
+  social_association_repost: 'posts',
+  social_repost_proposed: 'posts',
+  social_coorganise_proposed: 'events',
   form_opening_soon: 'forms',
   form_open: 'forms',
   event_proposed: 'events',

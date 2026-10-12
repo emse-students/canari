@@ -54,7 +54,7 @@ export const ROUTES = [
   'dashboard', 'posts', 'chat', 'communities', 'notifications', 'profile', 'settings', 'shop',
   'associations', 'associations/new', 'calendar', 'events', 'forms', 'forms/create', 'lists', 'lists/new',
   'documents', 'directory', 'account/purchases', 'legal/cgu', 'legal/privacy', 'legal/child-safety',
-  'admin', 'admin/agenda', 'admin/associations', 'admin/carte', 'admin/cercle', 'admin/document-reviewers',
+  'admin', 'admin/agenda', 'admin/carte', 'admin/cercle', 'admin/document-reviewers',
   'admin/legacy-cotisations', 'admin/moderation', 'admin/platform', 'admin/status', 'admin/storage', 'admin/users',
 ];
 

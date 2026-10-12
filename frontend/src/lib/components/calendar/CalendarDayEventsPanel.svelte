@@ -4,8 +4,14 @@
     eventsOnDay as eventsOnDayOf,
     formatEventTimeRange,
   } from '$lib/calendar/feedEvents';
-  import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
-  import { eventOwnersLabel, pendingRingStyle } from '$lib/calendar/feedEvents';
+  import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
+  import OrganiserFaces from '$lib/components/calendar/OrganiserFaces.svelte';
+  import {
+    eventOwners,
+    eventOwnersLabel,
+    organisersFullList,
+    pendingRingStyle,
+  } from '$lib/calendar/feedEvents';
   import { ChevronRight, CalendarDays } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -67,8 +73,8 @@
     <ul class="divide-cn-border/40 divide-y">
       {#each dayEvents as ev (ev.id)}
         {@const accent = eventAccentColor(ev)}
-        {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
         {@const owners = eventOwnersLabel(ev, ownAssociationId)}
+        {@const ownerList = eventOwners(ev)}
         {@const pending = ev.status === 'pending'}
         <li>
           <!--
@@ -92,14 +98,14 @@
               style={pending ? pendingRingStyle(accent) : `background:${accent};`}
               aria-hidden="true"
             ></span>
-            {#if logoSrc && owners}
-              <img src={logoSrc} alt="" class="h-8 w-8 shrink-0 rounded-full object-cover" />
+            {#if owners}
+              <OrganiserFaces owners={ownerList} size="md" />
             {/if}
             <div class="min-w-0 flex-1">
               <p class="text-text-main truncate text-sm font-bold">{ev.title}</p>
               <p class="text-text-muted mt-0.5 truncate text-xs">
                 {#if owners}
-                  <span class="font-semibold">{owners}</span>
+                  <span class="font-semibold" title={organisersFullList(ownerList)}>{owners}</span>
                   <span class="mx-1">·</span>
                 {/if}
                 {formatEventTimeRange(ev)}

@@ -28,8 +28,8 @@ Key features:
 - **E2E encrypted messaging** — Direct messages, group chats, media sharing (AES-256-GCM + MLS)
 - **Voice & video calls** — WebRTC with SFU relay, CallKit integration on iOS
 - **Communities** — Role-based workspaces and channels with server-assisted encryption
-- **Associations** — Club management, membership dues (cotisations), boutique shop (Stripe Connect)
-- **Forms & payments** — Dynamic form builder with Stripe Checkout, cash payments, Excel export
+- **Associations** — Club management, membership dues (cotisations), boutique shop (Lydia)
+- **Forms & payments** — Dynamic form builder with online payment (Lydia), cash payments, Excel export
 - **News feed** — Markdown posts, polls, reactions, comments
 - **Cross-platform** — Web (SvelteKit), Android & iOS (Tauri 2)
 
@@ -45,7 +45,7 @@ Browser / Tauri (Native App)
     |-> call-service:3004      (Rust/Axum)  WebRTC SFU relay
     |-> chat-delivery:3010     (NestJS)     MLS API, offline queue, push, sync
     |-> media-service:3011     (NestJS)     Encrypted blob storage (Garage)
-    |-> core-service:3012      (NestJS)     OIDC auth (Authentik), users, Stripe
+    |-> core-service:3012      (NestJS)     OIDC auth (Authentik), users, payments
     `-> social-service:3014    (NestJS)     Posts, forms, channels, associations
 
 Infrastructure: PostgreSQL · Redis · Garage

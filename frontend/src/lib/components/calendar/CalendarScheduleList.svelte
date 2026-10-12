@@ -34,7 +34,9 @@
   import { isToday } from '$lib/utils/dates';
   import {
     eventAccentColor,
+    eventOwners,
     eventOwnersLabel,
+    organisersFullList,
     formatEventTimeRange,
     groupEventsByDayInRange,
     pendingRingStyle,
@@ -44,7 +46,8 @@
     ROLLING_HORIZON_MONTHS,
     type AgendaRollingWindow,
   } from '$lib/calendar/agendaMonth.svelte';
-  import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
+  import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
+  import OrganiserFaces from '$lib/components/calendar/OrganiserFaces.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -233,8 +236,8 @@
 
                 <ul class="min-w-0 flex-1 space-y-0.5">
                   {#each group.events as event (event.id)}
-                    {@const logoSrc = associationLogoSrc(event.associationLogoUrl)}
                     {@const owners = eventOwnersLabel(event, ownAssociationId)}
+                    {@const ownerList = eventOwners(event)}
                     {@const pending = event.status === 'pending'}
                     <li>
                       <!--
@@ -277,14 +280,10 @@
                             <span class="shrink-0 font-medium">{formatEventTimeRange(event)}</span>
                             {#if owners}
                               <span aria-hidden="true">&#183;</span>
-                              {#if logoSrc}
-                                <img
-                                  src={logoSrc}
-                                  alt=""
-                                  class="h-3.5 w-3.5 shrink-0 rounded-full object-cover"
-                                />
-                              {/if}
-                              <span class="truncate">{owners}</span>
+                              <OrganiserFaces owners={ownerList} />
+                              <span class="truncate" title={organisersFullList(ownerList)}
+                                >{owners}</span
+                              >
                             {/if}
                           </span>
                         </span>

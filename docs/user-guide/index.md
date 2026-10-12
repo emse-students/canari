@@ -10,6 +10,7 @@
 | Etudiant ou personnel EMSE utilisant Canari | [Guide membre](membre.md) |
 | Secretaire, tresorier ou president d'une association | [Guide responsable d'association](responsable-association.md) |
 | Responsable qui doit donner des droits a ses membres | [Les permissions d'une association](permissions-association.md) |
+| Curieux de savoir comment vos messages sont protégés (PIN, nouvel appareil, historique) | [Comprendre le chiffrement de vos messages](chiffrement-et-historique.md) |
 | Administrateur de la plateforme Canari | [Guide administrateur](administrateur.md) |
 | Mainteneur du projet (deploiement, releases, environnement dev) | [Workflow de developpement](workflow-developpement.md) |
 

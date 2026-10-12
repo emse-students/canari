@@ -173,3 +173,48 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 - [`services/call-service.md`](../../services/call-service.md) — SFU WebRTC relay
 - [`services/chat-delivery.md#calls`](../../services/chat-delivery.md#calls) — Backend call endpoints
 - [`protocols/mls-protocol.md`](../../protocols/mls-protocol.md) — E2E encryption for call signaling
+
+## The SFU runs six webrtc majors it has never placed a call on (2026-08-27)
+
+Re-rated P1 -> P3 on 2026-10-01: `CALLS_ENABLED = false` since 2026-09-01, so no user can reach this code; it becomes P1 again the day calling is revived. The open line is in [backlog](../../backlog.md#p3-blocked-calls-held-off---the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27).
+
+`apps/call-service` was brought back to compiling on 2026-08-27 after two Dependabot majors (`webrtc` 0.11 -> 0.17, `axum` 0.7 -> 0.8) had merged through a CI hole (closed: the crate is in the Rust matrix now). Verified: it builds, clippy is clean under `--all-features`, its ten unit tests pass. Not one of those ten runs the ICE stack. **Since 2026-10-09 `apps/call-service/tests/relay_path.rs` does, in CI**: two relay-only peers through an in-process TURN server carry a data-channel message and an SRTP packet ([cicd](../../cicd.md)). It places no call through the SFU and no browser peer - a green gate is not a working system.
+
+Six majors of webrtc-rs is a different library. One change is known because it broke the build: `RTCIceServer::credential_type` is gone and its rule moved inside the crate - `RTCIceServer::urls()` returns `ErrNoTurnCredentials` for a `turn:`/`turns:` URL with an empty username or credential, where 0.11 accepted it. A misconfigured TURN entry used to degrade quietly and now fails the WHOLE ICE configuration for that peer connection; `build_rtc_ice_server` warns and names the offending server. The changes that did not break the build cannot be enumerated from a diff: the crate reworked ICE gathering, DTLS and the RTP/RTCP interceptor chain. The next bump (0.20) is a port, not a bump (see the port section below, and `.github/scripts/lib/ceiling.sh`).
+
+**What settles it is one call**: two peers, audio and video, over the SFU, with TURN configured as production configures it (prod HAS it and has never used it) - the relay path, because that is where `ErrNoTurnCredentials` sits and a STUN-only test never touches it. Watch the peer connection reaching `connected`, the terminal ICE line the crate already logs, and whether renegotiation still lands (`main.rs` has a renegotiation path no test covers). It is taken BY HAND, with no call runner written (decided 2026-09-06): `CALLS_ENABLED` is flipped in the LOCAL tree only and put back. The twenty CALL rows (rung 15) stay NEVER RUN, deliberately - calls are UNVERIFIED on this build, not broken.
+
+## The webrtc 0.20 port, measured 2026-09-15
+
+Dependabot #431 offers `webrtc`
+0.17.2 -> 0.20.5 and has sat red since 2026-09-07. The ceiling refuses it for the relay-path call,
+which is correct, but that refusal said by omission that the bump would otherwise be mechanical, and
+it would not. Reproduced locally (`cargo check` with `webrtc = "0.20.5"`, manifest restored
+afterwards): **26 errors, with the imports not even resolving.** The crate's root went from about
+twenty public modules to FIVE - `data_channel`, `media_stream`, `peer_connection`, `rtp_transceiver`,
+`runtime`, plus `error` - so all nineteen of `main.rs`'s `use webrtc::...` lines break: `webrtc::api`,
+`webrtc::ice`, `webrtc::ice_transport`, `webrtc::interceptor`, `webrtc::rtcp` and `webrtc::track` no
+longer exist.
+
+**0.20 is webrtc-rs re-founded as a thin async layer over the Sans-I/O [`rtc`](https://docs.rs/rtc)
+crate**, and the shape of the port is visible from its own documentation:
+
+| 0.17, what this SFU uses | 0.20 |
+| --- | --- |
+| `APIBuilder` + `MediaEngine` + `SettingEngine` + interceptor `Registry` | one `PeerConnectionBuilder` |
+| `RTCPeerConnection`, a struct | `PeerConnection`, a TRAIT, driven by a background `PeerConnectionDriver` |
+| `pc.on_track(Box::new(...))` and the other `on_*` closures | a `PeerConnectionEventHandler` trait you implement, async methods |
+| `webrtc::track::track_local` / `track_remote` | `media_stream::track_local` / `track_remote` |
+| tokio assumed | a `Runtime` trait; `runtime-tokio` is a default cargo FEATURE |
+
+Three names have no same-named replacement at all: `RTCRtpSender` (now the `RtpSender` trait),
+`RTPCodecType`, and `TrackLocalWriter`. `RTCPeerConnection` loses `close()` and `add_ice_candidate()`
+from its inherent surface. The rest of the types survive by name but move, mostly re-exported from
+`peer_connection` out of `rtc`.
+
+**This changes the ORDER of what is owed, not the verdict.** The call is still the gate, because a
+ported SFU that compiles is exactly the same nothing the current one is - six majors unplaced becomes
+nine majors unplaced. But whoever writes rung 15 CALL to retire the refusal should know they are
+retiring it against a crate this service has to be rewritten onto first, and should consider whether
+the port and the call belong in the same piece of work. (The refusal itself left the ceiling on 2026-10-09, retired by `relay_path.rs`; the by-hand call stays owed.) The refusal text in
+`.github/scripts/lib/ceiling.sh` now says both.

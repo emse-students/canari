@@ -11,7 +11,7 @@ The core-service is the authentication and user management hub. It:
 - Implements OIDC login via Authentik (code exchange, JWT issuance, refresh rotation).
 - Validates JWT tokens for Nginx `auth_request` (`GET /api/auth/verify`).
 - Manages user profiles, search, and directory.
-- Handles Stripe payments (Stripe Connect onboarding for associations, checkout sessions, saved cards, webhooks).
+- Handles online payments through Lydia ("Paiement Canari"): onboarding, checkout, callback. Stripe left on 2026-10-07 ([stripe-archive](../stripe-archive.md)).
 - Exposes platform configuration (maintenance mode, minimum client version).
 
 ## Auth model
@@ -164,8 +164,8 @@ of **three** outcomes. The distinction exists for one reason: **only an ANSWER m
 
 | outcome | when | response | cached |
 | --- | --- | --- | --- |
-| `image` | upstream 200 | the bytes, upstream `Content-Type` **and upstream `ETag`** | 1 h in process (then REVALIDATED, not re-fetched), 24 h in the browser |
-| `absent` | upstream **404** - this user has no photo | `404`, no body | 10 min in process, 10 min in the browser |
+| `image` | upstream 200 | the bytes, upstream `Content-Type` **and upstream `ETag`** | 1 h in process (then REVALIDATED, not re-fetched); `Cache-Control: public, no-cache` + ETag, `304` on a matching `If-None-Match` (2026-10-08) |
+| `absent` | upstream **404** - this user has no photo | `404`, no body | 10 min in process, 10 min in the browser (the web client itself remembers it for the session) |
 | `unavailable` | timeout, transport failure, upstream 5xx/429, our key refused, or no key configured | `502`, no body, `Cache-Control: no-store` | never, at any layer |
 
 - **The budget is 4 000 ms**, the number Le Cercle justified for the same endpoint. The four proxies
@@ -262,11 +262,40 @@ What shipped, and what deliberately did not:
   a validator for content it did not author claims something it cannot support, and MiGallery's
   token stays meaningful if these bytes are ever re-encoded in transit. **It is not the fix for
   staleness and must not be filed as one.**
-- **The 24 h was NOT shortened, and that is the point.** The saving is upstream: a lapsed hour costs
-  a conditional request instead of a full download, per replica, per face. The ~25 h a user sees is
-  decided by `max-age` alone and is untouched. The shape that does - `no-cache`
-  plus the real ETag, or a busted URL - is an open decision in [backlog](../backlog.md), and a
-  smaller number chosen as a compromise would be the same defect at a different rate.
+- **The 24 h was NOT shortened on 2026-09-16, and that was the point**: the saving was upstream, and
+  a smaller `max-age` chosen as a compromise would be the same defect at a different rate. The
+  response shape followed on 2026-10-08, below.
+
+##### `no-cache` + the upstream ETag, and the busted URL it did not need (2026-10-08)
+
+**The decision, taken because it needs nothing from MiGallery**: the controller answers
+`Cache-Control: public, no-cache` with MiGallery's asset-keyed ETag, and a matching `If-None-Match`
+(weak comparison, lists and `*` included - `etagMatches`) is a bodyless `304` that repeats the
+validator and the `Cache-Control`. `no-cache` means "store it, ask before every reuse", so a changed
+photo shows on the next render at the browser and at the edge, not up to 24 h later. The 304 is
+decided in the controller rather than left to Express so it is explicit; a response with no upstream
+ETag keeps Express's own weak one. Pinned by `users.avatar-log.spec.ts`, which reads the headers the
+response is given (no `max-age`, the ETag, the 304 and its `[AVATAR] outcome=not-modified` line).
+
+Cost, accepted: one conditional request per face per render goes back on the wire. It is answered
+from `AvatarService`'s in-process entry (itself revalidated upstream hourly), so it costs a
+round trip and no MiGallery traffic, and HTTP/3 multiplexing measured 17-37 ms each. Layers:
+
+| layer | now |
+| --- | --- |
+| browser HTTP cache | stores, revalidates each use (`fetch` in `userAvatarCache.ts` sets no cache mode and keeps no lifetime of its own; no service worker exists) |
+| nginx (`infrastructure/local/Dockerfile.frontend`) | no avatar rule; passes the headers |
+| Cloudflare | edge TTL follows the origin's `Cache-Control` ("use cache-control if present"); **OWED: one `curl -sI` pair on the next deploy** to confirm a changed photo answers `REVALIDATED`/`EXPIRED` and not a `HIT` with a growing `Age`, since the avatar Cache Rule cannot be read by our tokens |
+| Android/iOS notification disk copies | unchanged: their own 24 h age check, no conditional request |
+| `chat-delivery` `/api/mls/push/avatar/:id` | unchanged: `max-age=3600`, native readers only |
+
+**The alternative, still available**: a busted URL (`/api/users/<id>/avatar?v=<version>` answered
+`immutable`) would drop even the conditional request, but its version must reach the client WITHOUT
+fetching the avatar first. MiGallery exposes `photos_asset_id` only in `/api/users/[userId]/photo-access`
+(one call per person, own scope), so there is no batch carrier; and self-priming `/api/users/batch`
+from core's cache is REFUTED because that cache is per replica - one photo would come back busted
+from one replica and unbusted from another and the client would thrash between two entries. Revisit
+only if MiGallery adds a cheap batch carrier.
 
 Guarded by `avatar.service.spec.ts` (6 cases, including the `validateStatus` predicate read back and
 exercised directly, since axios is mocked and never applies it) and `avatar.cache.spec.ts` - five
@@ -312,9 +341,8 @@ Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`
 
 ### Payments (Stripe + Lydia)
 
-Stripe and Lydia now each own their own pair of columns on `associations`
-(`stripeAccountId`/`stripeOnboardingComplete` vs `lydiaAccountId`/`lydiaOnboardingComplete`,
-migration 037) - onboarding with one provider never overwrites or clears the other's link.
+Only the Lydia pair of columns on `associations` (`lydiaAccountId`/`lydiaOnboardingComplete`,
+migration 037) is read; the `stripe*` pair is kept at rest for rollback ([stripe-archive](../stripe-archive.md)).
 `/api/payments/onboarding` writes to whichever pair matches the platform's currently active
 provider (`PaymentService.getActiveProviderId()`), read at persist time right after the same call
 created the account, so the two always agree on which provider actually issued the id.
@@ -327,40 +355,47 @@ can never carry an `X-User-Id` - `NginxAuthGuard` was mistakenly added to this r
 and 401'd every one of those calls in production (2026-09-14) until it was removed; the route needs
 none, per the table below, because the value is global config with no per-user meaning. A
 Lydia `request/do` payment is also confirmed server-side: `POST /api/payments/lydia-request-callback`
-verifies the signed `confirm_url`/`cancel_url`/`expire_url` callback and fans out to the same
-fulfillment Stripe's webhook uses, via an `order_ref` Canari encodes itself
+verifies the signed `confirm_url`/`cancel_url`/`expire_url` callback and fans out to the
+fulfillment, via an `order_ref` Canari encodes itself
 (`lydia-order-ref.ts`). **Still blocking an actual switch to Lydia** (tracked in
-[backlog](../backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1), harmless today
-since `payment_provider` defaults to `stripe`): nothing resolves the `payerRecipient` `request/do`
+[backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), harmless today
+since `payment_provider` defaults to `disabled`): nothing resolves the `payerRecipient` `request/do`
 requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
 `lydiaOnboardingComplete` automatically) is deliberately unbuilt - no documented signature, and
 `vendor_token` is PUBLIC.
 
-**How core-service reads an association's payment account (2026-10-05).** `connect-status`, the
-dashboard link and the Lydia manual validation read social-service's INTERNAL route
-`GET /api/internal/associations/:id/payment-account` (X-Internal-Secret, the four Stripe/Lydia id and
+**How core-service reads an association's payment account (2026-10-05).** the Lydia manual
+validation reads social-service's INTERNAL route
+`GET /api/internal/associations/:id/payment-account` (X-Internal-Secret, the payment id and
 flag fields only). They used to call `GET /api/associations/:id`, which answers 401 without an
 `X-User-Id` since 2026-08-05, so each reported "Association not found" - invisible because
 `BadRequestException` is not logged and the client shows one generic message.
 
+#### How a failed call is logged, and how a provider refusal is answered
+
+Found on dev 2026-10-07 (prod logs clean). **No path may log an axios error, config, headers or a
+provider token object wholesale**: an `AxiosError` carries `config.headers['x-internal-secret']`, and
+Nest's exception filter prints whatever is left uncaught. `common/http-error-log.ts` (byte-identical
+in core-service and social-service, declared in `declared-duplicates.mjs`) renders
+`METHOD url-without-query -> status: provider message` and nothing else; its spec feeds it an
+`AxiosError` carrying a secret header and an `api_token`. Lydia's `business/create` response is logged
+with `api_token` and `api_token_id` redacted.
+
+A Lydia refusal (`request/do` error 5, "lieu d'activite bloque") is an ANSWER about the request:
+`postForm` throws a typed 400 `{ code: 'PAYMENT_PROVIDER_REFUSED', message: <Lydia's text> }`, and
+social-service's `mapCorePaymentError` answers the SAME 400 on the product checkout and the paid form
+submit (a core 5xx or no answer is a 502, never the raw error). The shop toast shows the reason. Deleting
+an association deletes its forms in the same transaction as its events and members (`forms.associationId`
+has no foreign key; the orphan rendered as "Personnel"). Submissions stay, as with a form's own delete.
+
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/payments/provider` | none | Active provider (`stripe` or `lydia`), for the frontend to render the matching onboarding UI |
+| GET | `/api/payments/provider` | none | Active provider (`lydia` or `disabled`), for the frontend to render the matching onboarding UI |
 | POST | `/api/payments/onboarding` | JWT | Start/resume Connect-style onboarding for an association, with the active provider |
-| GET | `/api/payments/connect-status/:associationId` | JWT | Live Stripe Connect status, syncs DB on success (Stripe-only - Lydia has no live-status poll) |
-| POST | `/api/payments/connect-dashboard-link/:associationId` | JWT | Single-use Stripe Dashboard login link |
-| POST | `/api/payments/disconnect-connect-account/:associationId` | JWT | Unlink the association's Stripe Connect account (local unlink only - the Stripe account itself is untouched) |
 | POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
-| POST | `/api/payments/create-checkout-session` | JWT | Create Stripe Checkout session |
+| POST | `/api/payments/create-checkout-session` | InternalSecret | Create a checkout session (called by social-service, never by a browser) |
 | POST | `/api/payments/verify-session` | JWT | Verify completed checkout, mark form submission paid |
 | POST | `/api/payments/cancel-session` | JWT | Cancel unpaid checkout |
-| POST | `/api/payments/setup-payment-method` | JWT | Create setup session to save a card |
-| GET | `/api/payments/payment-methods` | JWT | List saved cards |
-| DELETE | `/api/payments/payment-methods/:id` | JWT | Detach payment method |
-| POST | `/api/payments/charge-saved-method` | JWT | Charge saved card for form submission |
-| POST | `/api/payments/charge-product-saved-method` | JWT | Charge saved card for boutique product |
-| POST | `/api/payments/internal/customer-id` | InternalSecret | Get/create Stripe customer (called by social-service) |
-| POST | `/api/payments/webhook` | Stripe signature | Stripe webhook handler (`checkout.session.*`, `payment_intent.*`, `account.updated`) |
 | POST | `/api/payments/lydia-request-callback?outcome=confirm\|cancel\|expire` | Lydia signature (`sig`) | `request/do` payment confirmation - the authoritative fulfillment path for Lydia, since the buyer returning to the success redirect is not guaranteed |
 
 ### Health
@@ -375,7 +410,7 @@ PostgreSQL (`auth_db`). Main tables:
 
 | Table | Key columns |
 |---|---|
-| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin`, `notesCiphertext`, `notesKey`, `notes` (legacy) |
+| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `admin`, `notesCiphertext`, `notesKey`, `notes` (legacy) |
 | `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp`, `deviceId` |
 | `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion` |
 | `platform_announcements` | `title_fr/en`, `body_fr/en`, `min_client_version`, `max_client_version`, `active`, `created_by` |
@@ -476,6 +511,27 @@ this addresses is a readable database, not a hostile operator.
 it back as `legacyNotes` while no ciphertext exists, the client re-saves it encrypted, and the save
 nulls the column. Only the client can encrypt, so the conversion cannot happen in SQL.
 
+## Open design questions: the version of each device, and three unsigned-caller guards
+
+### Nothing records which BUILD each device runs (2026-08-27)
+
+Asked while debugging the iOS session: is there one place naming the version of every device? There is not. `/admin/platform` WRITES `minClientVersion` (a policy, not an observation) and `/admin/status` reads live presence from the gateway (no version). Two mechanisms already receive the value: `GET /users/me/announcement?clientVersion=` (every client, every launch; used only for an announcement's audience, then discarded) and `POST /auth/refresh?clientVersion=` (since 2026-08-27, for the refusal log). `push_token` already holds one row per `(userId, deviceId)` with a `platform` and an `updatedAt`, so recording the version is a column and a write. The cheap version is cheap; the useful version is a decision: which table owns it, whether a web session counts as a device, and what a dashboard shows (distribution by version, or laggards below `minClientVersion`). `key_package.deviceAppVersion` has been written on every platform since #613 (2026-09-14); devices enrolled before it re-report only when they next publish a key package, and it is the column `minClientVersion` decisions must be measured against ([durable-rules](../durable-rules.md#release-and-ci---cicd)).
+
+### Three services refuse an unsigned caller three different ways
+
+Merging them is a policy decision: picking one guard as "the" guard silently changes what the other two refuse. The HMAC they share is already one declared file (`internal-token.ts`).
+
+| Where | Refuses on |
+| --- | --- |
+| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` |
+| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET |
+| `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` (logs a denial on `/push/` routes) |
+| `chat-gateway/src/presence.rs` | empty `x-user-id` - Rust, stays where it is |
+
+**CodeQL 2547 (`js/user-controlled-bypass`, 2026-10-09) WAS REAL, AND IS CLOSED FOR `chat-delivery-service` ONLY.** Its guard skipped the HMAC when `INTERNAL_SHARED_SECRET` was unset and `NODE_ENV` was not `production`, so `x-user-logged-in: true` alone was the credential (proved by a failing test first). nginx clears and re-sets that header, and prod/dev pin `NODE_ENV=production` with the secret, so no estate was exposed; a bare local run was. The guard now requires the secret, a non-empty `x-user-id` and a valid token in EVERY environment, and the only callers of its routes are nginx-fronted. **The other two guards still skip the HMAC outside production when the secret is unset** (core and social, which also refuses an unset `NODE_ENV`): same latent shape, no alert because the header they read is `x-user-id`, and still the user's policy decision below.
+
+The same decision says whether `X-Internal-Token` is required OUTSIDE production too for core and social (chat-delivery answers yes since 2026-10-09). Presence about an arbitrary user id is not an access-rule question; it is parked in `presence.rs`'s docblock.
+
 ## Environment variables
 
 | Variable | Required | Description |
@@ -486,8 +542,6 @@ nulls the column. Only the client can encrypt, so the conversion cannot happen i
 | `AUTHENTIK_CLIENT_SECRET` | yes | OIDC client secret |
 | `AUTHENTIK_ISSUER` | yes | Authentik issuer URL |
 | `FRONTEND_URL` | yes | OIDC redirect URI base |
-| `STRIPE_SECRET_KEY` | no | Stripe secret key (payments) |
-| `STRIPE_WEBHOOK_SECRET` | no | Stripe webhook signing secret |
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
 
 ##### An absence is remembered, and a group photo is stored (2026-10-05)
@@ -498,10 +552,12 @@ and `userAvatarCache.ts` forgot `none` with the mount.
 
 - **A has-avatar flag in `/api/users/batch` is REFUTED**: the photo lives in MiGallery, core holds no
   column for it, so the flag would cost one upstream call per profile, which is the request it replaces.
-- **A 404 is kept per URL for 10 minutes** - the lifetime the server already states - and cleared when the
-  signed-in reader changes. **Only a 404**: a 502 `unavailable` is not an answer. **What would make it
-  wrong**: the user adds a photo, in MiGallery, which no Canari screen does and nothing here is told; so
-  the lifetime is the only bound. Guarded by `userAvatarCache.test.ts` ("a known absence").
+- **A 404 is kept per URL for the rest of the session, with NO timer** (user, 2026-10-06; the 10-minute
+  lifetime of 2026-10-05 was a clock deciding traffic, and prod 1.0.3 - which predates it - logged 5121
+  404s in 6587 avatar requests over 30 h) - cleared only when the signed-in reader changes. **Only a
+  404**: a 502 `unavailable` is not an answer. **What would make it wrong**: the user adds a photo, in
+  MiGallery, which no Canari screen does and nothing here is told; initials stay until the app reloads,
+  the accepted cost. Guarded by `userAvatarCache.test.ts` ("a known absence").
 - **Group photos came late for another reason**: `ConversationMeta` did not hold `imageMediaId`, so a
   restored sidebar row had no photo id until the server's group list arrived after the connection (the
   per-group `GET /api/mls/groups/:id` is NOT what feeds it). The id is now persisted (IndexedDB row, SQLite

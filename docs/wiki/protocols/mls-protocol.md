@@ -899,9 +899,9 @@ excludes rotation, so a failed tag is alteration; a header naming another key is
 magic bytes plus a version byte make "is this framed" a 2^-64 question, so there is no
 re-parse-as-legacy retry (it would be a fallback). The fingerprint is eight bytes of SHA-256 over a
 domain constant and the key - NOT the AEAD under a fixed nonce, which would risk reusing a nonce on a
-public plaintext. The three readers (`load_with_key`, the keystore probe in `resolve_at_rest_key`,
-`mls-wasm`'s `decrypt_mls_state_blob_with_key`) share it; the probe on its own would have read a
-header as a nonce and DELETED a good keystore key.
+public plaintext. The two readers (`load_with_key`, the keystore probe in `resolve_at_rest_key`)
+share it; the probe on its own would have read a header as a nonce and DELETED a good keystore key.
+(A third, `mls-wasm`'s `decrypt_mls_state_blob_with_key`, had no caller and was deleted 2026-10-12.)
 
 **The header goes at the STATE layer, never in `security::encrypt_blob`**, which also seals the
 PIN-protected backup files. **The writer cannot move first**: an older build handed a framed blob

@@ -2,7 +2,6 @@
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import ReactorsPanel from '$lib/components/shared/ReactorsPanel.svelte';
   import { reactorsTrigger } from '$lib/actions/reactorsTrigger';
-  import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
 
   interface Props {
     /** Aggregated count of each reaction type across all users. */
@@ -27,8 +26,6 @@
       .filter(([, type]) => type === popupReactionType)
       .map(([uid]) => uid)
   );
-  const allReactorIds = $derived(Object.keys(reactions));
-  const reactorNames = userDisplayNames(() => allReactorIds);
 
   const panelId = $props.id();
 
@@ -56,14 +53,14 @@
   A reader's own reaction is marked by a TINT, not by a bright ring around the pill. The ring was a
   second outline inside a card that already has one, and it sat beside a button now showing that same
   emoji - two loud signals for one fact, which is what made the badge read as an alert.
+
+  NO NATIVE `title` HERE. The reactors list is `ReactorsPanel`; a `title` of the same names drew the
+  browser's own tooltip on top of it (reported 2026-10-08), the same list twice.
 -->
 {#if Object.keys(reactionCounts).length > 0}
   <div class="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-hidden">
     {#each Object.entries(reactionCounts) as [reactionType, count] (reactionType)}
       {@const reaction = reactionList.find((r) => r.type === reactionType)}
-      {@const reactorIds = Object.entries(reactions)
-        .filter(([, type]) => type === reactionType)
-        .map(([uid]) => uid)}
       <button
         type="button"
         onclick={() => onReactionClick(reactionType)}
@@ -76,7 +73,6 @@
         reactionType
           ? 'bg-cn-yellow/15'
           : 'hover:bg-cn-yellow/10 bg-(--cn-surface)'}"
-        title={reactorIds.map((id) => reactorNames.get(id) ?? id).join(', ') || undefined}
       >
         <span class="text-lg"><EmojiText text={reaction?.emoji ?? '😊'} /></span>
         <span class="text-text-main text-sm font-bold">{count}</span>

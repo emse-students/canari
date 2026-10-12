@@ -7,6 +7,7 @@ import {
   NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
+import { describeHttpError } from '../common/http-error-log';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
@@ -18,6 +19,11 @@ import { AxiosError } from 'axios';
 import { mediaUrl } from '../internal/service-urls';
 import { applyMediaRetentionClass } from '../internal/media-retention-class';
 import type { SpaceSelection } from './directory-query';
+import {
+  AGENDA_SELECTION_FORBIDDEN,
+  selectionWithinSpaces,
+  signAgendaSelection,
+} from './agenda-signature';
 import { Association } from './entities/association.entity';
 import {
   AssociationMember,
@@ -47,6 +53,7 @@ import {
 } from './payment-delegation.util';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
+import { retireForms } from '../forms/retire-forms';
 import {
   AddMemberDto,
   CreateAssociationDto,
@@ -71,12 +78,16 @@ import {
   eventReachesSpaceMatchingSql,
   associationVisibleToViewerSql,
   eventVisibleToViewerSql,
+  READER_PROFILE_SQL,
   READER_SPACES_SQL,
+  campusWideReaderCampus,
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import { smallestRules } from '../spaces/spaces.service';
+import { assertCreatorCampusGoverned, defaultCampusRules } from '../spaces/audience-policy';
+import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
+import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import type { CoOrganiserPort } from './co-organisers.port';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
@@ -207,7 +218,7 @@ function calendarDateRefusal(
   return new BadRequestException({ code, message });
 }
 
-/** CRUD, logo management, membership, and Stripe helpers for student associations. */
+/** CRUD, logo management, membership, and payment-account helpers for student associations. */
 
 /**
  * Who is asking for a list of events, which decides how far back that list goes.
@@ -290,13 +301,17 @@ export class AssociationsService {
    * Creates a new association (or list). Throws if the slug is already taken or has an invalid
    * format.
    *
-   * IT REACHES ITS CREATOR'S SPACES BY DEFAULT (D36, user 2026-10-04): in the SAME transaction as
-   * the row, the creator's spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`) are written as
-   * the smallest equivalent rule set - so it is never visible for a moment with no rule, and the
-   * grid at `/admin/spaces` reads it back as ticked boxes a global admin then edits. A creator with
-   * no space (no campus or no cursus) gives it no rule: it reaches its members only.
+   * IT REACHES ITS CREATOR'S CAMPUS BY DEFAULT (audiences chantier, user 2026-10-07; it replaced
+   * D36's "the creator's spaces"): in the SAME transaction as the row, ONE rule `(every formation,
+   * the creator's profile campus)` is written, so it is never visible for a moment with no rule and
+   * the grid at `/admin/spaces` reads it back as a ticked campus. A creator with no campus is
+   * REFUSED with the typed `AUDIENCE_CREATOR_CAMPUS_REQUIRED` (decision 5) and nothing is written -
+   * the campus is never guessed. An institution keeps its own rule: no default, the creating global
+   * admin ticks its audience afterwards. A NON-admin creator (a BDE star) is further refused
+   * `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` when that default campus is not one its BDE governs: it could
+   * not edit what it made (decision 7).
    */
-  async create(dto: CreateAssociationDto, userId: string) {
+  async create(dto: CreateAssociationDto, userId: string, isGlobalAdmin: boolean) {
     if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(dto.slug)) {
       throw new BadRequestException(
         'Slug must start with a letter or digit and contain only lowercase letters, digits, and hyphens (2-50 chars)'
@@ -325,18 +340,22 @@ export class AssociationsService {
         );
         return saved;
       }
-      const creatorSpaces = (await manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
-      const rules = smallestRules(creatorSpaces);
-      if (rules.length === 0) {
-        this.logger.log(
-          `[spaces] ${saved.id} created by ${userId.slice(0, 8)}, who has no space: no default rule`
-        );
-        return saved;
+      const [profile] = (await manager.query(READER_PROFILE_SQL, [userId])) as {
+        campus: string | null;
+      }[];
+      // Thrown inside the transaction: the row saved above is rolled back with it.
+      const rules = defaultCampusRules(profile?.campus ?? null);
+      if (!isGlobalAdmin) {
+        const governed = (
+          (await manager.query(BDE_GOVERNED_CAMPUSES_SQL, [
+            userId,
+            AssociationPermissionFlag.MANAGE_ASSO,
+          ])) as { campus: string }[]
+        ).map((r) => r.campus);
+        assertCreatorCampusGoverned(governed, rules);
       }
       this.logger.log(
-        `[spaces] ${saved.id} reaches its creator's spaces: ${rules
-          .map((r) => `${r.formation ?? '*'} x ${r.campus ?? '*'}`)
-          .join(', ')}`
+        `[spaces] ${saved.id} reaches its creator's campus: ${rules[0].campus} (every formation)`
       );
       await manager.insert(
         AssociationAudience,
@@ -525,16 +544,28 @@ export class AssociationsService {
    * @param actorUserId The caller, from `x-user-id`. Required: the point of the line is the name.
    */
   async remove(id: string, actorUserId: string) {
-    const [memberCount, eventCount] = await Promise.all([
+    const [memberCount, eventCount, formCount] = await Promise.all([
       this.memberRepo.count({ where: { associationId: id } }),
       this.calendarRepo.count({ where: { associationId: id } }),
+      this.formRepo.count({ where: { associationId: id } }),
     ]);
     this.logger.warn(
-      `[ASSO] DELETE ${id} by ${actorUserId || 'unknown'} - removing ${memberCount} member(s) and ${eventCount} event(s); this is not reversible`
+      `[ASSO] DELETE ${id} by ${actorUserId || 'unknown'} - removing ${memberCount} member(s), ${eventCount} event(s) and ${formCount} form(s); this is not reversible`
     );
-    await this.calendarRepo.delete({ associationId: id });
-    await this.memberRepo.delete({ associationId: id });
-    await this.assoRepo.delete(id);
+    // ONE TRANSACTION, FORMS INCLUDED. A form is DELETED with its association, as an event is:
+    // `forms.associationId` has no foreign key, so a surviving form kept a dangling id and the
+    // client rendered it as a "Personnel" form - a paid form nobody could attribute or manage any
+    // more (found on dev 2026-10-07). Archiving would keep exactly that orphan; the form's own
+    // delete (`FormsService.delete`) is the precedent, and so is its rule: a form holding
+    // submissions is ARCHIVED rather than deleted (`retireForms`, `submissions_form_fk`), because
+    // they are the payers' records. An archived form is in no list, so it cannot be shown as
+    // "Personnel"; the staff reach it by id.
+    await this.assoRepo.manager.transaction(async (manager) => {
+      await manager.delete(AssociationCalendarEvent, { associationId: id });
+      await retireForms(manager, { associationId: id });
+      await manager.delete(AssociationMember, { associationId: id });
+      await manager.delete(Association, id);
+    });
     await this.invalidatePostListCaches();
     return { ok: true };
   }
@@ -611,8 +642,12 @@ export class AssociationsService {
           },
         })
       );
-    } catch {
-      /* non-fatal - object may already be gone */
+    } catch (err) {
+      // non-fatal - the object may already be gone. Logged through describeHttpError because the
+      // raw error carries the x-internal-secret header this call authenticated with.
+      this.logger.debug(
+        `Media delete best-effort failed for ${mediaId}: ${describeHttpError(err)}`
+      );
     }
   }
 
@@ -902,7 +937,7 @@ export class AssociationsService {
     }
     // Guard: block demoting a member who holds MANAGE_MEMBERS if they are the last one.
     // We check specifically for MANAGE_MEMBERS loss, not just permissions===0, because a partial
-    // demotion (e.g. keeping MANAGE_STRIPE_CONNECT) would bypass the old permissions===0 check
+    // demotion (e.g. keeping MANAGE_PAYOUT_ACCOUNT) would bypass the old permissions===0 check
     // while still leaving the association without any member manager.
     const hadManageMembers =
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
@@ -944,7 +979,7 @@ export class AssociationsService {
   /**
    * Counts members holding MANAGE_MEMBERS - the flag required to manage the association.
    * Used to prevent locking an association out of member management.
-   * Using `permissions > 0` was insufficient: a member with only MANAGE_STRIPE_CONNECT
+   * Using `permissions > 0` was insufficient: a member with only MANAGE_PAYOUT_ACCOUNT
    * counts as non-zero but cannot unblock the association.
    */
   private async manageMembersCount(associationId: string): Promise<number> {
@@ -1809,6 +1844,42 @@ export class AssociationsService {
   }
 
   /**
+   * Signs the agenda selection a signed-in reader asks to subscribe to (D40 amended 2026-10-06).
+   * Only selections inside the reader's OWN spaces are signed - their campus, their formations, a
+   * pair of both (`READER_SPACES_SQL`, the twin of `readerSpaces`); an association needs no
+   * membership, only to exist. A reader with a campus and NO cursus (EMSE staff) is signed their
+   * own campus alone, no formation = every formation of it (user, 2026-10-07). The returned `sig` goes into the feed URL unchanged.
+   */
+  async signAgendaFeedSelection(
+    userId: string,
+    selection: SpaceSelection,
+    associationId: string | null
+  ): Promise<{ sig: string }> {
+    if (associationId) await this.findById(associationId);
+    const spaces = (await this.assoRepo.manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
+    // A reader tied to no formation (EMSE staff) has no space: they may follow their own campus
+    // whole (user, 2026-10-07). Only asked when there is no space, so a student never reaches it.
+    let campusWide: string | null = null;
+    if (spaces.length === 0) {
+      const rows = (await this.assoRepo.manager.query(READER_PROFILE_SQL, [userId])) as Array<{
+        campus: string | null;
+        cursus: unknown;
+      }>;
+      campusWide = rows[0] ? campusWideReaderCampus(rows[0]) : null;
+    }
+    if (!selectionWithinSpaces(selection, spaces, campusWide)) {
+      this.logger.warn(
+        `[AGENDA_SIG] refused to sign campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
+      );
+      throw new ForbiddenException({
+        code: AGENDA_SELECTION_FORBIDDEN,
+        message: 'You can only subscribe to the agenda of your own campus and formations',
+      });
+    }
+    return { sig: signAgendaSelection({ ...selection, associationId }) };
+  }
+
+  /**
    * Lists agenda events across all associations in `[from, to]` (by `startsAt`),
    * optionally restricted to one association. Public (same visibility as per-association `/events`).
    * `fromIso`/`toIso` default to `defaultCalendarFeedRange()` when omitted or blank.
@@ -2067,6 +2138,11 @@ ${rejectionReason}`
 
     const kind = dto.kind ?? AssociationCalendarEventKind.Event;
     assertMayDecideKind(kind, AssociationCalendarEventKind.Event, isValidator);
+    // The cap is checked BEFORE the event is saved: `sync` runs after the save, and a refusal there
+    // would leave an event the caller was told failed.
+    assertWithinCoOrganiserCap(
+      new Set((dto.coOwnerIds ?? []).filter((id) => id !== targetId)).size
+    );
 
     const linkedFormId = dto.linkedFormId ?? null;
     if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId);
@@ -2747,35 +2823,9 @@ ${rejectionReason}`
     });
   }
 
-  // ── Stripe helpers ────────────────────────────────────────────────────────
-
-  /** Stores the Stripe connected-account ID for an association and invalidates post-list caches. */
-  async setStripeAccountId(id: string, stripeAccountId: string) {
-    const asso = await this.findById(id);
-    await this.assoRepo.update(id, { stripeAccountId });
-    await this.invalidatePostListCaches();
-    return { ...asso, stripeAccountId };
-  }
-
-  /** Flips stripeOnboardingComplete to true after the Stripe Connect onboarding webhook confirms the account is ready. */
-  async markStripeOnboardingComplete(id: string) {
-    await this.assoRepo.update(id, { stripeOnboardingComplete: true });
-    await this.invalidatePostListCaches();
-  }
-
-  /**
-   * Unlinks the association's Stripe Connect account from Canari, letting the treasurer restart
-   * onboarding from scratch. Local unlink only - the Stripe account itself (its dashboard, bank
-   * details, any balance) is left untouched.
-   */
-  async clearStripeAccount(id: string) {
-    await this.assoRepo.update(id, { stripeAccountId: null, stripeOnboardingComplete: false });
-    await this.invalidatePostListCaches();
-  }
-
   // ── Lydia helpers ────────────────────────────────────────────────────────
-  // Own columns, independent from the Stripe ones above - an association keeps both links
-  // regardless of which provider is currently active platform-wide (WP-LYDIA coexistence).
+  // The payout account columns: `lydiaAccountId` and `lydiaOnboardingComplete`. The historic
+  // `stripe*` pair is no longer mapped (docs/wiki/stripe-archive.md).
 
   /**
    * Stores the Lydia Business vendor_token (and its dashboard URL, handed out once by
@@ -2820,7 +2870,7 @@ ${rejectionReason}`
 
   /**
    * Resolves where an association's payments route, honoring an approved parent delegation AND
-   * the platform's currently active provider (Stripe/Lydia keep independent account ids - see
+   * the platform's currently active provider (the Lydia account id lives in its own column - see
    * payment-delegation.util.ts). Loads the parent only when the association delegates (approved).
    * Central resolver used by every payment path so delegation and provider selection are applied
    * uniformly. Lets a failure to reach core-service propagate - never guesses the active provider.
@@ -2836,7 +2886,7 @@ ${rejectionReason}`
   }
 
   /**
-   * Returns the connect-style account id (Stripe or Lydia, whichever is active) an association's
+   * Returns the connect-style account id (Lydia's `vendor_token`) an association's
    * payments route to, or null if none. Follows an approved parent delegation to the parent's account.
    */
   async getPaymentAccountId(id: string): Promise<string | null> {
@@ -2873,7 +2923,7 @@ ${rejectionReason}`
     );
   }
 
-  // ── Payment delegation (parent-association Stripe routing) ─────────────────
+  // ── Payment delegation (parent-association payment routing) ─────────────────
 
   /**
    * Returns this association's payment-delegation state for its own management UI: the chosen
@@ -2897,7 +2947,7 @@ ${rejectionReason}`
       status: asso.paymentDelegationStatus,
       parentAssociationId: asso.paymentParentAssociationId,
       parentName: parent?.name ?? null,
-      parentReady: !!parent?.stripeOnboardingComplete && !!parent?.stripeAccountId,
+      parentReady: !!parent?.lydiaOnboardingComplete && !!parent?.lydiaAccountId,
     };
   }
 
@@ -2984,7 +3034,7 @@ ${rejectionReason}`
 
   /**
    * Approves a pending delegation request from `childId` to `parentAssociationId`. Requires the
-   * parent to have completed its own Stripe Connect onboarding, since it becomes the receiver.
+   * parent to have completed its own payment account onboarding, since it becomes the receiver.
    */
   async approvePaymentDelegation(parentAssociationId: string, childId: string) {
     const [parent, child] = await Promise.all([
@@ -2999,9 +3049,9 @@ ${rejectionReason}`
     ) {
       throw new BadRequestException('No pending delegation request from this association');
     }
-    if (!parent.stripeOnboardingComplete || !parent.stripeAccountId) {
+    if (!parent.lydiaOnboardingComplete || !parent.lydiaAccountId) {
       throw new BadRequestException(
-        'Complete your Stripe Connect onboarding before accepting delegated payments'
+        'Complete your payment account onboarding before accepting delegated payments'
       );
     }
     await this.assoRepo.update(childId, { paymentDelegationStatus: 'approved' });
@@ -3070,20 +3120,20 @@ ${rejectionReason}`
   }
 
   /**
-   * Returns true if the user may manage Stripe Connect for the association.
+   * Returns true if the user may manage the payout account of the association.
    *
-   * `MANAGE_STRIPE_CONNECT` is in `SUPER_ADMIN_EXCLUDED_FLAGS`: it points payouts at a bank
+   * `MANAGE_PAYOUT_ACCOUNT` is in `SUPER_ADMIN_EXCLUDED_FLAGS`: it points payouts at a bank
    * account, so it stays with the association's own people and the platform administrator.
    *
    * Existence is checked for the same reason as `canPostAs`: core-service asks this before opening
    * a Connect account against the id, so a yes on an association nobody has must not be returned.
    */
-  async canManageStripeConnect(
+  async canManagePayoutAccount(
     userId: string,
     associationId: string,
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<boolean> {
-    const flag = AssociationPermissionFlag.MANAGE_STRIPE_CONNECT;
+    const flag = AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT;
     if (!(await this.mayAct(userId, associationId, flag, opts))) return false;
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     return !!asso;

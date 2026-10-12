@@ -1,6 +1,9 @@
 import { sendChatMessage } from '$lib/utils/chat/messaging';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import type { Conversation } from '$lib/types';
+import { m } from '$lib/paraglide/messages';
+import { GraineDistributionUnavailableError } from '$lib/utils/graine/seedDistribution';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 const sendEncryptedChannelMessage = vi.fn();
 vi.mock('$lib/utils/chat/channelCrypto', async (orig) => {
@@ -33,14 +36,15 @@ describe('a refused channel send is described from its status, never from its bo
 
   const SERVER_WORDS = 'You are not a member of this channel';
 
-  function deps() {
+  function deps(log: (line: string) => void = () => {}) {
     return {
       userId: 'me',
       conversation,
       deviceKeyB64: 'k',
       mlsService: {} as unknown,
-      log: () => {},
+      log,
       addMessageToChat: async () => {},
+      patchSalonEcho: () => {},
     } as never;
   }
 
@@ -88,5 +92,53 @@ describe('a refused channel send is described from its status, never from its bo
 
     expect(result.success).toBe(false);
     expect(result.error).not.toContain('sealChannelMessage');
+  });
+
+  it('names a refused seal by its TYPED reason, and logs which one fired', async () => {
+    // Production 2026-10-09: members read "Échec de l'envoi" for ten minutes while a key-group
+    // catch-up that never closed refused every seal - and the line could not say so.
+    const refusal = new GraineDistributionUnavailableError(
+      workspaceScope('ws-1'),
+      'key-group-catching-up'
+    );
+    sendEncryptedChannelMessage.mockImplementation(() => Promise.reject(refusal));
+    const log = vi.fn();
+
+    const result = await sendChatMessage('hello', 'channel_c1', null, deps(log));
+
+    // The row was drawn before the seal was attempted, so the refusal lands on it (echoed).
+    expect(result).toEqual({
+      success: false,
+      error: m.chat_send_error_seal_key_group_catching_up(),
+      echoed: true,
+    });
+    expect(result.error).not.toBe(m.chat_send_error_generic());
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('reason=key-group-catching-up'));
+  });
+
+  it('sends nothing and reports "not echoed" when the local row cannot be drawn', async () => {
+    // The composer's draft is the only copy then: `echoed` absent is what tells the page to put
+    // it back (WP-OFF-1), and the POST must not have run behind a row nobody can see.
+    const result = await sendChatMessage('hello', 'channel_c1', null, {
+      ...(deps() as object),
+      addMessageToChat: async () => {
+        throw new Error('storage gone');
+      },
+    } as never);
+
+    expect(sendEncryptedChannelMessage).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.echoed).toBeUndefined();
+  });
+
+  it('reports a refusal AFTER the row was drawn as echoed, so nothing is restored twice', async () => {
+    sendEncryptedChannelMessage.mockImplementation(() =>
+      Promise.reject(new ChannelApiError(500, null, SERVER_WORDS))
+    );
+
+    const result = await sendChatMessage('hello', 'channel_c1', null, deps());
+
+    expect(result.success).toBe(false);
+    expect(result.echoed).toBe(true);
   });
 });

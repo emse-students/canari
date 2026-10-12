@@ -18,9 +18,21 @@ not a work package, it is a line in this table. The WP ids are kept in the table
 `CHANGELOG.md` name them. **A check that FAILS earns a new WP; a check that passes earns a PASS
 here and nothing else.**
 
+**The bench is the Mi 9T and the iPhone 12. The Pixel 6a is the user's personal phone: observation only** (user, 2026-10-11) - no agent installs, resets, signs in over or drives it; a reading on it is the user's own look.
+
 ## Where the pass stands
 
-**2026-10-06, `v1.0.4-alpha.3` on the Mi 9T (a debug build of the same tree on the LOCAL estate - the harness accounts exist nowhere else; the release APK is signed with another key and cannot replace the debug app without an uninstall that costs the device).** Read and `PASS`: the tab swipe with no leftover shift (#1515), the profile header (#1513), conversation order across both accounts (#1510), the top-placed reaction-failure toast (#1509), the reel editor end to end (#1504-#1506), the own-message reply swipe icon, #1287, #1288, D1 and D4. **FAIL or owed, with the evidence on [backlog](backlog.md#after-the-102-release---what-the-user-asked-for-on-2026-10-02-and-what-is-owed-a-reading)**: no haptic on Android (the manifest lacks `VIBRATE`), NOTIF-10, GRP-3..10 ([cross-client-testing](cross-client-testing.md)), D2, D3 and #1520 (not reachable from the phone account).
+**2026-10-11, `v1.2.3-alpha.5` on the iPhone 12 (iOS 27.0.1, TestFlight build 100200305, `dev.canari-emse.fr`, account `canari-test-gamma`).** `PASS`: the login page's "Ouvrir dans l'application" opens the app (#1605, iPhone half), the conversation's glass chrome (alignment, "+" > Photos opens ONE picker, the four accessible names), the camera opening full-bleed on the front lens 15 of 15 times with a home-and-return (#1370, front half), the emoji pictures in the composer and the bubble (rows 3 and 12, in part), the profile hub's breadcrumb, a 5 s video sent, the associations list scroll. **`FAIL` in a new shape: check W on the iPhone** (3 of 3 rises). Every reading, what is blocked and what waits for the next pre-release: [the inventory below](#the-iphone-12-owed-readings-inventory-2026-10-11).
+
+**2026-10-07, `v1.0.4-alpha.5` on the iPhone 12 (iOS 27.0.1, TestFlight build 100000405, `dev.canari-emse.fr`).** Read and `PASS`: the signed calendar subscription for the reader's own campus and formation, copied and opened in Calendar (#1541, #1551), the reel camera opening on the FRONT lens (#1552), the post composer draft per account (#1549), the glass tab bar, the profile page, the tab swipe and the reel review controls. **Not read: the reaction toast, the send path and the reply context (#1548)** - `canari-test-gamma` is the service account and cannot discover or be discovered by a non-admin peer. Detail and owed causes: [backlog](backlog.md).
+
+**2026-10-06, `v1.0.4-alpha.4` on the iPhone 12 (iOS 27.0.1, the TestFlight build, `dev.canari-emse.fr`).** Read and `PASS`: the profile page and header (#1513), the glass tab bar, the tab swipe showing its destination and a drift staying put (#1515), the reel review letterbox with its controls, Next to publish and the confirmed discard (#1539, #1505, #1506), Noto emoji, the feed scroll. `FAIL`: the signed calendar subscription refuses the reader's own campus (#1541). Not reached: the reaction toast, the send path and the scheduled-post time (no second account on dev). Detail and owed causes: [backlog](backlog.md).
+
+**2026-10-06, `v1.0.4-alpha.3` on the Mi 9T (a debug build of the same tree on the LOCAL estate - the harness accounts exist nowhere else; the release APK is signed with another key and cannot replace the debug app without an uninstall that costs the device).** Read and `PASS`: the tab swipe with no leftover shift (#1515), the profile header (#1513), conversation order across both accounts (#1510), the top-placed reaction-failure toast (#1509), the reel editor end to end (#1504-#1506), the own-message reply swipe icon, #1287, #1288, D1 and D4. **FAIL or owed, with the evidence on [device-readings-2026-10](device-readings-2026-10.md)**: no haptic on Android (the manifest lacks `VIBRATE`), NOTIF-10, GRP-3..10 ([cross-client-testing](cross-client-testing.md)), D2, D3 and #1520 (not reachable from the phone account).
+
+**2026-10-06 (second pass), `v1.0.4-alpha.4` on the Mi 9T, same method.** Read and `PASS`: VIBRATE granted (#1535, no haptic can be felt on this phone's silent ringer), the salon reaction failure toast and rolled-back pill (#1536), the review pencil ring and the camera close (#1539), a scheduled post listed then published (#1520), the profile page (#1531), the signed calendar subscription (#1541), the tab swipe, the resume reload (`reloaded`). **Still `FAIL`: NOTIF-10** - one batched real banner and three refused pushes leave one nameless line ([backlog](device-readings-2026-10.md)).
+
+**2026-10-07 (third pass), `v1.0.4-alpha.5` on the Mi 9T (debug APK built from tag `1be223001`, identical to `10115526c` apart from the version bump, versionCode 100000405, installed over the previous one; LOCAL estate rebuilt from the same tree).** Read and `PASS`: the reply context is per conversation (#1548: armed in the DM, absent in the salon, back in the DM), the reel camera opens on the FRONT lens and the flip control swaps front and back both ways (#1552, log `[camera] opened user: camera 1, facing front`, then `environment: camera 0, facing back`), the signed calendar subscription (sign 201, feed 200 signed, 403 unsigned), the post composer draft is keyed by an owner hash (#1549; only ONE account is enrolled on the phone, so the cross-account isolation itself is not observable here), the profile page, the four-tab bar, the tab swipe, a scheduled post listed then published on the minute. The JNI call of #1550 (`ZJI`, `covers`) ran with no `UnsatisfiedLinkError` or `NoSuchMethodError`. **Still `FAIL`: NOTIF-10** - the batching works only when one banner stands for several messages; a run where each message got its own real banner long before its push arrived still leaves one nameless line ([backlog](device-readings-2026-10.md)).
 
 **Android is done except B-bis, H, K, L, M and R.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
 archived on the user's desktop) after partial runs on v0.11.5 and v0.11.6. Two defects came out of
@@ -35,6 +47,8 @@ cells are now OWED and schedulable; check S is the only one that has actually ru
 no iPad, and on 2026-08-30 that stopped being an academic gap**: App Review ran one, and the login
 defect it found had been in every build the store ever had - check T, and the paragraph there saying
 why an iPhone settles that particular check for both.
+
+**iPad: switching into Canari from another app does not rotate the window (reported 2026-08-28)** - needs an iPad. Android phone rotation is decided: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)). **iOS lifecycle classes (suspension and resume, the WebView evicted under memory pressure, a socket that does not come back; named by the user 2026-08-27) are closed by lettered checks here, one at a time, never by a fix written against a lifecycle bug nobody has seen** - three of three iOS defects so far were invisible to every gate.
 
 Two consequences to carry deliberately rather than rediscover:
 
@@ -407,6 +421,12 @@ which is a tap on a notification that woke them up.
 1. Kill the app. Have the peer send a DM, then a channel message.
 2. Tap each notification. Each must land in the right conversation, **not** merely the right tab.
 3. Repeat with the app merely backgrounded (HOME, not killed).
+4. **With the session dead** (sign in, delete the device's session server-side, kill the app), tap a
+   POST push: the app must land on `/login?returnTo=%2Fpost%2F<id>` and, after signing in, on the post
+   ([sessions](sessions.md#a-dead-session-sends-the-user-to-login-carrying-where-they-were-going-2026-10-09)).
+   Read `[AUTH] Session expired - logging out and redirecting to /login?returnTo=...` in the log. A bare
+   `/login` means the deep link never reached `goto` (then `[hooks] Processing URL` is absent too, and
+   the fault is upstream of this fix: read `[hooks] launch URL read on attempt N`).
 
 **Read the log, not just the screen.** This check was recorded PASS on v0.11.7 and the DM half was
 broken the whole time: the tap does reach the right tab, and "right tab" is what a pass looks like
@@ -554,12 +574,7 @@ been run. To re-arm the precondition - it is NOT ambient, and a run made without
    which is the whole reason this re-measurement sat unmade for a week. It performs steps 1-3 itself
    and asserts each, so the only human part is the reply.
 
-   **AND THE BACKGROUNDED CASE CANNOT BE ANSWERED YET, for a reason found on 2026-09-06**: the JS
-   layer posts the notification when the app is alive, and it attaches NO quick actions - only
-   `CanariFirebaseMessagingService` does, and that runs when the app is dead. So the shade offers no
-   `Repondre` in the state this check is about. Filed as a P2 in [backlog](backlog.md); `k.mjs`
-   records `SKIPPED` rather than `FAIL` when no reply is made, so a run cannot be mistaken for a
-   product verdict.
+   **The backgrounded case CAN be answered since 2026-09-18**: the WebSocket trigger posts through the same Kotlin builder, so the shade carries `Repondre` there too ([mobile](frontend/mobile.md#notification-quick-actions-are-on-every-android-message-notification-whoever-posts-it-resolved-2026-09-18-audited-2026-10-10)). `k.mjs` still records `SKIPPED` rather than `FAIL` when no reply is made, so a run cannot be mistaken for a product verdict.
 5. **Verdict lines:** `retrievePushSecret: newer secret adopted from pending_push_secret.txt -> Keystore`,
    then `sendQueuedMessagePush: HTTP 201`, then `1 sent, 0 remaining`. A `403` means the fix is
    wrong, not that the rig is.
@@ -1053,7 +1068,149 @@ and the English error became `auth_biometric_no_user`.
 Still owed: a real finger (the proof written by a success), the Settings radio (step 4), and all of
 iOS.
 
+## V. The camera swipe on a fresh Feed after publishing - owed on Android
+
+**Proves** [the modal that left the overlay stack](frontend/mobile.md#a-modal-closed-by-its-owners-state-left-the-overlay-stack-and-the-tab-swipe-stood-down-2026-10-09).
+**Precondition:** a build carrying it, the Mi 9T, a signed-in account that may publish.
+
+1. Open the Feed, publish a post from the composer (the modal closes by itself).
+2. Immediately, with no other navigation, swipe right from the Feed: the camera must open, first time.
+3. Repeat three times. The failure was 3 of 3 on the first load after publishing.
+
+A refusal here means some OTHER overlay is still registered: read `historyOverlayStackDepth()` over CDP.
+
 ## iPad and rotation - owed on an iPad\n\nSwitching into Canari from another app does not rotate the window on an iPad (reported 2026-08-28); it needs an iPad. The Android phone rotation is decided and shipped: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)).\n
+
+## X. The scroll after an edge swipe - owed on the Mi 9T
+
+**Proves or refutes** [the swallowed scroll](frontend/design-reference.md#41-the-system-back-gesture-takes-the-edge-touch-and-the-swipe-back-stayed-armed-mi-9t-2026-10-05):
+adb-injected edge gestures may not behave as a finger, so this is a REAL-FINGER reading. **Precondition:**
+a build carrying the `[swipeBack]` lines, gesture navigation on, a conversation with enough messages to scroll,
+the page inspectable over CDP (console) or `logcat`.
+
+1. Open the conversation, tap the text field, close the keyboard with the system back swipe from the
+   left edge. Expect `[swipeBack] armed at x=<small>` then `[swipeBack] touch cancelled (tracking=true...)`
+   and the conversation STILL open.
+2. Immediately scroll the list from mid-screen with one finger. Does it move on the FIRST stroke?
+3. Repeat the edge swipe, wait 3 s, then scroll. Then repeat with a scroll from the edge strip itself.
+4. If the first stroke is swallowed with a `cancelled` line before it: it is the engine after a cancelled
+   sequence, and the question moves to the WebView (record it, do not patch the page). If it is swallowed
+   with NO `cancelled` line: the edge touch was not seen by the page at all.
+
+## W. The composer stands still while the keyboard rises - owed on BOTH phones
+
+**Proves** [the two stale numbers of a keyboard rise](frontend/modules/chat.md#every-keyboard-rise-moves-the-composer-for-a-moment-on-both-phones-measured-2026-10-02-fixed-2026-10-09-reading-owed).
+Method of the original reading (#1345): over CDP, sample the composer's top
+(`.chat-composer-footer`, `getBoundingClientRect().top`) every animation frame while tapping the
+text field of an open conversation.
+
+1. **Mi 9T**: the top goes from ~877 straight to ~532, with NO frame near 174 (it sat there 60-100 ms),
+   and `visualViewport.height` never reads below `innerHeight` by a keyboard's worth.
+2. **iPhone 12**: the top goes from 766 straight to ~487 pt, with NO ~400 ms plateau at 465, and the
+   closed composer is where it always was (the pin is released on close).
+3. Open and close the keyboard five times each: no frame outside the two resting positions.
+
+**iPhone 12, `v1.2.3-alpha.5`, 2026-10-11: `FAIL` in a new shape, 3 of 3 rises.** The store build is
+not inspectable, so the composer was read from WDA's MJPEG stream (~22 frames/s, a frame every 45 ms).
+Step 2 holds: the composer goes from 766 to 487 pt with no plateau at 465, and a close goes back to
+766 in one frame. Step 3 fails. The native "+" twin is at 487 in the first frame of the rise. The web
+layer is not: for five or six frames (~250 ms) it is drawn about one keyboard height LOWER, then it
+slides up. The web composer is hidden behind the rising keyboard, the "+" floats alone, and the dev
+banner slides from y=333-353 pt up over the glass header. In points per frame: banner
+333/282/204/117/72/60, composer 713/642/592/546/501/487. Frames:
+`F:/Programmation/canari-harness/ios-bench/r1011/kbd2`, `kbd3`, and the contact sheets
+`kbd2-contact*.png`.
+
+## The iPhone 12 owed-readings inventory (2026-10-11)
+
+Every reading the wiki, the backlog, `CLAUDE.md` and the pull requests of 2026-10-09 to 2026-10-11
+owe the iPhone, classified against the build on the bench that day: TestFlight `1.2.3 (100200305)`,
+which is `v1.2.3-alpha.5`, signed *TestFlight Beta Distribution* (aps `production`, no
+`get-task-allow`, so NOT inspectable and no app log in the syslog), on `dev.canari-emse.fr`, signed
+in through "Connexion externe (service-account)" as `canari-test-gamma`. Driven with
+`tools/ios-device/ios.mjs` over WDA, timed from WDA's MJPEG stream on port 9100. Evidence:
+`F:/Programmation/canari-harness/ios-bench/r1011/`. **Delete a row when its reading is taken on
+the build it names.**
+
+| Reading owed | Source | Status on 2026-10-11 |
+| --- | --- | --- |
+| #1370 camera letterbox: 20+ opens, both lenses, a home-and-return | backlog verification table | **`PASS` front lens, rear NOT READ.** 22 opens, 8 lens flips, 2 home-and-returns: every front-lens preview full-bleed (0 dark columns, 3 dark rows: the status band). The rear lens faced the table, so its frame was black, with the torch button drawn. Owed: the rear half with the phone held up |
+| #1605 "Ouvrir dans l'application" on the login page | backlog | **`PASS` (iPhone half).** `canari.emse.fr/login` in Safari shows the link (dev correctly has none: `MOBILE_APP_LINK_HOSTS`), Safari asks "Ouvrir dans Canari ?", the app comes up on `/chat`. Android half still owed |
+| Liquid glass chrome: alignment, keyboard, "+" > Photos, the four names | backlog, the Liquid Glass section | **alignment, picker and names `PASS`**: back, title pill and menu share one centre line, and the pill is centred at x=195. "+" opens Photothèque / Appareil photo / Tous les fichiers / Envoyer un GIF, and Photothèque opens ONE system picker. The AX names (the ones VoiceOver speaks): "Retour au menu", "Paramètres du groupe", "Plus d'actions", "Ajouter". **Keyboard: see W** |
+| W, the composer during a keyboard rise | check W | **`FAIL`, new shape**: [W above](#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones) |
+| Emoji rows 1, 3, 12 (the iPhone, where the font never drew) | [emoji](frontend/emoji.md#what-a-future-campaign-owes---the-twelve-rows-moved-from-the-backlog-2026-10-08) | **`PASS` by eye, in part**: a flag, a ZWJ family and a skin-toned thumb are ONE picture each in the composer, with the caret after them. One Backspace removes the toned thumb whole. The sent bubble draws the flag and the family as pictures. `naturalWidth` (row 1) needs the DOM; a paste and an IME commit were not read |
+| `/posts` and associations scroll (first iOS feedback) | backlog, "The first iOS feedback" | **`PASS` on the BENCH iPhone**: three flicks on the associations list, momentum in 41 of 113 frames, the list moves 0 to 12 members down. The reading owed is on the REPORTING iPhone, which this is not |
+| Section navigation on the phone (profile hub, breadcrumb) | CLAUDE.md queue item 0 | **`PASS`**: Mon profil > Cotisations et achats shows the crumb and "Retour : Mon profil", and the crumb goes back. A synthetic edge swipe did NOT go back on that page (not a verdict: whether the edge swipe applies there is not written down) |
+| An attachment over 1 MiB on dev (WP-S1 #1708, #1710 on iOS) | backlog Cloudflare P1, offline section | **sent**: a 5 s gallery video in a one-member group read "Message envoyé" in ~2 s. Its size was NOT measured, and the server log read was refused to the agent, so this does not close the 1 MiB question |
+| #1604, no PIN prompt after a later sign-in | backlog | **BLOCKED** by the P3 "switching accounts on one iPhone install makes the local store unreadable", which this session met again (below) |
+| #1536 / #1548 reaction toast, send path, reply context | backlog | **BLOCKED**: no peer that the dev service account may discover |
+| NOTIF-18 (NSE on a silent frame), the iPhone salon banner, a push carrying its ciphertext once, the iOS reaction stack, mention names, check B/C/K on iOS | backlog, notification sections | **BLOCKED on the estate**: dev cannot send a push (Firebase not initialised in `canari-dev-chat-delivery-service`), and a TestFlight pre-release only talks to dev |
+| Check U (biometric cadence, all of iOS) | check U | **BLOCKED**: needs an enrolled face |
+| The iOS launch logo (#1289): delete, RESTART, reinstall | backlog | **not taken**: a restart kills the WDA runner the session depends on. Owed in a session that can re-arm `wda-daemon.py` |
+| The window bars (status bar, home indicator) with the glass chrome | backlog, iOS window layout | **screenshots for the user's look** in `r1011/` (`17-group.png`, `19-plus.png`). Seen: the dev banner sits over the status bar on the camera screen (`09-cam.png`), dev builds only |
+| The reel editor end to end (text, drawing, stickers, "Suivant"), real-content take, viewer swipe timing | backlog, CanaReels | **WAITS for the next pre-release**: #1739 and #1742 (the 9:16 frame, the editor full-bleed and keyboard-proof) merged after `v1.2.3-alpha.5` |
+| #1742 reel frame parity | PR | **WAITS** (merged, in no release yet) |
+| #1738 IndexedDB eviction: kill with a queued 13 MB file, relaunch | PR #1738 (open) | **WAITS**: the PR is not merged |
+| #1744 feed reel fetch, playback start | PR #1744 (open) | **WAITS**: not merged |
+| PDF viewer performance | branch `perf/pdf-viewer` | **WAITS**: no pull request yet |
+| Session holds, check P | CLAUDE.md | **not re-read by rule**: proven, "must not be re-verified" |
+
+**Met again: the account-switch P3, and how the bench got there.** TestFlight "Mises à jour
+automatiques" was ON, and it had replaced the bench's `1.2.2-alpha.1` with the `1.2.3` STABLE, a
+build that talks to PRODUCTION. Installing `100200305` from "Builds précédents" turns automatic
+updates off for the app (TestFlight says so), which keeps it off. The next sign-in as gamma then
+answered `auth_local_state_unopenable` on the right PIN, and the documented remedy cleared it:
+uninstall, reinstall, sign in. "PIN oublié ?" was not used, because it would reset the ACCOUNT's
+PIN. A fresh install then asks for notifications, the microphone and the camera, and, the first time
+a URL is opened, for iOS 27's default browser, which must be answered (Safari) before `ios.mjs url`
+or a Safari launch is allowed.
+
+## The Mi 9T readings of v1.2.4-alpha.2 (2026-10-12)
+
+Build `1.2.4 (100200402)`, the `v1.2.4-alpha.2` release APK, on `dev.canari-emse.fr`, signed in as
+the `fourth` account (shown as "Canari Test Delta"). It was already installed when the readings
+started, and nothing was reinstalled. The WebView is inspectable, so every number below comes from
+CDP (console, heap, DOM geometry) and screenshots, and every timestamp is the phone's. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1012-alpha2/` (frames, `send13.jsonl`, `slow.jsonl`,
+`dom*.log`). Frames that showed a tester's face were not kept.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| A ~13 MB video, sent in a DM | **`PASS`** | The file was a 12.9 MB, 20 s, 1080x1920 test pattern picked from "Tous les fichiers". `[video-prep]` brought it down to 7.4 MB (720x1280) in 12.1 s, before the send. After the tap on send: the outbox row was durable at +1.4 s (`durable write took 218 ms`), the bubble read `Envoi 24 % - 1,8 Mo sur 7,4 Mo` at about +2.9 s (first byte in under 3 s), and `[OUTBOX] ... sent` came at +6.3 s, with the check mark. No bubble stuck on "Envoi". The JS heap stayed at 18-21 MB throughout. Logcat shows no OOM, no GC storm and no lmk kill. Two things worth noting: the transcode keeps the main thread busy (TaskDuration +7.6 s over 12 s), and the pending tile shows a generic file icon instead of a video thumbnail. The poster appears about 15 s after "sent" |
+| Reel camera, 9:16 full-bleed | **`PASS` (geometry)** | Swiping right from `/posts` opens `/camera`. The preview is `436x775` CSS px at x=0 (full width), exactly 9:16, `object-fit: cover`, with a 12 px radius. The stream is 720x1280 from the FRONT lens by default. The room was dark at 02:00, so what the picture showed was not judged. The first time only, the swipe stopped half-way behind the microphone permission prompt |
+| Reel editor: keyboard, tray, trash, caption against the bar | **`FAIL`, one defect** | The keyboard lifts the text field and the tray above the IME. Dragging an overlay brings up a central trash that turns red, and dropping onto it deletes the overlay (`PASS`). The caption wraps over two lines, and "Publier" sits above the keyboard (`PASS`). **Defect: an overlay is not kept inside the frame.** Dropped on the tool tray, it is drawn OVER the tray icons. Its visible part cannot be grabbed again: a grab from the screen edge fires Android's back gesture, which opens the "Abandonner vos modifications" dialog. It is then baked into the published reel, clipped at the frame edge ("Test reel al" in the thumbnail and in the feed) |
+| Legacy reel in the viewer | **`PASS`** | A reel from before #1742 (588x1040, posted 15 h earlier) opens at `436x771` with `object-fit: contain`: no bars, rounded, on a blurred backdrop, with its controls inside the frame |
+| Feed reel playback start | **`PASS`** | An IntersectionObserver records `play`/`playing` 51 ms after the video reaches 50 % visibility. It plays muted, by itself. It was already cached, so a COLD first fetch was not timed |
+| The slow-link hint is a corner icon, not the "Connexion lente" banner | **`PASS`** | Provoked with no root by `settings put global ingress_rate_limit_bytes_per_second 18000` plus a Wi-Fi cycle. `[CONNECTIVITY] slow link` mounts `slow-link-indicator`: a 28x28 CSS px round badge at the top right (x=400, y=42), opacity 0.8, with the SignalLow glyph, and no strip. The label is in `aria-label`/`title` only. At 8 and 14 KB/s, two 20 s stalls turn it into the "Hors connexion" banner, which is the offline state and the right one for an unreachable server. On dev, the badge sits over the "Environnement de test" banner |
+| Media cards in the dark theme | **`PASS` by eye** | The chat video bubble (dark placeholder, then the poster), the feed image card on its blurred dark backdrop, the link-preview card and the viewer all look right. The light theme was not read |
+
+Also met: in the post composer, "Filmer" opens the SYSTEM camera (`org.lineageos.aperture`), not
+the CanaReels camera. In the reel camera, a TAP on the shutter takes a photo. The capture here was
+therefore a still, so the editor was read on an image and not on a video. Deleting a post from its
+menu asks for no confirmation. The PDF viewer measurement was not taken in this pass.
+
+## The Mi 9T readings of v1.2.4-alpha.3 (2026-10-12)
+
+Build `1.2.4 (100200403)`, the `v1.2.4-alpha.3` release APK (`app-universal-release.apk` from the
+GitHub release), installed with `adb install -r` over alpha.2. Play Protect's upload prompt was
+declined. The enrolment survived the upgrade, so there was no new sign-in: same `fourth` account
+("Canari Test Delta") on `dev.canari-emse.fr`. Every number comes from CDP on the inspectable
+WebView, and every timestamp is the phone's. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1012-alpha3/` (frames `a3_*.png`, `a3_pdfm.json`,
+`a3-cold-*.json`, `tap-summary.ndjson`).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| Reel editor: a text overlay dropped on the tool tray (#1755) | **`PASS`** | A photo was taken in `/camera` and a text "Canari bord TEST" was dragged from the middle to the bottom-right, onto the tray (`input swipe`, real touches). The box settled at x 424-1078 of a 1079 px screen, its centre above the tool row and clear of it, and no glyph was cut. It was grabbed again from its centre and moved to the middle with no back gesture. Dropped on the tray a second time, it landed in the same place. The export (718x1278) and the published feed card show the whole caption with about 20 px of margin |
+| Restyle with the keyboard up | **`PASS`, one thing to know** | With the field open and the keyboard up, changing the font (serif) and then the background style left the centre exactly where it was (751, 1883). But the restyled box got WIDER than the space left (its right edge went to 1106, then 1150, past the 1079 px screen), so during the edit "TEST" was cut at the screen edge. It is pulled back inside only at "OK" (right edge 1077, centre moved 73 px to the left), and that is the state that publishes. A tap on a style also hid the ADB keyboard (the viewport went from 2116 back to 2339 px) |
+| A tap on a stroke | **`PASS`** | A pencil stroke, then two taps on it: the stroke is selected (dashed box) and stays where it was, and the text overlay stays at 424/1818/1078/1949 |
+| PDF reader in the app: `pic86.pdf` (81-page 14 MB scan, the owner's file, read with permission), sent in the BenchR1 DM from "Tous les fichiers" | **`PASS`, one defect** | Sent with its check mark. The first-page thumbnail on the card took ~25 s to replace the spinner. Times measured by CDP from a scripted click on "Ouvrir le document" (blob already decrypted by an earlier open): **first page painted at 663 ms, sharp at 852 ms**. **Seven real flings** (`input swipe`, 60 ms each): the landing pages (80-81) were sharp **1.08 s** after the last one, with 7 long tasks over the fling, 758 ms in total, the longest 221 ms. **Page 40**, reached by setting `scrollTop` (the reader has no page-jump control): drawn at **28 ms**, sharp at **609 ms**. **Text selection**: a long press on the OCR layer selects the word ("les", highlighted on the glyph) with the system menu (Copier / Partager / Tout sélectionner). Dragging a handle extends the selection across lines. The copied text joins two lines with no space ("les**autres** Grandes Ecoles"). **Defect, zoom loses the reading position:** zooming in from page 80 (x3, scripted) landed on pages 26-27. A REAL tap on "Agrandir" from page 40 (printed page 39) landed on page 27 (printed page 26). `scrollTop` stays the same while every page gets taller, so the reader ends up at page / zoom. The pinch anchors on its page ([posts](frontend/modules/posts.md#the-pinch-and-why-it-needs-a-focal-point)), but the buttons do not. Sharp after the last of three clicks: 1.49 s, longest task 404 ms |
+| Notification tap to conversation, cold, behind the PIN (n=5) | **`PASS`** | Same method and instrument as [notification-to-conversation-latency](frontend/notification-to-conversation-latency.md) (the exact PendingIntent `am start`, then the PIN typed by the instrument). Medians [range], in ms after the tap: PIN gate 1665 [1627-1749], PIN submitted 1953 [1920-2130], `MLS ready` 2749 [2667-2905], route `/chat` 2965 [2870-3125], **pane + composer usable 3296 [3191-3449]**, first history row 3880 [3796-4107]. PBKDF2 106-136 ms, `mls-init` 28-48 ms. That is **0.53 s better than F2 (3825)** and **1.77 s better than the `main` baseline (5063)**. The gate matches F3 (1741). The feed's 20-card mount never ran under the landing. **Back from the conversation**: Back opens the conversation list. The feed tab then shows its posts (no stuck skeletons) |
+| Quick regression: a text, then a ~14 MB video in BenchR1 | **`PASS`** | The text was `msg-status-sent` within 3 s. The video was a 14.5 MB, 9 s cut of the 12 Mbit/s test pattern from "Tous les fichiers". After "Préparation de la vidéo", the bubble showed a placeholder and then its poster, with the check mark, within 30 s of the tap. The staged tile still shows a generic file icon. **Slow-link badge: not provoked.** On fast Wi-Fi the `slow-link-indicator` never mounted and no banner appeared over the 180 s of polling. The corner-icon form was read on alpha.2 with the rate limit (above), and nothing between the two builds touches it |
+
+Also met: swiping right on `/posts` (three `input swipe` attempts, on the media and on the post
+header) did not open `/camera` in this pass. The camera was reached through a link click. In the
+post composer, "Appareil photo" opens the system camera.
 
 ## Traps that outlived the work that found them
 

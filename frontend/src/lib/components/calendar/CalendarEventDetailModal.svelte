@@ -2,11 +2,13 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import LetterboxedImage from '$lib/components/shared/LetterboxedImage.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
   import {
     associationLogoSrc,
     eventIcsAbsoluteUrl,
     getPostLinkedToCalendarEvent,
+    listEventCoOrganisers,
     type AssociationCalendarFeedEvent,
     type LinkedPostSummary,
   } from '$lib/associations/api';
@@ -86,6 +88,33 @@
       });
   });
 
+  /**
+   * HOW MANY CO-ORGANISATION PROPOSALS ARE STILL WAITING, shown only to who may write the event (the
+   * states endpoint is for editors; a reader gets no line, and a refusal here is that, not a fault).
+   * A pending proposal is nothing on the event until accepted, so this quiet line is the only place
+   * the organiser side sees that more associations were asked.
+   */
+  let pendingCoOrganisers = $state(0);
+  $effect(() => {
+    const target = open && canEdit && event ? event : null;
+    if (!target) {
+      pendingCoOrganisers = 0;
+      return;
+    }
+    let cancelled = false;
+    listEventCoOrganisers(target.associationId, target.id)
+      .then((states) => {
+        if (!cancelled) pendingCoOrganisers = states.filter((s) => s.status === 'pending').length;
+      })
+      .catch((err) => {
+        if (!cancelled) pendingCoOrganisers = 0;
+        Log.d('calendarEventDetailModal.coOrganisers not readable', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  });
+
   function toAgendaExport(ev: AssociationCalendarFeedEvent): AgendaExportEvent {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     return {
@@ -127,13 +156,21 @@
       {/if}
 
       {#if identityLinks.length > 0}
-        <p class="text-cn-dark/80 text-xs font-semibold tracking-wide uppercase">
-          {#each identityLinks as link, i (link.associationId)}
-            {#if i > 0}<span class="text-text-muted"> · </span>{/if}
-            <a href="/associations/{encodeURIComponent(link.slug)}" class="hover:underline">
-              {link.name}
+        <div class="flex flex-wrap items-center gap-1.5" data-event-organisers>
+          {#each identityLinks as link (link.associationId)}
+            <a
+              href="/associations/{encodeURIComponent(link.slug)}"
+              class="border-cn-border text-text-main inline-flex max-w-full items-center gap-1.5 rounded-full border bg-(--cn-surface) py-0.5 pr-2.5 pl-0.5 text-xs font-semibold hover:underline"
+            >
+              <AssociationAvatar name={link.name} logoUrl={link.logoUrl} size="sm" shape="circle" />
+              <span class="truncate">{link.name}</span>
             </a>
           {/each}
+        </div>
+      {/if}
+      {#if pendingCoOrganisers > 0}
+        <p class="text-text-muted -mt-2 text-xs" data-coorganisers-pending={pendingCoOrganisers}>
+          {m.calendar_event_coorganisers_pending({ count: pendingCoOrganisers })}
         </p>
       {/if}
 

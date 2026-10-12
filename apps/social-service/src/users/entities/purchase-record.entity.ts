@@ -1,5 +1,12 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 'typeorm';
 
+/**
+ * How a purchase was paid. `online` is the current value for a card/Lydia payment; `stripe` is the
+ * value of every row written before the processor left (docs/wiki/stripe-archive.md) - data at rest,
+ * read as `online`, never written again.
+ */
+export type PurchasePaymentMethod = 'online' | 'stripe' | 'cash';
+
 /** Immutable audit record for a completed purchase (form submission or boutique product). */
 @Entity('purchase_records')
 export class PurchaseRecord {
@@ -24,7 +31,7 @@ export class PurchaseRecord {
   amountCents: number;
 
   @Column({ length: 30 })
-  paymentMethod: 'stripe' | 'cash';
+  paymentMethod: PurchasePaymentMethod;
 
   @Column({ length: 30 })
   status: 'paid' | 'pending_cash' | 'cancelled' | 'expired';

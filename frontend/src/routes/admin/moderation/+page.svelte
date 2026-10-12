@@ -37,17 +37,23 @@
   } from '$lib/posts/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { ensureContentModerator } from '$lib/associations/api';
-  import { goto } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
+  import { page } from '$app/state';
+  import { parseTab, tabUrl } from '$lib/admin/tabQuery';
+  import { internalPath } from '$lib/utils/internalPath';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
   import { copyId } from '$lib/utils/copyId';
   import { getLocale } from '$lib/paraglide/runtime';
 
-  type Tab = 'reports' | 'hidden' | 'muted';
+  const TABS = ['reports', 'hidden', 'muted'] as const;
+  type Tab = (typeof TABS)[number];
 
-  let tab = $state<Tab>('reports');
+  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  let tab = $state<Tab>(parseTab(page.url.searchParams.get('tab'), TABS, 'reports'));
   let reports = $state<ContentReport[]>([]);
   let mutedUsers = $state<MutedUser[]>([]);
   let hiddenPosts = $state<HiddenPost[]>([]);
@@ -87,6 +93,9 @@
       return;
     }
     void loadReports();
+    // Arriving on `?tab=hidden|muted`: the other lists load on first view, so load the open one.
+    if (tab === 'muted') void loadMuted();
+    if (tab === 'hidden') void loadHidden();
   });
 
   /** Resolves a set of user IDs to display names asynchronously. */
@@ -155,6 +164,7 @@
   async function switchTab(t: Tab) {
     tab = t;
     error = '';
+    replaceState(resolve(internalPath(tabUrl(page.url, t, 'reports'))), page.state);
     if (t === 'muted' && mutedUsers.length === 0) void loadMuted();
     if (t === 'hidden' && hiddenPosts.length === 0) void loadHidden();
   }
@@ -364,53 +374,36 @@
 </PageHeader>
 
 <!-- Tabs -->
-<div class="mb-6 flex gap-1 rounded-xl bg-black/5 p-1">
-  <button
-    onclick={() => switchTab('reports')}
-    class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
-    'reports'
-      ? 'bg-cn-surface text-text-main shadow-sm'
-      : 'text-text-muted hover:text-text-main'}"
-  >
-    <Flag size={16} />
-    {m.moderation_reports_tab()}
-    {#if pendingReports.length > 0}
-      <span class="text-2xs ml-1 rounded-full bg-red-500 px-1.5 py-0.5 font-bold text-white">
-        {pendingReports.length}
-      </span>
-    {/if}
-  </button>
-  <button
-    onclick={() => switchTab('hidden')}
-    class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
-    'hidden'
-      ? 'bg-cn-surface text-text-main shadow-sm'
-      : 'text-text-muted hover:text-text-main'}"
-  >
-    <EyeOff size={16} />
-    {m.moderation_hidden_tab()}
-    {#if hiddenPosts.length > 0}
-      <span class="text-2xs ml-1 rounded-full bg-orange-500 px-1.5 py-0.5 font-bold text-white">
-        {hiddenPosts.length}
-      </span>
-    {/if}
-  </button>
-  <button
-    onclick={() => switchTab('muted')}
-    class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
-    'muted'
-      ? 'bg-cn-surface text-text-main shadow-sm'
-      : 'text-text-muted hover:text-text-main'}"
-  >
-    <UserX size={16} />
-    {m.moderation_muted_tab()}
-    {#if mutedUsers.length > 0}
-      <span class="text-2xs ml-1 rounded-full bg-gray-500 px-1.5 py-0.5 font-bold text-white">
-        {mutedUsers.length}
-      </span>
-    {/if}
-  </button>
-</div>
+<SegmentedControl
+  class="mb-6"
+  items={[
+    {
+      key: 'reports',
+      label: m.moderation_reports_tab(),
+      icon: Flag,
+      badge: pendingReports.length,
+      badgeClass: 'bg-red-500 text-white',
+    },
+    {
+      key: 'hidden',
+      label: m.moderation_hidden_tab(),
+      icon: EyeOff,
+      badge: hiddenPosts.length,
+      badgeClass: 'bg-orange-500 text-white',
+    },
+    {
+      key: 'muted',
+      label: m.moderation_muted_tab(),
+      icon: UserX,
+      badge: mutedUsers.length,
+      badgeClass: 'bg-gray-500 text-white',
+    },
+  ]}
+  value={tab}
+  onSelect={switchTab}
+  label={m.moderation_title()}
+  tone="yellow"
+/>
 
 {#if error}
   <div class="bg-red-err/10 text-red-err border-red-err/30 mb-6 rounded-xl border p-4 text-sm">

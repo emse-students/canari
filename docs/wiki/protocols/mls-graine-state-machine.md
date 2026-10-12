@@ -1029,3 +1029,13 @@ That is what a store-and-forward queue for currently-offline devices looks like,
   learns something false about code that is correct. **So the convention is now `file` plus the
   SYMBOL** - a name a rename has to touch every caller to change, and one a reader can search for
   when it does move. Every pointer on this page was converted.
+
+## A bundle of pure declines goes out as key material (decided by the user, 2026-10-10)
+
+It used to be `DELIVERY.transport` on the argument that a decline carries no seed and restates a fact the requester could derive. The argument was false for the one fact a decline carries: "I do not hold it" is what sends the requester to the NEXT member, and a decline dropped for a recipient presence reports offline (a cold start asks before it has a socket, the COMM-18 shape) stranded the session for good, because nothing re-asks. **Every answer to a seed request is now ONE message, `DELIVERY.keyMaterial`, whatever it carries** - same delivery, same retry, same heal as a seed; no fourth `DELIVERY` combination was needed, so the wire is unchanged.
+
+- **Old clients need no shim, and no `legacy-compatibility` entry.** The flag is read by the server only; an old client decodes a `graineBundle` the same whichever way it arrived. A decline already in flight as transport is simply dropped as before. An OLD requester has no request-id check, so a decline replayed from the log after `forgetAskedSession` can DELAY it (one member struck early), never strand it.
+- **A durable decline can be REPLAYED from the distribution group's log**, so the requester binds each decline to the request it answers: `askedRequest` in `repair.ts` holds the id of the ask in flight per session, and `noteSeedUnavailable(session, answerer, requestId)` ignores any other id (a past walk, a superseded ask after an epoch change) and any decline not from the member the ask was addressed to. Idempotence comes from that id and the per-member `declined` set, never a clock. The id is recorded BEFORE the send, because the answer can land before `sendMessage` resolves.
+- **Cost accepted:** a few bytes per decline in the capped per-group log. Tests: `frameHandler.test.ts` (a pure decline is durable), `repair.test.ts` (`noteSeedUnavailable`: foreign request id, double delivery).
+- **Unproven:** the full chain on a real cold-starting device (decline reaches a socketless requester, the walk moves on) was not run on a harness.
+

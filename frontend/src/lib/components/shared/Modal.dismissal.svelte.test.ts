@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
-import { initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
+import { historyOverlayStackDepth, initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 import Modal from './Modal.svelte';
 
 const mounted: (() => void)[] = [];
@@ -176,5 +176,23 @@ describe('Modal', () => {
     openModal();
 
     expect(history.length).toBe(before + 1);
+  });
+
+  it('leaves the overlay stack when its OWNER closes it by state, not only when dismissed', () => {
+    // A publish sets `open = false` itself. The entry used to stay on the stack, and a non-empty
+    // stack stands the tab swipe down: the swipe to the camera did nothing on a fresh Feed after
+    // publishing, until a navigation drained it (Mi 9T, 2026-10-06).
+    const props = $state({ open: true, title: 'T', onClose: vi.fn() });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(Modal, { target, props });
+    mounted.push(() => void unmount(app));
+    flushSync();
+    expect(historyOverlayStackDepth()).toBe(1);
+
+    props.open = false;
+    flushSync();
+
+    expect(historyOverlayStackDepth()).toBe(0);
   });
 });

@@ -1,10 +1,72 @@
 # CanaReels - the client half (R3: decisions C4, C5, C6, C7)
 
 The camera tab, the capture screen, publishing, the full-screen viewer and save-to-gallery. The
-decisions are the user's ([backlog](../../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken));
+decisions are the user's ([below](#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29));
 the server contract is [reels (server)](../../services/reels.md); the one format a video is brought
 to before upload is the on-device preparation (`lib/video/prepareVideoForUpload.ts`). This page owns
 what the PHONE does.
+
+## The chantier: the comparison, the ten decisions, the build order (user, 2026-09-29)
+
+Asked on 2026-09-29, after the user looked at the publish screen on the Mi 9T: *"Regarde a quoi
+ressemble ce qui s'affiche quand on veut publier un post [...] Note les differences avec la facon de
+faire de Canari, peu ergonomique [...] On peut aussi regarder la facon de faire d'instagram [...] Les
+gens attendent les "CanaReels" avec impatience"*, then live streaming *"dans le futur"*. The composer
+comparison R1 was built from is on
+[posts](posts.md#the-composers-layout-full-screen-the-text-taking-the-height-the-actions-under-the-thumb-2026-09-29).
+
+**What the video path was, read from the code that day.**
+
+- Video was already accepted in a post, capped at 50 MB of ciphertext on both estates
+  ([media-service](../../services/media-service.md)).
+- It was drawn in a 16:9 box at most `max-w-md` wide (`PostMedia.svelte`): a vertical phone video was
+  small and letterboxed.
+- A media file was ONE AES-GCM operation under ONE IV (`mediaCrypto.ts`) and the download fetched the
+  whole blob and decrypted it once, so **nothing played before the last byte arrived** - the upload was
+  chunked for TRANSPORT only. R2 changed that (segmented encryption).
+- A post's CEK travels in the post row: post media is sealed against the STORAGE, not against the
+  Canari server - consistent with a post every member can read, and what makes a public live keyable.
+- Live has its bricks and none has run: the SFU is `call-service` (webrtc-rs, one-to-many), frames
+  are E2E-encrypted with MLS keys through `RTCRtpScriptTransform`, TURN is up in prod - and
+  `CALLS_ENABLED = false` ([calls](calls.md)).
+
+**Decided by the user, 2026-09-29.**
+
+| # | Decision |
+| --- | --- |
+| C1 | **Markdown STAYS** in posts; its layout is ours to make clean (formatting on demand, not two rows of buttons above an empty field). |
+| C2 | **Any member may publish a CanaReel**, as for a post; the existing reports cover moderation. |
+| C3 | **The PHONE compresses, the server only stores** - *"il faut que la charge serveur soit minimale, sinon on va vite avoir des problemes de stockage et de memoire"*. No server transcoding, no server thumbnails. Target 720p at ~2.5 Mb/s: ~28 MB for 90 s, under the 50 MB cap. |
+| C4 | **A CanaReel lasts 90 seconds at most.** |
+| C5 | **The camera is a TAB, left of the feed** (user's proposal): a swipe right from the feed opens it through the tab swipe that exists since #1223 - no competing gesture. |
+| C6 | **A CanaReel is kept ONE MONTH, then deleted - post, comments and reactions with it**; nothing dead stays on screen. The member can **save a reel to the phone's gallery** first, for memories. |
+| C7 | **A reel is read in the feed, and touching it opens a full-screen vertical viewer** that swipes to the next one. No dedicated Reels tab. |
+| C8 | **Stories: not now.** With one-month reels the two formats overlap. |
+| C9 | **Live, when it comes, is for the WHOLE network**, keyed like a post (its key in the row, as a post CEK is), after calls are revived and the box's egress is MEASURED (~1.5 Mb/s x viewers). |
+| C10 | **Delivered in stages**, each its own release (below). |
+
+Also decided later: no expiry notification for reel authors (user, 2026-10-02); the "deleted in N
+days" chip was removed (user, 2026-10-02), a reel shows its age.
+
+**The order, and where each stage stands.**
+
+1. **R1 - the composer: SHIPPED in `v0.18.32`** (#1226, #1227, #1229, then the in-app pickers and
+   Instagram-style feed video).
+2. **R2 - playable while downloading: SHIPPED.** Segmented media encryption (~1 MB segments, each its
+   own tag, a nonce per segment bound to its index and to the last one), a reader that decrypts as it
+   plays and seeks by segment, ranged reads on the media service; old single-block blobs stay
+   readable. The segmented writer has been ON since 2026-10-05
+   ([media-service](../../services/media-service.md#the-writer-flip---on-since-2026-10-05)); on-device
+   compression (C3) is the `prepareVideoForUpload` seam ([video-preparation](../video-preparation.md)),
+   composer wiring #1327.
+3. **R3 - CanaReels: SHIPPED in `v1.0.0`-`v1.0.2`.** The camera tab, 90 s capture, publish in the same
+   flow, the full-screen viewer, a `reel` retention class of 30 days that takes the post with it,
+   save-to-gallery. The capture screen is the app's own (full-screen preview, hold the shutter to
+   record, front/back switch, flash, a ring timer that stops at 90 s). The recorder writes WebM on
+   Android and MP4 on iOS and R2's compression brings both to one format. The server half is
+   [reels (server)](../../services/reels.md). The editor, called "catastrophic" by the user on
+   2026-10-05, is [reel-editor](reel-editor.md).
+4. **R4 - live** (C9), behind the calls revival: not started.
 
 ## The first camera open, read on both phones (2026-10-01, before anything was built on it)
 
@@ -33,6 +95,11 @@ What that decided:
   the hardware), `unavailable` (`NotFoundError`, `OverconstrainedError`, or no `getUserMedia` at all).
   An unknown name is logged with the name and read as `unavailable`. Each has its own sentence and a
   retry on the camera screen.
+- **The lens is asked EXACTLY** (`facingMode: { exact }`, 2026-10-06). A bare value is an IDEAL, and
+  WKWebView answered the BACK lens to `user` on an iPhone (alpha.4 reading) against the decision that the
+  camera opens on the FRONT one (`CameraSession.facing` starts at `user`, the flip is per take, nothing
+  persisted). A lens the phone lacks is an `OverconstrainedError` -> `unavailable`, logged; a track that
+  reports another lens than asked is `console.error`ed. Nothing ever retries on the other lens.
 - **The torch is a capability of the LENS**, read from the open track - so its button exists on the
   back lens and not on the Mi 9T's front one.
 - **Releasing a lens before opening the other** is what the session does anyway (a recorder cannot
@@ -136,7 +203,7 @@ bench log shows a `500` (Postgres refusing "reel-limits" as a UUID), and a serve
 
 The deadline that ends a full take IS the product rule (C4), not a timer standing in for a fact.
 
-**The take is the platform's container** (`reels/reelRecorder.ts`): MP4 on iOS, VP9 WebM elsewhere,
+**The take is the platform's container** (`reels/reelRecorder.ts`): MP4 on iOS, hardware H.264 in WebM on Android (VP9 only without it: software, it kept 19 of 30 fps, [device readings 2026-10-09](../../device-readings-2026-10.md)), the microphone with echo cancellation, noise suppression and gain control OFF (`REEL_AUDIO_CONSTRAINTS`), the review a full-bleed looping `object-cover` media with no player controls,
 at up to 4 Mb/s (`REEL_RECORD_BITRATE_MAX`, scaled DOWN with the pixels of a smaller screen) - above
 the 2.5 Mb/s target on purpose, since the preparation re-encodes once and recording at the target
 would compress twice. Its bytes are handed over at the recorder's `stop`
@@ -174,14 +241,34 @@ OWED, see below):
   aspect, capped at `REEL_CAPTURE_MAX_LONG_SIDE` (1280, what the upload is prepared to), plus 30 fps;
   the saved size never exceeds the screen, the cap or the crop (`framedOutputSize`), and the bitrate
   follows the pixels (`videoBitrateFor`).
-- **Mirroring.** The front preview is mirrored by a CSS transform; a canvas read of the decoded
-  frame ignores it, so the saved photo and take are NOT mirrored - Instagram's convention, so text in
-  frame reads right. The rear lens is never mirrored. The code never flipped a saved frame; if a
-  device still shows a flip, it is the review comparing an un-mirrored take with a mirrored preview,
-  or a platform fact to read on that device - not a transform to find here.
-- **Not changed, and a lead if the lag remains:** Android still prefers VP9 WebM in
-  `reelRecorderMimeCandidates`, a SOFTWARE encoder on the Mi 9T; H.264 MP4 (hardware) first is the
-  next candidate, to be measured, not guessed.
+- **Mirroring - REVERSED 2026-10-07.** The front preview is mirrored by a CSS transform; a canvas
+  read of the decoded frame ignores it, so the photo and take used to be saved NOT mirrored
+  (Instagram's convention). The user then reported the photo as "inverted": it was exactly that, the
+  review showing left and right swapped against the preview a second earlier. The capture now
+  REPRODUCES THE PREVIEW: `draw` flips the front lens horizontally (`shouldMirrorCapture`, carried in
+  `PreviewBox.mirror`), the rear lens never. Applies to photo and take alike, so the review always
+  matches the viewfinder (Snapchat's convention; text on a shirt reads mirrored, as in the
+  viewfinder). Nothing is rotated: the frame arrives upright and a canvas read applies no EXIF.
+- **The ring is a function of the capture state** (`shutterRingFraction`): empty unless recording or
+  finishing. It used to read an elapsed clock that only a new take zeroed, so a take dismissed by
+  Back or discarded from its review left the ring where it stopped (2026-10-07); the clock is also
+  zeroed on abandon and on return to `ready`. Its colour is `cn-yellow` (the app's yellow), not red.
+- **THE PHOTO'S 4 SECONDS WERE `canvas.toBlob`, NOT THE CAMERA (2026-10-07, measured on the Mi 9T,
+  alpha.2, through the app's own DevTools socket: `adb forward` to `webview_devtools_remote_<pid>`).**
+  Tap to review was ~4.1 s; in JS the `drawImage` took 2 ms, the `toBlob` callback arrived 4066 ms
+  after the call for a 35 KB JPEG, and the review painted 44 ms after that. It is not the audio
+  track, the recorder, the stream release or the size: a 16x16 canvas, an empty PNG, `OffscreenCanvas.
+  convertToBlob`, `createImageBitmap` then `toBlob` and `willReadFrequently` ALL took 4.0-4.2 s, with
+  the camera live or stopped and on the dashboard too. `toDataURL` (same encoder, calling task) took
+  41 ms. The async encode waits for an idle slot the WebView does not grant (WebView 152; the 'ASR' /
+  'audio glitch' logcat lines were a red herring). iOS WebKit has no such wait (< 0.7 s, Master).
+  FIX: `utils/canvasBlob.ts` (`canvasToBlob`, via `toDataURL`) replaces every `toBlob` that feeds a
+  user wait: the photo, the reel editor's export, the image upload compressor (`media.ts`) and the
+  square cropper. With the same change patched live on the phone: tap to review painted in 69 ms.
+  NOT converted: `qrCode.ts` (a large PNG canvas, not on a tap path; it pays the same 4 s on Android).
+  `pdfDocument.ts` encodes nothing since 2026-10-11 (pages stay canvases) and the PDF thumbnail goes
+  through `canvasToBlob` ([posts](posts.md#making-the-reader-fluid-on-a-phone-2026-10-11)). Re-measure before touching `reelRecorderMimeCandidates`: VP9 is NOT the
+  cause of the photo wait; it stays a lead for the TAKE's end only.
 
 **The camera also takes still photos.** A photo is captured from the live frame, reviewed, and can
 be edited before publishing. The editor draws freehand strokes and app-font text, then bakes those
@@ -235,6 +322,35 @@ cropped a phone's portrait clip into a wide strip; a reel is always portrait, so
 before the first frame. It plays muted while on screen like any feed video (`InlineVideo`), and a
 touch opens the viewer instead of the media viewer.
 
+**A feed card fetches what its video is about to play, and gives it all back off screen (fix of
+the 2026-10-11 audit's first P2).** The card's stream is PACED (`FEED_STREAM_PACING` in
+`utils/segmentedMediaStream.ts`): the HEAD (2 segments, 2 MiB - the first frame needs 2 of 20) is
+fetched once the card is within 400 px of the viewport, and the rest only while the inline
+`<video>` is PLAYING and holds under 10 s past its playhead. The demand is read from the element
+(`paused`, `buffered`, `currentTime`, its `play`/`timeupdate`/`waiting` events), never a clock, so a
+card scrolled past (paused by `playWhileVisible`), a refused autoplay or a viewer open over it asks
+for nothing more. LEAVING is reported by `nearViewport`'s two-way mode (`onleave`, video
+attachments only) at a FARTHER edge, 1200 px, so a card resting on the 400 px edge does not reopen
+its stream on every small scroll; both observers are rooted at the box the feed scrolls in
+(`.page-scroll-wrap`), since an observer rooted at the viewport clips a target by its scrolling
+ancestors without the margin. On leaving, `PostMedia` is deferred again, the stream is CLOSED (the segment
+in flight aborted) and the `<video>` unmounts with its decoder; a deferred video takes no warm blob
+either, so only the cards near the screen hold a player. Coming back opens a new stream, which
+re-fetches the head (nothing else keeps those bytes). The segments the final file needs are kept as
+`Blob`s, never as the decrypted `ArrayBuffer`s - the JS-heap second copy is gone - and a paced
+stream builds the whole file only once the member has watched it to the end, or opened the media
+viewer (`fetchAll`) - which opens AT THE TAP on the poster and fills when the file is in, and goes
+away with the card if the card leaves the band. On an iPhone the pacing also honours
+`ManagedMediaSource.streaming` (`startstreaming`/`endstreaming`); a range the engine EVICTS is not
+fetched again (no time-to-segment index yet), and nothing is trimmed behind the playhead because a
+feed video loops from its own buffer. The decrypted pool is capped by BYTES (64 MiB,
+`BLOB_URL_POOL_MAX_BYTES`) as well as entries, SOFTLY: when a new blob takes it past the cap, the
+least recently used IDLE blob is revoked, a held one - the video playing - never, and a release
+alone evicts nothing, so a page torn down by a tab swipe keeps its grace. Pinned by `segmentedMediaStream.test.ts` (ten unplayed cards fetch 20
+requests, two segments each, of an eight-segment file; close aborts the segment in flight),
+`PostMedia.stream.svelte.test.ts` and `blobUrlPool.test.ts`. NOT measured on a phone with a 30 MB
+reel: the decoder count and the bytes on the wire are owed one reading on the Mi 9T.
+
 **The viewer** (`components/reels/ReelViewer.svelte`) shows the touched reel first, then the reels
 `GET /api/posts?kind=reel&feed=all` lists, without repeating it, one per screen. Drag up for the
 next, down for the previous, to the right (or Back, or the X, or Escape) to close; a wide screen has
@@ -260,25 +376,26 @@ time by the viewer, since an MSE URL feeds one element - the same rule the media
 
 ## Saving before the deletion (C6)
 
-**What says a reel is the member's own is the server's list**, `GET /api/posts/my-reels`
-(`reels/myReels.svelte.ts`), never `authorId`: a reel published as an association or anonymously
-carries no author for anybody, its author included, and is still theirs to save. The list is asked
-once, held FOR THE ACCOUNT THAT ASKED (another account signing in on the same device sees none of
-it), and asked again only when a reel being drawn was created AFTER the list's `serverNow` and is
-absent from it - a fact, never a timer.
+**The "my reels" list is gone from the client (2026-10-09).** The save used to need it: only the author
+had the key, so a reel was the member's own when `GET /api/posts/my-reels` said so. The save is now for
+EVERY reel (below), and it reads the ref the viewer's own player already holds, so `reels/myReels.svelte.ts`
+and `getMyReels` were deleted; the server route stays ([reels (server)](../../services/reels.md)).
 
 **There is no "deleted in N days" chip, and that is a decision** (user, 2026-10-02: *"ce n'est pas
 discret"*; the 30 days are known). #1340 had put one on the member's own reels, amber once the server
 said `expiringSoon`; it is gone from the feed card and the viewer, with its two strings
-(`reels_expires_in`, `reels_expires_today`), `myReels.daysLeft` and `reelDaysLeft`. What a reel shows
+(`reels_expires_in`, `reels_expires_today`), `myReels.daysLeft` and `reelDaysLeft` (and, since
+2026-10-09, `myReels` itself). What a reel shows
 instead is its AGE, discreetly and from the one helper (`timeAgo`, with `exactDate` as its title): the
 feed card has it in the post header, and the viewer - which has no header - carries it beside the
 author's name. `expiresAt`, `expiringSoon` and `serverNow` stay on the server's `my-reels` answer
-([reels (server)](../../services/reels.md)); `serverNow` still decides when the list is asked again.
+([reels (server)](../../services/reels.md)), which no client reads any more.
 The publish step's own note ("visible 30 days...") is unchanged and is the user's to rule on.
 
-**The save** (`ReelSaveButton`, the member's own reel, in the viewer) reads the video out of the
-media cache with the key `my-reels` handed over, and gives it to:
+**The save** (`ReelSaveButton`) is **for EVERY reel, public or not, in the player's bar right after the
+volume button** (user, 2026-10-09: *"un bouton pour sauvegarder tous les reels, public ou non"*). It is a
+`barActions` snippet that `ReelSlide` hands to `PostMedia` (gallery mode), which hands it to `VideoPlayer`;
+it reads the video out of the media cache with the key the viewer's own ref carries, and gives it to:
 
 | Where | Path | Permission |
 | --- | --- | --- |
@@ -367,3 +484,140 @@ non-passive `touchmove` that prevents a single-finger move now claims it through
 the same phone the same day), the pull-to-refresh since #1350, and the reel viewer and the media
 lightbox since 2026-10-04, which stand their drag down instead of half-claiming it
 (`ReelViewer.svelte.test.ts` dispatches an uncancelable move and asserts it is never prevented).
+
+## A take is never asked about once the screen is left (2026-10-09)
+
+Mi 9T: "Discard this capture?" reappeared over the posts feed after publishing or cancelling. Root cause: the take holds a history entry whose handler, on a review, asks the discard question (Back semantics). A publish ends with `goto('/posts')`; the root layout's `beforeNavigate` calls `drainHistoryOverlayStack()`, which ran that handler, so the question was shown after the route had changed. Every drain of any route change did the same while a review existed.
+
+Fix at the source: `historyOverlayStack` passes a reason to close handlers (`'back'` from popstate, `'navigation'` from the drain). The take's handler asks only for `'back'`; for `'navigation'` it clears the editor and publish step, aborts a recording and drops the take, with no question and no re-armed entry. Tests: `ReelCapture.svelte.test.ts` (review, publish step, editor, recording, discard) and `historyOverlayStack.test.ts`. Other handlers ignore the reason and are unchanged.
+
+
+## Audit of 2026-10-11 - are CanaReels functional and optimised? (code read at `origin/main` `1a9b4b91d`, Mi 9T measured)
+
+**Verdict.** The path WORKS end to end on the Mi 9T and nothing measured is broken: capture, review,
+on-device re-encode, upload, publish, feed card, viewer, preload. What is NOT yet shown is the
+WORST CASE (a busy 90 s take: ~28-35 MB) on either phone, and three real inefficiencies are in the
+code (feed cards fetch every reel in full, a failed publish orphans a blob for ever, the reel upload
+has none of the attachment upload's progress and cancel). Nothing found is a P1.
+
+**What was run** (bench Mi 9T `fa71073b`, Android 16, WebView 152, app `1.2.3-alpha.4` on dev,
+account "fourth", the app's own DevTools socket for the console, `ps`/`top`/`gfxinfo` sampled every
+~4 s). The camera looked at a ceiling, so every take is a STATIC scene: sizes below are a floor, not
+the 2.5 Mb/s the plan can reach.
+
+| Measured | Value |
+| --- | --- |
+| Take A, tap-and-hold, released | 21.98 s, 7,447,378 B, `video/x-matroska;codecs=avc1,opus` (hardware H.264 since #1645), asked 2.75 Mb/s, got ~2.7 |
+| Take B, ended by the app going to the background (a Play Protect install dialog raised by another session) | 47.3 s, 18,422,238 B, asked 3.08 Mb/s, ~3.1 actual. The take was KEPT and reached review, as this page says it must |
+| Re-encode, take A | 11.2 s for 21.5 s of video (0.52x real time), 7.45 MB -> 2.26 MB, plan 588x1040 at 2500 kb/s, output `video/mp4; codecs="avc1.64001f, mp4a.40.2"` |
+| Re-encode, three ~6 s takes | 3.3 s each (0.55x), 1.7-1.9 MB -> 0.8-1.1 MB |
+| Publish after the re-encode (take A) | segment encrypt, single POST and `POST /api/posts`: ~2.3 s for 2.26 MB; "Publier" to the feed ~14 s |
+| Capture cost, take B | renderer 105-140 % and app process 135-160 % of one core, renderer RSS 365 -> 545-575 MB (+~190 MB), 537 MB still held in review; `MemAvailable` never under 2.3 GB |
+| Feed, 5 reels of 1-2 MB, 6 up and 3 down swipes | 1048 frames, p50 26 ms, p90 32, p99 38 (`gfxinfo`); the same swipes on the text-only "Associations" feed: 695 frames, p50 13, p90 29, p99 38. Reels playing roughly halve the median frame rate (~38 fps). Swipes were `adb input`, so read the ratio, not the absolute |
+| Feed, resources while scrolling | renderer RSS 363 -> 385 MB; media-codec thread count (a PROXY: the platform lists no per-client codec) 4 idle, 12 scrolling, 4-6 at rest; app 30-45 % and renderer 15-40 % of a core |
+| Viewer (opened by accident on the 6 reels) | `[reel-preload] start` and `ready` 1-12 ms apart (the feed had already cached the video); next/prev logged cleanly. No frame timing taken for the viewer this time |
+| One `play()` refusal | one `[video] playWhileVisible: play() refused Object` warning at the first scroll. The error NAME was not captured; if it is the `AbortError` of a pause racing a play it is noise the rules forbid |
+
+**The rig was disturbed**: at 11:06:35 another session installed an APK on the bench phone
+(`installPackageLI`), killed the app and left it signed out, so the planned 90 s take and the viewer
+frame timing were NOT done. A stray tap of mine also queued a `pic86.pdf` in the BenchR1 DM; it was
+cancelled from its own cross.
+
+### Is a reel on the outbox path, and does the 1.2 GB peak reach it? No, and that is its own finding
+
+`publishReel` calls `MediaService.encryptAndUpload` directly (`reels/publishReel.ts:45`); the outbox
+is not involved, so #1729, #1732 and #1733 (lazy decode, chunked base64, the orphan card) do not
+touch it and the 1.2 GB transient of a queued 13 MB attachment is not a reel's. What a reel costs
+instead (read, not measured at full size): the prepared file is built in a `BufferTarget`
+(`prepareVideoForUpload.ts:218`, ~28-35 MB at 90 s), then `file.arrayBuffer()` (a copy), the
+ciphertext (a copy) and 8 MiB slices plus `FormData` blobs per chunk (`media.ts:739-790`): roughly
+100-150 MB of transient heap at the cap. What bounds the size: the recorder's bitrate
+(`REEL_RECORD_BITRATE_MAX` 4 Mb/s, scaled to pixels, `framedCapture.ts:128`), the plan's 2.5 Mb/s
+target lowered to fit `maxBytes` (`videoEncodingPlan.ts:92`, floor 400 kb/s, 90 % budget share), the
+90 s cap from `GET /api/posts/reel-limits`, and the server's 50 MB ceiling (`too-large` after the
+fact). Over 8 MiB the upload takes the chunk route (4 sequential 8 MiB POSTs for a 28 MB reel); the
+resumable sessions of #1708 are SERVER ONLY, no client calls them.
+
+### Ranked findings
+
+**P2 - a feed reel card downloads the WHOLE video of every reel it comes near, and keeps it.**
+`PostMedia.svelte:166` releases the download once `nearViewport` (400 px, one-shot, never un-set:
+`PostContent.svelte:166/210/262`) has fired; the segmented stream then fetches EVERY segment with no
+back-pressure and no abort when the card leaves the screen (`segmentedMediaStream.ts:139-154`), keeps
+each decrypted segment in `parts` (a second copy of the video) next to the MSE buffer, and ends in a
+`Blob` handed to the pool, whose cap is 200 ENTRIES, not bytes (`blobUrlPool.ts:5`), kept 5 minutes.
+At 28-35 MB a reel, scrolling past ten reels is ~300 MB of mobile data and tens of MB of retained
+memory per card. UNMEASURED at real size (the bench reels were 1-2 MB), and the likeliest cause of
+the "decoders from feed autoplay" the Pixel agent saw: every near card holds a `<video>` with a
+source. Fix: stream only the head until the card is the one playing, stop on back-pressure and on
+leaving the viewport, put a byte cap on the pool.
+
+**P2 - a reel whose upload succeeded and whose post did not is stored for ever.** The client names
+class `reel` AT UPLOAD (`publishReel.ts:45`), the idle sweep takes only `ephemeral` and `chat-reel`
+(`media.service.ts:1472-1477`), and the claim by social-service happens only in `createPost`. A
+`createPost` failure, a kill between the two calls or a cancel there leaves 14-35 MB nobody
+references and nothing reaps (account deletion only). Fix: promote the class at the claim, or sweep
+unclaimed `reel` blobs older than N hours. Same family as the orphan audit of #1736.
+
+**P2 - a reel's upload has none of an attachment's upload guarantees.** No `transport` is passed
+(`publishReel.ts:45`), so there is no byte progress, no cancel of the body and no 45 s silence guard
+(only `fetchWithAnswerDeadline`); any failure throws a `ReelPublishError`, the member re-taps
+"Publier" and the prepared file is gone, so a retry re-encodes (~0.5x real time, so ~50 s for a 90 s
+take - extrapolated, NOT measured) and re-uploads from byte 0. The take itself lives only in memory.
+The design for durability exists ([reels-in-chat](reels-in-chat.md), RC-5) and is not built for the
+feed.
+
+**P2 - the worst case is unmeasured.** A busy 90 s take (28-35 MB, 4 chunks), its re-encode time and
+peak RSS on the Mi 9T (5.6 GB) and the iPhone 12, the chunked reel upload over a weak link, and a
+feed of ten full-size reels. Static-scene takes are not evidence for any of them.
+
+**P3 - the capture is expensive and lossy twice.** The take is drawn through a canvas
+(`framedCapture.ts:233`, `requestAnimationFrame` + `captureStream`) at ~2.5 cores and +190 MB RSS,
+recorded at ~3 Mb/s, then re-encoded at 2.5 Mb/s or less. A documented trade-off (the preview's crop
+IS the file); the heat of a 90 s take is unmeasured.
+
+**P3 - the viewer preloads only the NEXT reel** (`ReelViewer.svelte:295`, `preload={i === index + 1}`), so
+a swipe down meets the poster first unless the 5-minute pool still holds the video.
+
+**P3 - the board contradicts this page.** `cross-client-testing.md` still lists REEL-2 `pending`
+while this page records it `PASS` on 2026-10-02, and no harness row covers the feed card's autoplay,
+the viewer or a long take.
+
+**Open and only "owed a look" (unchanged, from the backlog):** the iPhone letterbox fix #1370
+(shipped unverified by the user's choice), the live-mic echo #1368, the user's look at real content
+on both phones, the iOS frame timing of the viewer swipe, the publish step's "Visible 30 jours" note,
+the camera swipe being undiscoverable (backlog, 2026-10-09). Fixed and read since v1.0.0: #1539,
+#1552, #1575, #1578 (the 4 s `toBlob`), #1641, #1645 (the VP9 software recorder dropping a third of
+the frames, now hardware H.264), #1684.
+
+### Tests: what exists and what is missing
+
+Exist: a unit file per `reels/` module (recorder, capture state machine, framed capture, publish
+order and payload, preload, viewer navigation, gallery staging, save, editor, strokes, overlays,
+camera access and session), `video/` (plan arithmetic; `prepareVideoForUpload` over a SCRIPTED
+mediabunny, so no real encoder), `ReelCapture`, `ReelViewer`, `ReelPublishSheet`, `ReelReview`,
+`CameraScreen`, `PostContent.reel`, `InlineVideo`, the segmented writer, reader and stream, the
+server reel claim and purge specs, and harness rows REEL-1 and REEL-2. Missing: any test that bounds
+what a feed card FETCHES (nothing fails if a card downloads a 35 MB reel it never plays), a
+real-encoder run of the 90 s plan, the publish-failure-after-upload orphan, the reel upload's chunk
+route and retry, the decoder count in the feed, and a long-take harness row.
+
+### Proposed fix list, in order
+
+1. Feed card: head-only streaming with back-pressure and abort off-screen, plus a byte cap on the
+   decrypted pool (P2). **Built (`fix/reel-feed-fetch`), see "Watching" above; the 30 MB reel
+   reading on a phone is still owed.**
+2. Orphan `reel` blobs: the claim promotes the class, or a bounded sweep (P2). **Built: the client
+   uploads `reel-pending`, the claim promotes it to `reel`, the sweep takes an unclaimed one a day
+   after upload ([media-service](../../services/media-service.md)).**
+3. Give the reel upload the attachment `transport` (progress, cancel, stall guard) and keep the
+   prepared file for a retry; later the RC-5 durable take (P2).
+4. Measure the worst case on both phones (a scripted busy 90 s take) and write it above (P2).
+5. Preload the previous reel; test the feed fetch bound; reconcile the board (P3).
+
+## One frame (2026-10-11)
+
+The camera preview, the review, the editor and the viewer share `ReelFrame` (9:16, shown whole, rounded
+`--radius-2xl` over a blurred backdrop when the screen's shape differs, edge to edge when it matches),
+and the camera records that frame, not the screen box. Detail and what is unverified:
+[reel-editor](reel-editor.md#one-frame-for-capture-edit-and-publish-2026-10-11-replaces-the-cover-and-crop-of-1739).

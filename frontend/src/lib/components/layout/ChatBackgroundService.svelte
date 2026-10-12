@@ -14,6 +14,8 @@
   import { onMount, untrack } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import { navigating } from '$app/state';
+  import { internalPath, loginAfterSessionExpiry } from '$lib/utils/internalPath';
   import { m } from '$lib/paraglide/messages';
   import { BiometricService } from '$lib/services/biometric';
   import { isBiometricPromptDue } from '$lib/services/biometricCadence';
@@ -54,6 +56,7 @@
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { removalOutcome } from '$lib/utils/chat/memberRemoval';
+  import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { WorkspacePurgeContext } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
@@ -63,6 +66,7 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
+  import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
@@ -104,6 +108,8 @@
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
+  import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
+  import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
 
   /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
   function buildRemoteCallParticipants(): CallParticipant[] {
@@ -234,6 +240,8 @@
       void goto(resolve(targetRoute));
     }
     if (step !== 'select') return;
+    // The route is reached: whatever waited for the landing to LEAVE (the feed's first draw) may go.
+    notifNav.markArrived();
     // Already on screen: the landing is done and must stay idle until the target is lost. The
     // selection is a map key and the target is a group id, so they are only ever equal for a
     // channel - matched raw, a landed DM never looked landed, and every mutation of the map
@@ -459,11 +467,24 @@
     return true;
   }
 
-  /** Opens the PIN modal for the given user, computing isFirstSetup from the server. */
+  /**
+   * Opens the PIN modal for the given user.
+   *
+   * THE GATE IS DRAWN ON THE LOCAL FACT WHEN THERE IS ONE. A device that enrolled this user is a
+   * returning one, so the server's `pin-status` - which waited for the token refresh, then a round
+   * trip, ~0.5 s of a cold start behind a notification - is asked only by a device that never did.
+   * See {@link firstPinSetupFromDevice}.
+   */
   async function openPinModal(uid: string) {
     if (!mayPromptForPin()) return;
     globalSession.userId = uid;
-    isFirstPinSetup = await detectFirstPinSetup(uid);
+    const knownLocally = firstPinSetupFromDevice(localStorage, uid);
+    if (knownLocally !== null) {
+      appendLog('[PIN] Gate drawn from the enrolled device id - no pin-status round trip');
+      isFirstPinSetup = knownLocally;
+    } else {
+      isFirstPinSetup = await detectFirstPinSetup(uid);
+    }
     showPinModal = true;
   }
 
@@ -504,9 +525,19 @@
       return;
     }
     _sessionExpiredHandled = true;
-    appendLog('[AUTH] Session expired - logging out and redirecting to /login.');
+    // The page the user was GOING to is read before `clearAuth` awaits: a deep link's navigation is
+    // usually still in flight here (its `load` is what met the 401), and `navigating.to` is the
+    // only place that target lives. A bare `/login` dropped a tapped post push (Mi 9T, 2026-10-08).
+    const loginPath = loginAfterSessionExpiry(
+      (navigating.to?.url ?? (typeof window === 'undefined' ? null : window.location)) as {
+        pathname: string;
+        search: string;
+        hash: string;
+      } | null
+    );
+    appendLog(`[AUTH] Session expired - logging out and redirecting to ${loginPath}.`);
     await clearAuth().catch(() => {});
-    void goto(resolve('/login'), { replaceState: true });
+    void goto(resolve(internalPath(loginPath)), { replaceState: true });
   }
 
   /**
@@ -570,6 +601,7 @@
    * were all revoked/GC'd but who still has a registered PIN (picking a new PIN would
    * then fail the verifier with a confusing mismatch). Defaults to false on any
    * network/auth failure so the "first setup" wording is never shown by mistake.
+   * Asked only by a device holding no enrolled device id ({@link openPinModal}).
    */
   async function detectFirstPinSetup(uid: string): Promise<boolean> {
     try {
@@ -740,6 +772,9 @@
       onChannelMemberJoined: (event: any) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
+        // READ BEFORE THE PLACEHOLDER IS MADE: a community this device has never seen is a join
+        // in-session, and the event names ONE salon of it.
+        const communityIsNew = globalChannels.isCommunityUnknownToEvent(event);
         const workspace = globalChannels.ensureWorkspaceForChannelEvent(event);
         const isPrivate = event.visibility === 'private';
         globalChannels.addChannelToWorkspace(workspace.id, {
@@ -764,7 +799,12 @@
         // path is concerned, so the first message typed into it is refused until an app relaunch
         // runs the full workspace hydration. A private salon also enters its own distribution
         // group here, for the same reason and in the same window.
-        if (workspace.workspaceDbId) {
+        if (communityIsNew) {
+          // The listing a reload runs registers, enters and lists EVERY salon of the community this
+          // member may read, this one included - so it replaces `registerJoinedChannel` here rather
+          // than following it.
+          void globalChannels.hydrateJoinedCommunity(channelsCtx());
+        } else if (workspace.workspaceDbId) {
           void globalChannels
             .registerJoinedChannel(
               event.channelId,
@@ -1172,13 +1212,24 @@
     // The leader counted this arrival against ITS selection. A follower tab that has the
     // conversation open is reading it, so taking the leader's count verbatim put a badge on an open
     // conversation that nothing cleared afterwards - the live path's `isConversationOpen` rule.
-    const isOpenHere = globalConvs.selectedContact === event.conversationId;
+    const isOpenHere = isReadingConversationNow(event.conversationId, globalConvs.selectedContact);
 
     if (event.type === 'message_added') {
-      if (convo.messages.some((m) => m.id === event.message.id)) return;
+      const merged = mergeAnnouncedMessage(convo.messages, event.message, event.clientMessageId);
+      if (!merged) return;
+      if (merged.settledEcho && event.clientMessageId) {
+        // This tab composed it and the leader received the frame: the send is proven delivered.
+        forgetDeliveredSalonSend(
+          event.clientMessageId,
+          globalSession.userId || currentUserId() || ''
+        );
+        console.debug(
+          `[TAB-SYNC] own salon echo ${event.clientMessageId.slice(0, 8)}... settled by the leader as ${event.message.id.slice(0, 8)}...`
+        );
+      }
       globalConvs.conversations.set(event.conversationId, {
         ...convo,
-        messages: insertMessageOrdered(convo.messages, event.message),
+        messages: merged.messages,
         lastMessageAt: event.lastMessageAt,
         unreadCount: isOpenHere ? 0 : event.unreadCount,
       });
@@ -1415,11 +1466,25 @@
         // No-op off Android. Then reconcile outbox_sent BEFORE the flusher re-reads the queue (so
         // we don't re-send a message the background already delivered), then reconnect/flush.
         void (async () => {
+          // WHAT THE SOCKET WAITS FOR ON A RESUME, step by step: a warm notification tap's reply is
+          // held until this sequence reaches `resumeConnection` (~0.5 s on the Mi 9T, 2026-10-11),
+          // and the total alone cannot say which step holds it.
+          const resumeStart = performance.now();
+          const steps: string[] = [];
+          let stepStart = resumeStart;
+          const stepDone = (name: string) => {
+            const now = performance.now();
+            steps.push(`${name} ${Math.round(now - stepStart)}`);
+            stepStart = now;
+          };
           await globalSession.ensureMls().reloadStateFromDisk();
+          stepDone('reload');
           if (storage) await reconcileOutboxSent(storage).catch(() => {});
+          stepDone('outbox');
           // WP-XP-5: the user may have answered a CallKit ring while we were away - record
           // the intent BEFORE the WS reconnect delivers the MLS invite that auto-accepts it.
           await drainNativePendingCallAccept();
+          stepDone('call');
           // WHAT THE SHADE DID WHILE WE WERE AWAY IS MERGED BEFORE THE SOCKET OPENS, in the order
           // login uses: the FCM cache first, then the shade's read watermarks recomputed over it.
           // The reconnect pulls every row still queued for this device, including one a reply from
@@ -1427,18 +1492,24 @@
           // conversation row already says it was read. Until 2026-10-01 the watermarks were merged
           // at login only, so a resumed app re-announced it (Mi 9T).
           if (deviceKeyB64 && storage) await flushFcmCache(deviceKeyB64, storage);
+          stepDone('fcm');
           const selfId = globalSession.userId;
           if (selfId) {
             await consumeNativeReadWatermarks(globalConvs.conversations, selfId, (key) =>
               globalConvs.saveConversation(key, convCtx())
             ).catch((e) => appendLog(`[READ_WATERMARK] Resume merge failed: ${String(e)}`));
           }
+          stepDone('watermarks');
           // resumeConnection, NOT attemptReconnect: `pauseConnection` stopped the connection and
           // sync watchdogs on the way out, and only this seam re-arms them - so it must run even
           // when the socket survived the background, hence no isWsConnected guard here. Calling
           // attemptReconnect directly left a mobile client with no timer able to notice a later
           // dead socket, which is exactly what was measured on hardware (see resumeConnectionImpl).
-          void globalSession.resumeConnection(sessionCb());
+          // The step timings ride on its `[LIFECYCLE] App in foreground` line.
+          void globalSession.resumeConnection(
+            sessionCb(),
+            `resume prepared in ${Math.round(performance.now() - resumeStart)} ms: ${steps.join(', ')} ms`
+          );
           checkSiblingCallWarning();
         })();
       }

@@ -4,7 +4,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { reelFileName, saveReel, type SaveReelDeps } from './saveReel';
-import type { MyReel } from '$lib/posts/api';
+import type { SaveableReel } from '$lib/reels/saveReel';
 
 vi.mock('$lib/utils/apiUrl', () => ({ mediaUrl: () => 'https://media.test' }));
 
@@ -16,13 +16,9 @@ const video = {
   mimeType: 'video/mp4',
   size: 3,
 };
-const reel: MyReel = {
+const reel: SaveableReel = {
   id: '0123456789abcdef',
   createdAt: '2026-10-01T09:00:00Z',
-  expiresAt: '2026-10-31T09:00:00Z',
-  durationMs: 1000,
-  expiringSoon: false,
-  markdown: '',
   media: [video],
 };
 

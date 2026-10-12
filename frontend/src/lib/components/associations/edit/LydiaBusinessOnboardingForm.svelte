@@ -8,6 +8,7 @@
   } from '$lib/associations/api';
   import { Building2, ExternalLink } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { wordingFor } from '$lib/associations/kindWording';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import Input from '$lib/components/ui/Input.svelte';
@@ -24,13 +25,16 @@
 
   let { asso, onAccountCreated, onDisconnected, onValidated }: Props = $props();
 
+  /** The sentences naming the entity: an institution is not called an association. */
+  const words = $derived(wordingFor(asso.type).lydia);
+
   let disconnecting = $state(false);
   let validating = $state(false);
 
   /** A platform admin confirms Lydia accepted the file; nothing else marks the onboarding complete. */
   async function handleValidate() {
     if (
-      !(await showConfirm(m.asso_lydia_validate_confirm(), {
+      !(await showConfirm(words.validateConfirm(), {
         confirmLabel: m.asso_lydia_validate_button(),
       }))
     )
@@ -49,7 +53,7 @@
 
   async function handleDisconnect() {
     if (
-      !(await showConfirm(m.asso_lydia_disconnect_confirm(), {
+      !(await showConfirm(words.disconnectConfirm(), {
         danger: true,
         confirmLabel: m.asso_lydia_disconnect_button(),
       }))
@@ -193,9 +197,9 @@
       {m.asso_lydia_open_dashboard_button()}
     </button>
   {:else}
-    <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_intro()}</p>
+    <p class="text-text-muted text-sm leading-relaxed">{words.intro()}</p>
 
-    <Input label={m.asso_lydia_name_label()} bind:value={name} required disabled={submitting} />
+    <Input label={words.nameLabel()} bind:value={name} required disabled={submitting} />
     <Input
       label={m.asso_lydia_address_label()}
       bind:value={address}

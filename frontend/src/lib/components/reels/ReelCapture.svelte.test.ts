@@ -250,6 +250,58 @@ describe('ReelCapture', () => {
     expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
   });
 
+  /** The root layout's `beforeNavigate` drain: the entry's handler runs with the reason. */
+  const navigationDrain = () => backHandler()('navigation');
+
+  it('LEAVING the screen with a review (a published reel lands on the feed) asks nothing', async () => {
+    const { target, hold } = await render();
+    await hold();
+    navigationDrain();
+    await settle();
+    expect(showConfirm).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+  });
+
+  it('LEAVING the screen with the publish step open asks nothing', async () => {
+    const { target, hold } = await render();
+    await hold();
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+    navigationDrain();
+    await settle();
+    expect(showConfirm).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-reel-publish]')).toBeNull();
+  });
+
+  it('LEAVING the screen with the editor open asks nothing, and leaves no entry behind', async () => {
+    const { target, hold } = await render();
+    await hold();
+    target
+      .querySelector<HTMLButtonElement>(
+        `[data-reel-review] [aria-label="${m.reels_review_edit()}"]`
+      )!
+      .click();
+    await settle();
+    const pushes = vi.mocked(pushHistoryOverlay).mock.calls.length;
+    navigationDrain();
+    await settle();
+    expect(showConfirm).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-reel-editor]')).toBeNull();
+    expect(vi.mocked(pushHistoryOverlay).mock.calls.length).toBe(pushes);
+  });
+
+  it('LEAVING the screen while recording drops the take, asks nothing', async () => {
+    const { shutter, pointer } = await render();
+    pointer('pointerdown', 1000);
+    vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+    await settle();
+    navigationDrain();
+    await settle();
+    expect(showConfirm).not.toHaveBeenCalled();
+    expect(shutter().getAttribute('aria-pressed')).toBe('false');
+    expect(framed.stop).toHaveBeenCalled();
+  });
+
   it('Back with the editor open leaves the editor, never the take', async () => {
     const { target, hold } = await render();
     await hold();

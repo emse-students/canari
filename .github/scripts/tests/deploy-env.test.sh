@@ -62,7 +62,8 @@ dev_env() {
     DEV_GARAGE_SECRET_ACCESS_KEY=d4 \
     DEV_CHANNELS_ENCRYPTION_SECRET=d5 \
     DEV_INTERNAL_SHARED_SECRET=d6 \
-    DEV_CALL_ROOM_SECRET=d7
+    DEV_CALL_ROOM_SECRET=d7 \
+    DEV_AGENDA_SIGNING_KEY=d8-0123456789abcdef0123456789abcdef
 }
 
 prod_env() {
@@ -80,7 +81,8 @@ prod_env() {
     GARAGE_SECRET_ACCESS_KEY=p4 \
     CHANNELS_ENCRYPTION_SECRET=p5 \
     INTERNAL_SHARED_SECRET=p6 \
-    CALL_ROOM_SECRET=p7
+    CALL_ROOM_SECRET=p7 \
+    AGENDA_SIGNING_KEY=p8-0123456789abcdef0123456789abcdef
 }
 
 # Run the renderer with an explicit environment built from the lines on stdin.
@@ -457,6 +459,30 @@ else
   fail "dev refused without naming the missing secret"
 fi
 
+# A signing key that is PRESENT but shorter than 32 characters passes every other gate and only
+# surfaces at runtime as a 503 on every subscription link. It must fail the deploy, naming the secret.
+out="$TMP/dev-shortkey.env"
+# shellcheck disable=SC2046
+render dev "$out" $(dev_env | grep -v '^DEV_AGENDA_SIGNING_KEY=') DEV_AGENDA_SIGNING_KEY=tooshort >"$TMP/dev-shortkey.log" || true
+if [ -f "$out" ]; then
+  fail "dev rendered with a 8-character AGENDA_SIGNING_KEY"
+elif grep -q 'AGENDA_SIGNING_KEY is set for the dev environment but is only 8 characters' "$TMP/dev-shortkey.log"; then
+  pass "a too-short AGENDA_SIGNING_KEY fails the dev render, naming the secret"
+else
+  fail "dev refused a short AGENDA_SIGNING_KEY without naming it"
+fi
+
+out="$TMP/prod-shortkey.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env | grep -v '^AGENDA_SIGNING_KEY=') AGENDA_SIGNING_KEY=0123456789abcdef0123456789abcde >"$TMP/prod-shortkey.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with a 31-character AGENDA_SIGNING_KEY"
+elif grep -q 'AGENDA_SIGNING_KEY is set for the prod environment but is only 31 characters' "$TMP/prod-shortkey.log"; then
+  pass "a 31-character AGENDA_SIGNING_KEY fails the production render, naming the secret"
+else
+  fail "production refused a short AGENDA_SIGNING_KEY without naming it"
+fi
+
 out="$TMP/dev-build.env"
 # shellcheck disable=SC2046
 render dev "$out" $(dev_env) >/dev/null
@@ -505,16 +531,6 @@ done
 # ═════════════════════════════════════════════════════════════════════════════
 printf '\nthe decisions the user took are locked, not merely documented\n'
 # ═════════════════════════════════════════════════════════════════════════════
-
-# "oublie. Stripe ne sera pas accessible en dev pour le moment, tant pis" (user, 2026-09-01).
-# `skip` rather than `warn`: the absence is the decision, so a warning every deploy would be noise.
-for key in STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET; do
-  if [ "$(manifest_field "$key" 3)" = "skip" ]; then
-    pass "$key is skipped in dev, which is the user's decision"
-  else
-    fail "$key is not skipped in dev - dev has no payment credentials, so the value could only mislead"
-  fi
-done
 
 # LYDIA REACHES DEV (2026-10-04), AND ONLY AS A SANDBOX: the credentials are Lydia's homologation
 # pair, rendered from the DEV_ secrets, and dev's compose PINS the homologation base URL as a literal.

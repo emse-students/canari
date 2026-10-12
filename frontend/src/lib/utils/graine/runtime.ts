@@ -24,7 +24,7 @@ import {
 /** Thrown when something asks the Graine layer to work before a session has wired it. */
 export class GraineNotReadyError extends GraineSealUnavailableError {
   constructor(what: string) {
-    super(`[GRAINE] ${what} - no session is wired`);
+    super(`[GRAINE] ${what} - no session is wired`, 'no-session');
     this.name = 'GraineNotReadyError';
   }
 }

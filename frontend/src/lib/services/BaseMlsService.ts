@@ -13,7 +13,10 @@ import {
   createSequentialDecryptSession,
 } from '$lib/mls-client/mlsDecryptSession';
 import {
+  DeliveryDeadlineError,
   DeviceRevokedError,
+  KEY_PACKAGE_ROUND_DEADLINE_MS,
+  raceDeadline,
   NotAGroupMemberError,
   type MlsDeliveryFetch,
 } from '$lib/mls-client/mlsDeliveryApi';
@@ -43,7 +46,11 @@ import {
   setSenderMismatchReporter,
   type EnvelopeSender,
 } from '$lib/mls-client/verifiedSender';
-import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
+import {
+  keyPackagePublication,
+  type DeviceKeyPackageAnswer,
+  type DeviceSignatureKeys,
+} from '$lib/mls-client/deviceKeyPackage';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
   shouldAckAfterSuccess,
@@ -66,6 +73,7 @@ import {
   type DeliveryRepeatShape,
 } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
+import { noteKeyGroupFrameLost } from '$lib/mls-client/keyGroupFrameLosses';
 import {
   channelScope,
   sameScope,
@@ -108,6 +116,19 @@ import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
  * that is behind the group's epoch ends the loop on that fact, whatever this number is.
  */
 const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
+
+/**
+ * How many times one join may read the device's published-KeyPackage fact while rounds keep
+ * settling and it stays absent or revoked. A counter per attempt, not a clock: it is what ends the
+ * loop when every pass is woken by a round that did not make the fact true.
+ */
+const EXTERNAL_JOIN_FACT_PASSES = 6;
+
+/**
+ * External joins running now, per service instance then per group. A WeakMap so the state is the
+ * instance's own and vanishes with it; entries live only for the span of one call.
+ */
+const externalJoinFlights = new WeakMap<object, Map<string, Promise<ExternalJoinOutcome>>>();
 
 /**
  * Abstract base class shared by WebMlsService (WASM) and TauriMlsService (Rust native).
@@ -385,6 +406,40 @@ export abstract class BaseMlsService implements IMlsService {
   private readonly publishedThisSession = new Set<string>();
   /** Epoch ms of the last {@link republishKeyMaterial} run, used to debounce it. */
   private lastKeyMaterialRepublish = 0;
+  /**
+   * The key package round that is running RIGHT NOW (mint, checkpoint, publish), or `null`.
+   *
+   * It exists so an external join can wait for the one thing the commit gate demands of a device
+   * before it will activate a membership: a static KeyPackage on the server. See
+   * {@link externalJoin} for the production measurement. Per-process, and held only for the span of
+   * one {@link generateKeyPackage} call, so it is a fact about NOW and never a "done" flag.
+   */
+  private keyPackageRoundInFlight: Promise<unknown> | null = null;
+
+  /**
+   * How many key package rounds are running RIGHT NOW. A count, not the field above: rounds overlap
+   * (boot, `republishKeyMaterial`, a join starting one) and the older one settling must not make
+   * the newer one invisible.
+   */
+  private keyPackageRoundsActive = 0;
+
+  /**
+   * Monotonic count of rounds that have SETTLED, success or failure. A reader captures it BEFORE
+   * asking the server and compares it before parking: a round that settled during the read is
+   * the wake-up the reader would otherwise have missed (the answer in hand predates it).
+   */
+  private keyPackageRoundsSettled = 0;
+
+  /** The most recent failed round and the settle count it ended at, for the joins it concerns. */
+  private lastKeyPackageRoundFailure: { settled: number; error: unknown } | null = null;
+
+  /**
+   * Joins parked until a key package round settles (see {@link awaitOwnKeyPackagePublished}). An
+   * EVENT, not a clock. Woken with `true` when the client is torn down, so none outlives it.
+   */
+  private ownKeyPackageUnverifiedReported: string | null = null;
+
+  private keyPackageRoundWaiters: Array<(tornDown: boolean) => void> = [];
 
   // ── Timers & event handlers ───────────────────────────────────────────────
   protected heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -625,6 +680,10 @@ export abstract class BaseMlsService implements IMlsService {
    * Calls {@link destroyPlatformResources} for subclass-specific teardown.
    */
   destroy(): void {
+    // NOTHING PARKED OUTLIVES THE CLIENT: a join waiting on a round that will never settle here
+    // would hold its group's flight for ever and hand every later caller the same hung promise.
+    this.wakeKeyPackageRoundWaiters(true);
+    externalJoinFlights.get(this)?.clear();
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -1751,9 +1810,6 @@ export abstract class BaseMlsService implements IMlsService {
             this.welcomeProcessedCallback?.(groupId);
             welcomedGroups.push(groupId);
           }
-
-          // Platform hook: called after each successful message (e.g. Tauri epoch cache refresh).
-          await this.onMessageProcessed(groupId);
         } catch (e) {
           console.error(`[QUEUE] Error processing message:`, e);
 
@@ -1838,13 +1894,6 @@ export abstract class BaseMlsService implements IMlsService {
       void this.processQueue();
     }
   }
-
-  /**
-   * Platform hook called after each successfully processed message.
-   * Override in subclasses to perform platform-specific post-processing
-   * (e.g. refreshing epoch cache on Tauri).
-   */
-  protected async onMessageProcessed(_groupId: string | undefined): Promise<void> {}
 
   /**
    * Fetches offline-queued messages from the delivery service and routes each through the priority
@@ -2208,18 +2257,233 @@ export abstract class BaseMlsService implements IMlsService {
    * Retried exactly once - a second refusal is a server bug, not a state to keep rotating through.
    */
   async generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage> {
+    // NAMED FOR ITS SPAN, so an external join issued while it runs can wait for the publication it
+    // depends on ({@link externalJoin}). The identity check keeps a later round from clearing its
+    // successor, and `finally` means a throw leaves nothing for a join to wait on.
+    // SET WHEN THE CALLER GAVE UP ON THIS ROUND (the deadline below). A stale round that late hits a
+    // revocation must not rotate the identity: it would change `deviceId`, localStorage, the
+    // delivery client and delete a device while a later round or a join runs on the id it is
+    // abandoning - a later round could publish under an id rotated away, a join could exclude a
+    // stale id. The rotation is a logged no-op and the late round just ends.
+    // A property of a shared object, not a bare `let`: the deadline handler below flips it while the
+    // round is suspended at an `await`, a write control-flow analysis (CodeQL 2552) cannot see.
+    const roundState = { stale: false };
+    const round = (async (): Promise<DatedKeyPackage> => {
+      try {
+        return await this.generateKeyPackageImpl(deviceKeyB64);
+      } catch (e) {
+        if (!(e instanceof DeviceRevokedError)) throw e;
+        if (roundState.stale) {
+          console.error(
+            `[MLS] an ABANDONED key package round met a revocation late - NOT rotating the identity (a later round owns it now); device ${sanitizeForLog(this.deviceId)}`
+          );
+          throw e;
+        }
+        const abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
+        console.warn(
+          `[MLS] Device ${sanitizeForLog(abandoned)} was revoked - re-enrolled as ${sanitizeForLog(
+            this.deviceId
+          )}`
+        );
+        if (roundState.stale) {
+          console.error(
+            '[MLS] an ABANDONED key package round was abandoned during its re-enrolment - not publishing under the new id from this stale round'
+          );
+          throw new Error('key package round abandoned during re-enrolment');
+        }
+        return this.generateKeyPackageImpl(deviceKeyB64);
+      }
+    })();
+    // THE CALLER STOPS WAITING AFTER A DEADLINE, THE WORK IS NOT CANCELLED (a native `invoke` and a
+    // mint under the MLS lock cannot be aborted). Without this a hang anywhere in the round kept
+    // the active count above zero for ever, so every join parked and its flight never cleared.
+    // WHAT AN ABANDONED ROUND MAY STILL DO: finish its mint, persist up to 50 bundles, publish. The
+    // next round reads the server's pool count: if the late publish landed it mints nothing, and if
+    // the round stopped between persist and publish it mints a second batch whose first batch is
+    // orphaned locally until `prune_expired_key_packages` - the same cost any failed publish after
+    // a mint already has. It is logged when it ends.
+    //
+    // TWO COSTS OF ABANDONING, stated: (1) the native promise stays pending, so a device whose
+    // native call hangs for good leaks ONE pending promise per deadline cycle (each later round
+    // that hangs adds one); (2) the abandoned round may still reach a late revocation, which would
+    // rotate the identity under a successor - `stale` turns that rotation into a logged no-op, and
+    // an abandoned round that is mid-rotation when the deadline fires refuses to publish afterwards.
+    // The persist and publish steps inside `generateKeyPackageImpl` are platform code and are NOT
+    // gated: a late publish under the CURRENT id is harmless (it is what the next round would do),
+    // and the id cannot have changed because only a non-stale round rotates.
+    const bounded = raceDeadline(
+      'key-package-round',
+      round,
+      KEY_PACKAGE_ROUND_DEADLINE_MS,
+      (late) =>
+        console.warn(
+          late.ok
+            ? '[MLS] an abandoned key package round FINISHED late (its bundles are persisted and published)'
+            : `[MLS] an abandoned key package round FAILED late: ${sanitizeForLog(String(late.error))}`
+        )
+    );
+    this.keyPackageRoundInFlight = bounded;
+    this.keyPackageRoundsActive++;
     try {
-      return await this.generateKeyPackageImpl(deviceKeyB64);
+      const keyPackage = await bounded;
+      this.noteKeyPackageRoundSettled();
+      return keyPackage;
     } catch (e) {
-      if (!(e instanceof DeviceRevokedError)) throw e;
-      const abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
-      console.warn(
-        `[MLS] Device ${sanitizeForLog(abandoned)} was revoked - re-enrolled as ${sanitizeForLog(
-          this.deviceId
-        )}`
-      );
-      return this.generateKeyPackageImpl(deviceKeyB64);
+      if (e instanceof DeliveryDeadlineError && e.operation === 'key-package-round') {
+        roundState.stale = true;
+      }
+      this.noteKeyPackageRoundSettled(e ?? new Error('key package round failed'));
+      throw e;
+    } finally {
+      if (this.keyPackageRoundInFlight === bounded) this.keyPackageRoundInFlight = null;
     }
+  }
+
+  /** Records a settled round and wakes every parked join, which re-reads the fact itself. */
+  private noteKeyPackageRoundSettled(error?: unknown): void {
+    this.keyPackageRoundsActive--;
+    this.keyPackageRoundsSettled++;
+    if (error !== undefined) {
+      this.lastKeyPackageRoundFailure = { settled: this.keyPackageRoundsSettled, error };
+    }
+    this.wakeKeyPackageRoundWaiters(false);
+  }
+
+  private wakeKeyPackageRoundWaiters(tornDown: boolean): void {
+    const waiters = this.keyPackageRoundWaiters;
+    this.keyPackageRoundWaiters = [];
+    for (const wake of waiters) wake(tornDown);
+  }
+
+  /**
+   * Waits until THE SERVER HAS STATED that this device holds a static KeyPackage - the fact the
+   * commit gate reads before it activates a membership - and answers why it could not be proven
+   * otherwise.
+   *
+   * THE FACT IS THE CONDITION, THE ROUND IS ONLY WHAT MAKES IT TRUE, and nothing here is a clock.
+   * Each pass: capture the settle count, READ the fact, then decide.
+   * - published: join.
+   * - a round settled while the read was in flight: the answer predates it, so read again (the lost
+   *   wake-up of parking on a stale answer for a round that already came and went). If that round
+   *   failed and nothing else is running, the failure is the answer.
+   * - a round is running: park until one settles, then read again. A round failing while an
+   *   overlapping one still runs refuses nobody - the survivor may yet publish.
+   * - no round is running and the fact is absent (or the id revoked, which a round re-enrols):
+   *   START one, the only thing that can make it true, and wait for it. If it succeeded and the
+   *   server STILL does not hold the package, that is unverified, never a second round.
+   * - the read got no answer and no round is running: unverified; nothing is claimed.
+   *
+   * WHAT IS BOUNDED: the join's WAIT. Each HTTP call of a round has its own typed deadline, and the
+   * whole round is raced against `KEY_PACKAGE_ROUND_DEADLINE_MS` (the native `invoke`, the mint and a
+   * re-enrolment cannot be aborted, only abandoned), so a hang fails the round typed and wakes this
+   * with a refusal. WHAT IS NOT: the abandoned work itself - see `generateKeyPackage`.
+   */
+  private async awaitOwnKeyPackagePublished(
+    short: string
+  ): Promise<'published' | 'round_failed' | 'unverified'> {
+    let startedOwnRound = false;
+    for (let pass = 1; ; pass++) {
+      // A PASS COUNT IS THE PROOF OF TERMINATION when rounds keep settling while the fact stays
+      // absent or revoked: each pass is one read, and the count is per join attempt, not a clock.
+      if (pass > EXTERNAL_JOIN_FACT_PASSES) {
+        this.reportOwnKeyPackageUnverified(
+          short,
+          `the fact stayed unpublished across ${EXTERNAL_JOIN_FACT_PASSES} reads`
+        );
+        return 'unverified';
+      }
+      const settledBefore = this.keyPackageRoundsSettled;
+      const answer = await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId);
+      const publication = keyPackagePublication(answer);
+      if (publication === 'published') {
+        this.ownKeyPackageUnverifiedReported = null;
+        return 'published';
+      }
+      if (answer.kind === 'unanswered') {
+        console.warn(
+          `[MLS] externalJoin ${short}... could not read this device's KeyPackage publication: ${sanitizeForLog(answer.detail)}`
+        );
+      }
+      const failedSince = (): boolean =>
+        this.lastKeyPackageRoundFailure !== null &&
+        this.lastKeyPackageRoundFailure.settled > settledBefore &&
+        this.keyPackageRoundsActive === 0;
+      if (this.keyPackageRoundsSettled !== settledBefore) {
+        if (failedSince()) return this.roundFailedForJoin(short);
+        console.log(
+          `[MLS] externalJoin ${short}... a key package round settled during the read (${publication}) - reading the fact again`
+        );
+        continue;
+      }
+      if (this.keyPackageRoundsActive > 0) {
+        console.log(
+          `[MLS] externalJoin ${short}... waits for the server to hold this device's KeyPackage (${publication}, a round is running): the commit gate refuses an activation without one`
+        );
+        const tornDown = await new Promise<boolean>((resolve) => {
+          this.keyPackageRoundWaiters.push(resolve);
+        });
+        if (tornDown) {
+          console.warn(
+            `[MLS] externalJoin ${short}... released: the client was torn down while it waited for a key package round`
+          );
+          return 'unverified';
+        }
+        if (failedSince()) return this.roundFailedForJoin(short);
+        console.log(
+          `[MLS] externalJoin ${short}... woken by a settled key package round - reading the fact again`
+        );
+        continue;
+      }
+      if (publication === 'unknown' || startedOwnRound) {
+        this.reportOwnKeyPackageUnverified(
+          short,
+          publication === 'unknown'
+            ? 'the server did not answer the read and no round is running'
+            : `our own round succeeded and the server still does not hold the package (${publication})`
+        );
+        return 'unverified';
+      }
+      console.warn(
+        `[MLS] externalJoin ${short}... finds NO KeyPackage published for this device (${publication}) and no round running - starting the round, the only thing that can make it true`
+      );
+      startedOwnRound = true;
+      try {
+        // THE KEY IS WHATEVER BOOT PASSED, INCLUDING '' IN BIOMETRIC MODE (the native layer resolves
+        // it from the keystore): an empty string is not "no key", so there is no guard on it.
+        await this.generateKeyPackage(this.currentDeviceKeyB64);
+      } catch (e) {
+        console.warn(
+          `[MLS] externalJoin ${short}... not attempted - the key package round FAILED:`,
+          sanitizeForLog(String(e))
+        );
+        return 'round_failed';
+      }
+    }
+  }
+
+  /**
+   * Says ONCE per distinct reason that a join could not be attempted for want of a published
+   * KeyPackage, and what would change it. The recovery cadence (about once a minute) asks again with
+   * no repair in between, so repeating the warning would be noise: a reader needs the state change,
+   * not the heartbeat. Cleared when the fact is next seen published.
+   */
+  private reportOwnKeyPackageUnverified(short: string, why: string): void {
+    if (this.ownKeyPackageUnverifiedReported === why) {
+      console.debug(`[MLS] externalJoin ${short}... still not attempted: ${why}`);
+      return;
+    }
+    this.ownKeyPackageUnverifiedReported = why;
+    console.warn(
+      `[MLS] externalJoin ${short}... not attempted: ${why}. Not repeated at this level until it changes - what changes it is a round publishing this device's KeyPackage or the server answering the read`
+    );
+  }
+
+  private roundFailedForJoin(short: string): 'round_failed' {
+    console.warn(
+      `[MLS] externalJoin ${short}... not attempted - the key package round FAILED, so the gate would answer no_key_package:`,
+      sanitizeForLog(String(this.lastKeyPackageRoundFailure?.error))
+    );
+    return 'round_failed';
   }
 
   /**
@@ -3457,7 +3721,8 @@ export abstract class BaseMlsService implements IMlsService {
   async routeDistributionFrame(
     groupId: string,
     sender: string,
-    ciphertext: Uint8Array
+    ciphertext: Uint8Array,
+    senderDeviceId?: string
   ): Promise<boolean> {
     const scope = this.distributionScopeByGroup.get(groupId);
     if (scope === undefined) {
@@ -3539,7 +3804,14 @@ export abstract class BaseMlsService implements IMlsService {
     }
 
     try {
-      await handler({ scope, workspaceId, groupId, sender, plaintext });
+      await handler({
+        scope,
+        workspaceId,
+        groupId,
+        sender,
+        plaintext,
+        ...(senderDeviceId ? { senderDeviceId } : {}),
+      });
     } catch (e) {
       // NOT acknowledged, on purpose: the handler is what STORES a seed, so a throw here means the
       // seed did not land, and acknowledging would drop key material nobody can ask for again.
@@ -3629,6 +3901,9 @@ export abstract class BaseMlsService implements IMlsService {
       this.tellEvictedOnce(groupId);
     }
     if (permanent) {
+      // COUNTED for the seed requests that follow, which print it (`keyGroupFrameLosses`). A
+      // device's own frame is not a loss: there was never anything for it to read.
+      if (kind !== 'own-message') noteKeyGroupFrameLost(groupId, kind);
       // ACKNOWLEDGED, and said once. The seed is gone from THIS device for good; what recovers it
       // is a peer answering `requestCommunityHistory`, never the server handing the same
       // undecryptable bytes back. Leaving it queued would cost the line above on every boot and
@@ -3797,178 +4072,225 @@ export abstract class BaseMlsService implements IMlsService {
    * always a chat group we are genuinely outside of.
    */
   async externalJoin(groupId: string): Promise<ExternalJoinOutcome> {
-    const excludeSelf = [`${this.userId}:${this.deviceId}`];
-    const short = groupId.slice(0, 8);
-    for (let attempt = 0; attempt < EXTERNAL_JOIN_MAX_ATTEMPTS; attempt++) {
-      // THE REFUSAL HAS TO SURVIVE THIS CATCH, which flattened every outcome into `null` and cost
-      // the caller the only discriminator it needed. `NotAGroupMemberError` is the server answering
-      // the question recovery is asking; anything else says nothing about membership and leaves the
-      // welcome_request fallback the right next move. And it is logged now: this was a swallowed
-      // branch on the path a real outage would take.
-      const gi = await this.groupInfoChannel(groupId)
-        .fetch()
-        .catch((e) => {
-          if (e instanceof NotAGroupMemberError) throw e;
+    // ONE JOIN PER GROUP AT A TIME. The wait below can be long, so a second caller (the recovery
+    // seam's own cooldown is 60 s) could otherwise start a second join of a group the first is
+    // about to hold - the duplicate-leaf race. Sharing the promise gives both the same answer.
+    const flights =
+      externalJoinFlights.get(this) ?? new Map<string, Promise<ExternalJoinOutcome>>();
+    externalJoinFlights.set(this, flights);
+    const running = flights.get(groupId);
+    if (running) {
+      console.log(`[MLS] externalJoin ${groupId.slice(0, 8)}... already in flight - awaiting it`);
+      return running;
+    }
+    const attempt = (async (): Promise<ExternalJoinOutcome> => {
+      const short = groupId.slice(0, 8);
+
+      // A DEVICE IS ADDRESSABLE ONLY ONCE ITS KEYPACKAGE IS PUBLISHED, and the commit below is the
+      // request that asks the gate to make it so. The gate answers an activation for a device with no
+      // static KeyPackage `no_key_package` and writes NO membership row, so a commit that wins the
+      // race against the publication leaves a device holding the tree of a group that routes nothing
+      // to it - the "holds the group, the group holds no row" repair, and its extra epoch.
+      //
+      // Measured on production 2026-10-09: all six `[MEMBERSHIP_ACTIVE] REFUSED ... no_key_package`
+      // lines of 32 hours, on four community distribution groups and no conversation. Each device's
+      // first run logged `[PURGE_PREKEYS]` (the start of its key package round), then this commit and
+      // its refusal in the same second, then `[REGISTER_DEVICE] START`. The mint holds the MLS lock
+      // only for its own span, so the join took the lock the moment the mint let go and committed one
+      // checkpoint and one round trip ahead of the publication. Three of the six healed 2 minutes to
+      // 1 h 44 min later, an iPhone among them, and the other three devices no longer exist.
+      //
+      // WAITS FOR THE PUBLISHED FACT, not for a round: the server's own statement that this device
+      // holds a static KeyPackage, read from what the gate reads. A round not started yet, running or
+      // ended is one case, and no timer decides it (see {@link awaitOwnKeyPackagePublished}). The
+      // earlier version waited on a round already running and left two holes this closes: a join that
+      // started BEFORE the round set its field, and a round whose request never answered.
+      const publication = await this.awaitOwnKeyPackagePublished(short);
+      if (publication === 'round_failed') {
+        return { joined: false, reason: 'key_package_round_failed' };
+      }
+      if (publication === 'unverified') {
+        return { joined: false, reason: 'own_key_package_unverified' };
+      }
+      // READ AFTER THE WAIT: the round can re-enrol the device under a new id (a revoked id), and the
+      // gate must exclude the id that actually joins.
+      const excludeSelf = [`${this.userId}:${this.deviceId}`];
+      for (let attempt = 0; attempt < EXTERNAL_JOIN_MAX_ATTEMPTS; attempt++) {
+        // THE REFUSAL HAS TO SURVIVE THIS CATCH, which flattened every outcome into `null` and cost
+        // the caller the only discriminator it needed. `NotAGroupMemberError` is the server answering
+        // the question recovery is asking; anything else says nothing about membership and leaves the
+        // welcome_request fallback the right next move. And it is logged now: this was a swallowed
+        // branch on the path a real outage would take.
+        const gi = await this.groupInfoChannel(groupId)
+          .fetch()
+          .catch((e) => {
+            if (e instanceof NotAGroupMemberError) throw e;
+            console.warn(
+              `[MLS] externalJoin GroupInfo fetch failed for ${short}...:`,
+              String(e).slice(0, 120)
+            );
+            return null;
+          });
+        if (!gi) return { joined: false, reason: 'no_base_published' };
+
+        // NEVER LEARN BY FAILING WHAT A FACT COULD HAVE TOLD YOU. A base behind the group's epoch is
+        // refused by the gate with certainty, and the refusal costs a round trip and the tree we would
+        // build to make it. Only a member already holding the tree can publish a usable one.
+        if (gi.baseEpoch < gi.activeEpoch) {
           console.warn(
-            `[MLS] externalJoin GroupInfo fetch failed for ${short}...:`,
+            `[MLS] externalJoin STALE base for ${short}... (published ${gi.baseEpoch}, group at ${gi.activeEpoch})` +
+              ` - not attempting; a member holding the tree must republish it`
+          );
+          return {
+            joined: false,
+            reason: 'stale_base',
+            baseEpoch: gi.baseEpoch,
+            serverEpoch: gi.activeEpoch,
+          };
+        }
+
+        // BUILD THE COMMIT AND THE BASE IT CREATES IN THE SAME BREATH. An external commit is applied
+        // to the returned instance at once (unlike a staged add/remove), so this device - and for one
+        // moment ONLY this device - can export the GroupInfo for the epoch its own commit produces.
+        // That base then travels inside the submission below and is stored with the epoch advance,
+        // which is what stops an external joiner from locking the NEXT one out (COMM-22).
+        let joined: { groupId: string; commit: Uint8Array; nextBase: string };
+        try {
+          joined = await this.runUnderMlsLock(async () => {
+            const built = await this.joinByExternalCommit(fromBase64(gi.groupInfo));
+            // The same atomic read as every other publisher, under the lock this section already holds.
+            const { base, baseEpoch } = await this.exportBaseForPublication(built.groupId);
+            // A HARD ERROR, NOT A DEGRADED SUBMISSION, and one step STRONGER than the read above: the
+            // published base is monotonic and cannot be walked back, so a blob exported at any other
+            // epoch than the one the server will record it under would strand the group for good.
+            // Nothing about this can be true and unnoticed: if the instance is not at base + 1 the
+            // join is abandoned like any other build failure, and the caller's welcome_request
+            // fallback is the right next move.
+            if (baseEpoch !== gi.baseEpoch + 1) {
+              throw new Error(
+                `external join instance at epoch ${baseEpoch}, expected ${gi.baseEpoch + 1}`
+              );
+            }
+            return { ...built, nextBase: base };
+          });
+        } catch (e) {
+          // Build failed (e.g. the group is already held locally) -> fall back.
+          console.warn(`[MLS] externalJoin build failed for ${short}...:`, String(e).slice(0, 120));
+          return { joined: false, reason: 'build_failed' };
+        }
+
+        // Submit under the epoch gate against the GroupInfo's base epoch. The server fans the external
+        // commit out to existing members (excluding this device, which already applied it).
+        let validation: { accepted: boolean; reason?: string; currentEpoch?: number };
+        try {
+          validation = await this.delivery.submitCommit(
+            joined.groupId,
+            gi.baseEpoch,
+            toBase64(joined.commit),
+            excludeSelf,
+            joined.nextBase
+          );
+        } catch (e) {
+          // A TRANSPORT FAILURE IS NOT AN ANSWER, and this used to be relabelled an epoch race: the
+          // staged commit was discarded, the base refetched, and the whole thing retried against a
+          // server that had never been reached. We claim NOTHING about membership here. The group is
+          // still dropped, because an external commit cannot be cleared and a pending one left
+          // unmerged breaks every later operation on it - and if the server DID accept the commit we
+          // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
+          await dropGroupState(this, joined.groupId, {
+            reason: 'the commit gate could not be reached',
+            // Built in memory during this very call and never checkpointed: there is nothing
+            // durable to undo, and a save here would cost one per failed attempt.
+            checkpoint: 'never-persisted',
+          });
+          console.warn(
+            `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
+              ` nothing is claimed about membership:`,
             String(e).slice(0, 120)
           );
-          return null;
-        });
-      if (!gi) return { joined: false, reason: 'no_base_published' };
+          return { joined: false, reason: 'unreachable' };
+        }
 
-      // NEVER LEARN BY FAILING WHAT A FACT COULD HAVE TOLD YOU. A base behind the group's epoch is
-      // refused by the gate with certainty, and the refusal costs a round trip and the tree we would
-      // build to make it. Only a member already holding the tree can publish a usable one.
-      if (gi.baseEpoch < gi.activeEpoch) {
-        console.warn(
-          `[MLS] externalJoin STALE base for ${short}... (published ${gi.baseEpoch}, group at ${gi.activeEpoch})` +
-            ` - not attempting; a member holding the tree must republish it`
-        );
-        return {
-          joined: false,
-          reason: 'stale_base',
-          baseEpoch: gi.baseEpoch,
-          serverEpoch: gi.activeEpoch,
-        };
-      }
-
-      // BUILD THE COMMIT AND THE BASE IT CREATES IN THE SAME BREATH. An external commit is applied
-      // to the returned instance at once (unlike a staged add/remove), so this device - and for one
-      // moment ONLY this device - can export the GroupInfo for the epoch its own commit produces.
-      // That base then travels inside the submission below and is stored with the epoch advance,
-      // which is what stops an external joiner from locking the NEXT one out (COMM-22).
-      let joined: { groupId: string; commit: Uint8Array; nextBase: string };
-      try {
-        joined = await this.runUnderMlsLock(async () => {
-          const built = await this.joinByExternalCommit(fromBase64(gi.groupInfo));
-          // The same atomic read as every other publisher, under the lock this section already holds.
-          const { base, baseEpoch } = await this.exportBaseForPublication(built.groupId);
-          // A HARD ERROR, NOT A DEGRADED SUBMISSION, and one step STRONGER than the read above: the
-          // published base is monotonic and cannot be walked back, so a blob exported at any other
-          // epoch than the one the server will record it under would strand the group for good.
-          // Nothing about this can be true and unnoticed: if the instance is not at base + 1 the
-          // join is abandoned like any other build failure, and the caller's welcome_request
-          // fallback is the right next move.
-          if (baseEpoch !== gi.baseEpoch + 1) {
-            throw new Error(
-              `external join instance at epoch ${baseEpoch}, expected ${gi.baseEpoch + 1}`
+        if (validation.accepted) {
+          await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
+          // THE SERVER HAS ALREADY MADE THIS DURABLE FOR EVERYONE ELSE, so this device may not hold
+          // its half in RAM. The commit is accepted: the group's epoch has advanced for every other
+          // member, and the secrets that make the new epoch usable exist ONLY here, in WASM memory.
+          // A reload before the next checkpoint restores a device that is IN the published tree and
+          // cannot read a word of it - and, finding no local group, joins again from the new base.
+          //
+          // THAT SECOND JOIN FORKS THE GROUP. Measured on prod 2026-08-27: a device joined one salon
+          // at base 0 and again at base 1 two seconds apart across a navigation, leaving the salon at
+          // epoch 2, the granting device stranded at 0 refusing frames it could not read, and the
+          // seed that device held undeliverable - a member granted access who can read nothing.
+          //
+          // `mlsStatePersister` defers routine writes for a reason it states in full: inbound state
+          // is replayable from the server, and outbound ratchet state is checkpointed on the send
+          // path. AN EXTERNAL JOIN IS NEITHER. Nothing on the server can replay these secrets back,
+          // so the structural checkpoint is awaited here, at the point the state moved.
+          let checkpointed: boolean;
+          try {
+            checkpointed = await persistMlsStructuralCheckpoint();
+          } catch (e) {
+            checkpointed = false;
+            console.error(
+              `[MLS] externalJoin FAILED to checkpoint ${short}... - a reload before the next write` +
+                ` would rejoin and fork the group:`,
+              String(e).slice(0, 120)
             );
           }
-          return { ...built, nextBase: base };
-        });
-      } catch (e) {
-        // Build failed (e.g. the group is already held locally) -> fall back.
-        console.warn(`[MLS] externalJoin build failed for ${short}...:`, String(e).slice(0, 120));
-        return { joined: false, reason: 'build_failed' };
-      }
+          // The join stands either way - it is accepted server-side and usable for this session, and
+          // refusing it here would discard a membership the rest of the group can already see. What
+          // is lost is only its durability, which is why this accuses rather than informs.
+          if (!checkpointed) {
+            console.error(
+              `[MLS] externalJoin for ${short}... was not checkpointed: no persister is registered,` +
+                ` so this membership does not survive a reload and the next load will rejoin`
+            );
+          }
+          // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX. The base for the epoch this join
+          // created was written in the same transaction as the epoch itself, so there is nothing left
+          // to mint and nothing left to lose - which is what a reload used to take with it.
+          console.log(
+            `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch},` +
+              ` base for ${gi.baseEpoch + 1} stored with the commit)`
+          );
+          return { joined: true };
+        }
 
-      // Submit under the epoch gate against the GroupInfo's base epoch. The server fans the external
-      // commit out to existing members (excluding this device, which already applied it).
-      let validation: { accepted: boolean; reason?: string; currentEpoch?: number };
-      try {
-        validation = await this.delivery.submitCommit(
-          joined.groupId,
-          gi.baseEpoch,
-          toBase64(joined.commit),
-          excludeSelf,
-          joined.nextBase
-        );
-      } catch (e) {
-        // A TRANSPORT FAILURE IS NOT AN ANSWER, and this used to be relabelled an epoch race: the
-        // staged commit was discarded, the base refetched, and the whole thing retried against a
-        // server that had never been reached. We claim NOTHING about membership here. The group is
-        // still dropped, because an external commit cannot be cleared and a pending one left
-        // unmerged breaks every later operation on it - and if the server DID accept the commit we
-        // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
+        // REFUSED, and the server said WHY - both fields used to be dropped and the line called every
+        // refusal an epoch race. An external commit cannot be cleared, so the group goes; the next
+        // pass re-reads the base and exits on the stale-base fact above if nobody republished.
         await dropGroupState(this, joined.groupId, {
-          reason: 'the commit gate could not be reached',
+          reason: 'the server refused the external commit',
           // Built in memory during this very call and never checkpointed: there is nothing
           // durable to undo, and a save here would cost one per failed attempt.
           checkpoint: 'never-persisted',
         });
         console.warn(
-          `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
-            ` nothing is claimed about membership:`,
-          String(e).slice(0, 120)
+          `[MLS] externalJoin REFUSED for ${joined.groupId.slice(0, 8)}... (base ${gi.baseEpoch},` +
+            ` reason ${validation.reason ?? 'unspecified'}, group at ${validation.currentEpoch ?? '?'})` +
+            ` - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
         );
-        return { joined: false, reason: 'unreachable' };
-      }
-
-      if (validation.accepted) {
-        await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
-        // THE SERVER HAS ALREADY MADE THIS DURABLE FOR EVERYONE ELSE, so this device may not hold
-        // its half in RAM. The commit is accepted: the group's epoch has advanced for every other
-        // member, and the secrets that make the new epoch usable exist ONLY here, in WASM memory.
-        // A reload before the next checkpoint restores a device that is IN the published tree and
-        // cannot read a word of it - and, finding no local group, joins again from the new base.
-        //
-        // THAT SECOND JOIN FORKS THE GROUP. Measured on prod 2026-08-27: a device joined one salon
-        // at base 0 and again at base 1 two seconds apart across a navigation, leaving the salon at
-        // epoch 2, the granting device stranded at 0 refusing frames it could not read, and the
-        // seed that device held undeliverable - a member granted access who can read nothing.
-        //
-        // `mlsStatePersister` defers routine writes for a reason it states in full: inbound state
-        // is replayable from the server, and outbound ratchet state is checkpointed on the send
-        // path. AN EXTERNAL JOIN IS NEITHER. Nothing on the server can replay these secrets back,
-        // so the structural checkpoint is awaited here, at the point the state moved.
-        let checkpointed: boolean;
-        try {
-          checkpointed = await persistMlsStructuralCheckpoint();
-        } catch (e) {
-          checkpointed = false;
-          console.error(
-            `[MLS] externalJoin FAILED to checkpoint ${short}... - a reload before the next write` +
-              ` would rejoin and fork the group:`,
-            String(e).slice(0, 120)
-          );
+        if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
+          return {
+            joined: false,
+            reason: 'refused',
+            serverReason: validation.reason ?? 'unspecified',
+            ...(validation.currentEpoch !== undefined
+              ? { serverEpoch: validation.currentEpoch }
+              : {}),
+          };
         }
-        // The join stands either way - it is accepted server-side and usable for this session, and
-        // refusing it here would discard a membership the rest of the group can already see. What
-        // is lost is only its durability, which is why this accuses rather than informs.
-        if (!checkpointed) {
-          console.error(
-            `[MLS] externalJoin for ${short}... was not checkpointed: no persister is registered,` +
-              ` so this membership does not survive a reload and the next load will rejoin`
-          );
-        }
-        // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX. The base for the epoch this join
-        // created was written in the same transaction as the epoch itself, so there is nothing left
-        // to mint and nothing left to lose - which is what a reload used to take with it.
-        console.log(
-          `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch},` +
-            ` base for ${gi.baseEpoch + 1} stored with the commit)`
-        );
-        return { joined: true };
       }
-
-      // REFUSED, and the server said WHY - both fields used to be dropped and the line called every
-      // refusal an epoch race. An external commit cannot be cleared, so the group goes; the next
-      // pass re-reads the base and exits on the stale-base fact above if nobody republished.
-      await dropGroupState(this, joined.groupId, {
-        reason: 'the server refused the external commit',
-        // Built in memory during this very call and never checkpointed: there is nothing
-        // durable to undo, and a save here would cost one per failed attempt.
-        checkpoint: 'never-persisted',
-      });
-      console.warn(
-        `[MLS] externalJoin REFUSED for ${joined.groupId.slice(0, 8)}... (base ${gi.baseEpoch},` +
-          ` reason ${validation.reason ?? 'unspecified'}, group at ${validation.currentEpoch ?? '?'})` +
-          ` - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
-      );
-      if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
-        return {
-          joined: false,
-          reason: 'refused',
-          serverReason: validation.reason ?? 'unspecified',
-          ...(validation.currentEpoch !== undefined
-            ? { serverEpoch: validation.currentEpoch }
-            : {}),
-        };
-      }
-    }
-    // Unreachable - the last attempt returns above. Typed rather than asserted.
-    return { joined: false, reason: 'refused', serverReason: 'unspecified' };
+      // Unreachable - the last attempt returns above. Typed rather than asserted.
+      return { joined: false, reason: 'refused', serverReason: 'unspecified' };
+    })().finally(() => {
+      // Identity-checked: a teardown cleared the map and a later join may own the entry by now.
+      if (flights.get(groupId) === attempt) flights.delete(groupId);
+    });
+    flights.set(groupId, attempt);
+    return attempt;
   }
 
   /**

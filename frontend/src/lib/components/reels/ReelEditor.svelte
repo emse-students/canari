@@ -9,15 +9,22 @@
    * letterboxed one), every overlay is placed in 0..1 of that frame and sized from its short side
    * (`reelOverlays.ts`), and the export uses the same numbers on the media's own pixels.
    *
-   * LAYOUT: one column - header, stage, tool tray - so nothing is ever drawn over the stage's own
-   * controls, the home indicator is the tray's padding, and the keyboard (which resizes the layout
-   * viewport) simply shortens the stage.
+   * LAYOUT (user, 2026-10-11: the picture never moves or resizes while editing, and what is captured,
+   * edited and published is ONE rectangle): the media sits in `ReelFrame`, whole - edge to edge when
+   * the screen has its shape, rounded over a blurred backdrop otherwise - at the largest height seen,
+   * so the keyboard cannot move it. The header and the tool tray are overlays on translucent scrims;
+   * the tray, anchored to the shrunken box, rides above the keyboard. Overlays live inside the frame.
+   * The scrims let touches through (only the real controls take them); the trash sits above the tray.
+   *
+   * REACH (`overlayReach.ts`): an overlay's whole box stays inside the frame on every move, so it is
+   * never published clipped; released anywhere but the trash, it settles with its centre clear of
+   * the header and the tray, so it can always be grabbed again away from the screen edge.
    *
    * GESTURES: ONE `TransformGesture` for every overlay kind. A finger on an overlay selects and
    * drags it; a second finger anywhere pinches and twists the same one; a tap on empty space
    * deselects; a tap on the already-selected text edits it; releasing over the trash deletes.
    */
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import {
     ArrowRight,
     ChevronLeft,
@@ -31,7 +38,17 @@
   } from '@lucide/svelte';
   import { TAP_SLOP_PX, TransformGesture, pointInRect } from '$lib/gestures/transformGesture';
   import type { ReelClip } from '$lib/reels/reelCapture';
+  import ReelFrame from './ReelFrame.svelte';
   import { renderEditedReelMedia } from '$lib/reels/reelEditor';
+  import {
+    controlBands,
+    keptInFrame,
+    overlayExtent,
+    placedAfterResize,
+    settledClearOfControls,
+    settlesOnRelease,
+    type OverlayExtent,
+  } from '$lib/reels/overlayReach';
   import {
     STROKE_WIDTHS,
     createStrokeOverlay,
@@ -81,6 +98,8 @@
   let { clip, oncancel, onnext }: Props = $props();
   let frame = $state<HTMLElement | null>(null);
   let trash = $state<HTMLElement | null>(null);
+  let header = $state<HTMLElement | null>(null);
+  let tray = $state<HTMLElement | null>(null);
   let draftInput = $state<HTMLInputElement | null>(null);
   let color = $state('#ffffff');
   /** The text style in hand: what a new text starts with, and what the row edits on a selected one. */
@@ -116,6 +135,8 @@
   let erasedSomething = false;
   /** The layout when the running arrange gesture began, to tell a move from a mere tap. */
   let gestureStart: ReelOverlay[] = [];
+  /** The handled overlay's placement when the running gesture began: the reach bounds include it. */
+  let gestureFrom: ReelOverlay | undefined;
 
   const colors = ['#ffffff', '#050505', '#ffcf33', '#f05b5b', '#5bd0f0'];
   const source = $derived(URL.createObjectURL(clip.blob));
@@ -136,10 +157,7 @@
 
   onDestroy(() => URL.revokeObjectURL(source));
 
-  const gesture = new TransformGesture(() => {
-    const bounds = frame?.getBoundingClientRect();
-    return { width: bounds?.width ?? 0, height: bounds?.height ?? 0 };
-  });
+  const gesture = new TransformGesture(liveFrameSize);
   /** The overlay the running gesture handles, and whether it was already selected when it began. */
   let gestureId: string | null = null;
   let wasSelected = false;
@@ -153,6 +171,69 @@
       ratio = width / height;
       console.debug(`[reel-editor] frame is ${width}x${height}`);
     }
+  }
+
+  /** The frame's size in CSS px, read now (the gesture and the reach rules work in it). */
+  function liveFrameSize() {
+    const bounds = frame?.getBoundingClientRect();
+    return { width: bounds?.width ?? 0, height: bounds?.height ?? 0 };
+  }
+
+  /** An overlay's extent; a text's is the box the screen drew for it (its span, untransformed). */
+  function extentOf(overlay: ReelOverlay): OverlayExtent {
+    const size = liveFrameSize();
+    const span =
+      overlay.kind === 'text'
+        ? frame?.querySelector<HTMLElement>(`[data-overlay-id="${overlay.id}"] > span`)
+        : null;
+    const measured = span ? { width: span.offsetWidth, height: span.offsetHeight } : null;
+    return overlayExtent(overlay, measured, Math.min(size.width, size.height));
+  }
+
+  /**
+   * THE ONE RULE FOR A RELEASE THAT IS NOT ON THE TRASH: the overlay stays, whole inside the frame,
+   * its centre moved clear of the header and the tray, measured as they stand with the keyboard
+   * closed (`controlBands`). Never while the text field is open: the commit settles once it closes.
+   */
+  function settle(id: string, from?: ReelOverlay) {
+    if (composing) return;
+    place(id, from);
+  }
+
+  /**
+   * Puts an overlay where the reach rules want it now (`placedAfterResize`): with the text field
+   * open, only inside the frame - a restyle that widens it is pulled in as it grows, not at "OK";
+   * with the field closed, the full release rule (`settledClearOfControls`).
+   */
+  function place(id: string, from?: ReelOverlay) {
+    const overlay = overlays.find((candidate) => candidate.id === id);
+    if (!overlay || !frame) return;
+    const bounds = frame.getBoundingClientRect();
+    const stage = frame.closest('[data-reel-stage]')?.getBoundingClientRect();
+    const bands = controlBands(
+      bounds,
+      stage?.top ?? bounds.top,
+      header?.getBoundingClientRect() ?? null,
+      tray?.offsetHeight ?? 0
+    );
+    const settled = from
+      ? settledClearOfControls(overlay, extentOf(overlay), bounds, bands, from)
+      : placedAfterResize(overlay, extentOf(overlay), bounds, bands, composing !== null);
+    if (settled.x === overlay.x && settled.y === overlay.y && settled.scale === overlay.scale)
+      return;
+    console.debug(
+      `[reel-editor] overlay ${id} ${composing ? 'kept in the frame' : 'settled'} at ${settled.x.toFixed(3)},${settled.y.toFixed(3)} x${settled.scale.toFixed(3)} (bands ${bands.top.toFixed(2)}/${bands.bottom.toFixed(2)})`
+    );
+    overlays = withTransform(overlays, id, settled);
+  }
+
+  /**
+   * A text whose words or face changed takes a new width: once drawn, it is placed again - kept in
+   * the frame while the field is open, settled once it is closed.
+   */
+  async function settleAfterRender(id: string) {
+    await tick();
+    place(id);
   }
 
   function overOverlayTrash(x: number, y: number): boolean {
@@ -182,7 +263,10 @@
         font = handled.font;
         background = handled.background;
       }
-      gesture.begin(handled);
+      const extent = extentOf(handled);
+      const from = handled;
+      gestureFrom = from;
+      gesture.begin(handled, (next) => keptInFrame(next, extent, liveFrameSize(), from));
     }
     // A second finger joins the running gesture wherever it lands: that is the pinch.
     if (!gestureId) return;
@@ -212,7 +296,10 @@
       console.debug(`[reel-editor] overlay ${id} dropped on the trash`);
       overlays = withoutOverlay(overlays, id);
       selectedId = null;
-    } else if (event.type === 'pointerup' && gesture.travel <= TAP_SLOP_PX && wasSelected) {
+    } else if (settlesOnRelease(composing !== null, layoutChanged(gestureStart, overlays))) {
+      settle(id, gestureFrom);
+    }
+    if (!dropped && event.type === 'pointerup' && gesture.travel <= TAP_SLOP_PX && wasSelected) {
       const tapped = overlays.find((overlay) => overlay.id === id);
       if (tapped?.kind === 'text') {
         draft = tapped.text;
@@ -309,12 +396,14 @@
     if (composing.id) {
       remember();
       overlays = withTextEdit(overlays, composing.id, { text: draft, color, font, background });
+      void settleAfterRender(composing.id);
     } else {
       const created = createTextOverlay(draft, color, { font, background });
       if (created) {
         remember();
         overlays = [...overlays, created];
         selectedId = created.id;
+        void settleAfterRender(created.id);
       }
     }
     composing = null;
@@ -354,6 +443,7 @@
     if (id) {
       remember();
       overlays = withTextEdit(overlays, id, edit);
+      void settleAfterRender(id);
     }
   }
 
@@ -423,46 +513,19 @@
     'inline-flex h-11 w-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500';
 </script>
 
-<div class="absolute inset-0 z-20 flex flex-col bg-black text-white" data-reel-editor>
-  <header
-    class="flex shrink-0 items-center justify-between gap-2 px-3 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-2"
-  >
-    <button
-      type="button"
-      class="ui-icon-button"
-      aria-label={m.reels_editor_back()}
-      title={m.reels_editor_back()}
-      onclick={() => void requestLeave()}
-    >
-      <ChevronLeft size={24} strokeWidth={2.5} />
-    </button>
-    <h1 class="min-w-0 text-base font-bold">{m.reels_editor_title()}</h1>
-    <button
-      type="button"
-      class="text-cn-ink inline-flex h-11 items-center gap-1.5 rounded-full bg-amber-500 px-4 text-sm font-bold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
-      disabled={busy}
-      onclick={next}
-      data-reel-editor-next
-    >
-      {busy ? m.reels_editor_exporting() : m.reels_review_next()}
-      <ArrowRight size={18} strokeWidth={2.5} />
-    </button>
-  </header>
-
-  <!-- THE STAGE: the media's own box, as large as fits. `cqw`/`cqh` are the stage's size, so the
-       frame never exceeds it and never takes a different shape from the media. -->
-  <div
-    class="relative flex min-h-0 flex-1 items-center justify-center"
-    style="container-type: size"
-  >
+<div class="absolute inset-0 z-20 overflow-hidden bg-black text-white" data-reel-editor>
+  <!-- THE FRAME (ReelFrame, shared with the camera, the review and the viewer): the media shown whole,
+       edge to edge when the screen has its shape, rounded over a blurred backdrop otherwise. It keeps
+       the largest height seen, so the keyboard never moves it. Overlays live INSIDE it. -->
+  <ReelFrame {ratio} latch={composing !== null}>
     <!-- Pointer-only by nature (a drag, a pinch): the keyboard and the screen reader reach the same
          actions through the tool buttons below, which add and clear what the gestures arrange. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       bind:this={frame}
-      class="relative touch-none overflow-hidden select-none"
-      style={`width: min(100cqw, calc(100cqh * ${ratio})); aspect-ratio: ${ratio}; container-type: size`}
-      data-reel-frame
+      data-reel-surface
+      class="absolute inset-0 touch-none overflow-hidden select-none"
+      style="container-type: size"
       onpointerdown={(event) => (mode === 'arrange' ? arrangeDown(event) : paintDown(event))}
       onpointermove={(event) => (mode === 'arrange' ? arrangeMove(event) : paintMove(event))}
       onpointerup={(event) => (mode === 'arrange' ? arrangeUp(event) : paintUp(event))}
@@ -504,11 +567,13 @@
         >
           {#if overlay.kind === 'text'}
             {@const paint = textPaint(overlay)}
+            <!-- The size undoes the system text size (`--text-zoom`, Android's WebView scales FONT sizes
+                 only): this text is part of the picture, and the export's canvas never scales it. -->
             <span
               class="block font-bold whitespace-nowrap {paint.pill
                 ? ''
                 : 'drop-shadow-[0_1px_3px_rgb(0_0_0/0.6)]'}"
-              style={`color:${paint.fill};font-family:${fontStack(overlay.font, 'inherit')};font-size:${TEXT_BASE_SIZE * overlay.scale * 100}cqmin;line-height:${TEXT_LINE_HEIGHT};${paint.pill ? `background:${paint.pill};padding:${PILL_PAD_Y_EM}em ${PILL_PAD_X_EM}em;border-radius:${PILL_RADIUS_EM}em` : ''}`}
+              style={`color:${paint.fill};font-family:${fontStack(overlay.font, 'inherit')};font-size:calc(${TEXT_BASE_SIZE * overlay.scale * 100}cqmin / var(--text-zoom, 1));line-height:${TEXT_LINE_HEIGHT};${paint.pill ? `background:${paint.pill};padding:${PILL_PAD_Y_EM}em ${PILL_PAD_X_EM}em;border-radius:${PILL_RADIUS_EM}em` : ''}`}
               >{overlay.text}</span
             >
           {:else if overlay.kind === 'stroke'}
@@ -555,24 +620,52 @@
         </svg>
       {/if}
     </div>
+  </ReelFrame>
 
-    {#if dragging}
-      <div
-        bind:this={trash}
-        class="absolute bottom-4 left-1/2 flex h-14 w-14 -translate-x-1/2 items-center justify-center rounded-full transition-transform {overTrash
-          ? 'scale-125 bg-red-500'
-          : 'bg-black/60'}"
-        role="img"
-        aria-label={m.reels_editor_trash()}
-        data-reel-trash
-      >
-        <Trash2 size={24} strokeWidth={2.25} />
-      </div>
-    {/if}
-  </div>
+  {#if dragging}
+    <div
+      bind:this={trash}
+      class="absolute bottom-48 left-1/2 z-20 flex h-14 w-14 -translate-x-1/2 items-center justify-center rounded-full transition-transform {overTrash
+        ? 'scale-125 bg-red-500'
+        : 'bg-black/60'}"
+      role="img"
+      aria-label={m.reels_editor_trash()}
+      data-reel-trash
+    >
+      <Trash2 size={24} strokeWidth={2.25} />
+    </div>
+  {/if}
+
+  <header
+    bind:this={header}
+    class="from-cn-scrim/60 pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-2 bg-gradient-to-b to-transparent px-3 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6 [&>*]:pointer-events-auto"
+  >
+    <button
+      type="button"
+      class="ui-icon-button"
+      aria-label={m.reels_editor_back()}
+      title={m.reels_editor_back()}
+      onclick={() => void requestLeave()}
+    >
+      <ChevronLeft size={24} strokeWidth={2.5} />
+    </button>
+    <h1 class="min-w-0 text-base font-bold">{m.reels_editor_title()}</h1>
+    <button
+      type="button"
+      class="text-cn-ink inline-flex h-11 items-center gap-1.5 rounded-full bg-amber-500 px-4 text-sm font-bold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
+      disabled={busy}
+      onclick={next}
+      data-reel-editor-next
+    >
+      {busy ? m.reels_editor_exporting() : m.reels_review_next()}
+      <ArrowRight size={18} strokeWidth={2.5} />
+    </button>
+  </header>
 
   <div
-    class="flex shrink-0 flex-col gap-2 px-3 pt-2 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)]"
+    bind:this={tray}
+    data-reel-tray
+    class="from-cn-scrim/70 pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2 bg-gradient-to-t to-transparent px-3 pt-6 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)] [&>*]:pointer-events-auto"
   >
     {#if composing}
       <form

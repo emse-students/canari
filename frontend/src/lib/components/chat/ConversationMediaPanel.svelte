@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import VideoPlayer from '../shared/VideoPlayer.svelte';
   import { Image as ImageIcon, Link as LinkIcon, FileText, Download } from '@lucide/svelte';
   import { MediaService } from '$lib/media';
@@ -153,10 +154,25 @@
     void openExternal(url);
   }
 
-  const tabs: { id: Tab; label: string; count: number }[] = $derived([
-    { id: 'media', label: m.chat_media_tab(), count: content.media.length },
-    { id: 'links', label: m.chat_links_tab(), count: content.links.length },
-    { id: 'files', label: m.chat_files_tab(), count: content.files.length },
+  const tabs = $derived([
+    {
+      key: 'media' as const,
+      label: m.chat_media_tab(),
+      icon: ImageIcon,
+      badge: content.media.length,
+    },
+    {
+      key: 'links' as const,
+      label: m.chat_links_tab(),
+      icon: LinkIcon,
+      badge: content.links.length,
+    },
+    {
+      key: 'files' as const,
+      label: m.chat_files_tab(),
+      icon: FileText,
+      badge: content.files.length,
+    },
   ]);
 </script>
 
@@ -168,23 +184,14 @@
 -->
 <div class="flex h-full min-h-0 flex-col">
   <!-- Tabs -->
-  <div class="border-cn-border flex gap-1 border-b px-(--side-panel-inset) py-2">
-    {#each tabs as tab (tab.id)}
-      <button
-        type="button"
-        onclick={() => (activeTab = tab.id)}
-        class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-semibold transition-colors {activeTab ===
-        tab.id
-          ? 'bg-cn-yellow text-cn-ink'
-          : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"
-      >
-        {#if tab.id === 'media'}<ImageIcon size={15} />{:else if tab.id === 'links'}<LinkIcon
-            size={15}
-          />{:else}<FileText size={15} />{/if}
-        {tab.label}
-        {#if tab.count > 0}<span class="text-xs opacity-70">{tab.count}</span>{/if}
-      </button>
-    {/each}
+  <div class="border-cn-border border-b px-(--side-panel-inset) py-2">
+    <SegmentedControl
+      items={tabs}
+      value={activeTab}
+      onSelect={(key) => (activeTab = key)}
+      label={m.chat_media_tab()}
+      tone="yellow"
+    />
   </div>
 
   <!-- Content -->

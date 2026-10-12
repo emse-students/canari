@@ -58,6 +58,7 @@ function makeEncryptedStorage(): IStorage & {
     // `getAllEncryptedRows`, and never looks one up by id.
     getMessage: vi.fn().mockResolvedValue(null),
     getMessages: vi.fn(),
+    countMessages: vi.fn(),
     getMessagesPage: vi.fn(),
     deleteOldMessages: vi.fn().mockResolvedValue(0),
     getAllEncryptedRows: vi.fn(async () => rows.slice()),
@@ -65,10 +66,12 @@ function makeEncryptedStorage(): IStorage & {
     importEncryptedRow: vi.fn().mockResolvedValue(undefined),
     saveOutboxEntry: vi.fn().mockResolvedValue(undefined),
     saveMessageWithOutboxEntry: vi.fn().mockResolvedValue(undefined),
-    getOutboxEntries: vi.fn().mockResolvedValue([]),
+    getOutboxQueue: vi.fn().mockResolvedValue([]),
+    getOutboxEntry: vi.fn().mockResolvedValue(null),
     getOutboxEntriesForConversation: vi.fn().mockResolvedValue([]),
     updateOutboxEntry: vi.fn().mockResolvedValue(undefined),
     deleteOutboxEntry: vi.fn().mockResolvedValue(undefined),
+    sweepOutboxBlobs: vi.fn().mockResolvedValue(0),
     // Graine: really encrypted, like the messages above, so a re-encryption can be OBSERVED
     // rather than asserted on a spy call.
     saveGraineSession: vi.fn(async (session: StoredGraineSession, deviceKeyB64: string) => {

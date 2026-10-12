@@ -18,4 +18,14 @@ ignore = [
   # and this app opens SQLite only, so the MySQL driver is never enabled. Unlike the two services,
   # whose argument is that no RSA key is ever constructed, here the code is not even compiled in.
   "RUSTSEC-2023-0071",
+  # libcrux-kem 0.0.9, wants >=0.0.10: a panic in the HYBRID KEM (encapsulation from a short seed,
+  # decoding a short hybrid key). Both advisories were issued 2026-10-07. NOT REACHABLE: it is compiled
+  # because hpke-rs-libcrux needs it, but the MLS cipher suite is MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519
+  # ([mls-protocol](docs/wiki/protocols/mls-protocol.md)), whose KEM is plain X25519 - no hybrid key is ever
+  # built or decoded - and the worst case is a local denial of service (CVSS 5.6). The fix cannot be
+  # taken yet: it ships in hpke-rs-libcrux 0.8.0 (libcrux-kem =0.0.10, published 2026-10-07), while
+  # openmls_libcrux_crypto 0.4.0, the newest, pins hpke-rs-libcrux ^0.7. Lifted by an
+  # openmls_libcrux_crypto release taking hpke-rs-libcrux 0.8; then delete both entries.
+  "RUSTSEC-2026-0330",
+  "RUSTSEC-2026-0331",
 ]

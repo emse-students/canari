@@ -277,8 +277,6 @@ services:
       DB_USERNAME: admin
       DB_PASSWORD: password
       DB_DATABASE: auth_db
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # Lydia (WP-LYDIA-1) - which provider is actually live is an admin-editable platform_config
       # setting, not env-driven; these are only the credentials, read by whichever provider is active.
       LYDIA_ENV: ${LYDIA_ENV:-homologation}
@@ -349,15 +347,13 @@ services:
       # no local stack: every measurement taken on it inherits the difference.
       REDIS_URL: redis://redis:6379
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:8081/posts?registration=success}
-      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:8081/posts?registration=cancel}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
       USER_SERVICE_URL: http://core-service:3012
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       MEDIA_SERVICE_URL: http://media-service:3011
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
+      AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010

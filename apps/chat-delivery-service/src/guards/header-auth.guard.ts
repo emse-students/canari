@@ -11,7 +11,8 @@ import { verifyInternalToken } from './internal-token';
  * NestJS guard that enforces authentication by inspecting the `x-user-logged-in`
  * HTTP header. This header is injected by Nginx after it validates the request
  * against the core-service auth endpoint (`/internal/auth/verify`). If the header
- * is `"true"` the request is allowed through; otherwise a 401 is thrown.
+ * is `"true"` AND the per-minute HMAC `X-Internal-Token` verifies for `x-user-id` the request is
+ * allowed through; otherwise (an unset INTERNAL_SHARED_SECRET included) a 401 is thrown.
  *
  * This guard must never be used on routes that are intentionally public - those
  * should be excluded from Nginx's `auth_request` directive instead.
@@ -37,22 +38,25 @@ export class HeaderAuthGuard implements CanActivate {
       throw new UnauthorizedException('User is not authenticated');
     }
 
-    // When INTERNAL_SHARED_SECRET is configured, verify the per-minute HMAC token
-    // to ensure the request came through nginx and not from a compromised container.
+    // x-user-logged-in is a plain header: nginx sets it, but so can any caller that reaches this
+    // container, so it proves nothing by itself. The per-minute HMAC nginx mints for the user is the
+    // proof, and it is required in EVERY environment (CodeQL 2547, 2026-10-09: it used to be skipped
+    // when the secret was unset outside production, leaving the header alone as the credential).
     const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
-
-    // Security: fail closed in production — INTERNAL_SHARED_SECRET is required
-    if (!internalSecret && process.env.NODE_ENV === 'production') {
+    if (!internalSecret) {
+      this.logger.error(
+        '[AUTH_GUARD] INTERNAL_SHARED_SECRET is not configured - refusing every guarded request'
+      );
       throw new UnauthorizedException(
-        'INTERNAL_SHARED_SECRET is not configured — service cannot verify internal requests'
+        'INTERNAL_SHARED_SECRET is not configured - service cannot verify internal requests'
       );
     }
 
-    if (internalSecret) {
-      const userId =
-        (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase() ?? '';
-      verifyInternalToken(request.headers, userId, internalSecret);
+    const userId = (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase() ?? '';
+    if (!userId) {
+      throw new UnauthorizedException('Missing X-User-Id header');
     }
+    verifyInternalToken(request.headers, userId, internalSecret);
 
     return true;
   }

@@ -50,7 +50,7 @@ lived in two files that had drifted.
 
 `PAGE_TITLES` in `resolve.ts` is now the one owner, and every entry is a reference to the message
 the page already displays as its heading - so a page's name exists exactly once in the app. Admin
-pages compose `seo_admin_page_title` over the section name, because `/admin/associations` and
+pages compose `seo_admin_page_title` over the section name, because `/admin/spaces` and
 `/associations` otherwise read identically in a tab.
 
 **"Not for the public" was three lists that disagreed.** `PRIVATE_PREFIXES` here, the `Disallow:`

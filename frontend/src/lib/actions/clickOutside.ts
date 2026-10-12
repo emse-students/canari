@@ -26,7 +26,7 @@ export interface ClickOutsideOptions {
  * fix its position, which left it reachable only for whatever the first tap happened to land on -
  * its search field, its nine category tabs and its skin-tone selector all dismissed it instead of
  * acting, and picking an emoji worked only because the web component's own event fired on the same
- * click, a frame before the panel was torn down. `AdminNavGroup` had already met this and avoided
+ * click, a frame before the panel was torn down. The admin dropdown (since deleted) had already met this and avoided
  * `clickOutside` entirely, explaining why in a comment; a rule known at one call site is a rule the
  * next call site breaks, so it lives in the mechanism now.
  *

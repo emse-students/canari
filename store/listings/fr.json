@@ -1,0 +1,18 @@
+{
+  "playLanguage": "fr-FR",
+  "appStoreLocale": "fr-FR",
+  "play": {
+    "title": "Canari - Mines Saint-Étienne",
+    "shortDescription": "Messagerie chiffrée, associations et agenda de la vie étudiante",
+    "fullDescription": "Canari est une application indépendante développée par l'association étudiante Les Rootz pour les élèves de l'École des Mines de Saint-Étienne (EMSE). Elle n'est pas éditée par l'administration de l'école.\n\nElle réunit les échanges et la vie du campus au même endroit :\n\n• Messagerie chiffrée : discutez en tête-à-tête ou en groupe, avec un chiffrement de bout en bout (protocole MLS). Les messages ne sont lisibles que par les personnes de la conversation.\n• Communautés : retrouvez votre promo, votre campus ou votre asso dans des espaces de discussion organisés en salons.\n• Associations : parcourez l'annuaire des associations, découvrez leurs membres, gérez vos adhésions et générez la carte de la vie asso.\n• Agenda : un calendrier adapté à votre campus et à votre formation, avec rappels, et un abonnement ICS ou un export PDF pour l'emporter dans votre propre agenda.\n• Actualités, sondages et formulaires : suivez le fil des associations, votez, réagissez, commentez et répondez aux formulaires.\n• Canareels : filmez et partagez de courtes vidéos avec votre campus.\n• Boutique et billetterie : réservez vos places et achetez les produits des associations avec un paiement intégré à l'application.\n• Institutions : retrouvez les structures de l'école et de la vie étudiante, et créez les vôtres directement dans l'application.\n• Photos, vidéos et documents : partagez des fichiers chiffrés avant même leur envoi.\n\nUn compte EMSE est nécessaire pour se connecter.",
+    "contactWebsite": "https://canari.emse.fr"
+  },
+  "appStore": {
+    "subtitle": "Messagerie et vie étudiante",
+    "promotionalText": "Messagerie chiffrée, communautés, associations, agenda de votre campus, actualités et Canareels : la vie étudiante des Mines de Saint-Étienne en un seul endroit.",
+    "keywords": "messagerie,chiffrée,étudiant,associations,agenda,événements,billetterie,campus,Mines,EMSE,Rootz",
+    "description": "Canari est une application indépendante développée par l'association étudiante Les Rootz pour les élèves de l'École des Mines de Saint-Étienne (EMSE). Elle n'est pas éditée par l'administration de l'école.\n\nElle réunit les échanges et la vie du campus au même endroit :\n\n• Messagerie chiffrée : discutez en tête-à-tête ou en groupe, avec un chiffrement de bout en bout (protocole MLS). Les messages ne sont lisibles que par les personnes de la conversation.\n• Communautés : retrouvez votre promo, votre campus ou votre asso dans des espaces de discussion organisés en salons.\n• Associations : parcourez l'annuaire des associations, découvrez leurs membres, gérez vos adhésions et générez la carte de la vie asso.\n• Agenda : un calendrier adapté à votre campus et à votre formation, avec rappels, et un abonnement ICS ou un export PDF pour l'emporter dans votre propre agenda.\n• Actualités, sondages et formulaires : suivez le fil des associations, votez, réagissez, commentez et répondez aux formulaires.\n• Canareels : filmez et partagez de courtes vidéos avec votre campus.\n• Boutique et billetterie : réservez vos places et achetez les produits des associations avec un paiement intégré à l'application.\n• Institutions : retrouvez les structures de l'école et de la vie étudiante, et créez les vôtres directement dans l'application.\n• Photos, vidéos et documents : partagez des fichiers chiffrés avant même leur envoi.\n\nUn compte EMSE est nécessaire pour se connecter.",
+    "supportUrl": "https://canari.emse.fr",
+    "marketingUrl": "https://canari.emse.fr"
+  }
+}

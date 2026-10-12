@@ -217,6 +217,36 @@ class CanariApplication : Application() {
         private const val TAG = "CanariApp"
 
         /**
+         * The id of the channel `tauri-plugin-notification` creates when it loads
+         * (`DEFAULT_NOTIFICATION_CHANNEL_ID` in its `TauriNotificationManager.kt`, 2.4.0), named
+         * and described with the hardcoded English literal "Default" - a resource Paraglide and
+         * `strings.xml` cannot reach, so a French app's notification settings listed six French
+         * channels and one called "Default" (measured 2026-09-23).
+         */
+        private const val PLUGIN_DEFAULT_CHANNEL_ID = "default"
+
+        /**
+         * Deletes the plugin's empty "Default" channel. NOTHING POSTS TO IT: every builder in this app
+         * names a `canari_*` channel, so the row is empty in BOTH build types and deleting it
+         * loses no user setting.
+         *
+         * Called from `MainActivity.onResume`, not from [onCreate]: the plugin creates the channel
+         * when it LOADS, which is after the Application exists, so a deletion at process start would
+         * run before the creation it is meant to undo. It runs on every resume because the plugin
+         * re-creates the channel at every load; the call is idempotent and cheap.
+         */
+        internal fun removePluginDefaultChannel(context: Context) {
+            try {
+                val manager = context.getSystemService(NotificationManager::class.java) ?: return
+                if (manager.getNotificationChannel(PLUGIN_DEFAULT_CHANNEL_ID) == null) return
+                manager.deleteNotificationChannel(PLUGIN_DEFAULT_CHANNEL_ID)
+                Log.d(TAG, "removePluginDefaultChannel: deleted the plugin's \"Default\" channel")
+            } catch (e: Exception) {
+                Log.e(TAG, "removePluginDefaultChannel: exception: ${e.message}", e)
+            }
+        }
+
+        /**
          * The process-wide Application context, or null before [onCreate] has run.
          *
          * `@Volatile` because it is written on the main thread and read from whatever thread the
@@ -229,15 +259,36 @@ class CanariApplication : Application() {
         internal fun appContext(): Context? = appContext
 
         /**
+         * The channel ids that carried the platform's default sound before the palette-A sounds
+         * (2026-10-09). A channel's sound is IMMUTABLE once created, so the new sounds live on new
+         * ids (`_v2`) and these are deleted: left alone they would stay in the user's settings as a
+         * second, dead "Messages" entry. Deleting is idempotent and cheap, and the user's per-channel
+         * choices on the old ids are NOT carried - the sound is the thing that changed.
+         */
+        private val SUPERSEDED_CHANNELS = listOf("canari_messages", "canari_mentions", "canari_reactions")
+
+        private fun deleteSupersededChannels(manager: NotificationManager) {
+            for (id in SUPERSEDED_CHANNELS) {
+                if (manager.getNotificationChannel(id) == null) continue
+                manager.deleteNotificationChannel(id)
+                Log.d(TAG, "deleteSupersededChannels: deleted $id (replaced by its _v2 channel)")
+            }
+        }
+
+        /** The bundled palette-A sound `res/raw/<name>`, as a channel sound. */
+        private fun gazouillisUri(context: Context, rawId: Int): android.net.Uri =
+            android.net.Uri.parse("android.resource://${context.packageName}/$rawId")
+
+        /**
          * Creates the notification channels if they do not exist yet.
          * Called from [CanariApplication.onCreate] and as a fallback from
          * [CanariFirebaseMessagingService.ensureNotificationChannels].
-         *  - canari_messages : DMs and group messages (IMPORTANCE_HIGH, vibration, sound)
+         *  - canari_messages_v2 : DMs and group messages (IMPORTANCE_HIGH, vibration, palette-A "message" trill)
          *  - canari_social   : reactions/comments on posts (IMPORTANCE_DEFAULT, silent)
          *  - canari_forms    : form reminders (IMPORTANCE_DEFAULT, silent)
          *  - canari_calls    : incoming call rings (WP-XP-5: IMPORTANCE_HIGH, RINGTONE sound,
          *                      bypass-DND requested - the user can confirm it in channel settings)
-         *  - canari_mentions : messages that @-mention the user (WP-XP-5: IMPORTANCE_HIGH,
+         *  - canari_mentions_v2 : messages that @-mention the user (WP-XP-5: IMPORTANCE_HIGH,
          *                      bypass-DND requested)
          *
          * A channel's name and description are WRITTEN ONCE, at creation: Android keeps the strings
@@ -249,6 +300,7 @@ class CanariApplication : Application() {
          */
         internal fun ensureChannels(context: Context, manager: NotificationManager) {
             val res = appLocaleContext(context)
+            deleteSupersededChannels(manager)
             if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_MESSAGES) == null) {
                 val audioAttrs = AudioAttributes.Builder()
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -262,7 +314,7 @@ class CanariApplication : Application() {
                     ).apply {
                         description = res.getString(R.string.notif_channel_messages_desc)
                         enableVibration(true)
-                        setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
+                        setSound(gazouillisUri(context, R.raw.canari_gazouillis_message), audioAttrs)
                     }
                 )
             }
@@ -331,7 +383,7 @@ class CanariApplication : Application() {
                     ).apply {
                         description = res.getString(R.string.notif_channel_reactions_desc)
                         enableVibration(false)
-                        setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
+                        setSound(gazouillisUri(context, R.raw.canari_gazouillis_reaction), audioAttrs)
                     }
                 )
             }
@@ -348,7 +400,7 @@ class CanariApplication : Application() {
                     ).apply {
                         description = res.getString(R.string.notif_channel_mentions_desc)
                         enableVibration(true)
-                        setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
+                        setSound(gazouillisUri(context, R.raw.canari_gazouillis_mention), audioAttrs)
                         setBypassDnd(true)
                     }
                 )

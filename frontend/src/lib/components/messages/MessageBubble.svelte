@@ -4,7 +4,6 @@
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
-  import type { MediaRef } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import {
     logMediaFailure,
@@ -15,11 +14,24 @@
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
   import MessageMediaRenderer from './MessageMediaRenderer.svelte';
+  import {
+    retryUpload,
+    uploadViewOf,
+    type UploadView,
+  } from '$lib/utils/chat/uploadProgress.svelte';
+  import { isReelMessage } from '$lib/reels/chatReel';
   import ChannelPoll from '../channels/ChannelPoll.svelte';
+  import { connectivity } from '$lib/stores/connectivity.svelte';
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
   import MessageReactions from './MessageReactions.svelte';
-  import type { MessageReaction } from '$lib/types';
+  import type { MessageReaction, MessageSendStatus } from '$lib/types';
+  import { isOrphanMediaCandidate } from '$lib/utils/chat/orphanMedia';
+  import { isOutboxEntryQueued } from '$lib/utils/chat/outbox';
+  import {
+    isOutboxEnqueueInflight,
+    outboxQueueVersion,
+  } from '$lib/utils/chat/outboxActivity.svelte';
   import { activeReactions } from '$lib/utils/chat/messageReactions';
   import type { MessagePickerOrigin } from '$lib/utils/chat/reactionPicker';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
@@ -31,7 +43,7 @@
   import MessageMobileActions from './MessageMobileActions.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { settings } from '$lib/stores/settingsStore.svelte';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import {
     getUserDisplayNameSync,
     getUserFirstNameSync,
@@ -137,9 +149,15 @@
     /** Active search term for in-message text highlighting. */
     searchTerm?: string;
     /** Delivery status of an outbound message; controls the status indicator icon. */
-    status?: 'pending' | 'sending' | 'sent' | 'error';
+    status?: MessageSendStatus;
     /** When true, enables mobile-specific interactions: long press toolbar, double-tap heart. */
     isMobile?: boolean;
+    /** Re-sends this message after a failed send; shown on the `error` status. */
+    onRetry?: () => void;
+    /** Gives this failed message up; shown beside `onRetry`. */
+    onDiscard?: () => void;
+    /** Puts this unconfirmed message back in the composer. */
+    onRestore?: () => void;
   }
 
   let {
@@ -177,6 +195,9 @@
     searchTerm = '',
     status,
     isMobile = false,
+    onRetry,
+    onDiscard,
+    onRestore,
   }: Props = $props();
 
   let bubbleAnchor = $state<HTMLElement | null>(null);
@@ -230,6 +251,14 @@
       (envelope.kind === 'text' || envelope.kind === 'media' ? envelope.replyTo : undefined)
   );
   let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
+  /**
+   * A CanaReel sent in this conversation: a tile that fetches NOTHING until it is tapped (the
+   * viewer downloads), and a message that is NOT forwarded - forwarding copies the media ref, so
+   * the key, and a reel message is as widely seen as the audience it was sent to
+   * ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md)).
+   */
+  const isReelMessageRow = $derived(isReelMessage(mediaRef));
+  const forwardAction = $derived(onForward && !isReelMessageRow ? onForward : undefined);
   // Image/video with no caption and no reply quote - render naked (no bubble background)
   const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
   // A photo or a video WITH text: the media fills the top of the bubble and the caption sits under
@@ -554,17 +583,96 @@
    */
   let isNearViewport = $state(false);
 
+  /**
+   * An attachment of mine that has not finished uploading: its ref has no `mediaId` yet and the
+   * outbox still owns it. The outbox's own view while it runs; `queued` (`waiting` only when the link is
+   * known down) when it has none (a reload brought the queued row back, or its turn has not come). A message that FAILED for good
+   * (`error`) or was sent has no upload to show, so the bubble falls back to its plain state.
+   */
+  /**
+   * The upload was REFUSED for good (the outbox ended the entry): the bubble says so and offers the
+   * delete, instead of the spinner a missing `mediaId` would otherwise draw for ever.
+   */
+  const uploadFailed = $derived(isOwn && !!mediaRef && !mediaRef.mediaId && status === 'error');
+  const upload = $derived.by((): UploadView | null => {
+    if (!isOwn || !mediaRef || mediaRef.mediaId) return null;
+    if (status !== 'pending' && status !== 'sending') return null;
+    // No view yet = the outbox has not started this entry (its turn, or the file is about to be
+    // read). Only a KNOWN offline link may say "waiting for the connection"; otherwise it is queued.
+    return (
+      uploadViewOf(messageId) ?? {
+        phase: connectivity.isOffline ? 'waiting' : 'queued',
+        loaded: 0,
+        total: 0,
+        attempt: 0,
+      }
+    );
+  });
+
+  /**
+   * AN ORPHAN IS DECIDED FROM THE DURABLE QUEUE, never from `status`: the status is derived in
+   * memory and only re-applied at session start, so a real queued upload after a reload has none
+   * (`upload` null) and a lost one keeps `pending`. A candidate (my own empty-mediaId attachment that
+   * no live upload view advances) asks the outbox whether it still holds an entry; only a definite
+   * `false` makes it an orphan, an unreadable queue (`null`) stays the queued spinner.
+   */
+  let outboxHasEntry = $state<boolean | null>(null);
+  const orphanCandidate = $derived(
+    isOrphanMediaCandidate({ mediaRef, isOwn, hasUpload: !!upload, uploadFailed }) &&
+      // The sender's own enqueue is still writing the row: "absent" is not yet an answer.
+      !isOutboxEnqueueInflight(messageId)
+  );
+  $effect(() => {
+    // Re-asked whenever the queue changed (an enqueue settled, an entry cancelled) - never polled.
+    void outboxQueueVersion();
+    if (!orphanCandidate) {
+      outboxHasEntry = null;
+      return;
+    }
+    let stale = false;
+    void isOutboxEntryQueued(messageId).then((queued) => {
+      if (stale) return;
+      outboxHasEntry = queued;
+      Log.d(
+        'MESSAGE',
+        `media ${messageId.slice(0, 8)} has no mediaId: outbox entry ${queued === null ? 'unknown' : queued ? 'present (queued)' : 'absent (orphan)'}`
+      );
+    });
+    return () => {
+      stale = true;
+    };
+  });
+  const orphanMedia = $derived(orphanCandidate && outboxHasEntry === false);
+
+  /**
+   * WHICH blob this row shows - a string, so it changes only when the attachment does.
+   *
+   * The download effect below is keyed on it rather than on `mediaRef`, because `mediaRef` is a
+   * fresh object every time the row's message is: a refetch of the thread hands each row a new
+   * message with the same content, the envelope is re-parsed, and an effect that read the OBJECT
+   * tore its blob URL down and downloaded it again. For a PDF that remounted the thumbnail, and
+   * every remount spawned a pdf.js worker - two worker loads per refetch on a salon with two PDFs
+   * ([web-console-log-audit](docs/wiki/frontend/web-console-log-audit-2026-10-12.md)). A media
+   * ref is never edited in place: one `mediaId` is one blob with one key.
+   */
+  const mediaBlobId = $derived(mediaRef?.mediaId || null);
+
   $effect(() => {
     // Empty mediaId = media still queued in the outbox (upload pending): leave blobUrl null
     // so MessageMediaRenderer shows its skeleton/spinner. Don't attempt a download (would 404).
-    if (!mediaRef || !mediaRef.mediaId || !authToken || !isNearViewport) return;
+    if (!mediaBlobId || !authToken || !isNearViewport) return;
+    // A reel message's tile downloads nothing: its viewer does, on the tap.
+    if (isReelMessageRow) return;
 
     void mediaAttempt;
     let destroyed = false;
     let acquired = false;
     mediaFailure = null;
 
-    const ref: MediaRef = mediaRef;
+    // Read untracked: the ref of THIS blob, whichever re-parse of the content produced it.
+    const ref = untrack(() => mediaRef);
+    if (!ref) return;
+    Log.d('MESSAGE', `media ${mediaBlobId.slice(0, 8)}: download for row ${messageId.slice(0, 8)}`);
     // Leaves the gate's queue if the row is torn down before its turn comes.
     const abort = new AbortController();
 
@@ -794,11 +902,19 @@
                 onRetry={() => (mediaAttempt += 1)}
                 {textContent}
                 {isOwn}
+                onBubble={!isMediaOnly}
+                orphan={orphanMedia}
                 {textSegments}
                 bleed={bleedsMedia}
                 {senderId}
                 sentAt={timestamp}
+                {messageId}
+                {authToken}
                 onNear={() => (isNearViewport = true)}
+                {upload}
+                {uploadFailed}
+                onCancelUpload={onDelete ? () => onDelete(messageId) : undefined}
+                onRetryUpload={() => retryUpload(messageId)}
               />
 
               {#if !mediaRef}
@@ -819,6 +935,9 @@
               isReadReceiptAnchor={false}
               {status}
               {readBy}
+              {onRetry}
+              {onDiscard}
+              {onRestore}
             />
           </div>
 
@@ -833,7 +952,7 @@
               hasMedia={!!mediaRef}
               {showEmojiPicker}
               onReply={onReply ? () => onReply!(messageId) : undefined}
-              onForward={onForward ? () => onForward!(messageId) : undefined}
+              onForward={forwardAction ? () => forwardAction!(messageId) : undefined}
               onReact={onReact ? (emoji) => onReact!(messageId, emoji) : undefined}
               userReactions={userOwnReactions}
               onToggleEmojiPicker={!isDeleted && onReact
@@ -920,7 +1039,7 @@
             showMobileActions = false;
           }
         : undefined}
-      onForward={onForward && !isDeleted ? () => onForward!(messageId) : undefined}
+      onForward={forwardAction && !isDeleted ? () => forwardAction!(messageId) : undefined}
       {pinned}
       onPin={!isDeleted && onTogglePin
         ? () => {

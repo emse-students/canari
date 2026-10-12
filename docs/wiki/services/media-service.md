@@ -74,15 +74,21 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | POST   | `/api/media/upload/chunk/init`         | JWT               | Initialize chunked upload session                                                                                                                                                |
 | POST   | `/api/media/upload/chunk/:id`          | JWT               | Append chunk (max 50 MB per chunk)                                                                                                                                               |
 | POST   | `/api/media/upload/chunk/:id/complete` | JWT               | Complete chunked upload, return `mediaId`                                                                                                                                        |
+| POST   | `/api/media/upload/session`            | JWT               | Open a resumable streamed upload: `{retentionClass?, totalBytes, partBytes, header}` -> `{uploadId, partBytes, totalParts, expiresAt}` ([sessions](#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10)) |
+| PUT    | `/api/media/upload/session/:id/parts/:index` | JWT         | One RAW part (`Content-Length` required, never over 8 MiB), piped to disk at its offset; re-sending is idempotent |
+| GET    | `/api/media/upload/session/:id`        | JWT               | `{received: [indexes], ...}` - the server's own fact, the resume point; carries `mediaId` once completed |
+| POST   | `/api/media/upload/session/:id/complete` | JWT             | Exact-size, every-part, header check, then store; idempotent (`uploadId -> mediaId` memo for 24 h) |
+| DELETE | `/api/media/upload/session/:id`        | JWT               | Cancel: aborts in-flight parts, removes the staging, releases the budget now |
 | GET    | `/api/media/public/:id`                | none              | Download public asset (cached 1 year, no auth)                                                                                                                                   |
 | GET    | `/api/media/:id`                       | JWT               | Download encrypted blob (no-cache, owner or group member); one `Range: bytes=a-b` answers `206` + `Content-Range`, `416` past the end ([ranges](#the-server-serves-byte-ranges)) |
 | DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion)                                                                                                                          |
+| DELETE | `/api/media/chat-reel/:id`             | JWT               | The SENDER takes back a reel sent in a conversation: allowed only for the caller's OWN `chat-reel` object (class AND owner), `403` otherwise, `410` on the next read ([chat-reel](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09)) |
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
 | POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
 | POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`)                                                        |
 
-(`retention-class` refuses `reel`: that class is only ever set through its owner.)
+(`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel` and `reel-pending`: they are attached at the upload that creates the object.)
 
 Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
@@ -132,7 +138,7 @@ this removed. The answer is cached per origin, so one fetch serves every picker.
 `MediaService.purgeExpiredMedia` (`media.service.ts`) deletes any **`ephemeral`** object whose
 `lastAccessAt` is older than **`RETENTION_MS` = 90 days**, leaving a tombstone that is itself
 trimmed after 90 days. It runs at boot, hourly (`DEFAULT_SWEEP_MS`, overridable with
-`MEDIA_RETENTION_SWEEP_MS`) and on every `download()`. **It was 30 days until 2026-09-23** - what
+`MEDIA_RETENTION_SWEEP_MS`); a `download()` judges only its OWN entry (below). **It was 30 days until 2026-09-23** - what
 moved it, and why moving it is not the same decision as the one taken in August, is §6 of
 [storage-forecast](../infrastructure/storage-forecast.md).
 
@@ -162,6 +168,37 @@ The index is a **JSON file** (`media_meta/media_metadata.json`), not a database 
 object's clock **and losing its class** - which is why the backfills below run at every boot rather
 than once. Since the allowlist, a lost class means "kept", never "swept".
 
+**It is written atomically and one write at a time (2026-10-11).** `persistMetadata` used to be a bare
+`writeJson` onto the index, called un-awaited from many paths at once: two writes could interleave on
+the one file, and a crash or a full disk mid-write left a truncated JSON that `loadMetadata` cannot
+parse - every entry lost at the next boot. It now writes `media_metadata.json.tmp` and renames it into
+place, and every call queues behind the previous one (`metadataWrites`), so no two writes share the
+temp file and an older snapshot never renames over a newer one. Each write serialises the index as it
+is when its turn comes; a failed write is logged, rejects to its own caller and does not block the
+next. Pinned by `media.service.persist-metadata.spec.ts`.
+
+### A purged object reads as 410, an absent one as 404 - and both were already typed (measured 2026-10-08)
+
+Closed from the backlog entry of 2026-09-05, whose two premises were both stale:
+
+- **"`downloadPublic` backfills from storage, `download` does not"**: that fallback was DELETED (it
+  published any blob it was asked for). `downloadPublic` answers `not_found` for a missing entry
+  too. There is no storage-side answer to copy: when the object is gone, storage holds nothing that
+  says it was purged. The ONLY record is the tombstone, kept `META_TOMBSTONE_MAX_AGE_MS` = 90 days
+  after the purge; past that, a purged id and an id that never existed are the same fact, and the
+  404 is by construction.
+- **"the client renders a red failure"**: `fetchMediaObject` and the segmented reader throw
+  `MediaPurgedError` (410) and `MediaNotFoundError` (404) at the response, `mediaFailureCause` reads
+  them by type, and both are permanent (`isRetryableMediaFailure`): a `warn`, no retry button, no
+  loop. 410 shows the surface's "expired" label, 404 the shared `media_error_not_found`.
+  `media.service.range.spec.ts` pins the server's two answers.
+
+**Measured on production, read-only**: `/api/media/:id` (GET, not `/public/`) over the host nginx
+`canari-prod` access logs, 2026-09-24 17:20 to 2026-10-08 01:21 (about 13 days; the rotated set
+starts at the migration cutover): **612 requests - 611 `200`, 1 `410`, 0 `404`**. The one 410 is on 2026-09-25 (one object, not
+attributed). So a 404 on this endpoint is not a population today; if
+the count ever moves, the tombstone window above is the first lever, not a storage lookup.
+
 ### The sweep is an allowlist: an association's document was swept (2026-10-01)
 
 **The report.** On `canari.emse.fr`, downloading a document from the `les-rootz` vault answered
@@ -183,13 +220,15 @@ community image (`channel_workspaces`) was unclassified, uploaded before `upload
 
 **The design now**, `RetentionClass` in `media.service.ts`:
 
-| Class         | Who sets it                                                                           | Idle sweep   | Account deletion |
-| ------------- | ------------------------------------------------------------------------------------- | ------------ | ---------------- |
-| `ephemeral`   | the client, for chat and channel media; social-service on a post release              | **takes it** | takes it         |
-| `archive`     | the client, for feed media and avatars; social-service's boot backfill                | keeps        | takes it         |
-| `association` | the client, for a vault upload; social-service on `createDocument` and at boot        | keeps        | **keeps**        |
-| `reel`        | the client at upload; social-service's CLAIM, proven by `ownerId` ([reels](reels.md)) | keeps        | takes it         |
-| none          | an old client, anything before 2026-10-01, an entry re-created after an index loss    | **keeps**    | takes it         |
+| Class          | Who sets it                                                                                                                 | Idle sweep                                   | Account deletion |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ---------------- |
+| `ephemeral`    | the client, for chat and channel media; social-service on a post release                                                    | **takes it**                                 | takes it         |
+| `archive`      | the client, for feed media and avatars; social-service's boot backfill                                                      | keeps                                        | takes it         |
+| `association`  | the client, for a vault upload; social-service on `createDocument` and at boot                                              | keeps                                        | **keeps**        |
+| `reel`         | social-service's CLAIM, proven by `ownerId` ([reels](reels.md)); a client older than `reel-pending` at upload               | keeps                                        | takes it         |
+| `reel-pending` | the client at upload of a FEED reel ([below](#the-reel-pending-class-a-feed-reel-whose-post-does-not-exist-yet-2026-10-11)) | **by AGE: 24 h from upload**, unless claimed | takes it         |
+| `chat-reel`    | the client at upload ([below](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09))                          | **by AGE: 30 days from upload**              | takes it         |
+| none           | an old client, anything before 2026-10-01, an entry re-created after an index loss                                          | **keeps**                                    | takes it         |
 
 - **The client's `encryptAndUpload` takes the class as a REQUIRED argument**, so no new call site
   can forget it the way the vault did.
@@ -264,6 +303,199 @@ fails is re-applied at the next boot; a release that fails only keeps an object 
 class folded into a total is a class whose growth nothing can ever see - the same defect the bucket
 breakdown was split to fix on 2026-08-18. At the rate measured on the day it shipped (40.8 MB over
 4.5 months, ~110 MB/year) this is indolent; the line exists so that stays a measurement.
+
+
+## One request body is at most 8 MiB (2026-10-10)
+
+The host's WAF drops any body over 10 MiB ([host-waf-body-limit](../infrastructure/host-waf-body-limit.md)), so the client sends a single-request upload only up to 8 MiB of ciphertext and uses `upload/chunk/init` + 8 MiB chunks + `complete` above it. The server needed no change (chunks append in order, 100 MB policy). A chunk that fails restarts the whole upload under a new session: there is no offset route yet (reels-in-chat RC-5). The abandoned session is released by `DELETE /media/upload/chunk/:id` (204, owner-checked, idempotent, logged), and `POST .../complete` is idempotent: a repeat for a finished session answers the same mediaId from a `<uploadId>.done` sidecar in the chunk directory (survives a restart, aged out by the 24 h orphan sweep). The record is written (temp + rename) BEFORE the staging is removed. A lost or expired session answers 404 (`NotFoundException`), which the client reads as "session lost" and mends with a new one. The in-memory opener map is what refuses another member's `complete`: it is KEPT across a failed complete (the staged bytes wait for the re-ask) and dropped only on success, abort, an over-cap append or the sweep; it is unknown after a restart. **The opener check covers all three routes** (append, complete, abort; 403 for another member), and the opener is recorded only AFTER the staging file exists, so a refused init registers nothing for the sweeper to race. **If the memo cannot be written (full disk) the staging file and its opener are KEPT**: the `complete` still answers its mediaId, and a re-ask re-assembles under the opener check instead of meeting a 404. Abort, complete and append share one per-uploadId lock, so a `DELETE` during an in-flight `complete` waits for it (the object survives, the memo answers the re-ask) and an abort after a finished `complete` is a no-op success; the sweep removes a stale `.done` / `.done.tmp` like any other file of the directory. **The client pauses between the three `complete` asks** (2 s, then 4 s, a function of the attempt counter; a cancel interrupts the pause; the pause is injectable so tests assert the schedule, not a clock). **Limits, stated**: a memo hit does not check that the object still exists; `DELETE` does not remove the memo, so a cancel racing a successful `complete` leaves the object and the memo; a memo that could not be written followed by a re-ask stores the object a second time (the first is left to the idle sweep); the single-request route (< 8 MiB) has no memo at all.
+
+## The `reel-pending` class: a feed reel whose post does not exist yet (2026-10-11)
+
+The reels audit ([reels](../frontend/modules/reels.md)) found that a feed reel was uploaded as
+`reel` and claimed only by `createPost`, so a `createPost` failure, a kill between the two calls or
+a cancel there left 14-35 MB nobody cited and nothing reaped. The client now uploads `reel-pending`
+(`FEED_REEL_UPLOAD_CLASS` in `publishReel.ts`); `claimReels` PROMOTES it to `reel`, the only path
+from one to the other; the sweep's allowlist (`isSweepable`) takes `reel-pending`, and `isDue` makes
+it due `MEDIA_PENDING_REEL_TTL_MS` (default 24 h) after `createdAt` - reads move nothing. The
+tombstone says `retention_expired` (`410`). What is NEVER deleted: a claimed reel is `reel`, and every
+reel stored before this class (uploaded `reel`) keeps its old life - the sweep was given a NEW name
+rather than a predicate over the old one, so no existing object became sweepable. `retention-class`
+refuses `reel-pending`, which would otherwise make a claimed reel's blob sweepable under its live
+post. Old server + new client: the class is unknown there, so the object is stored unclassified
+(kept) and the claim sets `reel` - nothing lost. The storage stats carry `pendingReelCount/Bytes`
+and an `overdue` pair (not yet drawn on the admin page, like `chat-reel`'s). Pinned by
+`media.service.reel-pending.spec.ts`.
+
+**The claim and the sweep cannot interleave into a dead post (review of #1744).** The sweep used to
+judge an entry, `await` the store's delete, then write the tombstone FROM THE STALE ENTRY - so a
+claim landing in that await (a `createPost` arriving more than a day after its upload, a phone
+suspended mid-publish) promoted the entry, the post was saved, and the object was deleted under it:
+a live reel answering `410` to everyone. Now (1) `claimReels` REFUSES a `reel-pending` entry that is
+already due instead of promoting it - the member publishes again; (2) the sweep re-reads every entry
+from the index, judges it and writes its tombstone in ONE synchronous step, BEFORE the delete, so a
+claim during the delete meets a tombstone and refuses, and an entry promoted (or replaced by a
+download's `setAccess`) before the sweep reaches it is judged as it is now. **The window has a
+floor**: `MEDIA_PENDING_REEL_TTL_MS` under 1 h stops the service at boot (`86400` meant as seconds
+would be 86 s), and the effective value is logged at boot. **Every deletion is logged** with its id,
+class and age; the run summary counts per class and names each class's window; a run deletes at most
+500 objects and says so when it stops there.
+
+**The 500 is a ceiling because the sweep is SINGLE-FLIGHT (review of #1744).** Boot, the interval
+and - until then - every `download`/`downloadRange`/`downloadPublic` each started their own run, so
+N overlapping callers could delete N x 500 objects, and every read waited for a whole sweep to learn
+whether ITS object was due. Now `purgeExpiredMedia` hands a caller arriving mid-run the run in flight
+(`sweeping`), and the download paths call none of it: `expireIfDue` judges the requested entry alone
+with the same `isDue`, tombstones and deletes it through the same `tombstoneAndDelete` the sweep
+uses, and the read answers `410`. `downloadPublic` judges nothing - a public asset is never
+sweepable. Pinned by `media.service.sweep-single-flight.spec.ts` (three concurrent callers, 1500 due
+objects, 500 deleted; a read answered while a sweep is held in flight).
+
+## The `chat-reel` class: a reel sent in a conversation (RC-2, 2026-10-09)
+
+**Server half of [reels-in-chat](../frontend/modules/reels-in-chat.md). Draft, waiting for review: nothing
+sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on production it reads zero.
+
+- **Swept by AGE from upload, never by idleness.** `isDue(entry, now)` is the ONE clock the sweep and
+  the stats share: an `ephemeral` object is due when nobody has read it for 90 days, a `chat-reel` when
+  `createdAt + 30 days` has passed. `lastAccessAt` moves on every download, so an idle clock would let a
+  reel watched every 29 days live for ever, against the sentence shown to the sender. `isSweepable`
+  stays an ALLOWLIST of classes (`ephemeral`, `chat-reel`): `reel`, `archive`, `association`, an
+  unclassified entry and a public asset are still kept by omission, and a spec pins each.
+- **`410`, not `404`.** The sweep tombstones `reel_expired`, the sender's delete `reel_deleted`, and
+  `isGoneTombstone` answers both (and `retention_expired`) as `purged`. `manual_delete` keeps its older
+  `404`.
+- **The client names the class, which is safe** where `association` is not: a client labelling something
+  `chat-reel` gains only a SHORTER life (the class can only shorten a life, never extend one) and pays the
+  budget. It is CLIENT-NAMED, so nothing here proves a blob is a reel. It cannot be applied to an existing id.
+- **Daily budget, 500 MB per member per rolling 24 h** (user, 2026-10-09), counted from the live
+  `chat-reel` entries of the caller (`size` is recorded for this class only) PLUS the bytes reserved by
+  uploads still in flight, refused `429` BEFORE the bytes are stored. **The check and the reservation share
+  one synchronous run** (`reserveChatReelBudget`), released in a `finally` in the run that registers the
+  entry: the first version checked, then awaited the store write, then registered, so N concurrent uploads
+  all passed (found by review). A failed write rolls the reservation back. A `chat-reel` with no `ownerId`
+  is an error (logged, 500), never a free pass. A swept or deleted reel gives its bytes back; that is
+  accepted, the loop costs the member's own bandwidth.
+- **A chunked upload declares `{retentionClass: 'chat-reel', totalBytes}` at `upload/chunk/init`**: the
+  budget is reserved there (so an over-budget member stages nothing), a chunk past the declared total is a
+  `413`, completion by another member is `403`, and the reservation is released on completion, on error and
+  when the orphan sweep finds the staged file gone. The reservations make a per-owner session cap
+  unnecessary (500 MB / 100 MB = five sessions at most). A session that declares nothing and names
+  `chat-reel` only at completion is still checked there (assembly), after staging: the RC-5 client must
+  declare at init.
+- **ROLLBACK HAZARD.** The index holds no schema version. A build older than this one that boots on the
+  same `media_metadata.json` does not know `chat-reel`: `isSweepable` is an allowlist, so it never sweeps
+  these entries (they live on, size unbounded by age), and a `reel_expired`/`reel_deleted` tombstone is not
+  a `410` there but a `404` (only `retention_expired` is). Both are the safe direction (nothing deleted
+  early) and heal on the roll-forward; the cost is a wrong status while rolled back. A meta version was
+  considered and not added: an old build rewrites the file without the field, so it could not protect
+  against the very build it is meant to warn about.
+- **The sender's delete is an ownership allowlist**: `DELETE /api/media/chat-reel/:id` removes an object
+  only when its class is `chat-reel` AND its `ownerId` is the caller. A feed photo, a vault document, a
+  feed reel, an unclassified blob, an object with no recorded owner or somebody else's reel are `403`.
+  Allowed here and refused for ordinary media because a reel message cannot be forwarded, so no other
+  conversation can cite the blob.
+- **Account deletion takes it** (not `survivesAccountDeletion`).
+- **Stats**: `GET internal/storage-stats` gains `chatReelCount`, `chatReelBytes`,
+  `chatReelOverdueCount`, `chatReelOverdueBytes` and `chatReelRetentionMs`; an overdue figure that does
+  not fall back within a sweep interval says the sweep stopped.
+- **NOT DONE, owed**: salons' moderator purge (social-service calls an internal `chat-reel-purge` with the
+  author the row proves, RC-8), the `/admin/storage` panel line in the frontend, the client's
+  `encryptAndUpload` class argument now accepts `'chat-reel'` but nothing passes it, and the storage
+  forecast re-read with a real send rate (RC-0). **Tested with unit specs over a stubbed store, NOT
+  against a real media-service over HTTP**: that bench run (window shortened by env) is still owed.
+
+## Upload sessions: streamed, resumable, every body under 8 MiB (WP-S1, 2026-10-10)
+
+Server half of [media-streaming-upload](media-streaming-upload.md), **additive**: no client calls it yet
+(S2), and the single-block `POST /upload` and the `upload/chunk/*` routes are untouched. Code:
+`upload-session.service.ts` (the state), `upload-session.ts` (pure geometry, header check, mutex), the five
+routes in `media.controller.ts` (NO `FileInterceptor`: a spec reads the route metadata).
+
+- **`init`** declares `totalBytes`, `partBytes` (1 KiB to **8 MiB**, else `400`/`413`; at most 4096 parts) and
+  the 20 public `segmented-v1` header bytes as 40 hex digits. Keyless check: magic, version, and
+  `20 + plaintext + segments x 16 == totalBytes`. Then, in this order and each a typed answer: `413` over the
+  ceiling (`MEDIA_MAX_SIZE_MB`, 50 on both estates), `429` past **4 open sessions per member** or the staging
+  budget (2 GiB declared), `429` past the daily `chat-reel` budget - **reserved ONCE here** with
+  `reserveChatReelBudget`, the same machinery as the single POST. A sparse staging file of exactly
+  `totalBytes` is created. The part size travels in `init`; the server assumes none.
+- **A session UNTOUCHED lives 15 min, not 24 h** (`MEDIA_UPLOAD_SESSION_EMPTY_TTL_MS`): untouched means no part
+  ever received (a durable `everReceived` flag in the sidecar, so a re-sent only-part leaving `received` does not
+  reset it; a sidecar without it falls back to its `received` list) AND no PUT in flight (a first part still
+  arriving is not "nothing"). One
+  member may declare at most **256 MiB** across open sessions (`MEDIA_UPLOAD_SESSION_MAX_OWNER_BYTES`, `429`).
+  Both exist because `init` is cheap (a sparse file plus a reservation) and the 2 GiB staging cap was
+  otherwise fillable by anyone, for a day, with no part sent. Expired sessions are disposed at `init` too,
+  so a full cap does not wait for the hourly sweep. Their reservation goes with them. That disposal is NOT awaited
+  by `init` (one behind a long `complete` would hold every member's `init`) and the sessions it is disposing are
+  not counted against the caps meanwhile; it re-judges expiry under the `:complete` lock, so an expiry queued
+  behind a `complete` that just gave the session a fresh window disposes nothing.
+- **`PUT parts/:index`**: raw `application/octet-stream`. `Content-Length` is REQUIRED (`411`), over **8 MiB is
+  `413` before a byte is read**, more than the part's exact length `413`, fewer `400`. The request stream
+  is piped through a byte counter into `createWriteStream(..., {flags: 'r+', start: index * partBytes})`
+  with 64 KiB buffers - heap is the buffer, not the part. Only a part whose every byte landed is recorded;
+  an interrupted one is `400` and absent from `status`. **A re-sent part rewrites the same bytes at the same
+  offset**: this is the defect of `appendChunk`, which appends and so doubled a chunk whose answer was lost.
+  Same-index PUTs are serialised, different indexes run in parallel. **A re-sent part is UNMARKED
+  (durably) before its first byte is rewritten and re-marked when the whole body landed**, so a retry cut
+  midway cannot leave a half-old, half-new part that `status` reports as received. A PUT after `complete`
+  started or finished is `409` (the `completing` flag is set in the same synchronous run as the in-flight
+  check), a PUT whose staging vanished under it (cancel, expiry) is `409`, and `ENOSPC` is `507`.
+- **`GET :id`** is the resume fact: `{received: [...], totalParts, partBytes, expiresAt}`, plus `mediaId` once
+  completed. The list is in a sidecar `<id>.json` (atomic write-and-rename) beside `<id>.data`, so a PROCESS
+  restart forgets nothing; the restored reservation is put back with `restore` (not re-judged, so a day that
+  filled up meanwhile cannot strand a session the member was told they had).
+- **`complete`**: every part present and no PUT in flight (`409`), staged size exact, the first 20 bytes equal
+  to the declared header (`422`), `fPutObject` from the file, then the index entry and the reservation hand
+  over in one synchronous run (`registerUpload`'s `onRegistered`). **The `mediaId` is chosen and persisted BEFORE
+  the store is written**, so a crash between the store, the register and the memo retries into the same key
+  (the store overwrites; `registerUpload` is a set); if only the memo write fails the member still gets
+  the id and the staging file is kept for that retry. A store failure leaves the session open,
+  reservation held, `complete` retryable. **Idempotent**: `uploadId -> mediaId` is the `completed` field of the
+  sidecar, kept a full window (24 h) after completion and surviving a restart.
+- **`DELETE :id`** aborts in-flight parts, removes the staging and releases the budget now. Under the
+  `complete` lock it re-reads whether the upload completed (`409`) or was disposed (`404`) meanwhile.
+- **Loading after a restart** validates every sidecar field (types, ranges, uuid shapes, staging size). A
+  record that is WRONG (bad JSON, bad field, staging missing or of another size) is deleted; a read that
+  FAILED (EIO, EACCES) is not: it is kept, logged as an error and shielded from the orphan sweep.
+- **Ownership**: another member is `403` on every route, an unknown or expired id `404`.
+- **Expiry is absolute**: `MEDIA_UPLOAD_SESSION_TTL_MS` (24 h) from the opening, never extended by
+  activity. It is enforced when a session is addressed AND by the hourly sweep, which also removes staging no
+  session claims. The sweep takes the reservation with it; the client is told `404` and opens a new session.
+  The directory is deliberately not `chunks_temp`, whose sweep is by file age and would take a sidecar that did
+  not change for a day along with its data.
+- **Release in `finally`**: complete, cancel, expiry and a failed `init` each give the reservation back, and
+  the release is idempotent, so no ending can count it twice or leave it behind.
+
+**Proven** (`upload-session.service.spec.ts`, 36 cases before the review fixes, which added the ones listed
+under them below, real staging directory and real budget; only the
+store is a stub): byte-for-byte assembly from parts sent concurrently and reversed; a part sent twice and
+twice at once; an interrupted part resent; `413` before reading; the 411/400/413 matrix; the last part's
+remainder; the open-session cap under 6 concurrent inits (exactly 4 pass); every ending releasing the
+budget; a restart keeping parts, reservation and memo; **50 MiB in 4 MiB parts growing `arrayBuffers` by
+under 16 MiB**; and a real HTTP server in front of the controller (a 9 MiB PUT is `413`, a raw part lands).
+
+Added by the review: the per-owner byte cap; the 15-minute expiry of an empty session and the release of its
+reservation; a retried part torn midway not counting as received; `complete` racing a PUT (either order);
+a crash between the register and the memo; a malformed sidecar and an unreadable one at load; cancel
+racing `complete`; `ENOSPC`.
+
+**Residuals.** (1) The staging directory is now its own volume, `media_upload_sessions` at
+`/app/upload_sessions` (prod and dev compose; the local bench compose keeps the container layer), so it
+survives a recreate. It is DELIBERATELY not in the backup (transient by design; no bootstrap step, Docker
+creates the volume on the next deploy). An existing sparse file's declared size still counts against
+the disk of the volume's filesystem, not the object store. (2) `partSize` is a CLIENT option of minio-js (default 64 MiB: `size <= partSize` is read whole into a buffer;
+minimum 5 MiB). It is set on a SECOND client, `streamClient`, used ONLY by `StorageService.putFileStream`
+(this service's `complete` and the chunk route's); `put()` and every other call keep the default client, so
+the single POST is unchanged. `putFileStream` opens its own read stream and calls `putObject`; on failure it
+destroys the stream and calls `removeIncompleteUpload` for the key (minio-js 8.0.7 never aborts a failed
+multipart upload; its first part number is 2), logging both, and rethrows the original error. **Unproven
+against Garage, and THE FIRST READING OWED: a real 6 MB and a real 50 MB upload through dev Garage** (the
+multipart path, the abort, a `process.memoryUsage()` probe); the specs stub the S3 client. (2b) **The vault/opaque mode is NOT in S1**
+(the header check is mandatory here, `init` refuses a non-`segmented-v1` blob): a vault document over 10 MiB
+still has no session route; it is a later package, see the design's 9.1/9.4. (3) Streamed `GET` (design 3.5) is not in this
+package. (4) The edge (nginx buffers a request body by default, then forwards it) and the 10 MiB wall are
+exercised only by gate 3 of the design (S5), not by these specs. (5) Part size, 8 MiB cap, 4 sessions and
+24 h are the user-delegated defaults of 2026-10-10, overridable.
 
 ## Segmented media: play while downloading (CanaReels R2) - the READER release, 2026-10-01
 
@@ -423,17 +655,24 @@ machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 
 ## Environment variables
 
-| Variable                   | Required | Description                                                                                                                                                                                                  |
-| -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `JWT_SECRET`               | yes      | HS256 secret (shared with all services)                                                                                                                                                                      |
-| `GARAGE_ENDPOINT`          | yes      | Garage host (`garage` in Compose)                                                                                                                                                                            |
-| `GARAGE_PORT`              | yes      | Garage S3 API port (`3900`)                                                                                                                                                                                  |
-| `GARAGE_REGION`            | yes      | Must match `s3_region` in `infrastructure/garage/garage.toml` (`garage`). Its absence is a crash loop, not a degradation: the S3 client signs for `us-east-1` and `bucketExists` fails inside `onModuleInit` |
-| `GARAGE_ACCESS_KEY_ID`     | yes      | The key Garage provisions on first boot - the only S3 identity in the stack                                                                                                                                  |
-| `GARAGE_SECRET_ACCESS_KEY` | yes      | Its secret                                                                                                                                                                                                   |
-| `GARAGE_BUCKET`            | yes      | Bucket name for media blobs (default `canari-media`), **also used for public assets**                                                                                                                        |
-| `MEDIA_MAX_SIZE_MB`        | no       | Max upload size in MB, measured on the CIPHERTEXT (default 100, capped at 100). **Both estates run `50`.** Published by `GET /api/media/limits` and the only copy of the number                              |
-| `MEDIA_RETENTION_SWEEP_MS` | no       | Retention sweep interval (default 1 h)                                                                                                                                                                       |
+| Variable                                | Required | Description                                                                                                                                                                                                  |
+| --------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `JWT_SECRET`                            | yes      | HS256 secret (shared with all services)                                                                                                                                                                      |
+| `GARAGE_ENDPOINT`                       | yes      | Garage host (`garage` in Compose)                                                                                                                                                                            |
+| `GARAGE_PORT`                           | yes      | Garage S3 API port (`3900`)                                                                                                                                                                                  |
+| `GARAGE_REGION`                         | yes      | Must match `s3_region` in `infrastructure/garage/garage.toml` (`garage`). Its absence is a crash loop, not a degradation: the S3 client signs for `us-east-1` and `bucketExists` fails inside `onModuleInit` |
+| `GARAGE_ACCESS_KEY_ID`                  | yes      | The key Garage provisions on first boot - the only S3 identity in the stack                                                                                                                                  |
+| `GARAGE_SECRET_ACCESS_KEY`              | yes      | Its secret                                                                                                                                                                                                   |
+| `GARAGE_BUCKET`                         | yes      | Bucket name for media blobs (default `canari-media`), **also used for public assets**                                                                                                                        |
+| `MEDIA_MAX_SIZE_MB`                     | no       | Max upload size in MB, measured on the CIPHERTEXT (default 100, capped at 100). **Both estates run `50`.** Published by `GET /api/media/limits` and the only copy of the number                              |
+| `MEDIA_CHAT_REEL_RETENTION_MS`          | no       | The `chat-reel` age window (default 30 days); a bench shortens it to cross it in seconds                                                                                                                     |
+| `MEDIA_PENDING_REEL_TTL_MS`             | no       | How long an unclaimed `reel-pending` upload lives (default 24 h). Milliseconds; under 1 h (3600000) the service REFUSES TO START, and the effective value is logged at boot                                  |
+| `MEDIA_CHAT_REEL_DAILY_BYTES`           | no       | Per-member `chat-reel` upload budget per rolling 24 h (default 500 MB)                                                                                                                                       |
+| `MEDIA_RETENTION_SWEEP_MS`              | no       | Retention sweep interval (default 1 h); also the upload-session sweep's                                                                                                                                      |
+| `MEDIA_UPLOAD_SESSION_DIR`              | no       | Where sessions stage (default `./upload_sessions`, NOT a volume: see the residuals of [sessions](#upload-sessions-streamed-resumable-every-body-under-8-mib-wp-s1-2026-10-10))                               |
+| `MEDIA_UPLOAD_SESSION_TTL_MS`           | no       | The resume window, from the opening (default 24 h)                                                                                                                                                           |
+| `MEDIA_UPLOAD_SESSION_MAX_OPEN`         | no       | Open sessions per member (default 4)                                                                                                                                                                         |
+| `MEDIA_UPLOAD_SESSION_MAX_STAGED_BYTES` | no       | Total declared size of open sessions (default 2 GiB)                                                                                                                                                         |
 
 **Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself
 stopped being MinIO. Renamed rather than kept: a name that lies about what it configures is read

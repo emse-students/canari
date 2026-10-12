@@ -19,7 +19,12 @@
 export const STATIC_PAGE_ROUTES: ReadonlySet<string> = new Set(
   Object.keys(import.meta.glob('/src/routes/**/+page.svelte'))
     .filter((file) => !file.includes('['))
-    .map((file) => file.slice('/src/routes'.length, -'/+page.svelte'.length) || '/')
+    // A `(group)` directory shares a layout and is NOT part of the URL (`/profile/(me)/+page.svelte`
+    // answers `/profile`), so it is stripped before the path means anything.
+    .map(
+      (file) =>
+        file.slice('/src/routes'.length, -'/+page.svelte'.length).replace(/\/\([^/]+\)/g, '') || '/'
+    )
 );
 
 /** Strips the optional trailing slash a path may carry, leaving the root itself alone. */

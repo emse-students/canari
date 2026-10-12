@@ -72,8 +72,16 @@ import {
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
-import { mergeReadWatermarks, parseReadWatermarks } from '$lib/utils/chat/readState';
+import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
+import { nextEchoMessages } from '$lib/utils/chat/salonEcho';
+import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
+import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
+import {
+  flushSalonReadMarks,
+  owedSalonReadMarks,
+  salonMarksAfterLoad,
+} from '$lib/utils/chat/salonReadMarkQueue';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -227,6 +235,21 @@ export function useConversations() {
   async function noteLiveStreamTransition(connected: boolean, ctx: ConversationContext) {
     invalidateChannelHistoryCache();
     if (!connected) return;
+    // WHAT ARRIVED WHILE THE SOCKET WAS DOWN reached no salon row and so raised no badge. The server
+    // counted it against the reader's marks; ask before anything else, for every salon.
+    const { channelService } = await import('$lib/services/ChannelService');
+    await reconcileSalonUnreadFromServer({
+      conversations,
+      selectedId: selectedContact,
+      userId: ctx.userId,
+      fetchCounts: () => channelService.listUnreadCounts(),
+      settleOwedMarks: () =>
+        flushSalonReadMarks(ctx.userId, (id, at, serverAt) =>
+          channelService.advanceReadMark(id, at, serverAt)
+        ),
+      log: ctx.log,
+      reason: 'live stream back',
+    });
     const open = selectedContact;
     if (!open || !isChannelConversationId(open)) return;
     ctx.log(`[CHANNEL] live stream back - reloading open salon ${open.slice(8, 16)}`);
@@ -312,6 +335,12 @@ export function useConversations() {
       if (!key) return;
       if (!conversations.has(key)) {
         if (notifNav.pending === key) return;
+        // SAID OUT LOUD, because from the outside this is a tap that did nothing: a salon row the
+        // sidebar still lists, selected and dropped in the same frame. A selection of a key the map
+        // never had is the visible end of a row lost upstream (`restoreKeepsSalonRows.test.ts`).
+        console.warn(
+          `[SELECT] ${key.slice(0, 16)} is not in the conversation map - selection dropped, nothing opens`
+        );
         selectedContact = null;
         sendError = '';
       }
@@ -467,8 +496,10 @@ export function useConversations() {
     force = false
   ) {
     const { channelService } = await import('$lib/services/ChannelService');
-    const { decodeChannelMessageRow, UnreadableRowTally } =
+    const { decodeChannelMessageRow, UnreadableRowTally, V1_SESSION_NOT_HELD } =
       await import('$lib/utils/chat/channelCrypto');
+    const { olderMessagesNotice, keepNoticeOnTop } =
+      await import('$lib/utils/chat/olderMessagesNotice');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const convo = conversations.get(channelConversationId);
@@ -504,6 +535,8 @@ export function useConversations() {
         }),
       ]);
       const loaded: ChatMessage[] = [];
+      // Server row id -> the client UUID its author sealed inside it (own rows only, see below).
+      const clientIdOf = new SvelteMap<string, string>();
       const edits: DecodedChannelEdit[] = [];
       const meLower = ctx.userId.toLowerCase();
 
@@ -531,11 +564,15 @@ export function useConversations() {
           // Seed the live poll tally from the server row, keyed by the server id.
           if (msg.poll) setPollMeta(String(msg.id), msg.poll);
 
+          if (decoded.message.isOwn && decoded.message.clientMessageId) {
+            clientIdOf.set(decoded.message.id, decoded.message.clientMessageId);
+          }
           loaded.push({
             id: decoded.message.id,
             senderId: decoded.message.senderId,
             content: decoded.message.content,
             timestamp: decoded.message.timestamp,
+            serverTimestamp: decoded.message.serverTimestamp,
             isOwn: decoded.message.isOwn,
             isSystem: decoded.message.isSystem,
           });
@@ -543,19 +580,56 @@ export function useConversations() {
       }
 
       tally.report();
+      // ONCE per salon, from this load's own count: rows under a v1 session this device does not
+      // hold are gone for good here (section 21.7), and a silent gap reads as a bug.
+      const notice = olderMessagesNotice(
+        channelConversationId,
+        Array.isArray(rows) ? rows : [],
+        tally.rowsOf(V1_SESSION_NOT_HELD)
+      );
+      if (notice) loaded.push(notice);
       loaded.sort(compareMessageOrder);
       const loadedEdited = applyChannelEdits(loaded, edits, ctx.log);
 
-      const current = conversations.get(channelConversationId);
+      let current = conversations.get(channelConversationId);
       if (current) {
+        // THIS DEVICE'S OWN ECHOES THE PAGE ALREADY HOLDS are re-keyed to the server's row first, so the
+        // merge below sees ONE row. It is the proof that settles an echo whose POST reply was lost or
+        // carried no id and whose frame never came (WP-OFF-2) - no clock involved. Only the author's
+        // own rows can match: `isOwn` is the row's proven sender.
+        let reKeyed = current.messages;
+        for (const row of loadedEdited) {
+          const clientId = clientIdOf.get(row.id);
+          if (!row.isOwn || !clientId) continue;
+          reKeyed =
+            nextEchoMessages(reKeyed, clientId, { kind: 'settled', serverId: row.id }) ?? reKeyed;
+        }
+        if (reKeyed !== current.messages) {
+          ctx.log(`[SALON-ECHO] history load settled echo(es) of ${channelConversationId}`);
+          current = { ...current, messages: reKeyed };
+        }
+        // The page is the proof the server holds these: whatever the unsent ledger still keeps for
+        // them (a POST reply lost, a previous page life killed mid-send) must not come back.
+        if (clientIdOf.size > 0) clearUnsentSalonTexts(ctx.userId, clientIdOf.values());
         // Same race as the DM path, and worse: decrypting 200 channel rows takes seconds, and every
         // live message posted meanwhile used to be discarded when this resolved.
+        // The reader's OWN mark comes from the server and the owed queue, never from a belief the
+        // device restored: one held above the server's stops the receipt from ever being posted.
+        const readWatermarks = salonMarksAfterLoad(
+          current.readWatermarks,
+          rawMarks === undefined ? undefined : (parseReadWatermarks(rawMarks) ?? {}),
+          ctx.userId,
+          owedSalonReadMarks(ctx.userId)[channelConversationId]?.at,
+          channelConversationId
+        );
         conversations.set(channelConversationId, {
           ...current,
-          messages: mergeMessagePage(current.messages, loadedEdited),
-          readWatermarks:
-            mergeReadWatermarks(current.readWatermarks, parseReadWatermarks(rawMarks)) ??
-            current.readWatermarks,
+          // FIRST after the merge too: a reload can hold rows older than this page (section 21.7).
+          messages: keepNoticeOnTop(
+            mergeMessagePage(current.messages, loadedEdited),
+            channelConversationId
+          ),
+          ...(readWatermarks !== undefined ? { readWatermarks } : {}),
         });
         channelHistoryLoadedAt.set(channelConversationId, {
           loadedAt: Date.now(),
@@ -588,6 +662,7 @@ export function useConversations() {
     const { decodeChannelMessageRow, UnreadableRowTally } =
       await import('$lib/utils/chat/channelCrypto');
     const { getPreviewText, parseEnvelope } = await import('$lib/envelope');
+    const { keepNoticeOnTop } = await import('$lib/utils/chat/olderMessagesNotice');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const meLower = ctx.userId.toLowerCase();
@@ -654,7 +729,11 @@ export function useConversations() {
       const existingIds = new SvelteSet(current.messages.map((m) => m.id));
       const added = decodedAll.filter((m) => !existingIds.has(m.id));
       if (added.length) {
-        const merged = [...current.messages, ...added].sort(compareMessageOrder);
+        // A whole-history sweep brings the oldest rows of all: the notice stays above them.
+        const merged = keepNoticeOnTop(
+          [...current.messages, ...added].sort(compareMessageOrder),
+          channelConversationId
+        );
         conversations.set(channelConversationId, { ...current, messages: merged });
       }
     }
@@ -872,6 +951,7 @@ export function useConversations() {
     dismissDrawerHistoryIfAny();
     dismissSidePanelIfAny();
     selectedContact = name;
+    noteSalonOpened(name);
     sendError = '';
     const convo = conversations.get(name);
     if (convo) {
@@ -890,6 +970,7 @@ export function useConversations() {
     dismissDrawerHistoryIfAny();
     dismissSidePanelIfAny();
     selectedContact = name;
+    noteSalonOpened(name);
     sendError = '';
     const convo = conversations.get(name);
     if (convo) {

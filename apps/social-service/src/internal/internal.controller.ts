@@ -120,7 +120,7 @@ export class InternalController {
    * `GET /api/associations/:id` answers 401 to a caller with no `X-User-Id` since 2026-08-05 (it
    * became "logged-in callers only"), and core-service's connect-status, dashboard-link and Lydia
    * validation all read it server to server - so all three said "Association not found" for ever.
-   * Internal secret, never nginx identity, and ONLY the four payment fields: no other column of the
+   * Internal secret, never nginx identity, and ONLY the two payment fields: no other column of the
    * association leaves through here.
    */
   @Get('associations/:associationId/payment-account')
@@ -133,8 +133,6 @@ export class InternalController {
       where: { id: associationId },
       select: {
         id: true,
-        stripeAccountId: true,
-        stripeOnboardingComplete: true,
         lydiaAccountId: true,
         lydiaOnboardingComplete: true,
       },
@@ -144,8 +142,6 @@ export class InternalController {
       throw new NotFoundException('Association not found');
     }
     return {
-      stripeAccountId: asso.stripeAccountId,
-      stripeOnboardingComplete: asso.stripeOnboardingComplete,
       lydiaAccountId: asso.lydiaAccountId,
       lydiaOnboardingComplete: asso.lydiaOnboardingComplete,
     };
@@ -284,6 +280,23 @@ export class InternalController {
       this.purchaseRepo.update({ userId }, { userId: '[deleted]' }),
       this.reportRepo.update({ reporterId: userId }, { reporterId: '[deleted]' }),
     ]);
+
+    // Nominative read grants (WP7): no foreign key crosses services, so the standing grant of a
+    // deleted account is removed here - an id re-issued later must not inherit it. The journal is
+    // history and stays, with the account anonymised on both of its sides.
+    await this.postRepo.manager.query(`DELETE FROM read_grants WHERE user_id = $1`, [userId]);
+    // Push mutes are the account's own preference and carry no foreign key to it: purge them.
+    await this.postRepo.manager.query(`DELETE FROM association_push_mutes WHERE "userId" = $1`, [
+      userId,
+    ]);
+    await this.postRepo.manager.query(
+      `UPDATE read_grant_journal SET user_id = '[deleted]' WHERE user_id = $1`,
+      [userId]
+    );
+    await this.postRepo.manager.query(
+      `UPDATE read_grant_journal SET actor = '[deleted]' WHERE actor = $1`,
+      [userId]
+    );
 
     await this.channelService.repairWorkspacesAfterAccountDeletion(affectedWorkspaceIds, userId);
 

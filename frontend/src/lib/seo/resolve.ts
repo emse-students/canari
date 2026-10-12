@@ -1,7 +1,23 @@
+import { parseSettingsSection, settingsSectionLabel } from '$lib/settings/settingsSections';
+import {
+  PROFILE_SELF_SEGMENT,
+  parseProfileSection,
+  profileSectionLabel,
+} from '$lib/profile/profileSections';
 import { m } from '$lib/paraglide/messages';
+import { wordingFor } from '$lib/associations/kindWording';
+import { PUBLIC_SECTIONS } from '$lib/associations/publicSections';
 import { APP_PLACES } from '$lib/navigation/places';
 import { SITE } from '$lib/seo/site';
 import type { SeoMeta } from '$lib/seo/types';
+
+/** `/associations/<slug>/edit[/<section>]` - the edit pages shared by associations, lists and institutions. */
+export const ASSOCIATION_EDIT_PATH = /^\/associations\/([^/]+)\/edit(?:\/[^/]+)?$/;
+
+/** `/associations/<slug>/<section>` - a section of the public page, built from the section keys. */
+export const ASSOCIATION_SECTION_PATH = new RegExp(
+  `^/associations/([^/]+)/(?:${PUBLIC_SECTIONS.join('|')})$`
+);
 
 /**
  * Every page this app does not offer to a search engine, by path prefix.
@@ -104,10 +120,9 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/account/purchases': () => m.purchases_heading(),
   '/admin': () => m.admin_title(),
   '/admin/agenda': () => adminTitle(m.admin_pending_agenda_label()),
-  '/admin/associations': () => adminTitle(m.admin_associations_label()),
   '/admin/carte': () => adminTitle(m.carte_card_label()),
   '/admin/cercle': () => adminTitle(m.admin_cercle_label()),
-  '/admin/document-reviewers': () => adminTitle(m.docreview_nav_label()),
+  '/admin/read-access': () => adminTitle(m.readaccess_nav_label()),
   '/admin/legacy-cotisations': () => adminTitle(m.admin_legacy_title()),
   '/admin/moderation': () => adminTitle(m.moderation_title()),
   '/admin/profile-corrections': () => adminTitle(m.profile_corrections_nav_label()),
@@ -128,6 +143,7 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/forms/create': () => m.form_create_heading(),
   '/forms/success': () => m.form_success_title(),
   '/institutions': () => m.inst_heading(),
+  '/institutions/new': () => m.inst_new_create_btn(),
   '/lists': () => m.list_heading(),
   '/lists/new': () => m.list_new_create_btn(),
   '/profile': () => m.seo_profile_title(),
@@ -189,6 +205,23 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
     return appPageSeo(path, m.group_join_page_title());
   }
 
+  // A settings section is a page of its own, named for what it holds.
+  const settingsSection = path.startsWith('/settings/')
+    ? parseSettingsSection(path.slice('/settings/'.length))
+    : null;
+  if (settingsSection) {
+    return appPageSeo(path, settingsSectionLabel(settingsSection));
+  }
+
+  // A profile section (`/profile/me/<section>`) is a page of its own, named for what it holds.
+  const profilePrefix = `/profile/${PROFILE_SELF_SEGMENT}/`;
+  const profileSection = path.startsWith(profilePrefix)
+    ? parseProfileSection(path.slice(profilePrefix.length))
+    : null;
+  if (profileSection) {
+    return appPageSeo(path, profileSectionLabel(profileSection));
+  }
+
   const pageTitle = PAGE_TITLES[path];
   if (pageTitle) {
     return appPageSeo(path, pageTitle());
@@ -198,6 +231,21 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
     // `/associations/new` never reaches here: `PAGE_TITLES` above is consulted first and owns it.
     // It used to be excluded by a `!== 'new'` on this line, which was a second statement that the
     // creation page is not a slug.
+    // The edit page is an app page, and its KIND-specific name (association, list, institution) is
+    // data the path does not carry: the page hands it over (`pageTitle`) and the server resolves
+    // it (`associationEditSeo`), both from `wordingFor(...).editTitle()`. The association wording
+    // is only the answer for a path nobody has resolved yet.
+    if (ASSOCIATION_EDIT_PATH.test(path)) {
+      return appPageSeo(path, wordingFor('association').editTitle());
+    }
+    // A SECTION of the public page (`/associations/<slug>/calendar`) is the same entity seen from
+    // inside, never a second indexable page: the hub is the one page the sitemap offers, and a
+    // section is `noindex` on the server answer too, so a crawler that finds one by a link does not
+    // list it beside its hub.
+    const sectionMatch = path.match(ASSOCIATION_SECTION_PATH);
+    if (sectionMatch) {
+      return appPageSeo(path, decodeURIComponent(sectionMatch[1]));
+    }
     const slugMatch = path.match(/^\/associations\/([^/]+)$/);
     if (slugMatch) {
       const slug = decodeURIComponent(slugMatch[1]);

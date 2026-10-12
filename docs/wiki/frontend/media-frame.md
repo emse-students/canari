@@ -206,6 +206,16 @@ ratio - **one shift, once per old message per device** - then files it in the me
 every later render of that row, in this session or after a restart, opens at the right size. A new
 message never shifts.
 
+## 7. An orphan media row, and a card with no bubble
+
+**An own file card assumed an amber bubble** (`text-cn-ink`, `bg-black/10`), but a media-only message has none (`MessageBubble` `isMediaOnly`): in dark theme the navy ink sat on the black page. `MessageMediaRenderer` takes `onBubble` (`!isMediaOnly`); amber tones apply only when `isOwn && onBubble`, otherwise the theme pair (`bg-black/5 dark:bg-white/10`, `text-text-main`). The ring and buttons use `currentColor`, so they follow.
+
+**An orphan** is MY attachment (`isOwn`: a receiver cannot know the sender's outbox, and a sender uploads before it sends, so a received empty-`mediaId` row has no producer) whose ref has an empty `mediaId`, with no live upload view and no refused-upload state, AND that the DURABLE queue no longer holds (`isOutboxEntryQueued`, the light read, no payload decode). It is never decided from `status`: that is derived in memory and re-applied only at session start, so a real 13 MB entry after a reload has no status and its Delete would withdraw the real upload, while a lost one keeps `pending`. An unreadable queue answers `null` and stays the queued spinner. The bubble logs the verdict. It shows `media_orphan_label` and the delete (`utils/chat/orphanMedia.ts`).
+
+**The source.** `handleSendChat` writes the placeholder, then the outbox entry. The file is read before the placeholder; `enqueue` / `enqueueOutboxMessage` reject instead of returning silently; on a rejection the placeholder is withdrawn (row and store) before the file is re-staged, so a second Send cannot duplicate it. **Callers of the enqueue**: the media send (`handleSendChat`) catches, withdraws the placeholder and re-stages; the text send (`sendChatMessage`) PROPAGATES to `MainChatPage.sendText`, which logs and raises the banner; every control event goes through `enqueueControlEvent`, which catches only `OutboxEnqueueError` and logs it at `console.error` with the event kind. Open items: [backlog](../backlog.md).
+
+**A normal send is never an orphan (2026-10-11).** `handleSendChat` writes the placeholder BEFORE the durable INSERT, and a 13 MB INSERT takes seconds, so the outbox honestly answered "absent" and the card flashed red with a Delete that would withdraw a healthy upload. The sender KNOWS the enqueue is in flight: `utils/chat/outboxActivity.svelte.ts` holds the in-flight message ids (`beginOutboxEnqueue`, ended in a `finally` so a rejection clears it) and a reactive queue version bumped when an enqueue settles or `cancelOutboxMessage` returns. The bubble's candidate is false while in flight, and its effect re-asks the outbox on each version change - no timer, no polling. A real orphan after a reload was never in flight, so it is asked once and stays red.
+
 ## 6. Where it stands
 
 | Half | Pull request | State |

@@ -1,3 +1,5 @@
+import { frameToPixels } from './reelFrame';
+import { canvasToBlob } from '$lib/utils/canvasBlob';
 import { emojiSvgSrc } from '$lib/utils/emojiSvg';
 import {
   emojiSize,
@@ -39,7 +41,8 @@ export function drawDecorations(
 ) {
   for (const overlay of edits.overlays) {
     context.save();
-    context.translate(overlay.x * width, overlay.y * height);
+    const at = frameToPixels(overlay, { width, height });
+    context.translate(at.x, at.y);
     context.rotate(overlay.rotation);
     if (overlay.kind === 'stroke') {
       // The points are in short-side units: the same factor sizes the line, as in the preview's SVG.
@@ -102,14 +105,10 @@ export async function loadOverlayImages(edits: ReelEdits): Promise<OverlayImages
   return images;
 }
 
-function canvasBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error('canvas export failed'))),
-      type,
-      quality
-    );
-  });
+function canvasBlob(canvas: HTMLCanvasElement, type: string, quality: number): Blob {
+  const blob = canvasToBlob(canvas, type, quality);
+  if (!blob) throw new Error('canvas export failed');
+  return blob;
 }
 
 async function loadImage(source: Blob): Promise<HTMLImageElement> {
@@ -142,7 +141,7 @@ async function renderImage(
   context.drawImage(image, 0, 0);
   drawDecorations(context, edits, canvas.width, canvas.height, fontFamily, images);
   return {
-    blob: await canvasBlob(canvas, 'image/webp', 0.92),
+    blob: canvasBlob(canvas, 'image/webp', 0.92),
     width: canvas.width,
     height: canvas.height,
   };
@@ -210,11 +209,22 @@ async function renderVideo(
   };
   video.onended = () => recorder.stop();
   recorder.start(200);
-  await video.play();
-  draw();
-  const blob = await result;
-  URL.revokeObjectURL(video.src);
-  return { blob, width: canvas.width, height: canvas.height };
+  try {
+    await video.play();
+    draw();
+    const blob = await result;
+    return { blob, width: canvas.width, height: canvas.height };
+  } finally {
+    // EVERYTHING THE RENDER OPENED IS RELEASED, success or failure: the source element and its
+    // decoder (a loaded element keeps a media pipeline, audio sink included, until its source is
+    // dropped) and both capture streams. The app holds no audio output it is not playing.
+    for (const track of [...canvasStream.getTracks(), ...sourceStream.getTracks()]) track.stop();
+    const url = video.src;
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    URL.revokeObjectURL(url);
+  }
 }
 
 /** Renders the camera editor's decorations into an uploadable image or video. */

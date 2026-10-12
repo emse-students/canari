@@ -11,12 +11,15 @@
  *   frame in software. The capture is now constrained to the screen's own pixel count, capped
  *   ({@link REEL_CAPTURE_MAX_LONG_SIDE}), and the bitrate follows the pixels ({@link videoBitrateFor}).
  *
- * MIRRORING. The front lens PREVIEW is mirrored by CSS, as every camera app shows it. A canvas
- * `drawImage` of the `<video>` reads the decoded frame, never the CSS transform, so the saved photo
- * and take are NOT mirrored - Instagram's convention (a selfie is saved as others see you, so text
- * on a shirt reads right). The rear lens is never mirrored at all. Nothing here flips anything: a
- * flip would have to be added, and none is.
+ * MIRRORING (user report of 2026-10-07: the photo came out "inverted"). The front lens PREVIEW is
+ * mirrored by CSS, as every camera app shows it. A canvas `drawImage` of the `<video>` reads the
+ * decoded frame, never the CSS transform, so the saved photo was the un-mirrored frame: left and right
+ * swapped against what the member had just looked at, and against the review that follows. The saved
+ * photo and take now REPRODUCE THE PREVIEW (WYSIWYG, Snapchat's convention): the front lens is drawn
+ * flipped horizontally ({@link shouldMirrorCapture}), the rear lens never. The sensor's frame is never
+ * rotated - the engine delivers it upright, and a canvas read applies no EXIF.
  */
+import { canvasToBlob } from '$lib/utils/canvasBlob';
 
 /** A width and a height, in whatever unit the caller states. */
 export interface Size {
@@ -40,6 +43,22 @@ export const REEL_CAPTURE_MAX_LONG_SIDE = 1280;
 
 /** The frame rate asked of the camera and of the framed stream. */
 export const REEL_CAPTURE_FPS = 30;
+
+/**
+ * The microphone a reel is recorded with: NO voice-call processing. Echo cancellation, noise
+ * suppression and automatic gain are a telephone's chain - they gate music and ambience, pump the
+ * level and, with the gain, pushed the user's reel to -10 LUFS with its peak over 0 dBFS (2026-10-09).
+ * Measured on the Mi 9T against one loud source, 6 s: gain control alone read 6 dB hotter than none
+ * (peak -10.9 against -17.1 dBFS). A reel records the room as it is, as a camera app does.
+ */
+export const REEL_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: false,
+  noiseSuppression: false,
+  autoGainControl: false,
+};
+
+/** Audio bitrate asked of the recorder, so its Opus is not left at an engine default. */
+export const REEL_RECORD_AUDIO_BITRATE = 128_000;
 
 /** The most a take is recorded at: above the 2.5 Mb/s upload target, so the preparation compresses once. */
 export const REEL_RECORD_BITRATE_MAX = 4_000_000;
@@ -114,7 +133,7 @@ export function videoBitrateFor(size: Size, fps: number = REEL_CAPTURE_FPS): num
   );
 }
 
-/** What the camera screen offers its shutter: both captures are the preview's crop, never mirrored. */
+/** What the camera screen offers its shutter: both captures are the preview's crop, mirrored as it is. */
 export interface CameraCapture {
   /** A decoded frame is on screen: nothing can be captured before this. */
   readonly ready: boolean;
@@ -124,11 +143,18 @@ export interface CameraCapture {
   startFramedStream(): FramedStream | null;
 }
 
-/** The preview element's box and the pixel ratio: everything a crop needs besides the frame. */
+/** The preview element's box, the pixel ratio and the lens: everything a capture needs besides the frame. */
 export interface PreviewBox {
   width: number;
   height: number;
   dpr: number;
+  /** The preview is mirrored on screen, so the capture is drawn mirrored too ({@link shouldMirrorCapture}). */
+  mirror: boolean;
+}
+
+/** Whether a capture from `facing` is drawn flipped: exactly when the preview is (the front lens). */
+export function shouldMirrorCapture(facing: 'user' | 'environment'): boolean {
+  return facing === 'user';
 }
 
 function cropFor(video: HTMLVideoElement, box: PreviewBox): { crop: CropRect; out: Size } {
@@ -139,13 +165,21 @@ function cropFor(video: HTMLVideoElement, box: PreviewBox): { crop: CropRect; ou
   return { crop, out: framedOutputSize(box, box.dpr, crop) };
 }
 
-function draw(
+/** Draws the crop into the canvas, flipped horizontally when `mirror` (the transform is undone after). */
+export function draw(
   context: CanvasRenderingContext2D,
   video: HTMLVideoElement,
   crop: CropRect,
-  out: Size
+  out: Size,
+  mirror: boolean
 ): void {
+  if (mirror) {
+    context.save();
+    context.translate(out.width, 0);
+    context.scale(-1, 1);
+  }
   context.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, out.width, out.height);
+  if (mirror) context.restore();
 }
 
 /**
@@ -162,20 +196,15 @@ export function takeFramedPhoto(video: HTMLVideoElement, box: PreviewBox): Promi
     console.error('[framed-capture] photo: no canvas context');
     return Promise.resolve(null);
   }
-  draw(context, video, crop, out);
+  draw(context, video, crop, out, box.mirror);
   console.debug(
-    `[framed-capture] photo ${out.width}x${out.height} from ${video.videoWidth}x${video.videoHeight}`
+    `[framed-capture] photo ${out.width}x${out.height} from ${video.videoWidth}x${video.videoHeight}` +
+      ` mirror=${box.mirror}`
   );
-  return new Promise((resolve) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) console.error('[framed-capture] photo: the canvas produced no blob');
-        resolve(blob);
-      },
-      'image/jpeg',
-      PHOTO_QUALITY
-    );
-  });
+  // Synchronous on purpose: `toBlob` waited ~4 s on the Android WebView (canvasBlob.ts).
+  const blob = canvasToBlob(canvas, 'image/jpeg', PHOTO_QUALITY);
+  if (!blob) console.error('[framed-capture] photo: the canvas produced no blob');
+  return Promise.resolve(blob);
 }
 
 /**
@@ -207,10 +236,10 @@ export class FramedStream {
     // computed once and the loop only draws.
     const tick = () => {
       if (this.#stopped) return;
-      draw(context, video, crop, this.size);
+      draw(context, video, crop, this.size, box.mirror);
       this.#frame = requestAnimationFrame(tick);
     };
-    draw(context, video, crop, this.size);
+    draw(context, video, crop, this.size, box.mirror);
     this.#frame = requestAnimationFrame(tick);
     console.debug(
       `[framed-capture] take ${this.size.width}x${this.size.height} at ${this.bitrate} b/s ` +

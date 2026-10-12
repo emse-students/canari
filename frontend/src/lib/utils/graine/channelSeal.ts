@@ -13,8 +13,8 @@ import {
 } from './runtime';
 import {
   distributeGraineSeed,
-  distributionEpochFor,
   GraineDistributionUnavailableError,
+  readDistributionEpoch,
 } from './seedDistribution';
 import { reserveOutboundSlot } from './sessionManager';
 import { endorseNewSession } from './endorseSession';
@@ -76,6 +76,30 @@ export class GraineSessionUnavailableError extends Error {
   ) {
     super(`[GRAINE] no seed for session ${sessionId} in channel ${channelId.slice(0, 8)}`);
     this.name = 'GraineSessionUnavailableError';
+  }
+}
+
+/**
+ * Thrown when an UNSIGNED row names a session this device does not hold.
+ *
+ * An unsigned row can only open under a v1 seed (a v2 session refuses a row with no signature), and
+ * a v1 seed that ARRIVES is refused since `minClientVersion` reached the v2 writer (channel-encryption
+ * section 21.7). So no peer can make this row readable here, and asking one would be learning by
+ * failing what the missing signature already says. Deliberately NOT a
+ * {@link GraineSessionUnavailableError}: that class is the one that asks.
+ *
+ * A server that strips the signature of a v2 row this device lacks the seed for lands here too. It
+ * can only make that row unreadable, which withholding the row would do as well.
+ */
+export class GraineV1SessionNotHeldError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly channelId: string
+  ) {
+    super(
+      `[GRAINE] unsigned row under session ${sessionId} in channel ${channelId.slice(0, 8)}: a v1 session this device does not hold, and a v1 seed is no longer accepted`
+    );
+    this.name = 'GraineV1SessionNotHeldError';
   }
 }
 
@@ -154,7 +178,8 @@ export class GraineReplayError extends Error {
 export class GraineUnknownChannelError extends GraineSealUnavailableError {
   constructor(readonly channelId: string) {
     super(
-      `[GRAINE] channel ${channelId.slice(0, 8)} belongs to no community this session has loaded`
+      `[GRAINE] channel ${channelId.slice(0, 8)} belongs to no community this session has loaded`,
+      'unknown-channel'
     );
     this.name = 'GraineUnknownChannelError';
   }
@@ -186,8 +211,15 @@ export async function sealChannelMessage(
   // Null, not zero: a scope whose distribution group is not in hand cannot receive a seed, so
   // sealing under a session nobody will ever be able to read is refused here rather than
   // discovered by every reader separately.
-  const distributionEpoch = distributionEpochFor(mlsService, scope);
-  if (distributionEpoch === null) throw new GraineDistributionUnavailableError(scope);
+  const reading = readDistributionEpoch(mlsService, scope);
+  if ('unavailable' in reading) {
+    const refusal = new GraineDistributionUnavailableError(scope, reading.unavailable);
+    // AT A LEVEL THAT ACCUSES: nothing left the device, and the member sees a refusal. Which of the
+    // four facts was missing is what tells a join not landed from a catch-up that never closed.
+    console.error(`[SEND] seal refused for channel ${channel.slice(0, 8)}: ${refusal.message}`);
+    throw refusal;
+  }
+  const distributionEpoch = reading.epoch;
 
   const slot = await reserveOutboundSlot(
     {
@@ -271,7 +303,12 @@ export async function openChannelMessage(
     session = await storage.getGraineSession(row.senderSessionId, deviceKey());
     if (session) cacheGraineSession(session);
   }
-  if (!session) throw new GraineSessionUnavailableError(row.senderSessionId, channel);
+  if (!session) {
+    // No signature means v1, and a v1 seed is refused on arrival (section 21.7): asking a peer for
+    // it would fetch a seed this device then refuses, for every such row, for ever.
+    if (!row.signature) throw new GraineV1SessionNotHeldError(row.senderSessionId, channel);
+    throw new GraineSessionUnavailableError(row.senderSessionId, channel);
+  }
   if (row.messageIndex < session.firstIndex) {
     throw new GraineBelowFirstIndexError(row.senderSessionId, row.messageIndex, session.firstIndex);
   }

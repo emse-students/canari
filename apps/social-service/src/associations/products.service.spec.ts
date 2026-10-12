@@ -69,9 +69,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     };
     const httpService = {
       post: jest.fn(() => of({ data: {} })),
-      // Active payment provider, polled via fetchActivePaymentProvider() - stripe by default,
-      // matching the `asso()` factory below (stripeAccountId/stripeOnboardingComplete).
-      get: jest.fn(() => of({ data: { provider: 'stripe' } })),
+      // Active payment provider, polled via fetchActivePaymentProvider() - lydia by default,
+      // matching the `asso()` factory below (lydiaAccountId/lydiaOnboardingComplete).
+      get: jest.fn(() => of({ data: { provider: 'lydia' } })),
     } as unknown as HttpService;
     const config = { get: jest.fn() } as unknown as ConfigService;
     const userTagService = {
@@ -133,8 +133,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     ({
       id: 'asso1',
       slug: 'bde',
-      stripeOnboardingComplete: true,
-      stripeAccountId: 'acct_1',
+      lydiaOnboardingComplete: true,
+      lydiaAccountId: 'acct_1',
       cotisationEnabled: true,
       cotisationMode: 'lifetime',
       cotisationExpiresAt: null,
@@ -216,19 +216,19 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
   });
 
   describe('parent-payment delegation routing', () => {
-    it('routes a delegating club purchase to the approved parent Stripe account', async () => {
+    it('routes a delegating club purchase to the approved parent account', async () => {
       const { service, productRepo, assoRepo, userTagService } = makeService();
       const club = asso({
         id: 'club1',
-        stripeOnboardingComplete: false,
-        stripeAccountId: null,
+        lydiaOnboardingComplete: false,
+        lydiaAccountId: null,
         paymentParentAssociationId: 'parent1',
         paymentDelegationStatus: 'approved',
       });
       const parent = asso({
         id: 'parent1',
-        stripeOnboardingComplete: true,
-        stripeAccountId: 'acct_parent',
+        lydiaOnboardingComplete: true,
+        lydiaAccountId: 'acct_parent',
       });
       assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
         Promise.resolve(id === 'parent1' ? parent : club)
@@ -245,15 +245,15 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const { service, productRepo, assoRepo } = makeService();
       const club = asso({
         id: 'club1',
-        stripeOnboardingComplete: false,
-        stripeAccountId: null,
+        lydiaOnboardingComplete: false,
+        lydiaAccountId: null,
         paymentParentAssociationId: 'parent1',
         paymentDelegationStatus: 'approved',
       });
       const parent = asso({
         id: 'parent1',
-        stripeOnboardingComplete: false,
-        stripeAccountId: null,
+        lydiaOnboardingComplete: false,
+        lydiaAccountId: null,
       });
       assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
         Promise.resolve(id === 'parent1' ? parent : club)
@@ -269,8 +269,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const { service, productRepo, assoRepo, userTagService } = makeService();
       const club = asso({
         id: 'club1',
-        stripeOnboardingComplete: true,
-        stripeAccountId: 'acct_club',
+        lydiaOnboardingComplete: true,
+        lydiaAccountId: 'acct_club',
         paymentParentAssociationId: 'parent1',
         paymentDelegationStatus: 'pending',
       });
@@ -1403,7 +1403,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
   describe('a product withheld for want of a payment account is released, once there is one', () => {
     const notReady = () =>
-      asso({ stripeOnboardingComplete: false, stripeAccountId: null, cotisationMode: null });
+      asso({ lydiaOnboardingComplete: false, lydiaAccountId: null, cotisationMode: null });
 
     it('marks a product WITHHELD when the caller wanted it on sale but payments are not ready', async () => {
       const { service, assoRepo } = makeService();
@@ -1472,8 +1472,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const parent = asso({ id: 'parent1' });
       const club = asso({
         id: 'club1',
-        stripeOnboardingComplete: false,
-        stripeAccountId: null,
+        lydiaOnboardingComplete: false,
+        lydiaAccountId: null,
         paymentParentAssociationId: 'parent1',
         paymentDelegationStatus: 'approved',
       });

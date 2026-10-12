@@ -133,25 +133,25 @@ check "refuses when the commits cannot be read at all" 1 "$work/empty.json" \
 # -- The LABEL beside the verdict, which is what a reader acts on ------------------------------
 # Below 1.0 Dependabot's `minor` is a COMPATIBILITY BREAK, because Cargo and npm both give `0.x` a
 # range of its own. #431 is the measured case: `webrtc 0.17.2 -> 0.20.5`, reported as "(minor)",
-# moved every module out of the facade crate. The refusal was right for its own reason; the word
+# moved every module out of the facade crate (the fixture below is a datastore image now: the `webrtc` arm left the table on 2026-10-09, see ceiling.sh). The refusal was right for its own reason; the word
 # beside it told the reader to expect a small change.
 cat > "$work/zerover.json" <<'FIXTURE'
-chore(deps): bump webrtc from 0.17.2 to 0.20.5
+chore(deps): bump dxflrs/garage from v0.9.4 to 0.10.0
 
 updated-dependencies:
-- dependency-name: webrtc
-  dependency-version: 0.20.5
+- dependency-name: dxflrs/garage
+  dependency-version: 0.10.0
   dependency-type: direct:production
   update-type: version-update:semver-minor
 FIXTURE
-check "says a 0.x minor is breaking" 1 "$work/zerover.json"   "0.20.5 (minor, and BREAKING below 1.0)"
+check "says a 0.x minor is breaking" 1 "$work/zerover.json"   "0.10.0 (minor, and BREAKING below 1.0)"
 
 # At or above 1.0 a minor is a minor, and saying otherwise would make the warning above worthless.
 cat > "$work/onepointx.json" <<'FIXTURE'
-chore(deps): bump webrtc from 1.17.2 to 1.20.5
+chore(deps): bump dxflrs/garage from v0.9.4 to 1.20.5
 
 updated-dependencies:
-- dependency-name: webrtc
+- dependency-name: dxflrs/garage
   dependency-version: 1.20.5
   dependency-type: direct:production
   update-type: version-update:semver-minor

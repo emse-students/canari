@@ -59,6 +59,28 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## The diary
 
+### No date yet - the `fr.emse.canari://stripe/...` checkout return host, from a build older than 2026-10-09
+
+**Site:** `isAllowedCheckoutCallbackUrl` in `apps/social-service/src/common/checkout-callback-url.ts` and
+`LEGACY_CHECKOUT_RETURN_HOST` in `frontend/src/lib/utils/checkoutCallbacks.ts`, read by `hooks.client.ts`.
+**Shim:** the checkout return now uses the host `payment` (declared in `tauri.conf.json` and the
+Android manifest, pinned by `deepLinkHostsDeclared.test.ts`). A build older than that registered and
+sends `stripe`, so the server still ACCEPTS it and the client still ROUTES it. Nothing emits it any more.
+**Removal condition:** `minClientVersion` at or above the first release carrying the `payment` host,
+both stores serving it; then the server check, the client constant and the `stripe` entry of
+`tauri.conf.json` and the manifest go together ([stripe-archive](stripe-archive.md)).
+
+### No date yet - a `paymentMethod` of `stripe`, from a client older than the Stripe removal
+
+**Site:** `@IsIn(['online', 'stripe', 'cash'])` in `apps/social-service/src/forms/dto/form.dto.ts`, and
+`PurchasePaymentMethod` in `users/entities/purchase-record.entity.ts`.
+**Shim:** the form submission still ACCEPTS `stripe` and means `online`; purchase rows written
+before 2026-10-08 hold `stripe` and are read as `online`. Nothing writes `stripe` any more
+([stripe-archive](stripe-archive.md)).
+**Removal condition:** the input goes when `minClientVersion` is at or above the first release
+carrying the removal, both stores serving it. The stored value is data at rest and goes only with a
+data migration of `purchase_records`.
+
 ### No date yet - MiConnect's `formation` and `promo` claims, derived from the profile
 
 **Site:** the scope mappings `miconnect-claim-formation` and `miconnect-claim-promo` in
@@ -75,15 +97,17 @@ requests the `formation` or `promo` scope. Measured then on authentik's access l
 
 **Site:** `openChannelMessage` in `frontend/src/lib/utils/graine/channelSeal.ts`, the `openWithGraine`
 branch taken when the session carries no `v2` block; its native twin is `open_graine_message` in
-`src-tauri/src/mobile/graine.rs`. And `storeIncomingSeed`, which still ACCEPTS a new v1 seed.
+`src-tauri/src/mobile/graine.rs`. `storeIncomingSeed` REFUSES a new v1 seed since 2026-10-11
+(step one below, [channel-encryption 21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)); a held one still opens.
 **Shim:** Graine v2 (channel-encryption section 21) binds a row to its salon, author and index and
 signs it. A v1 row proves none of that, and a v1 seed names no minter. v1 is kept because every row
 written before the v2 writer is v1, and they stay readable for as long as they are kept.
 The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fixture
 `crypto/graine.testSeal.ts`, so this entry is a reader alone.
 **Removal condition, in two steps (user, 2026-09-28):**
-- once `minClientVersion` is the v2 WRITER (G2-5) and both stores serve it, a v1 seed that ARRIVES
-  is refused, since a modified client could otherwise keep minting v1 sessions to forge an author;
+- DONE (floor `1.0.3`, 2026-10-11): a v1 seed that ARRIVES is refused, since a modified client
+  could otherwise keep minting v1 sessions to forge an author. An unsigned row under a session not
+  held is `GraineV1SessionNotHeldError` and asks nobody;
 - the v1 READER goes when no v1 row is left:
   `SELECT count(*) FROM channel_messages WHERE "signature" IS NULL AND "senderSessionId" IS NOT NULL`
   on production answers 0. Rows age out of the 365-day window, so that is at most a year after the
@@ -430,6 +454,23 @@ knowing it (user decision, D40: no per-user URL, no fallback to "everything").
   answering: it is narrowed to the reader's spaces).
 - **Why nothing is removed later:** the refusal IS the rule. The day nobody has a bare URL saved it
   merely stops being hit; no branch waits to be deleted.
+
+## Nothing to remove - an UNSIGNED calendar subscription now gets a 403 (2026-10-06)
+
+**A second BREAK in two days, and again no shim.** `feed.ics` and the anonymous `calendar/feed` now
+REFUSE a `campus` / `formation` / `associationId` selection that carries no valid `sig`: a 403 with code
+`AGENDA_SIGNATURE_REQUIRED` (absent) or `AGENDA_SIGNATURE_INVALID` (wrong), `associations/agenda-signature.ts`.
+The user decided it on 2026-10-06 ([D40 amended](profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)):
+a subscription is restricted to the reader's own spaces by a signed URL, and the old ones are NOT honoured.
+
+- **Who is affected:** every calendar subscription saved from `/calendar` between the D40 release
+  (selection URLs `?campus=..&formation=..`) and this one, and any association subscription saved
+  before (`?associationId=..`). The calendar app shows an error or an empty calendar until the reader
+  subscribes again from `/calendar` or the association's page; the modal says so (`calendar_subscribe_old_links_notice`).
+  The single-event link (`?eventId=`) is NOT affected. An installed app embeds the old frontend, so its
+  modal builds unsigned links until it updates: they are refused.
+- **Why nothing is removed later:** the signature IS the rule. Rotating `AGENDA_SIGNING_KEY` repeats this
+  break on purpose (it is the revocation) and needs no code.
 
 ## No date - `GET /api/mls/history/:groupId` answering with a bare array
 

@@ -9,7 +9,7 @@ import {
   Index,
 } from 'typeorm';
 
-/** TypeORM entity representing a dynamic form, optionally linked to an association and Stripe payment. */
+/** TypeORM entity representing a dynamic form, optionally linked to an association and an online payment. */
 @Entity('forms')
 export class Form {
   @PrimaryGeneratedColumn('uuid')
@@ -123,7 +123,7 @@ export class Form {
   @Column({ default: false })
   allowMultipleSubmissions: boolean;
 
-  /** Whether cash (physical) payment is accepted as an alternative to Stripe. */
+  /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   @Column({ default: false })
   allowCashPayment: boolean;
 
@@ -138,6 +138,14 @@ export class Form {
   /** Internal media-service ID for the banner image (used for cleanup on update). */
   @Column({ type: 'varchar', length: 255, nullable: true })
   imageMediaId: string | null;
+
+  /**
+   * Set when the form was deleted while it held submissions (migration 081): it is ARCHIVED - gone
+   * from every list and respondent flow, still loadable by staff so the submissions stay readable.
+   * `retireForms` is the only writer; every list and respondent read filters `deletedAt IS NULL`.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  deletedAt: Date | null;
 
   @CreateDateColumn()
   createdAt: Date;

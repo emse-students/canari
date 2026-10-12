@@ -81,7 +81,7 @@ export interface CreateFormPayload {
    * audience criterion that takes several answers - a guest has no identity for any of those.
    */
   isPublic?: boolean;
-  /** Whether cash (physical) payment is accepted as an alternative to Stripe. */
+  /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   allowCashPayment?: boolean;
   /** Days after submission before an unvalidated cash payment expires (null = never). */
   cashPaymentExpiryDays?: number;
@@ -124,16 +124,27 @@ export interface Form extends CreateFormPayload {
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
+import { SocialApiError } from '$lib/associations/api';
 
 /**
- * The server's own sentence for a refused call, or `fallback` when it gave none. A save refused
- * for a reason the manager can fix - a public form with a price - must say that reason, not
- * "failed". The validation pipe answers a LIST of sentences, joined here.
+ * A refused call, typed at the THROW: the status always, the server's stable `code` when the body
+ * carried one. Read the status with `refusalStatus` and a code with `refusalCode`; never branch on
+ * the message. The message is the server's own sentence, or `fallback` when it gave none - a save
+ * refused for a reason the manager can fix (a public form with a price) keeps its reason, and the
+ * validation pipe's LIST of sentences is joined. It is dev-facing: a screen words the refusal from
+ * the status and code (`describeApiRefusal`), not from this.
+ *
+ * A body that is not JSON (the host WAF's HTML page, a proxy error) carries no code and no
+ * sentence, so the fallback reads and the status stays the discriminator.
  */
-async function refusal(res: Response, fallback: string): Promise<Error> {
+async function refusal(res: Response, fallback: string): Promise<SocialApiError> {
   const body = await res.json().catch(() => ({}));
   const message = Array.isArray(body.message) ? body.message.join(' ') : body.message;
-  return new Error(message || `${fallback} (${res.status})`);
+  return new SocialApiError(
+    message || `${fallback} (${res.status})`,
+    typeof body.code === 'string' ? body.code : null,
+    res.status
+  );
 }
 
 export async function createForm(payload: CreateFormPayload): Promise<Form> {
@@ -148,13 +159,26 @@ export async function createForm(payload: CreateFormPayload): Promise<Form> {
 export async function getForms(): Promise<Form[]> {
   const url = `${socialUrl()}/api/forms`;
   const res = await apiFetch(url);
-  if (!res.ok) throw new Error('Failed to fetch forms');
+  if (!res.ok) throw await refusal(res, 'Failed to fetch forms');
   return res.json();
+}
+
+/**
+ * The server ANSWERED 404: this form does not exist (a deleted one included). A type, not a
+ * sentence, so a screen renders its own localized "form not found" state by `instanceof` instead of
+ * printing whatever English the throw carried.
+ */
+export class FormNotFoundError extends Error {
+  constructor(readonly formId: string) {
+    super(`Form ${formId} not found`);
+    this.name = 'FormNotFoundError';
+  }
 }
 
 export async function getForm(id: string): Promise<Form> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}`);
-  if (!res.ok) throw new Error('Failed to fetch form');
+  if (res.status === 404) throw new FormNotFoundError(id);
+  if (!res.ok) throw await refusal(res, 'Failed to fetch form');
   const text = await res.text();
   if (!text) throw new Error('Empty response from server');
   return JSON.parse(text) as Form;
@@ -182,10 +206,7 @@ export async function uploadFormImage(id: string, file: File): Promise<Form> {
     headers,
     body: fd,
   });
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`upload ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await refusal(res, 'Upload failed');
   return (await res.json()) as Form;
 }
 
@@ -204,30 +225,27 @@ export async function uploadFormItemImage(
     headers,
     body: fd,
   });
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`upload ${res.status}: ${details || res.statusText}`);
-  }
+  if (!res.ok) throw await refusal(res, 'Upload failed');
   return res.json();
 }
 
 /** Deletes a form entirely. */
 export async function deleteForm(id: string): Promise<{ ok: boolean }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error('Failed to delete form');
+  if (!res.ok) throw await refusal(res, 'Failed to delete form');
   return res.json();
 }
 
 /** Removes the banner image from a form. */
 export async function deleteFormImage(id: string): Promise<Form> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/image`, { method: 'DELETE' });
-  if (!res.ok) throw new Error('Failed to delete form image');
+  if (!res.ok) throw await refusal(res, 'Failed to delete form image');
   return res.json();
 }
 
 export async function getSubmission(formId: string): Promise<any> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/submission`);
-  if (!res.ok) throw new Error('Failed to fetch submission');
+  if (!res.ok) throw await refusal(res, 'Failed to fetch submission');
   return res.json();
 }
 
@@ -277,7 +295,7 @@ export async function checkSubmission(formId: string): Promise<{
   maySubmit: boolean;
 }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check`);
-  if (!res.ok) throw new Error('Failed to check submission status');
+  if (!res.ok) throw await refusal(res, 'Failed to check submission status');
   return res.json();
 }
 
@@ -299,7 +317,7 @@ export interface Submission {
 /** Returns all submissions for a form with submitter names (form manager only). */
 export async function getSubmissions(formId: string): Promise<Submission[]> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions`);
-  if (!res.ok) throw new Error('Failed to fetch submissions');
+  if (!res.ok) throw await refusal(res, 'Failed to fetch submissions');
   return res.json();
 }
 
@@ -310,7 +328,7 @@ export async function getSubmissionPayment(
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}`
   );
-  if (!res.ok) throw new Error('Failed to read the submission');
+  if (!res.ok) throw await refusal(res, 'Failed to read the submission');
   return res.json();
 }
 
@@ -322,7 +340,7 @@ export async function deleteSubmission(submissionId: string): Promise<void> {
       method: 'DELETE',
     }
   );
-  if (!res.ok) throw new Error('Failed to delete submission');
+  if (!res.ok) throw await refusal(res, 'Failed to delete submission');
 }
 
 /**
@@ -367,7 +385,7 @@ export function exportLabels(): ExportLabels {
 export async function exportSubmissions(id: string, labels: ExportLabels): Promise<Blob> {
   const query = encodeURIComponent(JSON.stringify(labels));
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/export?labels=${query}`);
-  if (!res.ok) throw new Error('Failed to export submissions');
+  if (!res.ok) throw await refusal(res, 'Failed to export submissions');
   return res.blob();
 }
 /** A submission awaiting cash payment validation. */
@@ -387,7 +405,7 @@ export async function listPendingCashSubmissions(formId: string): Promise<Pendin
   const res = await apiFetch(
     `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/pending-cash`
   );
-  if (!res.ok) throw new Error('Failed to fetch pending cash submissions');
+  if (!res.ok) throw await refusal(res, 'Failed to fetch pending cash submissions');
   return res.json();
 }
 
@@ -400,7 +418,7 @@ export async function validateCashSubmission(
     `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/validate-cash`,
     { method: 'POST' }
   );
-  if (!res.ok) throw new Error('Validation failed');
+  if (!res.ok) throw await refusal(res, 'Validation failed');
   return res.json();
 }
 
@@ -413,17 +431,17 @@ export async function cancelCashSubmission(
     `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/cancel-cash`,
     { method: 'POST' }
   );
-  if (!res.ok) throw new Error('Cancellation failed');
+  if (!res.ok) throw await refusal(res, 'Cancellation failed');
   return res.json();
 }
 
-/** Cancels a pending Stripe submission after payment failure or user abort. */
+/** Cancels a pending online-payment submission after payment failure or user abort. */
 export async function cancelPendingSubmission(submissionId: string): Promise<{ ok: boolean }> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/cancel`,
     { method: 'POST' }
   );
-  if (!res.ok) throw new Error('Cancellation failed');
+  if (!res.ok) throw await refusal(res, 'Cancellation failed');
   return res.json();
 }
 
@@ -436,7 +454,7 @@ export async function submitForm(
     answers: any;
     successUrl?: string;
     cancelUrl?: string;
-    paymentMethod?: 'stripe' | 'cash';
+    paymentMethod?: 'online' | 'cash';
   }
 ): Promise<any> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/submit`, {
@@ -445,7 +463,13 @@ export async function submitForm(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || 'Submission failed');
+    // Typed, so a payment-provider refusal (`code`) is worded by the one shared function rather
+    // than shown as the bare reason; every other refusal still reads as its message.
+    throw new SocialApiError(
+      err.message || 'Submission failed',
+      typeof err.code === 'string' ? err.code : null,
+      res.status
+    );
   }
   return res.json();
 }

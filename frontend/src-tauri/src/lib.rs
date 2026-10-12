@@ -1,5 +1,7 @@
 //! Canari Tauri backend: MLS cryptography, push notifications, and system integration.
 
+#[cfg(target_os = "ios")]
+mod app_group;
 mod commands;
 mod concurrency;
 mod keystore_bridge;
@@ -31,15 +33,15 @@ use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
-    creer_groupe, envoyer_message, envoyer_message_bytes, exporter_group_info,
-    exporter_ratchet_tree, exporter_secret, generer_key_packages_et_persister,
-    graine_member_signature_key, graine_session_keypair, graine_sign_with_device_credential,
-    graine_sign_with_session_key, graine_verify_signature, groupe_actif, initialiser_mls,
-    key_package_a_clef_privee, lister_groupes, lister_identites_membres, obtenir_epoch,
-    oublier_groupe, oublier_key_packages, recenser_key_packages, recevoir_message_bytes,
-    recevoir_messages_batch, recuperer_cle_session_mls, rejoindre_par_commit_externe,
-    retirer_membres, retirer_membres_par_appareil, sauvegarder_mls_et_persister,
-    skip_send_generations, trailer_welcome,
+    creer_groupe, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
+    exporter_secret, generer_key_packages_et_persister, graine_member_signature_key,
+    graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
+    graine_verify_signature, groupe_actif, initialiser_mls, key_package_a_clef_privee,
+    lister_groupes, lister_identites_membres, obtenir_epoch, oublier_groupe, oublier_key_packages,
+    recenser_key_packages, recevoir_message_bytes, recevoir_messages_batch,
+    recuperer_cle_session_mls, rejoindre_par_commit_externe, retirer_membres,
+    retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
+    trailer_welcome,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::take_picked_file;
@@ -1060,7 +1062,6 @@ pub fn run() {
             exporter_group_info,
             rejoindre_par_commit_externe,
             trailer_welcome,
-            envoyer_message,
             envoyer_message_bytes,
             skip_send_generations,
             recevoir_message_bytes,

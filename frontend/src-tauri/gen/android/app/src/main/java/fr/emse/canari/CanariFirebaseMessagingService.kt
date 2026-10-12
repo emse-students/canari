@@ -31,7 +31,10 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.push.ChannelReadMark
+import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
+import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.SeedFrameLadder
 import com.google.firebase.messaging.FirebaseMessagingService
@@ -104,7 +107,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private val WELCOMES_ON_LANE = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
         /** High-priority channel: DMs and group messages (sound + vibration). */
-        const val CHANNEL_MESSAGES = "canari_messages"
+        const val CHANNEL_MESSAGES = "canari_messages_v2"
 
         /** Normal-priority channel: reactions/comments on posts (silent). */
         const val CHANNEL_SOCIAL   = "canari_social"
@@ -116,7 +119,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val CHANNEL_CALLS    = "canari_calls"
 
         /** High-priority channel: messages that @-mention the user (WP-XP-5, bypass-DND request). */
-        const val CHANNEL_MENTIONS = "canari_mentions"
+        const val CHANNEL_MENTIONS = "canari_mentions_v2"
 
         /**
          * Normal-priority channel: somebody reacted to a message YOU wrote (sound, no vibration,
@@ -133,7 +136,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * notified, so it must be heard, and a heads-up popping over what they are doing for an
          * emoji is not what they asked for. No vibration for the same reason.
          */
-        const val CHANNEL_REACTIONS = "canari_reactions"
+        const val CHANNEL_REACTIONS = "canari_reactions_v2"
 
         const val PREFS_NAME    = "canari_prefs"
         const val KEY_FCM_TOKEN = "fcm_token"
@@ -368,6 +371,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 // Ring dedupe entries die with their notifications, so a re-ring can post again.
                 activeCallRings.clear()
+                // So do the real posts the generic-banner ledger remembered for refused pushes.
+                synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
             } catch (e: Exception) {
                 Log.w(TAG, "cancelAllMessageNotifications: ${e.message}")
             }
@@ -615,6 +620,45 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         internal fun reactionNotifKey(groupId: String): String = "reaction:$groupId"
 
         /**
+         * The [getStableNotifId] key for the ONE notification all reactions to a POST share. A
+         * namespace of its own so a post id can never collide with a conversation's.
+         */
+        internal fun postReactionNotifKey(postId: String): String = "postreaction:$postId"
+
+        private const val POST_REACTION_PREFS = "canari_post_reactions"
+        private const val POST_REACTION_KEY = "ledgers"
+        private const val MAX_POST_REACTION_LEDGERS = 50
+        private val POST_REACTION_LOCK = Any()
+
+        /**
+         * Draws up to three already-circular faces into ONE icon: two side by side, three in a
+         * triangle, the newest (first) on top. Each is scaled to 62 % of the edge, so the overlap
+         * is small and every face stays recognisable at notification size.
+         */
+        private fun composeFaceCollage(faces: List<Bitmap>): Bitmap {
+            val edge = faces.maxOf { maxOf(it.width, it.height) }
+            val output = Bitmap.createBitmap(edge, edge, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(output)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            val d = (edge * 0.62f).toInt()
+            val near = 0
+            val far = edge - d
+            val mid = (edge - d) / 2
+            // Top-left corner of each face, newest first; drawn in reverse so the newest is on top.
+            val corners = if (faces.size == 2) {
+                listOf(far to mid, near to mid)
+            } else {
+                listOf(mid to near, near to far, far to far)
+            }
+            for (i in faces.indices.reversed()) {
+                val (x, y) = corners[i]
+                canvas.drawBitmap(faces[i], null, Rect(x, y, x + d, y + d), paint)
+                faces[i].recycle()
+            }
+            return output
+        }
+
+        /**
          * The messages this device has ALREADY ALERTED FOR, newest last, bounded.
          *
          * A DISMISSAL IS A DECISION AND IT HAS TO OUTLIVE THE PROCESS THAT TOOK IT. The shade is the
@@ -712,6 +756,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(notifId)
+            // The real posts this notification stood for are gone: none may cover a later refused
+            // push (see [GenericBannerLedger.groupCleared]).
+            synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
             Log.d(TAG, "cancelConversationNotification: notif removed group=${groupId.take(8)} id=$notifId")
 
             // A reaction to one of your messages in THIS conversation stops being news the moment
@@ -1087,6 +1134,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setSmallIcon(R.drawable.ic_notification)
                 .setGroup(GROUP_KEY_MESSAGES)
                 .setGroupSummary(true)
+                // THE SUMMARY NEVER ALERTS. It is re-notified on every post and every cancel, and
+                // without these two it counted as a noisy post of its own: on a Pixel 6a a channel
+                // push followed 44 ms by a channel_read push re-alerted the conversation, and
+                // Android logged "Muting recently noisy" on this id (2026-10-09). Only a child
+                // (the message line) may make a sound.
+                .setOnlyAlertOnce(true)
+                .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
                 .setAutoCancel(true)
                 .setNumber(count)
                 .build()
@@ -1315,6 +1369,58 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
+        /**
+         * Tells the server this user has read a SALON up to [at] (`POST /api/mls/push/channel-read`,
+         * PushSecret - a shut app has no session). The server-authoritative twin of a DM's read
+         * watermark frame: it raises the salon's read receipt and clears the user's other devices'
+         * banners. Returns true when the server took it.
+         *
+         * NO RETRY AND NO QUEUE, deliberately. The banner was cleared on this phone before the call,
+         * so a failure costs a read receipt that rises anyway the next time the app opens the salon;
+         * a durable queue would be a second store for a fact the server recomputes. The failure is
+         * logged at warn, with the status the server answered.
+         */
+        internal fun postChannelRead(context: Context, channelId: String, at: Long): Boolean {
+            val ctx = MlsContextLoader.loadPushContext(context)
+            val secret = retrievePushSecret(context)
+            if (ctx == null || secret == null) {
+                Log.w(TAG, "postChannelRead: no push context or secret - the salon read mark is not sent channel=${channelId.take(8)}")
+                return false
+            }
+            return try {
+                val body = JSONObject().apply {
+                    put("userId", ctx.userId)
+                    put("deviceId", ctx.deviceId)
+                    put("channelId", channelId)
+                    put("at", at)
+                }.toString()
+                val conn = (URL("${ctx.baseUrl}/api/mls/push/channel-read").openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10_000
+                    readTimeout    = 10_000
+                    requestMethod  = "POST"
+                    doOutput       = true
+                    setRequestProperty("Authorization", "PushSecret $secret")
+                    setRequestProperty("Content-Type", "application/json")
+                }
+                try {
+                    conn.outputStream.use { it.write(body.toByteArray()) }
+                    val code = conn.responseCode
+                    if (code == 200 || code == 201) {
+                        Log.d(TAG, "postChannelRead: HTTP $code channel=${channelId.take(8)} at=$at")
+                        true
+                    } else {
+                        Log.w(TAG, "postChannelRead: HTTP $code channel=${channelId.take(8)} at=$at - the read mark did not move")
+                        false
+                    }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "postChannelRead: exception: ${e.message}")
+                false
+            }
+        }
+
         /** Reads the cleartext outbox mirror written by the TS. Returns [] if absent/unreadable. */
         internal fun readOutboxMirror(context: Context): List<OutboxMirrorEntry> {
             return try {
@@ -1467,6 +1573,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Executors.newSingleThreadExecutor { r -> Thread(r, "canari-ws-notif") }
 
         /**
+         * NOTIF-10 (b): pairs the generic banner of a push MLS refused for good with the real
+         * banner the WebView posts for the same message - see [GenericBannerLedger].
+         */
+        private val GENERIC_BANNERS = GenericBannerLedger()
+
+        /**
+         * Held across each check-and-post of the two triggers, so a real post and a generic post
+         * for one group cannot both decide before either is recorded.
+         */
+        private val GENERIC_BANNERS_LOCK = Any()
+
+        /**
          * Posts the SAME notification a push would, for a message that arrived over the WEBSOCKET.
          *
          * **WHY THIS EXISTS.** Until 2026-09-18 Android had TWO notification builders. A push came
@@ -1500,6 +1618,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *   the push payload uses, so both triggers render identically.
          * @param sentAt the sender's own instant in ms, 0 when unknown. See the de-duplication in
          *   [showMessageNotification]: without it the two triggers cannot recognise one message.
+         * @param covers how many inbound messages this ONE banner stands for (a catch-up flush
+         *   raises a single banner for N). [GenericBannerLedger] answers up to that many refused
+         *   pushes with it.
          */
         @JvmStatic
         fun notifyMessageFromWebSocket(
@@ -1510,28 +1631,38 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             body: String,
             mentionsMe: Boolean,
             sentAt: Long,
+            covers: Int,
         ): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
                 Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
                 return false
             }
-            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt")
+            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt covers=$covers")
             WS_NOTIF_LANE.execute {
                 try {
                     val avatar = if (senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
-                    context.showMessageNotification(
-                        senderName = senderName,
-                        groupName = groupName,
-                        body = body,
-                        largeIcon = avatar ?: generateInitialsBitmap(senderName),
-                        groupId = groupId,
-                        channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
-                        sentAt = sentAt,
-                        // The WebView already decided this reader cannot see the message land.
-                        suppressInForeground = false,
-                        namesEachSender = true,
-                    )
+                    synchronized(GENERIC_BANNERS_LOCK) {
+                        // THE REAL LINE REPLACES THE GENERIC ONE a refused push left for it.
+                        val generics = GENERIC_BANNERS.realPosted(groupId, maxOf(covers, 1))
+                        if (generics.isNotEmpty()) {
+                            Log.d(TAG, "notifyMessageFromWebSocket: replacing ${generics.size} generic banner(s) a refused push posted (groupId=${groupId.take(8)} covers=$covers)")
+                        }
+                        context.showMessageNotification(
+                            senderName = senderName,
+                            groupName = groupName,
+                            body = body,
+                            largeIcon = avatar ?: generateInitialsBitmap(senderName),
+                            groupId = groupId,
+                            channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
+                            sentAt = sentAt,
+                            // The WebView already decided this reader cannot see the message land.
+                            suppressInForeground = false,
+                            supersedes = generics.firstOrNull() ?: 0L,
+                            alsoSupersedes = generics.drop(1).toSet(),
+                            namesEachSender = true,
+                        )
+                    }
                 } catch (e: Exception) {
                     // EVERY SWALLOWED BRANCH LOGS: this lane is the only path to a banner for a
                     // message the server will never push, so a silent throw here is a message the
@@ -1844,6 +1975,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              */
             supersedes: Long = 0L,
             /**
+             * Further lines this post replaces: one batched real banner can answer several generic
+             * lines (see [GenericBannerLedger.realPosted]). Dropped like [supersedes].
+             */
+            alsoSupersedes: Set<Long> = emptySet(),
+            /**
              * Whether this notification is a conversation between PEOPLE, so every message carries
              * its author's name - the other person's above theirs, [R.string.notif_sender_self]
              * above ours - as a group already did.
@@ -1932,7 +2068,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             existingNotif
                 ?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
                 ?.messages
-                ?.filter { supersedes == 0L || it.timestamp != supersedes }
+                ?.filter { (supersedes == 0L || it.timestamp != supersedes) && it.timestamp !in alsoSupersedes }
                 ?.takeLast(MAX_NOTIF_MESSAGES - 1)
                 ?.forEach { style.addMessage(it) }
             // Rich media (WP-XP-3): attach the decrypted image inline via setData so it renders as a
@@ -2044,6 +2180,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
             if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
                 notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt))
+                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
+            } else if (quickActions && ChannelReadMark.offered(groupId, sentAt)) {
+                // A SALON offers "Mark as read" ONLY: its read state is a server row the receiver
+                // reaches with one PushSecret call. Reply stays off - the send is end-to-end
+                // encrypted under a Graine session the broadcast receiver cannot seal.
                 notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
             }
 
@@ -2385,6 +2526,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 else                                   -> "fr.emse.canari://posts"
             }
             val channel = if (msgType == "form_reminder") CHANNEL_FORMS else CHANNEL_SOCIAL
+            // REACTIONS TO ONE POST ARE ONE NOTIFICATION, UPDATED IN PLACE (user, 2026-10-08: six
+            // faceless "a reagi" stacked in the shade for a single post). Keyed on the post, so it
+            // needs the post id; a reaction push without one is logged and drawn ungrouped.
+            if (msgType == "social" && data["contentKey"] == "social_reaction") {
+                if (postId.isNotEmpty()) {
+                    runWithWakeLock("fcm_post_reaction") {
+                        showPostReactionNotification(data, postId, deepLink, channel)
+                    }
+                    return
+                }
+                Log.w(TAG, "social_reaction push without postId - nothing to group it under, drawn alone")
+            }
             Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel title=$title deepLink=$deepLink")
             // A THREAD, because this branch now fetches a picture. Everything above is a map lookup
             // and stays here; [socialLargeIcon] may touch the disk cache, the Keystore and the
@@ -2450,7 +2603,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Encrypted MLS message: decrypted on the serialized MLS lane (max 60s per push).
         // Non-blocking for FCM: onMessageReceived returns immediately.
         val silent = data["silent"] == "true"
-        runSerializedWithWakeLock("fcm_decrypt") { handleMlsFrame(data, silent) }
+        // COUNTED FROM RECEIPT, NOT FROM WHEN THE LANE RUNS IT: a burst queues behind the lane, and
+        // the WebView's real post can land while a refused push is still waiting its turn
+        // ([GenericBannerLedger]).
+        val bannerGroup = data["groupId"]?.takeIf { !silent && it.isNotEmpty() }
+        bannerGroup?.let { GENERIC_BANNERS.pushQueued(it) }
+        runSerializedWithWakeLock("fcm_decrypt") {
+            try {
+                handleMlsFrame(data, silent)
+            } finally {
+                bannerGroup?.let { GENERIC_BANNERS.pushFinished(it) }
+            }
+        }
     }
 
     /**
@@ -2691,10 +2855,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
         val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
         Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
-        showMessageNotification(
-            senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
-            channel, sentAt = decrypted?.sentAt ?: 0L, namesEachSender = true,
-        )
+        // NOTIF-10 (b). A push refused for good means another engine consumed this generation, so
+        // it holds the message and posts the real banner itself. The generic line stays as the
+        // floor (nobody else is proven to post), but it is REPLACED when the real one comes, or
+        // not added at all if that already came - see [GenericBannerLedger].
+        val refusedForGood = outcome is PushDecrypt.RefusedForGood
+        synchronized(GENERIC_BANNERS_LOCK) {
+            if (refusedForGood && GENERIC_BANNERS.refusedCoveredByRealPost(groupId)) {
+                Log.d(TAG, "refused for good, and the real banner is already up -> no generic banner (groupId=${groupId.take(8)})")
+            } else {
+                val stamp = showMessageNotification(
+                    senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
+                    channel, sentAt = decrypted?.sentAt ?: 0L, namesEachSender = true,
+                )
+                if (refusedForGood && stamp != 0L) {
+                    GENERIC_BANNERS.genericPosted(groupId, stamp)
+                    Log.d(TAG, "refused for good -> generic banner kept until the real one replaces it (groupId=${groupId.take(8)} stamp=$stamp)")
+                }
+            }
+        }
 
         // Woken by this incoming message: try to send our own pending outgoing messages
         // (text/reply/control), without waiting for a Welcome push or a reopen. Since the
@@ -3502,6 +3681,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // notification path reads and this frame must still ring nobody.
                     val seeds = json.optJSONArray("seeds")?.toString() ?: "[]"
                     Log.d(TAG, "$where: graine key material, ${json.optJSONArray("seeds")?.length() ?: 0} seed(s)")
+                    // Rust refused these v1 seeds (channel-encryption 21.7); its own line goes
+                    // nowhere in a killed app, so the reason is said here.
+                    json.optJSONArray("v1Refused")?.let {
+                        Log.w(TAG, "$where: REFUSED ${it.length()} v1 seed(s) $it - a v1 seed is no longer accepted")
+                    }
                     PushDecrypt.KeyMaterial(seeds)
                 }
                 "sender-mismatch" -> {
@@ -3992,10 +4176,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deepLink: String,
         channel: String,
         largeIcon: Bitmap? = null,
+        /** A stable id makes this notification UPDATE in place; null is a fresh one each time. */
+        stableId: Int? = null,
     ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannels(manager)
-        val notifId     = notificationIdCounter.incrementAndGet()
+        val notifId     = stableId ?: notificationIdCounter.incrementAndGet()
         val tapIntent   = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             setData(android.net.Uri.parse(deepLink))
@@ -4017,6 +4203,103 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .build()
         Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null}")
         manager.notify(notifId, notification)
+    }
+
+    // --- Reactions to a POST, one notification each ------------------------------
+
+    /**
+     * Draws the reactions to ONE post as ONE notification that every new reaction updates.
+     *
+     * Reported by the user on 2026-10-08, from a Pixel 6a: six notifications "Nouvelle reaction -
+     * X a reagi Marteau a votre publication" for a single post, each alone and each without a
+     * face. The server now names the actor's picture and sends the emoji; this keys the
+     * notification on the POST (the way [reactionNotifKey] keys a conversation's), so the next
+     * reaction replaces the last, accumulating who reacted.
+     *
+     * **THE LEDGER IS DURABLE STATE AND THE SHADE DECIDES WHEN IT ENDS - NO CLOCK.** Actors are kept
+     * in SharedPreferences per post. A reaction joins the existing group only when that
+     * notification is still posted; once it was swiped or opened, the next reaction starts a new
+     * one ("A a reagi", not "A, B et 4 autres" about reactions the user has already seen).
+     * [PostReactionGroup] holds the pure half (ledger, sentence shape, faces) and is unit-tested.
+     *
+     * The picture is the actor's for one person and a small collage of up to three faces for
+     * several; a face that cannot be had is the initials disc the message path draws, logged.
+     */
+    private fun showPostReactionNotification(
+        data: Map<String, String>,
+        postId: String,
+        deepLink: String,
+        channel: String,
+    ) {
+        // THE LOCK COVERS THE POST AS WELL AS THE LEDGER. Each push runs on a thread of its own, and
+        // the join-or-restart decision reads "is the notification still shown": with the lock
+        // released before `notify`, a burst (six reactions at once - the very case this exists for)
+        // found the shade still empty, restarted the ledger each time and kept only the last
+        // reactor. Held across the face fetch, the second push waits and then finds the first one
+        // posted; faces are cached for 24 h, so the wait is one fetch per new face.
+        synchronized(POST_REACTION_LOCK) {
+            showPostReactionNotificationLocked(data, postId, deepLink, channel)
+        }
+    }
+
+    private fun showPostReactionNotificationLocked(
+        data: Map<String, String>,
+        postId: String,
+        deepLink: String,
+        channel: String,
+    ) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notifId = getStableNotifId(this, postReactionNotifKey(postId))
+        val newcomer = PostReactionGroup.Actor(data["iconUserId"].orEmpty(), data["actorName"].orEmpty())
+        val emoji = data["contentArg"].orEmpty()
+
+        val actors = synchronized(POST_REACTION_LOCK) {
+            val prefs = getSharedPreferences(POST_REACTION_PREFS, Context.MODE_PRIVATE)
+            val ledger = JSONObject(prefs.getString(POST_REACTION_KEY, "{}") ?: "{}")
+            val stillShown = manager.activeNotifications.any { it.id == notifId }
+            val previous = if (stillShown) PostReactionGroup.decode(ledger.optString(postId)) else emptyList()
+            if (!stillShown && ledger.has(postId)) {
+                Log.d(TAG, "post reaction: post=${postId.take(8)} notification no longer shown -> a new group")
+            }
+            val updated = PostReactionGroup.add(previous, newcomer)
+            // Re-inserted last, so the oldest posts are the ones the bound drops.
+            ledger.remove(postId)
+            ledger.put(postId, PostReactionGroup.encode(updated))
+            while (ledger.length() > MAX_POST_REACTION_LEDGERS) {
+                ledger.remove(ledger.keys().next())
+            }
+            prefs.edit().putString(POST_REACTION_KEY, ledger.toString()).commit()
+            updated
+        }
+
+        val res = appLocaleContext(this).resources
+        val body = when (val shape = PostReactionGroup.shape(actors)) {
+            is PostReactionGroup.Shape.One ->
+                res.getString(R.string.notif_social_reaction_body, shape.a.name, emoji)
+            is PostReactionGroup.Shape.Two ->
+                res.getString(R.string.notif_social_reaction_body_two, shape.a.name, shape.b.name)
+            is PostReactionGroup.Shape.Three ->
+                res.getString(R.string.notif_social_reaction_body_three, shape.a.name, shape.b.name, shape.c.name)
+            is PostReactionGroup.Shape.Many ->
+                res.getString(R.string.notif_social_reaction_body_many, shape.a.name, shape.b.name, shape.others)
+            null -> {
+                Log.e(TAG, "post reaction: empty ledger after adding ${newcomer.name} - nothing to say")
+                return
+            }
+        }
+
+        val faces = PostReactionGroup.faces(actors).map { actor ->
+            val photo = if (actor.id.isNotEmpty()) fetchAvatar(actor.id) else null
+            if (photo == null) {
+                Log.d(TAG, "post reaction: no picture for ${actor.identity.take(8)} -> initials")
+            }
+            photo ?: generateInitialsBitmap(actor.name)
+        }
+        val icon = if (faces.size == 1) faces[0] else composeFaceCollage(faces)
+        Log.d(TAG, "post reaction: post=${postId.take(8)} actors=${actors.size} faces=${faces.size}")
+        showSimpleNotification(
+            res.getString(R.string.notif_social_reaction_title), body, deepLink, channel, icon, notifId,
+        )
     }
 
     // --- Reaction push -----------------------------------------------------------

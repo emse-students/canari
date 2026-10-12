@@ -441,8 +441,9 @@ already fixed `aspect-square` thumbnails in a scrolling row.
 ## PDF previews, and the in-app reader
 
 `utils/pdfDocument.ts` is the one pdf.js seam: it loads the library once, opens a decrypted
-document, and rasterises any page to a PNG object URL. `PdfThumbnail.svelte` (page 1 only) and
-`PdfViewerModal.svelte` (the whole document) both go through it. Two constraints fix this design:
+document, and rasterises any page into a detached `<canvas>` (a render that can be cancelled).
+`PdfThumbnail.svelte` (page 1 only, encoded to a WebP object URL by `canvasToBlob`) and `PdfViewerModal.svelte` (the
+whole document, canvases shown as they are) both go through it. Two constraints fix this design:
 
 - **No server-side thumbnail is possible.** Media is encrypted with a per-file CEK before upload;
   the backend only ever holds an opaque blob.
@@ -462,35 +463,104 @@ decoration. The download button is carved out of that area, which is why the cli
 the row's *content* rather than the row (a `<button>` inside a `<button>` is not markup), and the
 preview repeats the header's action with `tabindex="-1"` rather than adding a second tab stop.
 
-Three things in `PdfViewerModal` are not obvious and each one produced a blank or flickering
-viewer before it was right:
+Things in `PdfViewerModal` that are not obvious, each of which produced a blank, flickering or
+frozen viewer before it was right:
 
 - **Its effects must depend on the document URL, and on the render width, and on nothing else.**
-  Reading the page array inside either one makes every arriving page re-run the teardown, which
-  revokes the object URLs the `<img>`s are currently displaying. Both read it under `untrack`.
-- **A page already in view fires no new intersection event.** Lazy rendering is driven by an
-  `IntersectionObserver`, so after a zoom invalidates every bitmap the observer has nothing to say
-  and the viewer would stay empty — the visible indices are tracked separately and re-requested.
-- **Zooming re-renders rather than scaling a bitmap**, so text stays sharp; the placeholder that
-  stands in meanwhile keeps each page's own proportions once known (A4 until then), which is why
-  `renderPage` returns the bitmap's dimensions rather than just its URL.
-- **Pages are rasterised at exactly TWO scales, and the old bitmap is never taken off screen.**
-  Both come from the same report: re-rendering per zoom step made a pinch through 1.5 and 2 on the
-  way to 3 pay for every level, and each pass blanked the document — the placeholder replacing a
-  page is an `aspect-ratio` box with `overflow-hidden`, so a page whose proportions were not yet
-  known was visibly *cut* as well as emptied. `RENDER_ZOOMS` is therefore `[1, last step]`: the
-  intermediate steps display a bitmap rasterised larger than they need, which the browser
-  downscales and which costs nothing visually. A gesture now triggers at most one re-render, and
-  1.5 → 2 → 3 triggers none. The current bitmap stays displayed throughout and is replaced in place
-  when the sharp one lands — an old bitmap is the right image at the wrong resolution, which is
-  strictly better than no image. Measured on device by
-  `tools/cross-client-harness/check-pdf-render.mjs`, which samples the first page every 16 ms while
-  the zoom ladder is walked: **473 blank-or-cut frames out of 475 before, 0 out of 474 after**, and
-  the whole 1 → 1.5 → 2 → 3 walk now costs one rasterisation instead of four.
-- **The re-render guard is the CSS width a page was rendered FOR, tracked separately in
-  `renderedAt`.** It cannot be read back off the bitmap: `RenderedPdfPage.width` is the canvas size
-  in DEVICE pixels (`maxWidth * devicePixelRatio`, capped), so comparing it against `renderWidth`
-  compares two units and re-renders every page forever on any screen with a dpr above 1.
+  Reading the page arrays inside either one makes every arriving page re-run the teardown, which
+  frees the canvases currently on screen. Both read them under `untrack`.
+- **The document handle is `$state.raw`.** A `$state` handle is a deep proxy, never `===` the raw
+  handle the render queue holds, so every finished render was dropped as belonging to a closed
+  document - the first build of the 2026-10-11 rewrite rendered nothing at all.
+- **The old bitmap is never taken off screen.** A zoom leaves every bitmap the wrong size; it stays,
+  stretched by CSS (each canvas is `width: 100%` of a column that widens), and is replaced in place
+  when the sharp one lands. An old bitmap is the right image at the wrong resolution, strictly
+  better than a blank or *cut* page (the placeholder is an `aspect-ratio` box with
+  `overflow-hidden`). `tools/cross-client-harness/archive/check-pdf-render.mjs` measured that rule:
+  **473 blank-or-cut frames out of 475 before it, 0 out of 474 after**.
+- **The re-render guard is the CSS width a page was rendered FOR, tracked in `renderedAt`.** It
+  cannot be read back off the bitmap, whose size is in DEVICE pixels and capped by the pixel budget.
+
+### Making the reader fluid on a phone (2026-10-11)
+
+Asked by the owner on a scanned 81-page magazine (14 MB, one 1240 x 1754 JPEG per page behind a
+Flate filter, an OCR text layer). Measured on the Mi 9T with the REAL reader component, served to
+the app's own WebView over `adb reverse` from a temporary route, old and new builds through the
+same scripted pass (renderer RSS sampled from `/proc`, frames from an in-page `rAF` probe and
+`dumpsys gfxinfo`):
+
+| | before | after |
+| --- | --- | --- |
+| first page after the blob is ready | 4.96 s | 0.65 s |
+| landing page after 7 flings to the end | white for 28.9 s | 43 ms |
+| main-thread long tasks during that fling | 151, 32.5 s, longest 1.26 s | 22, 1.8 s, longest 0.14 s |
+| one zoom click (x3 walk) | 25-27 s long task each | longest 0.5 s, sharp page 57 ms after the last click |
+| renderer RSS peak over the pass | 1.82 GB (one run CRASHED the renderer, `code 5`) | 0.70 GB |
+
+What each number came from, and the fix that bounds it:
+
+- **`canvas.toBlob` for PNG or JPEG waits for an idle main thread.** The reader used to encode every
+  page to a PNG for an `<img>`. On the phone the same `toBlob` took 150-350 ms on a quiet page and
+  **4.07 s** while the reader scrolled, for a 1040 x 1470 page and a 109 x 154 thumbnail alike,
+  when the render itself took 55-83 ms; WebP took 360-470 ms. Pages now stay canvases (no encode,
+  no decode, the pixels held once); the thumbnail goes through `canvasToBlob` (`toDataURL`), the
+  same cure the camera took on 2026-10-07 ([reels](reels.md)).
+- **Nothing was ever cancelled.** A fling queued a render for every page flown past (57 of them),
+  and the page the reader landed on waited behind all of them. `utils/pdfRenderQueue.ts` runs at
+  most two renders, visible pages first, and cancels (`RenderTask.cancel`) a render whose page left
+  the window. The caller re-states WHAT it wants on every change; the queue decides what to start,
+  keep or cancel. Pure and unit-tested.
+- **The "near" window did not exist.** The observers were rooted on the viewport, and a page below
+  the scroll container's visible area is clipped by the container before the root margin applies:
+  `rootMargin: 100%` did nothing and every page started rendering once already on screen. They are
+  rooted on the scroll container now.
+- **Memory had no bound.** Every bitmap was kept, and pdf.js kept every page's decoded image (8.7 MB
+  each here). Now: a per-page cap of 6 MP (a x3 zoom asked for 8 MP, 32 MB, per page), a 96 MB
+  budget over sharp bitmaps with farthest-first eviction (never a visible page), and
+  `page.cleanup()` when a page leaves the window or is evicted.
+- **A page is never blank for more than one cheap pass.** Each page first gets a ~60 000-pixel
+  PREVIEW (~240 KB), then its sharp bitmap. Previews have their OWN budget, 24 MB (about 100
+  pages), evicted farthest from the reader first: a page scrolled back to inside it is blurry rather
+  than white, one further away re-renders its preview. Unbounded, a 600-page document read to the
+  end would hold 144 MB of previews, and WKWebView kills canvas allocation past a total
+  (`WEBKIT_CANVAS_MEMORY_LIMIT`, set at 384 MB here, conservative for an iPhone 12); the three
+  pools (sharp, preview, in-flight) are tested to stay under half of it.
+- **Zoom is a CSS stretch, then one sharp render.** The render width the queue plans against is a
+  SETTLED width (`SettledWidth` in `pdfRenderQueue.ts`), written only 250 ms after the zoom stops
+  moving - the queue never reads the live width, so a click mid-walk starts no sharp render and
+  walking 1 -> 1.5 -> 2 -> 3 costs exactly one; coming back to the settled width before the timer
+  fires costs none. Pages off screen keep their stretched bitmap until they scroll in. The
+  two-scale scheme (`RENDER_ZOOMS`) went with the pixel cap that made it unnecessary.
+- **The text layer was the zoom freeze.** `PdfTextLayer` fitted each span with its own action - a
+  transform write then a width read, span after span, so one forced layout per span - and re-did it
+  on every zoom step, on every page whose text had ever loaded. It now measures all spans of a
+  page in one read pass and one write pass, one frame after the width changes, reading the target
+  off the laid-out layer itself (a fit between the prop update and the font-size update made every
+  span 24 % too wide); and only pages within THREE SCREENS of the reader carry a layer (a window of
+  its own, wider than the one-screen render window).
+- **What that window costs, honestly.** The browser's find-in-page (Ctrl+F) only searches text that
+  is in the DOM, so a page read and then left more than three screens behind is no longer found
+  until it scrolls back near; before, every page whose text had ever loaded stayed searchable.
+  Likewise a drag selection can span about three screens of pages, not the whole document. The
+  window is a trade between that and the zoom freeze: a layer on every visited page is what made
+  each zoom step re-fit thousands of spans. The batched fit alone removed most of the freeze, so
+  the window is wide rather than tight; an in-viewer search over `getPageText` would lift the
+  find-in-page limit and is not built.
+- **A copy kept no line ends** ("les**autres**", Mi 9T, 2026-10-12): the spans are absolutely
+  placed, so nothing between them serialises as a break. Each run now carries pdf.js's `hasEOL`
+  (an EMPTY item that ends a line gives it to the run before it: 3 of 230 items on page 40 of the
+  scan) and the layer puts a `<br>` after it, as pdf.js's own viewer does. Read in the WebView: the
+  same selection copies `les
+autres` with the `<br>`, `lesautres` without.
+- **And the layer was font-size times too wide, on every PDF.** `textRunBox` multiplied pdf.js's
+  `item.width` by the run's scale, but pdf.js gives that width already in page units: a 43-character
+  line measured 3.3 page widths. Selection and highlight boxes now match the glyphs
+  (`pdfTextGeometry.test.ts` pins the real numbers).
+
+Not done, deliberately: range requests or streaming. The source is a blob already decrypted in
+memory, read whole in ~60 ms for 13 MB; the document opens in ~220 ms. **Owed:** one look on the
+installed app, which needs a build carrying this change; the numbers above were taken on the same
+WebView, renderer and phone, but not inside the signed-in app shell.
 
 ### The pinch, and why it needs a focal point
 
@@ -533,6 +603,15 @@ Two consequences worth keeping:
 - **The transform transition must be suppressed while the settle measures.** The column animates
   back to `scale(1)` over 120 ms and `getBoundingClientRect` reports the *animating* box, so a
   measurement taken mid-transition reads part of the gesture's own preview. `settling` gates it.
+- **The zoom buttons are the same anchored zoom, about the viewport's CENTRE** (`pageAnchor`, then
+  `anchorScroll`; one `zoomAbout` in the component serves both). Until 2026-10-12 they changed the
+  zoom and left `scrollTop` alone, so every page grew under a scroll that did not move and the
+  reader landed at page / zoom. Read with real taps on the Mi 9T (`pic86.pdf`, from page 40): before,
+  x1.5 / x2 / x3 landed on pages 27 / 20 / 14; after, page 40 at every step and back down, the
+  position within the page within 0.0005 of a page; sharp 0.6-0.9 s after the tap, longest task
+  0.26-0.36 s. A real tap on the icon's SVG stroke itself produced no `click` in that WebView
+  (`input tap`; pointerdown and pointerup arrive, no click), one on the button's padding did - the
+  rig taps the padding.
 - The module is deliberately pure and tested rather than inlined: it is the seed of the shared
   gesture WP-VIEWER-1 wants, and the arithmetic is the part worth pinning. MiGallery's `PhotoModal`
   can keep the ratio form because it scales ONE bitmap about its centre with no unscaled chrome
@@ -1055,6 +1134,8 @@ question or an option, a form with a choice - and `isPostComposerDraftWorthKeepi
 for the auto-save and the restore alike, so a draft that held only empty toggles is neither saved nor
 restored. Pinned by `postComposerDraft.test.ts`.
 
+**THE DRAFT IS OWNED BY THE ACCOUNT (2026-10-06, iPhone reading of `alpha.4`).** `canari_post_composer_draft` was ONE value per device and never cleared on sign-out, so account B opening "Nouvelle publication" landed on "Brouillon restaure" holding account A's text. It is now `canari_post_composer_draft:<userId>` (`postComposerDraftKey`): a switch hides the other account's draft rather than erasing it, and the author finds it again - no sign-out hook, no timer. The two old unkeyed keys (`canari_post_composer_draft`, `canari_post_draft`) have no provable author, so every draft access DROPS them and logs `[POST_COMPOSER] dropping unowned ...`; they are never adopted. With nobody signed in the draft is neither read nor written. Same class, enumerated and left alone on purpose: `canari_recent_emojis` and the skin tone (a device preference, no authored text), `canari.keyboardHeight.v1` (a measurement of the device), `canari_post_new_form_id` and `canari_pending_contact` (`sessionStorage`, one tab, consumed on the next page). Pinned by `postComposerDraft.test.ts`.
+
 ## The blocks preflight erases
 
 A reader reported on 0.18.17 that a post read nothing like what had been written: "the dashes do not
@@ -1277,6 +1358,14 @@ The "link to an event" picker (`linkableEventPickerOptions`, `utils/time.ts`, us
 and the editor) lists the furthest future event first and the furthest past last; the server answers
 ascending, so the sort lives in that one function.
 
+**The strip leaves at the scheduled time (2026-10-08).** It used to stay stale until the tab was left
+and re-entered (read on the Mi 9T, 2026-10-07: still listed a minute after the server published).
+`/posts` arms ONE `setTimeout` on the earliest `scheduledAt` the strip holds
+(`msUntilNextDue`, `posts/scheduledDue.ts`; nothing polls). When it fires the due posts leave the
+strip (`stillScheduled`) and the feed is re-read so they appear where the server now publishes them;
+the effect re-arms on the next one. A wait beyond the timer limit wakes early, finds nothing due and
+re-arms. Server-clock skew is not corrected: a client a second fast re-reads the feed a second early.
+
 ## One notion of "when it became visible": `publishedAt` (2026-10-06)
 
 Cause of the report "scheduled at noon for 18:00, published at 18:00 but shown as 12:00, behind newer
@@ -1294,3 +1383,24 @@ preview and republication cards read it; the client shows `post.publishedAt` (`P
 `COALESCE(scheduledAt, createdAt)`, so an immediate post's order is unchanged. Reels cannot be
 scheduled and keep `createdAt`. Notifications carry their own `createdAt` (written at announce time,
 which is already publication time).
+
+## A navigation never waits on data: the post page and the root layout (WP-NAV-1, 2026-10-10)
+
+Audit in [offline-and-weak-network](../offline-and-weak-network.md) (section 13.2, on the upload PR): in this
+SPA (`ssr = false`) a `load` that awaits holds the navigation, and two did. **`routes/posts/[postId]/+page.ts`
+awaited the post**, so a tap on a post in the feed did nothing visible until the GET answered (up to the 20 s
+read deadline on a weak link). It now returns the post as a PROMISE (`data.post`), the page resolves it in an
+effect and draws the header, the back link and a skeleton (`role="status"`) at once; `undefined` = on its way,
+`null` = absent or refused (the existing "not found" state). The title and path of the page's SEO are
+static: the description used to be cut from the post's text, and this route is behind sign-in and never
+server-rendered, so no crawler read it. The audience gate is still awaited, but only when no verdict is
+remembered (the first ever visit): a remembered one answers from memory.
+
+**`routes/+layout.ts` awaited `fetchUserProfile` on every navigation while the MLS session was not unlocked**
+(boot, a resume, the whole unlock window): a profile round trip in front of every page, to decide one thing,
+"redirect to login on a confirmed 404". It is now `checkSessionUserInBackground` (`utils/sessionProfileCheck.ts`),
+launched beside the navigation: only a typed 404 redirects, a status or transport failure is survived and
+logged, exactly as before. What stays awaited on purpose: `refresh()` when NO user id is known (the layout
+cannot tell who this is, nor whether to send them to login). Pinned by `routes/navigationNeverWaits.test.ts`
+(each `load` resolves while its network call is pending) and `sessionProfileCheck.test.ts`. Reaches users with
+the next pre-release.

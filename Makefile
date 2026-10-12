@@ -325,6 +325,7 @@ test-ci-scripts: lint-ci-scripts
 	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/compose-wiring.test.sh
+	@bash .github/scripts/tests/compose-logging.test.sh
 	@bash .github/scripts/tests/dev-copy-guards.test.sh
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
@@ -346,6 +347,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/scheduled.test.sh
 	@bash .github/scripts/tests/audit-dependencies.test.sh
 	@bash .github/scripts/tests/stream-json-premise.test.sh
+	@bash .github/scripts/tests/ignored-advisories-still-reported.test.sh
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
@@ -353,7 +355,9 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
 	@bun .github/scripts/tests/static-headers.test.mjs
+	@bun .github/scripts/tests/static-compression.test.mjs
 	@bun .github/scripts/tests/adminer-route.test.mjs
+	@bun .github/scripts/tests/access-log-redaction.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bun .github/scripts/tests/undeclared-duplicates.test.mjs
@@ -368,8 +372,11 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/android-unit-tests.test.sh
 	@bash .github/scripts/tests/wait-default-blueprints.test.sh
 	@bash .github/scripts/tests/bench-observables.test.sh
+	@bash .github/scripts/swift-syntax.sh
+	@bash .github/scripts/tests/swift-syntax.test.sh
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs
+	@bun test tools/store-listings
 
 # THE 158 SCRIPTS THAT PRODUCE EVERY CAMPAIGN VERDICT ARE LINTED HERE, and were linted by nothing at
 # all until 2026-09-07. `bun run lint` is scoped to `frontend/`; this recipe ran the self-tests and

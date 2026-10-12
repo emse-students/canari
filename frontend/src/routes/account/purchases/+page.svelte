@@ -19,7 +19,7 @@
     formId: string | null;
     productId: string | null;
     amountCents: number;
-    paymentMethod: 'stripe' | 'cash';
+    paymentMethod: 'online' | 'stripe' | 'cash';
     status: 'paid' | 'pending_cash' | 'cancelled' | 'expired';
     stripePaymentIntentId: string | null;
     associationId: string;

@@ -78,6 +78,7 @@ export class PostAnnounceScheduler {
       try {
         // BEFORE the send. See the class docblock.
         const recipientIds = await this.stampAndReadRecipients(post);
+        if (recipientIds === null) continue;
         const count = post.associationId
           ? await this.announceAssociationPost(post, recipientIds)
           : await this.announcePersonalPost(post, recipientIds);
@@ -172,9 +173,20 @@ export class PostAnnounceScheduler {
    *
    * An anonymous personal post is stamped and nobody is asked about: see `announcePersonalPost`.
    */
-  private stampAndReadRecipients(post: Post): Promise<string[]> {
+  private stampAndReadRecipients(post: Post): Promise<string[] | null> {
     return this.postRepo.manager.transaction(async (manager) => {
-      await manager.update(Post, post.id, { feedNotifiedAt: new Date() });
+      // CONDITIONAL: the stamp is the claim. A second instance (a rolling deploy overlaps two for
+      // a minute) that read the same pending row waits on this row lock, then matches nothing and
+      // announces nothing - idempotence from durable state, not from there being one cron.
+      const claimed = await manager.update(
+        Post,
+        { id: post.id, feedNotifiedAt: IsNull() },
+        { feedNotifiedAt: new Date() }
+      );
+      if (!claimed.affected) {
+        this.logger.log(`[ANNOUNCE] post=${post.id.slice(0, 8)} already claimed by another run`);
+        return null;
+      }
       if (!post.associationId && post.anonymous) return [];
       const rows: unknown = await manager.query(announceRecipientsSql(!post.associationId), [
         post.id,

@@ -75,6 +75,62 @@ describe('BlobUrlPool', () => {
     expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:first');
   });
 
+  /**
+   * THE CAP IS BYTES, NOT ENTRIES (reels audit, 2026-10-11): ten reels of 30 MB are ten entries of
+   * a 200-entry cap, and were all kept for five minutes. Past the byte cap the least recently used
+   * IDLE entry goes at once, and a HELD one - the video on screen - never does.
+   */
+  it('evicts idle entries least recently used first once the byte cap is exceeded', () => {
+    const pool = new BlobUrlPool({ maxBytes: 100 });
+    pool.retain('old', 'blob:old', 40);
+    vi.advanceTimersByTime(1);
+    pool.retain('recent', 'blob:recent', 40);
+    pool.release('old');
+    vi.advanceTimersByTime(1);
+    pool.release('recent');
+
+    pool.retain('new', 'blob:new', 40);
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:old');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:recent');
+    expect(pool.bytes).toBe(80);
+    expect(pool.tryRetain('old')).toBeNull();
+    expect(pool.tryRetain('recent')).toBe('blob:recent');
+  });
+
+  it('never evicts a held entry to honour the byte cap', () => {
+    const pool = new BlobUrlPool({ maxBytes: 100 });
+    pool.retain('playing', 'blob:playing', 80);
+    pool.retain('next', 'blob:next', 80);
+
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    expect(pool.bytes).toBe(160);
+  });
+
+  /**
+   * A SOFT CAP (review of #1744): a release over the cap used to evict at once, so a feed page torn
+   * down by a tab swipe lost its warm videos past 64 MiB. The grace holds until a new blob needs
+   * the room.
+   */
+  it('keeps a released entry warm over the cap until a new blob needs the room', () => {
+    const pool = new BlobUrlPool({ maxBytes: 100 });
+    pool.retain('a', 'blob:a', 80);
+    pool.retain('b', 'blob:b', 80);
+    pool.release('a');
+    pool.release('b');
+
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(pool.tryRetain('a')).toBe('blob:a');
+    pool.release('a');
+
+    vi.advanceTimersByTime(1);
+    pool.retain('c', 'blob:c', 10);
+    // `b` was released first and not touched since: it goes; `a` (retained again) stays.
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:b');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:a');
+  });
+
   it('keeps a blob alive while another holder remains', () => {
     const pool = new BlobUrlPool({ evictDelayMs: 0 });
     pool.retain('a', 'blob:first');

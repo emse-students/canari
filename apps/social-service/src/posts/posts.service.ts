@@ -41,7 +41,11 @@ import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
-import { postVisibleToViewerSql, readInFeedAudience } from '../spaces/reader-spaces';
+import {
+  postVisibleToViewerSql,
+  readInFeedAudience,
+  type PostAccessIntent,
+} from '../spaces/reader-spaces';
 import {
   REPUBLISHING_ASSOCIATION_TYPES,
   dropRepublicationsOf,
@@ -68,6 +72,12 @@ interface PostViewerContext {
    * as any (`isGlobalAdmin` decides that).
    */
   republishAsIds: Set<string>;
+  /**
+   * Ids, among the batch, of the posts the reader can see WITHOUT a nominative read grant - the
+   * predicate every write a grant never opened (a vote, a republication) enforces. A grant-only
+   * post is absent. Unused for a global admin, who sees every post by its id.
+   */
+  grantFreeIds: Set<string>;
 }
 
 /**
@@ -98,6 +108,11 @@ interface PostCapabilities {
    * association removes its OWN (D38), so these are the ones the reader may publish as.
    */
   canUnrepublishAs: string[];
+  /**
+   * The poll options may be voted: the reader sees the post by a right other than a read grant
+   * (a grant opens read, react and comment, never a vote - `assertVisible` 'VOTE').
+   */
+  canVote: boolean;
 }
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
@@ -197,6 +212,7 @@ export class PostsService {
     isModerator: false,
     managedAssociationIds: new Set(),
     republishAsIds: new Set(),
+    grantFreeIds: new Set(),
   };
 
   /**
@@ -207,7 +223,7 @@ export class PostsService {
    * before it looks at either field.
    */
   private async viewerContext(
-    rows: { associationId?: string | null }[],
+    rows: { id?: string; associationId?: string | null }[],
     viewerId: string | undefined,
     isGlobalAdmin: boolean
   ): Promise<PostViewerContext> {
@@ -219,10 +235,11 @@ export class PostsService {
         isModerator: true,
         managedAssociationIds: new Set(),
         republishAsIds: new Set(),
+        grantFreeIds: new Set(),
       };
     }
     const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
-    const [managedAssociationIds, isModerator, republishAsIds] = await Promise.all([
+    const [managedAssociationIds, isModerator, republishAsIds, grantFreeIds] = await Promise.all([
       this.associationsService.mayActOnAny(
         viewerId,
         associationIds,
@@ -230,8 +247,34 @@ export class PostsService {
       ),
       this.associationsService.isContentModerator(viewerId),
       this.republishAsIdsOf(viewerId),
+      this.grantFreeVisibleIds(
+        rows.map((row) => row.id).filter((id): id is string => !!id),
+        viewerId
+      ),
     ]);
-    return { viewerId, isGlobalAdmin: false, isModerator, managedAssociationIds, republishAsIds };
+    return {
+      viewerId,
+      isGlobalAdmin: false,
+      isModerator,
+      managedAssociationIds,
+      republishAsIds,
+      grantFreeIds,
+    };
+  }
+
+  /**
+   * Of `postIds`, those `viewerId` sees WITHOUT a read grant - ONE query for a page, through the
+   * same `postVisibleToViewerSql` (`readGrants: false`) that `assertVisible(.., 'VOTE')` and the
+   * republication path enforce, so a control is offered exactly when its write is accepted.
+   */
+  private async grantFreeVisibleIds(postIds: string[], viewerId: string): Promise<Set<string>> {
+    if (postIds.length === 0) return new Set();
+    const rows: unknown = await this.postRepo.manager.query(
+      `SELECT posts.id FROM posts WHERE posts.id = ANY($1::uuid[])
+         AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false })}`,
+      [postIds, viewerId]
+    );
+    return new Set(Array.isArray(rows) ? rows.map((r: { id: string }) => r.id) : []);
   }
 
   /**
@@ -305,6 +348,7 @@ export class PostsService {
    */
   private viewerCapabilities(
     post: {
+      id?: string;
       authorId?: string | null;
       associationId?: string | null;
       anonymous?: boolean;
@@ -327,16 +371,25 @@ export class PostsService {
             .map((r) => r.id)
             .filter((id) => viewer.isGlobalAdmin || viewer.republishAsIds.has(id))
         : [],
+      canVote:
+        !!viewer.viewerId && (viewer.isGlobalAdmin || this.viewerSeesWithoutGrant(post, viewer)),
     };
+  }
+
+  /** The post is in the reader's grant-free set: the rule a vote and a republication enforce. */
+  private viewerSeesWithoutGrant(post: { id?: string }, viewer: PostViewerContext): boolean {
+    return !!post.id && viewer.grantFreeIds.has(post.id);
   }
 
   /** `canRepublish`: see `PostCapabilities`. A personal post is never republished (D38). */
   private viewerMayRepublish(
-    post: { associationId?: string | null; republishedBy?: Republisher[] },
+    post: { id?: string; associationId?: string | null; republishedBy?: Republisher[] },
     viewer: PostViewerContext
   ): boolean {
     if (!viewer.viewerId || !post.associationId) return false;
     if (viewer.isGlobalAdmin) return true;
+    // A grant opens a post to read only: republishing it is a 404 (`RepublicationsService`).
+    if (!this.viewerSeesWithoutGrant(post, viewer)) return false;
     const already = new Set((post.republishedBy ?? []).map((r) => r.id));
     return [...viewer.republishAsIds].some((id) => id !== post.associationId && !already.has(id));
   }
@@ -539,7 +592,7 @@ export class PostsService {
    * Proves, through the media service, that every blob a reel cites is the author's own.
    *
    * Not optional hygiene: the later purge deletes what the row names, and an id is not a secret. A
-   * `refused` id (not theirs, unknown, already deleted) is a `400`; the media service being
+   * `refused` id (not theirs, unknown, already deleted, or a pending upload past its window) is a `400`; the media service being
    * unreachable is a `503` - a reel is never stored on trust, and never silently without a check.
    */
   private async claimReelBlob(authorId: string, mediaIds: string[]): Promise<void> {
@@ -556,10 +609,12 @@ export class PostsService {
     }
     if (refused.length > 0) {
       this.logger.warn(
-        `[REEL] ${authorId.slice(0, 8)} cited ${refused.length} blob(s) that are not theirs, or gone`
+        `[REEL] ${authorId.slice(0, 8)} cited ${refused.length} blob(s) that are not theirs, gone, or a pending upload past its window`
       );
+      // The pending window is the MEDIA service's (MEDIA_PENDING_REEL_TTL_MS), so it is not spelled
+      // here: a duration written in this sentence is one env change away from a lie.
       throw new BadRequestException(
-        "a reel's video must be a file you uploaded (with retentionClass 'reel') and that still exists"
+        "a reel's video must be a file you uploaded yourself that still exists - an unclaimed upload ('reel-pending') expires after the media service's pending window, upload it again"
       );
     }
   }
@@ -576,10 +631,18 @@ export class PostsService {
    * asked of one row. 404 and not 403: for that reader the post does not exist, and saying
    * "forbidden" would confirm the id. An absent viewer, or an absent post, sees nothing. A global
    * admin may open any post BY ITS ID (a report or moderation link) but is not shown it by browsing.
+   *
+   * THE INTENT IS EXPLICIT because a nominative read grant (WP7) opens a post to READ, REACT and
+   * COMMENT only: `'READ_OR_REACT'` counts the grant, `'VOTE'` does not (a vote was never granted,
+   * user 2026-10-07: read + react/comment). A caller must say which one it is.
    */
-  async assertVisible(postId: string, viewerId: string | undefined): Promise<void> {
+  async assertVisible(
+    postId: string,
+    viewerId: string | undefined,
+    intent: PostAccessIntent
+  ): Promise<void> {
     const rows: { visible: boolean }[] = await this.postRepo.manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
+      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: intent === 'READ_OR_REACT' })} AS visible FROM posts WHERE posts.id = $1`,
       [postId, viewerId ?? null]
     );
     if (rows[0]?.visible !== true) {
@@ -1279,7 +1342,7 @@ export class PostsService {
     }
     // A POST THIS READER MAY NOT SEE (WP6b) IS ONE THAT DOES NOT EXIST for them: 404, and BEFORE the
     // moderation check, whose 403 would otherwise confirm the id to someone outside its audience.
-    await this.assertVisible(id, opts?.viewerId);
+    await this.assertVisible(id, opts?.viewerId, 'READ_OR_REACT');
     if (post.hiddenByModeration && !opts?.allowHidden) {
       throw new ForbiddenException('Post not available');
     }

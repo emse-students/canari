@@ -4,8 +4,6 @@ import { signLydiaParams } from './lydia-signature';
 import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
-  ChargeResult,
-  ChargeWithSavedMethodParams,
   CheckoutSessionInfo,
   CheckoutSessionResult,
   ConnectBalanceSummary,
@@ -13,8 +11,14 @@ import type {
   OnboardingParams,
   OnboardingResult,
   PaymentProvider,
-  SavedPaymentMethod,
 } from './payment-provider.interface';
+
+/**
+ * The `code` a provider refusal carries in its response body. A refusal (a blocked venue, a bad
+ * phone number) is an ANSWER about the request, not a server fault: social-service reads this code
+ * to answer the SAME 400 with the provider's readable message on every checkout route.
+ */
+export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
 
 const HOMOLOGATION_BASE_URL = 'https://homologation.lydia-app.com';
 const PRODUCTION_BASE_URL = 'https://lydia-app.com';
@@ -25,9 +29,11 @@ export const LYDIA_MAX_AMOUNT_CENTS = 100_000;
 
 /**
  * Fields no log line may ever carry in the clear - `api_token_id` is the Business's own
- * private_token (see `createOnboarding`'s docblock on why it is never persisted either).
+ * private_token (see `createOnboarding`'s docblock on why it is never persisted either), and
+ * `api_token` is the Business's vendor token, which `business/create` answers with and which was
+ * logged in clear until 2026-10-07.
  */
-const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id']);
+const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id', 'api_token']);
 
 function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
@@ -38,8 +44,8 @@ function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * Lydia API implementation of PaymentProvider (WP-LYDIA-1). Platform config still defaults
- * `paymentProvider` to `stripe` - flipping it live is gated on the two gaps below, not on code.
+ * Lydia API implementation of PaymentProvider (WP-LYDIA-1). Stripe left the product
+ * (docs/wiki/stripe-archive.md); this is the only live provider.
  * Covers checkout (`request/do`, confirmed server-side via its signed per-request callback - see
  * `webhook.controller.ts`'s `lydia-request-callback` route) and session lookup (`request/state`).
  *
@@ -52,8 +58,8 @@ function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
  *   to read Canari's own DB-tracked state (written by the webhook) instead of calling Lydia live.
  *   That webhook receiver is deliberately not built either (2026-08-19): it has no documented
  *   signature and `vendor_token` is PUBLIC, so building it as-is would be forgeable.
- * - Saved payment method methods: retired per the WP-LYDIA-1 decision (see plan) - every purchase
- *   becomes its own `request/do` with payer interaction, there is no server-side vaulted instrument.
+ * - There are no saved payment methods: every purchase is its own `request/do` with payer
+ *   interaction, there is no server-side vaulted instrument.
  * - `createCheckoutSession` requires `payerRecipient`: the payment controller builds it from the
  *   `payerEmail` its caller sends, and a request without one is refused rather than sent.
  */
@@ -121,7 +127,13 @@ export class LydiaPaymentProvider implements PaymentProvider {
     const statusError = res.data?.status === 'error' ? (res.data.code ?? 'unknown') : null;
     const errorCode = numericError ?? statusError;
     if (errorCode) {
-      throw new BadRequestException(`Lydia error ${errorCode}: ${res.data.message ?? ''}`);
+      this.logger.warn(`${path} refused by Lydia: error ${errorCode}: ${res.data.message ?? ''}`);
+      throw new BadRequestException({
+        code: PAYMENT_PROVIDER_REFUSED,
+        provider: 'lydia',
+        providerCode: String(errorCode),
+        message: res.data.message || `Lydia error ${errorCode}`,
+      });
     }
     return res.data;
   }
@@ -278,37 +290,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
 
   async createConnectDashboardLink(_accountId: string): Promise<string> {
     throw new BadRequestException(
-      'Lydia Business dashboard access is via the dashboard_url returned once at business/create, not a re-issuable login link like Stripe.'
-    );
-  }
-
-  async getOrCreateCustomer(): Promise<string> {
-    throw new BadRequestException(
-      'Lydia has no Customer object - payer identity is inline (email/phone) per request/do call, see WP-LYDIA-1.'
-    );
-  }
-
-  async createSetupCheckoutSession(): Promise<{ url: string; sessionId: string }> {
-    throw new BadRequestException(
-      'Saved payment methods are retired for Lydia by decision (WP-LYDIA-1) - every purchase is its own request/do.'
-    );
-  }
-
-  async listPaymentMethods(): Promise<SavedPaymentMethod[]> {
-    throw new BadRequestException(
-      'Saved payment methods are retired for Lydia by decision (WP-LYDIA-1) - every purchase is its own request/do.'
-    );
-  }
-
-  async detachPaymentMethod(): Promise<void> {
-    throw new BadRequestException(
-      'Saved payment methods are retired for Lydia by decision (WP-LYDIA-1) - every purchase is its own request/do.'
-    );
-  }
-
-  async chargeWithSavedMethod(_params: ChargeWithSavedMethodParams): Promise<ChargeResult> {
-    throw new BadRequestException(
-      'Saved payment methods are retired for Lydia by decision (WP-LYDIA-1) - every purchase is its own request/do.'
+      'Lydia Business dashboard access is via the dashboard_url returned once at business/create, not a re-issuable login link.'
     );
   }
 

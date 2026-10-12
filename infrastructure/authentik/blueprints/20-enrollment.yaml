@@ -44,7 +44,7 @@ entries:
       field_key: "attributes.formation"
       label: "Formation :"
       type: "radio-button-group"
-      placeholder: "return [\"ICM\", \"ISMIN\", \"FSSS\", \"Autre\"]"
+      placeholder: "return [\"ICM\", \"ISMIN\", \"FSSS\", \"PDIS\", \"Autre\"]"
       order: 2
       placeholder_expression: true
   - model: authentik_stages_prompt.prompt

@@ -1,3 +1,4 @@
+import { getSavedUserId } from '$lib/stores/user';
 import { emptyPollOptions, newPollOption, type PollDraftOption } from './pollDraft';
 
 /**
@@ -35,9 +36,44 @@ export interface PostComposerDraft {
   selectedLinkedCalendarEventId: string;
 }
 
-export const POST_COMPOSER_DRAFT_KEY = 'canari_post_composer_draft';
-/** @deprecated Legacy markdown-only key; migrated on read. */
+/**
+ * The key the draft lived under until it became account-owned (2026-10-06): ONE per device, so a
+ * second account opening the composer read the first one's text. An unkeyed value belongs to
+ * nobody provable, so it is dropped, never adopted - see `dropUnownedDrafts`.
+ */
+const UNOWNED_DRAFT_KEY = 'canari_post_composer_draft';
+/** Legacy markdown-only key, also unowned: dropped with the other one. */
 const LEGACY_MARKDOWN_DRAFT_KEY = 'canari_post_draft';
+const POST_COMPOSER_DRAFT_KEY_PREFIX = 'canari_post_composer_draft:';
+
+/** The storage key of ONE account's draft: the draft is owned by the user id, not by the device. */
+export function postComposerDraftKey(userId: string): string {
+  return `${POST_COMPOSER_DRAFT_KEY_PREFIX}${userId}`;
+}
+
+/**
+ * Removes the two device-global keys a draft used to live under. Run on every access, so the
+ * first composer open after the upgrade sheds them whichever account opens it.
+ */
+function dropUnownedDrafts(): void {
+  for (const key of [UNOWNED_DRAFT_KEY, LEGACY_MARKDOWN_DRAFT_KEY]) {
+    if (localStorage.getItem(key) === null) continue;
+    console.log(
+      `[POST_COMPOSER] dropping unowned device-global draft (${key}) - no provable author`
+    );
+    localStorage.removeItem(key);
+  }
+}
+
+/** The signed-in account's draft key, or `null` (and a log) when nobody is signed in. */
+function ownedDraftKey(action: string): string | null {
+  const userId = getSavedUserId();
+  if (!userId) {
+    console.log(`[POST_COMPOSER] ${action}: no signed-in account - draft untouched`);
+    return null;
+  }
+  return postComposerDraftKey(userId);
+}
 
 export const POST_NEW_FORM_ID_KEY = 'canari_post_new_form_id';
 
@@ -49,13 +85,17 @@ export function buildCreateFormHref(returnTo = '/posts'): string {
 
 export function savePostComposerDraft(draft: PostComposerDraft): void {
   if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(POST_COMPOSER_DRAFT_KEY, JSON.stringify(draft));
-  localStorage.removeItem(LEGACY_MARKDOWN_DRAFT_KEY);
+  dropUnownedDrafts();
+  const key = ownedDraftKey('save');
+  if (key) localStorage.setItem(key, JSON.stringify(draft));
 }
 
 export function loadPostComposerDraft(): PostComposerDraft | null {
   if (typeof localStorage === 'undefined') return null;
-  const raw = localStorage.getItem(POST_COMPOSER_DRAFT_KEY);
+  dropUnownedDrafts();
+  const key = ownedDraftKey('load');
+  if (!key) return null;
+  const raw = localStorage.getItem(key);
   if (raw) {
     try {
       const parsed = JSON.parse(raw) as PostComposerDraft & Record<string, unknown>;
@@ -102,13 +142,9 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
         console.log('[POST_COMPOSER] stored draft held only abandoned attachments - not restored');
         return null;
       }
-    } catch {
-      /* fall through */
+    } catch (e) {
+      console.warn('[POST_COMPOSER] stored draft is unreadable - not restored', e);
     }
-  }
-  const legacyMarkdown = localStorage.getItem(LEGACY_MARKDOWN_DRAFT_KEY);
-  if (legacyMarkdown?.trim()) {
-    return emptyPostComposerDraft(legacyMarkdown);
   }
   return null;
 }
@@ -143,8 +179,9 @@ export function isPostComposerDraftWorthKeeping(draft: PostComposerDraft): boole
 
 export function clearPostComposerDraft(): void {
   if (typeof localStorage === 'undefined') return;
-  localStorage.removeItem(POST_COMPOSER_DRAFT_KEY);
-  localStorage.removeItem(LEGACY_MARKDOWN_DRAFT_KEY);
+  dropUnownedDrafts();
+  const key = ownedDraftKey('clear');
+  if (key) localStorage.removeItem(key);
 }
 
 export function emptyPostComposerDraft(markdown = ''): PostComposerDraft {

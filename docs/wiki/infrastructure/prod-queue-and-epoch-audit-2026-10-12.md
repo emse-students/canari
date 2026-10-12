@@ -1,0 +1,400 @@
+# Production queue and epoch audit - 2026-10-12
+
+**Question (user, 2026-10-12):** devices look out of date, they do not catch up to a community's
+epoch, and everything feels slow. `queued_message` held 14 493 rows on 2026-09-22 and holds
+**93 580** today. Is a client stuck, is the queue a backlog of the dead, and what costs the most?
+
+**Short answer.** No client is provably stuck. The jump comes from ONE community created
+yesterday evening, and from two things that were already in the design:
+
+1. **Answers to seed requests are sent to the WHOLE community and queued for every offline seat.**
+   In the 37 minutes of server log available, the new community's key group carried 391
+   application frames. 22 were new seeds. At least 185 were requests and about 184 were answers,
+   each answer delivered to about 100 seats. Bundles of 16 KB or more are 11 % of that group's
+   queued rows and **70 % of its bytes**.
+2. **42 % of all active device seats (821 of 1 952) belong to a device with no session left**, and
+   those devices hold **56 % of the queue rows** (52 691). Nearly all of them are old browser
+   profiles whose owner has signed in somewhere else since.
+
+The "external-join churn" hypothesis is **REFUTED**. The new community has 137 commits from 90
+devices: 80 devices committed once, and the busiest sender's 40 commits are admissions by the
+person who added the members (median 6.7 KB, section 20 of
+[channel-encryption](../protocols/channel-encryption.md)).
+
+Measured on production with read-only `SELECT`s and `docker logs`, 2026-10-12 08:53-09:10 UTC.
+People are named by role only
+([durable-rules](../durable-rules.md#a-measurement-taken-from-production-names-roles-and-counts-never-people---this-repository-is-public)).
+Group ids are cut to 8 hex characters. Nothing was written to production.
+
+## 1. The queue, measured
+
+| What | Value |
+| --- | --- |
+| Rows / table size / ciphertext (`proto`) | 93 580 / 350 MB / 263 MB |
+| Devices / users with a queue | 558 / 199 |
+| Commits / Welcomes queued | 18 113 / 691 |
+| Oldest row | 2026-07-28 (inside the 90-day window) |
+| Rows written on 2026-10-12, before 09:00 UTC | **32 211** (2026-10-05..09: 3 676 to 6 441 a day) |
+
+These are the rows still waiting. A row is deleted when it is acknowledged, so the number of rows
+WRITTEN per day is higher than this.
+
+| Group kind | Rows | Groups | Devices | Commits |
+| --- | --- | --- | --- | --- |
+| Community key group (`distributionWorkspaceId`) | 49 616 | 13 | 316 | 9 623 |
+| DM | 28 016 | 172 | 326 | 3 495 |
+| Group conversation | 15 822 | 9 | 184 | 4 930 |
+| Salon key group | 121 | 1 | 12 | 64 |
+
+| Rows per device | Devices | Rows |
+| --- | --- | --- |
+| < 10 | 161 | 808 |
+| 10-99 | 175 | 5 478 |
+| 100-499 | 183 | 42 982 |
+| 500-1 999 | 36 | 26 625 |
+| >= 2 000 | 2 | 17 682 |
+
+| Age of row | Rows | Devices |
+| --- | --- | --- |
+| < 1 day | 41 410 | 471 |
+| 1-7 days | 24 141 | 331 |
+| 7-14 days | 13 297 | 251 |
+| 14-30 days | 12 641 | 190 |
+| > 30 days | 2 086 | 66 |
+
+## 2. The community created yesterday: `1b1687d0`
+
+The community and its key group were created on 2026-10-11 at 20:52 UTC. By 09:05 it had 93
+members (70 of them joined between 21:00 and 22:00), 112 device seats and **epoch 137**. It is
+the largest single source in the queue: **34 946 rows for 187 devices**, none older than the
+evening before.
+
+**Its commit log has no hole** (epochs 0 to 136, 137 rows). The commits per hour follow the joins:
+79 commits at 21:00, 11 at 22:00, then 1 to 15 an hour.
+
+| Committing devices | Commits |
+| --- | --- |
+| 80 devices, exactly once each (first join) | 80 |
+| 10 devices, 2 or 3 times (re-join or resync) | about 17 |
+| The admitter's browser (median 6.7 KB, epochs 4-86) | 40 |
+
+**What its queued rows are**, grouped by distinct ciphertext. The server cannot read them, so the
+categories come from the delivery class and the size:
+
+| Kind | Size | Payloads | Rows | Copies per payload | MB |
+| --- | --- | --- | --- | --- | --- |
+| application | < 1.5 KB | 704 | 21 633 | 31 | 17.2 |
+| application | 1.5-4 KB | 127 | 4 260 | 34 | 10.7 |
+| application | 4-16 KB | 88 | 2 532 | 29 | 19.0 |
+| application | >= 16 KB (seed bundles, up to 60 KB) | 93 | 3 877 | 42 | **136.1** |
+| commit | all | 130 | 2 875 | 22 | 7.2 |
+| Welcome | all | 33 | 87 | 3 | 4.0 |
+
+**The answerers are who the election rule says they should be.** Most bundles come from the
+community's lowest user ids, because `resolveAnswerer` and `requestCommunityHistory` pick the
+lowest online user id. Others come from the community's main author, who minted 45 of the 136
+salon sessions and is asked first for each of them as its sender. In both cases every device of
+that user answers (finding G of the
+[web console audit](../frontend/web-console-log-audit-2026-10-12.md)).
+
+### The 37 minutes the delivery log still holds (08:28-09:05 UTC)
+
+The delivery container restarted at 08:28, so only this window is left. The counts come from
+`[SEND] START` and `TRANSPORT_SKIPPED_OFFLINE` lines on `group=1b1687d0`:
+
+| What | Count |
+| --- | --- |
+| Application frames sent on the key group | **391** (103, 84, 82 and 114 per 10 min) |
+| ... of which transport, offline recipients dropped (requests and declines) | >= 185, from 34 devices of 29 users, at most 13 per device |
+| ... new salon sessions in the same window (one seed distribution each) | 22, for 34 salon messages |
+| ... therefore durable answers (seed bundles) | about 184 |
+| Commits | 5 |
+| Offline device deliveries skipped for transport frames | 18 628 |
+
+**About 94 % of the application frames on that key group were repair traffic** (requests plus
+answers). Only 6 % were new seeds. Each durable answer is queued for every offline seat, about 100.
+The steady rate of about 630 frames an hour lasted until the end of the window, while only 5
+members joined that hour. **So the requests do not come from joins.** Section 5 lists what is not
+proven about where they come from.
+
+## 3. Devices with no session left - the fan-out multiplier
+
+`auth_sessions."deviceId"` is the liveness evidence. A row exists while the device holds a
+refresh token. Expired rows are deleted (0 expired rows in 409). **Control:** all 61 devices that
+SENT a frame in the last two hours (35 tauri, 26 web) have a session row, so a live device without
+one was not found.
+
+| | Active seats (non-deleted groups) | No session |
+| --- | --- | --- |
+| tauri | 626 | 85 |
+| web | 1 326 | **736** |
+| all | 1 952 | **821 (42 %)** |
+
+Devices with no session hold **52 691 queue rows (56 %), 58 MB**.
+
+**Devices whose oldest row is more than 14 days old** (200 devices, 43 793 rows): 198 have no
+session. For 167 of them the owner has signed in on another device within 7 days. 13 are tauri
+phones that still hold a push token. Only 2 used a session in the last 14 days. The deepest:
+
+| Device (role) | Rows | Oldest | Session | Owner seen |
+| --- | --- | --- | --- | --- |
+| member B's old browser profile (DM `46bb1cfa`) | 9 003 | 2026-09-27 | none | today |
+| member A's old browser profile (DM `46bb1cfa`) | 8 741 | 2026-09-22 | none | today |
+| a member's old browser profile | 766 | 2026-09-20 | none | today |
+| a member's old browser profile | 530 | 2026-09-01 | none | today |
+| a member's phone | 513 | 2026-09-16 | none | today |
+
+**DM `46bb1cfa` is NOT a bench pair.** It is two real members talking: about 2 000 frames a day,
+mostly 276-byte receipts and reactions, and only 7 commits. Its 18 015 rows sit on ONE abandoned
+browser profile of each member. Each of them has a newer profile that sends, and both members were
+active today. This is the 2026-08-11 shape again
+([chat-delivery](../services/chat-delivery.md#the-answer-was-a-revocation-not-a-sweep-2026-08-11)):
+a replaced generation is still a valid fan-out target. Both queues cross
+`QUEUE_DEPTH_WARN_PER_DEVICE` (2 000), so the hourly report names them, and only a revocation
+stops it.
+
+## 4. How long a returning device takes to catch up
+
+**Two per-frame costs are measured**:
+
+- **Bulk pull:** about **0.1 s per frame** on the Mi 9T. That is WP-PENDING-1 in
+  [chat-delivery](../services/chat-delivery.md#wp-pending-1-verified-on-hardware-and-what-the-run-could-not-establish):
+  about 1 100 DM frames acknowledged in about 100 s, one checkpoint per page, 1 MB per page.
+- **Live, one frame at a time:** at least **0.35 s per frame** on the web client. The checkpoint
+  alone has a median of 348 ms (finding C of the console audit).
+
+Neither number covers a large seed bundle. Absorbing about 70 seeds and refetching the salon
+(finding B, #1761 still open) is not measured.
+
+**How fast frames arrive** for devices absent the whole week (oldest row more than 8 days old, 275
+devices), counted from rows written in the last 7 days: median **3.1 per day**, p90 **22.9**, max
+849 (the DM above).
+
+| Absent for | Rows waiting (median - p90) | Bulk drain at 0.1 s |
+| --- | --- | --- |
+| 1 day | 3 - 23 | < 3 s |
+| 7 days | 22 - 160 | 2 - 16 s |
+| 30 days | 94 - 690 | 9 - 70 s |
+| 89 days (last day of retention) | 280 - 2 040 | 28 s - 3.5 min |
+| One night offline in `1b1687d0` alone | about 360 rows, about 2 MB, 30 % of it bundles | about 40 s plus bundle absorption |
+
+**The ordinary returner is fine, and today's burst is what users felt.** Of the devices that used a
+session in the last 24 hours, 60 web devices hold a median of **244 rows** (45 of them more than
+100) and 92 tauri devices a median of 44. Only 8 of those devices have a row older than a day, so
+they are draining. Their backlog is this morning's.
+
+**An ONLINE member pays live.** They receive every one of the about 630 frames an hour one at a
+time. That is about 220 s of checkpoint an hour on the web, plus a salon refetch for every bundle
+until #1761 ships.
+
+## 5. Can a device get permanently stuck?
+
+| Path | Evidence | Verdict |
+| --- | --- | --- |
+| Commit-log hole | **11 groups, unchanged** since the 2026-09-02 incident (dated 2026-08-27..09-01; DM `7da231f8` still has its one hole at epoch 121, backlog item 21). None of them is a key group. 16 devices still have rows from before 2026-09-02 in 7 of these groups, **all 16 with no session** | Stuck only for abandoned devices. If one comes back it takes rung 2 ([recovery ladder](../protocols/mls-recovery-ladder.md)) |
+| Log floor | 208 groups in `mls_commit_log`, **none trimmed** (minimum `baseEpoch` 0 everywhere) | A replay can always start from 0 |
+| Out-of-order queue | The pull is `ORDER BY "createdAt"` and never splits rows that share a timestamp across pages | Commits and frames arrive in sending order |
+| Key group behind its server | Rung 1 replays one commit at a time; rung 2 re-joins (section 22.1 of channel-encryption). No key-group log has a hole | Bounded |
+| Seed sealed at an epoch the receiver has left | `max_past_epochs(2)` (`mls-core/src/group.rs`). With 79 commits in one hour, a sender that does not yet know about a commit can seal at a stale epoch. That frame is unreadable for good on every device (finding H: 13 epochs behind) | **Not stuck**: the repair asks again. **But it is a cost multiplier**, and it is a candidate cause of the request volume in section 2 |
+| Missing more than 2 000 generations of one sender in one epoch | `maximum_forward_distance` = 2 000 | Not reached today. **It limits fix F1** (section 7) |
+| Away for more than 90 days | The age reaper drops queued commits, but the log is not trimmed | Replay from the log |
+| The author's devices are all gone | Graine section 4.5 limit (measured 2026-09-28) | Terminal by design: `DEAD`, reported |
+
+## 6. A reaper by age within 90 days: rejected
+
+**Age alone cannot tell "replaced" from "offline".** Of the 200 devices with rows older than 14
+days, 13 are phones still holding a push token and 2 used a session within the fortnight. Deleting
+their rows by age loses messages without telling anyone, which the design forbids. The 2026-08-11
+rule applies: **revoke the destination, do not sweep the rows.**
+
+**Proposed predicate R** (an allowlist, measured, not applied). A device qualifies when all of the
+following hold:
+
+- it has **no session row** and **no push token**;
+- the same user has **another device of the same platform** that holds a **live session**;
+- that other device's key package is **newer than this device's oldest undelivered row**.
+
+| | Devices | Rows | MB | Seats | Oldest row > 14 d | Oldest row > 30 d |
+| --- | --- | --- | --- | --- | --- | --- |
+| tauri | 21 | 2 753 | 3.6 | 50 | 19 | 14 |
+| web | 144 | 33 233 | 27.9 | 480 | 84 | 29 |
+| **R** | **165** | **35 986 (38 %)** | **31.5** | **530 (27 % of seats)** | 103 | 43 |
+
+**It runs through the product's own revocation path**: `revoked_device`, plus the seats, the key
+packages and the queue, in one transaction. It is staged: R with an oldest row older than 30 days
+first (43 devices), then the queue is re-measured, then R in full.
+
+**The risk that remains:** a person goes back to an old browser after its session expired (sessions
+live 10 days at the median, 44 days at most). That browser is revoked and has to register again,
+and its history comes back from peers and from the history stream, not from its queue. **This is
+destructive, so the user's go is required** (backlog, "owed to the user").
+
+## 7. Ranked causes and the fix plan
+
+| # | Cause | Share | Fix | Expected gain | Risk |
+| --- | --- | --- | --- | --- | --- |
+| F1 | A repair ANSWER (`graineBundle`, `DELIVERY.keyMaterial`) goes to every seat of the key group and is queued for every offline one | About 47 % of key-group application frames in the window. In `1b1687d0`, roughly 28 k of 35 k rows and about 180 of 194 MB | **Target the answer**: the sender declares the requester's user id, the server delivers it to that user's devices only, and the frame stays out of the history stream | About -80 % rows and -90 % bytes on a community in its first hours. Each answer reaches 1-3 seats instead of about 100 | Non-recipients skip that sender's generations, so the 2 000 forward distance must be asserted per sender per epoch. Other members lose the seeds they used to absorb for free (B says these are mostly duplicates). Needs a server field and a client change |
+| F2 | Every device of the elected answerer answers (G) | Doubles or triples each answer for a user with 2-3 devices online | The request names an answering DEVICE, chosen from presence by device, or the answerer's devices pick the lowest online device id | Duplicates go to 0 | Low |
+| F3 | The request volume itself: 185 or more in 37 min from 34 devices, while only 22 new sessions were minted | About 47 % of key-group application frames (transport, so live only) | **Measure first**: give each `[GRAINE] asked` line the reason the session was missing (never received, past epoch, answer arrived after the epoch moved). Then remove whatever re-asks (for example a re-ask on every cold load or tab, since the asked set lives in memory) | Up to the whole 47 % | None for the measurement |
+| F4 | Replaced device generations keep their seats | 42 % of seats, 56 % of rows | Predicate R, staged, through the revoke path (section 6). Settings > Appareils connectés could also list a stale profile | About -38 % rows now. Every future fan-out drops by 27 % of seats | Destructive. A returning old browser must register again. Requires the user's go |
+| F5 | The live client pays a checkpoint per frame (C) and a salon refetch per bundle (B) | About 220 s of checkpoint per online hour on the web during a burst | B: #1761. C: already in the [backlog](../backlog.md#p2---one-encrypted-mls-checkpoint-per-inbound-application-message) | What "slow" feels like on an open client | As stated there |
+| F6 | Onboarding moves the epoch once per seat, and every commit rotates every sender's seed (22 sessions for 34 messages) | 137 commits, 9 623 queued commit rows across key groups | Admit all pending newcomers in ONE Add commit. Reopen rotate-on-Add for key groups only with the numbers above | Fewer commits and seeds during a join wave | Rotate-on-Add was a deliberate security choice (channel-encryption, Graine section) |
+| F7 | The pull orders by `createdAt` over an index without it | Minor | Index `("recipientId","deviceId","createdAt")` | Cheaper pages for 9 000-row queues | Migration only |
+
+**Order:** F3's measurement and F2 are cheap and change nothing on the wire. F1 is the large gain,
+and it is a protocol change for the server and the client. F4 waits for the user's go.
+
+## 8. The SQL that produced every number
+
+Every statement ran inside `BEGIN READ ONLY; ... ROLLBACK;` as follows:
+`ssh portail-etu-direct 'docker exec -i canari-prod-postgres-1 psql -U canari -d auth_db -X -q' < file.sql`.
+
+```sql
+-- totals
+SELECT count(*), pg_size_pretty(pg_total_relation_size('queued_message')),
+  count(DISTINCT "deviceId"), count(DISTINCT "recipientId"), sum(length(proto))/1048576,
+  min("createdAt"), count(*) FILTER (WHERE "isCommit"), count(*) FILTER (WHERE "isWelcome")
+FROM queued_message;
+
+-- by group kind
+SELECT CASE WHEN g."distributionWorkspaceId" IS NOT NULL THEN 'community-key'
+            WHEN g."distributionChannelId" IS NOT NULL THEN 'salon-key'
+            WHEN g."isGroup" THEN 'group-conv' ELSE 'dm' END kind,
+  count(*), count(DISTINCT q."groupId"), count(DISTINCT q."deviceId"), count(*) FILTER (WHERE q."isCommit")
+FROM queued_message q LEFT JOIN dm_groups g ON g.id = q."groupId" GROUP BY 1;
+
+-- distinct payloads of one group by kind and size
+WITH p AS (SELECT md5(proto) h, min("senderDeviceId") sdev, bool_or(coalesce("isCommit",false)) c,
+                  bool_or(coalesce("isWelcome",false)) w, max(length(proto)) len, count(*) copies
+           FROM queued_message WHERE "groupId" = :gid GROUP BY 1)
+SELECT CASE WHEN w THEN 'welcome' WHEN c THEN 'commit' ELSE 'app' END,
+       CASE WHEN len<1500 THEN '<1.5k' WHEN len<4000 THEN '1.5-4k' WHEN len<16000 THEN '4-16k' ELSE '>=16k' END,
+       count(*), sum(copies), sum(len::bigint*copies)/1048576
+FROM p GROUP BY 1,2;
+
+-- commit-log holes
+WITH s AS (SELECT "groupId", "baseEpoch", "createdAt",
+                  lag("baseEpoch") OVER (PARTITION BY "groupId" ORDER BY "baseEpoch") prev FROM mls_commit_log)
+SELECT "groupId", prev+1 hole_from, "baseEpoch"-1 hole_to, "createdAt" FROM s
+WHERE prev IS NOT NULL AND "baseEpoch" > prev+1;
+
+-- seats with no session (the fan-out multiplier)
+SELECT split_part(m."deviceId",'-',1), count(*),
+  count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM auth_sessions s WHERE s."deviceId" = m."deviceId"))
+FROM dm_device_group_memberships m JOIN dm_groups g ON g.id = m."groupId" AND g."deletedAt" IS NULL
+WHERE m.status = 'active' GROUP BY 1;
+
+-- control: devices that sent in the last 2 h all have a session
+WITH alive AS (SELECT DISTINCT "senderDeviceId" d FROM queued_message
+               WHERE "createdAt" > now()-interval '2 hours' AND "senderDeviceId" IS NOT NULL)
+SELECT count(*), count(*) FILTER (WHERE EXISTS (SELECT 1 FROM auth_sessions s WHERE s."deviceId" = alive.d)) FROM alive;
+
+-- inflow per absent device
+WITH qd AS (SELECT "deviceId" d, min("createdAt") oldest,
+                   count(*) FILTER (WHERE "createdAt" > now()-interval '7 days') w7 FROM queued_message GROUP BY 1)
+SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY w7/7.0), percentile_disc(0.9) WITHIN GROUP (ORDER BY w7/7.0), max(w7/7.0)
+FROM qd WHERE oldest < now()-interval '8 days';
+
+-- predicate R
+WITH qd AS (SELECT "recipientId" u, "deviceId" d, min("createdAt") oldest, count(*) n FROM queued_message GROUP BY 1,2)
+SELECT split_part(d,'-',1), count(*), sum(n) FROM qd
+WHERE NOT EXISTS (SELECT 1 FROM auth_sessions s WHERE s."deviceId" = qd.d)
+  AND NOT EXISTS (SELECT 1 FROM push_token t WHERE t."deviceId" = qd.d)
+  AND EXISTS (SELECT 1 FROM key_package k JOIN auth_sessions s ON s."deviceId" = k."deviceId"
+              WHERE k."userId" = qd.u AND k."deviceId" <> qd.d
+                AND split_part(k."deviceId",'-',1) = split_part(qd.d,'-',1)
+                AND k."createdAt" > qd.oldest)
+GROUP BY 1;
+```
+
+The log counts in section 2 came from
+`docker logs canari-prod-chat-delivery-service-1 | grep "group=1b1687d0"`, with awk counting
+`START ... isCommit=false isWelcome=false` per sender and joining `TRANSPORT_SKIPPED_OFFLINE` on
+the `[SEND][trace]` id.
+
+## First reaper pass - 2026-10-12, 09:20 UTC
+
+**The user gave the go for the first stage of F4** (2026-10-12): predicate R (section 8, unchanged)
+restricted to devices whose oldest queued row is older than 30 days. The other stage, R in full,
+still waits for its own go.
+
+**The candidates.** Section 8's R query, plus `oldest < now() - 30 days`, run read-only at 09:15:
+**43 devices** (14 tauri, 29 web), the audit's count exactly. Before anything was written, a second
+read-only query checked each one again: 0 had a session row, 0 had a push token, 0 had a queued
+row younger than 30 days, and all 43 had another device of the same user and platform with an
+unexpired session. None was already revoked, and no row of theirs was addressed to another user.
+One of them had sent a frame 24 days before; the other 42 had sent nothing for at least 59 days.
+Oldest rows: 2026-07-28 to 2026-09-11.
+
+**The mechanism is the product's own.** Each device went through `DELETE
+/api/mls/devices/:userId/:deviceId` on `chat-delivery-service` (`deleteDevice` in
+`devices.controller.ts`). That is `purgeDeviceFootprint` (memberships, the Redis routing set
+`group:members:<groupId>`, the static key package, one-time prekeys, push tokens, queued rows),
+then the `revoked_device` row, then the `device_revoked` signal. A short script inside the
+container called the route on `127.0.0.1:3010` as each device's owner, signed the way nginx signs
+it, one device at a time, and stopped on any status other than 200. One device went first and was
+checked, then the other 42. The script was deleted from the container afterwards. No SQL was
+written by hand.
+
+| What | Before | Removed | After |
+| --- | --- | --- | --- |
+| Queued rows of the 43 devices | 5 771 | **5 771** (sum of `queuedMessagesDeleted`) | 0 |
+| Seats (`dm_device_group_memberships`, all active) | 1 953 | **173** | 1 780 |
+| Redis `group:members` entries of the 43 | 173 | 173 | 0 |
+| `key_package` | 1 088 | 43 | 1 045 |
+| `one_time_key_package` | 48 276 | 122 | 48 154 |
+| `push_token` | 247 | 0 | 247 |
+| `revoked_device` | 260 | +43 | 303 |
+
+The queue total went from 117 641 to 113 567 while the pass ran, because fan-out kept writing.
+
+**Nothing else lost a row.** 288 other devices have queued rows and no session, so nothing can
+acknowledge their rows. All 288 had the same count or more afterwards. The delivery log holds 43
+`[DELETE_DEVICE]` lines, no `ERROR` line, and no `[SEND]` line naming one of the 43 after 09:21:30.
+`chat-gateway` and `core-service` logged no error in the same window. The hourly report at 09:26
+read as before: no stranded membership, no stale base, no single-holder conversation, and the same
+11 commit-log holes as section 5.
+
+**Re-measured right after.** The share of active seats with no session went from 42 % to **36 %**
+(648 of 1 785). R in full now names 126 devices and 30 751 rows. One of them crossed 30 days since
+the morning and was left alone, because it was not in the list the user approved.
+
+### The backup and how to restore it
+
+The backup is on the Portail-etu host, in `~/canari-reaper-2026-10-12/` of the operator account,
+mode `700`, files `600`. It was written at 09:18, before the pass. It holds one CSV per table,
+each filtered to the 43 `(userId, deviceId)` pairs, plus `candidates.csv` and `SHA256SUMS`:
+
+| File | Rows |
+| --- | --- |
+| `queued_message.csv` (13 MB) | 5 771 |
+| `dm_device_group_memberships.csv` | 173 |
+| `key_package.csv` | 43 |
+| `one_time_key_package.csv` | 122 |
+| `push_token.csv`, `revoked_device.csv` | 0 (header only) |
+
+**Restoring a device makes sense only if its owner really goes back to that browser and wants its
+queue.** Otherwise registering again is the designed path. To restore all of them, or one after
+filtering the CSVs by `deviceId`:
+
+```sh
+ssh portail-etu-direct
+cd ~/canari-reaper-2026-10-12 && sha256sum -c SHA256SUMS
+PSQL='docker exec -i canari-prod-postgres-1 psql -U canari -d auth_db -X -v ON_ERROR_STOP=1'
+# 1. lift the ban, or the device cannot register again
+awk -F, '{printf "DELETE FROM revoked_device WHERE \"userId\"=%c%s%c AND \"deviceId\"=%c%s%c;\n",39,$1,39,39,$2,39}' candidates.csv | $PSQL
+# 2. put the rows back
+for t in key_package one_time_key_package dm_device_group_memberships queued_message; do
+  $PSQL -c "\copy $t FROM STDIN WITH (FORMAT csv, HEADER)" < $t.csv
+done
+# 3. put the seats back in the Redis routing set (columns: id, userId, deviceId, groupId, ...)
+awk -F, 'NR>1 {print "SADD group:members:"$4" "$2":"$3}' dm_device_group_memberships.csv \
+  | docker exec -i canari-prod-redis-1 redis-cli
+```
+
+## How to re-measure
+
+Run section 8's totals, kind and seat queries again after each fix. F1 is working when a new
+community's bundles of 16 KB or more drop from about 40 copies per payload to 1-3. F4 is working
+when the no-session share of seats falls from 42 %. The daily rows written (section 1) is the line
+to watch for a regression.

@@ -88,22 +88,47 @@ export function computeSnapshot(
     };
   }
 
-  const insetBottom = Math.max(0, m.winH - m.vvHeight - m.offsetTop);
-  const delta = Math.max(baselineHeight - m.vvHeight, m.winH - m.vvHeight);
+  // A DOUBLE REPORT IS ONE KEYBOARD, NOT TWO (Android WebView, Mi 9T, 2026-10-02). For 60-100 ms of
+  // every keyboard rise the layout viewport had ALREADY given up the keyboard's room (`winH` 588 of a
+  // 945 baseline) while the visual viewport was reported 230 tall - 945 - 2 x 357: the height taken
+  // off twice. Trusted, it pinned the shell at 230 and the composer jumped 358 px up and back. A
+  // visual viewport can only be SHORTER than a layout viewport that shrank by a keyboard's worth if
+  // it is counting that keyboard again (a pan keeps `winH` full, a pinch-zoom is `scale` and bailed
+  // out above), so it is read as the layout viewport's own height.
+  const layoutGaveUpKeyboard = baselineHeight - m.winH > thresholdPx;
+  const doubleReported = layoutGaveUpKeyboard && m.winH - m.vvHeight > thresholdPx * 0.35;
+  const vvHeight = doubleReported ? m.winH : m.vvHeight;
+
+  const insetBottom = Math.max(0, m.winH - vvHeight - m.offsetTop);
+  const delta = Math.max(baselineHeight - vvHeight, m.winH - vvHeight);
   const isOpen = delta > thresholdPx;
   const layoutShrunk =
-    baselineHeight - m.winH > thresholdPx * 0.35 || m.winH - m.vvHeight > thresholdPx * 0.35;
+    baselineHeight - m.winH > thresholdPx * 0.35 || m.winH - vvHeight > thresholdPx * 0.35;
   const layoutInsetBottom = isOpen && !layoutShrunk ? insetBottom : 0;
 
   return {
     isOpen,
-    viewportHeight: m.vvHeight,
+    viewportHeight: vvHeight,
     offsetTop: m.offsetTop,
     insetBottom,
     layoutInsetBottom,
     zoomed: false,
-    keyboardHeight: isOpen ? Math.max(0, Math.round(baselineHeight - m.vvHeight)) : 0,
+    keyboardHeight: isOpen ? Math.max(0, Math.round(baselineHeight - vvHeight)) : 0,
   };
+}
+
+/**
+ * The bottom safe-area value to PIN while the keyboard is open, or null to leave the platform's own.
+ *
+ * iOS keeps `env(safe-area-inset-bottom)` at the home indicator's 34 px for ~400 ms after the
+ * keyboard opens, although the keyboard covers that strip from its first frame
+ * (`visualViewport.height` was already 543); the composer footer pads `max(0.75rem, inset)`, so it
+ * stood 22 pt too high until the inset caught up (iPhone 12, iOS 27.0.1, 2026-10-02). The settled
+ * value is 0, so pinning 0 from the first open frame changes no resting state - only the transient.
+ * Android is left alone: its inset was not measured to lag.
+ */
+export function keyboardSafeAreaBottomOverride(isOpen: boolean, os: string): string | null {
+  return isOpen && os === 'ios' ? '0px' : null;
 }
 
 /**
@@ -138,6 +163,24 @@ function readSnapshot(baselineHeight: number): KeyboardViewportSnapshot {
   );
 }
 
+const SAFE_BOTTOM_PROPERTY = '--safe-area-inset-bottom';
+
+/** The inline value the pin replaced, while one is in force. */
+let pinnedSafeBottom: { previous: string } | null = null;
+
+/** Pins `value` (or releases the pin with null), putting back whatever inline value it replaced. */
+export function pinSafeAreaBottom(root: CSSStyleDeclaration, value: string | null): void {
+  if (value && !pinnedSafeBottom) {
+    pinnedSafeBottom = { previous: root.getPropertyValue(SAFE_BOTTOM_PROPERTY) };
+    root.setProperty(SAFE_BOTTOM_PROPERTY, value);
+  } else if (!value && pinnedSafeBottom) {
+    if (pinnedSafeBottom.previous)
+      root.setProperty(SAFE_BOTTOM_PROPERTY, pinnedSafeBottom.previous);
+    else root.removeProperty(SAFE_BOTTOM_PROPERTY);
+    pinnedSafeBottom = null;
+  }
+}
+
 function applyCssVars(snapshot: KeyboardViewportSnapshot, baselineHeight: number): void {
   const root = document.documentElement.style;
   // Fix 2: only pin the shell height (in px) while the keyboard is actually open. Otherwise
@@ -148,6 +191,9 @@ function applyCssVars(snapshot: KeyboardViewportSnapshot, baselineHeight: number
   } else {
     root.removeProperty('--app-viewport-height');
   }
+  // Inline on the root, so it outranks the `:root` declaration. `app.html` already pins the same
+  // property inline outside Tauri, so what was there is put BACK on release, never just removed.
+  pinSafeAreaBottom(root, keyboardSafeAreaBottomOverride(snapshot.isOpen, detectRuntimeDeviceOs()));
   root.setProperty('--keyboard-inset-bottom', `${snapshot.insetBottom}px`);
   root.setProperty('--keyboard-layout-inset-bottom', `${snapshot.layoutInsetBottom}px`);
   root.setProperty('--visual-viewport-offset-top', `${snapshot.offsetTop}px`);
@@ -252,6 +298,7 @@ export function initKeyboardViewport(): () => void {
     window.removeEventListener('focusin', handleFocusIn, true);
     window.visualViewport?.removeEventListener('resize', update);
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
+    pinSafeAreaBottom(document.documentElement.style, null);
     document.documentElement.style.removeProperty('--keyboard-inset-bottom');
     document.documentElement.style.removeProperty('--keyboard-layout-inset-bottom');
     document.documentElement.style.removeProperty('--visual-viewport-offset-top');

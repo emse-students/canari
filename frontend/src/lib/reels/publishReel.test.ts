@@ -6,7 +6,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ANONYMOUS_POST_IDENTITY } from '$lib/posts/postComposerDraft';
 import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
+import { MediaService } from '$lib/media';
 import {
+  defaultPublishReelDeps,
   declaredReelDurationMs,
   publishCameraPhoto,
   publishReel,
@@ -197,5 +199,24 @@ describe('declaredReelDurationMs', () => {
 
   it('never declares zero', () => {
     expect(declaredReelDurationMs(0.0001, 90_000)).toBe(1);
+  });
+});
+
+/**
+ * A feed reel is uploaded `reel-pending`, never `reel`: the server sweeps a pending upload a day
+ * later unless the post's claim promotes it, so a publish that fails after its upload leaves no blob
+ * behind for ever (reels audit, 2026-10-11).
+ */
+describe('defaultPublishReelDeps', () => {
+  it('uploads the reel under the reel-pending class, which only the claim promotes', async () => {
+    const upload = vi
+      .spyOn(MediaService.prototype, 'encryptAndUpload')
+      .mockResolvedValue(ref as never);
+    const file = new File([new Uint8Array(4)], 'reel.mp4', { type: 'video/mp4' });
+
+    await defaultPublishReelDeps().upload(file, 'token', { width: 9, height: 16 });
+
+    expect(upload).toHaveBeenCalledWith(file, 'token', { width: 9, height: 16 }, 'reel-pending');
+    upload.mockRestore();
   });
 });

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   Param,
   ParseUUIDPipe,
@@ -43,21 +44,35 @@ export class SpacesController {
   }
 }
 
-/** The audience rules of an association (D19): who it addresses. Global-admin only. */
+/**
+ * The audience rules of an association (D19): who it addresses. Reading and writing are a global
+ * admin's OR a BDE star's (MANAGE_ASSO) inside its own campus - the policy is enforced in
+ * `SpacesService.getAudiencesFor` / `setAudiences`, which need the caller, so the guard is not
+ * class-wide.
+ */
 @Controller('associations/:id/audiences')
-@UseGuards(NginxAuthGuard, GlobalAdminGuard)
+@UseGuards(NginxAuthGuard)
 export class AssociationAudiencesController {
   constructor(private readonly service: SpacesService) {}
 
-  /** The rules of one association. */
+  /** The rules of one association (global admin, or a BDE star within its campus). */
   @Get()
-  get(@Param('id', ParseUUIDPipe) id: string) {
-    return this.service.getAudiences(id);
+  get(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined
+  ) {
+    return this.service.getAudiencesFor(id, { userId, isGlobalAdmin: ga === 'true' });
   }
 
-  /** Replaces the rules of one association. */
+  /** Replaces the rules of one association (global admin, or a BDE star within its campus). */
   @Put()
-  set(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetAudiencesDto) {
-    return this.service.setAudiences(id, dto.rules);
+  set(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Body() dto: SetAudiencesDto
+  ) {
+    return this.service.setAudiences(id, dto.rules, { userId, isGlobalAdmin: ga === 'true' });
   }
 }

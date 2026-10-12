@@ -1,7 +1,7 @@
 <script lang="ts">
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
-  import PageHeader from '$lib/components/layout/PageHeader.svelte';
+  import AssociationsHeader from '$lib/components/associations/AssociationsHeader.svelte';
   import { onMount } from 'svelte';
   import {
     listAssociationDirectory,
@@ -12,7 +12,7 @@
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import AssociationTile from '$lib/components/associations/AssociationTile.svelte';
-  import { ChevronDown, ListChecks } from '@lucide/svelte';
+  import { ChevronDown } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   let associations = $state<Association[]>([]);
@@ -56,37 +56,12 @@
 </script>
 
 <PageContainer width="grid">
-  <PageHeader title={m.assoc_list_heading()} subtitle={m.assoc_list_subtitle()}>
-    {#snippet actions()}
-      <a
-        href="/lists"
-        class="border-cn-border text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition-colors hover:bg-(--cn-surface)"
-      >
-        <ListChecks size={16} />
-        {m.assoc_list_lists_btn()}
-      </a>
-      <a
-        href="/institutions"
-        class="border-cn-border text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition-colors hover:bg-(--cn-surface)"
-      >
-        {m.assoc_list_institutions_btn()}
-      </a>
-      <a
-        href="/calendar"
-        class="border-cn-border text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition-colors hover:bg-(--cn-surface)"
-      >
-        {m.assoc_list_global_calendar()}
-      </a>
-      {#if canCreate}
-        <a
-          href="/associations/new"
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-sm transition-all"
-        >
-          {m.assoc_new_create_btn()}
-        </a>
-      {/if}
-    {/snippet}
-  </PageHeader>
+  <AssociationsHeader
+    section="associations"
+    title={m.assoc_list_heading()}
+    subtitle={m.assoc_list_subtitle()}
+    {canCreate}
+  />
 
   <div class="space-y-8">
     {#if loading}

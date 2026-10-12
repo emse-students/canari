@@ -67,8 +67,18 @@ describe('a session loss releases every waiting caller, not only the first', () 
     // refresh cookie server-side, and a second `goto` mid-navigation is a wasted round trip.
     expect(after).toMatch(/_sessionExpiredHandled = true;/);
     expect(after).toMatch(/await clearAuth\(\)/);
-    expect(after).toMatch(/goto\(resolve\('\/login'\)/);
+    expect(after).toMatch(/goto\(resolve\(internalPath\(loginPath\)\)/);
     expect(handlerBody.slice(0, guard)).not.toMatch(/clearAuth/);
+  });
+
+  it('reads the page the user was going to BEFORE the logout awaits, and carries it to /login', () => {
+    const target = handlerBody.indexOf('loginAfterSessionExpiry(');
+    const clear = handlerBody.indexOf('await clearAuth()');
+    expect(target).toBeGreaterThan(-1);
+    // `navigating.to` is gone once the awaited logout lets the pending navigation settle: the read
+    // after it is the bare `/login` that dropped a tapped post push (Mi 9T, 2026-10-08).
+    expect(target).toBeLessThan(clear);
+    expect(handlerBody).toMatch(/navigating\.to\?\.url/);
   });
 
   it('says so when it takes the deduplicated path, rather than returning silently', () => {

@@ -51,6 +51,9 @@ export interface FixedPopoverPosition {
  */
 const MIN_USEFUL_HEIGHT = 160;
 
+/** Default minimum viewport margin in px - callers sizing content to the room read it here. */
+export const POPOVER_MARGIN = 8;
+
 /** Computes viewport-safe fixed coordinates for a popover panel. */
 export function computeFixedPopoverPosition(
   anchor: HTMLElement,
@@ -58,7 +61,7 @@ export function computeFixedPopoverPosition(
   options: FixedPopoverLayoutOptions = {}
 ): FixedPopoverPosition {
   const offset = options.offset ?? 8;
-  const margin = options.margin ?? 8;
+  const margin = options.margin ?? POPOVER_MARGIN;
   const estimatedHeight = options.estimatedHeight ?? 360;
 
   const anchorRect = anchor.getBoundingClientRect();

@@ -21,6 +21,7 @@ describe('PostAnnounceScheduler', () => {
   type Row = Partial<Post> & { id: string };
 
   let updates: { id: string; patch: Record<string, unknown> }[];
+  let claimAffected = 1;
   let batches: Record<string, unknown>[];
   let queries: { sql: string; params?: unknown[] }[];
   let warn: jest.SpyInstance;
@@ -44,8 +45,8 @@ describe('PostAnnounceScheduler', () => {
         // waits on); its manager writes through `postRepo.update` so a test can wrap that.
         transaction: (fn: (m: unknown) => Promise<unknown>) =>
           fn({
-            update: (_entity: unknown, id: string, patch: Record<string, unknown>) =>
-              postRepo.update(id, patch),
+            update: (_entity: unknown, where: { id: string }, patch: Record<string, unknown>) =>
+              postRepo.update(where.id, patch).then(() => ({ affected: claimAffected })),
             query,
           }),
       },
@@ -90,6 +91,7 @@ describe('PostAnnounceScheduler', () => {
 
   beforeEach(() => {
     updates = [];
+    claimAffected = 1;
     batches = [];
     queries = [];
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
@@ -103,6 +105,13 @@ describe('PostAnnounceScheduler', () => {
     expect(updates).toEqual([]);
     expect(batches).toEqual([]);
     expect(log).not.toHaveBeenCalled();
+  });
+
+  it('announces nothing for a post another run already claimed (conditional stamp)', async () => {
+    claimAffected = 0;
+    const post: Row = { id: 'p1', authorId: 'a1', associationId: 'asso1', markdown: 'hello' };
+    await scheduler([post], tables({ audience: ['u1'] })).announcePosts();
+    expect(batches).toEqual([]);
   });
 
   it('stamps a post before announcing it, so a tick cannot announce it twice', async () => {

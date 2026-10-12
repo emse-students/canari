@@ -166,10 +166,6 @@ for ref_case in   "dependabot/cargo/apps/chat-gateway/redis-1.7.0|cargo"   "depe
   fi
 done
 
-echo "unrunnable paths (the version is not consulted):"
-expect_refused webrtc-ice "0.20.3" "rung 15 CALL has no runner"
-expect_refused turn "0.9.0" "the relay path is unmeasured"
-
 # -------------------------------------------------------------------------------------------------
 # What must KEEP merging on its own. Each of these left the table when its gate was written, and a
 # regression that put one back would stop a whole class of update without anybody deciding to.
@@ -178,6 +174,9 @@ echo "what the suite is evidence about:"
 expect_allowed "@nestjs/common" "12.0.1"   # released by `boot-nest-apps`, 2026-08-31
 expect_allowed "@nestjs/core" "12.0.1"
 expect_allowed typeorm "1.1.0"             # released by `app-module.boot-spec.ts`, 2026-08-31
+expect_allowed webrtc "0.17.3"             # released by `apps/call-service/tests/relay_path.rs`, 2026-10-09
+expect_allowed webrtc-ice "0.17.3"
+expect_allowed turn "0.17.3"
 expect_allowed argon2 "0.6.0"              # released by `cross_version_state.rs`, 2026-08-31
 expect_allowed aes-gcm "0.11.0"            # released by `cross_version_push.rs`
 # THE WIRE-FORMAT FAMILY, released by `mls-forward-compat.test.sh` on 2026-09-15. It had been
@@ -200,12 +199,6 @@ expect_allowed libcrux-kem "0.0.9"
 expect_allowed adminer "5.0.0"
 expect_allowed svelte "6.0.0"
 expect_allowed node "26-alpine"
-# `stripe` LEFT THE TABLE ON 2026-09-15, when the test its refusal named was written:
-# `apps/core-service/src/payment/stripe-surface.ts` pins every webhook event and every field
-# this service reads against the SDK types, which are cut against one API version, and the
-# spec beside it drives a signed fixture of each event through the production path.
-expect_allowed stripe "22.6.2"
-expect_allowed stripe "23.0.0"
 
 # The caller strips the quotes Dependabot puts around a scoped name before consulting the table; if
 # that ever regresses, `"@nestjs/common"` must not silently become an unmatched name. This asserts

@@ -30,7 +30,15 @@
               onAction: () => globalSession.clearMlsFatalError(),
               dismissible: true,
             }
-          : null
+          : error === 'restore_shortfall'
+            ? {
+                variant: 'notice' as const,
+                text: m.mls_error_restore_shortfall_text(),
+                action: m.mls_error_dismiss_action(),
+                onAction: () => globalSession.clearMlsFatalError(),
+                dismissible: true,
+              }
+            : null
   );
 </script>
 

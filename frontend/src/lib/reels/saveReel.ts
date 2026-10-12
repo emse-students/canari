@@ -7,7 +7,7 @@
  * every reel was prepared into (C3), which both Photos and Android's gallery play.
  */
 import type { MediaRef } from '$lib/media';
-import type { MyReel } from '$lib/posts/api';
+import type { PostMediaRef } from '$lib/posts/api';
 import {
   acquireDecryptedMediaBlobUrl,
   releaseDecryptedMediaBlobUrl,
@@ -38,14 +38,26 @@ const defaultDeps: SaveReelDeps = {
 };
 
 /** The file name a saved reel gets: its day and a short id, so two reels of one day differ. */
-export function reelFileName(reel: Pick<MyReel, 'id' | 'createdAt'>): string {
+export function reelFileName(reel: Pick<SaveableReel, 'id' | 'createdAt'>): string {
   const day = reel.createdAt.slice(0, 10);
   return `canari-reel-${day}-${reel.id.slice(0, 8)}.mp4`;
 }
 
-/** Saves one of the member's reels. @throws {GalleryError} when the video cannot be saved. */
+/**
+ * What a save needs of a reel: an id and a day for the file name, and `media[0]` with its key. A
+ * feed reel, one of the member's own and a reel received in a conversation all have them.
+ */
+export interface SaveableReel {
+  id: string;
+  /** ISO date; its day names the saved file. */
+  createdAt: string;
+  /** `media[0]` is the video, with its key. */
+  media: PostMediaRef[];
+}
+
+/** Saves a reel - ANY reel the member can watch, public or not. @throws {GalleryError} when it cannot be saved. */
 export async function saveReel(
-  reel: MyReel,
+  reel: SaveableReel,
   deps: SaveReelDeps = defaultDeps
 ): Promise<ReelSaveOutcome> {
   const ref = reel.media[0];

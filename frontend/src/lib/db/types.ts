@@ -2,6 +2,7 @@
 // Shared types and the IStorage interface for Canari's local message store.
 // ---------------------------------------------------------------------------
 
+import type { MediaIntent } from '$lib/media';
 import type { ConversationLifecycle, MessageReaction, ReadWatermarks } from '$lib/types';
 
 /** Lightweight metadata row for a conversation stored in the local DB (no message payload). */
@@ -130,11 +131,25 @@ export interface OutboxMediaPayload {
   placeholder?: string;
   /** Recorded by the composer rather than picked from disk - see `MediaRef.voiceNote`. */
   voiceNote?: boolean;
+  /** Declared by the sender - see `MediaRef.intent`, `durationMs` and `expiresAtMs`. */
+  intent?: MediaIntent;
+  durationMs?: number;
+  expiresAtMs?: number;
   /**
    * Raw (already client-compressed) file bytes, kept until the blob is uploaded.
    * Cleared once `uploadedRef` is set so the queue does not hold the file twice.
+   *
+   * IN MEMORY ONLY: the storage layer moves them into the outbox blob store on write and puts them
+   * back on {@link IStorage.getOutboxEntry}; they are never part of the persisted row.
    */
   fileBytes?: Uint8Array;
+  /**
+   * Where the bytes of a queued attachment live: the key of the per-entry AES-GCM blob in the
+   * outbox blob store (the blob id is the entry id). Persisted in the encrypted row; set by the
+   * storage layer, absent on a row written before blobs existed (its bytes are inline) and once the
+   * file is uploaded.
+   */
+  blob?: { keyB64: string };
   /** Set after a successful encryptAndUpload; makes the flush idempotent (no re-upload). */
   uploadedRef?: OutboxMediaUploadedRef;
 }
@@ -463,6 +478,16 @@ export interface IStorage {
   getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null>;
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
+  /**
+   * How many rows the store holds for a conversation, decrypting NONE of them.
+   *
+   * It exists for the question "is anything stored here at all", which the history replay asks of
+   * every conversation on every cold start. It used to be answered with {@link getMessages}, which
+   * decrypts the whole conversation one AES-GCM call per row to read a `length` - every message the
+   * device holds, at every cold start. A row that does not decrypt still counts: it is a store that
+   * holds something, not a store that was wiped.
+   */
+  countMessages(conversationId: string): Promise<number>;
   /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */
   getMessagesPage(
     conversationId: string,
@@ -500,8 +525,23 @@ export interface IStorage {
 
   /** Encrypt and upsert a queued outbound message. */
   saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void>;
-  /** Decrypt and return all queued entries, sorted by `sentAt` ascending (compose order). */
-  getOutboxEntries(deviceKeyB64: string): Promise<OutboxEntry[]>;
+  /**
+   * The queue as the flusher polls it: every entry sorted by `sentAt`, but a `media` entry carries
+   * its scheduling columns ONLY (`media` undefined) - its payload is the whole file, and reading
+   * the queue several times per flush must not decode it. Ask {@link getOutboxEntry} for the one
+   * entry about to be sent.
+   */
+  getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]>;
+  /**
+   * One entry with its full payload, or null when it is no longer queued. Throws
+   * `OutboxPayloadUnreadableError` when the row exists but cannot be decrypted.
+   */
+  getOutboxEntry(id: string, deviceKeyB64: string): Promise<OutboxEntry | null>;
+  /**
+   * Delete the attachment blobs no outbox row owns (a kill between a blob write and its row write
+   * leaves one). Run once per session by the outbox. Resolves with the number removed.
+   */
+  sweepOutboxBlobs(): Promise<number>;
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
   getOutboxEntriesForConversation(
     conversationId: string,

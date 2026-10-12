@@ -203,7 +203,6 @@
       <a
         href={resolve('/documents')}
         class="border-cn-border hover:border-cn-yellow flex items-start gap-4 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
-        title={m.reviewer_docs_dashboard_label()}
       >
         <span
           class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"

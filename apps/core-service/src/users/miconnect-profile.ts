@@ -92,7 +92,7 @@ export function legacyColumns(cursus: CursusEntry[]): {
 }
 
 /** The formations a cursus may name (D4): `Autre` is the one bucket for masters, doctorates, the rest. */
-export const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'Autre'] as const;
+export const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const;
 
 /** The oldest and newest entry year an edit accepts - a typo guard, not a school rule. */
 const PROMO_MIN = 1900;

@@ -13,6 +13,12 @@ import type { IStorage } from '$lib/db';
 import type { LoginErrorCode } from './loginErrors';
 import type { AddMessageToChatOptions, Conversation, MessageBatchOrigin } from '$lib/types';
 
+/**
+ * The conditions the MLS fatal-error banner can state. `restore_shortfall` is the startup restore
+ * reporting that rows it restored as active lack their MLS group (`measureRestoreShortfall`).
+ */
+export type MlsFatalErrorKind = 'oom' | 'private_mode' | 'keystore_lost' | 'restore_shortfall';
+
 /** Callbacks that useChatSession needs from the parent composable (useConversations + UI glue). Passed to login(), logout(), reconnect helpers, etc. */
 export interface ChatSessionCallbacks {
   /** Reactive map of all open conversations, keyed by conversation ID. */
@@ -192,7 +198,7 @@ export interface SessionContext {
   getCallService(): any;
 
   // ── MLS errors ─────────────────────────────────────────────────────────────
-  setMlsFatalError(v: 'oom' | 'private_mode' | 'keystore_lost' | null): void;
+  setMlsFatalError(v: MlsFatalErrorKind | null): void;
 
   /**
    * Mutable timers in a boxed object so sub-modules can mutate them without

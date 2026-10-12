@@ -17,7 +17,7 @@ prepareVideoForUpload(source: Blob, {
 }): Promise<PreparedVideo>      // { file, width, height, durationSeconds, sourceBytes, outputBytes }
 ```
 
-- **Any source**: Android's `MediaRecorder` WebM (VP8/VP9 + Opus), iOS's MP4/MOV (H.264 or HEVC +
+- **Any source**: Android's `MediaRecorder` WebM (H.264, else VP8/VP9, + Opus), iOS's MP4/MOV (H.264 or HEVC +
   AAC), a gallery file of either. A caller passes the recorder's `Blob` or the picked `File` as is.
 - **What comes back is what is uploaded**: hand `file` to `MediaService.encryptAndUpload`, and
   `width`/`height` to it as the dimensions (the rotation is already applied).

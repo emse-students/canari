@@ -11,6 +11,7 @@
     defaultAgendaSelection,
     EMPTY_AGENDA_SELECTION,
     isAgendaSelected,
+    type AgendaReader,
     type AgendaSelection,
   } from '$lib/calendar/agendaSelection';
   import { Log } from '$lib/utils/Log';
@@ -63,6 +64,8 @@
    * One association's sheet needs none: the association IS the selection.
    */
   let selection = $state<AgendaSelection>(EMPTY_AGENDA_SELECTION);
+  /** Whose own campus and formations the selector offers (and nothing else, user 2026-10-06). */
+  let reader = $state<AgendaReader | null>(null);
 
   function selectionChanged(next: AgendaSelection) {
     selection = next;
@@ -197,7 +200,8 @@
       if (!isNaN(d.getTime())) focusDate = d;
     }
     try {
-      selection = defaultAgendaSelection(await fetchMyProfile());
+      reader = await fetchMyProfile();
+      selection = defaultAgendaSelection(reader);
     } catch (err) {
       Log.d('calendar.export: profile unavailable, the selection stays a required choice', err);
     }
@@ -244,7 +248,7 @@
           class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-5 shadow-sm lg:sticky lg:top-4"
         >
           {#if !filterAssociationId}
-            <AgendaSelectionFields {selection} onChange={selectionChanged} />
+            <AgendaSelectionFields {selection} {reader} onChange={selectionChanged} />
             <hr class="border-cn-border/60" />
           {/if}
 

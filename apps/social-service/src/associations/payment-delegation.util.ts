@@ -5,7 +5,7 @@ import type { Association } from './entities/association.entity';
 import { coreUrl } from '../internal/service-urls';
 
 /** Mirrors core-service's PaymentProviderId - no shared lib crosses this service boundary. */
-export type PaymentProviderId = 'stripe' | 'lydia' | 'disabled';
+export type PaymentProviderId = 'lydia' | 'disabled';
 
 /** The message every refusal carries when the platform declares payments disabled. */
 export const PAYMENTS_DISABLED_MESSAGE = 'Payments are disabled on this platform';
@@ -17,16 +17,15 @@ const logger = new Logger('PaymentDelegation');
  * an APPROVED parent-payment delegation. When an association delegates to an approved parent, the
  * parent's account both receives the funds and defines whether payments can be taken at all;
  * otherwise the association's own account is used. A platform that declares payments `disabled`
- * resolves to NOT ready with no account id, delegated or not (fail closed). Resolved against ONE provider at a time - the
- * platform's currently active one - since Stripe and Lydia each keep their own account id and
- * onboarding flag on `Association` and are never both "the" destination simultaneously.
+ * resolves to NOT ready with no account id, delegated or not (fail closed). Resolved against the platform's active
+ * provider (Lydia, or `disabled`); the `stripe*` columns on `Association` are historic and never read.
  */
 export interface PaymentTarget {
   /** Association whose account funds land in (this association, or its parent). */
   targetAssociationId: string;
   /** Which provider this target was resolved against. */
   provider: PaymentProviderId;
-  /** Connect-style account id for that provider (Stripe `acct_...` or Lydia `vendor_token`). Null when none linked. */
+  /** Connect-style account id for that provider (the Lydia `vendor_token`). Null when none linked. */
   connectAccountId: string | null;
   /** True when the resolved target has completed onboarding AND has a linked account, for `provider`. */
   ready: boolean;
@@ -41,17 +40,12 @@ export function isDelegating(
   return asso.paymentDelegationStatus === 'approved' && !!asso.paymentParentAssociationId;
 }
 
-/** Reads the account id + onboarding flag for one provider off an association row. */
-function accountFor(
-  asso: Pick<
-    Association,
-    'stripeAccountId' | 'stripeOnboardingComplete' | 'lydiaAccountId' | 'lydiaOnboardingComplete'
-  >,
-  provider: PaymentProviderId
-): { accountId: string | null; complete: boolean } {
-  return provider === 'lydia'
-    ? { accountId: asso.lydiaAccountId, complete: asso.lydiaOnboardingComplete }
-    : { accountId: asso.stripeAccountId, complete: asso.stripeOnboardingComplete };
+/** Reads the Lydia account id + onboarding flag off an association row. */
+function accountFor(asso: Pick<Association, 'lydiaAccountId' | 'lydiaOnboardingComplete'>): {
+  accountId: string | null;
+  complete: boolean;
+} {
+  return { accountId: asso.lydiaAccountId, complete: asso.lydiaOnboardingComplete };
 }
 
 /**
@@ -90,7 +84,7 @@ export function resolvePaymentTarget(
         delegated: true,
       };
     }
-    const { accountId, complete } = accountFor(parent, provider);
+    const { accountId, complete } = accountFor(parent);
     return {
       targetAssociationId: parent.id,
       provider,
@@ -99,7 +93,7 @@ export function resolvePaymentTarget(
       delegated: true,
     };
   }
-  const { accountId, complete } = accountFor(asso, provider);
+  const { accountId, complete } = accountFor(asso);
   return {
     targetAssociationId: asso.id,
     provider,
@@ -122,9 +116,10 @@ export async function fetchActivePaymentProvider(
   const { data } = await firstValueFrom(
     httpService.get<{ provider: PaymentProviderId }>(coreUrl('payments/provider'))
   );
-  // The REAL value: mapping an unknown answer to 'stripe' would route a disabled platform to
-  // Stripe. A value this service does not know is an error, never a guess.
-  if (data.provider === 'stripe' || data.provider === 'lydia' || data.provider === 'disabled') {
+  // The REAL value: mapping an unknown answer to 'lydia' would route a disabled platform to
+  // Lydia. A value this service does not know (the retired 'stripe' included) is an error, never a
+  // guess.
+  if (data.provider === 'lydia' || data.provider === 'disabled') {
     return data.provider;
   }
   logger.error(`fetchActivePaymentProvider: unknown provider ${JSON.stringify(data.provider)}`);

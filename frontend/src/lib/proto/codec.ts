@@ -13,6 +13,7 @@
  */
 
 import { canari } from './canari.js';
+import type { MediaRef } from '$lib/media';
 import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 
@@ -93,6 +94,46 @@ export function mediaPlaceholderProtoField(placeholder?: string): { placeholder?
 /** A `MediaMsg.placeholder` as the `MediaRef` carries it: base64, or absent for none. */
 export function mediaPlaceholderFromProto(placeholder?: Uint8Array | null): string | undefined {
   return placeholder && placeholder.length > 0 ? toBase64(placeholder) : undefined;
+}
+
+/** The declaration fields of a `MediaRef` that `MediaMsg` fields 14-16 carry. */
+type MediaReelDeclaration = Pick<MediaRef, 'intent' | 'durationMs' | 'expiresAtMs'>;
+
+/**
+ * The `MediaMsg` fields (`intent`, `duration_ms`, `expires_at_ms`) for a ref's declaration, to
+ * spread into `mkMedia` - each written ONLY when set, so an ordinary attachment encodes byte for
+ * byte as it did before the fields existed.
+ */
+export function mediaReelProtoFields(ref: MediaReelDeclaration): {
+  intent?: number;
+  durationMs?: number;
+  expiresAtMs?: number;
+} {
+  return {
+    ...(ref.intent === 'reel-message'
+      ? { intent: canari.MediaIntent.MEDIA_INTENT_REEL_MESSAGE }
+      : {}),
+    ...(ref.durationMs && ref.durationMs > 0 ? { durationMs: Math.round(ref.durationMs) } : {}),
+    ...(ref.expiresAtMs && ref.expiresAtMs > 0 ? { expiresAtMs: Math.round(ref.expiresAtMs) } : {}),
+  };
+}
+
+/**
+ * The declaration of a decoded `MediaMsg`, as the `MediaRef` carries it. A proto3 absent field reads
+ * as 0, and 0 is "not declared": only a positive value reaches the ref. **An intent VALUE this
+ * client does not know is read as an ordinary attachment**, never as an error - a newer writer's
+ * mode must degrade to "a video".
+ */
+export function mediaReelFromProto(media: IMediaMsg): MediaReelDeclaration {
+  const duration = Number(media.durationMs ?? 0);
+  const expires = Number(media.expiresAtMs ?? 0);
+  return {
+    ...(media.intent === canari.MediaIntent.MEDIA_INTENT_REEL_MESSAGE
+      ? { intent: 'reel-message' as const }
+      : {}),
+    ...(duration > 0 ? { durationMs: duration } : {}),
+    ...(expires > 0 ? { expiresAtMs: expires } : {}),
+  };
 }
 
 // ─── Transport layer ──────────────────────────────────────────────────────────

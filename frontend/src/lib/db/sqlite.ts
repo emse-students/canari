@@ -20,10 +20,22 @@ import type {
   StoredMessagePatch,
 } from './types';
 import {
+  attachOutboxBlob,
+  clearOutboxBlobsLast,
+  deleteOutboxBlobQuietly,
+  OutboxBlobStore,
+  outboxBlobReleased,
+  writeOutboxWithBlob,
+} from './outboxBlob';
+import { appendLog } from '$lib/utils/sessionLog';
+import {
   decodeOutboxEntry,
   encodeOutboxSensitive,
+  isOutboxClearPatch,
   mergeOutboxEntry,
+  OutboxPayloadUnreadableError,
   outboxClearColumns,
+  type OutboxClearColumns,
 } from './outboxCodec';
 import type { GraineClearColumns } from './graineCodec';
 import {
@@ -33,6 +45,7 @@ import {
   graineClearColumns,
   toEncryptedGraineRow,
 } from './graineCodec';
+import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { SCHEMA_VERSION, isFreshDatabase, legacyBlobPurgeStatement } from './sqliteMigrations';
 import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
 import { MESSAGE_ROWS_PER_STATEMENT, chunk, messageInsertSql } from './sqliteBatch';
@@ -54,11 +67,7 @@ function rowTimestampMs(raw: unknown): number {
 // ---------------------------------------------------------------------------
 
 /** Encode a binary buffer as a base64 string for safe storage in SQLite TEXT columns. */
-function uint8ToBase64(arr: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-  return btoa(binary);
-}
+const uint8ToBase64 = toBase64;
 
 /** Decode a base64 string (or legacy number array) back to a Uint8Array; returns an empty array on failure. */
 function base64ToUint8(val: unknown): Uint8Array {
@@ -66,7 +75,7 @@ function base64ToUint8(val: unknown): Uint8Array {
   // New format: base64-encoded string
   if (typeof val === 'string') {
     try {
-      return Uint8Array.from(atob(val), (c) => c.charCodeAt(0));
+      return fromBase64(val);
     } catch {
       return new Uint8Array(0);
     }
@@ -86,10 +95,13 @@ function base64ToUint8(val: unknown): Uint8Array {
 export class SqliteStorage implements IStorage {
   private db: any = null;
   private readonly dbPath: string;
+  /** The bytes of queued attachments: IndexedDB, never the SQL bridge (see outboxBlob.ts). */
+  private readonly blobs: OutboxBlobStore;
 
   /** Create a storage instance for the given user. Call init() before using. */
   constructor(userId: string) {
     this.dbPath = `sqlite:canari_${userId}.db`;
+    this.blobs = new OutboxBlobStore(userId);
   }
 
   /** Whether the SQLite handle is open. See {@link IStorage.isOpen}. */
@@ -109,6 +121,7 @@ export class SqliteStorage implements IStorage {
       console.warn('[DB] SQLite close failed:', e);
     }
     this.db = null;
+    await this.blobs.close();
   }
 
   async init(): Promise<void> {
@@ -576,6 +589,15 @@ export class SqliteStorage implements IStorage {
     return results;
   }
 
+  /** Rows held for `conversationId`, counted on `idx_messages_conv` - nothing is decrypted. */
+  async countMessages(conversationId: string): Promise<number> {
+    const rows: Array<{ n: number }> = await this.db.select(
+      'SELECT COUNT(*) AS n FROM messages WHERE conversation_id = $1',
+      [conversationId]
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+
   /**
    * Decrypt and return a paginated slice of messages using a server-side LIMIT clause.
    * Rows are fetched in descending timestamp order (most recent first) then re-sorted
@@ -695,24 +717,26 @@ export class SqliteStorage implements IStorage {
       const iv = base64ToUint8(row.iv);
       const cipherText = base64ToUint8(row.cipher_text);
       const payload = await decryptData(cipherText, iv, deviceKeyB64);
-      return decodeOutboxEntry(
-        {
-          id: row.id,
-          conversationId: row.conversation_id,
-          sentAt: rowTimestampMs(row.sent_at),
-          kind: row.kind,
-          status: row.status,
-          attempts: typeof row.attempts === 'number' ? row.attempts : 0,
-          lastAttemptAt: row.last_attempt_at ?? undefined,
-          nextAttemptAt: row.next_attempt_at ?? undefined,
-          createdAt: rowTimestampMs(row.created_at),
-        },
-        payload
-      );
+      return decodeOutboxEntry(this.outboxClearOf(row), payload);
     } catch {
       console.warn('Failed to decrypt outbox row', row.id);
       return null;
     }
+  }
+
+  /** The clear columns of an outbox row. */
+  private outboxClearOf(row: any): OutboxClearColumns {
+    return {
+      id: row.id,
+      conversationId: row.conversation_id,
+      sentAt: rowTimestampMs(row.sent_at),
+      kind: row.kind,
+      status: row.status,
+      attempts: typeof row.attempts === 'number' ? row.attempts : 0,
+      lastAttemptAt: row.last_attempt_at ?? undefined,
+      nextAttemptAt: row.next_attempt_at ?? undefined,
+      createdAt: rowTimestampMs(row.created_at),
+    };
   }
 
   /** Encrypt the sensitive payload and upsert a queued outbound message. */
@@ -741,38 +765,34 @@ export class SqliteStorage implements IStorage {
     await this.saveMessages([msg], deviceKeyB64);
   }
 
+  /**
+   * Upsert a queued entry. An attachment's bytes go to the blob store FIRST and the row, holding
+   * only the blob's key, SECOND - so a row without its blob is a typed failure at flush time and a
+   * blob without its row is garbage {@link sweepOutboxBlobs} removes.
+   */
   async saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void> {
-    const encrypted = await encryptData(encodeOutboxSensitive(entry), deviceKeyB64);
-    const c = outboxClearColumns(entry);
-    await this.db.execute(
-      `INSERT OR REPLACE INTO outbox
+    await writeOutboxWithBlob(this.blobs, entry, async (blobKeyB64) => {
+      const encrypted = await encryptData(encodeOutboxSensitive(entry, blobKeyB64), deviceKeyB64);
+      const c = outboxClearColumns(entry);
+      await this.db.execute(
+        `INSERT OR REPLACE INTO outbox
          (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, created_at, iv, cipher_text)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [
-        c.id,
-        c.conversationId,
-        c.sentAt,
-        c.kind,
-        c.status,
-        c.attempts,
-        c.lastAttemptAt ?? null,
-        c.nextAttemptAt ?? null,
-        c.createdAt,
-        uint8ToBase64(encrypted.iv),
-        uint8ToBase64(encrypted.cipherText),
-      ]
-    );
-  }
-
-  /** Decrypt and return all queued entries, sorted by `sentAt` ascending. */
-  async getOutboxEntries(deviceKeyB64: string): Promise<OutboxEntry[]> {
-    const rows: any[] = await this.db.select('SELECT * FROM outbox ORDER BY sent_at ASC');
-    const out: OutboxEntry[] = [];
-    for (const row of rows) {
-      const entry = await this.decodeOutboxRow(row, deviceKeyB64);
-      if (entry) out.push(entry);
-    }
-    return out;
+        [
+          c.id,
+          c.conversationId,
+          c.sentAt,
+          c.kind,
+          c.status,
+          c.attempts,
+          c.lastAttemptAt ?? null,
+          c.nextAttemptAt ?? null,
+          c.createdAt,
+          uint8ToBase64(encrypted.iv),
+          uint8ToBase64(encrypted.cipherText),
+        ]
+      );
+    });
   }
 
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
@@ -792,22 +812,114 @@ export class SqliteStorage implements IStorage {
     return out;
   }
 
+  /**
+   * The queue as the flusher reads it - several times per flush. A media row comes back with its
+   * clear columns ONLY: its ciphertext column is not even selected, so the file neither crosses the
+   * SQL bridge nor is decrypted until {@link getOutboxEntry} is asked for that one entry.
+   */
+  async getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]> {
+    const rows: any[] = await this.db.select(
+      `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, created_at,
+         CASE WHEN kind = 'media' THEN NULL ELSE iv END AS iv,
+         CASE WHEN kind = 'media' THEN NULL ELSE cipher_text END AS cipher_text
+       FROM outbox ORDER BY sent_at ASC, id ASC`
+    );
+    const out: OutboxEntry[] = [];
+    for (const row of rows) {
+      const entry =
+        row.kind === 'media'
+          ? decodeOutboxEntry(this.outboxClearOf(row), undefined)
+          : await this.decodeOutboxRow(row, deviceKeyB64);
+      if (entry) out.push(entry);
+    }
+    return out;
+  }
+
+  /** One entry with its full payload, or null when not queued. Throws {@link OutboxPayloadUnreadableError}. */
+  async getOutboxEntry(id: string, deviceKeyB64: string): Promise<OutboxEntry | null> {
+    const rows: any[] = await this.db.select('SELECT * FROM outbox WHERE id = $1', [id]);
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    let entry: OutboxEntry;
+    try {
+      const payload = await decryptData(
+        base64ToUint8(row.cipher_text),
+        base64ToUint8(row.iv),
+        deviceKeyB64
+      );
+      entry = decodeOutboxEntry(this.outboxClearOf(row), payload);
+    } catch (e) {
+      throw new OutboxPayloadUnreadableError(id, e);
+    }
+    return attachOutboxBlob(this.blobs, entry, async () => {
+      const again: any[] = await this.db.select('SELECT id FROM outbox WHERE id = $1', [id]);
+      return again.length > 0;
+    });
+  }
+
   /** Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent. */
   async updateOutboxEntry(
     id: string,
     patch: Partial<OutboxEntry>,
     deviceKeyB64: string
   ): Promise<void> {
+    if (isOutboxClearPatch(patch)) {
+      // A retry only moves the clear scheduling columns. Decoding the row and writing it back
+      // re-encrypts the whole payload - file bytes included - for a change that never touches it:
+      // measured on a Pixel 6a (2026-10-10), the renderer swung from 160 MB to 1.4 GB and the
+      // INSERT took 1.5 s on EVERY backoff of one queued media entry.
+      await this.db.execute(
+        `UPDATE outbox SET status = COALESCE($2, status), attempts = COALESCE($3, attempts),
+           last_attempt_at = COALESCE($4, last_attempt_at), next_attempt_at = COALESCE($5, next_attempt_at)
+         WHERE id = $1`,
+        [
+          id,
+          patch.status ?? null,
+          patch.attempts ?? null,
+          patch.lastAttemptAt ?? null,
+          patch.nextAttemptAt ?? null,
+        ]
+      );
+      return;
+    }
     const rows: any[] = await this.db.select('SELECT * FROM outbox WHERE id = $1', [id]);
     if (rows.length === 0) return;
     const entry = await this.decodeOutboxRow(rows[0], deviceKeyB64);
     if (!entry) return;
-    await this.saveOutboxEntry(mergeOutboxEntry(entry, patch), deviceKeyB64);
+    // The row read above is the small one: a blob-format row carries a key, not the file, so the
+    // post-upload patch (uploadedRef, fileBytes dropped) rewrites ~1 KB and never the attachment.
+    const merged = mergeOutboxEntry(entry, patch);
+    await this.saveOutboxEntry(merged, deviceKeyB64);
+    if (outboxBlobReleased(merged)) await deleteOutboxBlobQuietly(this.blobs, id);
   }
 
-  /** Remove a queued entry (after a confirmed send or a permanent failure). */
+  /**
+   * Remove a queued entry (after a confirmed send or a permanent failure), and its blob. The row
+   * goes first: a kill between the two leaves a blob with no row, which the boot sweep removes.
+   */
   async deleteOutboxEntry(id: string): Promise<void> {
+    // The kind only decides whether a blob may exist, so its read must never be what fails a
+    // cancel: unreadable, the blob is deleted anyway (absent is success).
+    let kind: string | undefined = 'unknown';
+    try {
+      const rows: any[] = await this.db.select('SELECT kind FROM outbox WHERE id = $1', [id]);
+      kind = rows[0]?.kind;
+    } catch (e) {
+      appendLog(
+        `[DB] outbox ${id}: kind not readable before delete, blob deleted too: ${String(e)}`
+      );
+    }
     await this.db.execute('DELETE FROM outbox WHERE id = $1', [id]);
+    if (kind === 'media' || kind === 'unknown') await deleteOutboxBlobQuietly(this.blobs, id);
+  }
+
+  /** See {@link IStorage.sweepOutboxBlobs}. */
+  async sweepOutboxBlobs(): Promise<number> {
+    const removed = await this.blobs.sweep(async () => {
+      const rows: any[] = await this.db.select('SELECT id FROM outbox');
+      return rows.map((r) => String(r.id));
+    });
+    return removed.length;
   }
 
   // -- Pending group exits -------------------------------------------------
@@ -1025,7 +1137,11 @@ export class SqliteStorage implements IStorage {
 
   // -- Misc ----------------------------------------------------------------
 
-  /** Delete every row from the messages, conversations, outbox and graine tables (account reset / testing). */
+  /**
+   * Delete every row from the messages, conversations, outbox, graine, owed-exit and distribution
+   * tables, then the outbox blob store (account reset / testing). Rejects with
+   * `OutboxBlobClearError` when only the blob store failed - every table is empty by then.
+   */
   async clear(): Promise<void> {
     invalidateAllHistoryStateKeys();
     await this.db.execute('DELETE FROM messages');
@@ -1037,5 +1153,8 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM pending_group_exits');
     // The seeds go with the reset, so the classification that routes to them goes too.
     await this.db.execute('DELETE FROM distribution_groups');
+    // LAST, and only once every row above is gone: a separate database that may refuse to open
+    // must not be able to skip the deletes of the seeds (see `clearOutboxBlobsLast`).
+    await clearOutboxBlobsLast(this.blobs);
   }
 }

@@ -247,7 +247,7 @@ export class CreateFormDto {
   @IsOptional()
   allowMultipleSubmissions?: boolean;
 
-  /** Whether cash (physical) payment is accepted alongside Stripe. */
+  /** Whether cash (physical) payment is accepted alongside the online payment. */
   @IsBoolean()
   @IsOptional()
   allowCashPayment?: boolean;
@@ -301,9 +301,13 @@ export class SubmitFormDto {
   @IsOptional()
   cancelUrl?: string;
 
-  /** `stripe` (default) or `cash` (when the form allows it). */
+  /**
+   * `online` (default) or `cash` (when the form allows it). `stripe` is the retired spelling of
+   * `online`, still sent by clients older than the Stripe removal: it is accepted and means
+   * online (docs/wiki/legacy-compatibility.md).
+   */
   @IsString()
-  @IsIn(['stripe', 'cash'])
+  @IsIn(['online', 'stripe', 'cash'])
   @IsOptional()
   paymentMethod?: string;
 }

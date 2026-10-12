@@ -31,7 +31,12 @@ vi.mock('$lib/utils/chat/channelCrypto', () => {
     })),
     UnreadableRowTally: class {
       report() {}
+      // Every row decodes here, so no row is ever dropped and no older-messages notice is added.
+      rowsOf() {
+        return [];
+      }
     },
+    V1_SESSION_NOT_HELD: 'v1 session not held',
   };
 });
 
@@ -115,6 +120,19 @@ describe('salon history cache - stale by event, never by clock', () => {
 
     expect(listMessages).toHaveBeenCalledTimes(2);
     expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it("a load takes the reader's own mark from the server, not from a belief restored from disk", async () => {
+    // A mark advanced locally and never delivered used to survive every load (max-merge), so the
+    // receipt effect never saw reading move it and never posted it (#infos, 2026-10-09).
+    localStorage.clear();
+    listReadMarks.mockResolvedValue({ u1: 500, peer: 700 });
+    const convs = useConversations();
+    convs.conversations.set(SALON, { ...salon(), readWatermarks: { u1: 9_000 } });
+
+    await convs.loadHistoryForConversation(SALON, SALON, makeCtx());
+
+    expect(convs.conversations.get(SALON)?.readWatermarks).toEqual({ u1: 500, peer: 700 });
   });
 
   it('reloads nothing on reconnect when no salon is open', async () => {

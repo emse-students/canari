@@ -37,6 +37,7 @@
     isBelowMinClientVersion,
   } from '$lib/stores/appVersionCheck.svelte';
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
+  import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
   import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -61,6 +62,7 @@
     type SwipeNavGestureState,
   } from '$lib/utils/swipeNavigation';
   import { onTouchGestureEnd } from '$lib/utils/touchGestureEnd';
+  import { installPressedClickGuard } from '$lib/utils/pressedClickGuard';
   import { claimTouchMove } from '$lib/utils/touchClaim';
   import { hasActiveTextSelection, onTextSelectionActive } from '$lib/utils/textSelection';
   import { onViewportChange, SWIPE_NAV_QUERY } from '$lib/utils/viewport';
@@ -128,6 +130,8 @@
   });
 
   onMount(() => {
+    // A click goes to the component the press began on, never to what a layout change put under it.
+    const disposePressedClickGuard = installPressedClickGuard();
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
@@ -163,6 +167,7 @@
     });
 
     return () => {
+      disposePressedClickGuard();
       teardownHistory();
       teardownKeyboard();
       window.removeEventListener('focus', onVersionCheckTrigger);
@@ -596,6 +601,7 @@
 <a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
 
 <PlatformGateOverlay />
+<IdentitySplitOverlay />
 
 <!-- The swipe gesture's touch listeners are bound to this node in script, and only on a screen that
      can swipe - see the effect above. They are deliberately NOT `ontouch*` attributes: those bind

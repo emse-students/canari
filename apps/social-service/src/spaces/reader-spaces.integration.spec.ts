@@ -53,6 +53,11 @@ const MIGRATION_074 = readFileSync(
   join(__dirname, '..', 'migrations', '074_coorganise.sql'),
   'utf8'
 );
+// Nominative read grants (WP7): the feed gate and the read predicates read `read_grants`.
+const MIGRATION_078 = readFileSync(
+  join(__dirname, '..', 'migrations', '078_read_grants.sql'),
+  'utf8'
+);
 
 /** The cast. Ids are readable on purpose: a failure names a person, not a uuid. */
 const USERS = {
@@ -193,6 +198,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     await client.query(MIGRATION_072);
     await client.query(MIGRATION_073);
     await client.query(MIGRATION_074);
+    await client.query(MIGRATION_078);
     // A3 is created after 071, so it has no rule: it reaches its members and nobody else.
     await client.query(`INSERT INTO associations (id, name) VALUES ($1, 'A3')`, [A3]);
     // Then the grid: A2 addresses the whole Gardanne campus instead.
@@ -547,6 +553,43 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     } finally {
       await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [created]);
       await client.query(`DELETE FROM associations WHERE id = $1`, [created]);
+    }
+  });
+
+  it('a change of audience applies to a POST ALREADY PUBLISHED: visibility follows the current rule (decision 4)', async () => {
+    const post = '00000000-0000-4000-8000-0000000000b1';
+    await client.query(
+      `INSERT INTO posts (id, "authorId", "associationId") VALUES ($1, 'staff', $2)`,
+      [post, A1]
+    );
+    const seenBy = async () => {
+      const seen: string[] = [];
+      for (const id of ['icmSe', 'isminGa']) {
+        const { rows } = await client.query(
+          `SELECT ${postVisibleToViewerSql('p', '$1')} AS v FROM posts p WHERE p.id = $2`,
+          [id, post]
+        );
+        if (rows[0].v === true) seen.push(id);
+      }
+      return seen;
+    };
+    try {
+      // A1 addresses ICM x saint-etienne: only the ICM student of Saint-Etienne reads it.
+      expect(await seenBy()).toEqual(['icmSe']);
+      // The audience moves to Gardanne: the SAME stored post now reaches the other reader instead.
+      await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A1]);
+      await client.query(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, 'gardanne')`,
+        [A1]
+      );
+      expect(await seenBy()).toEqual(['isminGa']);
+    } finally {
+      await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A1]);
+      await client.query(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', 'saint-etienne')`,
+        [A1]
+      );
+      await client.query(`DELETE FROM posts WHERE id = $1`, [post]);
     }
   });
 

@@ -3,35 +3,56 @@ import { PaymentController, SESSION_ID_RE } from './payment.controller';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import type { PaymentService } from './payment.service';
-import type { UsersService } from '../users/users.service';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 describe('SESSION_ID_RE', () => {
-  it('accepts a Stripe checkout session id', () => {
-    expect(SESSION_ID_RE.test('cs_test_a1B2c3')).toBe(true);
-  });
-
-  it('accepts a Lydia request_uuid (retrieveSession() routes to whichever provider issued it)', () => {
+  it('accepts a Lydia request_uuid', () => {
     expect(SESSION_ID_RE.test('11111111-1111-1111-1111-111111111111')).toBe(true);
   });
 
   it('rejects garbage', () => {
     expect(SESSION_ID_RE.test('not-a-session-id')).toBe(false);
     expect(SESSION_ID_RE.test('')).toBe(false);
+    // The Stripe-era `cs_...` id is no longer a session this service can have issued.
+    expect(SESSION_ID_RE.test('cs_test_a1B2c3')).toBe(false);
   });
 });
 
 describe('PaymentController.createCheckout', () => {
+  const SECRET = 'internal-secret-for-test';
+  beforeAll(() => {
+    process.env.INTERNAL_SECRET = SECRET;
+  });
+
+  /** The controller as social-service reaches it: every call carries the internal secret. */
   function makeController(createCheckoutSession: jest.Mock) {
     const paymentService = {
       isConfigured: jest.fn().mockResolvedValue(true),
       createCheckoutSession,
     } as unknown as PaymentService;
-    const usersService = {} as UsersService;
-    return new PaymentController(paymentService, usersService);
+    const controller = new PaymentController(paymentService);
+    const createCheckout = controller.createCheckout.bind(controller);
+    return Object.assign(controller, {
+      createCheckout: (body: Parameters<typeof createCheckout>[0]) => createCheckout(body, SECRET),
+    });
   }
+
+  it.each([[undefined], ['wrong-secret']])(
+    'refuses a caller whose internal secret is %s, before any provider call',
+    async (secret) => {
+      const createCheckoutSession = jest.fn();
+      const controller = new PaymentController({
+        isConfigured: jest.fn().mockResolvedValue(true),
+        createCheckoutSession,
+      } as unknown as PaymentService);
+      await expect(
+        controller.createCheckout({ lineItems: [], successUrl: 's', cancelUrl: 'c' }, secret)
+      ).rejects.toThrow('Forbidden');
+      expect(createCheckoutSession).not.toHaveBeenCalled();
+    }
+  );
 
   it('forwards idempotencyKey to PaymentService.createCheckoutSession', async () => {
     const createCheckoutSession = jest
@@ -51,7 +72,7 @@ describe('PaymentController.createCheckout', () => {
     );
   });
 
-  it('omits idempotencyKey when the caller does not send one (unchanged Stripe behavior)', async () => {
+  it('omits idempotencyKey when the caller does not send one (unchanged behavior)', async () => {
     const createCheckoutSession = jest
       .fn()
       .mockResolvedValue({ id: 'sess-1', url: 'https://example/checkout' });
@@ -127,11 +148,13 @@ describe('PaymentController.createCheckout', () => {
  *
  * Sixteen nginx locations carry `auth_request /internal/auth/verify`, and that sub-request answers
  * 200 for a logged-OUT caller too - it IDENTIFIES, it never refuses. So a payments route with no
- * guard is reachable by anybody, which is how four of them reached a LIVE Stripe account on
- * 2026-09-10. The guard is the only thing standing between the two facts, so its presence is
- * asserted here rather than assumed from a decorator being visible in a diff.
+ * guard is reachable by anybody, which is how four of them reached a LIVE payment account on
+ * 2026-09-10 (Stripe, then; the processor has since left). The guard is the only thing standing
+ * between the two facts, so its presence is asserted here rather than assumed from a decorator being visible in a diff.
  */
 describe('PaymentController - every money route is guarded', () => {
+  // `createCheckout` is not here on purpose: social-service calls it past nginx, so it checks the
+  // internal secret instead (tested above).
   const GUARD_METADATA = '__guards__';
 
   /** The guards Nest will run for `handler`, read from the metadata Nest itself reads. */
@@ -141,7 +164,7 @@ describe('PaymentController - every money route is guarded', () => {
     return (Reflect.getMetadata(GUARD_METADATA, fn as object) as unknown[]) ?? [];
   }
 
-  it.each([['createOnboarding'], ['createCheckout'], ['verifySession'], ['cancelSession']])(
+  it.each([['createOnboarding'], ['verifySession'], ['cancelSession']])(
     '%s runs NginxAuthGuard',
     (handler) => {
       expect(guardsOn(handler)).toContain(NginxAuthGuard);
@@ -158,7 +181,7 @@ describe('PaymentController.createOnboarding - the check is not conditional on t
     const paymentService = {
       isConfigured: jest.fn().mockResolvedValue(true),
     } as unknown as PaymentService;
-    return new PaymentController(paymentService, {} as UsersService);
+    return new PaymentController(paymentService);
   }
 
   /**
@@ -186,8 +209,8 @@ describe('PaymentController.createOnboarding - the check is not conditional on t
 });
 
 /**
- * The three routes that read an association's payment account (connect-status, dashboard link,
- * Lydia validation) called social-service's `GET /associations/:id`, which answers 401 to a caller
+ * The routes that read an association's payment account (Lydia validation, once with the
+ * connect-status and dashboard-link routes that are gone) called social-service's `GET /associations/:id`, which answers 401 to a caller
  * with no X-User-Id, so each reported "Association not found" for ever. They read the INTERNAL route
  * now, and this pins the URL and the secret header, which is the whole fix.
  */
@@ -200,7 +223,7 @@ describe('PaymentController.completeLydiaAccount - reads the internal payment-ac
     process.env.INTERNAL_SECRET = 'internal-secret-for-test';
     mockedAxios.get.mockResolvedValue({ status: 200, data: { lydiaAccountId: 'vendor-1' } });
     mockedAxios.post.mockResolvedValue({ status: 201, data: {} });
-    const controller = new PaymentController({} as PaymentService, {} as UsersService);
+    const controller = new PaymentController({} as PaymentService);
 
     await expect(controller.completeLydiaAccount(id)).resolves.toEqual({ ok: true });
 
@@ -212,7 +235,7 @@ describe('PaymentController.completeLydiaAccount - reads the internal payment-ac
 
   it('refuses an association with no linked Lydia account without completing anything', async () => {
     mockedAxios.get.mockResolvedValue({ status: 200, data: { lydiaAccountId: null } });
-    const controller = new PaymentController({} as PaymentService, {} as UsersService);
+    const controller = new PaymentController({} as PaymentService);
 
     await expect(controller.completeLydiaAccount(id)).rejects.toThrow(/No Lydia account/);
     expect(mockedAxios.post.mock.calls).toHaveLength(0);

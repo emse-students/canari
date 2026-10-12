@@ -14,6 +14,7 @@ export class Submission {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  /** Foreign key `submissions_form_fk` ON DELETE RESTRICT (migration 081): see `retireForms`. */
   @Column({ type: 'uuid' })
   @Index()
   formId: string;
@@ -35,16 +36,16 @@ export class Submission {
   /**
    * Lifecycle status of the payment.
    * - `free` - no payment required
-   * - `pending` - Stripe checkout pending
+   * - `pending` - online checkout pending
    * - `pending_cash` - awaiting physical cash validation by an admin
-   * - `paid` - paid (Stripe or cash validated)
+   * - `paid` - paid (online or cash validated)
    * - `cancelled` - cancelled / abandoned
    * - `expired` - cash payment window elapsed without validation
    */
   @Column({ default: 'free' })
   paymentStatus: string;
 
-  /** `stripe` or `cash` - set when the user chooses a payment method at submission time. */
+  /** `cash` once the submitter chose it; null otherwise (`stripe` on rows written before the processor left). */
   @Column({ nullable: true })
   paymentMethod: string | null;
 

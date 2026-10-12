@@ -390,6 +390,17 @@ It reconciles against every **live** member, sender included. Reconciling agains
 instead left the sender - and any `excludeDeviceIds` entry - out for ever, which made the repair
 incomplete by construction.
 
+**A frame may narrow the recipient set, never widen it: `recipientDevices` (2026-10-12).** A Graine seed
+answer names the one device that asked, as `userId:deviceId`. `readAddressedDevices` refuses it on
+a commit or a Welcome, as an empty list, above 16 keys or as a malformed key. `sendMessage` also refuses it (`addressed_not_key_group`, 400) on any group that is
+not a key-distribution group: on a conversation group it would let a member show different
+ciphertexts to different members, each kept out of the history stream. `sendMessage` keeps only
+the resolved live members that match (user id compared lower-case) and logs `[SEND][trace]
+ADDRESSED matched=N of M`, or warns `ADDRESSED_NOBODY` when nobody matches. **An addressed frame is
+never appended to the history stream**: that stream is replayed to every member, and the frame
+belongs to one device's queue only. Why and what it costs:
+[channel-encryption §23](../protocols/channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12).
+
 ### The queue is bounded on ONE axis, and observed on the other
 
 `cleanupExpiredQueuedMessages` bounds the queue by AGE, and that is the only axis on which
@@ -1010,6 +1021,7 @@ those groups' first pages itself, which is the path every group took before the 
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
 | GET | `/api/mls/push/avatar/:targetUserId` | PushSecret | Get avatar URL for notification display |
 | GET | `/api/mls/push/media/:mediaId` | PushSecret | Proxy encrypted media ciphertext (2 MB cap) for a notification thumbnail |
+| POST | `/api/mls/push/channel-read` | PushSecret | A shut phone's "Mark as read" on a SALON notification: forwarded to social-service's internal read-mark route ([social-service](social-service.md)); 403 when the user cannot read the salon, 502/503 when social-service refuses or is down |
 | POST | `/api/mls/push/refresh-token` | PushSecret | Refresh FCM token and/or PushKit `voipToken` |
 | POST | `/api/mls/push/membership-active` | PushSecret | Mark membership active after push-triggered add |
 | POST | `/api/mls/push/acquire-add-lock` | PushSecret | Acquire add-lock from background service |
@@ -1436,6 +1448,10 @@ group summary, avatar/initials fallback, and sender-name subtitles inside group 
     other regardless of conversation. Now it passes `groupId` as `threadIdentifier` (fallback
     `@"canari_messages"` when empty), mirroring the NSE. Social/form notifications keep their own
     threads (`canari_social`/`canari_forms`).
+
+**Reactions to a post** (2026-10-08): both platforms group them per POST. Android keeps one
+notification per post updated in place; iOS files them under the APNs thread `post_reaction_<postId>`
+(`buildInternalApnsRequest`). Detail and what iOS still lacks: [mobile](../frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none).
 
 **Group summary**
 
@@ -1939,3 +1955,20 @@ core never sees the requester device). Outcome vocabulary: `served` and `absent`
 gallery key on the estate) log at warn. The full id, the secret and the image never appear. A failed
 fetch is found with `grep -E "PUSH_AVATAR|\[AVATAR\]" | grep -v -E "outcome=(served|absent) "`; see also
 [core-service](core-service.md#the-avatar-proxy).
+
+### A Welcome is carried by reference, never inlined (2026-10-08)
+
+**Measured**: a first-contact Welcome is 4608 B against a 3716 B inline budget. The FCM limit (4096 B)
+applies to the whole data map, keys included, so the budget is what `inlineProtoBudget` leaves after
+the fixed fields. The push was never dropped - it went out with `proto` empty - but the outcome was
+an implicit `if` plus a log silenced for Welcomes (`uninlinedProtoIsWorthReporting`).
+
+**Why by reference is the design, not a degradation**: the Android reader
+(`processReceivedWelcomeBackground`) fetches the whole bundle, ciphertext AND ratchet tree, through
+`/api/mls/push/fetch-proto` by `queuedMessageId`, whatever it inlined, because the tree never rides in
+the push; the iOS NSE processes no Welcome at all. So inlining a Welcome could not save a request.
+
+**The decision** is `decideProtoCarriage` in `push-payload.ts`, a typed `ProtoCarriage`: `inlined`
+(a message that fits), `by-reference` (every Welcome, whatever its size; debug line, expected),
+`over-budget` (a MESSAGE that did not fit: the fixed fields grew; `warn`), `empty`. No client change
+and no native work was needed. `push-payload.spec.ts` pins the 4608 B case.

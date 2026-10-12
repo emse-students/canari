@@ -2,6 +2,25 @@
 export const MOBILE_APP_PACKAGE = 'fr.emse.canari';
 
 /**
+ * The app's custom URL scheme as `URL.protocol` spells it. The scheme IS the identifier, so this
+ * is derived rather than spelled: a second package id (a side-by-side dev build) changes one
+ * constant, not every deep link.
+ */
+export const MOBILE_APP_PROTOCOL = `${MOBILE_APP_PACKAGE}:`;
+
+/**
+ * A deep link into the app: `<identifier>://<hostAndPath>`.
+ *
+ * @param hostAndPath What follows `://` - a host such as `callback`, then an optional path and query.
+ */
+export function appDeepLink(hostAndPath: string): string {
+  return `${MOBILE_APP_PACKAGE}://${hostAndPath}`;
+}
+
+/** Where Authentik sends a Tauri mobile login back: the deep-link plugin registers this host. */
+export const OIDC_MOBILE_REDIRECT_URI = appDeepLink('callback');
+
+/**
  * Hosts that declare verified App Links / Universal Links for Canari.
  *
  * `www` is intentionally excluded: it only 301-redirects to the apex, and

@@ -67,8 +67,8 @@ to signal that a pointer is over something.
 
 **ONE EXCEPTION, DECIDED (user, 2026-09-30): STATIC CHROME THAT FLOATS OVER CONTENT IS GLASS.** *"Only
 static ui element, that are apart from content, should be liquid glass"* - the iOS tab bar, and IN THE
-PHONE APPS (not the website) the conversation's header pieces and the composer's "+", which content
-scrolls UNDER. Nothing
+PHONE APPS (not the website) the conversation's header pieces, its polls and pinned pills
+(2026-10-12) and the composer's "+", which content scrolls UNDER. Nothing
 that IS content - a bubble, a card, a panel, a list - and no structural surface: this section still
 holds for all of them. On iOS the chrome is Apple's native Liquid Glass; elsewhere it is
 `.glass-chrome` in `app.css` (translucent `--glass-chrome-bg`, `backdrop-filter: blur(18px)
@@ -3011,6 +3011,18 @@ could fire a refresh at the end of an unrelated stroke) now do both; the other t
 (`MessageBubble`, `ReelViewer`, `MediaLightbox`, `PdfViewerModal`) already handle `touchcancel`.
 Tests: `swipeBack.test.ts` (a cancelled edge touch, then a mid-screen scroll).
 
+**What was left after that fix: the NEXT scroll does not move the list (Mi 9T, 2026-10-05, measured
+with adb-injected gestures, which may not behave as a finger).** The conversation no longer closes, but
+the first scroll after an edge swipe is swallowed while the same scroll from mid-screen works. Nothing
+in the page is known to hold it: `swipeBack` never calls `preventDefault`, its `touchmove` is passive,
+and `reset()` clears the transform. The two live explanations are outside the page's code (Chromium
+spending the first stroke after a cancelled touch sequence, or the injected gesture itself) and a
+reading with a real finger separates them - **since 2026-10-09 `swipeBack` logs `[swipeBack] armed`,
+`touch cancelled` and `released`** so that reading is one logcat/CDP read rather than a guess
+([device-verification X](../device-verification.md#x-the-scroll-after-an-edge-swipe---owed-on-the-mi-9t)).
+Not fixed on suspicion: a change made against a lifecycle fault nobody has observed is the class this
+repository refuses.
+
 ## 42. The profile rendered, then broke: a late section threw on a repeated key (2026-10-06)
 
 **Report (production, iPhone store build):** "Mon profil" showed, then a loading state, then the error screen.
@@ -3032,3 +3044,48 @@ is the one section that arrives LATE, hence "shows, loading, breaks". It threw i
 and REFUSES a non-object (the page logs it and shows no section). The three swallowed extras loaders now
 log. Pinned by `ProfileParrainageSection.svelte.test.ts` (fails with `each_key_duplicate` before) and
 `profile/api.test.ts`. No data repair is needed: the rows are Sky's and render as they are.
+
+## A click belongs to the element its press began on (2026-10-08)
+
+Reported on the Pixel 6a: tapping the `bureau` salon landed on a member's profile, and the salon opened with the read receipts of a bubble already showing. A press that changes the layout (opening a salon) can have its click dispatched at the NEW layout, so it hits whatever is now under the finger. `installPressedClickGuard` (`frontend/src/lib/utils/pressedClickGuard.ts`, installed in the root layout) refuses, in the capture phase, a click whose `pointerdown` began on an unrelated element; same element, ancestor/descendant, a label and its control, and `detail === 0` clicks (keyboard, `.click()`) pass. No timer: the press is state. The refusal logs `pressedClickGuard: click refused`. The exact browser mechanism was not isolated; the Pixel reading after the next pre-release is what confirms it. The read-receipt popover also wraps now (`max-w` of 20rem or the screen, names break) instead of one `whitespace-nowrap` line.
+
+## "Voir plus" is measured, never counted (2026-10-08)
+
+A comment offered "Voir plus" past 280 characters but clamps at five LINES, so a ~300-character comment (four lines on a wide column) opened nothing. `reportLineClamp` (`actions/reportLineClamp.ts`) reports `scrollHeight > clientHeight` while the clamp is active and freezes its verdict once expanded. Same rule as `reportClipped` (a character count is an estimate of a width the browser knows). `PostContent` still measures inline with its own effect; fold it into the action when next touched.
+
+## A native `title` never duplicates a panel the app already draws (2026-10-08)
+
+The reaction pill carried `title=<every reactor's name>` beside `ReactorsPanel`, so hovering showed the browser's tooltip over the app's list (user report, desktop). Rule: where the app has its own display for a fact, the element carries NO `title` for it. A `title` stays only as the sole label of an icon-only control with no tooltip of its own.
+
+## A popover's height comes from its content, never from a constant (2026-10-09)
+
+`ReactorsPanel` passed `estimatedHeight: 200` to `bindFixedPopover`, which turns it into the frame's `max-height`; past ~7 names the rows overflowed the frame onto the comment below (user report, 11 reactors). The panel cannot scroll (any scroll closes it), so `ReactorsPanel` now passes the viewport as the only cap, measures how many rows the real `maxHeight` holds, and lays the names out in as many columns as fit (`layoutReactors`, 8rem minimum column); what still does not fit is one `+K` line. Measured in headless Chrome at 360x640, 390x844 and 1280x800 with 1, 3, 11, 40 and 200 reactors, at centre, bottom, right and top anchors and a very long name: 63 of 63 cases have `scrollHeight <= clientHeight`, every row inside the frame and the frame inside the viewport. The other `bindFixedPopover` callers scroll inside their own box (pickers, autocomplete, `FloatingSurface`) or hold fixed menus, so their constants only bound a scroller.
+
+## Tooltips: one convention, audited 2026-10-08
+
+Audit of every `title` in `frontend/src` (about 440 hits, 270 of them `title={m.x()}` on an element).
+Four systems exist: the native `title`, the poll voters' bubble (`PostPolls`, `role="tooltip"`), the
+click-opened `MessageInfoTooltip`, and the panels (`ReactorsPanel`, `SeenByHeads`'s sr-only list).
+
+**The rule: a native `title` is the label of a control that has no visible text, and nothing else.**
+
+- **Where the app draws its own display of a fact (panel, popover, visible label), the element carries
+  NO `title` for it.** It would be the same list twice, and on a phone (no hover) it is the only one
+  that exists. The reaction pill did this (reactors in a `title` over `ReactorsPanel`); the dashboard
+  `reviewer_docs` card printed its label under an identical `title`.
+- **An icon-only control has `title` AND `aria-label`, both from Paraglide, both the same string when
+  the text is the same.** Where they differ on purpose (short hint vs a longer accessible name,
+  "Rechercher" / "Rechercher dans la conversation") two keys are fine; two keys with identical text
+  are not (four were merged).
+- **Never a raw literal, never a stored key or an id.** A reaction type is the wire value
+  (`Marteau`): its name is `reactionTypeToLabel()`. `Avatar`, `AssociationAvatar`, `Modal` and the
+  admin project rename carried French literals; they are messages now.
+- **A `title` carrying data a phone cannot hover (exact dates, full device id, long names) is
+  harmless but is never the only place the fact exists** if the fact matters.
+
+### The reel frame: a media surface rounds at `--radius-2xl` only when it does not fill the screen (2026-10-11)
+
+`ReelFrame` draws the picture whole at the capture ratio. It is square-cornered and edge to edge when
+the screen has its shape (within 2 %), else `rounded-2xl` (12 px, the larger card) centred over a
+blurred canvas copy of the same picture. The scale has no step above 12 px that means "media surface";
+`--radius-4xl` (24 px) is unscaled and was not used. See [reel-editor](modules/reel-editor.md#one-frame-for-capture-edit-and-publish-2026-10-11-replaces-the-cover-and-crop-of-1739).

@@ -151,7 +151,7 @@ Rules, all of them load-bearing:
   migrations leave holes at 023 and 026-029 in social-service); duplicates are not, because ordering
   then depends on the rest of the filename.
 - **One-shot data backfills are a trap.** Before the ledger existed every file replayed on every
-  deploy, so a backfill kept re-applying: migration 004 re-granted `MANAGE_STRIPE_CONNECT` and 016
+  deploy, so a backfill kept re-applying: migration 004 re-granted `MANAGE_PAYOUT_ACCOUNT` and 016
   re-enabled `cotisationEnabled`, silently reverting admin changes. The ledger fixes this going
   forward; keep backfills narrowly conditioned anyway.
 

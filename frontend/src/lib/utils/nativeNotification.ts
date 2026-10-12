@@ -58,6 +58,15 @@ export type NativeMessageNotification = {
    * thread can show one message twice.
    */
   sentAt: number;
+  /**
+   * HOW MANY INBOUND MESSAGES THIS ONE BANNER STANDS FOR: 1 for a live frame, N for a catch-up
+   * flush, which raises a single banner for the last of N messages.
+   *
+   * Load-bearing for the pairing of a refused push's generic line with this banner
+   * (`GenericBannerLedger`): the server may push each of the N messages, so one real post must
+   * answer up to N pushes, not one (Mi 9T, 2026-10-06: `messages=5`, three pushes, one answered).
+   */
+  covers: number;
 };
 
 /**
@@ -83,6 +92,7 @@ export async function postNativeMessageNotification(
       body: notification.body,
       mentionsMe: notification.mentionsMe,
       sentAt: notification.sentAt,
+      covers: notification.covers,
     });
   } catch (e) {
     // NOT a fallback to the plain builder: reaching here means the one path failed, and the fix

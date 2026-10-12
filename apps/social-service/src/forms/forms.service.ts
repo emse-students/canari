@@ -7,10 +7,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Form } from './entities/form.entity';
+import { retireForms } from './retire-forms';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
@@ -21,7 +22,7 @@ import { answerText, type AnswerQuestion } from './answer-text';
 import type { ExportLabels } from './export-labels';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
-import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
+import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { withSubmissionReturnKey } from './return-url-key';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
@@ -49,6 +50,8 @@ import {
 } from '../pricing/validate';
 import { normaliseCondition, visibleItemIds } from './visibility';
 import { coreUrl } from '../internal/service-urls';
+import { internalCoreRequestConfig } from '../internal/core-request';
+import { mapCorePaymentError } from '../common/core-payment-error';
 import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
@@ -96,7 +99,7 @@ function hasProfileCriterion(item: any): boolean {
 /** Where a submission comes from: a signed-in member, or a guest on a public form's link. */
 export type SubmitOrigin = 'member' | 'guest';
 
-/** Dynamic form engine: creation, submission (with optional Stripe checkout), exports, and submission lifecycle. */
+/** Dynamic form engine: creation, submission (with optional online checkout), exports, and submission lifecycle. */
 /** The part of a form item the XLSX export needs: a column header, its key, and how to read an answer. */
 type FormItemLike = AnswerQuestion & { id: string; label: string };
 
@@ -117,7 +120,7 @@ export class FormsService {
   ) {}
 
   /**
-   * Paid forms linked to an association require Stripe Connect onboarding complete.
+   * Paid forms linked to an association require its payment onboarding to be complete.
    * @throws BadRequestException when the association cannot receive payments yet
    */
   private async assertPaidFormAssociationReady(input: {
@@ -375,7 +378,9 @@ export class FormsService {
    */
   async list(ownerId?: string) {
     if (!ownerId) {
-      return this.withAssociationNames(await this.formRepo.find({ order: { createdAt: 'DESC' } }));
+      return this.withAssociationNames(
+        await this.formRepo.find({ where: { deletedAt: IsNull() }, order: { createdAt: 'DESC' } })
+      );
     }
     const managedAssociations = await this.associationsService.associationsWhereUserHasFlag(
       ownerId,
@@ -384,12 +389,13 @@ export class FormsService {
     const managedIds = managedAssociations.map((a) => a.id);
 
     const [owned, viaAssociation] = await Promise.all([
-      this.formRepo.find({ where: { ownerId }, order: { createdAt: 'DESC' } }),
+      this.formRepo.find({ where: { ownerId, deletedAt: IsNull() }, order: { createdAt: 'DESC' } }),
       managedIds.length === 0
         ? Promise.resolve([])
         : this.formRepo
             .createQueryBuilder('f')
             .where('"f"."associationId" IN (:...managedIds)', { managedIds })
+            .andWhere('"f"."deletedAt" IS NULL')
             .orderBy('"f"."createdAt"', 'DESC')
             .getMany(),
     ]);
@@ -417,10 +423,19 @@ export class FormsService {
     }));
   }
 
-  /** Returns a single form by ID with its current submission count, or null if not found. */
+  /**
+   * Returns a single form by ID with its current submission count.
+   *
+   * A form that does not exist (a deleted one included) is a 404, never `null`: Nest serialises a
+   * returned `null` as a `200` with an EMPTY body, which the client could only read as a raw
+   * "Empty response from server" - a status code is the answer, an empty success is not.
+   */
   async get(id: string) {
-    const form = await this.formRepo.findOne({ where: { id } });
-    if (!form) return null;
+    const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
+    if (!form) {
+      this.logger.debug(`get: form ${id} not found`);
+      throw new NotFoundException('Form not found');
+    }
     const submissionCount = await this.countActiveSubmissions(id);
     return { ...form, submissionCount };
   }
@@ -443,7 +458,7 @@ export class FormsService {
    * public route cannot be used to learn which ids exist.
    */
   async getPublic(id: string) {
-    const form = await this.formRepo.findOne({ where: { id } });
+    const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     if (!form?.isPublic) {
       this.logger.debug(`[FORMS] public read refused, not a public form id=${id.slice(0, 8)}`);
       throw new NotFoundException('Form not found');
@@ -555,10 +570,15 @@ export class FormsService {
     return this.formRepo.save(form);
   }
 
-  /** Deletes a form entirely. Requires owner, co-owner, global admin, or MANAGE_FORMS flag. */
+  /**
+   * Deletes a form: ARCHIVED when it holds submissions (they are the payers' records and
+   * `submissions_form_fk` forbids orphaning them), removed outright when it holds none - see
+   * `retireForms`. Requires owner, co-owner, global admin, or MANAGE_FORMS flag. Deleting an
+   * already archived form is a no-op that still answers ok.
+   */
   async delete(formId: string, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
-    await this.formRepo.remove(form);
+    await retireForms(this.formRepo.manager, { formId: form.id });
     return { ok: true };
   }
 
@@ -590,7 +610,7 @@ export class FormsService {
 
   /**
    * Grants the form's configured cotisation tier to a submitter whose payment just landed.
-   * Shared by the Stripe webhook path (`markPaid`) and the cash validation path, which had a copy
+   * Shared by the online-payment confirmation path (`markPaid`) and the cash validation path, which had a copy
    * each.
    *
    * Best-effort by design: the payment is a fact by the time this runs, so a failure here must not
@@ -648,7 +668,7 @@ export class FormsService {
     hiddenItemIds: string[];
     maySubmit: boolean;
   }> {
-    const form = await this.formRepo.findOne({ where: { id: formId } });
+    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
     if (!form)
       return {
         hasSubmitted: false,
@@ -721,10 +741,10 @@ export class FormsService {
     };
   }
 
-  /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a Stripe Checkout URL. */
+  /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a checkout URL. */
   async submit(id: string, input: SubmitFormDto, origin: SubmitOrigin = 'member') {
     const guest = origin === 'guest';
-    const form = await this.formRepo.findOne({ where: { id } });
+    const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     // A guest reaching a form that is not public is told it does not exist, as `getPublic` does.
     if (!form || (guest && !form.isPublic)) throw new NotFoundException('Form not found');
 
@@ -919,7 +939,7 @@ export class FormsService {
       }
     });
 
-    // Cash payment shortcut - skip Stripe entirely
+    // Cash payment shortcut - skip the online checkout entirely
     if (totalCents > 0 && form.allowCashPayment && input.paymentMethod === 'cash') {
       const cashExpiresAt =
         form.cashPaymentExpiryDays != null
@@ -933,11 +953,11 @@ export class FormsService {
       return { submissionId: savedSubmission.id, cashPayment: true };
     }
 
-    // Stripe minimum is 50 cents for all supported currencies
-    const STRIPE_MIN_CENTS = 50;
-    if (totalCents > 0 && totalCents < STRIPE_MIN_CENTS) {
+    // 50-cent floor, inherited from the card processor Canari used before Lydia; Lydia's own minimum is unmeasured
+    const MIN_PAYMENT_CENTS = 50;
+    if (totalCents > 0 && totalCents < MIN_PAYMENT_CENTS) {
       throw new BadRequestException(
-        `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is below the Stripe minimum of 0.50 ${currency.toUpperCase()}. Adjust the form price.`
+        `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is below the minimum of 0.50 ${currency.toUpperCase()}. Adjust the form price.`
       );
     }
 
@@ -958,15 +978,14 @@ export class FormsService {
 
       try {
         // If the form belongs to an association, route payment via its connected account
-        let stripeConnectAccountId: string | undefined;
+        let connectAccountId: string | undefined;
         if (form.associationId) {
           await this.associationsService.assertPaymentsReady(form.associationId);
           const acctId = await this.associationsService.getPaymentAccountId(form.associationId);
-          if (acctId) stripeConnectAccountId = acctId;
+          if (acctId) connectAccountId = acctId;
         }
 
-        // order_ref for Lydia's request/do callback (see webhook.controller.ts) - never sent for
-        // Stripe, which would otherwise read it as its own idempotency key.
+        // order_ref for Lydia's request/do callback (see webhook.controller.ts).
         const activeProvider = await this.associationsService.getActivePaymentProvider();
         if (activeProvider === 'disabled') {
           this.logger.warn(
@@ -974,52 +993,32 @@ export class FormsService {
           );
           throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
         }
-        const idempotencyKey =
-          activeProvider === 'lydia' ? `form:${savedSubmission.id}` : undefined;
-
-        // Resolve the Stripe customer ID for the user so the card gets saved after checkout
-        let customerId: string | undefined;
-        if (input.userId) {
-          try {
-            const customerResp = await axios.post<{ customerId: string | null }>(
-              coreUrl('payments/internal/customer-id'),
-              { userId: input.userId },
-              { maxRedirects: 0 }
-            );
-            customerId = customerResp.data.customerId ?? undefined;
-          } catch {
-            // Non-fatal - proceed without customer ID
-          }
-        }
+        const idempotencyKey = `form:${savedSubmission.id}`;
 
         const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
-        const successUrl = resolveStripeCallbackUrl(
+        const successUrl = resolveCheckoutCallbackUrl(
           input.successUrl,
           `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
           frontendUrl
         );
-        const cancelUrl = resolveStripeCallbackUrl(
+        const cancelUrl = resolveCheckoutCallbackUrl(
           input.cancelUrl,
           `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
           frontendUrl
         );
-        const res = await axios.post(checkoutUrl, {
-          lineItems: singleLineItem,
-          successUrl:
-            activeProvider === 'lydia'
-              ? withSubmissionReturnKey(successUrl, savedSubmission.id)
-              : successUrl,
-          cancelUrl:
-            activeProvider === 'lydia'
-              ? withSubmissionReturnKey(cancelUrl, savedSubmission.id)
-              : cancelUrl,
-          metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
-          stripeConnectAccountId,
-          idempotencyKey,
-          payerEmail: input.payerEmail,
-          // saveForFuture is incompatible with destination charges (Stripe Connect)
-          ...(customerId ? { customerId, saveForFuture: !stripeConnectAccountId } : {}),
-        });
+        const res = await axios.post(
+          checkoutUrl,
+          {
+            lineItems: singleLineItem,
+            successUrl: withSubmissionReturnKey(successUrl, savedSubmission.id),
+            cancelUrl: withSubmissionReturnKey(cancelUrl, savedSubmission.id),
+            metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
+            connectAccountId,
+            idempotencyKey,
+            payerEmail: input.payerEmail,
+          },
+          internalCoreRequestConfig()
+        );
 
         const data = res.data || {};
         const sessionUrl = data.url || data.checkoutUrl || null;
@@ -1038,15 +1037,8 @@ export class FormsService {
         }
 
         return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
-      } catch (err: any) {
-        const stripeMsg =
-          err?.response?.data?.message ||
-          err?.response?.data?.error ||
-          err?.response?.data ||
-          err?.message ||
-          String(err);
-        this.logger.error('Payment service error', stripeMsg);
-        throw new BadRequestException(`Failed to create checkout session: ${stripeMsg}`);
+      } catch (err: unknown) {
+        throw mapCorePaymentError(err, this.logger, 'Forms');
       }
     }
 
@@ -1066,7 +1058,7 @@ export class FormsService {
     this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
   }
 
-  /** Loads a submission by ID with its payment status and the associated Stripe account ID (if any). */
+  /** Loads a submission by ID with its payment status and the associated payment account ID (if any). */
   async getSubmissionById(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
@@ -1078,7 +1070,7 @@ export class FormsService {
       totalPaid: submission.totalPaid,
       currency: form?.currency ?? 'eur',
       paymentStatus: submission.paymentStatus,
-      stripeAccountId: form?.associationId
+      paymentAccountId: form?.associationId
         ? await this.associationsService.getPaymentAccountId(form.associationId)
         : null,
     };
@@ -1088,7 +1080,7 @@ export class FormsService {
    * Records that a submission has been paid, and grants everything that payment buys.
    *
    * THE CALLER IS THE AUTHORISATION, WHICH IS WHY THIS TAKES NO CALLER. Its only route is the
-   * internal `X-Internal-Secret` controller, reached from core-service after Stripe's webhook
+   * internal `X-Internal-Secret` controller, reached from core-service after the payment provider's callback
    * signature has been verified - so by the time this runs, the payment is a fact established
    * somewhere that cannot be spoofed by a client. It used to accept `callerId`/`isGlobalAdmin` and
    * run `assertSubmissionAccess` only `if (callerId)`: a check that quietly did not happen when the
@@ -1125,14 +1117,14 @@ export class FormsService {
           source: 'form',
           formId: submission.formId,
           amountCents: submission.totalPaid,
-          paymentMethod: 'stripe',
+          paymentMethod: 'online',
           status: 'paid',
           associationId: form.associationId,
           productName: form.title ?? 'Formulaire',
         });
       } catch (e) {
         this.logger.error(
-          `[PurchaseRecord] Failed to record stripe purchase for submission ${submissionId}`,
+          `[PurchaseRecord] Failed to record online purchase for submission ${submissionId}`,
           e
         );
       }
@@ -1155,7 +1147,7 @@ export class FormsService {
   }
 
   /**
-   * Marks a pending Stripe submission as cancelled without auth checks.
+   * Marks a pending online-payment submission as cancelled without auth checks.
    * Called by core-service when checkout expires or a charge fails definitively.
    */
   async cancelPendingSubmission(submissionId: string): Promise<{ ok: boolean }> {
@@ -1447,7 +1439,7 @@ export class FormsService {
 
   /** Subscribes a user to reminders for a form (upsert). Rejects if opensAt is null or already past. */
   async subscribeReminder(formId: string, userId: string) {
-    const form = await this.formRepo.findOne({ where: { id: formId } });
+    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
     if (!form) throw new NotFoundException('Form not found');
     if (!form.opensAt || new Date(form.opensAt) <= new Date()) {
       throw new BadRequestException('Form is already open or has no scheduled opening time');

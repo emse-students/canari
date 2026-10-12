@@ -20,15 +20,15 @@
 
   interface Props {
     asso: Association;
-    /** True once Stripe Connect can collect online payments. */
+    /** True once the payment account can collect online payments. */
     onlinePaymentsReady: boolean;
-    /** Whether the caller can configure Stripe Connect (tweaks the warning copy). */
-    canManageStripeConnect: boolean;
+    /** Whether the caller can configure the payment account (tweaks the warning copy). */
+    canManagePayoutAccount: boolean;
     /** Switches the parent to the Paiements tab. */
     onGoToPayments: () => void;
   }
 
-  let { asso, onlinePaymentsReady, canManageStripeConnect, onGoToPayments }: Props = $props();
+  let { asso, onlinePaymentsReady, canManagePayoutAccount, onGoToPayments }: Props = $props();
 
   let forms = $state<AssociationForm[]>([]);
   let formsLoading = $state(false);
@@ -138,7 +138,7 @@
     </div>
     <a
       href="/forms/create?association={encodeURIComponent(asso.id)}&returnTo={encodeURIComponent(
-        `/associations/${asso.slug}/edit?section=formulaires`
+        `/associations/${asso.slug}/edit/formulaires`
       )}"
       class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
     >
@@ -153,7 +153,7 @@
     >
       <TriangleAlert size={15} class="mt-0.5 shrink-0" />
       <span>
-        {#if canManageStripeConnect}
+        {#if canManagePayoutAccount}
           {m.asso_forms_payments_missing_can_manage_prefix()}<strong
             >{m.asso_forms_payments_missing_strong()}</strong
           >{m.asso_forms_payments_missing_suffix()}<button

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages';
+  import { canvasToBlob } from '$lib/utils/canvasBlob';
 
   /**
    * Square logo export: drag the photo to reposition it under a fixed, resizable crop square,
@@ -197,13 +198,13 @@
       ctx.fillRect(0, 0, OUT, OUT);
     }
     ctx.drawImage(imgEl, srcX, srcY, srcSize, srcSize, 0, 0, OUT, OUT);
-    canvas.toBlob(
-      (b) => {
-        if (b) onExport(b);
-      },
+    // Synchronous: `toBlob` waits ~4 s on the Android WebView (utils/canvasBlob.ts).
+    const b = canvasToBlob(
+      canvas,
       outputFormat === 'png' ? 'image/png' : 'image/jpeg',
       outputFormat === 'png' ? undefined : 0.92
     );
+    if (b) onExport(b);
   }
 </script>
 

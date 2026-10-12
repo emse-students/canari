@@ -181,6 +181,17 @@ compute_garage_admin_host_port() {
   if [ "$ENVIRONMENT" = "dev" ]; then printf '19101'; else printf '19011'; fi
 }
 
+# ── Minimum lengths ───────────────────────────────────────────────────────────
+# A value can be PRESENT and still unusable: social-service refuses to sign anything with an
+# AGENDA_SIGNING_KEY shorter than 32 characters and answers 503 at runtime, which the deploy's
+# colour never shows (iPhone reading on dev, 2026-10-06). So the length is refused HERE, naming the
+# secret, exactly as an absent one is. Prints the minimum, or nothing when the key has none.
+min_length() {
+  case "$1" in
+  AGENDA_SIGNING_KEY) printf '32' ;;
+  esac
+}
+
 # ── Pass 1: resolve everything, and fail before writing anything ─────────────
 # Two passes deliberately. A required secret discovered missing halfway through would otherwise
 # leave .env regenerated from the template with some keys upserted and the rest at their template
@@ -240,6 +251,14 @@ while IFS=$'\t' read -r key prod dev source note; do
       exit 2
       ;;
     esac
+    continue
+  fi
+
+  minimum="$(min_length "$key")"
+  if [ -n "$minimum" ] && [ "${#value}" -lt "$minimum" ] && [ "$disposition" = "required" ]; then
+    printf '::error::%s is set for the %s environment but is only %s characters, %s needs at least %s - %s
+'       "$key" "$ENVIRONMENT" "${#value}" "$key" "$minimum" "$note" >&2
+    MISSING=1
     continue
   fi
 

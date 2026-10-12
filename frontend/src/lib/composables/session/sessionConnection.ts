@@ -22,6 +22,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps, processDeviceInvitationsLocally } from './sessionAuth';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
+import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 
 /** Connection watchdog duration - same value as RECOVERY_TIMEOUT_MS. */
 const CONNECTION_WATCHDOG_MS = RECOVERY_TIMEOUT_MS;
@@ -185,6 +186,15 @@ export async function attemptReconnectImpl(
       void goto(resolve('/login'), { replaceState: true });
       return;
     }
+    if (err instanceof IdentitySplitError) {
+      // NOT A FAILURE TO RETRY: the verdict stands until sign-out, so the ladder would knock on the
+      // gateway for ever with the same refusal. The blocking notice is the way out.
+      cb.log(
+        `[AUTH] IDENTITY SPLIT (token ${err.split.tokenSub} vs local ${err.split.localId}) - reconnect loop stopped until sign-out.`
+      );
+      console.error('[WS] Reconnect stopped: identity split');
+      return;
+    }
     cb.log(`Reconnection failed: ${String(err)}`);
     console.error('[WS] Reconnection failed:', err);
     retry = true;
@@ -256,12 +266,17 @@ export function pauseConnectionImpl(ctx: SessionContext): void {
  */
 export async function resumeConnectionImpl(
   ctx: SessionContext,
-  cb: ChatSessionCallbacks
+  cb: ChatSessionCallbacks,
+  prepared?: string
 ): Promise<void> {
   // Lifted first, even logged out: the foreground is the one fact the pause was waiting for.
   ctx.setConnectionPaused(false);
   if (!ctx.isLoggedIn()) return;
-  appendLog('[LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...');
+  // `prepared` is what the caller made the reconnect wait for, folded into this one line so a
+  // resume still prints exactly one.
+  appendLog(
+    `[LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...${prepared ? ` (${prepared})` : ''}`
+  );
   ctx.setReconnectAttempts(0);
   startConnectionWatchdogImpl(ctx, cb);
   startSyncWatchdogImpl(ctx, cb);

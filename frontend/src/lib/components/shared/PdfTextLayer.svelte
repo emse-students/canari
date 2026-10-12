@@ -20,7 +20,7 @@
 
   interface Props {
     /** Runs of this page, in page fractions. */
-    runs: readonly (TextRunBox & { text: string })[];
+    runs: readonly (TextRunBox & { text: string; eol: boolean })[];
     /** Rendered height of the page box in CSS pixels - the unit every `em` below resolves against. */
     pageHeight: number;
     /** Rendered width of the page box in CSS pixels, needed to turn a width fraction into `em`. */
@@ -30,24 +30,54 @@
   let { runs, pageHeight, pageWidth }: Props = $props();
 
   /**
-   * Stretches a span onto the width its run really occupies.
+   * Stretches every span onto the width its run really occupies.
    *
    * The browser lays the characters out in a substituted font, so a span's natural width is never
    * the PDF's. Selection highlights follow the SPAN, so without this they drift further from the
-   * glyphs with every word. Measured once per span, on mount: the correction is a ratio of two
-   * lengths that scale together, so it stays right at every zoom and never needs redoing.
+   * glyphs with every word.
+   *
+   * Re-measured, once per frame, whenever the page width changes. The ratio would be invariant if
+   * text scaled exactly linearly, which a minimum font size and glyph hinting do not promise, and
+   * one batched layout per page on screen is cheap enough not to bet on it.
+   *
+   * ALL READS, THEN ALL WRITES. This used to be one action per span, each writing its transform
+   * and the next one reading its width: a forced layout per span, hundreds per page of a scan with
+   * an OCR layer - a ~1 s long task each time a page came near, and 11-13 s per zoom click once
+   * every page carried its layer (Mi 9T, 2026-10-11). Batched, it is one layout per page.
    */
-  function fitWidth(node: HTMLElement, targetPx: number) {
-    const apply = (target: number) => {
-      node.style.transform = '';
-      const natural = node.getBoundingClientRect().width;
-      const scaleX = horizontalScale(target, natural);
-      // The rotation is already on the element; compose rather than overwrite it.
-      const angle = node.dataset.angle ?? '0';
-      node.style.transform = `rotate(${angle}rad) scaleX(${scaleX})`;
+  function fitWidths(layer: HTMLElement, width: number) {
+    let frame = 0;
+    const fit = () => {
+      frame = 0;
+      const spans = Array.from(layer.querySelectorAll<HTMLElement>('span[data-run]'));
+      for (const span of spans) span.style.transform = '';
+      // The target is read off the layer in the SAME layout as the spans, never taken from the
+      // prop: on a zoom the prop and the layer's font size reach the DOM in different updates, and
+      // a fit between the two made every span 24 % too wide at x1.5 (Mi 9T, 2026-10-11).
+      const pageWidthPx = layer.getBoundingClientRect().width;
+      const naturals = spans.map((span) => span.getBoundingClientRect().width);
+      spans.forEach((span, i) => {
+        const run = runs[Number(span.dataset.run)];
+        if (!run) return;
+        const scaleX = horizontalScale(run.width * pageWidthPx, naturals[i]);
+        span.style.transform = `rotate(${run.angle}rad) scaleX(${scaleX})`;
+      });
     };
-    apply(targetPx);
-    return { update: (next: number) => apply(next) };
+    /** One fit per frame, after every update of that frame has reached the DOM. */
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(fit);
+    };
+    schedule();
+    return {
+      // The width is only the trigger; `fit` measures what is actually laid out.
+      update: (next: number) => {
+        if (next !== width) {
+          width = next;
+          schedule();
+        }
+      },
+      destroy: () => cancelAnimationFrame(frame),
+    };
   }
 </script>
 
@@ -60,14 +90,17 @@
   class="pdf-text-layer pointer-events-none absolute inset-0 select-text"
   style="font-size: {pageHeight}px;"
   aria-hidden="true"
+  use:fitWidths={pageWidth}
 >
   {#each runs as run, index (index)}
     <span
       class="pointer-events-auto absolute origin-top-left whitespace-pre text-transparent"
-      data-angle={run.angle}
+      data-run={index}
       style="left: {run.left * 100}%; top: {run.top * 100}%; font-size: {run.fontHeight}em;"
-      use:fitWidth={run.width * pageWidth}>{run.text}</span
+      >{run.text}</span
     >
+    <!-- The line end a copy keeps: without it the spans' text is joined with nothing between. -->
+    {#if run.eol}<br role="presentation" />{/if}
   {/each}
 </div>
 

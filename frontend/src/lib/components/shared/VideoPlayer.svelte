@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import { CircleAlert, Maximize, Minimize, Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { followVideoSound, type VideoSoundScope } from '$lib/actions/playWhileVisible';
@@ -74,6 +74,12 @@
      * edge (the reel review keeps its own bar beneath), so the inset is paid once, not twice.
      */
     safeBottom?: boolean;
+    /**
+     * Extra controls drawn in the bar right after the sound button - the reel viewer's save. The
+     * caller owns what they do; the bar only gives them the place the user asked for, next to the
+     * volume (user, 2026-10-09).
+     */
+    barActions?: Snippet;
   }
 
   let {
@@ -85,6 +91,7 @@
     videoClass = 'max-h-full max-w-full object-contain',
     soundScope = 'app',
     safeBottom = true,
+    barActions,
   }: Props = $props();
 
   /**
@@ -454,6 +461,8 @@
           <Volume2 size={20} strokeWidth={2.25} />
         {/if}
       </button>
+
+      {@render barActions?.()}
 
       {#if canFullscreen}
         <button

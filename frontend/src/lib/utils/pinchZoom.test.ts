@@ -4,6 +4,7 @@ import {
   clampTranslation,
   nearestBoxIndex,
   nearestStepIndex,
+  pageAnchor,
   touchDistance,
   touchMidpoint,
   zoomAboutPivot,
@@ -311,5 +312,71 @@ describe('zoomAboutPivot', () => {
       tx: 0,
       ty: 0,
     });
+  });
+});
+
+describe('pageAnchor - a zoom button keeps the page being read', () => {
+  // A paged column as the PDF reader lays it out: fixed padding and gutters that do NOT scale,
+  // pages whose width and height do. The numbers are the Mi 9T's (a 404 px column, a 700 px
+  // viewport), 81 pages of A4.
+  const pad = 12;
+  const gap = 12;
+  const columnWidth = 404;
+  const viewport = { width: 404, height: 700 };
+  const pages = 81;
+  const boxesAt = (zoom: number, scroll: { scrollLeft: number; scrollTop: number }) =>
+    Array.from({ length: pages }, (_, i) => {
+      const width = columnWidth * zoom;
+      const height = width * 1.414;
+      return {
+        left: 8 - scroll.scrollLeft,
+        top: pad + i * (height + gap) - scroll.scrollTop,
+        width,
+        height,
+      };
+    });
+  const centre = { x: viewport.width / 2, y: viewport.height / 2 };
+  // Page 40 (index 39) a third of the way down the screen.
+  const start = { scrollLeft: 0, scrollTop: pad + 39 * (404 * 1.414 + gap) - 100 };
+
+  it('names the page under the centre and the fraction within it', () => {
+    const anchor = pageAnchor(centre, boxesAt(1, start));
+    expect(anchor?.index).toBe(39);
+    expect(anchor?.fracY).toBeCloseTo(250 / (404 * 1.414), 6);
+  });
+
+  it('keeping scrollTop lands at page / zoom - the defect read on the Mi 9T', () => {
+    const anchor = pageAnchor(centre, boxesAt(1, start))!;
+    const landed = pageAnchor(centre, boxesAt(1.5, start))!;
+    expect(anchor.index).toBe(39);
+    expect(landed.index).toBe(26);
+  });
+
+  it.each([1.5, 2, 3])('the new scroll keeps the same page and offset at x%s', (zoom) => {
+    const anchor = pageAnchor(centre, boxesAt(1, start))!;
+    const relaidOut = boxesAt(zoom, start);
+    const next = anchorScroll({
+      ...start,
+      focalX: centre.x,
+      focalY: centre.y,
+      anchor: relaidOut[anchor.index],
+      fracX: anchor.fracX,
+      fracY: anchor.fracY,
+    });
+    const after = pageAnchor(centre, boxesAt(zoom, next))!;
+    expect(after.index).toBe(39);
+    expect(after.fracY).toBeCloseTo(anchor.fracY, 9);
+    expect(after.fracX).toBeCloseTo(anchor.fracX, 9);
+  });
+
+  it('a centre in a gutter anchors on the nearest page', () => {
+    const boxes = boxesAt(1, { scrollLeft: 0, scrollTop: 0 });
+    const gutterY = boxes[2].top + boxes[2].height + 4;
+    expect(pageAnchor({ x: 100, y: gutterY }, boxes)?.index).toBe(2);
+  });
+
+  it('no page, or a page with no area, is no anchor', () => {
+    expect(pageAnchor(centre, [])).toBeNull();
+    expect(pageAnchor(centre, [{ left: 0, top: 0, width: 0, height: 0 }])).toBeNull();
   });
 });

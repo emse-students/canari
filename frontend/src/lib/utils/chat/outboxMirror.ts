@@ -113,7 +113,13 @@ export async function reconcileOutboxSent(storage: IStorage): Promise<void> {
   if (!sentIds.length) return;
   appendLog(`[OUTBOX_MIRROR] ${sentIds.length} message(s) sent in the background to reconcile`);
   for (const id of sentIds) {
-    await storage.deleteOutboxEntry(id).catch(() => {});
+    await storage
+      .deleteOutboxEntry(id)
+      .catch((e) =>
+        appendLog(
+          `[OUTBOX_MIRROR] could not drop background-sent ${id} from the outbox: ${String(e)}`
+        )
+      );
   }
 }
 
@@ -224,7 +230,7 @@ export async function adoptOrphanedMirrorEntries(
   if (!mirror.length) return 0;
 
   const known = await storage
-    .getOutboxEntries(deviceKeyB64)
+    .getOutboxQueue(deviceKeyB64)
     .catch((e) => {
       // Treating a failed read as an empty queue here would re-adopt the whole live queue, so this
       // is the one branch that must give up rather than guess.

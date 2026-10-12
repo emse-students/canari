@@ -129,6 +129,27 @@ describe('swipeBack', () => {
     expect(node.style.transform).toBe('');
   });
 
+  it('says what it did with an edge touch, so a device log can tell a cancelled touch from a lifted one', () => {
+    const node = document.createElement('section');
+    document.body.appendChild(node);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    swipeBack(node, { onBack: vi.fn(), enabled: true });
+
+    touch(node, 'touchstart', 2, 1200);
+    touch(node, 'touchcancel', 40, 1200);
+    touch(node, 'touchstart', 3, 1200);
+    touch(node, 'touchend', 10, 1200);
+
+    const lines = debug.mock.calls.map((c) => String(c[0]));
+    expect(lines).toEqual([
+      '[swipeBack] armed at x=2',
+      '[swipeBack] touch cancelled (tracking=true, committed=false)',
+      '[swipeBack] armed at x=3',
+      '[swipeBack] released dx=7 -> snap',
+    ]);
+    debug.mockRestore();
+  });
+
   it('forgets an unfinished edge touch when a new touch starts away from the edge', () => {
     const node = document.createElement('section');
     document.body.appendChild(node);

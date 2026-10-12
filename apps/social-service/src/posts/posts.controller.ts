@@ -235,7 +235,7 @@ export class PostsController {
     @Headers('x-user-id') xUserId: string
   ) {
     // The event of a post the reader may not see is that post's content: same 404 as the post.
-    await this.service.assertVisible(postId, xUserId);
+    await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
     const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
     return { linkedEvent };
   }
@@ -311,7 +311,7 @@ export class PostsController {
     @Param('pollId') pollId: string,
     @Body() body: VotePollDto
   ) {
-    await this.service.assertVisible(postId, xUserId);
+    await this.service.assertVisible(postId, xUserId, 'VOTE');
     return this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
   }
 
@@ -324,7 +324,7 @@ export class PostsController {
     @Body() body: AddReactionDto
   ) {
     await this.assertNotMuted(xUserId);
-    await this.service.assertVisible(postId, xUserId);
+    await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
     return this.interactions.addReaction(postId, xUserId, body.reactionType);
   }
 
@@ -347,7 +347,7 @@ export class PostsController {
     @Body() body: AddCommentDto
   ) {
     await this.assertNotMuted(xUserId);
-    await this.service.assertVisible(postId, xUserId);
+    await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
     return this.interactions.addComment(postId, { ...body, userId: xUserId });
   }
 
@@ -359,7 +359,7 @@ export class PostsController {
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string
   ) {
-    await this.service.assertVisible(postId, xUserId);
+    await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
     return this.interactions.likeComment(postId, commentId, xUserId);
   }
 

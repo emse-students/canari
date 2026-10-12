@@ -111,6 +111,9 @@ describe('ChannelService security hardening', () => {
     const redis = {
       publishChannelEvent: jest.fn(() => Promise.resolve()),
       onlineUserIds: jest.fn((_ids: readonly string[]) => Promise.resolve(new Set<string>())),
+      onlineDevicesByUser: jest.fn((_ids: readonly string[]) =>
+        Promise.resolve(new Map<string, string[]>())
+      ),
     };
 
     const service = new ChannelService(
@@ -1673,17 +1676,32 @@ describe('ChannelService security hardening', () => {
   it('listChannelMembers marks who is online only when presence is asked for', async () => {
     const { service, channelRepo, memberRepo, roleRepo, redis } = makeService();
     arrangePrivateChannelRoster({ channelRepo, memberRepo, roleRepo });
-    redis.onlineUserIds.mockResolvedValue(new Set(['guest']));
+    redis.onlineDevicesByUser.mockResolvedValue(new Map([['guest', ['tauri-g', 'web-g']]]));
 
     const plain = await service.listChannelMembers('ch1', 'boss');
     // The lists the UI draws never pay the keyspace scan.
-    expect(redis.onlineUserIds).not.toHaveBeenCalled();
+    expect(redis.onlineDevicesByUser).not.toHaveBeenCalled();
     expect(plain.every((m) => !('online' in m))).toBe(true);
 
     const marked = await service.listChannelMembers('ch1', 'boss', 'channel', true);
     expect(marked.map((m) => [m.userId, 'online' in m && m.online])).toEqual([
       ['boss', false],
       ['guest', true],
+    ]);
+  });
+
+  it('names the online DEVICES of each member, which a seed request elects its answerer from', async () => {
+    // Since 1.2.5 the requester names ONE device of the member it elects (channel-encryption
+    // section 23); a per-user flag cannot say which.
+    const { service, channelRepo, memberRepo, roleRepo, redis } = makeService();
+    arrangePrivateChannelRoster({ channelRepo, memberRepo, roleRepo });
+    redis.onlineDevicesByUser.mockResolvedValue(new Map([['guest', ['tauri-g', 'web-g']]]));
+
+    const marked = await service.listChannelMembers('ch1', 'boss', 'channel', true);
+
+    expect(marked.map((m) => [m.userId, 'onlineDevices' in m && m.onlineDevices])).toEqual([
+      ['boss', []],
+      ['guest', ['tauri-g', 'web-g']],
     ]);
   });
 
@@ -1696,7 +1714,7 @@ describe('ChannelService security hardening', () => {
       { id: 'm2', userId: 'Guest', roleIds: [], createdAt: 'now' },
     ]);
     roleRepo.find.mockResolvedValue([]);
-    redis.onlineUserIds.mockResolvedValue(new Set(['guest']));
+    redis.onlineDevicesByUser.mockResolvedValue(new Map([['guest', ['web-g']]]));
 
     const marked = await service.listWorkspaceMembers('ws1', 'boss', true);
 

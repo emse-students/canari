@@ -198,7 +198,7 @@ describe('purgeRetiredAvatarCache', () => {
 describe('a known absence', () => {
   afterEach(() => vi.useRealTimers());
 
-  it('is asked ONCE across remounts, and again once the server-stated lifetime has passed', async () => {
+  it('is asked ONCE across remounts, and never again on a clock - only the session ending clears it', async () => {
     // HAR 2026-10-05: 7 users without a photo were asked 11-12 times each in 22 s.
     vi.useFakeTimers();
     const url = nextUrl();
@@ -211,9 +211,10 @@ describe('a known absence', () => {
     }
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
-    vi.advanceTimersByTime(10 * 60 * 1000 + 1);
+    // No timer expires an absence: a day later it is still believed.
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000);
     await resolveUserAvatarDisplayUrl(url, 'u');
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('is never remembered for an outage - a 502 says nothing about whether there is a photo', async () => {

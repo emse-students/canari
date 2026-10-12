@@ -12,7 +12,7 @@ Canari runs as a native mobile app on Android and iOS via Tauri 2, using the sam
 | MLS | WASM (`WebMlsService`) | Native Rust (`TauriMlsService` via `invoke()`) |
 | Which of the two ships | chosen when the bundle is BUILT - see below | idem |
 | State storage | IndexedDB | Filesystem (`~/.canari/`) |
-| HTTP | `fetch()` with cookies | `@tauri-apps/plugin-http` (bypasses CORS) |
+| HTTP | `fetch()` with cookies | `@tauri-apps/plugin-http` (bypasses CORS); a binary body to Canari's API uses the WebView's own `fetch` ([why](#a-binary-body-through-the-http-plugin-costs-85-times-its-size-and-50-mb-crashes-the-app)) |
 | WebSocket auth | `canari_ws_token` cookie | `?token=` query param (cookie not sent on cross-origin WS) |
 | MLS snapshot | Argon2 in worker thread → IndexedDB | Direct filesystem write under `mls_bin_write_lock` |
 | Prekeys | 50 OTKPs | 200 OTKPs (more frequent offline periods) |
@@ -230,6 +230,74 @@ consequences that nothing type-checks:
 Also verified on hardware while chasing it: `XMLHttpRequest` is NOT patched and reads a `blob:` URL
 fine, so a passing XHR next to a failing `fetch` is the fingerprint of this class of bug.
 
+### A binary body through the HTTP plugin costs 85 times its size, and 50 MB crashes the app
+
+**Measured on the Mi 9T (Android 16, 5.6 GB, app 1.2.2), 2026-10-10.** The plugin's JS (`dist-js/index.js`,
+2.6.1 installed, **2.8.1 in the lockfile, byte-identical on this point; 2.8.1 is the latest on npm**, the
+3.0 line is alpha) does `Array.from(new Uint8Array(await req.arrayBuffer()))` and ships it through `invoke`
+as JSON: one JS number per byte, then a JSON string, then a Rust `Vec<u8>`. The RESPONSE side is not like
+that: `fetch_read_body` returns raw binary chunks (`tauri::ipc::Response`), so only request bodies are hit.
+
+Resident memory above the pre-run baseline (`/proc/<pid>/statm` polled every ~20 ms for the app and the
+renderer, upload of a random `FormData` blob to `dev.canari-emse.fr/api/media/upload` with an invalid token,
+which stores nothing; same method as [section 9.2 of the upload design](../services/media-streaming-upload.md)):
+
+| Body | Through the plugin (app / renderer) | Native WebView `fetch` (app / renderer) |
+| --- | --- | --- |
+| 4 MB | +326 / +167 | +5 / +5 |
+| 13.4 MB | +1185 / +487 | +14 / +14 (+15 / +38 through the patched `window.fetch`) |
+| 28 MB | +2209 / +1156 (earlier run) | +36 / +28 |
+| 50 MB | render process killed, the app crashes | +52 / +100 |
+
+**Why the override exists, and why this is safe to narrow.** `ad405e190` (2026-04-05) installed it when the
+Tauri origins were not yet in the services' CORS allowlists. They all are now (`TAURI_WEBVIEW_ORIGINS`, three
+spellings, asserted by name in each `cors-origins.spec.ts`), and every credentialed call already goes native
+(`shouldUseNativeFetch`), so the WebView's `fetch` already talks to every service from `tauri.localhost` in
+production. Checked from the Android origin against dev: an `Authorization`-bearing POST with a `FormData`,
+`Blob` or `Uint8Array` body, so a real preflight, answers 401 readably on `/api/media/upload`,
+`/upload/public`, `/upload/chunk/init`, `/api/associations/:id/logo` and `/api/forms/:id/image`.
+
+**The rule (`shouldUseNativeFetch`, third and fourth arguments, wired in `hooks.client.ts`):** a request with a
+BINARY body (`Blob`/`File`, `FormData`, `ArrayBuffer`, typed array, or a `Request` whose `Content-Type` is not
+text) to one of Canari's five service origins (`apiServiceOrigins()`) goes to the WebView. JSON string bodies,
+JSON/text `Request`s, GETs and third-party hosts stay on the plugin, which is what the override is for. A
+`ReadableStream` or async-iterable body is NEVER native (WKWebView cannot stream a request body; the plugin
+buffers it). A `Request` built from a stream looks like one built from an untyped `Blob` and counts as binary,
+the one case `hasBinaryBody` cannot tell apart. The hook installs `createRoutedFetch` (`utils/fetchRouting.ts`),
+the tested seam that forwards `init`, the `Request` and a freshly read origin list on every call. The three options
+and why this won:
+
+| Option | Verdict |
+| --- | --- |
+| Newer plugin-http | None exists: 2.8.1 is the latest JS and still has the `Array.from` path. |
+| A Rust command taking a path/offset or a raw `invoke` payload and streaming with `reqwest` | Works and would also unlock a file-backed outbox, but it is new native code on two platforms, needs its own auth, 401-retry, cancel and progress, and cannot be exercised by any web test. Kept as the fallback if native fetch fails on a device. |
+| WebView `fetch` for binary bodies to first-party origins | **Chosen.** One predicate, no native code, the same path web users run today (including the 401-refresh retry in `fetchUpload`), and no copy at all. |
+
+**Which origin the release builds bake (read from the workflows and the relay, 2026-10-10).** `android.yml` and
+`ios.yml` write the SAME `APP_URL` into every `VITE_*_URL`: the `BASE_URL` secret for a stable (the classifier
+accepts `canari.emse.fr` or `canari-emse.fr`; `BASE_URL` moved to `canari.emse.fr` on 2026-09-25) and
+`DEV_BASE_URL` for a pre-release, which must be `dev.canari-emse.fr` (the only dev name the classifier knows).
+Measured with a 2 MB POST to `/api/media/upload`: `canari.emse.fr` answers `401` (straight to the Portail-etu
+host, no cap), while `dev.canari-emse.fr` and `canari-emse.fr` answer **`413`** - both still go through the old
+VM's nginx relay (`canari-relay-dev.conf`, `canari-relay-prod.conf`), which sets no `client_max_body_size` and
+so keeps nginx's 1 MiB default. **So stable builds are unaffected; every pre-release (dev, tester) build uploads
+through the cap.** The secret values themselves cannot be read; this is inferred from the classifier and the
+measured answers. Removing the cap is a relay edit and not done here. In the meantime
+`fetchWithAnswerDeadline` (`utils/uploadDeadline.ts`, used by `fetchUpload`) aborts an upload nobody answers
+after `30 s + bytes / 16 KiB/s` and throws the ONE `UploadAnswerTimeoutError` (`uploadXhr.ts`, a `RequestDeadlineError`, the same type the XHR path raises), so `isTransportFailure` reads it by type and the UI shows the existing unreachable text (`auth_server_unreachable`); no second error type exists.
+
+**Not verified, and why.** (1) The iPhone: nothing was run (the installed build has no inspectable page, see
+[section 9.5](../services/media-streaming-upload.md)). The WKWebView sends `Origin: tauri://localhost`, which
+every service allows and which already carries the credentialed calls, but a multi-megabyte `FormData` fetch
+from WKWebView is a reading owed on the device. (2) A complete large upload: dev answers `413` above 1 MiB at its
+legacy relay and a native fetch then waits instead of reading the 413 (an 8 s abort in the bench), while the
+plugin reads it. No Canari server was reachable without that limit and a local server needs cleartext HTTP,
+which the release build refuses. Bodies over 1 MiB therefore proved MEMORY, not delivery; delivery is proven
+below 1 MiB (401 on a 500 KB body) and by the web client, which runs this very `fetch` path. The deadline turns
+the wait into a typed error but was proven only by unit test (fake timers), NOT on a device. (3) Downloads were
+not changed or measured. (4) That the deadline's 16 KiB/s floor suits a real member link is a choice, not a
+measurement.
+
 ### A relative `/api/` path is dead on mobile, and it fails as a SUCCESS
 
 The WebView's origin is `tauri.localhost`, so Tauri resolves a relative path as an ASSET, misses,
@@ -321,8 +389,13 @@ to one, since a Tauri download goes through the native save dialog and an object
 `<img>` reaches `shouldInterceptRequest`, never `shouldOverrideUrlLoading`.
 
 **Two things this does NOT claim.** It is not the upstream fix - a boundary that cannot unwind owes
-a `Result`, and `wry` 0.56.1 (tauri-apps/wry#1772) provides one, but every stable
-`tauri-runtime-wry` pins `wry ^0.55` and only `tauri-runtime-wry 3.0.0-alpha.0` asks for `^0.56`.
+a `Result`, and `wry` 0.56.1 (tauri-apps/wry#1772, in the 0.57.0 changelog: *"Don't panic in the IPC
+handler when the webview's current document URL is not a valid `http::Uri`"*) provides one. The app
+has built against it since tauri 2.12.1 / `wry 0.57.0` (2026-10-08, with `tao 0.37.1`, whose own
+`handle_intent` carries the `getType()` null guard this repo used to vendor as `patches/tao`), so the
+predicate is now defence in depth for the same input rather than the only thing standing in front of
+the abort; it is kept because it also keeps `currentUrl` from ever holding a value the IPC would then
+have to drop.
 And it is not airtight: `tauri-runtime-wry` parses the string into a `url::Url` before calling the
 handler and **allows the navigation outright when that parse fails** (`unwrap_or(true)`, its
 lib.rs:4898). `url::Url` accepts far more than `http::Uri` does - every case in the module's tests
@@ -521,6 +594,65 @@ communities` twice. The post-login community load was in flight, so the landing'
 back `refreshRan: false` at once, re-armed, and asked again on the next mutation of the map.
 `landingRecovery` now WAITS while `isLoadingWorkspaces` (made reactive for this) is true; the
 in-flight load settling re-runs the landing.
+
+#### What every notification opens, and what was measured (2026-10-08)
+
+**Asked by the user: does a tap land on the right page, and do I get notified of what I follow?**
+Built from the code and the tests, with no phone (both questions at the end of this section). Every
+emitter in `apps/social-service`, `apps/chat-delivery-service` and `apps/core-service` was listed; the
+destination column is what the app opens, the coverage column is what a test or a hardware row pins.
+
+| Notification | Channel | Destination field | App opens | Pinned by | Verdict |
+|---|---|---|---|---|---|
+| DM / group message | FCM + APNs (NSE) | `groupId` | `/chat`, conversation selected through `notifNav` (survives PIN, login, cold start) | NOTIF-7/7b `pending`; `notificationRouting` tests | routes; **no scroll to the message** (opens at the unread marker, by design) |
+| Message reaction | FCM + APNs | `groupId` | same conversation | NOTIF-15 | routes |
+| Salon (community) message | FCM + APNs (NSE writes `chat/channel_<id>`) | `channelId` | `/communities`, channel selected, community derived by the sidebar | **NOTIF-7c / 7d `pending`** | routes by code; phone layout never read |
+| Mention, reply, comment on my post/comment | FCM + APNs | `postId` | `/posts/<id>` with comments open | `push-target.spec`, `deepLinkRoutes.test` | routes; **no comment anchor** (a long thread is not scrolled to the comment) |
+| Reaction to a post | FCM + APNs | `postId` | `/posts/<id>` | same | routes |
+| `association_post`, `followed_post`, `association_repost` | FCM + APNs | `postId` | `/posts/<id>` | same | routes |
+| `repost_proposed`, `coorganise_proposed` | FCM + APNs | none (`postId` is the RECEIVING association) | **was the feed `/posts`**; now `proposals/<associationId>` -> slug lookup -> `/associations/<slug>/edit/republications` | `push-target.spec`, `deepLinkRoutes.test` | **fixed on the branch**, never run on a phone |
+| `form_opening_soon`, `form_open` | FCM + APNs | `formId` | `/forms/<id>` | same | routes |
+| `event_proposed` | FCM + APNs | `associationId`, `action` | `/admin/agenda` | same | routes (iOS read on hardware 2026-10-05) |
+| `event_validated/rejected/updated/deleted/pending` | FCM + APNs | same | `/calendar` | same | routes |
+| `profile_correction_applied/refused` | none (`skipPush`) | `requestId` | in-app row only, `/profile` | `notificationTarget.test` | no push by design |
+| Incoming call | FCM silent frame | `groupId`, `callId` | `/chat`, accept recorded | NOTIF rows | HELD: `CALLS_ENABLED = false` |
+| Browser (web) notification | `new Notification` from a WebSocket frame, **no service worker, no web push** | `conversationId` | `chatDeepLinkRoute` | `useNotifications.webClick.test` | **was `/chat` for a salon, fixed on the branch**; a closed tab gets nothing |
+
+**The three app states.** A tap is an `Intent` / `openURL` carrying `fr.emse.canari://<host>/<id>`.
+Running or backgrounded, `onOpenUrl` delivers it; killed, `getCurrent()` does (granted by `deep-link:default`,
+pinned by `tauriCapabilities.test.ts`). A chat or salon target is held in `notifNav` and landed by
+`ChatBackgroundService` once the session is logged in and the conversation is known - the only path that
+survives the PIN gate and a login. **A page target (`post`, `form`, `calendar`, `admin-agenda`) is a plain `goto`**:
+logged out, the root layout turns the destination into `/login?returnTo=<path>`, so it survives a login; behind the
+PIN gate the iPhone opened the post after the PIN on a cold start (2026-10-05), Android cold start was read on
+2026-08-11. A STALE target is handled where it lands: a deleted or unreadable post renders "Publication introuvable"
+(refusal and absence are not told apart on purpose); a channel the device does not know triggers one community
+refresh then `abandon`; a form that is gone shows the forms page error state.
+
+**What the 2026-10-08 section navigation does to taps: nothing breaks.** The only association link a push can carry is the
+queue one, and `/associations/<slug>/edit/republications` is still a section key (`editSections.ts`, "old
+notifications link to it"); the legacy `?section=` form is redirected by `edit/[[section]]/+page.ts`. `/admin/agenda`
+exists. Nobody may reach a section they lack the right for: that is decided after the roster loads (`mayOpenEditSection`).
+
+**Hosts the deep-link plugin must declare (measured 2026-10-08, Mi 9T).** The notification's `PendingIntent` is an explicit
+`VIEW fr.emse.canari://<host>/...`, but `tauri-plugin-deep-link` forwards `onNewIntent` and `load` URLs ONLY when
+`isDeepLink` matches a `plugins.deep-link.mobile` entry of `tauri.conf.json`. `posts`, `calendar`, `admin-agenda` and
+`proposals` were not declared, so a calendar, agenda-validation or proposal tap opened the app and did NOTHING (the
+JS `onOpenUrl` never fired). They are declared since, and `deepLinkHostsDeclared.test.ts` pins every host the server
+builds. Read on hardware after the fix, backgrounded and killed: the calendar event, the admin agenda and the proposal
+queue open.
+
+**Following: what "Suivre" does and does not change.** Two tables, `association_follows` and `user_follows`
+(`FollowsService`). Following feeds the `followed` tab of the feed and nothing else for an ASSOCIATION: its post is
+announced by `PostAnnounceScheduler` to everyone who can SEE the post (`announceRecipientsSql`, the same predicate as
+every read), `association_follows` is deliberately not consulted. A PERSON's post is announced to their followers
+who also share a space with them (`followersOnly` plus `postVisibleToUserSql`); an anonymous personal post is
+never announced. Measured on the local database, in a rolled-back transaction: with no follow row nobody is selected;
+with two followers, the one sharing campus and formation is selected, the one with no space is not. A push is
+`social_association_post` or `social_followed_post`, one notification per post per reader, no batching, no quiet hours.
+The only switch is the account-wide `posts` category (it governs both kinds); there is no per-association or
+per-person mute, and the per-channel levels only cover salons. A holder of a nominative read grant is not announced
+(the recipient SQL passes no `readGrants`), although the post is in their feed.
 
 ## Where an update comes from
 
@@ -763,7 +895,7 @@ thread under it, where CSS can only blur it. Android keeps the CSS glass.
 | Concern | Where it lives |
 |---|---|
 | The action that doubles a web piece | `mobile/nativeGlassPiece.svelte.ts` (`use:nativeGlassPiece`), `usesNativeGlassChrome` = the iOS app |
-| The four pieces | `ChatHeader` (back, the centre pill, "..."), `ChatComposer` (the "+") |
+| The four pieces | `ChatHeader` (back, the centre pill, "..."), `ChatComposer` (the "+") - NOT the polls and pinned pills, which stay CSS glass ([why](modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)) |
 | The pill's picture | `mobile/avatarBitmap.ts`, reading the `[data-glass-avatar]` node the web draws |
 | What the plugin lacked | the patch: a button's `menu`, `hidden`, `accessibilityLabel`, `foreground`, `imageSide` |
 
@@ -1008,6 +1140,20 @@ double consumption, which was the risk of adding a second handler beside Chromiu
 compile time, and `gen/android` is regenerated by `tauri android init` and by a major Tauri upgrade.
 The web half of the same defect - a landing that drained its own overlay entry - is in
 [chat](modules/chat.md#and-the-re-verification-it-asked-for-says-the-mechanism-is-there-and-the-landing-destroys-it-2026-09-21).
+
+### A modal closed by its owner's state left the overlay stack, and the tab swipe stood down (2026-10-09)
+
+On a fresh Feed after publishing a post the swipe to the camera did nothing three times, and worked
+after one round trip through another tab (Mi 9T, 2026-10-06). `isSwipeNavActive` is false while
+`historyOverlayStackDepth() > 0`, and `Modal` (and `bindHistoryOverlay`) only left the stack when
+DISMISSED through it: a publish sets `showCreateModal = false` itself (`routes/posts/+page.svelte`),
+the modal cleared its own reference and the entry stayed, until the next `beforeNavigate` drain -
+the "round trip". `releaseHistoryOverlay` (`historyOverlayStack.ts`) now takes the entry off the stack
+when `open` turns false, **without `history.back()`** (the owner is usually about to navigate, and an
+asynchronous traversal after the router's push is the bug the drain's comment names): the browser
+entry becomes the ghost `onPopState` already skips. Tests: `Modal.dismissal.svelte.test.ts` and
+`historyOverlayStack.test.ts`. The mechanism is proven in jsdom; **the reading owed** is the original
+one on a phone ([device-verification](../device-verification.md#v-the-camera-swipe-on-a-fresh-feed-after-publishing---owed-on-android)).
 
 ### The bar icons follow the page's theme, handed over by the page (2026-10-01)
 
@@ -1390,6 +1536,16 @@ the channel would fix the wording and discard the sound and importance THEY chos
 larger harm. `ensureChannels(context, manager)` therefore takes a `Context` and does its best at
 creation time; there is no repair after it.
 
+**The notification plugin's own "Default" channel is deleted at every resume (2026-10-09).**
+`tauri-plugin-notification` 2.4.0 creates a channel `default` when it loads, named and described
+with the hardcoded literal "Default" (`TauriNotificationManager.kt:96`), so a French app's settings
+listed six French channels and one called "Default" (measured 2026-09-23). Nothing posts to it - every
+`sendNotification` goes through `androidNotificationOptions`, asserted by `notificationChannels.test.ts`
+- so `CanariApplication.removePluginDefaultChannel`, called from `MainActivity.onResume`, deletes it:
+not from `Application.onCreate`, which runs BEFORE the plugin's load creates the channel. This was
+written and checked by the test; **READ on the Mi 9T on `v1.2.2` (2026-10-10, `dumpsys notification`): `default`
+is `mDeleted=true` under `fr.emse.canari`, the six Canari channels remain, the APK carrying it compiled in CI.**
+
 **iOS's quick-action titles are the one native string that CAN follow a language change**, and they
 do. `setNotificationCategories` REPLACES the whole category set, where an Android channel is written
 once and never again, so `CanariRefreshNotificationCategories` re-registers Reply / Send / Mark as
@@ -1508,6 +1664,37 @@ Two decisions inside it are easy to get wrong:
   explicitly, and on iOS that is why the name is a PARAMETER of the shared notification function:
   only the call site knows what the letter should stand for.
 
+**REACTIONS TO ONE POST ARE ONE NOTIFICATION WITH THE FACES OF WHO REACTED (user, 2026-10-08).** A
+Pixel 6a showed six separate `Nouvelle reaction - X a reagi Marteau a votre publication`, each alone
+and none with a face. Three defects, three fixes:
+
+- **No face**: `addReaction` built its push with no `icon`, while the other path (`createNotification`)
+  did. It now names `{ kind: 'user', userId }`, so `iconUserId` rides like any social push.
+- **`Marteau` instead of the emoji**: `Post.reactions` stores the picker's French LABEL and both
+  callers handed it to `reactionContent`, whose `arg` is the emoji. `reactionTypeToEmoji`
+  (`push-content.ts`) converts once on the server; a spec reads the frontend's `REACTIONS` and
+  fails if the two lists drift, and an unknown type logs at `warn` and is drawn as the heart the app
+  draws.
+- **Six notifications**: `showPostReactionNotification` (Kotlin) keys ONE notification on the post
+  (`postReactionNotifKey`, stable id like `reactionNotifKey` does for a conversation). The actors
+  accumulate in SharedPreferences (`canari_post_reactions`, bounded to 50 posts and 50 actors) and
+  the sentence is `A a reagi 🔨 ...` / `A et B ...` / `A, B et C ...` / `A, B et N autres ...`
+  (newest first, `N >= 2`). **The group ends on the SHADE, not on a clock**: a reaction joins the
+  ledger only when that notification is still posted, so a swipe or a tap starts a fresh group.
+  The large icon is the actor's face for one person and a collage of up to three faces for several,
+  through the same `fetchAvatar` and the same initials disc (logged) as every other path. The pure
+  half - ledger, sentence shape, faces, encoding - is `push/PostReactionGroup.kt`, compiled by the
+  JVM test project (`PostReactionGroupTest`).
+
+An un-react does not shrink an already-shown group: removing a reaction sends no push, so "A, B et 4 autres" stays until the notification is swiped or opened.
+
+**iOS** gets the cheap half only: `buildInternalApnsRequest` files a `social_reaction` under the
+thread `post_reaction_<postId>`, so the notification centre stacks the reactions to one post, and
+`attachSocialIcon` already draws the one actor's face from `iconUserId`. What it does not get is ONE
+banner updated in place with "A, B et N autres": that needs the NSE to read the delivered
+notifications of the thread and rewrite its text and a face collage, which is new native code that
+nothing here can run without an iPhone ([backlog](../backlog.md)).
+
 **"NO PICTURE" IS REMEMBERED ON ANDROID, AND NOTHING ELSE THAT IS NOT A PICTURE IS (2026-10-01).**
 `cachedRemoteIcon` used to write its file only on a `200`, so a person with no photo - every bench
 account, and many real ones - cost a request on EVERY notification, in the FCM process, before the
@@ -1532,7 +1719,7 @@ network for the notification's face. The id comes from `Avatar.svelte`, which ho
 the URL. The file name is spelt twice, Kotlin and Rust, and `avatarMirror.test.ts` holds the two
 together. **The clock**: the mirror's mtime is the moment of the write, so the native 24 h now
 measures "since the app last drew this face" - a contact seen daily never ages out, and a changed
-photo can be up to two days stale in the shade (the browser's 24 h `max-age`, then the native one).
+photo can be up to two days stale in the shade (the browser's 24 h `max-age` until 2026-10-08, now only the native one).
 No ETag is carried: a cross-origin `fetch` cannot read it without an `Access-Control-Expose-Headers`
 nobody sends, and the reader would need the network to compare it. **The bytes go as a plain array
 (`{ userId, data }`, the shape `save_mls_state` takes), never a raw invoke body**: the first version
@@ -1575,6 +1762,8 @@ as its corner badge; the plain `setLargeIcon` stays only for the shortcut-less s
 NOTHING AND SEEN NOWHERE**: the Gradle project needs the Tauri-generated settings, and no Canari
 notification could be raised on the Mi 9T without a push - owed a look on that phone.
 
+**The group key is still ONE constant**, `setGroup(GROUP_KEY_MESSAGES)` at three call sites of `CanariFirebaseMessagingService.kt` with one summary, where Messenger keys per THREAD (`GROUP:<threadId>`) - open, P3 ([backlog](../backlog.md)); measure on the Mi 9T after any change, since nothing in CI sees which section of the shade a notification lands in.
+
 **What the shade's two actions cover (audited 2026-10-05).** Reply and "Marquer comme lu" exist on
 Android and iOS for a one-to-one and a group (the MLS outbox and `read_watermark`, one function each,
 app killed included). **A community salon (`channel_<id>`) carries NEITHER action on either platform,
@@ -1595,7 +1784,7 @@ recipient is its author and already holds it.
 
 Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:
 
-1. Try a direct decrypt (`tryDecrypt` / `decryptProto`). **A refusal at an epoch this device already holds stops here** (reason `mls-refused-for-good`, Kotlin `PushDecrypt.RefusedForGood`, since 2026-10-04): `background.rs` `refused_by_mls` splits MLS refusals by `DecryptErrorKind`, and a spent generation, a same-epoch refusal, a past epoch, our own frame or an eviction cannot be read by any later epoch. So no catch-up and no worker - each used to cost `fetchCommitsFromBackend` and an enqueue per message to learn `no commit to catch up`. A visible push still gets the generic banner. (The in-app iOS path, `canari_push.mm`, does not read the reason yet.)
+1. Try a direct decrypt (`tryDecrypt` / `decryptProto`). **A refusal at an epoch this device already holds stops here** (reason `mls-refused-for-good`, Kotlin `PushDecrypt.RefusedForGood`, since 2026-10-04): `background.rs` `refused_by_mls` splits MLS refusals by `DecryptErrorKind`, and a spent generation, a same-epoch refusal, a past epoch, our own frame or an eviction cannot be read by any later epoch. So no catch-up and no worker - each used to cost `fetchCommitsFromBackend` and an enqueue per message to learn `no commit to catch up`. A visible push still gets the generic banner, **and since NOTIF-10 (b) that banner is paired with the real one** (`push/GenericBannerLedger.kt`, tested by `GenericBannerLedgerTest`): the refusal means another engine (the WebView, alive but backgrounded) holds the message and posts the real line through `notifyMessageFromWebSocket`. Generic first: its MessagingStyle instant is remembered and the real post REPLACES it (`supersedes`, the channel path's mechanism). Real first (the order measured on the Mi 9T, 2026-10-06, 56 ms apart): a credit, kept only while a push for that group is in flight, makes the refused push post nothing. No clock; a real post with no push behind it leaves no credit. **ONE REAL POST CAN STAND FOR N MESSAGES** (2026-10-06, Mi 9T: a 600 s radio cut ended in ONE banner, `messages=5`, against three refused pushes - the first was covered, the second left a generic line, the third was suppressed): a catch-up flush raises a single banner for the last of N, so `covers` (N, 1 for a live frame) crosses the bridge (`useMessaging` flush -> `nativeNotification.ts` -> `notifier_message_natif` -> `notifyMessageFromWebSocket`) and `realPosted(groupId, covers)` answers up to N pushes: it replaces up to N generic lines (`supersedes` plus `alsoSupersedes`) and credits the rest, still capped by the pushes in flight. (The in-app iOS path, `canari_push.mm`, does not read the reason yet.)
 2. If that fails, ask where the group stands: `groupLocality` / `GroupLocality` returns `LOCAL`, `ABSENT` or `UNKNOWN`.
 3. `UNKNOWN` — the state could not be reached at all (lock not acquired, `mls.bin` unreadable, device key missing, JNI absent). **Neither recovery runs**, because neither is an answer to it. The push falls through to the fallback below.
 4. `LOCAL` (epoch ≥ 0) — run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately.
@@ -2167,6 +2356,10 @@ conversation has read it (product decision, 2026-08-31). Both call one function 
 (`sendReadWatermark` in `CanariNotificationActionReceiver.kt`, `CanariSendReadWatermark` in
 `canari_push.mm`), so neither can drift into its own idea of what reading means.
 
+### A salon: Mark as read only, and why Reply is not offered (decided 2026-10-10, Android)
+
+A salon notification (`channel_<id>`) carries **Mark as read** and no Reply. Marking read is server-authoritative, so it is one PushSecret call (`CanariFirebaseMessagingService.postChannelRead` -> chat-delivery `POST /api/mls/push/channel-read` -> social-service, mechanism on [social-service](../services/social-service.md)); the local banner is cleared first, and the action is offered only when the notification holds the message's server instant (`ChannelReadMark.offered`, JVM-tested). **Reply is not built, by decision**: a salon send is not a plain POST but an end-to-end encrypted message sealed under a Graine session (a signed v2 frame, [channel-encryption](../protocols/channel-encryption.md)), and the broadcast receiver holds neither the signing key nor the session. Building it means a native Graine sealing path in the JNI layer plus a PushSecret send route in the delivery service - a package of its own. **iOS has neither half**: the NSE category actions run in no gate of this repo, so they wait for a hand on an iPhone ([backlog](../backlog.md)).
+
 ### The instant is carried, never looked up
 
 The frame is `AppMessage{ system: SystemMsg{ event: "read_watermark", data: {"at"} } }`, built by
@@ -2228,7 +2421,12 @@ Each fact is now answered where it lives, by durable state rather than a clock:
 
 - **a paused socket does not exist** - `pauseConnectionImpl` calls `IMlsService.pauseSocket`
   (frame, then release with no disconnect callback), and the session's pause flag refuses every
-  reconnect request (`online`, the service's own hook) until the foreground `resumeConnectionImpl`;
+  reconnect request (`online`, the service's own hook) until the foreground `resumeConnectionImpl`.
+  **The frame is the probe (2026-10-08):** the Tauri socket the OS closed under a backgrounding app
+  delivers no `Close`, but its `send` rejects and the plugin has already dropped it, so
+  `disconnect()` could only answer "Trying to work with closed connection" - a `console.warn` on every
+  background (Mi 9T, 2026-10-06). The native disconnect now follows an ACCEPTED frame only; a refused
+  one is logged at `log` level as "already closed natively";
 - **the resume merges the shade first** - `ChatBackgroundService` flushes the FCM cache and
   `consumeNativeReadWatermarks` BEFORE reopening the socket, in login's order;
 - **already read is not news, on both builders' doorsteps** - `notifyInbound` asks
@@ -2295,6 +2493,40 @@ two hops, and the second one is slower than the first:
 |---|---|---|
 | `pending_push_secret.txt` (app data dir) | the WebView, via `store_push_secret` (`push.rs`) | at every `/register`, i.e. at each login/unlock that re-registers |
 | Android Keystore / iOS Keychain | `CanariApplication.processPendingPushSecret` (also run from `MainActivity.onResume`) / `CanariRetrievePushSecret` | at process start and at each resume - always BEFORE the registration that writes the file |
+| `push_secret.txt` in the App Group (iOS only, the NSE's copy) | `store_push_secret`, in the SAME call as the file above; `CanariMirrorPushStateToAppGroup` rewrites the same value at each activation and resignation | at every `/register` since 2026-10-12 |
+
+### The extension's copy that followed the lifecycle, and the iPhones that presented a dead secret
+
+**Measured, prod, 2026-10-12, 09:15-09:35 UTC** (the only window the container's 30 MB log rotation
+kept): 45 `[PUSH_SECRET] rejected reason=mismatch` and 15 `[PUSH_AVATAR] outcome=rejected`, from
+SIX devices of six real accounts - **every one an iPhone** (127 iOS push rows, 120 Android, zero
+Android rejections), on 1.0.3 to 1.1.2. Not a retry loop: each burst is 1-3 calls landing 1-2 s
+after a `[SOCIAL_PUSH] sent` to that device, i.e. one Notification Service Extension run per push
+(avatar, commit catch-up, omitted proto). And not a stale second install: the same devices'
+`refresh-token` calls - made by the APP process, from the Keychain - passed in the same minutes
+(`caaf29` rejected at 09:17:38, refreshed at 09:17:48, no rejection after).
+
+The NSE has no way to the app's data dir or its Keychain item, so it reads `push_secret.txt` from the
+App Group, and that copy was written ONLY by `CanariMirrorPushStateToAppGroup` at `didBecomeActive`
+/ `willResignActive`. The registration runs just after `didBecomeActive`'s mirror, so the copy was
+one secret behind for the whole foreground session (`5dcbd8`: `[PUSH_REGISTER]` 09:21:25, push
+09:21:31, rejected 09:21:32), and for ever when the app left the foreground before `/register`
+answered. **A third store with its own writer is the "one value, two stores" defect again**, so
+`store_push_secret` now writes it beside the handoff file (temp + rename, the NSE reads it from
+another process); the App Group path comes from `app_group.rs`, through the Objective-C runtime
+because `libapp.a` is linked into the extension too.
+
+**And login registered twice.** `sessionAuth` and the root layout's effect both start the push
+service, 500 ms apart, and both passed the skip check before either recorded its result - two
+`[PUSH_REGISTER]` a second apart for `409811`, each invalidating the other, with the server keeping
+the last COMMIT and the device the last ANSWER. `registerPushToken` joins an attempt already in
+flight now, and awaits `store_push_secret` so a registration counts as finished only once its secret
+is stored (`PushNotificationService.singleflight.test.ts`).
+
+**What it cost**: no avatar on those notifications, and a generic text wherever the inline decrypt
+needed a commit catch-up or the proto was omitted. The inline decrypt itself needs no secret.
+**Owed**: one reading on the bench iPhone (dev) after a fresh login - a push received while the app
+is open must fetch its avatar - and a production `grep -c 'reason=mismatch'` after the stable.
 
 So the file, whenever it exists, is **newer by construction**, and the Keystore is one registration
 behind for the whole window between an unlock and the next resume. `retrievePushSecret` reads the
@@ -2641,9 +2873,59 @@ showed "not sticky," never why, and the actual gap (0.05px) was only visible by 
 | `android.yml` | `.aab` to Google Play - `internal` track for a pre-release, `production` for a stable |
 
 Both store arms also accept `workflow_dispatch` as a pure compile check: `publish` defaults to
-false there, and it is the only way to compile Swift, ObjC or Kotlin off macOS.
+false there, and it is the only way to COMPILE Swift, ObjC or Kotlin off macOS.
+
+**Swift is PARSED on every pull request since 2026-10-09** (`.github/scripts/swift-syntax.sh`, a step of
+`make test-ci-scripts`, so the always-on `Test CI Scripts` job). It runs `swiftc -parse` over every
+`git ls-files '*.swift'` - 25 files at the time: the notification extension, the vendored plugins'
+`ios/` trees, five `Package.swift` manifests - on the Linux runner, whose image ships Swift (6.4 at the
+time of writing). `-parse` is Swift's own grammar with no SDK, so it needs no UIKit to resolve and no
+Mac. **It finds syntax errors and nothing else**: a type error, a missing symbol, an availability
+mistake or a `guard` body that falls through are semantic and stay with the `ios.yml` dispatch above.
+The set is derived (an empty one fails), a missing `swiftc` fails on CI and is said out loud on a
+workstation, and `tests/swift-syntax.test.sh` shows the instrument able to fail where a real `swiftc`
+exists (a `guard` with no `else`). **There is no Swift test suite to run, and the measurement matters**:
+the two `Tests/PluginTests` targets under the vendored plugins are the Xcode template (`testExample`
+builds a plugin and asserts nothing) against packages that need a Tauri tree only a Mac has, and
+nothing runs them. A real suite needs a macOS runner - `ios.yml` is the only workflow with one, and it
+is a release path - so it is not built; the NSE's pure helpers (the cache-path and URL rules, mirrored
+in Kotlin) are the place to start if it ever is.
 
 See [`cicd.md`](../cicd.md) for the full pipeline.
+
+## Notification quick actions are on every Android message notification, whoever posts it (resolved 2026-09-18, audited 2026-10-10)
+
+The 2026-09-06 measurement (a notification posted by the WebView carried no actions, so check K's backgrounded case could not be performed) described a world with TWO builders. Since 2026-09-18 the WebSocket frame is a second TRIGGER for the ONE Kotlin builder ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts) -> `notifier_message_natif` -> `showMessageNotification`, `quickActions = true` by default), so a backgrounded message carries Reply and Mark as read like a pushed one. The only conversations without them are reactions (`quickActions = false`) and salons (a \`channel_\` id), whose send is server-authoritative. What is still owed is the HAND: answering a backgrounded shade (NOTIF-6c).
+
+## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, scheduled after the campaign)
+
+**Play's requirement:** an app with sign-in must support Zero-Tap Sign-In restoration on a new Android device (mobile and tablet; enforcement from **April 2027**). The exemptions (Block Store integration by 30 September 2026 - that date has PASSED - enterprise or permanently-private apps, regulatory) do not describe a student messaging app. The mechanism is the Restore Credentials API (`androidx.credentials`, Android 9+, our minSdk is 28; GMS core 24220000+): a system-managed WebAuthn credential tied to the package, created silently after sign-in, backed up with the device. It works regardless of `android:allowBackup`, so it does not reopen the device-transfer exclusion of 2026-08-26.
+
+**The cost is a server we do not have:** `core-service` has no WebAuthn registration or assertion endpoint, and a restore key needs both plus a store keeping restore keys distinguishable from passkeys; a successful assertion must mint the usual pair of an opaque refresh row and a 1 h access token ([sessions](../sessions.md)).
+
+**The principle is decided, not to be re-opened** (the user accepted it 2026-08-26): zero-tap signs the new device in with no second factor, Google says the API "does not handle multi-factor authentication", and Canari has 2FA. Accepted because a restored session authenticates, it does not decrypt: Keystore material is non-exportable, the MLS device key does not travel, and the new device still enrols as a new MLS client ([backup](backup.md)).
+
+**Three traps for the build:** (1) the logout half is a requirement - Play requires deleting the restore key on sign-out, so a Tauri command down to `ClearCredentialStateRequest(TYPE_CLEAR_RESTORE_CREDENTIAL)`, run on the paths that log out WITHOUT a gesture too (401/403, revoked session); (2) the library was `1.7.0-alpha03` - check for a stable line before starting; (3) `E2eeUnavailableException` is expected (no screen lock or no Google backup), handled by retrying with `isCloudBackupEnabled = false`, a second path that is logged at a level that accuses with its rate measured.
+
+## One row arriving through the push, the pull and the socket (measured 2026-09-08 to 2026-10-06)
+
+The open line is in [backlog](../backlog.md#p3---the-pull-and-the-socket-hand-the-same-row-in-and-the-queue-notices-afterwards-instead-of-the-overlap-not-existing-measured-2026-09-08).
+
+**On the phone, the overlap reaches openmls.** NOTIF-7 (backgrounded, push, tap, foreground), 2026-09-08, left six `severe` lines on A1: two frames at one epoch (group 2bd5add9, `msg_epoch=196 group_epoch=196`, generations 7 and 8), each refused with `Ciphertext generation out of bounds` / `SecretReuseError` and `MLS decryption failed at exactly its own epoch, so no redelivery can help`. A same-epoch `SecretReuseError` means the generation was already consumed, so these are duplicates, not losses (the row displayed exactly one message). On the web the same overlap is caught by the queue and files `[QUEUE] delivery ... arrived twice`, a notice; on the phone nothing catches it first, so the same defect costs a `PASS-DIRTY` on the web and severe lines on a handset. Re-measured on `00a86a1a8` (2026-09-23, NOTIF-7b killed): two severe lines instead of six, same shape, 21 ms apart - the count moved, the mechanism did not.
+
+**Who consumes the generation (code read 2026-10-06, after NOTIF-10 went `FAIL` on the Mi 9T twice, `7ab8f1780`).** The push path persists nothing: `background.rs` (`decrypt_push_message_with_key`, "These never persist `mls.bin`") decrypts in memory and discards the manager; only the outbox batch and the Welcome paths call `save_encrypted_with_key`. A push decrypt answering `SecretReuse` was refused because ANOTHER ENGINE persisted that generation first: the JS/WebView engine (socket drain, catch-up pull) or the `MlsBackgroundWorker`. The 2026-09-08 reading, which blamed the Kotlin service writing the state back, was wrong, and the fix it proposed (acknowledge the row at the cache write, or consult the FCM cache by `messageId` + `groupId`) is withdrawn. What survives: the frames ARE the same ids end to end (`queuedMessageId` in `CanariFCM` is `qId` in `[QUEUE]`); `BaseMlsService.deliveries` cannot see a consumer in another layer; and `read_and_clear_fcm_cache` clears BEFORE the JS has persisted anything, so a crash between that clear and `saveMessage` loses the plaintext for good - a window to close on its own (read, persist, THEN clear), never by retrying or suppressing the log line.
+
+**The generic banner is a straight line, not a leak.** `RefusedForGood` (`mls-refused-for-good`, kind `SecretReuse`) on a VISIBLE push skips the ladder and the worker (#1394) but falls through `decrypted == null` in `handleMlsFrame` to `buildFallbackText` -> `Fallback notification: Nouveau message de <sender>` -> `showMessageNotification`, suppressed only when `MainActivity.isInForeground` is true at post time. NOTIF-10, 2026-10-05, both runs: four pushes refused `SecretReuse` at one epoch (20, then 26), 0.5-1.4 s apart, four fallback lines, only the last suppressed - three nameless banners posted while the app was not yet foreground. The Mi 9T logcat shows the JS engine's `[QUEUE] Processing` about 1.4 s before the first push refusal and a real banner (`notifyMessageFromWebSocket`) 56 ms BEFORE the push's generic line, which is why the shade showed both.
+
+**Decided and implemented 2026-10-06 (design b, #1550)**: `push/GenericBannerLedger.kt` pairs the real banner and the generic one in either order, and one batched real banner answers every refused push it covers (`covers`). Kotlin-side only; the service cannot be compiled outside the Tauri Android project, so the ledger is JVM-tested. One on-device NOTIF-10 re-read is owed (the batched-banner half was added after the `messages=5` reading); the Mi 9T third pass on `v1.0.4-alpha.5` read NOTIF-10 failing in a new shape (#1555).
+
+**Real banners that no push was waiting for are remembered, bounded (2026-10-09, NOTIF-10 `FAIL` of 2026-10-07).** With the push channel cut, five messages each got their OWN real banner (`covers=1`) while NO push was in flight, so they left no credit; the pushes then arrived ~9 min later, were refused `SecretReuse`, and the shade ended with the summary plus one generic `Nouveau message de ...` nothing would replace ([device readings](../device-readings-2026-10.md#2026-10-07---mi-9t-v104-alpha5-debug-apk-from-tag-1be223001-versioncode-100000405)). A refusal PROVES the other engine held that generation, so a real banner for the group exists or is being posted: `GenericBannerLedger` now keeps, per group, a count of real posts no push claimed (`unclaimed`, capped at `MAX_UNCLAIMED = 8`), a refused push with no credit consumes one and posts nothing, and `groupCleared` / `allCleared` forget them when the group's notification is cancelled or the app opens (`cancelConversationNotification`, `cancelAllMessageNotifications`) - no clock. The ACK-won-race case the old rule protected now costs at most one swallowed generic line for a message whose real banner the refusal proves. Proven in `GenericBannerLedgerTest` (the 2026-10-07 case is a test; `cd frontend/src-tauri/android-tests && ./gradlew test`); the two cancel call sites are in the service and were NOT compiled from here. Owed: `bun archive/notif.mjs 10` on the Mi 9T, which must end with no generic line in the shade.
+
+**The web-side overlap (HEAL-NEW).** One line on W3 on every HEAL-NEW run with a fresh device pulling while a socket is live: `[QUEUE] delivery ... arrived twice - the pull listed a row the socket had already handed in ...; not decrypting it again`. Nothing is lost or decrypted twice, but it is the visible end of two delivery paths overlapping BY CONSTRUCTION, and a race that heals cleanly is still a defect. Declaring it `ignoringExpectedLog` would demote a real overlap to keep a cell green, so HEAL-NEW-2 stays `PASS-DIRTY` until the overlap goes. **The direction is small**: the duplicate is caught at the DRAIN, by a queue that already holds the row; the pull that lists it again could ask the same question one step earlier (a row already queued for this device is not a row to queue). Both halves are in memory in the same module, so it is a membership test, not a new ledger. **Owed before the change**: the RATE against the population - `notableCount` on the same record was 91, so the counted-not-printed tail holds the real number.
+
+## The group summary never alerts (measured on a Pixel 6a, 2026-10-09)
+
+Logcat 12:16:49: a `type=channel` push at .069, a `type=channel_read` at .103 (`cancelConversationNotification` id=1035, which calls `refreshBadgeSummary`), the message banner posted at .147, then Android logged "Muting recently noisy" on the summary id 9999. The summary was rebuilt by every post and cancel with default alert behaviour, so each rebuild counted as a noisy post and tripped the platform's rate limit on the group. `refreshBadgeSummary` now sets `setOnlyAlertOnce(true)` and `GROUP_ALERT_CHILDREN`: only a child line may sound. No change to the message repost: a message already announced and cancelled by a read push is refused by the alerted ledger (`hasAlreadyAlerted`), and one not yet announced is rightly its first alert, so a second `setOnlyAlertOnce` there would only hide a real first sound.
 
 ## See also
 

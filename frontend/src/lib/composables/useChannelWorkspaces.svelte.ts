@@ -1,5 +1,7 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { slugify } from '$lib/utils/textFold';
+import { reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
+import { flushSalonReadMarks } from '$lib/utils/chat/salonReadMarkQueue';
 import { ChannelApiError, ChannelService } from '$lib/services/ChannelService';
 import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
@@ -44,6 +46,7 @@ import {
 } from '$lib/utils/graine/distributionGroup';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
+import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
@@ -200,6 +203,8 @@ export function useChannelWorkspaces() {
    * the landing must re-run when that load settles rather than start a second one.
    */
   let isLoadingWorkspaces = $state(false);
+  /** A join landed while a listing was in flight; that listing's answer predates it. */
+  let joinedCommunityReloadOwed = false;
   let workspacesLoadError = $state<string | null>(null);
 
   const service = new ChannelService();
@@ -246,77 +251,43 @@ export function useChannelWorkspaces() {
     const validChannelConversationIds: string[] = [];
     const validWorkspaceSlugs = new SvelteSet<string>();
 
+    // EVERY COMMUNITY ROW FIRST, IN THE SERVER'S ORDER, THEN THEIR SALONS SIDE BY SIDE.
+    //
+    // The walk used to be one community after another, each paying its key-group read, its roster
+    // read and its salon listing before the next one started: measured on a production web console
+    // 2026-10-12 (`v1.2.5`), 7 communities were 21+ requests in a row and `communities/channels
+    // loaded` came 2.87 s after the first one went out - every salon row, and the unread counts asked
+    // after this load, waiting behind the slowest chain repeated seven times. Nothing one community
+    // does reads another's: the key-group join is coalesced PER SCOPE (`ensureDistributionGroupFor`),
+    // and each community only appends to its own sidebar entry. So the chains run together and the
+    // load costs the longest one. The rows are upserted synchronously first so the sidebar's order
+    // stays the server's whatever order the chains finish in.
+    //
+    // SETTLED, NOT RACED: an attempt that fails is retried by the caller, and a retry starting while
+    // a sibling chain of the failed attempt still runs would be two loads at once - the overlap
+    // `isLoadingWorkspaces` exists to forbid. So every chain is awaited, and the first failure is
+    // rethrown only then.
+    const prepared: { sidebarWorkspace: ChannelSidebarWorkspace; workspaceId: string }[] = [];
     for (const workspace of backendWorkspaces) {
       const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
       const workspaceId = sidebarWorkspace.workspaceDbId;
       if (!workspaceId) continue;
       validWorkspaceSlugs.add(sidebarWorkspace.id);
+      prepared.push({ sidebarWorkspace, workspaceId });
+    }
 
-      // Joining the community's Graine key-distribution group is done HERE, and AWAITED, for a
-      // reason beyond tidiness: it is what registers the group id locally, and until it is
-      // registered a seed frame arriving on that group is treated as an unknown conversation and
-      // answered with a welcome_request nobody will ever send. Awaiting closes that window instead
-      // of leaving one spurious recovery per community per start.
-      //
-      // Never fatal to the load: a community that fails to prepare must still appear in the
-      // sidebar, and its salons then refuse to SEND with a named cause rather than the whole
-      // community vanishing. The failure is logged with its cause by
-      // `ensureCommunityDistributionGroup`, which is all a best-effort path leaves behind.
-      if (ctx.ensureMls) {
-        const mls = await ctx.ensureMls();
-        await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
-      }
-
-      const channels = await service.listChannels(workspaceId);
-      for (const channel of channels as ChannelDto[]) {
-        const actualId = channel.id || channel._id;
-        if (!actualId) continue;
-
-        const isPrivate = channel.visibility === 'private';
-
-        // Which group a salon's seeds travel on is the one fact the send path cannot derive: a
-        // channel id alone reaches every send site, and the seal needs the roster the seed is
-        // sealed to - the community for a public salon, the salon itself for a private one.
-        registerChannelWorkspace(actualId, workspaceId, isPrivate);
-
-        // A PRIVATE SALON HAS ITS OWN GROUP, and this is one of the three moments this device
-        // enters it. This is the only one that meets a salon the viewer may merely SEE, so it is the
-        // only one that passes anything but `true` - see `enterPrivateSalonGroup` for why declining
-        // has to be as loud as entering.
-        await enterPrivateSalonGroup(service, workspaceId, actualId, {
-          isPrivate,
-          viewerHasAccess: channel.viewerHasAccess !== false,
-          ensureMls: ctx.ensureMls,
-          log: ctx.log,
-        });
-
-        const channelConversationId = `channel_${actualId}`;
-        if (!validChannelConversationIds.includes(channelConversationId)) {
-          validChannelConversationIds.push(channelConversationId);
-        }
-        addChannelToWorkspace(sidebarWorkspace.id, {
-          id: channelConversationId,
-          name: channel.name,
-          isPrivate,
-          hasAccess: channel.viewerHasAccess !== false,
-          canWrite: channel.viewerCanWrite !== false,
-        });
-
-        // AN UNJOINED SALON GETS NO CONVERSATION, and that is the point: a conversation row is what
-        // every read path keys off, and this viewer may not read it. The sidebar row exists so the
-        // join is reachable, and the join is what turns it into a conversation.
-        if (channel.viewerHasAccess === false) continue;
-
-        ctx.conversations.set(
-          channelConversationId,
-          buildConversationRow({
-            id: channelConversationId,
-            lifecycle: 'active',
-            identity: { contactName: channelConversationId, displayName: channel.name },
-            existing: ctx.conversations.get(channelConversationId),
-          })
-        );
-      }
+    const outcomes = await Promise.allSettled(
+      prepared.map(({ sidebarWorkspace, workspaceId }) =>
+        loadCommunitySalons(ctx, sidebarWorkspace, workspaceId, validChannelConversationIds)
+      )
+    );
+    const firstFailure = outcomes.find(
+      (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
+    );
+    if (firstFailure) {
+      const failed = outcomes.filter((outcome) => outcome.status === 'rejected').length;
+      ctx.log(`[WORKSPACE-LOAD] ${failed}/${outcomes.length} community(ies) failed to load`);
+      throw firstFailure.reason;
     }
 
     const selectedChannel = ctx.getSelectedConversationId?.();
@@ -324,6 +295,98 @@ export function useChannelWorkspaces() {
       await ctx.reloadChannelHistory(selectedChannel);
     }
 
+    await pruneAfterLoad(ctx, epochAtRequest, validChannelConversationIds, validWorkspaceSlugs);
+  }
+
+  /**
+   * One community's half of a load: its key group, its salons, their sidebar rows and conversations.
+   *
+   * Appends every salon it finds to `validChannelConversationIds`, which the prune reads once every
+   * community has answered. Runs beside the other communities' - see `executeWorkspaceLoadAttempt`.
+   */
+  async function loadCommunitySalons(
+    ctx: ChannelWorkspaceContext,
+    sidebarWorkspace: ChannelSidebarWorkspace,
+    workspaceId: string,
+    validChannelConversationIds: string[]
+  ): Promise<void> {
+    // Joining the community's Graine key-distribution group is done HERE, and AWAITED, for a
+    // reason beyond tidiness: it is what registers the group id locally, and until it is
+    // registered a seed frame arriving on that group is treated as an unknown conversation and
+    // answered with a welcome_request nobody will ever send. Awaiting closes that window instead
+    // of leaving one spurious recovery per community per start.
+    //
+    // Never fatal to the load: a community that fails to prepare must still appear in the
+    // sidebar, and its salons then refuse to SEND with a named cause rather than the whole
+    // community vanishing. The failure is logged with its cause by
+    // `ensureCommunityDistributionGroup`, which is all a best-effort path leaves behind.
+    if (ctx.ensureMls) {
+      const mls = await ctx.ensureMls();
+      await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
+    }
+
+    const channels = await service.listChannels(workspaceId);
+    for (const channel of channels as ChannelDto[]) {
+      const actualId = channel.id || channel._id;
+      if (!actualId) continue;
+
+      const isPrivate = channel.visibility === 'private';
+
+      // Which group a salon's seeds travel on is the one fact the send path cannot derive: a
+      // channel id alone reaches every send site, and the seal needs the roster the seed is
+      // sealed to - the community for a public salon, the salon itself for a private one.
+      registerChannelWorkspace(actualId, workspaceId, isPrivate);
+
+      // A PRIVATE SALON HAS ITS OWN GROUP, and this is one of the three moments this device
+      // enters it. This is the only one that meets a salon the viewer may merely SEE, so it is the
+      // only one that passes anything but `true` - see `enterPrivateSalonGroup` for why declining
+      // has to be as loud as entering.
+      await enterPrivateSalonGroup(service, workspaceId, actualId, {
+        isPrivate,
+        viewerHasAccess: channel.viewerHasAccess !== false,
+        ensureMls: ctx.ensureMls,
+        log: ctx.log,
+      });
+
+      const channelConversationId = `channel_${actualId}`;
+      if (!validChannelConversationIds.includes(channelConversationId)) {
+        validChannelConversationIds.push(channelConversationId);
+      }
+      addChannelToWorkspace(sidebarWorkspace.id, {
+        id: channelConversationId,
+        name: channel.name,
+        isPrivate,
+        hasAccess: channel.viewerHasAccess !== false,
+        canWrite: channel.viewerCanWrite !== false,
+      });
+
+      // AN UNJOINED SALON GETS NO CONVERSATION, and that is the point: a conversation row is what
+      // every read path keys off, and this viewer may not read it. The sidebar row exists so the
+      // join is reachable, and the join is what turns it into a conversation.
+      if (channel.viewerHasAccess === false) continue;
+
+      ctx.conversations.set(
+        channelConversationId,
+        buildConversationRow({
+          id: channelConversationId,
+          lifecycle: 'active',
+          identity: { contactName: channelConversationId, displayName: channel.name },
+          existing: ctx.conversations.get(channelConversationId),
+        })
+      );
+    }
+  }
+
+  /**
+   * What a load ends with: the salons and communities the listing did not name are deleted, except
+   * those created on this device after it was requested.
+   */
+  async function pruneAfterLoad(
+    ctx: ChannelWorkspaceContext,
+    epochAtRequest: number,
+    validChannelConversationIds: string[],
+    validWorkspaceSlugs: Set<string>
+  ): Promise<void> {
     // NEWER THAN THE QUESTION IS NOT ABSENT FROM THE ANSWER. A salon created while this listing
     // was in flight is missing from it by construction, and deleting it here destroys a salon the
     // user is very probably typing in.
@@ -464,7 +527,7 @@ export function useChannelWorkspaces() {
     } else if (error instanceof GraineSealUnavailableError) {
       // Nothing was sent: this device holds no key for the scope yet (join not landed, session not
       // wired). Said as a TYPE at the throw, so it no longer lands in the nameless arm below.
-      message = m.channel_action_error_not_ready({ action });
+      message = sealUnavailableMessage(error.reason);
     } else if (isRetryableLoadError(error)) {
       // ONE PREDICATE, NOT TWO. "Worth retrying" and "say it is the network" are the same
       // question - the server did not decide anything - and they were two hand-kept lists that
@@ -758,6 +821,22 @@ export function useChannelWorkspaces() {
           await executeWorkspaceLoadAttempt(ctx);
           workspacesLoadError = null;
           ctx.log(`[WORKSPACE-LOAD] communities/channels loaded (attempt ${attempt + 1})`);
+          // THE SALONS EXIST NOW, and what is unread in them is the server's to say: the live tally
+          // this device keeps is empty after any reload. See `salonUnread.ts`.
+          // NOT awaited: this runs under `isLoadingWorkspaces`, and a slow answer must not make
+          // every other load refuse.
+          void reconcileSalonUnreadFromServer({
+            conversations: ctx.conversations,
+            selectedId: ctx.getSelectedConversationId?.() ?? null,
+            userId: currentUserId() ?? '',
+            fetchCounts: () => service.listUnreadCounts(),
+            settleOwedMarks: () =>
+              flushSalonReadMarks(currentUserId() ?? '', (id, at, serverAt) =>
+                service.advanceReadMark(id, at, serverAt)
+              ),
+            log: ctx.log,
+            reason: 'communities loaded',
+          });
           return true;
         } catch (error) {
           ctx.log(
@@ -797,7 +876,42 @@ export function useChannelWorkspaces() {
       return true;
     } finally {
       isLoadingWorkspaces = false;
+      // A join that arrived while THIS listing was in flight is not in its answer, so it is owed one
+      // more. Run here, after the flag drops, because that is the one moment a second load is legal.
+      const owed = joinedCommunityReloadOwed;
+      joinedCommunityReloadOwed = false;
+      if (owed) void loadChannelWorkspacesFromBackend(ctx);
     }
+  }
+
+  /**
+   * True when no community of this device matches the event: the first sight of a community, which
+   * is what a join in-session looks like from the receiving end.
+   */
+  function isCommunityUnknownToEvent(event: { workspaceId?: string; workspaceSlug?: string }) {
+    const slug = event.workspaceSlug?.trim().toLowerCase();
+    return !channelWorkspaces.some(
+      (workspace) =>
+        (event.workspaceId && workspace.workspaceDbId === event.workspaceId) ||
+        (slug && workspace.id === slug)
+    );
+  }
+
+  /**
+   * Hydrates a community this device has just JOINED, through the one path a reload uses.
+   *
+   * WHY IT EXISTS (measured 2026-10-08, UNR-11): accepting an invitation link makes the SERVER
+   * publish ONE `channel.member.joined`, for one representative public salon, whatever the
+   * community holds. Handled alone it registered that salon and nothing else, so the sidebar listed
+   * one salon and every message in the others hit `Message received for an unknown channel` until
+   * the next full load. The event names a community, never its roster: the roster is the listing's
+   * to say, so the listing runs - once, awaited by nobody, and owed again if one was already in
+   * flight (its answer predates the join).
+   */
+  async function hydrateJoinedCommunity(ctx: ChannelWorkspaceContext): Promise<void> {
+    ctx.log('[WORKSPACE-LOAD] community joined in-session - loading its salons');
+    const ran = await loadChannelWorkspacesFromBackend(ctx);
+    if (!ran) joinedCommunityReloadOwed = true;
   }
 
   /** Creates a new workspace with the given name, loads its default channels, then auto-selects the first channel. */
@@ -1690,6 +1804,8 @@ export function useChannelWorkspaces() {
     removeChannelFromWorkspaces,
     /** Returns or creates a sidebar workspace entry for an incoming real-time channel event. */
     ensureWorkspaceForChannelEvent,
+    isCommunityUnknownToEvent,
+    hydrateJoinedCommunity,
     /** Records the community of a channel the user was just added to in-session (no relaunch needed). */
     registerJoinedChannel,
     /** Enters a private salon an admin can see but has not joined, then re-reads the community. */

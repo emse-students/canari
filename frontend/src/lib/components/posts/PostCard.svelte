@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { publicSectionHref } from '$lib/associations/publicSections';
   import {
     votePoll,
     addReaction,
@@ -246,6 +247,8 @@
     // A closed poll is a fact this card holds. Sending the vote to find out would be answered with
     // a 400 since 2026-09-23, and before that it was RECORDED - which is why the buttons say so.
     if (pollIsOver(poll)) return;
+    // The server said this reader may not vote (a read grant opens the post, never its poll).
+    if (localPost.canVote === false) return;
     // An anonymous vote is final, so there is nothing left to select once it has been cast.
     if (poll.anonymous && poll.voted) return;
     const mine = selectionIn(poll);
@@ -663,9 +666,11 @@
       {@const ev = localPost.linkedCalendarEvent}
       <div class="px-5 pb-3">
         <a
-          href="/associations/{encodeURIComponent(
-            ev.associationSlug
-          )}?section=calendar&fromPost={encodeURIComponent(localPost.id)}"
+          href="{publicSectionHref(
+            '/associations',
+            ev.associationSlug,
+            'calendar'
+          )}?fromPost={encodeURIComponent(localPost.id)}"
           class="inline-flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
         >
           <CalendarCheck size={14} strokeWidth={2.5} />
@@ -734,6 +739,7 @@
       onVoteClick={handleVoteClick}
       onSubmitVote={submitVote}
       isOver={pollIsOver}
+      canVote={localPost.canVote !== false}
     />
 
     {#if pendingAttachedFormIds.length > 0}

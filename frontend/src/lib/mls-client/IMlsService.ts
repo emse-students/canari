@@ -76,6 +76,17 @@ export type ExternalJoinOutcome =
   | { joined: false; reason: 'stale_base'; baseEpoch: number; serverEpoch: number }
   /** The external commit could not be built locally (e.g. the group is already held). */
   | { joined: false; reason: 'build_failed' }
+  /**
+   * The join was NOT attempted: this device's own key package round was running and failed, so the
+   * commit gate would refuse the activation (`no_key_package`). The round reported its own cause.
+   */
+  | { joined: false; reason: 'key_package_round_failed' }
+  /**
+   * The join was NOT attempted: the server's statement about this device's KeyPackage could not be
+   * established (unreadable, or still absent after a round of ours) and no round can change it.
+   * Nothing is claimed about membership; the caller's cadence retries.
+   */
+  | { joined: false; reason: 'own_key_package_unverified' }
   /** The commit gate was never reached. Nothing is claimed about membership. */
   | { joined: false; reason: 'unreachable' }
   /** The gate refused every bounded attempt; `serverReason` is its own classification. */
@@ -95,6 +106,13 @@ export interface DistributionFrame {
   groupId: string;
   /** Lower-cased sender user id. */
   sender: string;
+  /**
+   * The sending DEVICE the delivery envelope names, when it names one - what a seed answer is
+   * addressed to (channel-encryption section 23). Self-asserted by the sender, and that is enough
+   * for an address: the server delivers only to a `userId:deviceId` that is a live member of the
+   * group, so a lie about it reaches nobody else.
+   */
+  senderDeviceId?: string;
   /** The decrypted payload - a Graine control message, never a chat message. */
   plaintext: Uint8Array;
 }
@@ -825,7 +843,12 @@ export interface IMlsService {
    * Decrypts a frame that arrived on a key-distribution group and hands it to the Graine handler.
    * Returns whether the frame may be acknowledged.
    */
-  routeDistributionFrame(groupId: string, sender: string, ciphertext: Uint8Array): Promise<boolean>;
+  routeDistributionFrame(
+    groupId: string,
+    sender: string,
+    ciphertext: Uint8Array,
+    senderDeviceId?: string
+  ): Promise<boolean>;
   /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
   /**

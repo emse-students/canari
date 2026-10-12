@@ -1,0 +1,18 @@
+{
+  "playLanguage": "en-US",
+  "appStoreLocale": "en-US",
+  "play": {
+    "title": "Canari - Mines Saint-Étienne",
+    "shortDescription": "Encrypted messaging, clubs and agenda for student life",
+    "fullDescription": "Canari is an independent application developed by the Les Rootz student association for the students of École des Mines de Saint-Étienne (EMSE). It is not published by the school's administration.\n\nIt brings messaging and campus life together in one place:\n\n• Encrypted messaging: chat one-on-one or in groups with end-to-end encryption (MLS protocol). Messages can only be read by the people in the conversation.\n• Communities: find your class, your campus or your club in discussion spaces organised in channels.\n• Associations: browse the directory of student associations, discover their members, manage your memberships and generate the carte de la vie asso.\n• Agenda: a calendar adapted to your campus and your programme, with reminders, and an ICS subscription or a PDF export to take it into your own calendar.\n• News, polls and forms: follow the associations' feed, vote, react, comment and answer forms.\n• Canareels: film and share short videos with your campus.\n• Shop and ticketing: book your seats and buy association products with a payment built into the app.\n• Institutions: find the school and student-life bodies, and create your own right in the app.\n• Photos, videos and documents: share files that are encrypted before they are even sent.\n\nAn EMSE account is required to sign in.",
+    "contactWebsite": "https://canari.emse.fr"
+  },
+  "appStore": {
+    "subtitle": "Messaging and student life",
+    "promotionalText": "Encrypted messaging, communities, associations, your campus agenda, news and Canareels: student life at Mines Saint-Étienne in one place.",
+    "keywords": "messaging,encrypted,student,clubs,associations,agenda,events,polls,ticketing,campus,Mines,EMSE,Rootz",
+    "description": "Canari is an independent application developed by the Les Rootz student association for the students of École des Mines de Saint-Étienne (EMSE). It is not published by the school's administration.\n\nIt brings messaging and campus life together in one place:\n\n• Encrypted messaging: chat one-on-one or in groups with end-to-end encryption (MLS protocol). Messages can only be read by the people in the conversation.\n• Communities: find your class, your campus or your club in discussion spaces organised in channels.\n• Associations: browse the directory of student associations, discover their members, manage your memberships and generate the carte de la vie asso.\n• Agenda: a calendar adapted to your campus and your programme, with reminders, and an ICS subscription or a PDF export to take it into your own calendar.\n• News, polls and forms: follow the associations' feed, vote, react, comment and answer forms.\n• Canareels: film and share short videos with your campus.\n• Shop and ticketing: book your seats and buy association products with a payment built into the app.\n• Institutions: find the school and student-life bodies, and create your own right in the app.\n• Photos, videos and documents: share files that are encrypted before they are even sent.\n\nAn EMSE account is required to sign in.",
+    "supportUrl": "https://canari.emse.fr",
+    "marketingUrl": "https://canari.emse.fr"
+  }
+}

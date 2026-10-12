@@ -9,7 +9,7 @@ import {
 } from 'typeorm';
 import { isBdeAssociationSql } from '../../spaces/bde';
 
-/** TypeORM entity representing a student association with optional Stripe Connect integration. */
+/** TypeORM entity representing a student association with optional payout account (Lydia). */
 @Entity('associations')
 export class Association {
   @PrimaryGeneratedColumn('uuid')
@@ -36,13 +36,11 @@ export class Association {
   @Column({ type: 'uuid', nullable: true })
   logoMediaId: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
-  stripeAccountId: string | null;
+  // The historic `stripeAccountId` / `stripeOnboardingComplete` columns are deliberately NOT mapped any
+  // more (2026-10-09): nothing reads or writes them, and they stay in the table until the drop step of
+  // docs/wiki/stripe-archive.md so a rollback to the previous release still finds them.
 
-  @Column({ default: false })
-  stripeOnboardingComplete: boolean;
-
-  /** Lydia Business `vendor_token` - own column, independent from `stripeAccountId` (WP-LYDIA coexistence). */
+  /** Lydia Business `vendor_token`. */
   @Column({ type: 'varchar', nullable: true })
   lydiaAccountId: string | null;
 
@@ -58,7 +56,7 @@ export class Association {
   lydiaDashboardUrl: string | null;
 
   /**
-   * Parent association whose Stripe Connect account receives this association's payments when
+   * Parent association whose payout account receives this association's payments when
    * delegation is approved. Distinct from `parentAssociationId` (a promo list's owning BDE):
    * this one is purely financial routing + accounting access. Null when no delegation is set.
    * @see paymentDelegationStatus

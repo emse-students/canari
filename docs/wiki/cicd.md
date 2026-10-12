@@ -175,11 +175,11 @@ which is how three chains came to each re-derive the same fact:
 | The release | What is deployed | Image tag it moves |
 | --- | --- | --- |
 | `v0.15.0-alpha.1` (pre-release) | `dev.canari-emse.fr`, plus the Play *internal* track and TestFlight | `:dev` |
-| `v0.15.0` (stable) | production | `:latest` |
+| `v0.15.0` (stable) | production, deployed BY `:v0.15.0` | `:latest` |
 
-1. `detect-changed-services` diffs against the previous release **of the same kind**
-2. Builds the frontend against that estate's `VITE_*` set, then only the changed images → GHCR
-3. Self-hosted runner: sync `.env`, `docker compose pull` + `up -d`
+1. `enumerate-services` names all eight services (no diff: every service is built every release)
+2. Builds the frontend against that estate's `VITE_*` set, then every image → GHCR, each tagged `v<version>`
+3. Self-hosted runner: sync `.env`, `docker compose pull` + `up -d` - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK
 4. Database migrations, then health checks
 5. MiConnect's blueprints: a pre-release DRY-RUNS them against the production MiConnect, and a
    stable APPLIES them before `prod-released` moves. The same runner lives on MiConnect's host, so
@@ -200,20 +200,16 @@ exactly one implementation of that sentence.
 
 `GITHUB_TOKEN` pushes from the version-bump workflow do **not** trigger `on: push`. CD is chained via `workflow_run` instead (no `branches:` filter — GitHub would silently drop release-triggered parents).
 
-#### The baseline is the previous release OF THE SAME KIND, and that is forced by the image tags
+#### There is no baseline: every service is built every release, and production deploys by `v<version>` (2026-10-06)
 
-Production deploys `:latest`, which only a stable release moves; dev deploys `:dev`, which only a
-pre-release moves. A service a release does not rebuild keeps whatever that estate's tag already
-points at - so the honest question is "what changed since the last release THAT ESTATE received".
-Taking the previous release of *either* kind for dev would skip rebuilding a service changed since
-the last alpha but not since the intervening stable, and dev would run a months-old image under a
-tag claiming otherwise. With no previous release of that kind, everything is built: over-building
-is slow, under-building ships an estate referencing an image that does not exist.
-
-**The order comes from the GitHub API, not from `git tag --sort=v:refname`**: git's version sort
-places `v1.0.0-alpha` AFTER `v1.0.0` unless `versionsort.suffix` is configured, which is the wrong
-way round for every pre-release. `gh api .../releases` returns them newest-first by creation, which
-is the order they deployed in.
+The change detector (a baseline = the previous release of the same kind, a diff, a path-to-service
+map) was deleted on 2026-09-03 because it saved nothing a release waits for and its failure mode was
+silent. Eight images, three tags each (`<sha>`, `v<version>`, and the estate's moving tag), every
+release. **That is what makes a rollback real**: production is deployed by `--tag v<version>`, which
+exists for every service, so re-running an old release's `Deploy to Production Server` puts THAT
+release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4 while passing twenty
+steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
+A rollback does not revert a migration the newer release applied: read it before rolling back across one.
 
 **`prod-deployed` is gone, and its replacement answers a different question.** That tag was the
 change detector's INPUT; the detector reads releases now, so the tag survives only as `prod-released`
@@ -499,7 +495,7 @@ runs `tools/cross-client-harness/deployed-wasm-check.mjs https://dev.canari-emse
 `Record the deployed commit` step, so a dev estate serving a wasm that can panic (the 2026-09-06
 class: every login refused as a wrong PIN, every status code 200) never moves the marker, and gate 4
 refuses the stable. It is not a login; the sign-in smoke test stays a user decision
-([backlog](backlog.md#the-delivery-chain-review---opened-by-the-2026-09-06-outage-agreed-with-the-user-the-same-night)).
+([backlog](backlog.md#the-delivery-chain-review---opened-by-the-2026-09-06-outage)).
 `release-chain.test.sh` pins the order; `archive/deployed-wasm-selftest.mjs` pins the three exit codes.
 
 **A PULL REQUEST THAT MERGES BETWEEN THE PRE-RELEASE AND THE STABLE COSTS ONE MORE PRE-RELEASE, AND
@@ -525,6 +521,42 @@ arrive AFTER the tag exists.
 the primary path failed - so the fix belongs there. The emergency path is unchanged and is not in
 software: a human with admin rights acting by other means, written into `CHANGELOG.md` when taken.
 Gate 4 costs one extra pre-release in a real emergency, which deploys dev in minutes.
+
+**THE ADMIN BYPASS SHORTENS NOTHING, AND THAT IS THE DOCUMENTED PRICE (decided 2026-10-06, the
+cheaper of the two options the 2026-09-06 outage left).** `gh pr merge --admin` skips the ruleset's
+`CI passed` on the PULL REQUEST; gate 3 then refuses the release until `CI passed` has run on the
+merged commit - main's own CI, ~8 minutes after the merge, the same suite the bypass avoided. So the
+sequence in an emergency is: admin-merge, `gh run list --branch main` until CI is green, publish the
+pre-release (or `gh run rerun` a refused one - it needs no new tag, and rescues only this gate), then
+the stable. Gate 3's refusal says so in its own words (`release-preflight.sh`, pinned by
+`release-preflight.test.sh`). A short path that is actually short would need a gate that trusts
+something other than a green suite on the commit, and the project's rule is that a refusal names the
+test that would lift it, not a switch.
+
+#### Two incident-time items decided NOT to be built (2026-10-06)
+
+Both came out of the 2026-09-06 outage and both were re-read against `origin/main` before any code.
+
+**An auto-merge hold on files an in-flight fix touches.** The proposal keyed on an open `hotfix/*`
+pull request. No such population exists: the last 60 merged branches were `fix/` (25), `feat/`
+(16), `docs/` (9), `dependabot/` (8) and `test/` (2), so the hold would never fire; keying on `fix/`
+instead would make two overlapping fixes hold each other. And the harm it was written against - a
+green merge silently reverting a fix - needs the other pull request to have changed the SAME lines,
+which git refuses as a conflict (and a conflicting pull request does not merge); a change to other
+lines of that file keeps the fix. What is left is a SEMANTIC interaction between two correct changes,
+which is `CI passed`'s job. The real incident-class defect of that day - a session re-arming a
+deliberately disarmed merge - has its own rule in [durable-rules](durable-rules.md): a disarmed
+auto-merge is a decision until something proves it a fault.
+
+**Splitting `release.yml`'s `group: release` so the stores do not hold the lock.** The premise
+holds (an estate-only pre-release waited behind another's TestFlight upload) but the split cannot be
+made sound from here: job-level groups do not compose into a lock over a graph of jobs (a second run's
+`bump` would interleave with the first's `land` and `serve-*`), and a callee-level group on
+`android.yml` / `ios.yml` alone leaves the workflow-level lock in place. Nothing short of
+restructuring the whole run can be tested off GitHub, and the cost of getting it wrong is a refused
+or double-bumped release. **The supported gesture is the one the item itself named: `gh run cancel
+<run>` on the superseded pre-release once its estate jobs are green** - the estate work is already
+recorded (`dev-deployed`), only the store arms die, and the waiting run starts.
 
 #### The bump job
 
@@ -644,6 +676,8 @@ asserts the ordering directly (31 assertions).
 
 ### A stable ships the latest pre-release, and `main` may move on (2026-10-02)
 
+**A PRE-RELEASE tag is still refused when `main` moved past its sha between the head read and the tag, and a rerun re-reads the same tag and cannot rescue it; a stable is immune** (it ships the latest alpha, #1367).
+
 A stable used to be built on the commit its tag named and pushed to `main`, so it was REFUSED the
 moment anything merged after that commit - each merge during a release cost a new tag. Now (user:
 *"une release n'opere que sur le tag de la derniere pre-release"*):
@@ -724,15 +758,14 @@ ghcr.io/emse-students/canari/<service>:<tag>
 
 | Tag | Meaning | Moved by |
 |---|---|---|
-| `latest` | what production is deploying | a STABLE release |
+| `latest` | the newest stable's images (informational: production deploys by `v<version>`) | a STABLE release |
 | `dev` | what the dev estate is deploying | a PRE-RELEASE |
-| `<sha>` | the immutable one - this exact commit | every release that builds the image |
-| `v0.15.0-alpha.1` | the release that produced it | every release that builds the image |
+| `<sha>` | the immutable one - this exact commit | every release |
+| `v0.15.0` / `v0.15.0-alpha.1` | the release that produced it; **what production deploys** | every release |
 
 **The two moving tags never cross**, and that is what lets one registry feed two estates from two
-different commits. Neither decides what actually runs: both compose files are deployed with an
-explicit tag, and a service a release did not rebuild keeps whatever its estate's tag already points
-at - which is what a selective rebuild means.
+different commits. Production is deployed by the release's `v<version>`; dev by its moving `dev`
+(a rollback of dev is not a goal).
 
 ## Self-hosted runner
 
@@ -1218,17 +1251,28 @@ retires it**:
 | Family | Why the suite is blind to it | The test that retires it |
 |---|---|---|
 | `aes-gcm` | it opens a channel push sealed by ANOTHER member's device, so both directions are cross-version, and `src-tauri` freezes neither | a channel-push fixture |
-| `webrtc*`, `str0m`, `sdp`, `ice`, `turn`, `stun` | the SFU's ten tests never touch the ICE stack | one relay-path call (campaign rung 15 CALL) |
-| `stripe` | the SDK's literal `apiVersion` type stops a silent API crossing at COMPILE time, but nothing here proves the app still reads what a new API SENDS | fixtures per API version, over the webhook events and object fields the service actually reads |
 | `postgres`, `redis`, `garage` - **a major crossing only** | a datastore major is refused by the data ALREADY ON DISK, and every gate here creates its cluster from an EMPTY volume - the one case that always works | starting the new major against a data directory written by the old one, and proving the documented upgrade path carries it |
 
-**Five families have already LEFT this table, which is what a refusal is for** - it names a missing
+**Six families have already LEFT this table, which is what a refusal is for** - it names a missing
 gate, and it goes the day the gate arrives. `@nestjs/*` left because `boot-nest-apps` constructs the
 real `AppModule` on all four services, which alone moved the ceiling from 5 merge / 28 refuse to 26
 merge / 6 refuse. `chacha20poly1305`, `argon2` and `ciborium` left because `cross_version_state.rs`
 opens artefacts they sealed in v0.14.14, and for an AT-REST envelope - read only by the device that
 wrote it - that backward direction is the whole question. Bare `typeorm` left because
 `app-module.boot-spec.ts` now issues a real query through every entity the app registered.
+
+**`webrtc*`, `str0m`, `sdp`, `ice`, `turn` and `stun` left on 2026-10-09**, retired by the test the row
+named, taken in-process rather than by hand: `apps/call-service/tests/relay_path.rs` starts the
+library's own TURN server on loopback, builds two peers the way the SFU builds them (default codecs and
+interceptors, mDNS off, `RTCIceTransportPolicy::Relay`), and asserts that every candidate is `typ relay`,
+ICE reaches `Connected`, a data-channel message crosses (DTLS and SCTP) and an opus RTP packet arrives
+(SRTP). It runs in the `Call Service (SFU)` job of the Rust matrix whenever `apps/call-service/` changes,
+which is every Dependabot cargo bump of it, in about 2 s once compiled. **What it does not cover:** the
+SFU's forwarding logic (`main.rs` is a binary, so the test links the library directly), a browser peer,
+renegotiation, and any TURN provider but the library's own - so the by-hand call in
+[calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)
+stays owed before calling is revived. The `webrtc` 0.20 major is not refused by name any more: it does
+not compile against this SFU, which the suite sees on its own, and the port meets this test.
 
 **`openmls*`, `tls_codec*`, `hpke-rs*` and `libcrux*` left on 2026-09-15, and that one could not be
 closed by a fixture at all.** For an at-rest envelope the reader is the writer, so bytes frozen once
@@ -1250,9 +1294,7 @@ naming `mls-core/**` would have skipped every pull request it was written to jud
 have been green for the reason that nothing was asked. `.github/scripts/tests/mls-forward-compat.test.sh`
 feeds that filter the file list a real bump produces and requires it to fire. What the gate does NOT
 cover: one group, one epoch, one application frame each way - a change breaking only a removal, an
-external join or a PSK would pass it. The live
-list is in
-[backlog](backlog.md#p1---two-classes-of-dependency-update-still-cannot-merge-unattended-and-each-names-its-missing-test).
+The live list is `Dependency ceiling` in `ci.yml`, which reads `.github/scripts/lib/ceiling.sh`: the table above is the whole of it.
 
 A refusal is **never** routed to a human queue. It is posted as a comment on the pull request naming
 the missing test, once, behind the marker `<!-- canari-auto-merge-ceiling -->`.
@@ -1657,11 +1699,75 @@ therefore not three independent draws; they are one npm blip lasting minutes. Th
 anyway, because the CALLER could not read the answer, and that defect is above. *The classifier's
 rate says the design is right; only its reader was wrong.*
 
+### A Tauri plugin bump is two halves, and the crate half can be a runtime bump (2026-10-08)
+
+`Security / Guard the committed lockfiles` runs `frontend/scripts/check-tauri-plugin-versions.mjs`:
+the JS package (`package.json`) and the crate (`src-tauri/Cargo.lock`) must agree on major.minor.
+Dependabot's `bun` block moves the JS half and cannot move the crate (its `cargo` entry for
+`frontend/src-tauri` is unreachable, see the block in `.github/dependabot.yml`), so every plugin
+minor arrives red by construction: #1491 (`plugin-store` 2.5.0), #1596 (`plugin-opener` 2.7.0),
+#1597 (`plugin-http` 2.8.0). **Grouping the pair is not possible** - a group only spans what the
+ecosystem can open a PR for, and the cargo side opens none here; `dependabot.yml` is unchanged.
+
+Measured 2026-10-08, one at a time from a clean `origin/main` with `cargo update -p <crate>
+--precise <version>`: each of the three crates (`tauri-plugin-store` 2.5.0, `-opener` 2.7.0, `-http`
+2.7.0+/2.8.1) requires `tauri ^2.12`, so the lock moves `tauri 2.11.1 -> 2.12.1`, `wry 0.55.1 ->
+0.57.0`, `tao 0.35 -> 0.37`, and cargo reports the vendored `patches/tao` as `patch.unused`. That
+is the rebase in [backlog](backlog.md) ("the wry bump that removes the abort"), a native work
+package owed an A1 deep-link run, so **all three stay held and their PRs open**. The JS and the
+crate move together, in the PR that rebases `tao`. The latest versions the CURRENT tauri accepts
+are `tauri-plugin-store` 2.4.5, `-opener` 2.5.5, `-http` 2.7.0 (JS 2.4.x/2.5.x/2.7.x to match).
+
+**Closed the same day, by hand, and the recipe is the mechanism.** The rebase #1609 landed (tauri 2.12.1), so
+store/opener/http moved with it. The next three arrivals - `plugin-biometric` 2.4.1 (#1622),
+`plugin-websocket` 2.5.0 (#1623), `plugin-log` 2.10.0 (#1624) - stayed red for the reason above while
+being fully movable: measured 2026-10-09, `cargo update -p <crate> --precise <version>` moves ONLY the
+crate (websocket also moves `tokio-tungstenite`/`tungstenite` 0.28 -> 0.29, which only that plugin uses),
+and `cargo check --lib` in `frontend/src-tauri` compiles. **The recipe for a plugin PR that is red on
+`Guard the committed lockfiles` with `tauri-plugin-X (vA) : @tauri-apps/plugin-X (vB)`:** in ONE
+commit, `bun add @tauri-apps/plugin-X@B` in `frontend/`, `cargo update -p tauri-plugin-X --precise B` in
+`frontend/src-tauri`, `node frontend/scripts/check-tauri-plugin-versions.mjs`. First ask the dry run
+(`cargo update --dry-run -p ... --precise ...`) whether `tauri` itself would move: if it does, that is a
+runtime bump and stops being this recipe.
+
+### Four audit advisories are suppressed on one edge of media-service, and why each is unreachable
+
+The open line is in [backlog](backlog.md#p3---audit-advisories-are-suppressed-because-they-cannot-be-reached-and-retire-themselves); the reasoning is here. The reachability argument for the `decode-uri-component` ignore and the assertion that keeps it honest are in `.github/workflows/code-analysis.yml`, the only copy of that half.
+
+- `GHSA-vcc3-ghjq-m6fr` (moderate, denial of service) covers every `decode-uri-component` at or below 0.4.2 and reaches media-service as `minio > query-string > decode-uri-component`. It is ignored for that one service only: nothing in the chain can move (minio 8.0.7 is the latest release and pins `query-string: ^7.1.3`, which pins `decode-uri-component: ^0.2.2`), and the fixed 0.5.0 is ESM-only where `query-string@7` is CommonJS, so an override would fail at boot instead of at audit.
+- `GHSA-528h-pc64-c93x` (moderate, denial of service; added 2026-09-03 when it turned every pull request red) covers every `stream-json` at or below 3.4.0, whose `pick`/`ignore`/`filter`/`replace` filters are O(depth^2) on nested input, and arrives as `minio > stream-json`. minio requires `stream-json: ^1.8.0` and the fix is 3.5.0, two majors outside it. It is unreachable twice over: minio imports exactly one thing from the package (`stream-json/jsonl/Parser.js`, in its bucket-notification module) and none of the four filters, and media-service never calls that API (its whole use of the client is `bucketExists`, `fPutObject`, `getObject`, `makeBucket`, `putObject`, `removeObject`).
+- Third and fourth, 2026-10-06: `GHSA-hqr4-qq8f-hg3x` (JSONC parser/verifier re-scan, <= 3.5.0) and `GHSA-mjw6-4jj6-33hc` (Assembler prototype pollution, < 3.6.0) on the same `minio > stream-json` edge. The override to 3.x was refused: the fixed stream-json is `type: module` with `src/` entry points where minio's CJS build `require`s it, and nothing proves that boot. Both ride leg one, now an ALLOWLIST (minio may import only `stream-json/jsonl/Parser.js`) in `.github/scripts/stream-json-premise.sh`, self-tested by `tests/stream-json-premise.test.sh`.
+
+**What retires them:** minio publishing a release that moves either pin (dropping `query-string@7`, or requiring a `stream-json` at or above 3.5.0, 3.6.0 being the floor for the fourth). The ignore and the premise assertion beside it are then deleted the same day. Until then the assertions are what stop the suppressions outliving their reason: CI fails if minio ever parses a query string, if the `stringify` call site the measurement was taken on disappears, if minio starts importing a stream-json FILTER, or if the service starts calling the notification API.
+
+**The third retirement condition originally listed is dead, not pending**: `query-string` DOES now depend on a fixed `decode-uri-component` (latest 9.5.1, on `^0.5.0`), but minio's pin is `^7.1.3` and cannot reach a 9.x, so only minio moving retires either suppression.
+
+**Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
+
+### A merged branch that is still there was pushed back, not left behind (measured 2026-09-22)
+
+Two specimens of a squash-merged branch still on the remote: #341 (2026-09-03, present twelve minutes after an auto-merge while #339 and #340 were already 404; a `DELETE /git/refs/heads/...` removed it with no error) and #825. Of 596 merges since 2026-09-17, exactly one branch was still there on 2026-09-22: `perf/le-blob-ne-traverse-plus-le-pont`, whose merge consumed head `9ff6d0755` (2026-09-17 19:09:28 Z) while the branch carried `4b4b5862b`, committed 22:08 Z, three hours AFTER the merge.
+
+**GitHub re-creates a branch when something pushes to it**, so nothing failed to delete anything: the branch was deleted on merge and a workstation pushed it back (which also explains #341). The cost is not untidiness: the commit pushed there was a CHANGELOG shortening the user had asked for that evening, and it never travelled to `main` (a merged pull request does not carry another commit). **Work pushed to a merged branch is committed, pushed and unshipped, and nothing says so** - `git status` is clean and the push succeeds. The prevention is the `git branch -D` at the end of THE DEVELOPMENT CYCLE in `CLAUDE.md`: a local branch kept past its merge is the only thing that can be pushed back.
+
+### A pre-release tag can still race a merge, between the head read and the tag
+
+Gate 2 of `.github/scripts/release-preflight.sh` refuses an alpha whose sha `main` has moved past, and a rerun re-reads the SAME tag, so it cannot rescue one. The stable half closed with #1367 (a stable ships the latest pre-release of its version on `release/vX.Y.Z` and the tag moves, see above). **Measured 2026-10-09 over every alpha `release.yml` ever ran (108, since 2026-09-03): ONE was refused for it** (`v0.18.22-alpha.3`, 2026-09-24, `main has moved past 774e1455`, which the refusal reported before anything moved, so the cost was one more alpha), and none in the fifteen days since - the other two failed alphas died of a docker build and of the iOS WASM check. The window is only preflight to the bump push (about a minute), and the refusal is clean and names its remedy, so nothing here is broken enough to re-architect: moving an alpha off `main` would change what `main` carries (the manifests' version) for a 1 in 100 refusal. **Reopen if it recurs, with `gh run list --workflow release.yml` showing a second one**, and then: let the gesture name "the release" and the machine take `main` HEAD, never a sha a human read seconds earlier - and never a rebase or a lenient gate 4, which are fallbacks.
+
+### The last node runtime: four jest suites that will not run under bun (decided 2026-08-27, after the campaign)
+
+npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the one `bun run test` in the Makefile's `test-history`). What survives is the node RUNTIME: `actions/setup-node` twice in `ci.yml` (backend suites, harness self-tests) and once in `code-analysis.yml`.
+
+**The measured blocker is one file**: `apps/chat-delivery-service/src/controllers/admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under the bun runtime, which is why CI installs, lints and builds with bun but TESTS with node. Do not collapse the two runtimes without re-running that spec.
+
+**The work**: port four NestJS services from jest to `bun test` - `jest.fn()`/`jest.spyOn` to bun's `mock`/`spyOn`, `ts-jest` (which TypeScript 7 already could not load, see [ecosystem-convergence](ecosystem-convergence.md) section 9), the `moduleNameMapper`, the `@nestjs/testing` fixtures. Days, not hours, and it touches suites guarding MLS storage - the wrong place to discover a mock that silently stopped asserting. It waits for the campaign ladder to reach the bottom, because a test-framework migration changes what "green" means for every rung still to be taken. Until then: bun is the package manager and runtime everywhere except one test invocation, which runs on node on purpose.
+
 ## Notable CI gotchas
 
 - **A CONFLICTING PR PRODUCES NO `pull_request` RUN, AND THE CHECKS LIST STILL LOOKS BUSY.** The `pull_request` event is computed against the MERGE ref; with a conflict GitHub cannot build one, so `CI` is never queued - not red, not skipped, simply never created. `arm-auto-merge` is `pull_request_target`, evaluates against the base, and runs anyway, so one green row sits there while nothing tests the code. PR #525 waited twice and survived a close/reopen before the state was actually asked for. `gh run list` returning nothing is an ANSWER: read `gh pr view <n> --json mergeable,mergeStateStatus` (`CONFLICTING` / `DIRTY`), then rebase on a freshly fetched `main` and `git push --force-with-lease`.
 - **`CHANGELOG.md`'s `## [Unreleased]` heading WAS an anchor every fix wrote to, so two PRs opened the same day conflicted by construction** - #837 and #838 did exactly that (2026-09-18). The first answer, `CHANGELOG.md merge=union` in `.gitattributes`, was verified with `git merge-file --union` and **never worked where it mattered: GitHub ignores `.gitattributes` merge drivers when it computes mergeability and squash-merges a PR.** Measured 2026-09-24 on #1067: `git merge-tree origin/main HEAD` merged clean locally while GitHub reported `CONFLICTING`. The anchor is gone instead: each PR adds its entry as a file in `changelog.d/`, the stable bump folds them under `## [X.Y.Z]` and deletes them ([changelog.d/README.md](../../changelog.d/README.md)), and `docsMergeArtefacts.test.ts` fails a PR that writes under `[Unreleased]`. **A merge behaviour verified with local git is verified for local git** - the platform that performs the merge is the one to measure.
 - **A Tauri plugin's JS package and its Rust crate must agree on major.minor, and only a RELEASE used to discover when they did not.** The CLI refuses to build (`tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`), but nothing else in this pipeline compiles the Tauri app, so an ordinary `bun install` that re-resolves the JS half lands green and kills the next tag - it took out Android Release and AppImage Release on v0.14.6, while iOS Release passed because its path never runs the check. `frontend/scripts/check-tauri-plugin-versions.mjs` (step `Guard the Tauri JS/Rust version parity` in `code-analysis.yml`) now compares the two committed files on every run. Fix the Rust side with `cd frontend/src-tauri && cargo update -p <crate>`.
+- **Recorded flake, not reproduced:** `chat-delivery-service` failed one test in one of five local runs on 2026-08-31; if it recurs, capture the suite name first and do not widen the dependency ceiling to feel safe.
 - iOS `altool` can exit 0 while output says `UPLOAD FAILED` — the workflow greps for failure markers in the transcript.
 - Android Play API rejects `changesNotSentForReview` post-launch — never include this flag.
 - `workflow_run` triggered off a release-triggered workflow must NOT have a `branches` filter (GitHub silently drops them).

@@ -1,11 +1,16 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
+  import {
+    pushHistoryOverlay,
+    closeHistoryOverlayFromUi,
+    releaseHistoryOverlay,
+  } from '$lib/utils/historyOverlayStack';
 
   interface Props {
     open?: boolean;
@@ -149,6 +154,9 @@
       historyClose = () => onClose();
       pushHistoryOverlay(historyClose);
     } else if (!open && historyClose) {
+      // Closed by its owner's state (a publish, a save): the entry must leave the stack too, or
+      // the tab swipe stays stood down until some navigation drains it.
+      releaseHistoryOverlay(historyClose);
       historyClose = null;
     }
   });
@@ -229,7 +237,7 @@
               <button
                 onclick={dismiss}
                 class="ui-icon-button hover:bg-cn-bg text-text-muted hover:text-cn-dark rounded-lg transition-colors"
-                aria-label="Fermer"
+                aria-label={m.common_close_label()}
               >
                 <X size={16} />
               </button>

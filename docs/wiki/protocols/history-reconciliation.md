@@ -1642,7 +1642,95 @@ could not be printed in the field at all. Every real occurrence read `CONCURRENT
 nesting the guard exists for, which would have read as "nothing to fix". A distinction carried in a
 string is a distinction nobody makes.
 
+### The seen-ciphertext ledger has two namespaces and two bounds (2026-10-08)
+
+`history_seen_cipher:<user>:<group>` is ONE array holding two kinds of entry that answer different
+questions: a **fingerprint** (`frameFingerprint`, `<len36>:<hash36>`: *"I consumed this ratchet
+generation"*) and a **row key** (a Redis stream id `<ms>-<seq>`: *"I walked this row"*). Losing a
+fingerprint is what a false `unreadable for good` accusation is made of; losing a row key costs a
+re-check against the fingerprints.
+
+**What was measured (TAB-3b, 2026-09-08, `seenset.mjs`, W1 bench profile).** The busiest conversation
+held 2 762 row keys and 2 073 fingerprints, under the old SHARED cap of 5 000 that kept the last
+5 000 of the mixture - so row keys pushed fingerprints out first. Across the profile: 169 ledgers,
+247 kB, mean 1.5 kB each, and nothing bounded their number.
+
+**What bounds it now** (`frontend/src/lib/utils/chat/seenLedgerBounds.ts`, called by
+`saveSeenCipherHashes`):
+
+| Bound | Value | Why this number |
+| --- | --- | --- |
+| Fingerprints per ledger | 5 000 | busiest measured 2 073, 2.4x headroom |
+| Row keys per ledger | 5 000 | busiest measured 2 762, 1.8x headroom |
+| Ledgers per user | 256 | 169 measured, 1.5x headroom |
+
+Each namespace keeps its LAST N in insertion order, so the oldest of the overflowing namespace goes
+first and the other is untouched. The caps were not lowered below the old ceiling per namespace on
+purpose: shrinking one evicts a mark, and a mark's loss is the accusation. Worst case per ledger is
+about 5 000 x (14 + 18) characters (~160 kB); 256 full ledgers would be far past a 5-10 MB origin
+quota, but the measured mean is 1.5 kB and a write that does not fit is still caught and logged, so
+the number protects against unbounded growth, not against a profile that fills every ledger.
+
+**The ledger cap is write order, not a clock.** A per-user index `history_seen_cipher_index:<user>`
+lists groups oldest write first; a write moves its group to the end, and past 256 the front entries
+are deleted (storage key, in-memory cache, pending flush) with one `[HISTORY]` warning. The group
+being written is never evicted. A profile with no index adopts its existing ledger keys once, in
+storage order, so the first eviction after the upgrade is arbitrary among them; an evicted group
+re-walks its archive once. Fingerprint versus row key is told by shape (a stream id has a dash and no
+colon); the id-less fallback row key (`<ts>:<content>`) is longer and non-base-36, so it counts as a
+row key. Pinned by `seenLedgerBounds.test.ts`.
+
+**Not done, deliberately:** the mark/advance atomicity and the 61 s catch-up are separate open items
+in [backlog](../backlog.md).
+
 ---
+
+## A cold start re-accuses frames it already read: the mark must be one write with the advance (TAB-3b, measured 2026-09-08)
+
+Shipped and in `CHANGELOG.md`: the two silent decrypt paths that spent a generation without recording it
+(`noteFrameConsumed`, asserted by `historyFrameConsumptionSeam.test.ts`), the checkpoint-bound replay marks
+(`commitPendingHistoryMarks`) and the ack barrier (`announceAck` / `ackInFlight`). Run-by-run evidence is on
+the TAB-3b row of [cross-client-testing](../cross-client-testing.md).
+
+**What is left, measured 2026-09-08 with the cap and hydration both exonerated (`seenset.mjs`).** Each
+TAB-3b cold start still prints `[History] frame never read here and unreadable for good (secret-reuse)` for
+frames the device already decrypted, re-accuses every earlier one (three generations more per start, so the
+cost is QUADRATIC in cold starts) and fires a full `[HISTORY_RECONCILE]`. The accused fingerprints are
+ABSENT from every ledger on the client while the frame no longer decrypts (`SecretReuseError` at its own
+epoch): **the advance IS durable and the mark is NOT.**
+
+**The fix is atomicity, not ordering, and no smaller fix should be attempted.** Writing the mark eagerly is
+right for a ROW key ("I walked this row" has no ratchet to run ahead of) and the OPPOSITE defect for a
+FINGERPRINT: one written before its advance is durable tells the next replay to SKIP a frame nobody read - a
+silent real loss, strictly worse than a false accusation. The mark and the advance are one fact and must be
+one write: the mark belongs INSIDE the checkpoint, or "have I already consumed this ciphertext" should be
+answered FROM the MLS state rather than from a parallel ledger that can disagree with it.
+
+**Still unmeasured**: which path spends the generations - live delivery, the queue drain, or the archive
+replay's own successful pages. A console tailer cannot answer it (the row destroys the CDP target it would
+attach to); it needs a purpose-built reproduction that brings W1 down between a known send and a known
+decrypt.
+
+**The catch-up is a TIMER, worth a row of its own.** Five cold starts took 61 863 to 62 019 ms to show a
+message sent while the browser was down (a 156 ms spread): something waits about sixty seconds before an
+offline device is given a message the server already holds. `PHASE_STUCK_MS` is 60 s but only REPORTS, so
+it is not that. On a phone this is a minute of an empty conversation.
+
+## HEAL-repair lands on a coin flip: the measurement and the root cause (2026-09-08)
+
+The open line is in [backlog](../backlog.md#p1---the-repair-of-a-rewound-sender-lands-on-a-coin-flip-the-ask-cadence-is-identical-either-way-and-a-peer-21-messages-behind-was-told-same-state---nothing-to-do-measured-2026-09-08-ten-runs-across-three-builds). The row HEAL-repair and its `PASS` of 2026-09-06 were one draw of a three-sided coin (ten runs across three builds, 2026-09-08). Two candidate causes were refuted by A/B and are not to be re-opened without new evidence ([durable-rules](../durable-rules.md)).
+
+**What separates a healed run from a partial one is not the asking.** The cadence is identical: three asks about 33 s apart, `escalated: true` every time. The difference is whether any one is ANSWERED. Every PARTIAL run contains zero `[HISTORY_BUNDLE]` lines; every HEALED run contains exactly one, answering the LAST ask (172 ms after it in the sampled run), never the first.
+
+**The state-key leg has been wrong at least once.** On the healed run of 01:07 the responder logged `same state as <W1> - nothing to do` and a digest found 21 missing messages 267 ms later. Both keys are computed over the ASKER'S window (`historyStateKeyFor(groupId, probe.since)`), so the two devices were not measuring different spans; the stale-cache explanation is excluded (`invalidateHistoryStateKey` is called on every write path of both backends). Not excluded, and where to look first: `historyRangeStartFor`, and whether an empty or clipped span makes two different stores hash alike. **The same defect is why TAB-3b is `PASS-DIRTY`**: W1 reports the same two frames (group `2bd5add9`, `7e:4yhgc8` and `5p:1s1iuic`) as `never read here and unreadable for good (secret-reuse); will reconcile` on reload after reload, a reconciliation promised four times and never done.
+
+**Root cause: arithmetic.** The server elects a RANDOM online member. Over the A/B window the twenty history requests were routed 10 to W3 (same user as W1, real and active, 5 groups, idle `0d`), 7 to W1 (the ONLY device holding the messages) and 3 to W2 (W1's own asks). Three candidate responders, one holder: the run heals only when one draws W1, about a third of the time. W3 cannot help for a good reason: the rewind is on W1's SENDER ratchet, so every receiver fails those frames identically.
+
+**And the walk terminates on a false proof.** In `actions.ts`, state leg: when `ourKey === probe.key` the responder logs `same state - nothing to do` and answers with its COVERAGE. Adequate coverage is signalled by SILENCE ("a member whose coverage turns out to be adequate simply says nothing"), so the asker reads *we agree, and this member is complete* and stops. Both halves are individually right; the defect is the INFERENCE. The comment above that branch already says AGREEMENT IS NOT COMPLETENESS but addresses only the window case, never two peers agreeing while a THIRD member holds what both lack.
+
+**The rule that makes it fixable**: the asker holds POSITIVE PROOF that it is incomplete (frames it has and cannot read - the evidence `escalateReconciliation` is already gated on), so *a peer's agreement is not a termination while this device holds frames it cannot read; it is a reason to EXCLUDE that peer and elect another*. That drives the exclusion walk from an ANSWER rather than from an absence, the only safe form - the 2026-09-08 attempt that drove it from an absence excluded W1 200 ms after electing it. [durable-rules](../durable-rules.md) already says a deadline is not a termination proof, and a leg that needs no remembered state to answer must not require a live waiter.
+
+**Not built, deliberately**: three earlier attempts to carry "this group is incomplete" across an exchange were each wrong in a different way (a durable marker read as "have I already asked", a coalescing clock, an absence read as silence). This one needs its state specified first: WHAT is remembered, for HOW LONG, and WHAT discharges it - the discharge being the repair landing, never any peer saying anything.
 
 ## Open questions
 

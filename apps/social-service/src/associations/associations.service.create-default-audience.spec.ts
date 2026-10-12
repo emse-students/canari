@@ -1,20 +1,23 @@
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import { AssociationsService } from './associations.service';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import { READER_SPACES_SQL } from '../spaces/reader-spaces';
+import { READER_PROFILE_SQL } from '../spaces/reader-spaces';
 
 /**
- * D36 (user, 2026-10-04): A NEW ASSOCIATION REACHES ITS CREATOR'S SPACES BY DEFAULT.
- *
- * The rules are written in the SAME transaction as the row - the save, the read of the creator's
- * spaces and the insert all go through the transaction's manager, never the repository - so the
- * association never exists without its default. The rule set is the smallest one (the grid's
- * canonical form), and a creator with no space writes nothing. Which readers those rules then reach
- * is proven against PostgreSQL in `reader-spaces.integration.spec.ts`.
+ * A NEW ASSOCIATION OR LIST REACHES ITS CREATOR'S CAMPUS BY DEFAULT (user, 2026-10-07; D36's
+ * "creator's spaces" replaced): one rule, every formation + the profile campus, written in the SAME
+ * transaction as the row. A creator with no campus is refused with a typed error and nothing is
+ * kept. An institution keeps no default rule.
  */
-function makeService(creatorSpaces: { formation: string; campus: string }[]) {
+function makeService(campus: string | null, governed: string[] = []) {
   const manager = {
     save: jest.fn((row: object) => Promise.resolve({ ...row, id: 'new-asso' })),
-    query: jest.fn(() => Promise.resolve(creatorSpaces)),
+    query: jest.fn((sql: string) =>
+      Promise.resolve(
+        sql === BDE_GOVERNED_CAMPUSES_SQL ? governed.map((c) => ({ campus: c })) : [{ campus }]
+      )
+    ),
     insert: jest.fn(() => Promise.resolve()),
   };
   const assoRepo = {
@@ -45,55 +48,82 @@ function makeService(creatorSpaces: { formation: string; campus: string }[]) {
 const dto = { name: 'Club', slug: 'club' } as never;
 const institutionDto = { name: 'Ecole', slug: 'ecole', type: 'institution' } as never;
 
-describe('AssociationsService.create - the default reach (D36)', () => {
-  it("writes the creator's spaces as the smallest rule set, inside the transaction", async () => {
-    const { service, manager, assoRepo } = makeService([
-      { formation: 'ICM', campus: 'saint-etienne' },
-      { formation: 'ISMIN', campus: 'saint-etienne' },
-    ]);
+describe('AssociationsService.create - the default reach (campus, every formation)', () => {
+  it("writes ONE rule, the creator's campus and every formation, inside the transaction", async () => {
+    const { service, manager, assoRepo } = makeService('saint-etienne');
 
-    const saved = await service.create(dto, 'creator-1');
+    const saved = await service.create(dto, 'creator-1', true);
 
     expect(saved).toMatchObject({ id: 'new-asso', createdBy: 'creator-1' });
     expect(assoRepo.save).not.toHaveBeenCalled();
-    expect(manager.query).toHaveBeenCalledWith(READER_SPACES_SQL, ['creator-1']);
+    expect(manager.query).toHaveBeenCalledWith(READER_PROFILE_SQL, ['creator-1']);
     expect(manager.insert).toHaveBeenCalledWith(AssociationAudience, [
-      { associationId: 'new-asso', formation: 'ICM', campus: 'saint-etienne' },
-      { associationId: 'new-asso', formation: 'ISMIN', campus: 'saint-etienne' },
+      { associationId: 'new-asso', formation: null, campus: 'saint-etienne' },
     ]);
   });
 
-  it('collapses a whole campus into one campus rule', async () => {
-    const { service, manager } = makeService(
-      ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'].map((formation) => ({
-        formation,
-        campus: 'gardanne',
-      }))
-    );
+  it('gives a list the same default', async () => {
+    const { service, manager } = makeService('gardanne');
 
-    await service.create(dto, 'creator-2');
+    await service.create({ ...(dto as object), type: 'list' } as never, 'creator-2', true);
 
     expect(manager.insert).toHaveBeenCalledWith(AssociationAudience, [
       { associationId: 'new-asso', formation: null, campus: 'gardanne' },
     ]);
   });
 
-  it('writes no rule for a creator with no space', async () => {
-    const { service, manager } = makeService([]);
-
-    const saved = await service.create(dto, 'admin-no-space');
-
-    expect(saved).toMatchObject({ id: 'new-asso' });
-    expect(manager.insert).not.toHaveBeenCalled();
+  it('REFUSES a creator with no campus, typed, and writes no rule', async () => {
+    for (const campus of [null, '', 'lyon']) {
+      const { service, manager } = makeService(campus);
+      const err = await service.create(dto, 'no-campus', true).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'AUDIENCE_CREATOR_CAMPUS_REQUIRED',
+      });
+      expect(manager.insert).not.toHaveBeenCalled();
+    }
   });
 
-  it('writes NO rule for an institution, even for a creator who has spaces (user, 2026-10-05)', async () => {
-    const { service, manager } = makeService([{ formation: 'ICM', campus: 'saint-etienne' }]);
+  it('writes NO rule for an institution, even for a creator who has a campus (user, 2026-10-05)', async () => {
+    const { service, manager } = makeService('saint-etienne');
 
-    const saved = await service.create(institutionDto, 'admin-with-spaces');
+    const saved = await service.create(institutionDto, 'admin-with-campus', true);
 
     expect(saved).toMatchObject({ id: 'new-asso' });
     expect(manager.query).not.toHaveBeenCalled();
     expect(manager.insert).not.toHaveBeenCalled();
+  });
+});
+
+describe('AssociationsService.create - a non-admin creator is bound to the campuses its BDE governs', () => {
+  it('creates when the default campus is governed by the creator BDE', async () => {
+    const { service, manager } = makeService('gardanne', ['gardanne']);
+
+    await service.create(dto, 'star-1', false);
+
+    expect(manager.insert).toHaveBeenCalledWith(AssociationAudience, [
+      { associationId: 'new-asso', formation: null, campus: 'gardanne' },
+    ]);
+  });
+
+  it('REFUSES with a typed 403 when the profile campus is not governed, and writes no rule', async () => {
+    for (const governed of [[], ['saint-etienne']]) {
+      const { service, manager } = makeService('gardanne', governed);
+      const err = await service.create(dto, 'star-2', false).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err as ForbiddenException).getResponse()).toMatchObject({
+        code: 'AUDIENCE_OUTSIDE_BDE_CAMPUS',
+      });
+      expect(manager.insert).not.toHaveBeenCalled();
+    }
+  });
+
+  it('leaves a global admin unchanged: no governed-campus query at all', async () => {
+    const { service, manager } = makeService('gardanne', []);
+
+    await service.create(dto, 'admin-1', true);
+
+    expect(manager.query).not.toHaveBeenCalledWith(BDE_GOVERNED_CAMPUSES_SQL, expect.anything());
+    expect(manager.insert).toHaveBeenCalled();
   });
 });

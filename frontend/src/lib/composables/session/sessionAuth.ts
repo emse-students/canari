@@ -10,6 +10,7 @@ import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage } from '$lib/db';
+import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import {
   applyNewDeviceKeyLocally,
@@ -26,6 +27,7 @@ import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
 import { LoginFailure, isExpectedLoginOutcome, loginErrorCode } from './loginErrors';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE, isKeystoreKeyUnavailable } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
+import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
@@ -55,6 +57,7 @@ import { sendHistoryStateKey } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { canSendInGroup } from '$lib/utils/chat/groupUsability';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
 import { setGraineRuntime } from '$lib/utils/graine/runtime';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
 import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
@@ -219,7 +222,7 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     isGroupHealthy: (groupId: string) => canSendInGroup(ctx.ensureMls(), groupId),
     // A session unlocked offline holds no token: hold the queue until promoteOfflineSession has
     // one and has reopened the socket, then it flushes explicitly.
-    canFlush: () => !ctx.isOfflineSession(),
+    canFlush: () => !ctx.isOfflineSession() && !isIdentitySplit(),
     markDeletedRemotely: (groupId: string) =>
       markConversationDeletedRemotely(
         cb.conversations,
@@ -232,7 +235,10 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     // bubble, no explanation, and a conversation that read as live again after a reload.
     addMessageToChat: cb.addMessageToChat,
     saveConversation: cb.saveConversation,
-    uploadMedia: async (media: NonNullable<import('$lib/db').OutboxEntry['media']>) => {
+    uploadMedia: async (
+      media: NonNullable<import('$lib/db').OutboxEntry['media']>,
+      transport?: import('$lib/utils/uploadXhr').XhrUploadOptions
+    ) => {
       const { MediaService } = await import('$lib/media');
       const token = await getToken();
       const bytes = media.fileBytes ?? new Uint8Array(0);
@@ -243,7 +249,8 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
         file,
         token,
         { width: media.width, height: media.height },
-        'ephemeral'
+        'ephemeral',
+        transport
       );
     },
   };
@@ -552,6 +559,19 @@ export async function loginImpl(
         ctx.setIsLoginInProgress(false);
         if (cb.onSessionExpired) cb.onSessionExpired();
         else void goto(resolve('/login'), { replaceState: true });
+        return;
+      }
+      // THE TOKEN IS FOR SOMEBODY ELSE THAN THIS DEVICE'S MLS IDENTITY. Not a transport failure
+      // (the server answered) and not an expiry (the credential is alive): continuing would run
+      // every send and seed request under the wrong account, and an offline unlock would do the
+      // same once the network returned. The blocking notice offers the sign-out; the PIN modal has
+      // nothing to add, and the MLS state is left untouched.
+      if (err instanceof IdentitySplitError) {
+        ctx.setIsLoginInProgress(false);
+        cb.log(
+          `[LOGIN] IDENTITY SPLIT (token ${err.split.tokenSub} vs local ${err.split.localId}) - login stopped, sign-out required.`
+        );
+        cb.onLoginFailed?.(m.identity_split_title());
         return;
       }
       // Anything else is a transport failure (no network, backend restarting): the server was
@@ -1214,7 +1234,9 @@ export async function loginImpl(
       // Reconcile background sends (killed app) first: remove from the outbox any
       // messages already delivered by the native service, BEFORE re-deriving "pending"
       // statuses (otherwise an already-sent message would be shown as pending again).
-      await reconcileOutboxSent(ctx.getStorage()!).catch(() => {});
+      await reconcileOutboxSent(ctx.getStorage()!).catch((e) =>
+        cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`)
+      );
       // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
       await applyOutboxPendingStatuses();
 
@@ -1255,6 +1277,21 @@ export async function loginImpl(
 
     try {
       const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
+      // THE RESTORE'S OWN VERDICT, taken BEFORE the demotion below rewrites the rows: afterwards the
+      // evidence is gone and a partial restore looks complete. Reported through the existing
+      // fatal-error banner, and accused at `error` because a row on screen that cannot work is the
+      // visible end of an MLS state that did not come back with it.
+      const shortfall = measureRestoreShortfall(cb.conversations.values(), localMlsGroups);
+      if (shortfall) {
+        ctx.setMlsFatalError('restore_shortfall');
+        const ids = shortfall.missingIds.map((id) => id.slice(0, 8)).join(', ');
+        cb.log(
+          `[ERROR] Partial restore: ${shortfall.restored}/${shortfall.expected} conversation(s) hold their MLS group - missing ${ids}`
+        );
+        console.error(
+          `[INIT] Partial restore: ${shortfall.restored}/${shortfall.expected} conversation(s) hold their MLS group (missing ${ids})`
+        );
+      }
       const missingKeys: string[] = [];
       // Conversations stuck in 'pending' while their local MLS state exists:
       // the "Sync" badge would remain forever (DF5). Reconciliation demoted absent
@@ -2001,6 +2038,7 @@ export function tearDownLiveSession(
   // The watchdog's candidate set IS the live conversation map, so emptying it is half of why
   // nothing can drive recovery for a session that has ended.
   cb.conversations.clear();
+  resetSalonUnread();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.

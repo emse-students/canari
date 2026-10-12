@@ -259,14 +259,27 @@ export function countUnreadForUser(
  * Taken from the messages themselves rather than from the clock, so the value compares correctly
  * against the population it will be compared against - a device whose clock runs fast would
  * otherwise mark unread messages read, permanently and unfixably, the merge being `max`.
+ *
+ * `includeSystem` is for a SALON ONLY. A DM's notice is stamped by this device's clock, so it cannot
+ * bound a read; a salon's notice is a server row dated by the SERVER, and the server counts it as
+ * unread until a mark reaches it. Without it a salon whose newest rows are membership notices could
+ * never be marked read: the badge came back at every reload (prod, 2026-10-11).
  */
 export function watermarkAfterReading(
-  msgs: Array<Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp'>>,
-  current: number
+  msgs: Array<
+    Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'awaitingServerId'>
+  >,
+  current: number,
+  includeSystem = false
 ): number {
   let highest = current;
   for (const msg of msgs) {
-    if (msg.isSystem || msg.senderId === 'system') continue;
+    if (!includeSystem && (msg.isSystem || msg.senderId === 'system')) continue;
+    // A SALON ECHO IS DATED BY THE AUTHOR'S CLOCK until the server's row settles it (WP-OFF-2), and
+    // a salon mark is on the server's `createdAt` clock: counting it would push this reader's own
+    // mark past every row the server holds whenever the device runs fast - the permanent
+    // over-read described above. The settled row, server-dated, moves the mark instead.
+    if (msg.awaitingServerId) continue;
     const key = readOrderKey(msg);
     if (key > highest) highest = key;
   }

@@ -40,9 +40,11 @@ vi.mock('$lib/paraglide/messages', () => ({
     channel_action_error_generic: vi.fn(
       ({ action, detail }: { action: string; detail: string }) => `${action}: ${detail}`
     ),
-    channel_action_error_not_ready: vi.fn(
-      ({ action }: { action: string }) => `${action}: not ready`
-    ),
+    chat_send_error_seal_no_session: vi.fn(() => 'seal: no-session'),
+    chat_send_error_seal_unknown_channel: vi.fn(() => 'seal: unknown-channel'),
+    chat_send_error_seal_key_group_missing: vi.fn(() => 'seal: key-group-missing'),
+    chat_send_error_seal_key_group_unsettled: vi.fn(() => 'seal: key-group-unsettled'),
+    chat_send_error_seal_key_group_catching_up: vi.fn(() => 'seal: key-group-catching-up'),
     channel_action_error_conflict: vi.fn(({ action }: { action: string }) => `${action}: conflict`),
   },
 }));
@@ -161,6 +163,74 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
     expect(store.workspacesLoadError).toBeNull();
     expect(store.channelWorkspaces).toHaveLength(1);
     expect(store.channelWorkspaces[0].channels[0].id).toBe('channel_ch1');
+  });
+
+  // Production web console 2026-10-12 (v1.2.5): 7 communities walked one after another, 21+
+  // requests in a row, 2.87 s before `communities/channels loaded`. They now run side by side.
+  it('asks every community for its salons before ANY of them has answered', async () => {
+    listUserWorkspaces.mockResolvedValue([
+      makeWorkspaceDto('ws1', 'One', 'one'),
+      makeWorkspaceDto('ws2', 'Two', 'two'),
+      makeWorkspaceDto('ws3', 'Three', 'three'),
+    ]);
+    const pending = new Map<string, (rows: ChannelDto[]) => void>();
+    listChannels.mockImplementation(
+      (workspaceId: string) =>
+        new Promise<ChannelDto[]>((resolve) => pending.set(workspaceId, resolve))
+    );
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const promise = store.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+
+    // Three listings in flight at once; the serial walk had exactly one here.
+    expect(listChannels).toHaveBeenCalledTimes(3);
+    // Every community row is already in the sidebar, in the server's order.
+    expect(store.channelWorkspaces.map((ws) => ws.id)).toEqual(['one', 'two', 'three']);
+
+    // Answered in REVERSE order: the sidebar order is still the server's.
+    pending.get('ws3')!([makeChannelDto('c3', 'trois')]);
+    pending.get('ws2')!([makeChannelDto('c2', 'deux')]);
+    pending.get('ws1')!([makeChannelDto('c1', 'un')]);
+    await promise;
+
+    expect(store.channelWorkspaces.map((ws) => ws.id)).toEqual(['one', 'two', 'three']);
+    expect(store.channelWorkspaces.map((ws) => ws.channels.map((c) => c.id))).toEqual([
+      ['channel_c1'],
+      ['channel_c2'],
+      ['channel_c3'],
+    ]);
+    expect(store.workspacesLoadError).toBeNull();
+  });
+
+  it('a community that fails fails the attempt only once every sibling has settled', async () => {
+    listUserWorkspaces.mockResolvedValue([
+      makeWorkspaceDto('ws1', 'One', 'one'),
+      makeWorkspaceDto('ws2', 'Two', 'two'),
+    ]);
+    let releaseSibling: (rows: ChannelDto[]) => void = () => {};
+    listChannels.mockImplementation((workspaceId: string) =>
+      workspaceId === 'ws1'
+        ? Promise.reject(new SessionExpiredError())
+        : new Promise<ChannelDto[]>((resolve) => (releaseSibling = resolve))
+    );
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    let settled = false;
+    const promise = store.loadChannelWorkspacesFromBackend(ctx).then(() => (settled = true));
+    await tick();
+
+    // ws1 has already failed, but ws2 is still loading: no retry may start beside it.
+    expect(settled).toBe(false);
+    expect(store.isLoadingWorkspaces).toBe(true);
+
+    releaseSibling([makeChannelDto('c2', 'deux')]);
+    await promise;
+    expect(ctx.log).toHaveBeenCalledWith('[WORKSPACE-LOAD] 1/2 community(ies) failed to load');
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    expect(store.workspacesLoadError).not.toBeNull();
   });
 
   it('refreshes a channel already in the sidebar rather than ignoring it (COMM-13)', async () => {
@@ -774,6 +844,80 @@ describe('useChannelWorkspaces - a salon joined in-session enters the group its 
   });
 });
 
+/**
+ * A COMMUNITY JOINED IN-SESSION LISTS EVERY SALON THE MEMBER MAY READ (measured 2026-10-08, UNR-11).
+ *
+ * Accepting an invitation link makes the server publish ONE `channel.member.joined`, for one
+ * representative public salon. Handled alone it left the sidebar with that salon and every message
+ * in the others "received for an unknown channel" until a reload.
+ */
+describe('useChannelWorkspaces - hydrateJoinedCommunity', () => {
+  const event = { workspaceId: 'ws-new', workspaceSlug: 'unr-11', workspaceName: 'UNR-11' };
+
+  beforeEach(() => {
+    listUserWorkspaces.mockReset();
+    listChannels.mockReset();
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws-new', 'UNR-11', 'unr-11')]);
+    listChannels.mockResolvedValue([
+      makeChannelDto('c1', 'general'),
+      makeChannelDto('c2', 'salon-a'),
+      makeChannelDto('c3', 'salon-b'),
+    ]);
+  });
+
+  it('knows a community by its first sight only', () => {
+    const api = useChannelWorkspaces();
+    expect(api.isCommunityUnknownToEvent(event)).toBe(true);
+    api.ensureWorkspaceForChannelEvent(event);
+    expect(api.isCommunityUnknownToEvent(event)).toBe(false);
+  });
+
+  it('gives the community every salon, with a conversation row each, in ONE listing', async () => {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    api.ensureWorkspaceForChannelEvent(event);
+    api.addChannelToWorkspace('unr-11', { id: 'channel_c1', name: 'general' });
+
+    await api.hydrateJoinedCommunity(ctx);
+
+    const ws = api.channelWorkspaces.find((w) => w.id === 'unr-11');
+    expect(ws?.channels.map((c) => c.id)).toEqual(['channel_c1', 'channel_c2', 'channel_c3']);
+    expect([...ctx.conversations.keys()].sort()).toEqual([
+      'channel_c1',
+      'channel_c2',
+      'channel_c3',
+    ]);
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+  });
+
+  it('owes the join one more listing when one was already in flight', async () => {
+    let releaseFirst: (value: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces.mockReset();
+    listUserWorkspaces.mockImplementationOnce(
+      () =>
+        new Promise<WorkspaceDto[]>((resolve) => {
+          releaseFirst = resolve;
+        })
+    );
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws-new', 'UNR-11', 'unr-11')]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    const startup = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    await api.hydrateJoinedCommunity(ctx);
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+
+    // The startup answer predates the join: it knows no community, and the owed listing does.
+    releaseFirst([]);
+    await startup;
+    await vi.waitFor(() =>
+      expect(api.channelWorkspaces.find((w) => w.id === 'unr-11')?.channels).toHaveLength(3)
+    );
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('useChannelWorkspaces - salon names and order', () => {
   const FREE_NAME = 'Général 🎉 Équipe';
 
@@ -844,14 +988,15 @@ describe('useChannelWorkspaces - salon names and order', () => {
     const { api, ctx } = await loadedStore();
     const channels = api.channelWorkspaces[0].channels;
 
-    for (const failure of [
-      new GraineNotReadyError('cannot seal'),
-      new GraineUnknownChannelError('c1c1c1c1c1'),
-    ]) {
+    for (const [failure, said] of [
+      [new GraineNotReadyError('cannot seal'), 'seal: no-session'],
+      [new GraineUnknownChannelError('c1c1c1c1c1'), 'seal: unknown-channel'],
+    ] as const) {
       vi.mocked(showToast).mockClear();
       reorderChannels.mockRejectedValue(failure);
       await api.reorderChannels('promo', [channels[2], channels[1], channels[0]], ctx);
-      expect(showToast).toHaveBeenCalledWith(expect.stringContaining('not ready'), 'error');
+      // The toast names WHICH fact was missing, from the reason the refusal carries.
+      expect(showToast).toHaveBeenCalledWith(said, 'error');
     }
   });
 

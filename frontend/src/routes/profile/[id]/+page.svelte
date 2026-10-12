@@ -5,6 +5,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
+  import { PROFILE_SELF_SEGMENT } from '$lib/profile/profileSections';
   import { followUser, unfollowUser, getUserFollowStatus } from '$lib/posts/api';
   import { listBlockedUsers, blockUser, unblockUser } from '$lib/users/blocks';
   import { createReport, ModerationApiError } from '$lib/moderation/api';
@@ -138,7 +139,9 @@
 
     // Redirect to own profile page if viewing self.
     const currentUserId = getSavedUserId();
-    if (currentUserId && userId === currentUserId) {
+    // `me` is the segment of the reader's own sections (`/profile/me/<section>`), never a user id:
+    // a typed `/profile/me` is the reader's own profile too.
+    if (userId === PROFILE_SELF_SEGMENT || (currentUserId && userId === currentUserId)) {
       goto(resolve('/profile'), { replaceState: true });
       return;
     }

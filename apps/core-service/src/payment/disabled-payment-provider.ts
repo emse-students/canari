@@ -1,13 +1,11 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import type {
-  ChargeResult,
   CheckoutSessionInfo,
   CheckoutSessionResult,
   ConnectAccountStatusResponse,
   ConnectBalanceSummary,
   OnboardingResult,
   PaymentProvider,
-  SavedPaymentMethod,
 } from './payment-provider.interface';
 
 /** The one message every refused operation carries, so a client can match it and a log can grep it. */
@@ -18,8 +16,8 @@ export const PAYMENTS_DISABLED_MESSAGE = 'Payments are disabled on this platform
  *
  * Reports itself as NOT configured, so every route that gates on `isConfigured()` answers exactly
  * as it does when no provider has credentials. Any operation that reaches it anyway fails CLOSED
- * with a 400 - it never falls through to Stripe or Lydia. Payments already in flight are NOT
- * handled here: the Stripe webhook and the Lydia callback verify with their own secrets, independent
+ * with a 400 - it never falls through to Lydia. Payments already in flight are NOT
+ * handled here: the Lydia callback verifies with its own secret, independent
  * of the active provider (see PaymentService.verifyLydiaRequestCallback).
  */
 export class DisabledPaymentProvider implements PaymentProvider {
@@ -56,20 +54,5 @@ export class DisabledPaymentProvider implements PaymentProvider {
   }
   async retrieveSession(): Promise<CheckoutSessionInfo> {
     return this.refuse('retrieveSession');
-  }
-  async getOrCreateCustomer(): Promise<string> {
-    return this.refuse('getOrCreateCustomer');
-  }
-  async createSetupCheckoutSession(): Promise<{ url: string; sessionId: string }> {
-    return this.refuse('createSetupCheckoutSession');
-  }
-  async listPaymentMethods(): Promise<SavedPaymentMethod[]> {
-    return this.refuse('listPaymentMethods');
-  }
-  async detachPaymentMethod(): Promise<void> {
-    return this.refuse('detachPaymentMethod');
-  }
-  async chargeWithSavedMethod(): Promise<ChargeResult> {
-    return this.refuse('chargeWithSavedMethod');
   }
 }

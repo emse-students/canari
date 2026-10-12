@@ -25,7 +25,7 @@ describe('PlatformService', () => {
       maintenanceEnabled: true,
       maintenanceMessage: 'Pause',
       minClientVersion: '1.0.0',
-      paymentProvider: 'stripe' as const,
+      paymentProvider: 'lydia' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -36,7 +36,7 @@ describe('PlatformService', () => {
       maintenanceEnabled: false,
       maintenanceMessage: null,
       minClientVersion: '0.0.0',
-      paymentProvider: 'stripe' as const,
+      paymentProvider: 'lydia' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -49,7 +49,7 @@ describe('PlatformService', () => {
       maintenanceEnabled: false,
       maintenanceMessage: null,
       minClientVersion: '0.0.0',
-      paymentProvider: 'stripe',
+      paymentProvider: 'lydia',
     });
 
     await service.ensureDefaults();
@@ -66,7 +66,7 @@ describe('PlatformService', () => {
       maintenanceEnabled: false,
       maintenanceMessage: null,
       minClientVersion: min,
-      paymentProvider: 'stripe',
+      paymentProvider: 'lydia',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -111,7 +111,7 @@ describe('PlatformService', () => {
       maintenanceEnabled: false,
       maintenanceMessage: null,
       minClientVersion: '0.13.0',
-      paymentProvider: 'stripe',
+      paymentProvider: 'lydia',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);

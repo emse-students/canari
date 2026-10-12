@@ -792,9 +792,23 @@
   });
 
   $effect(() => {
-    if (replyingTo || isEditing) {
+    if (replyingTo && !isEditing) {
       mentionComposer?.focusEditor();
     }
+  });
+
+  // ENTERING AN EDIT puts the caret at the END of the loaded text. The parent loads the message into
+  // `messageText` and the input re-renders its DOM from it in its own effect, so focusing at once
+  // lands on the empty field (caret far left); `tick()` waits for that render. Keyed on the boolean
+  // `isEditing`, a $derived, so it runs once per edit and not once per text change.
+  $effect(() => {
+    if (!isEditing) return;
+    void tick().then(() => {
+      const end = untrack(() => messageText.length);
+      Log.d('ChatComposer', `edit entered, caret to ${end}`);
+      mentionComposer?.focusEditor();
+      mentionComposer?.setSelectionRange(end);
+    });
   });
 
   /** Publishes composer stack height for message list padding (--chat-composer-height). */
@@ -1220,7 +1234,7 @@
           <button
             type="button"
             onclick={() => onCreatePoll()}
-            title={m.chat_create_poll_title()}
+            title={m.chat_create_poll_label()}
             aria-label={m.chat_create_poll_label()}
             class="ui-icon-button chat-composer-icon-button"
           >
@@ -1235,7 +1249,7 @@
           <button
             type="button"
             onclick={openGif}
-            title={m.chat_send_gif_title()}
+            title={m.chat_send_gif_label()}
             aria-label={m.chat_send_gif_label()}
             class="ui-icon-button chat-composer-icon-button text-2xs font-bold tracking-tight"
           >
@@ -1311,7 +1325,7 @@
             <button
               type="button"
               onclick={() => (showEmojiPicker = !showEmojiPicker)}
-              title={m.chat_emoji_picker_title()}
+              title={m.chat_emoji_picker_label()}
               aria-label={m.chat_emoji_picker_label()}
               class="ui-icon-button chat-composer-icon-button chat-composer-emoji-button"
             >

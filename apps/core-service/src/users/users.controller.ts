@@ -12,12 +12,13 @@ import {
   Delete,
   HttpCode,
   Res,
+  Req,
   ForbiddenException,
   BadRequestException,
   HttpException,
   Logger,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { UsersService } from './users.service';
 import { UserBlocksService } from './user-blocks.service';
 import { AvatarService } from './avatar.service';
@@ -49,6 +50,18 @@ import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 const MAX_PROFILE_BATCH = 100;
 
 /** Controller handling user profile CRUD, search, and avatar proxy. */
+/**
+ * Whether an `If-None-Match` header names `etag`. WEAK comparison (RFC 9110 8.8.3.2), because an
+ * intermediary may turn a strong validator into a weak one on the way back; `*` matches anything
+ * we hold. The upstream token is an opaque asset id, so only equality of the opaque part is asked.
+ */
+export function etagMatches(header: string | undefined, etag: string): boolean {
+  if (!header) return false;
+  const opaque = (t: string) => t.trim().replace(/^W\//, '');
+  const ours = opaque(etag);
+  return header.split(',').some((t) => t.trim() === '*' || opaque(t) === ours);
+}
+
 @Controller('users')
 export class UsersController {
   private readonly logger = new Logger(UsersController.name);
@@ -59,7 +72,7 @@ export class UsersController {
    * every failure at warn, so `grep AVATAR | grep -v outcome=served` finds a failed fetch.
    */
   private logAvatar(
-    outcome: 'served' | 'absent' | 'unavailable' | 'disabled' | 'rejected',
+    outcome: 'served' | 'not-modified' | 'absent' | 'unavailable' | 'disabled' | 'rejected',
     status: number,
     startedAt: number,
     userId: string
@@ -67,8 +80,9 @@ export class UsersController {
     const line =
       `[AVATAR] outcome=${outcome} status=${status} ms=${Date.now() - startedAt} ` +
       `target=${String(userId).slice(0, 8)}`;
-    if (outcome === 'served' || outcome === 'absent') this.logger.log(line);
-    else this.logger.warn(line);
+    if (outcome === 'served' || outcome === 'not-modified' || outcome === 'absent') {
+      this.logger.log(line);
+    } else this.logger.warn(line);
   }
 
   constructor(
@@ -220,7 +234,10 @@ export class UsersController {
    *
    * THREE OUTCOMES, THREE ANSWERS, AND THE CACHING IS THE POINT OF THE DISTINCTION:
    *
-   * - the image, cached for a day, as before;
+   * - the image, `no-cache` + the upstream ETag: the browser and the edge MAY store it but must ask
+   *   before each reuse, and a matching `If-None-Match` is answered 304. A changed photo therefore
+   *   shows on the next render instead of up to 24 h later (the shape is in
+   *   `docs/wiki/services/core-service.md`, "One lifetime");
    * - `absent` - the upstream says this user has no photo - is a real ANSWER and is cached briefly,
    *   which is what stops a browser re-asking for the same missing face on every single render;
    * - `unavailable` is not an answer about the avatar, so it is a **502 marked `no-store`**: the
@@ -233,7 +250,7 @@ export class UsersController {
    * URL, and all in the window a test run has to read.
    */
   @Get(':id/avatar')
-  async getAvatar(@Param('id') userId: string, @Res() res: Response) {
+  async getAvatar(@Param('id') userId: string, @Req() req: Request, @Res() res: Response) {
     // ONE `[AVATAR]` LINE PER REQUEST, whatever the outcome - see `logAvatar`.
     const startedAt = Date.now();
     let outcome: Awaited<ReturnType<AvatarService['fetchUserAvatar']>>;
@@ -273,11 +290,12 @@ export class UsersController {
       return;
     }
 
-    this.logAvatar('served', 200, startedAt, userId);
+    // `no-cache` is "store it, revalidate before every reuse" - NOT `max-age=86400`, which republished
+    // an upstream `no-cache` as fresh for a day and made a changed photo invisible that long. `public`
+    // stays so the edge may keep the bytes; the validator is what makes asking cheap.
     res.set({
       'Content-Type': outcome.contentType,
-      'Content-Length': outcome.body.length,
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': 'public, no-cache',
     });
     // THE ORIGIN'S VALIDATOR RATHER THAN A PROXY'S INVENTION - AND THAT IS ALL IT IS.
     //
@@ -292,7 +310,17 @@ export class UsersController {
     // it as the fix for staleness: what shortens that is `max-age`, and the decision about its
     // shape is in `docs/wiki/backlog.md`. The revalidation that actually saves work is the one
     // AvatarService makes upstream.
-    if (outcome.etag) res.set({ ETag: outcome.etag });
+    if (outcome.etag) {
+      res.set({ ETag: outcome.etag });
+      // The 304 is decided HERE rather than left to Express, so it is explicit and measurable.
+      if (etagMatches(req.headers['if-none-match'], outcome.etag)) {
+        this.logAvatar('not-modified', 304, startedAt, userId);
+        res.status(304).end();
+        return;
+      }
+    }
+    this.logAvatar('served', 200, startedAt, userId);
+    res.set({ 'Content-Length': outcome.body.length });
     res.send(outcome.body);
   }
 

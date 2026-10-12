@@ -14,6 +14,7 @@
  * the session offline for the next attempt.
  */
 import { getToken, SessionExpiredError } from '$lib/stores/auth';
+import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { startPushService } from '$lib/services/PushNotificationService';
@@ -80,6 +81,14 @@ async function runPromotion(
       // touched - this is not a PIN reset - so signing back in restores the full history.
       cb.log('[PROMOTE] Session expired while offline - signing out.');
       cb.onSessionExpired?.();
+      return;
+    }
+    if (err instanceof IdentitySplitError) {
+      // The server was reached and a token exists, but it is for another account than the local
+      // one. The blocking notice owns the next step; promoting would send under the wrong identity.
+      cb.log(
+        `[PROMOTE] IDENTITY SPLIT (token ${err.split.tokenSub} vs local ${err.split.localId}) - staying offline until sign-out.`
+      );
       return;
     }
     // Still no usable network. Stay offline and wait for the next reconnect signal.

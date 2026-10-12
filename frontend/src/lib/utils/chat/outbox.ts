@@ -1,12 +1,20 @@
 import type { SvelteMap } from 'svelte/reactivity';
+import { bumpOutboxQueueVersion } from './outboxActivity.svelte';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
+import { OutboxPayloadUnreadableError } from '$lib/db/outboxCodec';
+import {
+  OutboxBlobCorruptError,
+  OutboxBlobMissingError,
+  OutboxBlobWriteError,
+} from '$lib/db/outboxBlob';
 import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
 import type { MediaRef } from '$lib/media';
 import {
   encodeAppMessage,
   mediaEncodingProtoField,
+  mediaReelProtoFields,
   mediaKindToType,
   mediaPlaceholderProtoField,
   mkMedia,
@@ -16,11 +24,32 @@ import {
 import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { m } from '$lib/paraglide/messages';
+import { refusalStatus } from '$lib/utils/apiRefusal';
+import { uploadRefusalCause } from '$lib/utils/mediaErrors';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import { recordEviction } from '$lib/utils/chat/eviction';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
-import { connectivity } from '$lib/stores/connectivity.svelte';
+import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
+import { DeliveryUnreachableError, SendEdgeRefusedError } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  UPLOAD_NO_ANSWER_ATTEMPTS,
+  UPLOAD_PROGRESS_MARGIN_BYTES,
+  UploadAbortedError,
+  UploadGaveUpError,
+  UploadNetworkError,
+  UploadStalledError,
+  type XhrUploadOptions,
+} from '$lib/utils/uploadXhr';
+import {
+  clearAllUploads,
+  clearUpload,
+  patchUpload,
+  setUploadRetry,
+  uploadViewOf as viewOfUpload,
+} from './uploadProgress.svelte';
 import {
   getIsTabLeader,
   getTabLeadership,
@@ -38,6 +67,88 @@ import {
  * Indexed by attempt count, clamped to the last value.
  */
 const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
+
+/**
+ * Consecutive LOCAL failures of ONE attachment - this device could not read, decode or hold the file
+ * (see {@link isLocalAttachmentFailure}) - after which it is parked as `error`. About five minutes of
+ * the ladder, short enough that a Pixel 6a is not made to decode a 13 MB file every minute for ever
+ * (2026-10-10). NOTHING ELSE COUNTS: a transport failure, a 5xx, a roster repair or an edge refusal
+ * is about the network or the server, and a relay outage of five minutes must not tell the member
+ * that their file is unreadable.
+ */
+export const MAX_UNEXPECTED_ATTEMPTS = 8;
+
+/**
+ * The queued attachment cannot be read on THIS device: its row failed to load, or it holds no bytes
+ * while still owing an upload. Typed, so the outbox never decides "local" from a message.
+ */
+export class LocalAttachmentError extends Error {
+  constructor(why: string, cause?: unknown) {
+    super(why, { cause });
+    this.name = 'LocalAttachmentError';
+  }
+}
+
+/**
+ * A message could NOT be handed to the queue: there is no storage layer, no controller is active, or
+ * the durable write failed. Typed and thrown, never swallowed: the caller still holds the file and
+ * the optimistic row, and a swallowed one left a `mediaId: ''` placeholder that nothing would ever
+ * upload (the orphan seen on the Mi 9T, alpha.3).
+ */
+export class OutboxEnqueueError extends Error {
+  constructor(why: string, cause?: unknown) {
+    super(why, { cause });
+    this.name = 'OutboxEnqueueError';
+  }
+}
+
+/**
+ * True when an enqueue failed because the device is out of storage (the attachment's blob was
+ * refused with `QuotaExceededError`): the one enqueue failure a member can act on, read from the
+ * TYPE of the cause chain and never from a message.
+ */
+export function isEnqueueQuotaFailure(e: unknown): boolean {
+  return (
+    e instanceof OutboxEnqueueError && e.cause instanceof OutboxBlobWriteError && e.cause.quota
+  );
+}
+
+/**
+ * True for the failures that are about this device and no one else, read from the TYPE: the outbox's
+ * own {@link LocalAttachmentError}, the platform's `NotReadableError`/`NotFoundError` on a file, and a
+ * `RangeError` (an allocation the renderer refused).
+ */
+export function isLocalAttachmentFailure(e: unknown): boolean {
+  if (e instanceof LocalAttachmentError || e instanceof RangeError) return true;
+  return (
+    typeof DOMException !== 'undefined' &&
+    e instanceof DOMException &&
+    (e.name === 'NotReadableError' || e.name === 'NotFoundError')
+  );
+}
+
+const textEncoder = new TextEncoder();
+
+/**
+ * True when `entry` cannot go out while any of `ids` is unsent: a reply quoting one of them, or a
+ * control event (reaction, edit, delete, pin) whose pre-encoded proto carries one of the ids as a
+ * string - the protobuf carries a message id as its UTF-8 bytes, so a byte search is exact for a
+ * UUID and needs no decoding. An unrelated message is independent and may pass a parked one.
+ */
+function dependsOnAny(entry: OutboxEntry, ids: Set<string>): boolean {
+  if (ids.size === 0) return false;
+  if (entry.kind === 'reply' && entry.replyTo && ids.has(entry.replyTo.id)) return true;
+  if (entry.kind !== 'control' || !entry.controlProto) return false;
+  const proto = entry.controlProto;
+  for (const id of ids) {
+    const needle = textEncoder.encode(id);
+    outer: for (let i = 0; i + needle.length <= proto.length; i++) {
+      for (let j = 0; j < needle.length; j++) if (proto[i + j] !== needle[j]) continue outer;
+      return true;
+    }
+  }
+  return false;
+}
 
 /** Returns the backoff delay for the given (post-increment) attempt count. */
 function backoffFor(attempts: number): number {
@@ -130,7 +241,10 @@ export interface OutboxDeps {
    */
   saveConversation?: (key: string) => Promise<void>;
   /** Encrypt + upload a queued media file, returning the server media ref (queued-media flush). */
-  uploadMedia?: (media: NonNullable<OutboxEntry['media']>) => Promise<MediaRef>;
+  uploadMedia?: (
+    media: NonNullable<OutboxEntry['media']>,
+    transport?: XhrUploadOptions
+  ) => Promise<MediaRef>;
   /**
    * True when the session is in a state where sending can succeed. Returns false for a session
    * unlocked offline that has no access token yet: the browser can report `online` before the
@@ -160,8 +274,19 @@ export interface OutboxController {
    * `true` means there is nothing out there to tell anyone about.
    */
   cancelPending: (messageId: string) => Promise<boolean>;
+  /**
+   * Whether the durable queue holds an entry for this message id: `true`/`false` from the light read
+   * (no payload decode), `null` when the queue could not be read - which is NOT "absent".
+   */
+  hasEntry: (messageId: string) => Promise<boolean | null>;
   /** Drain the outbox. Gated on tab leadership here, not by the caller. Coalesces concurrent calls. */
   flush: () => Promise<void>;
+  /**
+   * "Try this attachment again NOW" (a bubble's retry): skips its backoff, and abandons a transfer
+   * that is on the wire but stalled. The bytes already sent are lost - the media route has no
+   * offset - so a retry restarts the upload at zero.
+   */
+  retryUpload: (messageId: string) => void;
   /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
   applyPendingStatuses: () => Promise<void>;
   /** Stop the internal backoff timer. */
@@ -169,7 +294,22 @@ export interface OutboxController {
 }
 
 /** Result of attempting to flush a single entry. */
-type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip';
+type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip' | 'gone' | 'parked';
+
+/**
+ * How many conversations may have a frame on the wire at once. Lanes (below) remove head-of-line
+ * blocking between conversations; this bounds what they may cost a weak link: three concurrent POSTs
+ * is enough that one stalled lane never freezes the rest, and few enough that a 50 kbit/s uplink is
+ * not carved into slivers each of which then misses its deadline.
+ */
+export const MAX_CONCURRENT_SENDS = 3;
+
+/**
+ * How long an attachment may move no byte before its bubble says so (`stalled`). DISPLAY ONLY: the
+ * transport's own guard (`DEFAULT_UPLOAD_IDLE_MS`) is what abandons the attempt, and this merely
+ * tells the member sooner than that that nothing is moving and a retry is on offer.
+ */
+export const UPLOAD_STALL_HINT_MS = 10_000;
 
 /**
  * Creates the outbox controller. The flusher re-encodes the proto against the current epoch at
@@ -183,8 +323,64 @@ type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip';
 export function createOutbox(deps: OutboxDeps): OutboxController {
   const { conversations, storage, mlsService, deviceKey, log, canFlush } = deps;
 
-  let flushing = false;
-  let rerun = false;
+  /**
+   * ONE LANE PER CONVERSATION (WP-OFF-5). The flush used to await its entries one by one across the
+   * whole queue, so one stalled POST - measured: no deadline, no limit - froze every message queued
+   * behind it, in every conversation. Conversations share nothing a send needs (each group has its
+   * own ratchet, and `runAsEpochSend` is per group), so each one drains in its own lane while a
+   * stalled one holds only itself.
+   *
+   * ORDER IS PER CONVERSATION AND IT IS KEPT BY CONSTRUCTION: inside a lane the next entry is not
+   * attempted until the previous one SENT (or is gone). An entry that must retry or is backing off
+   * holds its successors, which the old loop did not - it attempted the later ones anyway, so a
+   * failed message could be overtaken by the next one.
+   */
+  /**
+   * Ids whose last attempt failed for want of an ANSWER (a transport failure or a deadline), as
+   * opposed to a refusal or a held group. Only those may skip their backoff when the link comes
+   * back (WP-OFF-6): the ladder exists to keep a dead link from being hammered, and a link that has
+   * just proven itself alive is no longer that. A refusal (`sender-not-active`, a group not yet
+   * sendable) is a fact about the GROUP and no reconnect changes it, so those keep their clock.
+   * In memory only, on purpose: after a reload the ladder is at most 60 s and the boot flush is
+   * the trigger.
+   */
+  const transportHeld = new Set<string>();
+  /**
+   * Ids that were answered 403: parked, never re-posted by this controller. In memory on purpose -
+   * a restart earns ONE more attempt per entry (bounded), and a sign-in builds a new controller.
+   */
+  const forbiddenParked = new Set<string>();
+  /** Conversations already told (once) that the edge is blocking their sends. */
+  const edgeNoticed = new Set<string>();
+  /** The subset armed by a reconnect: each id skips its backoff ONCE, then is forgotten. */
+  const resuming = new Set<string>();
+  /**
+   * Entries whose upload the GATEWAY blocked (a CrowdSec 403 ban page). A ban is time-limited and
+   * says nothing about the file, so the entry is KEPT - never deleted, never auto-retried in a loop -
+   * until the member taps retry (or deletes it). In memory by design: a reload makes ONE new attempt,
+   * which re-parks it if the ban still stands.
+   */
+  const parked = new Set<string>();
+  /**
+   * Consecutive upload attempts per entry that ended with NO ANSWER (typed: a stall, an unanswered
+   * body, a rejected `fetch`). At {@link UPLOAD_NO_ANSWER_ATTEMPTS} the entry is parked as `failed`.
+   * In memory by design, like `parked`: a reload earns one more bounded round, and a manual retry,
+   * a success or a cancel starts the count again.
+   */
+  const noAnswer = new Map<string, number>();
+  /** The furthest an attempt of this entry has got, so only a NO-FURTHER attempt is counted. */
+  const bestLoaded = new Map<string, number>();
+  /**
+   * Consecutive ONLINE failures per attachment that are not a typed no-answer upload (see
+   * {@link MAX_UNEXPECTED_ATTEMPTS}). In memory by design, like `noAnswer`: a reload, a manual retry
+   * or a success starts the count again.
+   */
+  const unexpected = new Map<string, number>();
+  const lanes = new Map<string, Promise<void>>();
+  /** Conversations whose running lane must look at the queue once more (an enqueue or wake-up arrived). */
+  const laneRerun = new Set<string>();
+  let activeSends = 0;
+  const sendWaiters: Array<() => void> = [];
   let backoffTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
@@ -196,7 +392,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * its own. Measured on HEAL-REVOKE-5, 2026-08-29: ONE `Flush deferred` line (identical, so the
    * dedup key folded it) and TWENTY `Leadership decided as leader after N ms` lines inside one
    * second, each carrying its own start offset - 6017 ms down to 3871 ms. The flush itself already
-   * coalesces through `flushing`/`rerun`, but only AFTER this gate, so the coalescing could not
+   * coalesces through the per-conversation lanes, but only AFTER this gate, so the coalescing could not
    * reach the waiting.
    *
    * NOT A CORRECTNESS FIX AND THAT IS THE POINT. Every waiter resumed and no message was lost; what
@@ -227,12 +423,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   let inFlight: string | null = null;
 
   /**
+   * The transfer of each queued attachment that is being uploaded right now, by message id. It is
+   * what lets a bubble's cancel and retry reach a request already on the wire: withdrawing the row
+   * alone would leave a 13 MB body leaving a weak uplink for a message nobody wants any more.
+   * Reasons: `'cancel'` (the member withdrew it) and `'retry'` (try again now, skip the backoff).
+   */
+  const uploads = new Map<string, AbortController>();
+
+  /**
    * Read the queue. A failure here is indistinguishable from an empty queue to every caller, so
    * it is the one place a queued message can vanish without a trace - hence the log.
    */
   async function readQueue(where: string): Promise<OutboxEntry[]> {
     if (!storage) return [];
-    return storage.getOutboxEntries(deviceKey()).catch((e) => {
+    return storage.getOutboxQueue(deviceKey()).catch((e) => {
       log(`[OUTBOX] ${where}: reading the queue failed, treating it as empty: ${String(e)}`);
       return [] as OutboxEntry[];
     });
@@ -268,12 +472,24 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * cleared". It fires on BOTH transitions - the store emits it from the `online` handler and from
    * `notifyServerReachable` - so it strictly supersedes the listener it replaces rather than adding
    * a second one. Listeners here must stay idempotent and cheap: a flapping link fires it often,
-   * and `runFlush` already collapses re-entry through `flushing`/`rerun`.
+   * and `runFlush` already collapses re-entry through the per-conversation lanes.
    */
   const onVisible = (): void => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') runFlush();
   };
   const unsubscribeReconnect = connectivity.onReconnect(() => {
+    // THE RESUME IS PROMPT, AND IDEMPOTENT BECAUSE OF DURABLE STATE, NEVER A CLOCK (WP-OFF-6): an
+    // entry leaves the queue only after the server answered 2xx, and one lane per conversation means
+    // no entry is ever on the wire twice at once, so skipping a backoff can at worst re-send a frame
+    // whose answer was lost - which the receiver deduplicates on the inner `messageId`, exactly as
+    // for any retry. Nothing here waits for a timer to expire.
+    for (const id of transportHeld) {
+      resuming.add(id);
+      // The link is back: the stale "waiting for the connection" is false from now on, the entry is
+      // simply next in line until its attempt starts and says `preparing`.
+      if (viewOfUpload(id)?.phase === 'waiting') patchUpload(id, { phase: 'queued' });
+    }
+    transportHeld.clear();
     runFlush();
   });
   if (typeof window !== 'undefined') {
@@ -371,8 +587,66 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     let ref = media.uploadedRef;
     if (!ref) {
       if (!deps.uploadMedia) throw new Error('uploadMedia callback not provided');
+      if (!media.fileBytes || media.fileBytes.length === 0) {
+        throw new LocalAttachmentError('the queued attachment holds no bytes to upload');
+      }
       logMlsMetric({ kind: 'outbox_upload_attempt', conversationId: entry.conversationId });
-      const uploaded = await deps.uploadMedia(media);
+      const control = new AbortController();
+      uploads.set(entry.id, control);
+      patchUpload(entry.id, {
+        phase: 'preparing',
+        loaded: 0,
+        total: 0,
+        attempt: entry.attempts + 1,
+      });
+      // The hint only: the transport abandons a dead transfer on its own, this says so earlier.
+      let lastMoved = Date.now();
+      const hint = setInterval(() => {
+        if (Date.now() - lastMoved > UPLOAD_STALL_HINT_MS)
+          patchUpload(entry.id, { phase: 'stalled' });
+      }, 2_000);
+      let uploaded: MediaRef;
+      let attemptLoaded = 0;
+      try {
+        uploaded = await deps.uploadMedia(media, {
+          signal: control.signal,
+          onProgress: ({ loaded, total }) => {
+            lastMoved = Date.now();
+            attemptLoaded = Math.max(attemptLoaded, loaded);
+            patchUpload(entry.id, { phase: 'uploading', loaded, total });
+          },
+        });
+      } catch (e) {
+        // NO ANSWER, read from the TYPE the TRANSPORT threw - `UploadStalledError` (no byte moved)
+        // or `UploadNetworkError` (the connection broke) - never from a message and never from a
+        // bare `TypeError`, which preparation and encryption can throw too. A status is an answer
+        // (`uploadRefusalCause` reads it in the flush), a cancel is the member's act, and an
+        // `UploadAnswerTimeoutError` means the BODY WAS DELIVERED and the server is slow: not this.
+        if (e instanceof UploadStalledError || e instanceof UploadNetworkError) {
+          // AN ATTEMPT THAT MOVED MORE BYTES THAN ANY BEFORE IS PROGRESS, NOT A VERDICT: a slow
+          // link advances a little each time and must never be given up on. Only an attempt that
+          // fails no further than the best so far counts - the signature of a refusal at a fixed
+          // point (a relay's body limit), which is what the count exists to end.
+          const best = bestLoaded.get(entry.id) ?? 0;
+          let count: number;
+          if (attemptLoaded > best + UPLOAD_PROGRESS_MARGIN_BYTES) {
+            bestLoaded.set(entry.id, attemptLoaded);
+            count = 0;
+          } else {
+            count = (noAnswer.get(entry.id) ?? 0) + 1;
+          }
+          noAnswer.set(entry.id, count);
+          if (count >= UPLOAD_NO_ANSWER_ATTEMPTS) throw new UploadGaveUpError(count, e);
+        }
+        throw e;
+      } finally {
+        clearInterval(hint);
+        uploads.delete(entry.id);
+      }
+      noAnswer.delete(entry.id);
+      bestLoaded.delete(entry.id);
+      unexpected.delete(entry.id);
+      clearUpload(entry.id);
       ref = {
         mediaId: uploaded.mediaId,
         key: uploaded.key,
@@ -391,6 +665,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           log(`[OUTBOX] ${entry.id.slice(0, 8)}… media ref not persisted: ${String(e)}`)
         );
     }
+    // What the sender declared (a reel message's intent, length and expiry hint): empty for an
+    // ordinary attachment, which therefore encodes exactly as before.
+    const declaration = {
+      ...(media.intent ? { intent: media.intent } : {}),
+      ...(media.durationMs ? { durationMs: media.durationMs } : {}),
+      ...(media.expiresAtMs ? { expiresAtMs: media.expiresAtMs } : {}),
+    };
     const fullRef: MediaRef = {
       type: mediaKindToType(media.kind),
       mediaId: ref.mediaId,
@@ -404,6 +685,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       ...(media.placeholder ? { placeholder: media.placeholder } : {}),
       ...(media.voiceNote ? { voiceNote: true } : {}),
       ...(ref.encoding ? { encoding: ref.encoding } : {}),
+      ...declaration,
     };
     const proto = encodeAppMessage({
       ...mkMedia({
@@ -419,6 +701,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
         ...mediaPlaceholderProtoField(media.placeholder),
         ...mediaEncodingProtoField(ref.encoding),
+        ...mediaReelProtoFields(declaration),
       }),
       messageId: entry.id,
       sentAt: entry.sentAt,
@@ -444,7 +727,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function failPermanently(
     entry: OutboxEntry,
     terminalId: string,
-    cause: 'group-deleted' | 'evicted' | 'evicted-late'
+    cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large' | 'refused'
   ): Promise<FlushOutcome> {
     // THE KIND IS THE SEVERITY, and this line used to omit the one thing that decides it. A
     // `control` entry dying with its group is a read receipt or a reaction that lost a race to a
@@ -457,8 +740,23 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         (entry.kind === 'control' ? ' (control: nothing the user wrote is lost)' : '')
     );
     patchStatus(entry.id, 'error');
+    clearUpload(entry.id);
     if (entry.kind !== 'control') {
-      if (cause === 'group-deleted') {
+      if (cause === 'too-large' || cause === 'refused') {
+        // THE ONE PERMANENT FAILURE THAT IS ABOUT THE OBJECT, NOT THE GROUP: nothing about the
+        // conversation changed, so no banner and no eviction - only a line in the thread that tells
+        // the author which message will never go and what to do about it. Best-effort, and logged.
+        await deps
+          .addMessageToChat?.(
+            'system',
+            cause === 'too-large' ? m.outbox_upload_too_large() : m.outbox_upload_refused(),
+            entry.conversationId,
+            { isSystem: true }
+          )
+          .catch((e: unknown) =>
+            log(`[OUTBOX] ${entry.id.slice(0, 8)}… too-large notice not posted: ${String(e)}`)
+          );
+      } else if (cause === 'group-deleted') {
         deps.markDeletedRemotely?.(terminalId);
       } else {
         // `evicted` was read from `isGroupActive` before the wire was touched; `evicted-late` from
@@ -509,9 +807,25 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   async function holdForRetry(
     entry: OutboxEntry,
-    describe: (attempts: number) => string
+    describe: (attempts: number) => string,
+    opts: { transport?: boolean; repair?: boolean; local?: boolean; quiet?: boolean } = {}
   ): Promise<FlushOutcome> {
+    if (opts.transport) transportHeld.add(entry.id);
+    else transportHeld.delete(entry.id);
+    // The count is of CONSECUTIVE local failures: any other kind of hold breaks the run.
+    if (!opts.local) unexpected.delete(entry.id);
     patchStatus(entry.id, 'pending');
+    // An attachment still to upload shows that its next attempt is queued (and starts from zero).
+    // `quiet` when the payload was not read, so whether the upload already happened is not known.
+    if (!opts.quiet && entry.kind === 'media' && !entry.media?.uploadedRef) {
+      // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
+      // network; a group repair and any other failure each say what they are.
+      patchUpload(entry.id, {
+        phase: opts.transport ? 'waiting' : opts.repair ? 'repairing' : 'retrying',
+        loaded: 0,
+        attempt: entry.attempts + 1,
+      });
+    }
     const attempts = entry.attempts + 1;
     await storage
       ?.updateOutboxEntry(
@@ -534,19 +848,80 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     return 'retry';
   }
 
+  /**
+   * Parks an entry that keeps failing for a reason retrying cannot mend, with a state the member can
+   * SEE and act on (`error`: retry or delete). Kept, never deleted - nothing the user wrote is lost -
+   * and terminal until the member acts: a reconnect resumes only `transportHeld` entries.
+   */
+  function parkAsError(entry: OutboxEntry, why: string): FlushOutcome {
+    const line = `[OUTBOX] ${entry.id.slice(0, 8)}… ${entry.kind} entry FAILED on this device: ${why} - parked for a manual retry, entry kept`;
+    console.error(line);
+    log(line);
+    parked.add(entry.id);
+    transportHeld.delete(entry.id);
+    unexpected.delete(entry.id);
+    patchStatus(entry.id, 'pending');
+    patchUpload(entry.id, { phase: 'error' });
+    return 'parked';
+  }
+
+  /**
+   * The generic retry of an ATTACHMENT, bounded ONLY for local failures (see
+   * {@link isLocalAttachmentFailure}): the Nth consecutive one parks the entry. Every other failure
+   * is held on the ladder without a count and resets the run - the network and the server are
+   * waited out, never held against the file. Any other entry kind is held without a count (cheap
+   * now that a queue read decodes no file, and the ladder tops at 60 s).
+   */
+  function countedHold(
+    entry: OutboxEntry,
+    e: unknown,
+    describe?: (attempts: number) => string,
+    opts: { transport?: boolean; repair?: boolean; quiet?: boolean } = {}
+  ): Promise<FlushOutcome> | FlushOutcome {
+    const local = entry.kind === 'media' && isLocalAttachmentFailure(e);
+    if (local) {
+      const count = (unexpected.get(entry.id) ?? 0) + 1;
+      unexpected.set(entry.id, count);
+      if (count >= MAX_UNEXPECTED_ATTEMPTS) {
+        return parkAsError(entry, `${count} attempts in a row failed (${String(e).slice(0, 120)})`);
+      }
+    }
+    return holdForRetry(
+      entry,
+      describe ??
+        ((attempts) =>
+          `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`),
+      { ...opts, local }
+    );
+  }
+
   /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
   async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
     // Withdrawn after this flush read its snapshot of the queue. The row is already gone, so this
     // is the only thing standing between a message the user deleted and the wire.
     if (cancelled.has(entry.id)) {
       cancelled.delete(entry.id);
+      clearUpload(entry.id);
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… cancelled before it was sent - dropped, not delivered`
       );
-      return 'skip';
+      return 'gone';
     }
 
-    if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
+    // Consumed here, whether or not the backoff was still running, so a stale arming cannot outlive
+    // the reconnect it came from.
+    if (forbiddenParked.has(entry.id)) return 'skip';
+    const resumed = resuming.delete(entry.id);
+    // A manual retry (or a reconnect's resume) is a fresh start for the no-answer count.
+    if (resumed) {
+      noAnswer.delete(entry.id);
+      bestLoaded.delete(entry.id);
+      unexpected.delete(entry.id);
+    }
+    // PARKED IS NOT BLOCKING: the entry waits for the member, and what was written after it goes.
+    if (!resumed && parked.has(entry.id)) return 'parked';
+    parked.delete(entry.id);
+    if (!resumed && entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… skipped, backing off for ${entry.nextAttemptAt - Date.now()}ms (attempt ${entry.attempts})`
       );
@@ -560,6 +935,58 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… channel entry - dropped (channels do not use MLS)`);
       await storage?.deleteOutboxEntry(entry.id).catch(() => {});
       return 'error';
+    }
+
+    // THE PAYLOAD OF AN ATTACHMENT IS READ HERE AND NOWHERE EARLIER: the queue read returns a media
+    // entry as its scheduling columns only, because decoding the file is what froze a Pixel 6a once
+    // per backoff (2026-10-10). Every skip above returns before this line, so an entry that is not
+    // due costs a row of numbers - and a due one is decoded exactly once.
+    if (entry.kind === 'media' && !entry.media) {
+      try {
+        // TIMED, because this read is where a 13 MB attachment's 'waiting' bubble was spent and no
+        // line said how long it took (Mi 9T, alpha.4: ~60 s before the first progress).
+        const readFrom = Date.now();
+        const full = await storage?.getOutboxEntry(entry.id, deviceKey());
+        if (full) {
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… payload read in ${Date.now() - readFrom} ms (${full.media?.fileBytes?.length ?? 0} file bytes)`
+          );
+        }
+        if (!full) {
+          // Withdrawn between the `cancelled` check above and this read - or between the row read
+          // and the blob read inside it, which the storage layer re-asks before calling a missing
+          // blob a lost attachment: consume it, like that check.
+          cancelled.delete(entry.id);
+          clearUpload(entry.id);
+          log(`[OUTBOX] ${entry.id.slice(0, 8)}… no longer queued - nothing to send`);
+          return 'gone';
+        }
+        entry = full;
+      } catch (e) {
+        if (e instanceof OutboxPayloadUnreadableError) {
+          // A blob the platform evicted (iOS WKWebView under storage pressure) or that no longer
+          // opens is the attachment LOST on this device: said so, because "cannot be decrypted"
+          // would send the reader after the PIN.
+          const gone =
+            e.cause instanceof OutboxBlobMissingError || e.cause instanceof OutboxBlobCorruptError;
+          return parkAsError(
+            entry,
+            gone
+              ? `its attachment is no longer readable on this device (${(e.cause as Error).name})`
+              : `its payload cannot be decrypted (${String(e.cause).slice(0, 80)})`
+          );
+        }
+        // A row that exists but cannot be loaded is a LOCAL failure, and whether the upload already
+        // happened is unknown here, so the bubble is left as it is.
+        return countedHold(
+          entry,
+          new LocalAttachmentError('the queued row could not be read', e),
+          undefined,
+          {
+            quiet: true,
+          }
+        );
+      }
     }
 
     const terminalId = entry.conversationId;
@@ -585,7 +1012,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return holdForRetry(
         entry,
         (attempts) =>
-          `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… not sendable, re-add requested (attempt ${attempts})`
+          `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… not sendable, re-add requested (attempt ${attempts})`,
+        { repair: true }
       );
     }
 
@@ -640,6 +1068,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // The media envelope was installed immediately after upload, before the MLS send.
       await persistSent(terminalId, entry.id);
       patchStatus(entry.id, 'sent');
+      clearUpload(entry.id);
+      transportHeld.delete(entry.id);
+      unexpected.delete(entry.id);
       // The tab that composed this may be a follower, whose own echo is still showing `pending`.
       publishOutboxEntrySent(entry.id, mediaContent);
       // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
@@ -673,6 +1104,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // ONE READ OF THE DISCRIMINATOR, used by all three branches below. It was classified three
       // times for the same error, which is three chances for the arms to drift apart on what they
       // think happened.
+      // A TRANSFER THE MEMBER ENDED ON PURPOSE, read from the TYPE the transport threw. Cancel: the
+      // row is already withdrawn (`cancelPending` deleted it before aborting), so this is only the
+      // flush learning of it. Retry: not a failure at all - the member asked for another attempt
+      // now, so the backoff is skipped and the lane re-runs at once.
+      if (e instanceof UploadAbortedError) {
+        if (e.reason === 'retry') {
+          log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload restarted on request`);
+          resuming.add(entry.id);
+          laneRerun.add(entry.conversationId);
+          return 'retry';
+        }
+        cancelled.delete(entry.id);
+        clearUpload(entry.id);
+        log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`);
+        return 'gone';
+      }
       const kind = classifyOutgoingSendError(e);
       if (kind === 'sender-not-active') {
         log(
@@ -712,6 +1159,80 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         );
         return failPermanently(entry, terminalId, 'group-deleted');
       }
+      // AN ANSWER IS NEVER TRANSIENT. A refusal the media service (or the gateway in front of it)
+      // gave to THIS upload is read from the TYPE the throw carried (status and origin, never the
+      // message), and no retry changes it: the ladder used to re-post the same body once a minute for
+      // ever (attempt 806 on a 413, 2026-10-07; a 403 CrowdSec ban page on every 10 MiB+ body,
+      // 2026-10-10, which spun the bubble for ever). It accuses: each is the visible end of an upload
+      // path that shipped something the other side cannot take.
+      const refusal = uploadRefusalCause(e);
+      if (refusal === 'blocked') {
+        log(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… upload BLOCKED by the gateway (${String(e).slice(0, 120)}) - parked for a manual retry, entry kept`
+        );
+        console.error(`[OUTBOX] upload blocked by the gateway: ${String(e).slice(0, 120)}`);
+        parked.add(entry.id);
+        patchStatus(entry.id, 'pending');
+        patchUpload(entry.id, { phase: 'blocked' });
+        return 'parked';
+      }
+      // THE UPLOAD NEVER GOT AN ANSWER, THREE TIMES RUNNING, ONLINE: not a link to wait out but a
+      // path that does not work (a relay refusing early and closing mid-body delivers no status).
+      // Terminal and member-visible - kept, parked, retry and delete offered - never an endless
+      // "sending". It accuses, because it is the visible end of something upstream.
+      if (e instanceof UploadGaveUpError) {
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… upload FAILED: no answer on ${e.attempts} attempts in a row (${String(e.cause).slice(0, 120)}) - parked for a manual retry, entry kept`;
+        console.error(line);
+        log(line);
+        parked.add(entry.id);
+        // TERMINAL UNTIL THE MEMBER ACTS: a reconnect resumes every `transportHeld` entry, and the
+        // attempt that gave up was held as a transport failure - leaving it there would restart it
+        // behind a bubble still saying `failed`.
+        transportHeld.delete(entry.id);
+        patchStatus(entry.id, 'pending');
+        patchUpload(entry.id, { phase: 'failed' });
+        return 'parked';
+      }
+      if (refusal) {
+        const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… upload REFUSED (${refusal}: ${String(e).slice(0, 120)}) - ${detail} in ${terminalId.slice(0, 8)}…: no retry can succeed, giving up`;
+        console.error(line);
+        log(line);
+        return failPermanently(entry, terminalId, refusal);
+      }
+      // A 403 IS AN ANSWER ABOUT THE CALLER, read from the TYPE (`SendForbiddenError` is an
+      // `ApiRefusalError`), and re-posting the same frame cannot change who the caller is. The
+      // ladder re-posted six entries 23 times on a bench phone whose token named another account
+      // (2026-10-10). The entry is KEPT - nothing the user wrote is lost, and it goes out after a
+      // sign-in - but it is PARKED for this controller's life (a new sign-in builds a new one), and
+      // the line accuses: the 403 is the visible end of an identity or authorization defect upstream.
+      // A 403 FROM THE EDGE (CrowdSec ban page, not the gateway's JSON) is about the NETWORK PATH,
+      // so it is not parked: a sign-in cannot lift it, the ban expiring does. It climbs the ladder
+      // on the backoff ladder (a reconnect does not lift it, so it is not `transport`), accuses, and tells the user ONCE per conversation.
+      if (e instanceof SendEdgeRefusedError) {
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with ${e.status} by the EDGE (not the gateway) in ${terminalId.slice(0, 8)}… - a WAF/proxy block on this network path; retrying on the ladder`;
+        console.error(line);
+        if (edgeNoticed.add(terminalId) && entry.kind !== 'control') {
+          await deps
+            .addMessageToChat?.('system', m.outbox_edge_blocked(), entry.conversationId, {
+              isSystem: true,
+            })
+            .catch((err: unknown) => log(`[OUTBOX] edge notice not posted: ${String(err)}`));
+        }
+        return holdForRetry(
+          entry,
+          (attempts) =>
+            `[OUTBOX] ${entry.id.slice(0, 8)}… held on an edge refusal (attempt ${attempts})`
+        );
+      }
+      if (refusalStatus(e) === 403) {
+        forbiddenParked.add(entry.id);
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with 403 in ${terminalId.slice(0, 8)}… - the caller is not allowed to send this; parked, no retry until the next sign-in`;
+        console.error(line);
+        log(line);
+        patchStatus(entry.id, 'pending');
+        return 'skip';
+      }
       if (kind === 'evicted') {
         log(
           `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`
@@ -727,10 +1248,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // as "transient failure (attempt 23)" is what let eight stuck messages read as ordinary
       // network noise for two and a half hours. What is retried here is the MESSAGE; what is being
       // waited on is the REPAIR, and the line says which.
-      return holdForRetry(entry, (attempts) =>
-        kind === 'sender-not-active'
-          ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
-          : `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`
+      return countedHold(
+        entry,
+        e,
+        (attempts) =>
+          kind === 'sender-not-active'
+            ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
+            : `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`,
+        // Classified by TYPE: the delivery API raises `DeliveryUnreachableError` for a POST that got
+        // no answer (a deadline expiry included), never a sentence to match.
+        {
+          transport:
+            kind === 'unknown' && (e instanceof DeliveryUnreachableError || isTransportFailure(e)),
+          repair: kind === 'sender-not-active',
+        }
       );
     }
   }
@@ -800,61 +1331,109 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log('[OUTBOX] Flush skipped - session not ready to send yet.');
       return;
     }
-    if (flushing) {
-      rerun = true;
-      return;
+    const queued = await readQueue('flush');
+    if (queued.length === 0) return;
+    // CHECK AND CLAIM WITH NO AWAIT BETWEEN THEM: two wake-ups landing together must not both start
+    // a lane for one conversation, because two lanes would send one entry twice.
+    const started: Promise<void>[] = [];
+    for (const conversationId of new Set(queued.map((e) => e.conversationId))) {
+      if (lanes.has(conversationId)) {
+        laneRerun.add(conversationId);
+        continue;
+      }
+      const lane = drainLane(conversationId).finally(() => lanes.delete(conversationId));
+      lanes.set(conversationId, lane);
+      started.push(lane);
     }
-    flushing = true;
+    if (started.length === 0) return;
     try {
-      // Before any send: let the INCOMING message queue drain. fetchPendingMessages
-      // (on reconnect/resume) only enqueues the pending frames - their processing (commits
-      // that advance the epoch) is asynchronous. Without this barrier, a flush triggered by
-      // online/visibilitychange can go out BEFORE the missed commits are applied:
-      // the message would be encrypted at a stale epoch, hence undecryptable by up-to-date peers
-      // (silent loss - the "cold send on resume" race). Waiting for idle guarantees the local
-      // epoch is up to date. In steady state the queue is already idle -> immediate resolution,
-      // no added latency. [[DF1c]]
-      // `null`: a flush is raised by a reconnect, a visibility change or a session promotion, never
-      // from inside a decrypt session - and it is about whatever the queue happens to hold.
-      await mlsService.waitForMessageQueueIdle('outbox flush', null).catch((e) =>
-        // The barrier failing does NOT stop the flush - a queue that cannot drain must not block
-        // sending forever. But it means exactly the condition the barrier exists to prevent, so it
-        // is the first thing to look for when a message is accepted locally and never arrives.
+      await Promise.all(started);
+      // Re-read for backoff scheduling (statuses/attempts changed during the lanes).
+      const remaining = await readQueue('backoff scheduling');
+      if (remaining.length > 0) {
         log(
-          `[OUTBOX] Incoming-queue barrier failed, sending at a possibly stale epoch: ${String(e)}`
-        )
-      );
-      do {
-        rerun = false;
-        const entries = await readQueue('flush');
-        if (entries.length === 0) break;
-        logMlsMetric({ kind: 'outbox_pending_count', count: entries.length });
-        log(`[OUTBOX] Flushing ${entries.length} queued entr${entries.length === 1 ? 'y' : 'ies'}`);
-        let anySent = false;
-        for (const entry of entries) {
-          const outcome = await flushOne(entry);
-          if (outcome === 'sent') anySent = true;
-        }
-        // Re-read for backoff scheduling (statuses/attempts changed during the loop).
-        const remaining = await readQueue('backoff scheduling');
-        if (remaining.length > 0) {
-          log(
-            `[OUTBOX] ${remaining.length} entr${remaining.length === 1 ? 'y' : 'ies'} still queued`
-          );
-          scheduleBackoff(remaining);
-        }
-        // Chain another pass if a send unblocked dependents, or a concurrent enqueue arrived.
-        if (!anySent) break;
-      } while (rerun);
+          `[OUTBOX] ${remaining.length} entr${remaining.length === 1 ? 'y' : 'ies'} still queued`
+        );
+        scheduleBackoff(remaining);
+      }
     } finally {
-      flushing = false;
       void refreshMirror();
+    }
+  }
+
+  /** Runs `fn` while holding one of {@link MAX_CONCURRENT_SENDS} slots; a released slot is handed on, never freed and re-raced. */
+  async function withSendSlot<T>(fn: () => Promise<T>): Promise<T> {
+    if (activeSends < MAX_CONCURRENT_SENDS) activeSends++;
+    else await new Promise<void>((resolve) => sendWaiters.push(resolve));
+    try {
+      return await fn();
+    } finally {
+      const next = sendWaiters.shift();
+      if (next) next();
+      else activeSends--;
+    }
+  }
+
+  /** Drains ONE conversation, oldest entry first, until nothing more can be sent now. */
+  async function drainLane(conversationId: string): Promise<void> {
+    // Before any send: let the INCOMING message queue drain. fetchPendingMessages
+    // (on reconnect/resume) only enqueues the pending frames - their processing (commits
+    // that advance the epoch) is asynchronous. Without this barrier, a flush triggered by
+    // online/visibilitychange can go out BEFORE the missed commits are applied:
+    // the message would be encrypted at a stale epoch, hence undecryptable by up-to-date peers
+    // (silent loss - the "cold send on resume" race). Waiting for idle guarantees the local
+    // epoch is up to date. In steady state the queue is already idle -> immediate resolution,
+    // no added latency. [[DF1c]]
+    // `null`: a flush is raised by a reconnect, a visibility change or a session promotion, never
+    // from inside a decrypt session - and it is about whatever the queue happens to hold.
+    await mlsService.waitForMessageQueueIdle('outbox flush', null).catch((e) =>
+      // The barrier failing does NOT stop the flush - a queue that cannot drain must not block
+      // sending forever. But it means exactly the condition the barrier exists to prevent, so it
+      // is the first thing to look for when a message is accepted locally and never arrives.
+      log(`[OUTBOX] Incoming-queue barrier failed, sending at a possibly stale epoch: ${String(e)}`)
+    );
+    for (;;) {
+      laneRerun.delete(conversationId);
+      const entries = (await readQueue('flush')).filter((e) => e.conversationId === conversationId);
+      if (entries.length === 0) return;
+      logMlsMetric({ kind: 'outbox_pending_count', count: entries.length });
+      log(
+        `[OUTBOX] Flushing ${entries.length} queued entr${entries.length === 1 ? 'y' : 'ies'} for ${conversationId.slice(0, 8)}…`
+      );
+      let anySent = false;
+      // Ids parked or held back in THIS pass: what depends on one of them (a reply to it, a control
+      // naming it) is not attempted - it would reference a message the peers never received.
+      const heldBack = new Set<string>();
+      for (const entry of entries) {
+        if (dependsOnAny(entry, heldBack)) {
+          heldBack.add(entry.id);
+          log(`[OUTBOX] ${entry.id.slice(0, 8)}… waits: it depends on a parked message`);
+          continue;
+        }
+        const outcome = await withSendSlot(() => flushOne(entry));
+        if (outcome === 'parked') heldBack.add(entry.id);
+        if (outcome === 'sent') anySent = true;
+        // Withdrawn or permanently failed: the entry is out of the queue, so what follows it may go.
+        else if (outcome === 'gone' || outcome === 'error') continue;
+        // Parked for the member (blocked, failed): waiting on a human, not on the network, so what
+        // was written after it must not wait too. Only an entry that RETRIES holds its successors.
+        else if (outcome === 'parked') continue;
+        // Retry or backing off: the successors wait, which is what keeps the conversation in order.
+        else break;
+      }
+      // Chain another pass if a send unblocked dependents, or a concurrent enqueue arrived.
+      if (!anySent && !laneRerun.has(conversationId)) return;
     }
   }
 
   return {
     async enqueue(entry: OutboxEntry, opts: { alreadyDurable?: boolean } = {}): Promise<void> {
-      if (!storage) return;
+      // REJECTS RATHER THAN RETURNS: a no-op here told the caller its message was queued when
+      // nothing would ever send it.
+      if (!storage) {
+        log(`[OUTBOX] Enqueue refused for ${entry.id.slice(0, 8)}…: no storage layer`);
+        throw new OutboxEnqueueError('no storage layer');
+      }
       // The first trace of a message on this device: without it there is no way to tell a send that
       // never reached the queue from one the queue accepted and lost.
       log(
@@ -865,12 +1444,29 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // way to fail AFTER the fact is durable - which is the state this argument exists to make
       // impossible to reach.
       if (!opts.alreadyDurable) {
-        await storage
-          .saveOutboxEntry(entry, deviceKey())
-          .catch((e) => log(`[OUTBOX] Enqueue failed: ${String(e)}`));
+        try {
+          const writeFrom = Date.now();
+          await storage.saveOutboxEntry(entry, deviceKey());
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… durable write took ${Date.now() - writeFrom} ms (${entry.media?.fileBytes?.length ?? 0} file bytes)`
+          );
+        } catch (e) {
+          log(`[OUTBOX] Enqueue failed for ${entry.id.slice(0, 8)}…: ${String(e)}`);
+          throw new OutboxEnqueueError('the durable write failed', e);
+        }
       }
       await refreshMirror();
       runFlush();
+    },
+
+    async hasEntry(messageId: string): Promise<boolean | null> {
+      if (!storage) return null;
+      try {
+        return (await storage.getOutboxQueue(deviceKey())).some((e) => e.id === messageId);
+      } catch (e) {
+        log(`[OUTBOX] hasEntry ${messageId.slice(0, 8)}…: reading the queue failed: ${String(e)}`);
+        return null;
+      }
     },
 
     async cancelPending(messageId: string): Promise<boolean> {
@@ -882,6 +1478,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // the durable row (every future flush), this tab's snapshot (a flush already walking), and
       // the other tabs' snapshots (a leader draining on our behalf).
       cancelled.add(messageId);
+      parked.delete(messageId);
+      noAnswer.delete(messageId);
+      bestLoaded.delete(messageId);
+      unexpected.delete(messageId);
       publishOutboxEntryCancelled(messageId);
       await storage
         .deleteOutboxEntry(messageId)
@@ -893,6 +1493,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           cancelled.delete(messageId);
         });
       if (!cancelled.has(messageId)) return false;
+      // A body already on the wire is stopped too, not only forgotten. AFTER the check above: the
+      // abort wakes the flush that owns the transfer, which consumes `cancelled`.
+      uploads.get(messageId)?.abort('cancel');
       // The mirror is the native background sender's own copy of the queue: leaving the entry in it
       // sends the message from Android after it was withdrawn here.
       await refreshMirror();
@@ -912,6 +1515,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return runFlush();
     },
 
+    retryUpload(messageId: string): void {
+      // Skip the backoff for this entry (the one `resuming` already exists for) and, when its
+      // transfer is on the wire and stalled, abandon it: the flush then restarts it at once.
+      resuming.add(messageId);
+      parked.delete(messageId);
+      // A 403-parked entry used to ignore this button for the controller's whole life.
+      forbiddenParked.delete(messageId);
+      const running = uploads.get(messageId);
+      if (running) running.abort('retry');
+      else runFlush();
+    },
+
     async applyPendingStatuses(): Promise<void> {
       if (!storage) return;
       const entries = await readQueue('pending statuses');
@@ -925,6 +1540,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     },
 
     dispose(): void {
+      for (const running of uploads.values()) running.abort('cancel');
+      uploads.clear();
+      clearAllUploads();
       if (backoffTimer) clearTimeout(backoffTimer);
       backoffTimer = null;
       unsubscribeTabOutbox();
@@ -943,13 +1561,36 @@ let active: OutboxController | null = null;
 /** Register the session's outbox controller, replacing and disposing any previous one. */
 export function registerOutbox(deps: OutboxDeps): OutboxController {
   active?.dispose();
+  // The prompt resume needs the store to be able to ask the server whether it is back (WP-OFF-6).
+  installReachabilityProbe();
   active = createOutbox(deps);
+  const controller = active;
+  sweepOrphanBlobs(deps);
+  setUploadRetry((messageId) => controller.retryUpload(messageId));
   return active;
+}
+
+/**
+ * Once per session, delete the attachment blobs no queued row owns - what a kill between a blob
+ * write and its row write leaves. Best-effort and logged: garbage is a cost, never a failure.
+ */
+function sweepOrphanBlobs(deps: OutboxDeps): void {
+  const storage = deps.storage;
+  if (!storage) return;
+  // Called INSIDE the chain: a synchronous throw (a storage handle not open yet) must land in the
+  // `.catch` below, never in `registerOutbox`, which would then return no controller at all.
+  Promise.resolve()
+    .then(() => storage.sweepOutboxBlobs())
+    .then((n) => {
+      if (n > 0) deps.log(`[OUTBOX] swept ${n} orphan attachment blob(s) (no row owns them)`);
+    })
+    .catch((e) => deps.log(`[OUTBOX] orphan blob sweep failed: ${String(e)}`));
 }
 
 /** Tear down the active controller (logout). */
 export function unregisterOutbox(): void {
   active?.dispose();
+  setUploadRetry(null);
   active = null;
 }
 
@@ -968,7 +1609,7 @@ export function getOutbox(): OutboxController | null {
  *
  * Every one of them funnels into `runFlush`, which is where all the gates live and the only place
  * they live: the tab election, the leader gate, `connectivity.isOffline`, `canFlush`, and the
- * `flushing`/`rerun` coalescer. There is no second flusher to fuse this with. FIVE sites are
+ * the per-conversation lanes coalescer. There is no second flusher to fuse this with. FIVE sites are
  * internal wake-ups, each bound to the one condition it is the seam for - `connectivity.onReconnect`,
  * `visibilitychange`, a follower tab's `outbox_flush_request`, the backoff timer, and `enqueue`.
  * THREE are external moments nothing inside this module can observe:
@@ -994,12 +1635,23 @@ export function flushOutbox(): void {
   void active?.flush();
 }
 
-/** Enqueue a message on the active controller (no-op when none). */
+/** Enqueue a message on the active controller. Rejects with {@link OutboxEnqueueError} when it cannot. */
 export function enqueueOutboxMessage(
   entry: OutboxEntry,
   opts?: { alreadyDurable?: boolean }
 ): Promise<void> {
-  return active ? active.enqueue(entry, opts) : Promise.resolve();
+  if (!active) {
+    return Promise.reject(new OutboxEnqueueError('no active outbox controller'));
+  }
+  return active.enqueue(entry, opts);
+}
+
+/**
+ * Whether the durable queue still holds `messageId`. `null` when that cannot be known (no controller,
+ * unreadable queue) - an unknown is never reported as an absence.
+ */
+export function isOutboxEntryQueued(messageId: string): Promise<boolean | null> {
+  return active ? active.hasEntry(messageId) : Promise.resolve(null);
 }
 
 /**
@@ -1007,7 +1659,8 @@ export function enqueueOutboxMessage(
  * reads as "not cancelled" - the safe answer, since it sends the delete as an event instead.
  */
 export function cancelOutboxMessage(messageId: string): Promise<boolean> {
-  return active ? active.cancelPending(messageId) : Promise.resolve(false);
+  if (!active) return Promise.resolve(false);
+  return active.cancelPending(messageId).finally(bumpOutboxQueueVersion);
 }
 
 /** Mark loaded messages still queued as `pending` (no-op when none). */

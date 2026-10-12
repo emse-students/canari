@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { assertAgendaSignature } from './agenda-signature';
 import { SPACE_CAMPUSES, SPACE_FORMATIONS } from '../spaces/space.entity';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 
@@ -73,23 +74,32 @@ export function parseSpaceSelection(raw: { campus?: string; formation?: string }
 export const AGENDA_SELECTION_REQUIRED = 'AGENDA_SELECTION_REQUIRED';
 
 /**
- * THE PUBLIC AGENDA IS ONE FEED PER SELECTION (D40, user 2026-10-05): an ANONYMOUS read must name a
- * campus and/or a formation, or one association (`associationId`), or one event (`eventId`, the
- * single-evening link). The bare URL is REFUSED on purpose - no fallback to "everything" - knowing
- * it ends the subscriptions installed before D40 (docs/wiki/legacy-compatibility.md). A signed-in
- * reader is already narrowed to their own spaces, so the rule does not apply to them.
+ * THE PUBLIC AGENDA IS ONE SIGNED FEED PER SELECTION (D40, amended 2026-10-06). An ANONYMOUS read
+ * must name a campus / formation / association (`campus`, `formation`, `associationId`) AND carry
+ * the `sig` the server signed for that selection, or name one event (`eventId`, the single-evening
+ * link, readable unsigned like an SEO page). No selection and no event is a 400
+ * `AGENDA_SELECTION_REQUIRED` - no fallback to "everything"; an unsigned or wrongly signed
+ * selection is a 403 (`agenda-signature.ts`). A signed-in reader is already narrowed to their own
+ * spaces, and `trusted` (a server-to-server call with the internal secret, the SEO page) is not
+ * restricted: neither is checked.
  */
-export function assertAgendaSelected(args: {
+export function assertAgendaAccess(args: {
   selection: SpaceSelection;
   associationId?: string;
   eventId?: string;
+  sig?: string;
   signedIn: boolean;
+  trusted?: boolean;
 }): void {
-  if (args.signedIn) return;
-  if (args.selection.campus !== null || args.selection.formation !== null) return;
-  if (args.associationId?.trim() || args.eventId?.trim()) return;
-  throw new BadRequestException({
-    code: AGENDA_SELECTION_REQUIRED,
-    message: 'The public agenda needs a selection: pass campus and/or formation (or associationId)',
-  });
+  if (args.signedIn || args.trusted) return;
+  const associationId = args.associationId?.trim() || null;
+  if (args.eventId?.trim()) return;
+  if (args.selection.campus === null && args.selection.formation === null && !associationId) {
+    throw new BadRequestException({
+      code: AGENDA_SELECTION_REQUIRED,
+      message:
+        'The public agenda needs a selection: pass campus and/or formation (or associationId)',
+    });
+  }
+  assertAgendaSignature({ ...args.selection, associationId }, args.sig);
 }

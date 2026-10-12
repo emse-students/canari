@@ -66,9 +66,6 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   notesKey?: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
-  stripeCustomerId?: string | null;
-
   @Column({ type: 'boolean', default: false })
   admin?: boolean;
 

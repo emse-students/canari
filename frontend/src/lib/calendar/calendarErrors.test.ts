@@ -14,6 +14,17 @@ const RAW = 'endsAt must be after startsAt';
 const fallback = () => 'FALLBACK';
 
 describe('calendarErrorMessage', () => {
+  it('names the co-organiser cap with its numbers', () => {
+    const out = calendarErrorMessage(
+      new SocialApiError('An event has at most 3 co-organisers', 'CALENDAR_COORGANISER_CAP', 400),
+      fallback
+    );
+
+    expect(out).not.toBe('FALLBACK');
+    expect(out).toContain('4');
+    expect(out).toContain('3');
+  });
+
   it.each([['CALENDAR_INVALID_START'], ['CALENDAR_INVALID_END'], ['CALENDAR_END_BEFORE_START']])(
     'translates %s to a localized sentence',
     (code) => {

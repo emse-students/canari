@@ -23,6 +23,8 @@ reclaimable by the plainest possible prune, and reconstructible by the next `doc
 | Dangling images | `docker image prune -f` (never `-a`) | an untagged layer set no container runs; `compose pull` rebuilds it |
 | Build cache | `docker builder prune -f` | cache, by definition |
 
+| Unused release images (**opt-in**, `--remove-releases`) | `docker image rm <repo>:v<semver>`, by NAME, never `-f` | see below |
+
 **It never deletes a volume and never removes a container.** A dangling volume may be the orphan of a
 removed container or may be data whose container is simply not running; `docker volume prune` cannot
 tell those apart and neither can a name. An exited container is frequently the only surviving record
@@ -30,6 +32,30 @@ of what a volume belonged to, so removing it turns a decidable question into an 
 
 The allowlist is a real check in the code - `reclaim()` raises on any kind but `image` and `builder`,
 so widening it is an edit somebody has to make on purpose.
+
+## Release images - an allowlist by name, and three guards
+
+Since 2026-10-06 production deploys `v<version>`: the image a deploy replaces keeps its tag, is not
+dangling, and the dangling-only prune never reclaims it (eight images per stable). The removal is
+OFF unless `--remove-releases` is given; otherwise the plan is only written into the ledger line
+(`release_images.plan`), and `--dry-run` prints it.
+
+- **Candidates are matched by name**: `ghcr.io/emse-students/canari/<repository>:v<semver>` only.
+  `dev`, `latest`, untagged layers and every other project's images (Authentik, Cercle, Sky) are not
+  listed at all.
+- **Per repository, the newest `--keep` (default 3) are kept** - semver order, a pre-release below
+  its stable - as the rollback margin.
+- **Never removed, whatever the rank**: an image any container references, running OR stopped (by
+  image id, so every tag sharing that id is protected), and an image a compose file passed with
+  `--compose FILE...` names literally.
+- Removal is `docker image rm <ref>` without `-f`, so docker's own refusal of an in-use image is a
+  second guard; a refusal is recorded in the ledger and does not stop the batch.
+
+Tests (python stdlib, fixtures proving what is kept and removed, including the container guard):
+
+```sh
+python3 -m unittest discover -s infrastructure/docker-prune -p "test_*.py"
+```
 
 ## What it reports instead
 
@@ -100,6 +126,54 @@ The two hosts run different docker majors (29 on `canari`, 28 on `mitv`), which 
 read through `docker inspect` and never through `docker ps --format`: docker 29 turned `.Labels`
 there into a comma-joined string, so `index .Labels "..."` fails outright on one host and works on
 the other.
+
+## On the Portail-etu host (nothing is installed yet)
+
+Read-only census of 2026-10-08: `docker system df` showed 67 images (12.15 GB, **6.5 GB
+reclaimable**), 133 build-cache entries (**6.98 GB, all reclaimable**), 16 volumes (1.43 GB), and `/`
+at **88 % used** (38 G of 45 G, 5.5 G free). Of the 67 images, 24 are Canari releases (`v1.1.0`, `v1.1.1`, `v1.1.2`, eight each, so a
+`--keep 3` removal reclaims nothing today; the dry-run plan was 24 kept, 0 removed, and a `v2.4.1`
+of another project was not matched), 8 are `dev`, and the rest are dangling `canari/*` layers: the
+plain dangling prune plus the build cache is where the space is.
+
+Nothing was installed. Dry-run without installing anything (writes no ledger, deletes nothing):
+
+```sh
+ssh portail-etu-direct 'python3 - --dry-run' < infrastructure/docker-prune/prune.py
+```
+
+Read-only facts about the host, checked 2026-10-09 so the steps below need no guess: the login
+user `jolan.boudin` is in the `docker` group (no sudo needed), `python3` is 3.13, docker is 26.1,
+the user has **no crontab yet**, `/var/lib/docker` is `drwx--x--- root` (the script only calls
+`statvfs` on it, which needs search permission on the parents and nothing more), `/home/canari` does
+not exist (hence `CANARI_PRUNE_DIR` in every command below), and the two compose files are
+`/srv/canari/infrastructure/docker-compose.prod.yml` and
+`/srv/canari-dev/infrastructure/docker-compose.dev.yml`.
+
+To enable it, the user or Master runs these four commands, in this order, and sends back the output
+of the third:
+
+```sh
+ssh portail-etu-direct 'mkdir -p ~/docker-prune'
+scp infrastructure/docker-prune/prune.py portail-etu-direct:docker-prune/prune.py
+ssh portail-etu-direct 'CANARI_PRUNE_DIR=$HOME/docker-prune python3 ~/docker-prune/prune.py --dry-run --remove-releases --keep 3 --compose /srv/canari/infrastructure/docker-compose.prod.yml /srv/canari-dev/infrastructure/docker-compose.dev.yml | head -80'
+ssh portail-etu-direct 'CANARI_PRUNE_DIR=$HOME/docker-prune python3 ~/docker-prune/prune.py --remove-releases --keep 3 --compose /srv/canari/infrastructure/docker-compose.prod.yml /srv/canari-dev/infrastructure/docker-compose.dev.yml'
+```
+
+The third is the dry run (nothing deleted, no ledger line); the fourth is the first real pass and
+prints nothing on success. Then the cron entry, installed with `ssh portail-etu-direct crontab -e`:
+
+```cron
+# Docker hygiene (05:30) - see infrastructure/docker-prune/README.md in the canari repository
+30 5 * * * CANARI_PRUNE_DIR=$HOME/docker-prune python3 $HOME/docker-prune/prune.py --remove-releases --keep 3 --compose /srv/canari/infrastructure/docker-compose.prod.yml /srv/canari-dev/infrastructure/docker-compose.dev.yml >> $HOME/docker-prune/prune.log 2>&1
+```
+
+**Expected after the first pass** (from the 2026-10-08 census): about 6.5 GB of dangling images and
+about 7 GB of build cache reclaimed, no release image removed (24 kept under `--keep 3`), `/` back
+near 70 %. Read the slope with `tail -3 ~/docker-prune/passes.ndjson` on the host.
+
+The dangling-image and build-cache prune run unfiltered by project on a shared daemon: they only
+reach untagged layers and cache, never a tagged image of another estate.
 
 ## Reading the slope
 

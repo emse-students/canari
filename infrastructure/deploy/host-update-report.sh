@@ -56,6 +56,17 @@ STALE_TRIGGER_DAYS="${STALE_TRIGGER_DAYS:-8}"
 # 2026-09-03, where the resolved list opened with the whole of stable while the file said security.
 ALLOWED_ORIGIN_SUBSTRING="${ALLOWED_ORIGIN_SUBSTRING:-Debian-Security}"
 
+# WHO OWNS THE APT POLICY OF THE BOX THIS RUNS ON. `canari` (default): this project installed
+# `52canari-unattended-upgrades` and the origin list and the log are ours to assert. `host-admins`:
+# the box is a shared host whose administrators own `unattended-upgrades` (the Portail-etu host runs
+# the School's own policy - full stable, packagecloud, an automatic 02:00 reboot, a log this runner
+# cannot read), and this project does not ask them to change it (user, 2026-10-10). Judging a policy
+# nobody here can alter makes a report that is red for ever - noise, and a line its reader learns to
+# skip hides the next real one. Under `host-admins` the two facts that are THEIR policy (the origin
+# list, the unreadable log) are printed and not judged; everything that is OUR question stays: the
+# timer ran, nothing security is pending, no reboot is owed.
+POLICY_OWNER="${POLICY_OWNER:-canari}"
+
 # -------------------------------------------------------------------------------------------------
 # GATHER - reads the host, writes facts, judges nothing.
 # -------------------------------------------------------------------------------------------------
@@ -226,7 +237,7 @@ judge() {
   # upgrades` is `root:adm 0750`; the first real run of this report was made by an account outside
   # `adm` and reported `never` on a box whose timer had fired four hours earlier - so the ERROR arm
   # above was unreachable, whatever the host was doing.
-  if [ "${last_outcome}" = "unreadable" ]; then
+  if [ "${last_outcome}" = "unreadable" ] && [ "${POLICY_OWNER}" = "canari" ]; then
     # shellcheck disable=SC2016  # the backticks are prose, naming three unix groups, not a subshell
     printf '::error::%s cannot read /var/log/unattended-upgrades - the ERROR arm of this report is blind, so a failed run would pass. Fix: add the reporting account to the `adm` group (it grants nothing an account in `sudo` and `docker` did not already have)\n' "${host}"
     findings=$((findings + 1))
@@ -250,7 +261,9 @@ judge() {
   fi
 
   # WIDER THAN SECURITY IS A DIFFERENT RISK, NOT A SMALLER ONE. PG 15 is held at 15 on purpose.
-  if [ -z "${origins:-}" ]; then
+  if [ "${POLICY_OWNER}" != "canari" ]; then
+    printf 'note: the apt policy of %s belongs to its administrators; origins and log are reported, not judged.\n' "${host}"
+  elif [ -z "${origins:-}" ]; then
     printf '::error::no Unattended-Upgrade::Origins-Pattern resolves on %s - it would upgrade nothing at all\n' "${host}"
     findings=$((findings + 1))
   else

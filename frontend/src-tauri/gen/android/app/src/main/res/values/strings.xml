@@ -73,6 +73,9 @@
     <string name="notif_social_comment_body">Nouveau commentaire</string>
     <string name="notif_social_reaction_title">Nouvelle réaction</string>
     <string name="notif_social_reaction_body">%1$s a réagi %2$s à votre publication</string>
+    <string name="notif_social_reaction_body_two">%1$s et %2$s ont réagi à votre publication</string>
+    <string name="notif_social_reaction_body_three">%1$s, %2$s et %3$s ont réagi à votre publication</string>
+    <string name="notif_social_reaction_body_many">%1$s, %2$s et %3$d autres ont réagi à votre publication</string>
     <string name="notif_social_association_post_title">%1$s a publié</string>
     <string name="notif_social_association_post_body">Nouvelle publication</string>
     <string name="notif_social_followed_post_title">%1$s a publié</string>

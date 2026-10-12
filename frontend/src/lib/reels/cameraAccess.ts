@@ -15,7 +15,8 @@
  * NO SECOND PATH. A refused camera is a state the screen explains (`CameraScreen`), never a hand-off
  * to the system camera app - the capture screen is the app's own (R3).
  */
-import { cameraVideoConstraints } from './framedCapture';
+import { REEL_AUDIO_CONSTRAINTS, cameraVideoConstraints } from './framedCapture';
+import { REEL_FRAME_RATIO, containFrame } from './reelFrame';
 
 /** Why the camera could not be opened. One code per cause the screen draws differently. */
 export type CameraFault =
@@ -88,23 +89,33 @@ export async function openReelCamera(facing: CameraFacing): Promise<MediaStream>
     throw new CameraAccessError('unavailable', 'camera: getUserMedia is not available');
   }
   try {
-    // THE FRAME ASKED FOR IS THE SCREEN'S, capped (framedCapture.ts): nothing larger than the phone
-    // can show is worth the encoder's time. Both phones answer a landscape request as a portrait
-    // track (measured 2026-10-01).
-    const wanted = cameraVideoConstraints(
+    // THE FRAME ASKED FOR IS THE REEL FRAME'S, as large as the screen shows it, capped
+    // (framedCapture.ts): the canonical 9:16 shown whole in the screen, so the recorded file has the
+    // ratio every surface draws. Both phones answer a landscape request as a portrait track
+    // (measured 2026-10-01).
+    const shown = containFrame(
       { width: window.screen.width, height: window.screen.height },
-      window.devicePixelRatio || 1
+      REEL_FRAME_RATIO
     );
+    const wanted = cameraVideoConstraints(shown, window.devicePixelRatio || 1);
     const stream = await devices.getUserMedia({
       video: {
-        facingMode: facing,
+        // EXACT, never a bare value: a bare `facingMode` is only an IDEAL, which WKWebView answered with
+        // the BACK lens on an iPhone (alpha.4 reading, 2026-10-06). An unavailable lens is then an
+        // OverconstrainedError, classified below and logged - never a silent switch to the other one.
+        facingMode: { exact: facing },
         width: { ideal: wanted.width },
         height: { ideal: wanted.height },
         frameRate: { ideal: wanted.frameRate },
       },
-      audio: true,
+      audio: REEL_AUDIO_CONSTRAINTS,
     });
     const video = stream.getVideoTracks()[0];
+    const reported = video?.getSettings?.().facingMode;
+    if (reported && reported !== facing) {
+      // The engine granted a lens other than the exact one asked for: a defect to read, not to absorb.
+      console.error(`[camera] asked ${facing} exactly, the track reports ${reported}`);
+    }
     console.debug(`[camera] opened ${facing}: ${video?.label ?? 'no video track'}`);
     return stream;
   } catch (err) {

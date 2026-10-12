@@ -125,7 +125,7 @@ describe('the offline session never re-enters the destructive catch', () => {
   it('holds the outbox until a token exists', () => {
     // The outbox flushes on its own `online` listener, which fires before the promotion has a
     // token; without this predicate every queued entry burns an attempt on that first tick.
-    expect(sessionAuth).toContain('canFlush: () => !ctx.isOfflineSession(),');
+    expect(sessionAuth).toContain('canFlush: () => !ctx.isOfflineSession() && !isIdentitySplit(),');
   });
 
   it('detaches the reconnect listener on logout', () => {

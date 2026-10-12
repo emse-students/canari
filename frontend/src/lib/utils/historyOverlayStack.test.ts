@@ -1,9 +1,11 @@
 import {
+  drainHistoryOverlayStack,
   pushHistoryOverlay,
   closeHistoryOverlayFromUi,
   clearHistoryOverlayStack,
   initHistoryOverlayStack,
   historyOverlayStackDepth,
+  releaseHistoryOverlay,
 } from './historyOverlayStack';
 
 describe('historyOverlayStack', () => {
@@ -41,7 +43,7 @@ describe('historyOverlayStack', () => {
       (c) => c[0] === 'popstate'
     )?.[1] as ((e: PopStateEvent) => void) | undefined;
     handler?.({ state: null } as PopStateEvent);
-    expect(close).toHaveBeenCalled();
+    expect(close).toHaveBeenCalledWith('back');
     expect(historyOverlayStackDepth()).toBe(0);
   });
 
@@ -50,5 +52,25 @@ describe('historyOverlayStack', () => {
     pushHistoryOverlay(close);
     closeHistoryOverlayFromUi(close);
     expect(history.back).toHaveBeenCalled();
+  });
+
+  it('releasing an overlay its owner closed empties the stack and never walks the history', () => {
+    const close = vi.fn();
+    pushHistoryOverlay(close);
+    releaseHistoryOverlay(close);
+    expect(historyOverlayStackDepth()).toBe(0);
+    expect(history.back).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    // Idempotent: a dismissal that went through the stack already removed it.
+    releaseHistoryOverlay(close);
+    expect(historyOverlayStackDepth()).toBe(0);
+  });
+
+  it('a drain tells each handler the app is navigating, so none may ask', () => {
+    const reasons: (string | undefined)[] = [];
+    pushHistoryOverlay((reason) => reasons.push(reason));
+    drainHistoryOverlayStack();
+    expect(reasons).toEqual(['navigation']);
+    expect(historyOverlayStackDepth()).toBe(0);
   });
 });

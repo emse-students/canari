@@ -277,7 +277,6 @@ jobs:
           DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
           DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
           DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
-          STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUB_KEY }}
           ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
@@ -333,11 +332,6 @@ jobs:
             # to whoever is looking at it - rather than putting a banner on production.
             echo "VITE_DEPLOY_ENVIRONMENT=development" >> .env
 
-            # NO VITE_STRIPE_PUBLISHABLE_KEY on dev. It has no payment credentials at all (decided
-            # with the user), and a publishable key whose secret half is absent produces a checkout
-            # that opens and then fails - worse than a button that is not there.
-          elif [ -n "$STRIPE_PUBLISHABLE_KEY" ]; then
-            echo "VITE_STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}" >> .env
           fi
 
           if [ -n "$ANDROID_APP_LINK_SHA256" ]; then
@@ -420,10 +414,13 @@ jobs:
       # `type=ref,event=branch` and `type=sha,prefix={{branch}}-` are gone with the push trigger:
       # there is no branch event any more, and both produced tags nothing ever pulled.
       #
-      # `latest` MOVES ONLY FOR A STABLE RELEASE, and `dev` only for a pre-release. Both compose
-      # files are deployed with an explicit `TAG=<sha>`, so neither moving tag decides what runs -
-      # but `latest` is what a human typing `docker pull` gets, and letting an alpha claim it would
-      # make that person's answer to "what is production running" quietly wrong. `enable=` takes a
+      # `v<version>` IS WHAT PRODUCTION DEPLOYS (`serve-prod.yml`), which makes a rerun of an old
+      # release a rollback; the dev estate still deploys its moving `dev`. EVERY service gets it on
+      # EVERY release - nothing is selectively rebuilt - and the GHCR prune keeps the newest 30.
+      #
+      # `latest` MOVES ONLY FOR A STABLE RELEASE, and `dev` only for a pre-release. Neither
+      # decides what production runs, but `latest` is what a human typing `docker pull` gets, and
+      # letting an alpha claim it would make that person's answer to "what is production running" quietly wrong. `enable=` takes a
       # literal true/false, which is why the release kind is threaded in rather than inferred from
       # the default branch (every release commit is on the default branch, alpha and stable alike,
       # so `{{is_default_branch}}` could not tell them apart).

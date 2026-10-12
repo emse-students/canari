@@ -1,5 +1,6 @@
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 import { associationAccentHex } from '$lib/associations/accent';
+import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 
 /**
@@ -308,7 +309,43 @@ export function eventOwnersLabel(
 ): string {
   const owners = eventOwners(event);
   if (owners.length === 1 && owners[0].associationId === ownAssociationId) return '';
-  return owners.map((owner) => owner.name).join(' + ');
+  return organisersLabel(owners);
+}
+
+/**
+ * The organisers as ONE short label: the name alone, `A + B` for two, `A + N others` from three on.
+ *
+ * Up to four associations may run an event (D39, 2026-10-10), and joining every name with " + " into
+ * one `truncate`d span showed two of four at 390 px with no sign that the rest existed. The label
+ * therefore stops naming at two and COUNTS the remainder; the full list is
+ * {@link organisersFullList}, carried by the title and the aria-label next to it, and by the detail
+ * modal, the one place every name is guaranteed visible.
+ */
+export function organisersLabel(owners: EventOwnerIdentity[]): string {
+  if (owners.length <= 2) return owners.map((owner) => owner.name).join(' + ');
+  return m.calendar_owners_and_others({ first: owners[0].name, count: owners.length - 1 });
+}
+
+/** Every organiser's name, owner first, as a plain list for a title or an aria-label. */
+export function organisersFullList(owners: EventOwnerIdentity[]): string {
+  return owners.map((owner) => owner.name).join(', ');
+}
+
+/** How many faces a stack of organisers draws before it turns the rest into a `+N` pill. */
+export const MAX_ORGANISER_FACES = 3;
+
+/**
+ * Splits the organisers into the faces drawn and the ones the `+N` pill stands for: with the cap at
+ * four, a full event is three faces and `+1`, the pill's size being the same as a face's.
+ */
+export function splitOrganiserFaces(owners: EventOwnerIdentity[]): {
+  shown: EventOwnerIdentity[];
+  hidden: EventOwnerIdentity[];
+} {
+  return {
+    shown: owners.slice(0, MAX_ORGANISER_FACES),
+    hidden: owners.slice(MAX_ORGANISER_FACES),
+  };
 }
 
 /**

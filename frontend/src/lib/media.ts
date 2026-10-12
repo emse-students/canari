@@ -50,12 +50,25 @@ export type MediaType = 'image' | 'video' | 'audio' | 'file';
  *   uploader's account deletion because it belongs to the association.
  * - `'reel'` - a CanaReels video: kept by the idle sweep, deleted with its reel 30 days after
  *   publication by social-service's reel worker, which claims the blob at publication
- *   ([reels (server)](docs/wiki/services/reels.md)).
+ *   ([reels (server)](docs/wiki/services/reels.md)). Set by that claim; this client no longer
+ *   uploads it (a client older than `'reel-pending'` still does).
+ * - `'reel-pending'` - what a feed reel is UPLOADED as: deleted by AGE a day after upload unless
+ *   the post's claim promotes it to `'reel'` first, so a publish that fails after its upload
+ *   leaves nothing behind ([media-service](docs/wiki/services/media-service.md)).
+ * - `'chat-reel'` - a CanaReel sent in a conversation: deleted by AGE, 30 days after upload, and
+ *   counted against the member's 500 MB a day. Naming it can only SHORTEN an object's life, which
+ *   is why the client may set it ([media-service](docs/wiki/services/media-service.md)).
  *
  * An object with no class is KEPT. It used to be the other way round, and an association vault
  * document - uploaded with no class - was swept on production in 2026-09.
  */
-export type MediaRetentionClass = 'ephemeral' | 'archive' | 'association' | 'reel';
+export type MediaRetentionClass =
+  | 'ephemeral'
+  | 'archive'
+  | 'association'
+  | 'reel'
+  | 'reel-pending'
+  | 'chat-reel';
 
 export interface MediaRef {
   type: MediaType;
@@ -103,7 +116,26 @@ export interface MediaRef {
    * string and not just the one value this client writes.
    */
   encoding?: string;
+  /**
+   * What the media is FOR, DECLARED BY THE SENDER (`MediaMsg.intent`): `'reel-message'` is a CanaReel
+   * sent in a conversation - drawn as a tile and played in the reel viewer, never as a chat video.
+   * Absent is an ordinary attachment, and so is any proto value this client does not know: a newer
+   * intent must degrade to "a video", never to an error
+   * ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md)).
+   */
+  intent?: MediaIntent;
+  /** Declared length in milliseconds (`MediaMsg.duration_ms`), drawn on the tile before a fetch. */
+  durationMs?: number;
+  /**
+   * When the blob is expected to be gone, epoch milliseconds (`MediaMsg.expires_at_ms`). A DISPLAY
+   * HINT that lets the tile draw its tombstone without a request: the server's clock is the
+   * authority and a 410 is the truth.
+   */
+  expiresAtMs?: number;
 }
+
+/** The intents a client can name; see {@link MediaRef.intent}. */
+export type MediaIntent = 'reel-message';
 
 export interface ImageDimensions {
   width: number;
@@ -141,6 +173,7 @@ const SKIP_REENCODE_UNDER_BYTES = 2 * 1024 * 1024;
 const MIN_SIZE_SAVINGS_RATIO = 0.85;
 
 import { encryptMediaBuffer } from '$lib/mediaCrypto';
+import { canvasToBlob } from '$lib/utils/canvasBlob';
 import {
   SEGMENTED_MEDIA_ENCODING,
   SEGMENTED_MEDIA_WRITER_ENABLED,
@@ -148,14 +181,129 @@ import {
   segmentedCiphertextLength,
   writesSegmented,
 } from '$lib/mediaSegmented';
-import { MediaUploadError } from '$lib/utils/mediaErrors';
+import { refresh, SessionExpiredError } from '$lib/stores/auth';
+import { uploadRefusalFrom } from '$lib/utils/mediaErrors';
+import {
+  GATEWAY_MAX_BODY_BYTES,
+  MEDIA_REQUEST_BODY_BUDGET_BYTES,
+  requestBodyBytes,
+} from '$lib/utils/mediaRequestLimits';
 import { prepareVideoForUpload, type PrepareVideoOptions } from '$lib/video/prepareVideoForUpload';
 import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
 import { mediaUrl } from '$lib/utils/apiUrl';
+import {
+  DEFAULT_UPLOAD_IDLE_MS,
+  UploadAbortedError,
+  xhrUpload,
+  type XhrUploadOptions,
+  type UploadProgress,
+} from '$lib/utils/uploadXhr';
+import { isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { fetchWithAnswerDeadline } from '$lib/utils/uploadDeadline';
+
+/** How many times `complete` is asked for ONE uploadId when its answer is lost. */
+const COMPLETE_ATTEMPTS = 3;
+
+/**
+ * The pause before the Nth re-ask is `N * COMPLETE_BACKOFF_STEP_MS` (2 s, then 4 s): a function of
+ * the attempt COUNTER, so it is deterministic and bounded by {@link COMPLETE_ATTEMPTS}. Without it
+ * the re-asks fire back to back against a server that just failed to answer, which is the moment a
+ * restart or an overload most needs room.
+ */
+const COMPLETE_BACKOFF_STEP_MS = 2_000;
+
+/** Waits `ms` between two attempts; injectable so a test asserts the schedule without a clock. */
+export type ReaskPause = (ms: number, signal?: AbortSignal) => Promise<void>;
+
+/** The real pause: a timer a cancel interrupts at once (rejecting as an {@link UploadAbortedError}). */
+const pauseUnlessAborted: ReaskPause = (ms, signal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(new UploadAbortedError(signal.reason));
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new UploadAbortedError(signal?.reason));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * `fetch` for an UPLOAD: one 401 renews the access token and repeats the request ONCE.
+ *
+ * `authToken` is handed in by the caller, taken before an encryption that can last long enough for
+ * a 15-minute token to expire, so a 401 here usually means "stale copy", not "no session" - and a
+ * web client that read it as the second used to end up signed out (9 `POST /api/media/upload` 401
+ * in 30 h of production, each followed by a logout and a sign-in). Only a 401 AFTER a refresh may
+ * end the session, and `refresh()` is single-flight, so a burst of uploads shares ONE renewal.
+ *
+ * Throws what `refresh()` throws (dead cookie, refused, unreachable) unchanged, and
+ * `SessionExpiredError` when a freshly minted token is refused too. Any other status is returned
+ * for the caller to type as a `MediaUploadError`. The bodies (`FormData`, `Blob`) are re-readable,
+ * so the retry resends the same bytes.
+ *
+ * @param url       Absolute upload URL.
+ * @param build     Builds the request init for a token (headers + body).
+ * @param authToken The token the caller holds.
+ * @param transport When given, the request goes through {@link xhrUpload} instead of `fetch`, which
+ *                  is the only way to see its progress, cancel it and bound it by silence. The 401
+ *                  retry is the same on both, and a retry reports its progress from zero again.
+ */
+async function fetchUpload(
+  url: string,
+  build: (token: string) => RequestInit,
+  authToken: string,
+  transport?: XhrUploadOptions
+): Promise<Response> {
+  const where = url.replace(/^https?:\/\/[^/]+/, '');
+  const send = (token: string): Promise<Response> => {
+    const init = build(token);
+    // A BODY THE HOST'S WAF WOULD DROP IS NEVER SENT: it answers a 403 HTML page after the whole
+    // body has left, which used to read as a failure to retry for ever. Reaching this line means a
+    // caller built a request that does not respect the budget - a defect of ours, said loudly.
+    const bytes = requestBodyBytes(init.body);
+    if (bytes > GATEWAY_MAX_BODY_BYTES) {
+      throw new Error(
+        `[media] refusing to send ${bytes} body bytes to ${where}: over the ${GATEWAY_MAX_BODY_BYTES}-byte gateway limit`
+      );
+    }
+    return transport
+      ? xhrUpload(
+          url,
+          {
+            method: init.method,
+            headers: init.headers as Record<string, string> | undefined,
+            body: init.body as FormData | Blob | string | null | undefined,
+          },
+          transport
+        )
+      : fetchWithAnswerDeadline(url, init);
+  };
+  const res = await send(authToken);
+  if (res.status !== 401) return res;
+  console.warn(`[media] 401 on ${where} - refreshing the token and retrying once`);
+  let fresh: string;
+  try {
+    fresh = await refresh();
+  } catch (e) {
+    const cause = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    console.warn(`[media] refresh failed on ${where} - ${cause}`);
+    throw e;
+  }
+  const retry = await send(fresh);
+  console.log(`[media] ${retry.status} on ${where} (retry after refresh)`);
+  if (retry.status === 401) {
+    console.warn(`[media] double 401 on ${where} - session invalid`);
+    throw new SessionExpiredError();
+  }
+  return retry;
+}
 
 /**
  * Compress an image file using canvas.
@@ -314,37 +462,30 @@ export async function compressImage(
         ctx.drawImage(img, 0, 0, width, height);
 
         const outputType = 'image/webp';
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              resolve(
-                keepOriginal('encode-produced-nothing', file, {
-                  width: outWidth,
-                  height: outHeight,
-                })
-              );
-              return;
-            }
+        // Synchronous: `toBlob` waits ~4 s on the Android WebView (utils/canvasBlob.ts).
+        const blob = canvasToBlob(canvas, outputType, quality);
+        if (!blob) {
+          resolve(
+            keepOriginal('encode-produced-nothing', file, {
+              width: outWidth,
+              height: outHeight,
+            })
+          );
+          return;
+        }
 
-            const worthReplacing =
-              blob.size <= file.size * MIN_SIZE_SAVINGS_RATIO ||
-              (needsResize && blob.size < file.size);
+        const worthReplacing =
+          blob.size <= file.size * MIN_SIZE_SAVINGS_RATIO || (needsResize && blob.size < file.size);
 
-            if (worthReplacing) {
-              resolve({
-                file: new File([blob], file.name, { type: outputType, lastModified: Date.now() }),
-                width: outWidth,
-                height: outHeight,
-              });
-            } else {
-              resolve(
-                keepOriginal('webp-not-smaller', file, { width: outWidth, height: outHeight })
-              );
-            }
-          },
-          outputType,
-          quality
-        );
+        if (worthReplacing) {
+          resolve({
+            file: new File([blob], file.name, { type: outputType, lastModified: Date.now() }),
+            width: outWidth,
+            height: outHeight,
+          });
+        } else {
+          resolve(keepOriginal('webp-not-smaller', file, { width: outWidth, height: outHeight }));
+        }
       };
 
       // HEIC lands here on any engine that cannot decode it - i.e. a full-size phone photo
@@ -454,7 +595,10 @@ export class MediaService {
   /**
    * @param baseUrl Optional override for the media service base URL. Defaults to {@link mediaUrl}.
    */
-  constructor(baseUrl?: string) {
+  constructor(
+    baseUrl?: string,
+    private readonly pause: ReaskPause = pauseUnlessAborted
+  ) {
     this.baseUrl = (baseUrl ?? mediaUrl()).replace(/\/$/, '');
   }
 
@@ -506,6 +650,79 @@ export class MediaService {
   // -------------------------------------------------------------------------
 
   /**
+   * Asks the server to assemble a staged session, and RE-ASKS THE SAME uploadId when the answer is
+   * lost. `complete` streams the whole object to storage and the server records its outcome per
+   * uploadId, so a repeat returns the same mediaId; starting over under a new uploadId would store
+   * the object a second time and orphan the first. Bounded by a COUNTER ({@link COMPLETE_ATTEMPTS}),
+   * not a clock: only the absence of an answer (a transport failure, a 5xx) is re-asked, never a
+   * refusal and never a cancel.
+   */
+  private async completeChunkedUpload(
+    uploadId: string,
+    authToken: string,
+    retentionClass: MediaRetentionClass,
+    transport?: XhrUploadOptions
+  ): Promise<string> {
+    for (let attempt = 1; ; attempt++) {
+      // A re-ask waits for room first; the pause is outside the `try` so a cancel during it ends the
+      // upload as a cancel and is never mistaken for a lost answer.
+      if (attempt > 1) {
+        await this.pause((attempt - 1) * COMPLETE_BACKOFF_STEP_MS, transport?.signal);
+      }
+      try {
+        const res = await fetchUpload(
+          `${this.baseUrl}/api/media/upload/chunk/${uploadId}/complete`,
+          (t) => ({
+            method: 'POST',
+            headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ retentionClass }),
+          }),
+          authToken,
+          transport && { ...transport, onProgress: undefined }
+        );
+        if (res.status >= 500 && attempt < COMPLETE_ATTEMPTS) {
+          console.warn(
+            `[media] complete ${uploadId} answered ${res.status}: asking again (${attempt})`
+          );
+          continue;
+        }
+        if (!res.ok) {
+          throw await uploadRefusalFrom(res, 'chunked upload complete failed', {
+            sessionLost: res.status === 404,
+          });
+        }
+        const { mediaId } = await res.json();
+        return mediaId;
+      } catch (err) {
+        if (err instanceof UploadAbortedError || attempt >= COMPLETE_ATTEMPTS) throw err;
+        if (!isTransportFailure(err)) throw err;
+        console.warn(
+          `[media] complete ${uploadId} got no answer (${attempt}/${COMPLETE_ATTEMPTS}): asking again`,
+          err
+        );
+      }
+    }
+  }
+
+  /**
+   * Gives a staged legacy chunk session back to the server (`DELETE /media/upload/chunk/:id`).
+   * Best effort by design: the caller is already failing and must not wait on, or be changed by,
+   * this call; the server's 24 h sweep remains the backstop. Every outcome is logged.
+   */
+  private releaseChunkSession(uploadId: string, authToken: string): void {
+    // Through `fetchUpload` so a token that expired during a long upload is renewed once.
+    fetchUpload(
+      `${this.baseUrl}/api/media/upload/chunk/${uploadId}`,
+      (t) => ({ method: 'DELETE', headers: { Authorization: `Bearer ${t}` }, keepalive: true }),
+      authToken
+    )
+      .then((res) =>
+        console.debug(`[media] released chunk session ${uploadId}: HTTP ${res.status}`)
+      )
+      .catch((e) => console.warn(`[media] could not release chunk session ${uploadId}`, e));
+  }
+
+  /**
    * Encrypt `file` client-side and upload the ciphertext to the media service.
    *
    * @param file           The raw File object selected by the user.
@@ -515,6 +732,10 @@ export class MediaService {
    *                       cannot tell a post photo from a chat photo, so the surface says it here,
    *                       where it is already known. REQUIRED, so no new call site can forget it:
    *                       `'ephemeral'` (chat) is the only class the idle sweep may take.
+   * @param transport      Optional progress sink, cancel signal and stall guard (see
+   *                       {@link xhrUpload}). Without it the body goes through `fetch`, which can
+   *                       report nothing until the answer arrives - every surface that shows a
+   *                       bubble for the upload passes it.
    * @returns              A `MediaRef` ready to be JSON-serialised and embedded
    *                       inside the MLS application message.
    */
@@ -522,7 +743,8 @@ export class MediaService {
     file: File,
     authToken: string,
     dimensions: Partial<ImageDimensions> | undefined,
-    retentionClass: MediaRetentionClass
+    retentionClass: MediaRetentionClass,
+    transport?: XhrUploadOptions
   ): Promise<MediaRef> {
     const plaintext = await file.arrayBuffer();
     // THE FORMAT IS DECIDED HERE AND DECLARED IN THE REF - see `SEGMENTED_MEDIA_WRITER_ENABLED`,
@@ -536,70 +758,81 @@ export class MediaService {
       : await encryptMediaBuffer(plaintext);
 
     // 3. Upload the encrypted blob (server stores opaque bytes, no key)
-    const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB
+    // ONE REQUEST BODY NEVER EXCEEDS THE HOST WAF'S LIMIT (10 MiB, measured 2026-10-10): the budget is
+    // the single-request ceiling AND the chunk size, so anything bigger takes the chunked route.
+    const CHUNK_SIZE = MEDIA_REQUEST_BODY_BUDGET_BYTES;
     let mediaId: string;
 
     if (ciphertext.byteLength > CHUNK_SIZE) {
-      // Chunked upload for large files (>50MB) to bypass limits
+      // Chunked upload for anything over the per-request budget
       // 3.1 Initialize chunked upload
-      const initRes = await fetch(`${this.baseUrl}/api/media/upload/chunk/init`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
+      const initRes = await fetchUpload(
+        `${this.baseUrl}/api/media/upload/chunk/init`,
+        (t) => ({ method: 'POST', headers: { Authorization: `Bearer ${t}` } }),
+        authToken,
+        transport && { ...transport, onProgress: undefined }
+      );
       if (!initRes.ok) {
-        throw new MediaUploadError(
-          initRes.status,
-          `chunked upload init failed (${initRes.status})`
-        );
+        throw await uploadRefusalFrom(initRes, 'chunked upload init failed');
       }
       const { uploadId } = await initRes.json();
 
-      // 3.2 Upload chunks
-      const totalChunks = Math.ceil(ciphertext.byteLength / CHUNK_SIZE);
-      for (let i = 0; i < totalChunks; i++) {
-        const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, ciphertext.byteLength);
-        const chunk = ciphertext.slice(start, end);
-        const chunkFormData = new FormData();
-        chunkFormData.append(
-          'chunk',
-          new Blob([chunk], { type: 'application/octet-stream' }),
-          'chunk'
-        );
+      // Whatever ends this attempt before the object exists (a cancel, a refusal, a stall, a lost
+      // session) leaves staged bytes that the NEXT attempt, under a new uploadId, never reuses:
+      // release them, best effort, without delaying the failure.
+      let completing = false;
+      try {
+        // 3.2 Upload chunks
+        const totalChunks = Math.ceil(ciphertext.byteLength / CHUNK_SIZE);
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, ciphertext.byteLength);
+          const chunk = ciphertext.slice(start, end);
+          const chunkFormData = new FormData();
+          chunkFormData.append(
+            'chunk',
+            new Blob([chunk], { type: 'application/octet-stream' }),
+            'chunk'
+          );
 
-        const chunkRes = await fetch(`${this.baseUrl}/api/media/upload/chunk/${uploadId}`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${authToken}` },
-          body: chunkFormData,
-        });
-        if (!chunkRes.ok) {
-          throw new MediaUploadError(
-            chunkRes.status,
-            `chunk upload failed at chunk ${i + 1}/${totalChunks} (${chunkRes.status})`
+          const chunkRes = await fetchUpload(
+            `${this.baseUrl}/api/media/upload/chunk/${uploadId}`,
+            (t) => ({
+              method: 'POST',
+              headers: { Authorization: `Bearer ${t}` },
+              body: chunkFormData,
+            }),
+            authToken,
+            // Progress is the WHOLE blob's, so a chunk reports from where the previous one ended.
+            transport && {
+              ...transport,
+              onProgress: (p: UploadProgress) =>
+                transport.onProgress?.({ loaded: start + p.loaded, total: ciphertext.byteLength }),
+            }
+          );
+          if (!chunkRes.ok) {
+            throw await uploadRefusalFrom(
+              chunkRes,
+              `chunk upload failed at chunk ${i + 1}/${totalChunks}`,
+              { sessionLost: chunkRes.status === 404 }
+            );
+          }
+        }
+
+        // 3.3 Complete chunked upload
+        completing = true;
+        mediaId = await this.completeChunkedUpload(uploadId, authToken, retentionClass, transport);
+      } catch (err) {
+        if (completing && err instanceof UploadAbortedError) {
+          // The cancel landed while the server may have been assembling: the object can exist and
+          // nothing references it. The idle sweep takes it; said here so it is never a mystery.
+          console.warn(
+            `[media] upload ${uploadId} cancelled during complete: the assembled object may be unreferenced`
           );
         }
+        this.releaseChunkSession(uploadId, authToken);
+        throw err;
       }
-
-      // 3.3 Complete chunked upload
-      const completeRes = await fetch(
-        `${this.baseUrl}/api/media/upload/chunk/${uploadId}/complete`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ retentionClass }),
-        }
-      );
-      if (!completeRes.ok) {
-        throw new MediaUploadError(
-          completeRes.status,
-          `chunked upload complete failed (${completeRes.status})`
-        );
-      }
-      const completeData = await completeRes.json();
-      mediaId = completeData.mediaId;
     } else {
       // Standard single-request upload
       const formData = new FormData();
@@ -612,19 +845,17 @@ export class MediaService {
       // runs, so it reaches `@Body()` whichever order the parts are in.
       formData.append('retentionClass', retentionClass);
 
-      const res = await fetch(`${this.baseUrl}/api/media/upload`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` },
-        body: formData,
-      });
+      const res = await fetchUpload(
+        `${this.baseUrl}/api/media/upload`,
+        (t) => ({ method: 'POST', headers: { Authorization: `Bearer ${t}` }, body: formData }),
+        authToken,
+        // No per-session memo on this route: a repeat stores a second object. So it is NOT given the
+        // long answer bound of a chunked `complete` - under 8 MiB the answer is quick or lost.
+        transport && { ...transport, answerMs: transport.answerMs ?? DEFAULT_UPLOAD_IDLE_MS }
+      );
 
       if (!res.ok) {
-        const responseText = await res.text();
-        const details = responseText ? ` - ${responseText}` : '';
-        throw new MediaUploadError(
-          res.status,
-          `media upload failed (${res.status} ${res.statusText})${details}`
-        );
+        throw await uploadRefusalFrom(res, 'media upload failed');
       }
 
       const data = await res.json();
@@ -707,18 +938,14 @@ export class MediaService {
     const formData = new FormData();
     formData.append('file', file, file.name);
 
-    const res = await fetch(`${this.baseUrl}/api/media/upload/public`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${authToken}` },
-      body: formData,
-    });
+    const res = await fetchUpload(
+      `${this.baseUrl}/api/media/upload/public`,
+      (t) => ({ method: 'POST', headers: { Authorization: `Bearer ${t}` }, body: formData }),
+      authToken
+    );
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new MediaUploadError(
-        res.status,
-        `avatar upload failed (${res.status})${text ? ` - ${text}` : ''}`
-      );
+      throw await uploadRefusalFrom(res, 'avatar upload failed');
     }
 
     const data = await res.json();

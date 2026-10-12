@@ -228,6 +228,12 @@ export interface ChannelMemberDto {
    * `presence: true` - the Graine repair election, which must not address an offline member.
    */
   online?: boolean;
+  /**
+   * The member's devices online right now, sorted. Present only with `presence: true`, and only from
+   * a social service of 1.2.5 or later: a seed request names ONE of them as the device that answers
+   * (channel-encryption section 23). Absent is "not answered", never "none".
+   */
+  onlineDevices?: string[];
 }
 
 /**
@@ -706,7 +712,10 @@ export class ChannelService {
     return res.json();
   }
 
-  async sendMessage(channelId: string, dto: SendChannelMessageDto) {
+  async sendMessage(
+    channelId: string,
+    dto: SendChannelMessageDto
+  ): Promise<{ id?: string; createdAt?: unknown }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/messages`, {
       method: 'POST',
@@ -830,16 +839,27 @@ export class ChannelService {
    *
    * @returns the stored instant, or `null` when the server already held as much.
    */
-  async advanceReadMark(channelId: string, at: number): Promise<number | null> {
+  async advanceReadMark(channelId: string, at: number, serverAt?: number): Promise<number | null> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/read-mark`, {
       method: 'POST',
-      body: JSON.stringify({ at }),
+      body: JSON.stringify({ at, ...(serverAt ? { serverAt } : {}) }),
     });
     await this.handleError(res);
     const body = (await res.json()) as { at: number | null };
     Log.d('CHANNEL_READ', `mark ${cid.slice(0, 8)} asked=${at} stored=${body.at}`);
     return body.at;
+  }
+
+  /**
+   * How many unread messages each of the caller's salons holds, counted by the server against the
+   * caller's read marks - the durable answer a reload or an offline stretch cannot erase. Raw off the
+   * wire; `parseSalonUnreadAnswer` decides whether it is a shape worth applying.
+   */
+  async listUnreadCounts(): Promise<unknown> {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/unread-counts`);
+    await this.handleError(res);
+    return res.json();
   }
 
   /** Every current reader's read mark on `channelId`, `{ [userId]: epochMs }`, raw off the wire. */
