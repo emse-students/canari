@@ -283,6 +283,10 @@ The post menu's "Supprimer" deletes at once (`PostCard.handleDeletePost` calls t
 
 The slow-link badge (`slow-link-indicator`, `OfflineBanner.svelte`, a 28 px disc at the top right) is drawn over the `EnvironmentBanner` strip that only `dev.canari-emse.fr` shows. Production has no such banner, so no member sees it; it hides the badge from whoever reads a weak-network row on dev.
 
+## P2 - a stale salon history load can remove a row a newer load just decoded (found reviewing #1761, 2026-10-12)
+
+`loadChannelHistory` (`frontend/src/lib/composables/useConversations.svelte.ts`, ~:485) has no in-flight guard, and `mergeMessagePage` (`frontend/src/lib/utils/chat/messageMerge.ts`, :100-122) treats a page as AUTHORITATIVE for its window: a held row inside `[oldest, newest]` that the page does not carry is dropped. The exact sequence: (1) load A fetches the salon's page while seed S is not yet held, so row R decodes as unreadable and is left out of A's page; (2) S lands, `announceGraineRepair` starts load B; (3) B fetches, decodes R and merges it; (4) A's decode finishes AFTER B and merges its page - R lies inside A's window and is not in it, so R is removed. Until #1761, the redundant refetch that every held seed triggered usually ran a load C after A and put R back, which hid the race; #1761 removes those refetches, so the race is now visible. **The fix is a per-salon generation token**: each load takes the next number and merges only if no later load has started (or completed) for that salon. **Do not bring the refetch back**: it was a heal, not a fix.
+
 ## Open defects, in severity order
 
 ### P1 - owed: ONE live reading of the in-session join fix (2026-10-08)

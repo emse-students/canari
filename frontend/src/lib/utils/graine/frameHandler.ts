@@ -40,7 +40,7 @@ import { checkSeedEndorsement } from './endorsement';
  * bundle travels on the community's distribution group, so EVERY member receives the answer to
  * ANY member's request. Each of them announced every salon named by a seed it already held as
  * repaired and re-read its history: 18 refetches of one salon in three minutes on a client that had
- * asked for nothing ([web-console-log-audit](docs/wiki/frontend/web-console-log-audit-2026-10-12.md)).
+ * asked for nothing ([channel-encryption](docs/wiki/protocols/channel-encryption.md#the-repair-that-worked-said-nothing---fixed-2026-08-20)).
  */
 export type SeedStoreOutcome = 'stored' | 'already-held' | 'refused';
 
