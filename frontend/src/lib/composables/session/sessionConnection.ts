@@ -266,12 +266,17 @@ export function pauseConnectionImpl(ctx: SessionContext): void {
  */
 export async function resumeConnectionImpl(
   ctx: SessionContext,
-  cb: ChatSessionCallbacks
+  cb: ChatSessionCallbacks,
+  prepared?: string
 ): Promise<void> {
   // Lifted first, even logged out: the foreground is the one fact the pause was waiting for.
   ctx.setConnectionPaused(false);
   if (!ctx.isLoggedIn()) return;
-  appendLog('[LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...');
+  // `prepared` is what the caller made the reconnect wait for, folded into this one line so a
+  // resume still prints exactly one.
+  appendLog(
+    `[LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...${prepared ? ` (${prepared})` : ''}`
+  );
   ctx.setReconnectAttempts(0);
   startConnectionWatchdogImpl(ctx, cb);
   startSyncWatchdogImpl(ctx, cb);

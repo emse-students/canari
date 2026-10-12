@@ -1453,11 +1453,25 @@
         // No-op off Android. Then reconcile outbox_sent BEFORE the flusher re-reads the queue (so
         // we don't re-send a message the background already delivered), then reconnect/flush.
         void (async () => {
+          // WHAT THE SOCKET WAITS FOR ON A RESUME, step by step: a warm notification tap's reply is
+          // held until this sequence reaches `resumeConnection` (~0.5 s on the Mi 9T, 2026-10-11),
+          // and the total alone cannot say which step holds it.
+          const resumeStart = performance.now();
+          const steps: string[] = [];
+          let stepStart = resumeStart;
+          const stepDone = (name: string) => {
+            const now = performance.now();
+            steps.push(`${name} ${Math.round(now - stepStart)}`);
+            stepStart = now;
+          };
           await globalSession.ensureMls().reloadStateFromDisk();
+          stepDone('reload');
           if (storage) await reconcileOutboxSent(storage).catch(() => {});
+          stepDone('outbox');
           // WP-XP-5: the user may have answered a CallKit ring while we were away - record
           // the intent BEFORE the WS reconnect delivers the MLS invite that auto-accepts it.
           await drainNativePendingCallAccept();
+          stepDone('call');
           // WHAT THE SHADE DID WHILE WE WERE AWAY IS MERGED BEFORE THE SOCKET OPENS, in the order
           // login uses: the FCM cache first, then the shade's read watermarks recomputed over it.
           // The reconnect pulls every row still queued for this device, including one a reply from
@@ -1465,18 +1479,24 @@
           // conversation row already says it was read. Until 2026-10-01 the watermarks were merged
           // at login only, so a resumed app re-announced it (Mi 9T).
           if (deviceKeyB64 && storage) await flushFcmCache(deviceKeyB64, storage);
+          stepDone('fcm');
           const selfId = globalSession.userId;
           if (selfId) {
             await consumeNativeReadWatermarks(globalConvs.conversations, selfId, (key) =>
               globalConvs.saveConversation(key, convCtx())
             ).catch((e) => appendLog(`[READ_WATERMARK] Resume merge failed: ${String(e)}`));
           }
+          stepDone('watermarks');
           // resumeConnection, NOT attemptReconnect: `pauseConnection` stopped the connection and
           // sync watchdogs on the way out, and only this seam re-arms them - so it must run even
           // when the socket survived the background, hence no isWsConnected guard here. Calling
           // attemptReconnect directly left a mobile client with no timer able to notice a later
           // dead socket, which is exactly what was measured on hardware (see resumeConnectionImpl).
-          void globalSession.resumeConnection(sessionCb());
+          // The step timings ride on its `[LIFECYCLE] App in foreground` line.
+          void globalSession.resumeConnection(
+            sessionCb(),
+            `resume prepared in ${Math.round(performance.now() - resumeStart)} ms: ${steps.join(', ')} ms`
+          );
           checkSiblingCallWarning();
         })();
       }

@@ -113,7 +113,13 @@ export async function reconcileOutboxSent(storage: IStorage): Promise<void> {
   if (!sentIds.length) return;
   appendLog(`[OUTBOX_MIRROR] ${sentIds.length} message(s) sent in the background to reconcile`);
   for (const id of sentIds) {
-    await storage.deleteOutboxEntry(id).catch(() => {});
+    await storage
+      .deleteOutboxEntry(id)
+      .catch((e) =>
+        appendLog(
+          `[OUTBOX_MIRROR] could not drop background-sent ${id} from the outbox: ${String(e)}`
+        )
+      );
   }
 }
 

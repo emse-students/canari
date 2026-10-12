@@ -442,8 +442,10 @@ export function useChatSession() {
     /** Pauses WebSocket and clears background timers when the app is backgrounded. */
     pauseConnection: () => pauseConnectionImpl(ctx),
     /** Resumes WebSocket after app comes back to foreground. */
-    resumeConnection: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
-      resumeConnectionImpl(ctx, cb),
+    resumeConnection: (
+      cb: import('./session/sessionTypes').ChatSessionCallbacks,
+      prepared?: string
+    ) => resumeConnectionImpl(ctx, cb, prepared),
     /** Schedules an exponential-backoff WebSocket reconnect attempt. */
     scheduleReconnect: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       scheduleReconnectImpl(ctx, cb),

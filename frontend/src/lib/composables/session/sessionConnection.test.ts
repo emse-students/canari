@@ -30,6 +30,11 @@ vi.mock('$lib/utils/chat/connection', () => ({
 vi.mock('$lib/utils/chat/actions', () => ({ discoverMissingGroups }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ appendLog: vi.fn() }));
+const sessionLogLines = vi.hoisted(() => vi.fn());
+vi.mock('$lib/utils/sessionLog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/sessionLog')>()),
+  appendLog: sessionLogLines,
+}));
 
 const { pauseConnectionImpl, resumeConnectionImpl, scheduleReconnectImpl } =
   await import('./sessionConnection');
@@ -241,5 +246,27 @@ describe('the pause/resume pair', () => {
     await resumeConnectionImpl(ctx, makeCb());
     expect(timers.connectionWatchdog).toBeNull();
     expect(startSyncWatchdogImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('the foreground line', () => {
+  it('carries what the resume waited for, so one resume still prints one line', async () => {
+    const { ctx } = makeCtx({ connected: true });
+    sessionLogLines.mockClear();
+    await resumeConnectionImpl(ctx, makeCb(), 'resume prepared in 540 ms: reload 40 ms');
+    const lines = sessionLogLines.mock.calls.map((c) => String(c[0]));
+    const foreground = lines.filter((l) => l.includes('[LIFECYCLE] App in foreground'));
+    expect(foreground).toHaveLength(1);
+    expect(foreground[0]).toContain('(resume prepared in 540 ms: reload 40 ms)');
+  });
+
+  it('prints the plain line when the caller had nothing to wait for', async () => {
+    const { ctx } = makeCtx({ connected: true });
+    sessionLogLines.mockClear();
+    await resumeConnectionImpl(ctx, makeCb());
+    const line = sessionLogLines.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.includes('App in foreground'));
+    expect(line).toBe('[LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...');
   });
 });
