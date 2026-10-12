@@ -1,4 +1,5 @@
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
+import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
 import { openChannelMessage } from '$lib/utils/graine/channelSeal';
 import { reportUnreadableChannelMessage } from '$lib/utils/chat/channelCrypto';
 import { decodeAppMessage } from '$lib/proto/codec';
@@ -401,9 +402,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
       // Keyed by the SERVER row id, exactly like the history load (`decodeChannelMessageRow`).
       // Every server-side operation on a channel message - delete, pin, poll vote, reaction -
-      // addresses it by that id, and a channel send has no optimistic echo to reconcile
-      // (see `sendChatMessage`), so the AppMessage id would only make the live bubble
-      // unaddressable until the next reload.
+      // addresses it by that id; the author's own echo, shown under the AppMessage id, is
+      // re-keyed to it just below (WP-OFF-2), so the AppMessage id never names a live bubble.
       const renderedId = String(data.messageId || data.id);
       const poll = data.poll as ChannelPollMeta | undefined;
       if (poll) setPollMeta(renderedId, poll);
@@ -426,6 +426,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           { kind: 'settled', serverId: renderedId, serverMs: channelServerMs },
           log
         );
+        // The frame is the proof the server holds it: the unsent ledger must not hand it back.
+        clearUnsentSalonTexts(ctx.userId, [innerMessageId]);
       }
 
       // A membership notice is attributed to nobody, exactly like `decodeChannelMessageRow` does

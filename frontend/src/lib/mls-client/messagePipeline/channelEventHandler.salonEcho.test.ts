@@ -103,4 +103,33 @@ describe('channelEventHandler - the salon echo', () => {
     await handleChannelEvent(frame('mallory'), ctx);
     expect(ids()).toEqual(['local-1']);
   });
+
+  it('the frame settling a send whose POST reply was lost clears its unsent text', async () => {
+    // Without it the next page life handed the text of a DELIVERED message back to the composer.
+    const { recordUnsentSalonText, takeOrphanedSalonTexts } =
+      await import('$lib/utils/chat/salonUnsent');
+    localStorage.clear();
+    recordUnsentSalonText('Me', {
+      messageId: 'local-1',
+      conversationKey: 'channel_c1',
+      text: 'hello',
+    });
+    const { ctx } = setup();
+    await handleChannelEvent(frame('me'), ctx);
+    expect(takeOrphanedSalonTexts('Me', 'channel_c1', new Set())).toEqual([]);
+  });
+
+  it("another member's frame leaves this device's unsent text alone", async () => {
+    const { recordUnsentSalonText, takeOrphanedSalonTexts } =
+      await import('$lib/utils/chat/salonUnsent');
+    localStorage.clear();
+    recordUnsentSalonText('Me', {
+      messageId: 'local-1',
+      conversationKey: 'channel_c1',
+      text: 'hello',
+    });
+    const { ctx } = setup();
+    await handleChannelEvent(frame('mallory'), ctx);
+    expect(takeOrphanedSalonTexts('Me', 'channel_c1', new Set())).toHaveLength(1);
+  });
 });

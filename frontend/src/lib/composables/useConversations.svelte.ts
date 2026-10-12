@@ -75,6 +75,7 @@ import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
 import { nextEchoMessages } from '$lib/utils/chat/salonEcho';
+import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
 import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
 import {
   flushSalonReadMarks,
@@ -607,6 +608,9 @@ export function useConversations() {
           ctx.log(`[SALON-ECHO] history load settled echo(es) of ${channelConversationId}`);
           current = { ...current, messages: reKeyed };
         }
+        // The page is the proof the server holds these: whatever the unsent ledger still keeps for
+        // them (a POST reply lost, a previous page life killed mid-send) must not come back.
+        if (clientIdOf.size > 0) clearUnsentSalonTexts(ctx.userId, clientIdOf.values());
         // Same race as the DM path, and worse: decrypting 200 channel rows takes seconds, and every
         // live message posted meanwhile used to be discarded when this resolved.
         // The reader's OWN mark comes from the server and the owed queue, never from a belief the

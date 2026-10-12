@@ -55,12 +55,25 @@ export function recordUnsentSalonText(userId: string, entry: UnsentSalonText): v
 
 /** Forgets one entry: the server answered, or the member gave the message up. */
 export function clearUnsentSalonText(userId: string, messageId: string): void {
+  clearUnsentSalonTexts(userId, [messageId]);
+}
+
+/**
+ * Forgets every entry the server is PROVEN to hold: its broadcast frame or a history page carried
+ * the client id sealed inside the row. Without this, a send whose POST reply was lost and that the
+ * frame settled kept its text here for ever, and the next page life (or a sibling tab) handed the
+ * text of a DELIVERED message back to the composer - one click from posting it twice.
+ */
+export function clearUnsentSalonTexts(userId: string, messageIds: Iterable<string>): void {
+  const ids = new Set(messageIds);
+  if (ids.size === 0) return;
   const all = readAll(userId);
-  if (all.some((e) => e.messageId === messageId)) {
-    writeAll(
-      userId,
-      all.filter((e) => e.messageId !== messageId)
+  const kept = all.filter((e) => !ids.has(e.messageId));
+  if (kept.length !== all.length) {
+    console.debug(
+      `[SALON-UNSENT] ${all.length - kept.length} entr(y/ies) forgotten: the server holds them`
     );
+    writeAll(userId, kept);
   }
 }
 
