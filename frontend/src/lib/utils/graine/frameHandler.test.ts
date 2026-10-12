@@ -16,7 +16,10 @@ import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEn
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
 import {
+  graineRepairHoldObserver,
+  holdGraineRepairs,
   registerCommunityHistoryVisibility,
+  releaseGraineRepairs,
   setGraineRepairListener,
   setGraineRuntime,
 } from './runtime';
@@ -397,6 +400,80 @@ describe('a seed arriving on the distribution group', () => {
     // announced, nothing ever went back for them: a device that reconnected into an open salon sat
     // in front of a blank history whose seed it was already holding.
     expect(repaired).toEqual([['chan-1']]);
+    setGraineRepairListener(null);
+  });
+
+  // Production web console 2026-10-12 (v1.2.5): 26 new seeds for 3 salons in one drain became 26
+  // history reloads (52 requests). Inside a drain the announcement waits for the drain's end.
+  it('inside a drain, announces each salon ONCE at its end, however many seeds it brought', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+
+    holdGraineRepairs();
+    const salons = ['chan-1', 'chan-2', 'chan-3'];
+    for (let i = 0; i < 26; i++) {
+      const channelId = salons[i % 3];
+      await handleDistributionFrame(frame(await v2SeedFor(channelId, `sess-${i}`, 0)));
+    }
+    // Twenty-six seeds stored, nothing re-read yet: the drain still has frames to read.
+    expect(repaired).toEqual([]);
+
+    releaseGraineRepairs();
+
+    expect(repaired).toHaveLength(1);
+    expect([...repaired[0]].sort()).toEqual(salons);
+    setGraineRepairListener(null);
+  });
+
+  it('a nested drain releases at the OUTERMOST end, and an unmatched release changes nothing', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    holdGraineRepairs();
+    holdGraineRepairs();
+    await handleDistributionFrame(frame(await v2SeedFor('chan-1', 'sess-a', 0)));
+    releaseGraineRepairs();
+    expect(repaired).toEqual([]);
+    releaseGraineRepairs();
+    expect(repaired).toEqual([['chan-1']]);
+
+    // The depth never goes negative: an announcement after a stray release is still delivered at once.
+    releaseGraineRepairs();
+    expect(warn).toHaveBeenCalledWith(
+      '[GRAINE] repair hold released without a matching hold - ignored'
+    );
+    await handleDistributionFrame(frame(await v2SeedFor('chan-2', 'sess-b', 0)));
+    expect(repaired).toEqual([['chan-1'], ['chan-2']]);
+    warn.mockRestore();
+    setGraineRepairListener(null);
+  });
+
+  // A history restore is a bulk-ingest window too, and the startup one spans every conversation's
+  // replay. Holding on it kept a live seed's salon blank until all of them had been replayed.
+  it('only the queue drain holds: a history-restore window announces at once', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+    const restore = { bufferUi: false, showOverlay: false };
+    const drain = { bufferUi: true, showOverlay: true };
+
+    graineRepairHoldObserver.onBulkIngestStart(restore);
+    await handleDistributionFrame(frame(await v2SeedFor('chan-1', 'sess-r', 0)));
+    expect(repaired).toEqual([['chan-1']]);
+
+    graineRepairHoldObserver.onBulkIngestStart(drain);
+    await handleDistributionFrame(frame(await v2SeedFor('chan-2', 'sess-d', 0)));
+    expect(repaired).toEqual([['chan-1']]);
+    await graineRepairHoldObserver.onBulkIngestEnd(drain);
+    expect(repaired).toEqual([['chan-1'], ['chan-2']]);
+    await graineRepairHoldObserver.onBulkIngestEnd(restore);
+    expect(repaired).toEqual([['chan-1'], ['chan-2']]);
     setGraineRepairListener(null);
   });
 

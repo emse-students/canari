@@ -1099,7 +1099,7 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 | #1770 F1, a notification opens from the local store | draft, conflicting | PIN-adjacent: a phone reading; kept out of a stable while the user is away |
 | #1777 PIN salt asked ahead | draft | a phone reading; kept out of a stable while the user is away |
 | #1778 history drawn first, #1779 no group check before a send | drafts | #1779 under adversarial review |
-| #1773 the open conversation read by its own key | draft, conflicting | a rebase |
+| #1773 the open conversation read by its own key | draft, merged with main | adversarial review |
 | #1785 a salon re-read once per drain | draft | review |
 | #1783 polls, #1784 double tap | drafts | review |
 | #1542 the run-locally rule | conflicting | a rebase |

@@ -222,6 +222,32 @@ describe('MessagingService - a send cannot outlive its group', () => {
     expect(redis.publish).not.toHaveBeenCalled();
   });
 
+  it('refuses a send into a group deleted BEFORE it, whose roster the deletion swept', async () => {
+    // `tombstoneGroups` deletes the device memberships, so the recipient set resolves empty and the
+    // check above used to be skipped: 200, a history append, and a client marking its message sent.
+    groups[GROUP] = { id: GROUP, deletedAt: new Date('2026-10-12T10:00:00.000Z') };
+    const roster = (
+      service as unknown as { deviceGroupRepo: { findOne: jest.Mock; find: jest.Mock } }
+    ).deviceGroupRepo;
+    roster.findOne.mockResolvedValue(null);
+    roster.find.mockResolvedValue([]);
+
+    await expect(send(GROUP)).rejects.toBeInstanceOf(GoneException);
+    expect(committed).toEqual([]);
+    expect(warnings.find((w) => w.includes('REJECT group_deleted'))).toContain('0 row(s)');
+  });
+
+  it('still answers a live group whose roster names nobody else', async () => {
+    const roster = (
+      service as unknown as { deviceGroupRepo: { findOne: jest.Mock; find: jest.Mock } }
+    ).deviceGroupRepo;
+    roster.find.mockResolvedValue([{ ...SENDER, groupId: GROUP, status: 'active' }]);
+
+    await expect(send(GROUP)).resolves.toBeDefined();
+    expect(committed).toEqual([]);
+    expect(lockedReads).toHaveLength(1);
+  });
+
   it('reads the group row under a shared lock, in the same transaction as the write', async () => {
     // THE STRUCTURAL CLAIM, and the only one that distinguishes this fix from another stale read.
     // The lock is what orders the send against the delete in BOTH directions: it blocks behind a
