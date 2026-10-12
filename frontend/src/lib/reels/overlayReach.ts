@@ -167,6 +167,27 @@ export function settledClearOfControls(
 }
 
 /**
+ * Where an overlay goes after something changed its size without a finger on it (a restyle, a
+ * reword). With the text field open, ONLY the frame rule ({@link keptInFrame}, no gesture to widen
+ * the bounds): the keyboard is up and has shrunk the stage the tray rides on, so settling against
+ * the controls then would answer for a layout that is about to change. Restyling to a wider face
+ * (serif, a background box) used to push the box past the screen edge for the whole edit, and "OK"
+ * then moved it 73 px at once (Mi 9T, 2026-10-12); kept in the frame as it grows, the commit's
+ * settle has no width left to correct. With the field closed, the full release rule.
+ */
+export function placedAfterResize(
+  transform: Transform,
+  extent: OverlayExtent,
+  frame: StageSize,
+  bands: ControlBands,
+  composing: boolean
+): Transform {
+  return composing
+    ? keptInFrame(transform, extent, frame)
+    : settledClearOfControls(transform, extent, frame, bands);
+}
+
+/**
  * Whether a release settles the overlay. NOT while the text field is open: the keyboard is up, and
  * the settle runs once on commit instead. NOT after a tap: a gesture that changed nothing moves
  * nothing and takes no undo step.

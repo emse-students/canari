@@ -6,6 +6,7 @@ import {
   fitScale,
   keptInFrame,
   overlayExtent,
+  placedAfterResize,
   settledClearOfControls,
   settlesOnRelease,
 } from './overlayReach';
@@ -170,5 +171,39 @@ describe('a rotation that shrank a wide text', () => {
     const turned = keptInFrame({ ...UPRIGHT, rotation: Math.PI / 2 }, text, landscape);
     expect(turned.scale).toBeCloseTo(0.64);
     expect(keptInFrame({ ...turned, rotation: 0 }, text, landscape).scale).toBe(turned.scale);
+  });
+});
+
+describe('placedAfterResize - a restyle with the keyboard up', () => {
+  // Read on the Mi 9T (2026-10-12): a text near the right edge, restyled to serif then to a
+  // background box with the field open, grew past the screen edge for the whole edit, and "OK"
+  // pulled it back 73 px at once.
+  const bands = { top: 0.08, bottom: 0.25 };
+  const placed = { ...UPRIGHT, x: 0.7, y: 0.8 };
+  const narrow = { width: 0.55, height: 0.1 };
+  const widened = { width: 0.7, height: 0.12 };
+  const rightEdge = (t: { x: number; scale: number }, extent: { width: number }) =>
+    t.x * FRAME.width + (extent.width * t.scale * FRAME.width) / 2;
+
+  it('the narrow text fits where it is, so nothing moves', () => {
+    expect(placedAfterResize(placed, narrow, FRAME, bands, true)).toEqual(placed);
+  });
+
+  it('pulls the widened box back inside the frame DURING the edit', () => {
+    const during = placedAfterResize(placed, widened, FRAME, bands, true);
+    expect(rightEdge(placed, widened)).toBeGreaterThan(FRAME.width);
+    expect(rightEdge(during, widened)).toBeCloseTo(FRAME.width * (1 - OVERLAY_EDGE_INSET), 6);
+  });
+
+  it('does not settle against the controls while the field is open', () => {
+    // Its centre is in the tray band (0.8 > 0.75): only the commit moves it out of there.
+    expect(placedAfterResize(placed, widened, FRAME, bands, true).y).toBe(0.8);
+  });
+
+  it('leaves the commit no width to correct: "OK" does not move it sideways', () => {
+    const during = placedAfterResize(placed, widened, FRAME, bands, true);
+    const committed = placedAfterResize(during, widened, FRAME, bands, false);
+    expect(committed.x).toBe(during.x);
+    expect(committed).toEqual(settledClearOfControls(during, widened, FRAME, bands));
   });
 });

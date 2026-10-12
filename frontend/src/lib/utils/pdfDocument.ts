@@ -95,6 +95,12 @@ export function releasePdfCanvas(canvas: HTMLCanvasElement | null | undefined): 
 export interface PdfTextRun extends TextRunBox {
   /** The characters themselves. */
   text: string;
+  /**
+   * The line ends after this run. The layer puts a `<br>` there, as pdf.js's own viewer does:
+   * absolutely placed spans carry no line structure, so a copy joined the last word of a line to
+   * the first of the next ("lesautres", Mi 9T, 2026-10-12).
+   */
+  eol: boolean;
 }
 
 /** An open PDF the caller MUST {@link PdfDocument.destroy} when it is done with it. */
@@ -212,7 +218,13 @@ export async function openPdfDocument(source: string): Promise<PdfDocument> {
       for (const item of content.items) {
         // `getTextContent` yields marked-content markers alongside the text items; only the
         // latter carry a transform, and `str` is what distinguishes them.
-        if (!('str' in item) || typeof item.str !== 'string' || item.str.length === 0) continue;
+        if (!('str' in item) || typeof item.str !== 'string') continue;
+        // An EMPTY item can still end a line (3 of 230 on a page of the OCR scan the defect was
+        // read on); it places nothing, so its line end goes to the run before it.
+        if (item.str.length === 0) {
+          if (item.hasEOL && runs.length > 0) runs[runs.length - 1].eol = true;
+          continue;
+        }
         const pageMatrix = asMatrix(viewport.transform);
         const runMatrix = asMatrix(item.transform);
         if (!pageMatrix || !runMatrix) continue;
@@ -220,7 +232,7 @@ export async function openPdfDocument(source: string): Promise<PdfDocument> {
         // A run with no placeable box is DROPPED rather than placed at the origin: a pile of
         // spans in the top-left corner would be selectable text that belongs nowhere, which is
         // worse than text that is merely absent.
-        if (box) runs.push({ text: item.str, ...box });
+        if (box) runs.push({ text: item.str, eol: item.hasEOL === true, ...box });
       }
       return runs;
     },

@@ -20,7 +20,7 @@
 
   interface Props {
     /** Runs of this page, in page fractions. */
-    runs: readonly (TextRunBox & { text: string })[];
+    runs: readonly (TextRunBox & { text: string; eol: boolean })[];
     /** Rendered height of the page box in CSS pixels - the unit every `em` below resolves against. */
     pageHeight: number;
     /** Rendered width of the page box in CSS pixels, needed to turn a width fraction into `em`. */
@@ -99,6 +99,8 @@
       style="left: {run.left * 100}%; top: {run.top * 100}%; font-size: {run.fontHeight}em;"
       >{run.text}</span
     >
+    <!-- The line end a copy keeps: without it the spans' text is joined with nothing between. -->
+    {#if run.eol}<br role="presentation" />{/if}
   {/each}
 </div>
 

@@ -30,8 +30,30 @@ const state = {
   cleanups: 0,
 };
 
+/** A text item as pdf.js gives it: `str`, a baseline transform, a width in page units, `hasEOL`. */
+const textItem = (str: string, hasEOL: boolean) => ({
+  str,
+  hasEOL,
+  width: str.length * 6,
+  transform: [10, 0, 0, 10, 50, 700],
+});
+
 const page = {
-  getViewport: ({ scale }: { scale: number }) => ({ width: 600 * scale, height: 800 * scale }),
+  getViewport: ({ scale }: { scale: number }) => ({
+    width: 600 * scale,
+    height: 800 * scale,
+    transform: [scale, 0, 0, -scale, 0, 800 * scale],
+  }),
+  getTextContent: async () => ({
+    items: [
+      textItem('les', true),
+      textItem('autres', false),
+      textItem('Grandes Ecoles', false),
+      textItem('', true),
+      { type: 'beginMarkedContent' },
+      textItem('fin', false),
+    ],
+  }),
   render: () => {
     state.renderCalls += 1;
     return {
@@ -169,5 +191,20 @@ describe('PdfDocument.releasePage', () => {
     doc.releasePage(2);
     await flush();
     expect(state.cleanups).toBe(0);
+  });
+});
+
+describe('PdfDocument.getPageText', () => {
+  it('keeps where each line ends, so a copy does not join two lines ("lesautres")', async () => {
+    const doc = await openPdfDocument('blob:x');
+    state.getPage.resolve(page);
+    const runs = await doc.getPageText(1);
+    expect(runs.map((run) => [run.text, run.eol])).toEqual([
+      ['les', true],
+      ['autres', false],
+      // An EMPTY item that ends a line gives its line end to the run before it.
+      ['Grandes Ecoles', true],
+      ['fin', false],
+    ]);
   });
 });

@@ -16,12 +16,12 @@
    */
   import { tick, untrack } from 'svelte';
   import {
-    anchorFraction,
     anchorScroll,
-    nearestBoxIndex,
     nearestStepIndex,
+    pageAnchor,
     touchDistance,
     touchMidpoint,
+    type PageAnchor,
   } from '$lib/utils/pinchZoom';
   import { ZoomIn, ZoomOut, Download, FileText } from '@lucide/svelte';
   import FullScreenViewer from './FullScreenViewer.svelte';
@@ -524,7 +524,7 @@
    * overshoots by (ratio - 1) x (padding + gutters above the page) - 48 px on page 2 at x3, and
    * one gutter more for every page deeper in.
    */
-  let pinchAnchor: { index: number; fracX: number; fracY: number } | null = null;
+  let pinchAnchor: PageAnchor | null = null;
   /**
    * Suppresses the hand-back transition while the settle measures. The transform animates back to
    * `scale(1)` over 120 ms, and `getBoundingClientRect` reports the ANIMATING box - measuring the
@@ -550,6 +550,82 @@
     };
   }
 
+  /**
+   * The page under `focal` (scroll-container coordinates) and where within it, measured on the
+   * layout as it stands. `null` before any page is laid out.
+   */
+  function anchorAt(focal: { x: number; y: number }): PageAnchor | null {
+    const boxRect = scrollEl?.getBoundingClientRect();
+    if (!columnEl || !boxRect) return null;
+    const boxes = Array.from(columnEl.children, (el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        left: r.left - boxRect.left,
+        top: r.top - boxRect.top,
+        width: r.width,
+        height: r.height,
+      };
+    });
+    return pageAnchor(focal, boxes);
+  }
+
+  /**
+   * Moves to zoom step `nextIndex` keeping the content point `anchor` under `focal`: the column is
+   * re-laid out at the new width on the next flush, then the anchored page is re-measured and the
+   * scroll moved by the measured difference (`anchorScroll`). The pinch and the buttons both end
+   * here; without an anchor the zoom still applies and the scroll is left alone, said out loud.
+   */
+  async function zoomAbout(
+    nextIndex: number,
+    focal: { x: number; y: number } | null,
+    anchor: PageAnchor | null
+  ) {
+    if (!scrollEl || !focal || !anchor) {
+      console.debug(`[pdfViewer] zoom x${ZOOM_STEPS[nextIndex]} without an anchor, scroll kept`);
+      zoomIndex = nextIndex;
+      return;
+    }
+    settling = true;
+    zoomIndex = nextIndex;
+    await tick();
+    const box = pageBox(anchor.index);
+    if (box) {
+      const next = anchorScroll({
+        scrollLeft: scrollEl.scrollLeft,
+        scrollTop: scrollEl.scrollTop,
+        focalX: focal.x,
+        focalY: focal.y,
+        anchor: box,
+        fracX: anchor.fracX,
+        fracY: anchor.fracY,
+        maxScrollLeft: scrollEl.scrollWidth - scrollEl.clientWidth,
+        maxScrollTop: scrollEl.scrollHeight - scrollEl.clientHeight,
+      });
+      scrollEl.scrollLeft = next.scrollLeft;
+      scrollEl.scrollTop = next.scrollTop;
+    } else {
+      console.debug(`[pdfViewer] anchor page ${anchor.index} vanished on relayout, scroll kept`);
+    }
+    settling = false;
+  }
+
+  /**
+   * A zoom button: the same anchored zoom as a pinch, about the CENTRE of the viewport. Keeping
+   * `scrollTop` instead (what the buttons did until 2026-10-12) made every page grow under a scroll
+   * that did not move, and the reader landed at page / zoom - page 40 -> 27 on a real tap.
+   */
+  function stepZoom(delta: 1 | -1) {
+    const nextIndex = Math.min(ZOOM_STEPS.length - 1, Math.max(0, zoomIndex + delta));
+    if (nextIndex === zoomIndex) return;
+    const focal = scrollEl ? { x: scrollEl.clientWidth / 2, y: scrollEl.clientHeight / 2 } : null;
+    const anchor = focal ? anchorAt(focal) : null;
+    Log.d('pdfViewer:zoomButton', {
+      to: ZOOM_STEPS[nextIndex],
+      page: anchor ? anchor.index + 1 : null,
+    });
+    void zoomAbout(nextIndex, focal, anchor);
+  }
+
   function handleTouchStart(e: TouchEvent) {
     if (e.touches.length !== 2) return;
     pinchStartDistance = touchDistance(e.touches[0], e.touches[1]);
@@ -566,18 +642,7 @@
 
     // Which page the fingers are on, so the settle can re-measure that page rather than trust a
     // scale ratio the surrounding layout does not obey.
-    pinchAnchor = null;
-    const children = columnEl ? Array.from(columnEl.children) : [];
-    if (pinchFocal && children.length > 0 && boxRect) {
-      const boxes = children.map((el) => {
-        const r = el.getBoundingClientRect();
-        return { top: r.top - boxRect.top, height: r.height };
-      });
-      const index = nearestBoxIndex(pinchFocal.y, boxes);
-      const box = index >= 0 ? pageBox(index) : null;
-      const fraction = box ? anchorFraction(pinchFocal, box) : null;
-      if (fraction) pinchAnchor = { index, ...fraction };
-    }
+    pinchAnchor = pinchFocal ? anchorAt(pinchFocal) : null;
   }
 
   function handleTouchMove(e: TouchEvent) {
@@ -615,38 +680,9 @@
       `[pdfViewer] pinch settled at x${to} (anchor ${anchor ? `page ${anchor.index}` : 'unavailable'})`
     );
 
-    if (!scrollEl || !focal || !anchor) {
-      zoomIndex = nearest;
-      pinchOrigin = null;
-      return;
-    }
-
-    // The column is re-laid out at the new width on the next flush; only then can the pinched page
-    // be re-measured, and that measurement is what actually keeps the pinched point in place. The
-    // live transform-origin above and this share one focal point, so the preview hands over
-    // without a visible jump.
-    settling = true;
-    zoomIndex = nearest;
-    await tick();
-    const box = pageBox(anchor.index);
-    if (box) {
-      const next = anchorScroll({
-        scrollLeft: scrollEl.scrollLeft,
-        scrollTop: scrollEl.scrollTop,
-        focalX: focal.x,
-        focalY: focal.y,
-        anchor: box,
-        fracX: anchor.fracX,
-        fracY: anchor.fracY,
-        maxScrollLeft: scrollEl.scrollWidth - scrollEl.clientWidth,
-        maxScrollTop: scrollEl.scrollHeight - scrollEl.clientHeight,
-      });
-      scrollEl.scrollLeft = next.scrollLeft;
-      scrollEl.scrollTop = next.scrollTop;
-    } else {
-      console.debug(`[pdfViewer] anchor page ${anchor.index} vanished on relayout, scroll kept`);
-    }
-    settling = false;
+    // The live transform-origin above and the settle share one focal point, so the preview hands
+    // over without a visible jump.
+    await zoomAbout(nearest, focal, anchor);
     pinchOrigin = null;
   }
 
@@ -712,7 +748,7 @@
       type="button"
       class="ui-icon-button rounded-lg bg-white/15 transition-colors hover:bg-white/25 disabled:opacity-30"
       disabled={zoomIndex === 0}
-      onclick={() => (zoomIndex = Math.max(0, zoomIndex - 1))}
+      onclick={() => stepZoom(-1)}
       aria-label={m.pdf_viewer_zoom_out()}
     >
       <ZoomOut size={18} strokeWidth={2.5} />
@@ -721,7 +757,7 @@
       type="button"
       class="ui-icon-button rounded-lg bg-white/15 transition-colors hover:bg-white/25 disabled:opacity-30"
       disabled={zoomIndex === ZOOM_STEPS.length - 1}
-      onclick={() => (zoomIndex = Math.min(ZOOM_STEPS.length - 1, zoomIndex + 1))}
+      onclick={() => stepZoom(1)}
       aria-label={m.pdf_viewer_zoom_in()}
     >
       <ZoomIn size={18} strokeWidth={2.5} />

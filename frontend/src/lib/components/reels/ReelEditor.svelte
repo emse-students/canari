@@ -44,6 +44,7 @@
     controlBands,
     keptInFrame,
     overlayExtent,
+    placedAfterResize,
     settledClearOfControls,
     settlesOnRelease,
     type OverlayExtent,
@@ -195,8 +196,18 @@
    * closed (`controlBands`). Never while the text field is open: the commit settles once it closes.
    */
   function settle(id: string, from?: ReelOverlay) {
+    if (composing) return;
+    place(id, from);
+  }
+
+  /**
+   * Puts an overlay where the reach rules want it now (`placedAfterResize`): with the text field
+   * open, only inside the frame - a restyle that widens it is pulled in as it grows, not at "OK";
+   * with the field closed, the full release rule (`settledClearOfControls`).
+   */
+  function place(id: string, from?: ReelOverlay) {
     const overlay = overlays.find((candidate) => candidate.id === id);
-    if (!overlay || !frame || composing) return;
+    if (!overlay || !frame) return;
     const bounds = frame.getBoundingClientRect();
     const stage = frame.closest('[data-reel-stage]')?.getBoundingClientRect();
     const bands = controlBands(
@@ -205,19 +216,24 @@
       header?.getBoundingClientRect() ?? null,
       tray?.offsetHeight ?? 0
     );
-    const settled = settledClearOfControls(overlay, extentOf(overlay), bounds, bands, from);
+    const settled = from
+      ? settledClearOfControls(overlay, extentOf(overlay), bounds, bands, from)
+      : placedAfterResize(overlay, extentOf(overlay), bounds, bands, composing !== null);
     if (settled.x === overlay.x && settled.y === overlay.y && settled.scale === overlay.scale)
       return;
     console.debug(
-      `[reel-editor] overlay ${id} settled at ${settled.x.toFixed(3)},${settled.y.toFixed(3)} x${settled.scale.toFixed(3)} (bands ${bands.top.toFixed(2)}/${bands.bottom.toFixed(2)})`
+      `[reel-editor] overlay ${id} ${composing ? 'kept in the frame' : 'settled'} at ${settled.x.toFixed(3)},${settled.y.toFixed(3)} x${settled.scale.toFixed(3)} (bands ${bands.top.toFixed(2)}/${bands.bottom.toFixed(2)})`
     );
     overlays = withTransform(overlays, id, settled);
   }
 
-  /** A text whose words or face changed takes a new width: once drawn, it settles again. */
+  /**
+   * A text whose words or face changed takes a new width: once drawn, it is placed again - kept in
+   * the frame while the field is open, settled once it is closed.
+   */
   async function settleAfterRender(id: string) {
     await tick();
-    settle(id);
+    place(id);
   }
 
   function overOverlayTrash(x: number, y: number): boolean {
