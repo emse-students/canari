@@ -1795,9 +1795,15 @@ identical logs**, and the only symptom of the second is a salon that stays unrea
 
 `absorbSeedBundle` now ends with `[GRAINE] absorbed <n>/<total> seed(s) from <sender> in community
 <id8> - salon(s) <ids>`. Read it against the `answered` line: the counts agreeing is the repair, and
-`absorbed 0/N` under `answered N` is an answer that repaired nothing. `storeIncomingSeed` returns
-true whenever the seed is now held - including when it already was - so a shortfall means a
-malformed seed, which warns on its own line.
+`absorbed 0/N` under `answered N` is an answer that repaired nothing. Since 2026-10-12 the line
+reads `absorbed <new>/<total> seed(s) (<k> already held)`: `storeIncomingSeed` returns a
+`SeedStoreOutcome` (`stored`, `already-held`, `refused`) instead of a boolean that folded the first
+two together, and **only `stored` - a new session or a lower floor - announces a salon as
+repaired**. A bundle travels on the community's distribution group, so every member receives the
+answer to ANY member's request, and announcing held seeds re-read the salon's history on every online
+member per answer: 18 refetches of one salon in three minutes on a client that had asked for nothing
+(production web console, 2026-10-12, `v1.2.4`). A shortfall that is not
+`already held` is a refusal, which warns or errors on its own line.
 
 **Found by COMM-8**, which asserts that a member granted access to a salon is SEEN to receive its
 seed. That assertion could not hold on any wording, because the only line it could match belongs to

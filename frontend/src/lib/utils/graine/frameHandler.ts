@@ -30,23 +30,38 @@ import { checkSeedEndorsement } from './endorsement';
  */
 
 /**
+ * What storing one incoming seed CHANGED, which is what decides whether a salon is re-read.
+ *
+ * `stored` - a new session, or a lower floor on a held one: rows that could not be read now can.
+ * `already-held` - a copy of what this device holds; nothing new is readable.
+ * `refused` - malformed, a replacement, or an endorsement that did not hold; nothing was stored.
+ *
+ * A boolean used to fold the first two together ("held, including when it already was"), and a seed
+ * bundle travels on the community's distribution group, so EVERY member receives the answer to
+ * ANY member's request. Each of them announced every salon named by a seed it already held as
+ * repaired and re-read its history: 18 refetches of one salon in three minutes on a client that had
+ * asked for nothing ([channel-encryption](docs/wiki/protocols/channel-encryption.md#the-repair-that-worked-said-nothing---fixed-2026-08-20)).
+ */
+export type SeedStoreOutcome = 'stored' | 'already-held' | 'refused';
+
+/**
  * Stores an incoming Graine seed, or explains why it was ignored.
  *
  * @param keyGroupId The distribution group the frame arrived on - whose tree names a v2 minter.
- * @returns true when the seed is now held (including when it already was).
+ * @returns what storing it CHANGED - see {@link SeedStoreOutcome}.
  */
 export async function storeIncomingSeed(
   workspaceId: string,
   senderId: string,
   seed: IncomingSeed,
   keyGroupId: string
-): Promise<boolean> {
+): Promise<SeedStoreOutcome> {
   const { storage, deviceKey, mlsService } = requireGraineRuntime('cannot store an incoming seed');
   if (!seed.sessionId || seed.seed.length === 0 || !seed.channelId) {
     console.warn(
       `[GRAINE] ignoring a malformed seed frame from ${senderId} in community ${workspaceId.slice(0, 8)}`
     );
-    return false;
+    return 'refused';
   }
 
   const existing = await storage.getGraineSession(seed.sessionId, deviceKey());
@@ -62,16 +77,16 @@ export async function storeIncomingSeed(
       console.error(
         `[GRAINE] REFUSED seed replacement: ${senderId} sent session ${seed.sessionId} with a different ${conflict} than the one held (from ${existing.senderId}) in community ${workspaceId.slice(0, 8)}`
       );
-      return false;
+      return 'refused';
     }
     // OUR OWN SESSION, COMING BACK. The frame is durable, so this device meets its own seed again
     // on every fresh start. Writing it would drop `sentCount` - the count that decides the next
     // index and the 100-message rotation - and the session would look received rather than minted,
     // so the next send would rotate for no reason and distribute a seed nobody needed.
-    if (existing.sentCount !== undefined) return nowHeld(seed.sessionId);
+    if (existing.sentCount !== undefined) return nowHeld(seed.sessionId, 'already-held');
     // A lower floor is strictly more history: same seed, more of it readable. Anything else is a
     // replay of what is already held.
-    if (existing.firstIndex <= seed.firstIndex) return nowHeld(seed.sessionId);
+    if (existing.firstIndex <= seed.firstIndex) return nowHeld(seed.sessionId, 'already-held');
   }
 
   // A NEW v2 SESSION IS STORED ONLY ONCE ITS MINTER'S DEVICE IS SHOWN TO HAVE ENDORSED IT - this key
@@ -83,7 +98,7 @@ export async function storeIncomingSeed(
       console.error(
         `[GRAINE] REFUSED v2 seed ${seed.sessionId} from ${senderId} in community ${workspaceId.slice(0, 8)}: ${verdict.why}`
       );
-      return false;
+      return 'refused';
     }
     if (verdict.kind === 'unanswered') {
       // Not a refusal: nothing is known against the seed. Not stored either - a half-checked
@@ -92,7 +107,7 @@ export async function storeIncomingSeed(
       console.warn(
         `[GRAINE] v2 seed ${seed.sessionId} from ${senderId} NOT stored yet: ${verdict.why}`
       );
-      return false;
+      return 'refused';
     }
   }
 
@@ -123,7 +138,7 @@ export async function storeIncomingSeed(
   // correctness - the seed is already durable - but awaited for ORDER: a notification racing the
   // mirror would degrade for no reason.
   await mirrorGraineSeed(session);
-  return nowHeld(seed.sessionId);
+  return nowHeld(seed.sessionId, 'stored');
 }
 
 /**
@@ -161,9 +176,9 @@ function seedConflict(
  * miss on the same session has to get past, so leaving it in place would silence the one request
  * that could still widen a floor.
  */
-function nowHeld(sessionId: string): true {
+function nowHeld<O extends Exclude<SeedStoreOutcome, 'refused'>>(sessionId: string, outcome: O): O {
   forgetAskedSession(sessionId);
-  return true;
+  return outcome;
 }
 
 /**
@@ -182,13 +197,18 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
   }
 
   if (msg.graine) {
-    const stored = await storeIncomingSeed(
+    const outcome = await storeIncomingSeed(
       frame.workspaceId,
       frame.sender,
       seedFromWire(msg.graine),
       frame.groupId
     );
-    if (stored) {
+    if (outcome === 'already-held') {
+      console.debug(
+        `[GRAINE] seed ${msg.graine.sessionId} from ${frame.sender} already held - nothing to re-read`
+      );
+    }
+    if (outcome === 'stored') {
       console.debug(
         `[GRAINE] seed ${msg.graine.sessionId} from ${frame.sender} for channel ${String(msg.graine.channelId).slice(0, 8)}`
       );
@@ -441,16 +461,22 @@ async function absorbSeedBundle(
 ): Promise<void> {
   const repaired = new Set<string>();
   let absorbed = 0;
+  let alreadyHeld = 0;
   for (const seed of bundle.seeds ?? []) {
-    const stored = await storeIncomingSeed(
+    const outcome = await storeIncomingSeed(
       frame.workspaceId,
       frame.sender,
       seedFromWire(seed),
       frame.groupId
     );
-    if (stored) {
+    // ONLY WHAT IS NEW REPAIRS A SALON. The bundle reaches every member of the community, so a seed
+    // already held is the common case - somebody else's request being answered - and re-reading a
+    // salon for it was a history refetch on every online member, per answer.
+    if (outcome === 'stored') {
       absorbed++;
       if (seed.channelId) repaired.add(String(seed.channelId));
+    } else if (outcome === 'already-held') {
+      alreadyHeld++;
     }
   }
 
@@ -463,7 +489,7 @@ async function absorbSeedBundle(
   // Counted per SEED and the salons named: "answered with N seed(s)" upstream against "absorbed 0"
   // here is the shape of an answer whose seeds were all refused, and nothing else would show it.
   console.debug(
-    `[GRAINE] absorbed ${absorbed}/${(bundle.seeds ?? []).length} seed(s) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}`
+    `[GRAINE] absorbed ${absorbed}/${(bundle.seeds ?? []).length} seed(s) (${alreadyHeld} already held) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}`
   );
 
   if (bundle.truncated) {

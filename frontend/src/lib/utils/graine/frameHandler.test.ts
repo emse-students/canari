@@ -1077,3 +1077,89 @@ describe('a frame whose payload will not decode', () => {
     warn.mockRestore();
   });
 });
+
+/**
+ * A bundle travels on the community's distribution group, so EVERY member receives the answer to
+ * ANY member's request. Re-reading a salon is owed only for what the frame made readable - a new
+ * session or a lower floor - never for a copy of what is held: that re-read was a full history
+ * refetch on every online member, per answer (18 refetches of one salon in three minutes on a web
+ * client that had asked for nothing, production console 2026-10-12).
+ */
+describe('a seed this device already holds', () => {
+  const held = (firstIndex: number): StoredGraineSession => ({
+    workspaceId: 'ws-1',
+    channelId: 'chan-1',
+    sessionId: 'sess-1',
+    senderId: 'bob',
+    seedB64: toBase64(SEED),
+    firstIndex,
+    createdAt: 1_700_000_000_000,
+  });
+
+  function bundleOf(firstIndex: number) {
+    return {
+      ...frame(),
+      sender: 'carol',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({
+          workspaceId: 'ws-1',
+          requestId: 'r-of-somebody-else',
+          seeds: [
+            {
+              channelId: 'chan-1',
+              sessionId: 'sess-1',
+              seed: SEED,
+              firstIndex,
+              createdAt: 1_700_000_000_000,
+            },
+          ],
+        })
+      ),
+    };
+  }
+
+  function listen(): string[][] {
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+    return repaired;
+  }
+
+  afterEach(() => setGraineRepairListener(null));
+
+  it('re-reads no salon when a bundle carries only seeds already held', async () => {
+    const { storage, saved } = fakeStorage([held(0)]);
+    wire(storage);
+    const repaired = listen();
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleOf(0));
+
+    expect(saved).toHaveLength(0);
+    expect(repaired).toEqual([]);
+    // "absorbed 0" alone would read as a bundle whose seeds were all REFUSED; the held count is what
+    // tells the two apart.
+    expect(debug.mock.calls.flat().join(' ')).toContain('absorbed 0/1 seed(s) (1 already held)');
+    debug.mockRestore();
+  });
+
+  it('re-reads no salon when the distributed copy of a held seed comes back', async () => {
+    const { storage } = fakeStorage([held(0)]);
+    wire(storage);
+    const repaired = listen();
+
+    await handleDistributionFrame(frame());
+
+    expect(repaired).toEqual([]);
+  });
+
+  it('still re-reads the salon when the copy LOWERS the floor - more history became readable', async () => {
+    const { storage, saved } = fakeStorage([held(40)]);
+    wire(storage);
+    const repaired = listen();
+
+    await handleDistributionFrame(bundleOf(0));
+
+    expect(saved[0].firstIndex).toBe(0);
+    expect(repaired).toEqual([['chan-1']]);
+  });
+});
