@@ -30,19 +30,43 @@
   import { channelUnreadCount, communityHasUnread } from '$lib/utils/unreadTotal';
   import { m } from '$lib/paraglide/messages';
   import { moveById } from '$lib/utils/chat/channelOrder';
+  import { createChannelPressTracker } from '$lib/utils/chat/channelPressGesture';
+  import { Log } from '$lib/utils/Log';
 
   /** Channels of the open community while a drag is in flight; null the rest of the time. */
   let draggedChannels = $state<ChannelItem[] | null>(null);
   /** Screen-reader announcement of the last keyboard move. */
   let channelMoveAnnouncement = $state('');
 
+  /** Whether the drag in flight is really a press on a row - see `channelPressGesture.ts`. */
+  const channelPress = createChannelPressTracker();
+
   function handleChannelDndConsider(e: CustomEvent<DndEvent<ChannelItem>>) {
+    channelPress.consider(e.detail.items, e.detail.info.trigger);
     draggedChannels = e.detail.items;
   }
 
-  function handleChannelDndFinalize(workspaceSlug: string, e: CustomEvent<DndEvent<ChannelItem>>) {
+  function handleChannelDndFinalize(
+    workspace: ChannelWorkspace,
+    e: CustomEvent<DndEvent<ChannelItem>>
+  ) {
     draggedChannels = null;
-    onReorderChannels?.(workspaceSlug, e.detail.items);
+    const outcome = channelPress.finalize(String(e.detail.info.id));
+    if (outcome.kind === 'tap') {
+      // THE TAP THE DRAG SWALLOWED, delivered exactly as the row's own `onclick` would have: the
+      // hold lifted the row from under the finger, so the browser's click never reached it.
+      const channel = workspace.channels.find((c) => c.id === outcome.id);
+      Log.d('sidebar.channelPressAsTap', { channelId: outcome.id, found: !!channel });
+      if (channel) activateChannelRow(channel);
+      return;
+    }
+    onReorderChannels?.(workspace.id, e.detail.items);
+  }
+
+  /** What a tap on a salon row does: enter a private salon the admin only sees, else open it. */
+  function activateChannelRow(channel: ChannelItem) {
+    if (channel.hasAccess === false) onJoinPrivateChannel?.(channel.id, channel.name);
+    else onSelectChannelConversation?.(channel.id);
   }
 
   /** Alt + Up/Down moves the focused salon one place: the keyboard path of the drag. */
@@ -687,7 +711,7 @@
                 dropTargetStyle: {},
               }}
               onconsider={handleChannelDndConsider}
-              onfinalize={(e) => handleChannelDndFinalize(currentWorkspace.id, e)}
+              onfinalize={(e) => handleChannelDndFinalize(currentWorkspace, e)}
             >
               {#each draggedChannels ?? currentWorkspace.channels as channel (channel.id)}
                 {@const unjoined = channel.hasAccess === false}
@@ -715,10 +739,7 @@
                     canReorderChannels && handleChannelKeydown(e, currentWorkspace, channel)}
                   aria-keyshortcuts={canReorderChannels ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
                   aria-describedby={canReorderChannels ? 'channel-reorder-hint' : undefined}
-                  onclick={() =>
-                    unjoined
-                      ? onJoinPrivateChannel?.(channel.id, channel.name)
-                      : onSelectChannelConversation?.(channel.id)}
+                  onclick={() => activateChannelRow(channel)}
                   aria-current={selectedChannelId === channel.id ? 'true' : undefined}
                   aria-label={unjoined
                     ? m.chat_channel_join_as_admin_aria({ name: channel.name })

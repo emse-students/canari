@@ -26,6 +26,7 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { customTabsCommand } from '$lib/services/customTabsCommands';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
+import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
 import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import {
@@ -640,6 +641,8 @@ export async function clearAuth(): Promise<void> {
   clearIdentitySplit();
   // Drop persisted message ACKs so a next user on this tab can't ACK the previous user's ids.
   clearPersistedPendingAcks();
+  // And a PIN salt asked for a keypad this session will never submit.
+  forgetPinSaltAhead('signed out', alog);
   // Tell the backend to REVOKE the session row - the cookie is the least of it. The credential has
   // to travel the same way it does on a refresh, or the server cannot name the row to delete and a
   // logout on iOS would clear the local copy while leaving the session alive for seven more days.

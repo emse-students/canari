@@ -20,8 +20,8 @@ tree inherits that tree's whole build.
 
 ## The contract for `whats-new.txt`
 
-First line `version: X.Y.Z`, then the notes, at most 4000 characters (Apple's limit, enforced by
-the API rather than truncated).
+First line `version: X.Y.Z`, then the notes, at most 500 characters (Google Play's limit, the tightest
+of the three destinations - `PLAY_WHATS_NEW_MAX` in `tools/app-store/submit.mjs`).
 
 ```
 version: 0.16.0
@@ -33,6 +33,12 @@ submission without them, so their absence has to be refused somewhere - but a ch
 "is the file non-empty" passes for ever on notes nobody updated, and the store then publishes the
 previous release's text. A file cannot be asked when it was last *meant*. Naming the version makes
 the staleness impossible instead of reported.
+
+**The notes name no platform** - no Android, iOS, iPhone, iPad, Google Play or App Store. The same
+text reaches BOTH stores, so a sentence true of one is third-party metadata on the other: App Review
+rejected the 1.2.1 submission on 2026-10-12 (guideline 2.3.10) for the 1.2.0 notes' *"sur
+Android"*, after two stables had passed with the same kind of sentence. `readWhatsNew` refuses the
+words, so `--check-notes` stops the release at the preflight. Say what changed, not where.
 
 **The version bump deliberately does not rewrite that line.** A marker the machine maintains is
 only ever in step with itself.

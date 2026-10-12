@@ -15,7 +15,8 @@
   import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
-  import { sendReadWatermark } from '$lib/utils/chat/messaging';
+  import { sendReadWatermark, liveSalonSendIds } from '$lib/utils/chat/messaging';
+  import { recordUnsentSalonText, takeOrphanedSalonTexts } from '$lib/utils/chat/salonUnsent';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { isAppInForeground } from '$lib/utils/appForeground';
@@ -512,6 +513,32 @@
       canRefresh: () => !session.isWsConnected,
     };
   }
+
+  // ─── A salon message left unanswered by a PREVIOUS page life goes back to the composer ─────────
+  // The echo is memory only and the composer was cleared at the click, so a kill or reload while it
+  // was sending would have lost the text. It is handed back, never re-sent (WP-OFF-2). Only texts
+  // whose writer is PROVEN dead come back - a sibling tab still sending its own keeps them.
+  $effect(() => {
+    const contact = convs.selectedContact;
+    const userId = session.userId;
+    if (!contact || !userId || !isChannelConversationId(contact)) return;
+    void untrack(async () => {
+      const orphans = await takeOrphanedSalonTexts(userId, contact, liveSalonSendIds());
+      if (orphans.length > 0 && convs.selectedContact !== contact) {
+        // The member left the salon while the owner check ran: the texts belong to ITS composer,
+        // so they go back in the ledger, owned by this page life, for the next visit.
+        log(`[SEND] ${orphans.length} restorable salon text(s) kept: the salon was left meanwhile`);
+        for (const o of orphans) recordUnsentSalonText(userId, o);
+        return;
+      }
+      for (const o of orphans) {
+        messageText = restoreFailedDraft(messageText, o.text);
+        log(
+          `[SEND] unanswered salon message ${o.messageId.slice(0, 8)}... of a past session restored to the composer`
+        );
+      }
+    });
+  });
 
   // ─── Load group members when selected conversation changes ────────────────
   $effect(() => {
@@ -1321,6 +1348,12 @@
                 )
             : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
           canModerate={canModerateSelectedChannel}
+          onRetrySend={(msgId) => void messaging.retrySend(msgCtx(), msgId)}
+          onDiscardSend={(msgId) => messaging.discardSend(msgCtx(), msgId)}
+          onTakeBackSend={(msgId) => {
+            const text = messaging.takeBackSend(msgCtx(), msgId);
+            if (text !== null) messageText = restoreFailedDraft(messageText, text);
+          }}
           onDelete={isSelectedChannel
             ? (msgId) =>
                 void channels.deleteChannelMessage(

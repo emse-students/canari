@@ -667,31 +667,49 @@ fn classify_verified(
     if out["reason"] == "graine-key-material" {
         let seeds = out["seeds"].as_array().cloned().unwrap_or_default();
         let offered = seeds.len();
+        // NAMED IN THE ANSWER, because this crate's log reaches no logger in a killed Android app or
+        // in the iOS extension: the native callers print it (section 21.7).
+        let v1_refused: Vec<serde_json::Value> = seeds
+            .iter()
+            .filter(|seed| seed["version"].as_u64() != Some(2))
+            .map(|seed| seed["sessionId"].clone())
+            .collect();
         let kept: Vec<serde_json::Value> = seeds
             .into_iter()
             .filter(|seed| endorsed_by_tree(manager, group_id, seed))
             .collect();
         if kept.len() < offered {
             log::warn!(
-                "[PushBG] kept {} of {offered} seed(s) on {}: the rest wait for the app",
+                "[PushBG] kept {} of {offered} seed(s) on {}: the rest are refused or wait for the app",
                 kept.len(),
                 group_id.get(..8).unwrap_or(group_id)
             );
         }
         out["seeds"] = kept.into();
+        if !v1_refused.is_empty() {
+            out["v1Refused"] = v1_refused.into();
+        }
     }
     out
 }
 
-/// Whether a seed a key-material frame carried may reach the mirror: a v1 seed always, a v2 seed
-/// only once its endorsement verifies against the minting device's leaf in `group_id`'s tree.
+/// Whether a seed a key-material frame carried may reach the mirror: a v2 seed only once its
+/// endorsement verifies against the minting device's leaf in `group_id`'s tree, and a v1 seed never.
+///
+/// A v1 seed is refused since `minClientVersion` reached the v2 writer (channel-encryption section
+/// 21.7), the native twin of `storeIncomingSeed`. A v1 session the app already holds is mirrored by
+/// the app itself (`store_graine_seed`), so dropping its copy here loses nothing.
 ///
 /// NO SERVER HERE, unlike the app: a push handler holds no user session to ask the published keys
 /// with. A minter that has left the tree is therefore UNANSWERED, not refused - the seed is not
 /// mirrored, the app checks it against the server when it runs, and mirrors it then.
 fn endorsed_by_tree(manager: &MlsManager, group_id: &str, seed: &serde_json::Value) -> bool {
     if seed["version"].as_u64() != Some(2) {
-        return true;
+        log::warn!(
+            "[GRAINE_V2] REFUSED v1 seed {}: a v1 seed is no longer accepted",
+            seed["sessionId"].as_str().unwrap_or_default()
+        );
+        return false;
     }
     let text = |k: &str| seed[k].as_str().unwrap_or_default();
     let bytes = |k: &str| STANDARD.decode(text(k)).unwrap_or_default();
@@ -1049,6 +1067,43 @@ mod tests {
         );
     }
 
+    /// A v2 seed frame minted by `minter` on `dev-a` and endorsed by its own leaf - the only kind of
+    /// seed the push path mirrors since a v1 seed is refused (channel-encryption section 21.7).
+    fn endorsed_seed_frame(
+        minter: &MlsManager,
+        minter_id: &str,
+        session_id: &str,
+        seed: &[u8; 32],
+    ) -> Vec<u8> {
+        use super::super::graine::{encode_endorsement_v2, seed_commitment, GraineEndorsementV2};
+        use super::super::proto_fields::{build_graine_v2_app_message, GraineV2Fields};
+        let signing_pk = [9u8; 32];
+        let created_at = 1_700_000_000_000i64;
+        let d = encode_endorsement_v2(&GraineEndorsementV2 {
+            channel_id: "ch-salon",
+            session_id,
+            minter_user_id: minter_id,
+            minter_device_id: "dev-a",
+            signing_public_key: &signing_pk,
+            seed_commitment: &seed_commitment(seed),
+            created_at: created_at as u64,
+        })
+        .expect("descriptor");
+        let endorsement = minter.sign_with_device_credential(&d).expect("sign");
+        build_graine_v2_app_message(
+            "ch-salon",
+            session_id,
+            seed,
+            created_at,
+            &GraineV2Fields {
+                minter_user_id: minter_id,
+                minter_device_id: "dev-a",
+                signing_public_key: &signing_pk,
+                endorsement: &endorsement,
+            },
+        )
+    }
+
     /// THE DEFECT, OVER A REAL MLS FRAME AND NOT A HAND-BUILT BUFFER.
     ///
     /// A Graine seed reaches a killed phone as an ordinary silent push. Everything downstream -
@@ -1071,12 +1126,7 @@ mod tests {
         let dir = temp_dir("graine");
 
         let seed = [42u8; 32];
-        let frame = super::super::proto_fields::build_graine_app_message(
-            "ch-salon",
-            "sess-abc",
-            &seed,
-            1_700_000_000_000,
-        );
+        let frame = endorsed_seed_frame(&alice, "graine-alice", "sess-abc", &seed);
         let out = send_messages_background_with_key(
             &dir,
             &alice_state,
@@ -1137,12 +1187,7 @@ mod tests {
             .expect("merge add commit");
 
         let seed = [7u8; 32];
-        let frame = super::super::proto_fields::build_graine_app_message(
-            "ch-salon",
-            "sess-new",
-            &seed,
-            1_700_000_000_000,
-        );
+        let frame = endorsed_seed_frame(&alice, "graine-ahead-alice", "sess-new", &seed);
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
         let out = send_messages_background_with_key(
             &temp_dir("graine-ahead"),
@@ -1279,6 +1324,35 @@ mod tests {
         assert_eq!(info["ok"], false);
         assert_eq!(info["reason"], "mls-refused-for-good");
         assert_eq!(info["kind"], "SecretReuse");
+    }
+
+    /// A NEW v1 seed never reaches the mirror (channel-encryption section 21.7): the frame still
+    /// reads as key material, so it rings nobody, but it carries no seed for Kotlin to store.
+    #[test]
+    fn a_v1_seed_is_refused_by_the_push_path() {
+        let frame = super::super::proto_fields::build_graine_app_message(
+            "ch-salon",
+            "sess-v1",
+            &[5u8; 32],
+            1_700_000_000_000,
+        );
+        let (bob_state, ciphertext, group_id) = alice_frame_for_bob("v1-refused", 18, &frame);
+        let info = decrypt_push_message_with_key(
+            &bob_state,
+            &key_b64(18),
+            "v1-refused-bob",
+            "dev-b",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: "v1-refused-alice",
+                ciphertext: &ciphertext,
+            },
+        );
+        assert_eq!(info["ok"], false, "key material must still ring nobody");
+        assert_eq!(info["reason"], "graine-key-material");
+        assert_eq!(info["seeds"].as_array().expect("seeds").len(), 0);
+        // Named for the native callers, whose logs are the only ones a killed app keeps.
+        assert_eq!(info["v1Refused"], serde_json::json!(["sess-v1"]));
     }
 
     /// A v2 seed reaches the mirror only once its minter's leaf endorses it (channel-encryption

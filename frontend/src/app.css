@@ -1266,8 +1266,54 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
     pointer-events: none;
   }
 
-  .chat-glass-chrome .chat-chrome-slot :is(button, input, a, .chat-search-panel) {
+  /* `.chat-chrome-panel` is a SURFACE (the pinned / polls list), not a gap: left `none`, a tap or a
+     drag on its padding, between its rows, went through to the thread under it. */
+  .chat-glass-chrome
+    .chat-chrome-slot
+    :is(button, input, a, .chat-search-panel, .chat-chrome-panel) {
     pointer-events: auto;
+  }
+
+  /* THE POLLS AND PINNED BARS ARE GLASS PIECES OF THE HEADER, NOT WHITE BARS ACROSS IT (user,
+     2026-10-12). Each trigger is a compact pill centred under the title pill - the same recipe and
+     corner (the pill meaning, like the day pill), one step smaller (13px, 36px tall) since it is
+     secondary to the title, 6px apart - and the list it
+     opens is a glass panel hanging from it at the larger-card corner, as `GlassMenuButton`'s panel
+     is. Unlayered, so it beats the website's utilities on the same elements; the website, and the
+     apps' wide layout, keep the opaque bar. CSS glass on iOS too: a native twin cannot carry a list
+     with a per-row unpin, and these are not doubled by `nativeGlassPiece`. */
+  .chat-glass-chrome .chat-chrome-bar,
+  .chat-glass-chrome .chat-chrome-panel {
+    background: var(--glass-chrome-bg);
+    -webkit-backdrop-filter: blur(18px) saturate(180%);
+    backdrop-filter: blur(18px) saturate(180%);
+    border: 1px solid var(--glass-chrome-edge);
+    box-shadow: 0 4px 20px var(--glass-chrome-shadow);
+  }
+
+  .chat-glass-chrome .chat-chrome-strip {
+    padding-top: 0.375rem;
+  }
+
+  .chat-glass-chrome .chat-chrome-bar {
+    width: fit-content;
+    max-width: 100%;
+    min-height: 2.25rem;
+    margin-inline: auto;
+    padding-inline: 0.875rem 0.625rem;
+    border-radius: 9999px;
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    transition: transform 0.15s ease;
+  }
+
+  .chat-glass-chrome .chat-chrome-bar:active {
+    transform: scale(0.98);
+  }
+
+  .chat-glass-chrome .chat-chrome-panel {
+    margin-top: 0.375rem;
+    border-radius: var(--radius-2xl);
   }
 
   .chat-glass-chrome .chat-messages-scroll {

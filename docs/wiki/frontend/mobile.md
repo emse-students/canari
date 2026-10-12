@@ -895,7 +895,7 @@ thread under it, where CSS can only blur it. Android keeps the CSS glass.
 | Concern | Where it lives |
 |---|---|
 | The action that doubles a web piece | `mobile/nativeGlassPiece.svelte.ts` (`use:nativeGlassPiece`), `usesNativeGlassChrome` = the iOS app |
-| The four pieces | `ChatHeader` (back, the centre pill, "..."), `ChatComposer` (the "+") |
+| The four pieces | `ChatHeader` (back, the centre pill, "..."), `ChatComposer` (the "+") - NOT the polls and pinned pills, which stay CSS glass ([why](modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)) |
 | The pill's picture | `mobile/avatarBitmap.ts`, reading the `[data-glass-avatar]` node the web draws |
 | What the plugin lacked | the patch: a button's `menu`, `hidden`, `accessibilityLabel`, `foreground`, `imageSide` |
 
@@ -2493,6 +2493,40 @@ two hops, and the second one is slower than the first:
 |---|---|---|
 | `pending_push_secret.txt` (app data dir) | the WebView, via `store_push_secret` (`push.rs`) | at every `/register`, i.e. at each login/unlock that re-registers |
 | Android Keystore / iOS Keychain | `CanariApplication.processPendingPushSecret` (also run from `MainActivity.onResume`) / `CanariRetrievePushSecret` | at process start and at each resume - always BEFORE the registration that writes the file |
+| `push_secret.txt` in the App Group (iOS only, the NSE's copy) | `store_push_secret`, in the SAME call as the file above; `CanariMirrorPushStateToAppGroup` rewrites the same value at each activation and resignation | at every `/register` since 2026-10-12 |
+
+### The extension's copy that followed the lifecycle, and the iPhones that presented a dead secret
+
+**Measured, prod, 2026-10-12, 09:15-09:35 UTC** (the only window the container's 30 MB log rotation
+kept): 45 `[PUSH_SECRET] rejected reason=mismatch` and 15 `[PUSH_AVATAR] outcome=rejected`, from
+SIX devices of six real accounts - **every one an iPhone** (127 iOS push rows, 120 Android, zero
+Android rejections), on 1.0.3 to 1.1.2. Not a retry loop: each burst is 1-3 calls landing 1-2 s
+after a `[SOCIAL_PUSH] sent` to that device, i.e. one Notification Service Extension run per push
+(avatar, commit catch-up, omitted proto). And not a stale second install: the same devices'
+`refresh-token` calls - made by the APP process, from the Keychain - passed in the same minutes
+(`caaf29` rejected at 09:17:38, refreshed at 09:17:48, no rejection after).
+
+The NSE has no way to the app's data dir or its Keychain item, so it reads `push_secret.txt` from the
+App Group, and that copy was written ONLY by `CanariMirrorPushStateToAppGroup` at `didBecomeActive`
+/ `willResignActive`. The registration runs just after `didBecomeActive`'s mirror, so the copy was
+one secret behind for the whole foreground session (`5dcbd8`: `[PUSH_REGISTER]` 09:21:25, push
+09:21:31, rejected 09:21:32), and for ever when the app left the foreground before `/register`
+answered. **A third store with its own writer is the "one value, two stores" defect again**, so
+`store_push_secret` now writes it beside the handoff file (temp + rename, the NSE reads it from
+another process); the App Group path comes from `app_group.rs`, through the Objective-C runtime
+because `libapp.a` is linked into the extension too.
+
+**And login registered twice.** `sessionAuth` and the root layout's effect both start the push
+service, 500 ms apart, and both passed the skip check before either recorded its result - two
+`[PUSH_REGISTER]` a second apart for `409811`, each invalidating the other, with the server keeping
+the last COMMIT and the device the last ANSWER. `registerPushToken` joins an attempt already in
+flight now, and awaits `store_push_secret` so a registration counts as finished only once its secret
+is stored (`PushNotificationService.singleflight.test.ts`).
+
+**What it cost**: no avatar on those notifications, and a generic text wherever the inline decrypt
+needed a commit catch-up or the proto was omitted. The inline decrypt itself needs no secret.
+**Owed**: one reading on the bench iPhone (dev) after a fresh login - a push received while the app
+is open must fetch its avatar - and a production `grep -c 'reason=mismatch'` after the stable.
 
 So the file, whenever it exists, is **newer by construction**, and the Keystore is one registration
 behind for the whole window between an unlock and the next resume. `retrievePushSecret` reads the

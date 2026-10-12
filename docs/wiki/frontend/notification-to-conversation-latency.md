@@ -211,9 +211,11 @@ fetch. While the preview shows, the conversation list is not mounted, the thread
 session is up, the landing runs `openNotificationTarget` once, as on `main`.
 
 **The PIN path draws nothing before the PIN is accepted, by data dependency.** The device key behind
-a PIN is derived only after `pin-check` has answered, and that same answer carries `resetRequired`
-(the revocation). With no key, nothing can be decrypted, so the preview starts after the derivation
-(`landingPreviewOrder.test.ts` pins that order). The gate is not dismissible and pushes no history
+a PIN is handed back by `unlockWithPin` only after `pin-check` has answered `ok` or `registered`, and
+that same answer carries `resetRequired` (the revocation); since F9 the derivation overlaps the
+check, but its result is still released only after it (`pinUnlock.test.ts`). With no key, nothing
+can be decrypted, so the preview starts after `unlockWithPin` returns (`landingPreviewOrder.test.ts`
+pins that order). The gate is not dismissible and pushes no history
 entry. Before the unlock, the route may already be `/chat` under the gate, but nothing is decrypted
 or drawn until the PIN is accepted. On the vault path ("Rester connecte") the key is local, so the
 preview starts before `await getToken()`. On the biometric path it starts once the keystore has
@@ -242,7 +244,7 @@ comes first, the withdrawal second, and the login flag is released last. It also
 already open there, so this cannot hang), and only then does `wipeRevokedDevice` start. Leaving the
 landing before the session is up discards the preview, and so does leaving the chat page while the
 preview is selected: the page reports the held sends, discards the preview and clears the landing. The restore that follows a
-successful login keeps that one row's page through its `clear()` (`preserveMessagesOf`), so the
+successful login keeps that one row's page through its prune of the non-salon rows (`preserveMessagesOf`), so the
 thread does not go blank while Phase 2 waits on the network.
 
 **Measured (Mi 9T, dev, `BenchR1`, ms after the tap, median [range]; baseline `571c633e0`).**
@@ -276,6 +278,62 @@ could reopen the database during a revocation wipe, the hazard named in
 reuses the session's own `getStorage` connection, so no second reader is left open for a wipe. The `[LANDING_PREVIEW]` line now prints the store-open and
 read durations separately, so the next lever (a smaller first page, or a cheaper open) can be chosen
 on numbers.
+
+### F9 - the PIN salt is asked while the keypad is up, and the device key is derived during the check (measured: submit to `MLS ready` -0.3 s)
+
+**The spans of a cold PIN open after F2 and F3** (Mi 9T, `1.2.4`, 2026-10-12, one run shown, the
+other five within ~30 ms): `pin-salt-fetch` **350 ms**, `pin-verifier-pbkdf2` 117, `resolve-device-id`
+44, `pin-check-request` 253, `device-key-pbkdf2` **166** - ~0.93 s from the submit to `mls-init`,
+all of it in series. Two of those steps wait on nothing they need:
+
+- **The salt does not depend on the PIN.** It was asked at submit, after the person had typed, and on
+  a fresh process it is also the request that opens the connection. `openPinModal` now starts it
+  (`pinSaltAhead.ts`, `prefetchPinSaltImpl`) and `loginImpl` consumes it. An entry is used ONCE (a
+  retry after a failed unlock gets its own round trip, asked again from `applyPinFailure` - the
+  keypad's own wrong-PIN handler, the saved-PIN path and the biometric button all pass through it -
+  and NOT after a `device_revoked` wipe, which leaves no session to ask with). The salt lives in
+  memory only, as it already did for the length of every login. **A first setup is excluded**:
+  `GET pin-salt` WRITES a placeholder row for a user with no salt, which `pin-status` then reads as
+  "registered", so asking it ahead could turn an abandoned keypad into a skipped PIN choice.
+- **What the review found, and how each is closed** (2026-10-12):
+  - *A failure is a value, not a rejection.* An entry settles to `{ failure }`, so a submit that took
+    it before it failed is never handed the prefetch's exception: `unlockWithPin` logs the failure
+    and asks the salt at submit with that login's own token - the round trip every submit made
+    before - whose failure is its own (`auth_pin_salt_unreachable`).
+  - *Forgotten when the keypad ends* (`forgetPinSaltAhead`): any unlock (PIN, biometrics, vault), the
+    keypad closing, `clearAuth` (sign-out, session expiry, revocation wipe) and a PIN reset.
+  - *A salt made stale by a PIN reset is never a wrong PIN.* A reset deletes the row and the next GET
+    mints another salt, so a keypad's salt can be stale. `pin-check` is now sent the salt the verifier
+    came from and answers **`stale-salt`** without comparing, storing or resetting anything - which
+    also closes the case where, with no row left, the old code REGISTERED a verifier under a salt the
+    server never stored. The client asks the salt again and checks once more; a second `stale-salt`
+    is refused by name (`pin_salt_rotated`). A client that sends no salt is answered as before.
+  - *The key is installed on an ALLOWLIST of answers*: only `ok` and `registered`. It used to be
+    installed for anything that was not `mismatch` or `stale-salt`, so a `200 {}` unlocked; any other
+    answer is now logged and refused (`other`, `auth_pin_check_unexpected`) with the key unread.
+  - *Behavioural tests, not regexes*: the PIN half moved to `pinUnlock.ts` (`unlockWithPin`, every
+    dependency passed in), and `pinUnlock.test.ts` answers `mismatch`, `resetRequired` and a double
+    `stale-salt` and watches `installDeviceKey` stay uncalled.
+- **The device key does not depend on the PIN check.** It was derived AFTER `pin-check`, "on purpose".
+  The purpose is a rule about USING the key - nothing is decrypted with a key from an unproven PIN -
+  and that rule is kept: the derivation now starts once the verifier is computed, runs during the
+  check's round trip, and its result is awaited and installed (`ctx.setDeviceKey`) only after the
+  check answered and after the `mismatch` and `resetRequired` branches. On a mismatch it is dropped
+  unread (`pinUnlock.test.ts` asserts it by behaviour). `resolveDeviceId` (a stored id, nothing
+  decrypted) joins the verifier.
+- **After the verifier, not beside it - and that was measured, not assumed.** The first version
+  started both derivations together: they share the WebCrypto worker, the verifier went from ~112 to
+  **215 ms** and delayed the check it feeds by as much, so it gained ~0.1 s less.
+
+| killed, PIN typed by the instrument ~130 ms after the gate (n=6 each) | without (4 builds, n=24) | beside the verifier | **during the check** |
+| --- | ---: | ---: | ---: |
+| `pin-salt-fetch` at submit | 212-239 | 76 | **27** |
+| `pin-verifier-pbkdf2` | 53-112 | 215 | 112 |
+| submit -> `MLS ready` | 742-886 (median per build) | 584 | **489** [433-975] |
+| composer usable | 3543-4117 | 3426 | **3266** |
+
+**~0.3 s off a PIN unlock with a keypad typed in 130 ms**; a person typing for 1.5-3 s leaves the salt
+fully absorbed, so the gain is at least that.
 
 ## The ranked fix plan
 

@@ -138,6 +138,12 @@
     onClosePoll?: (messageId: string) => void;
     /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
+    /** Re-sends a salon message whose send failed (WP-OFF-2); the row offers it on `error`. */
+    onRetrySend?: (messageId: string) => void;
+    /** Gives a failed salon message up: removes its row. */
+    onDiscardSend?: (messageId: string) => void;
+    /** Puts an unconfirmed salon message back in the composer. */
+    onTakeBackSend?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
     /**
@@ -252,6 +258,9 @@
     onNavigateToMessage,
     onReact,
     onDelete,
+    onRetrySend,
+    onDiscardSend,
+    onTakeBackSend,
     canModerate = false,
     onEdit,
     onCancelReply,
@@ -1176,11 +1185,11 @@
       {/if}
 
       {#if activePolls.length > 0}
-        <div class="px-3 pt-1 md:px-6">
+        <div class="chat-chrome-strip px-3 pt-1 md:px-6">
           <button
             type="button"
             onclick={() => (showPolls = !showPolls)}
-            class="border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            class="chat-chrome-bar border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
             <ChartColumn size={14} class="text-cn-yellow shrink-0" />
             <span class="font-semibold"
@@ -1194,7 +1203,7 @@
           {#if showPolls}
             <div
               transition:slide={{ duration: 150 }}
-              class="border-cn-border mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border bg-(--cn-surface) p-1"
+              class="chat-chrome-panel border-cn-border mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border bg-(--cn-surface) p-1"
             >
               {#each activePolls as poll (poll.id)}
                 <button
@@ -1214,11 +1223,11 @@
       {/if}
 
       {#if pinnedIds.length > 0}
-        <div class="px-3 pt-1 md:px-6">
+        <div class="chat-chrome-strip px-3 pt-1 md:px-6">
           <button
             type="button"
             onclick={() => (showPinned = !showPinned)}
-            class="border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            class="chat-chrome-bar border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
             <Pin size={14} class="shrink-0 text-amber-500" />
             <span class="font-semibold"
@@ -1232,7 +1241,7 @@
           {#if showPinned}
             <div
               transition:slide={{ duration: 150 }}
-              class="border-cn-border mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border bg-(--cn-surface) p-1"
+              class="chat-chrome-panel border-cn-border mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border bg-(--cn-surface) p-1"
             >
               {#each pinnedIds as pid (pid)}
                 <div
@@ -1381,6 +1390,9 @@
             {onVotePoll}
             {onClosePoll}
             {onDelete}
+            {onRetrySend}
+            {onDiscardSend}
+            {onTakeBackSend}
             {canModerate}
             onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}
@@ -1403,8 +1415,15 @@
              it gains text is announced unreliably: assistive technology has to be watching the
              region BEFORE the mutation. It is also the cross-client rig's only hook on this
              indicator - `state.mjs` tests its existence and `archive/type.mjs` reads its
-             `innerText` - so the class name is load-bearing beyond this file. -->
-        <div class="chat-typing-indicator" role="status" aria-live="polite">
+             `innerText` - so the class name is load-bearing beyond this file.
+
+             AND IT CARRIES THE THREAD'S TRAILING SPACE (`pb-4`), because it is ALWAYS the last row.
+             That space used to be the message groups' own `pb-4`, which put it ABOVE this row: the
+             last message stood 24px clear of the composer and the bubble, once it showed, stood 0px
+             clear - flush on the composer's top edge, its avatar on the "+" (user, 2026-10-12).
+             Moved here, nothing changes while nobody types (8px gap + 16px = the same 24px) and the
+             bubble gets the clearance the last message had. -->
+        <div class="chat-typing-indicator pb-4" role="status" aria-live="polite">
           {#if typingUserIds.length > 0}
             <div transition:slide={{ duration: 150, axis: 'y' }} class="pt-1">
               <ChatTypingBubble userIds={typingUserIds} label={typingLabel} />

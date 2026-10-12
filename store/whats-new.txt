@@ -1,3 +1,3 @@
-version: 1.2.4
+version: 1.2.6
 
-Le lecteur de PDF est beaucoup plus fluide : première page en moins d'une seconde, zoom sans gel. L'éditeur de reels garde vos textes entiers dans le cadre, et la connexion lente s'affiche en petite icône discrète au lieu d'un gros bandeau. Ouvrir une notification vous amène plus vite dans la conversation, et les messages et fichiers lourds sont envoyés plus sûrement.
+Un salon sur lequel on clique s'ouvre de nouveau à coup sûr, même juste après le démarrage : plus besoin de redémarrer l'application. Un appui long sur un salon l'ouvre au lieu de rester sans effet. La bulle « écrit… » ne colle plus au champ de saisie, et les barres de messages épinglés et de sondages s'alignent sur l'en-tête. Les notifications retrouvent leur avatar. Les communautés très actives échangent beaucoup moins de données.

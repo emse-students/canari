@@ -97,15 +97,17 @@ requests the `formation` or `promo` scope. Measured then on authentik's access l
 
 **Site:** `openChannelMessage` in `frontend/src/lib/utils/graine/channelSeal.ts`, the `openWithGraine`
 branch taken when the session carries no `v2` block; its native twin is `open_graine_message` in
-`src-tauri/src/mobile/graine.rs`. And `storeIncomingSeed`, which still ACCEPTS a new v1 seed.
+`src-tauri/src/mobile/graine.rs`. `storeIncomingSeed` REFUSES a new v1 seed since 2026-10-11
+(step one below, [channel-encryption 21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)); a held one still opens.
 **Shim:** Graine v2 (channel-encryption section 21) binds a row to its salon, author and index and
 signs it. A v1 row proves none of that, and a v1 seed names no minter. v1 is kept because every row
 written before the v2 writer is v1, and they stay readable for as long as they are kept.
 The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fixture
 `crypto/graine.testSeal.ts`, so this entry is a reader alone.
 **Removal condition, in two steps (user, 2026-09-28):**
-- once `minClientVersion` is the v2 WRITER (G2-5) and both stores serve it, a v1 seed that ARRIVES
-  is refused, since a modified client could otherwise keep minting v1 sessions to forge an author;
+- DONE (floor `1.0.3`, 2026-10-11): a v1 seed that ARRIVES is refused, since a modified client
+  could otherwise keep minting v1 sessions to forge an author. An unsigned row under a session not
+  held is `GraineV1SessionNotHeldError` and asks nobody;
 - the v1 READER goes when no v1 row is left:
   `SELECT count(*) FROM channel_messages WHERE "signature" IS NULL AND "senderSessionId" IS NOT NULL`
   on production answers 0. Rows age out of the 365-day window, so that is at most a year after the

@@ -320,22 +320,6 @@ export function archiveStorageKey(uid: string): string {
   return `canari_archived_conversations_${uid.toLowerCase()}`;
 }
 
-/**
- * Reads the persisted set of archived conversation IDs for a user from localStorage.
- * Returns an empty array if nothing is stored or the stored value is not a valid array.
- */
-export function loadPersistedArchivedIds(uid: string): string[] {
-  try {
-    const raw = localStorage.getItem(archiveStorageKey(uid));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return [...new Set(parsed.map((id) => String(id).toLowerCase()).filter(Boolean))];
-  } catch {
-    return [];
-  }
-}
-
 /** Saves the current set of archived conversation IDs for a user to localStorage. */
 export function persistArchivedConversations(uid: string, ids: string[]) {
   localStorage.setItem(archiveStorageKey(uid), JSON.stringify([...new Set(ids)]));
@@ -782,7 +766,7 @@ export interface LoadConversationsContext {
   /** Called when the archived-ID set is pruned to remove stale entries. */
   onArchivedIdsChange: (ids: string[]) => void;
   /**
-   * The one conversation whose in-memory page survives the rebuild's `clear` - the notification
+   * The one conversation whose in-memory page survives the rebuild's prune of non-salon rows - the notification
    * landing's target, drawn from the local store before the session was up. Null keeps none.
    */
   preserveMessagesOf?: string | null;
@@ -890,19 +874,57 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
 
   // THE LANDING TARGET KEEPS THE PAGE ALREADY ON SCREEN (F1, 2026-10-12). A notification landing
   // draws its conversation from the local store before the session is up, and this rebuild runs
-  // after it: without this, the thread the reader is looking at went blank at the `clear` below and
+  // after it: without this, the thread the reader is looking at went blank at the prune below and
   // stayed blank until Phase 2 reached it behind two network round trips. Only that one row, and
-  // only until Phase 2 replaces the page with the same stored one.
+  // only until Phase 2 replaces the page with the same stored one. A salon is never the target
+  // here: its row is kept whole by the prune.
   const keptPage =
     ctx.preserveMessagesOf && !isChannelConversationId(ctx.preserveMessagesOf)
       ? ctx.conversations.get(ctx.preserveMessagesOf)?.messages
       : undefined;
 
-  ctx.conversations.clear();
+  // THE RESTORE REPLACES THE ROWS IT OWNS, AND A SALON'S ROW IS NOT ONE OF THEM. The community load
+  // writes salon rows without persisting them, so storage holds a salon only once something saved
+  // it. This used to `clear()` the whole map: a restore that ran after the community load (the login
+  // path awaits the socket first; `onWelcomeProcessed` restores mid-session) erased every salon
+  // storage lacked while the sidebar still listed it, and the selection watchdog then deselected
+  // every tap on one - lit, never opened, until a restart (`restoreKeepsSalonRows.test.ts`). A
+  // salon row in memory is the community load's, kept with its messages; a stale one is pruned by
+  // that load, never by this one.
+  const keptSalons = new Set<string>();
+  for (const key of Array.from(ctx.conversations.keys())) {
+    if (isChannelConversationId(key)) keptSalons.add(key);
+    else ctx.conversations.delete(key);
+  }
+  if (keptSalons.size > 0) {
+    ctx.log(`[RESTORE] kept ${keptSalons.size} salon row(s) the community load owns`);
+  }
   ctx.messageReactions.clear();
 
   // Phase 1 - fast, immediately usable conversation stubs.
   for (const meta of mergedConvMetas) {
+    if (keptSalons.has(meta.id)) {
+      // KEPT, BUT STILL SEEDED: the community load builds a cold row with none of the state this
+      // device persisted for the salon, and skipping the stored row outright would drop it for the
+      // session - the read watermarks behind "Lu par" and the unread recount, the history floor,
+      // the sort key. What the live row already carries wins; only what it lacks is read back.
+      // Absent stays absent, never `undefined` (the `buildConversationRow` contract).
+      const live = ctx.conversations.get(meta.id);
+      if (live) {
+        const lastMessageAt = live.lastMessageAt ?? meta.updatedAt;
+        const readWatermarks = live.readWatermarks ?? meta.readWatermarks;
+        const historyFloor = live.historyFloor ?? meta.historyFloor;
+        const startedAt = live.startedAt ?? meta.startedAt;
+        ctx.conversations.set(meta.id, {
+          ...live,
+          ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
+          ...(readWatermarks !== undefined ? { readWatermarks } : {}),
+          ...(historyFloor !== undefined ? { historyFloor } : {}),
+          ...(startedAt !== undefined ? { startedAt } : {}),
+        });
+      }
+      continue;
+    }
     const row = restoredConversationRow(meta, ctx.userId, snapshot.get(meta.id));
     ctx.conversations.set(
       meta.id,

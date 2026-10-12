@@ -1056,17 +1056,78 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
     }
 }
 
-/// Writes the pushSecret received from the backend to {app_data_dir}/pending_push_secret.txt.
-/// CanariApplication.processPendingPushSecret() reads it at the next startup, encrypts it into the
-/// Android Keystore, then deletes the file.
+/// The app's own handoff file: read FIRST by every in-app reader, then moved into the Keystore /
+/// Keychain (`retrievePushSecret`, `CanariRetrievePushSecret`).
+const PENDING_PUSH_SECRET_FILE: &str = "pending_push_secret.txt";
+
+/// The iOS Notification Service Extension's copy, in the App Group container
+/// (`NotificationService.loadPushSecret`). The extension has no other way to the secret.
+const EXTENSION_PUSH_SECRET_FILE: &str = "push_secret.txt";
+
+/// Writes a freshly minted push secret to EVERY place a reader looks for it, in one call.
+///
+/// `POST /mls/push/register` invalidates the previous secret the instant it answers, so a copy not
+/// written here is a copy the server already refuses. The extension's copy used to be written only
+/// by `CanariMirrorPushStateToAppGroup` at `didBecomeActive` / `willResignActive` - and the
+/// registration runs just AFTER `didBecomeActive`, so for the whole foreground session (and for
+/// ever, when the app left the foreground before the registration answered) the extension
+/// presented the previous secret: production 2026-10-12, six iPhones, every avatar, commit
+/// catch-up and omitted-proto fetch 403 `[PUSH_SECRET] reason=mismatch`, while the same devices'
+/// in-app `refresh-token` calls passed. `extension_dir` is `None` where there is no extension
+/// (Android).
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+fn write_push_secret(
+    data_dir: &std::path::Path,
+    extension_dir: Option<&std::path::Path>,
+    secret: &str,
+) -> Result<(), String> {
+    log::debug!(
+        "[PushSecret] storing a new secret (extension copy: {})",
+        extension_dir.is_some()
+    );
+    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    std::fs::write(data_dir.join(PENDING_PUSH_SECRET_FILE), secret).map_err(|e| e.to_string())?;
+    if let Some(dir) = extension_dir {
+        // Temp + rename: the extension reads this file from another process, and must never see
+        // it half-written.
+        let target = dir.join(EXTENSION_PUSH_SECRET_FILE);
+        let tmp = dir.join(format!("{EXTENSION_PUSH_SECRET_FILE}.tmp"));
+        std::fs::write(&tmp, secret)
+            .and_then(|()| std::fs::rename(&tmp, &target))
+            .map_err(|e| {
+                log::error!(
+                    "[PushSecret] the extension copy was NOT written - every PushSecret fetch the \
+                     notification extension makes will 403 until the next activation: {e}"
+                );
+                format!("write {}: {e}", target.display())
+            })?;
+    }
+    Ok(())
+}
+
+/// Stores the pushSecret received from the backend: `pending_push_secret.txt` for the app's own
+/// readers (moved into the Keystore / Keychain at the next startup or resume), and on iOS the
+/// notification extension's copy in the App Group too - see `write_push_secret` for why both are
+/// written here and not left to a lifecycle transition.
 #[tauri::command]
 pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-        std::fs::write(data_dir.join("pending_push_secret.txt"), &secret)
-            .map_err(|e| e.to_string())?;
+        #[cfg(target_os = "ios")]
+        {
+            let group = crate::app_group::app_group_dir();
+            write_push_secret(&data_dir, group.as_deref().ok(), &secret)?;
+            if let Err(e) = group {
+                log::error!(
+                    "[PushSecret] no App Group container - the notification extension keeps a \
+                     secret the server refuses: {e}"
+                );
+                return Err(e);
+            }
+        }
+        #[cfg(target_os = "android")]
+        write_push_secret(&data_dir, None, &secret)?;
     }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
@@ -1313,5 +1374,57 @@ mod graine_mirror_tests {
         assert_eq!(dropped, 1);
         assert_eq!(sessions.len(), GRAINE_MIRROR_SESSIONS_PER_CHANNEL);
         assert!(!sessions.contains_key("s-undated"));
+    }
+}
+
+#[cfg(test)]
+mod push_secret_tests {
+    use super::{write_push_secret, EXTENSION_PUSH_SECRET_FILE, PENDING_PUSH_SECRET_FILE};
+
+    fn dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("push-secret-{tag}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn read(dir: &std::path::Path, name: &str) -> String {
+        std::fs::read_to_string(dir.join(name)).unwrap()
+    }
+
+    /// Production 2026-10-12: the extension's copy followed only a lifecycle transition, so after a
+    /// registration it held the secret the server had just invalidated. Every rotation must reach
+    /// both copies in the same call - the second rotation is the case that used to diverge.
+    #[test]
+    fn every_rotation_reaches_the_extension_copy_in_the_same_call() {
+        let app = dir("app");
+        let group = dir("group");
+
+        write_push_secret(&app, Some(&group), "first").unwrap();
+        assert_eq!(read(&app, PENDING_PUSH_SECRET_FILE), "first");
+        assert_eq!(read(&group, EXTENSION_PUSH_SECRET_FILE), "first");
+
+        write_push_secret(&app, Some(&group), "second").unwrap();
+        assert_eq!(read(&app, PENDING_PUSH_SECRET_FILE), "second");
+        assert_eq!(read(&group, EXTENSION_PUSH_SECRET_FILE), "second");
+        // Temp + rename leaves nothing beside the file the extension reads.
+        assert_eq!(std::fs::read_dir(&group).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn without_an_extension_only_the_app_handoff_is_written() {
+        let app = dir("android");
+        write_push_secret(&app, None, "only").unwrap();
+        assert_eq!(read(&app, PENDING_PUSH_SECRET_FILE), "only");
+        assert!(!app.join(EXTENSION_PUSH_SECRET_FILE).exists());
+    }
+
+    #[test]
+    fn an_unwritable_extension_copy_is_an_error_not_a_silent_success() {
+        let app = dir("app-err");
+        let missing = app.join("no-such-group");
+        assert!(write_push_secret(&app, Some(&missing), "s").is_err());
+        // The app's own readers still get the secret: their copy is written first.
+        assert_eq!(read(&app, PENDING_PUSH_SECRET_FILE), "s");
     }
 }

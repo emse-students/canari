@@ -31,14 +31,15 @@ describe('loginImpl and the landing preview', () => {
   });
 
   it('starts the PIN preview only after pin-check proved the PIN and the device', () => {
-    const check = at(loginBody, 'if (pinCheckData.resetRequired === true) {');
-    const derive = at(loginBody, 'deviceKeyB64 = await deriveDeviceKeyB64(');
+    // `unlockWithPin` returns the device key only once pin-check answered `ok` or `registered` and
+    // the `mismatch` and `resetRequired` branches were passed (`pinUnlock.test.ts`, by behaviour), so
+    // the preview starting after its return is the whole of the ordering left to pin here.
+    const unlock = at(loginBody, 'deviceKeyB64 = await unlockWithPin(');
     const starts = [
       ...loginBody.matchAll(/startLandingPreview\(storageOpen, deviceKeyB64\);/g),
     ].map((m) => m.index ?? -1);
     expect(starts).toHaveLength(2);
-    expect(starts[1]).toBeGreaterThan(check);
-    expect(starts[1]).toBeGreaterThan(derive);
+    expect(starts[1]).toBeGreaterThan(unlock);
   });
 
   it('removes the preview, then lets the read finish, BEFORE the revocation wipe', () => {

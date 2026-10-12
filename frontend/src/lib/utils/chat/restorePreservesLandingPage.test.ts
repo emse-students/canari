@@ -2,7 +2,7 @@
  * F1 - THE RESTORE DOES NOT BLANK THE THREAD THE LANDING DREW.
  *
  * The notification landing draws its target from the local store before the session is up; the
- * startup restore then `clear()`s the map and rebuilds it, and Phase 2 reaches the target only
+ * startup restore then drops every non-salon row and rebuilds it, and Phase 2 reaches the target only
  * behind `getUserGroups` and the batch history - two round trips. Without `preserveMessagesOf`
  * the thread on screen went empty for that whole time. The round trip is held open here so the
  * assertion reads the map exactly in that window.

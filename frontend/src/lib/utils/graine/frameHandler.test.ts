@@ -1,6 +1,6 @@
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
-import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { addressedKeyMaterial } from '$lib/mls-client/frameDelivery';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
 import {
   decodeAppMessage,
@@ -94,6 +94,28 @@ beforeAll(async () => {
   };
 });
 
+/** carol's endorsed v2 fields for any salon and session - what a relayed bundle seed must carry. */
+async function v2SeedFor(channelId: string, sessionId: string, firstIndex: number) {
+  const descriptor = encodeGraineEndorsementV2({
+    channelId,
+    sessionId,
+    minterUserId: 'carol',
+    minterDeviceId: 'dev-c',
+    signingPublicKey: V2_WIRE.signingPublicKey,
+    seedCommitment: await graineSeedCommitment(SEED),
+    createdAt: 1,
+  });
+  return {
+    channelId,
+    sessionId,
+    seed: SEED,
+    firstIndex,
+    createdAt: 1,
+    ...V2_WIRE,
+    endorsement: await webCryptoEngine.signWithSessionKey(CAROL_DEVICE_SECRET, descriptor),
+  };
+}
+
 /**
  * The key group's tree, as `memberSignatureKey` reads it, and the server's published history for
  * a device that has left it. carol:dev-c is in the tree unless a test takes her out.
@@ -105,6 +127,7 @@ function graineMls(extra: Record<string, unknown> = {}) {
     memberSignatureKey: async (_groupId: string, identity: string) => tree.get(identity) ?? null,
     fetchDeviceSignatureKeys: async () => published,
     graineSignatureEngine: () => webCryptoEngine,
+    getDeviceId: () => 'alice-laptop',
     ...extra,
   } as never;
 }
@@ -160,23 +183,49 @@ function wire(storage: IStorage) {
 afterEach(() => setGraineRuntime(null));
 
 describe('a seed arriving on the distribution group', () => {
-  it('is stored under its SENDER, lower-cased, with no counters of ours', async () => {
+  it('is stored with no counters of ours', async () => {
     const { storage, saved } = fakeStorage();
     wire(storage);
 
-    await handleDistributionFrame(frame());
+    await handleDistributionFrame(frame(V2_WIRE));
 
+    // Under the MINTER its endorsement names, never the relaying sender ('Bob' here).
     expect(saved[0]).toMatchObject({
       workspaceId: 'ws-1',
       channelId: 'chan-1',
       sessionId: 'sess-1',
-      senderId: 'bob',
+      senderId: 'carol',
       firstIndex: 0,
     });
     // Neither is ours to invent: `sentCount` is what marks a session as THIS device's outbound
     // one, and the roster it was minted under is a judgement only its sender may make.
     expect(saved[0].sentCount).toBeUndefined();
     expect(saved[0].distributionEpoch).toBeUndefined();
+  });
+
+  // Section 21.7: since `minClientVersion` is the v2 writer, no honest client mints a v1 seed, and
+  // accepting one would let its sender post under any member's name.
+  it('REFUSES a new v1 seed: nothing stored, mirrored or announced, and says so', async () => {
+    const { mirrorGraineSeed } = await import('./graineMirror');
+    vi.mocked(mirrorGraineSeed).mockClear();
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(frame());
+
+    expect(saved).toHaveLength(0);
+    expect(mirrorGraineSeed).not.toHaveBeenCalled();
+    expect(repaired).toEqual([]);
+    expect(String(warn.mock.calls.at(-1)?.[0])).toContain('REFUSED v1 seed sess-1 from Bob');
+    // A warn: the durable log still replays v1 frames honest clients sent before the floor moved.
+    expect(error).not.toHaveBeenCalled();
+    setGraineRepairListener(null);
+    warn.mockRestore();
+    error.mockRestore();
   });
 
   it('does NOT overwrite a session of its own when the durable copy comes back', async () => {
@@ -340,7 +389,7 @@ describe('a seed arriving on the distribution group', () => {
     const repaired: string[][] = [];
     setGraineRepairListener((ids) => repaired.push(ids));
 
-    await handleDistributionFrame(frame());
+    await handleDistributionFrame(frame(V2_WIRE));
 
     // A seed reaches a device by TWO paths - its sender distributing it, and the distribution
     // group's durable log replaying it on reconnect - and only the second races the salon's own
@@ -423,6 +472,31 @@ describe('a seed arriving on the distribution group', () => {
       error.mockRestore();
     });
 
+    it('refuses a version-2 seed whose endorsement fields are ALL empty as v2, never as v1', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // `seedFromWire` keeps `version = 2` a v2 seed with every field empty, so the refusal is the
+      // endorsement's (ERROR), not the v1 one (WARN): a stripped v2 seed must not pass for an old one.
+      await handleDistributionFrame(
+        frame({
+          version: 2,
+          minterUserId: '',
+          minterDeviceId: '',
+          signingPublicKey: new Uint8Array(0),
+          endorsement: new Uint8Array(0),
+        })
+      );
+
+      expect(saved).toHaveLength(0);
+      expect(String(error.mock.calls.at(-1)?.[0])).toContain('REFUSED v2 seed sess-1');
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('v1 seed'))).toBe(false);
+      error.mockRestore();
+      warn.mockRestore();
+    });
+
     it('checks a minter who has LEFT the tree against the keys the server published', async () => {
       const { storage, saved } = fakeStorage();
       wire(storage);
@@ -492,6 +566,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       workspaceId: 'ws-1',
       groupId: 'g-1',
       sender: 'bob',
+      senderDeviceId: 'bob-phone',
       plaintext: encodeAppMessage(mkGraineRequest(request)),
     };
   }
@@ -626,7 +701,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       })
     );
 
-    expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.keyMaterial);
+    expect(sendMessage.mock.calls[0][3]).toEqual(addressedKeyMaterial('bob:bob-phone'));
   });
 
   it('sends an answer that carries only declines as KEY MATERIAL too, so a decline is never dropped for an offline requester', async () => {
@@ -650,9 +725,82 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       })
     );
 
-    expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.keyMaterial);
+    expect(sendMessage.mock.calls[0][3]).toEqual(addressedKeyMaterial('bob:bob-phone'));
     expect(sendMessage.mock.calls[0][3].durable).toBe(true);
     warn.mockRestore();
+  });
+
+  describe('answers from the named devices, to one device (section 23)', () => {
+    const sessionsRequest = (extra: Partial<Parameters<typeof mkGraineRequest>[0]> = {}) =>
+      requestFrame({
+        workspaceId: 'ws-1',
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['sess-1'],
+        answererUserId: 'alice',
+        requestId: 'r-1',
+        ...extra,
+      });
+
+    it('addresses the answer to the device that asked, and to nobody else in the key group', async () => {
+      // On production 2026-10-12 an answer was queued for every seat of a 112-seat key group: ~42
+      // rows per seed bundle, 70 % of that group's queued bytes, for seeds nobody else had asked for.
+      const { storage } = fakeStorage([heldSeed('sess-1', 0)]);
+      const sendMessage = wireWithMls(storage);
+
+      await handleDistributionFrame(sessionsRequest());
+
+      expect(sendMessage.mock.calls[0][3].recipients).toEqual(['bob:bob-phone']);
+    });
+
+    it('stays silent, and says so at debug, when the request names only OTHER devices of this user', async () => {
+      // Every device of the elected user used to answer - one bundle per device online (finding G).
+      const { storage } = fakeStorage([heldSeed('sess-1', 0)]);
+      const sendMessage = wireWithMls(storage);
+
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(
+        sessionsRequest({ answererDeviceIds: ['alice-phone', 'alice-tablet'] })
+      );
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(debug.mock.calls.flat().join(' ')).toContain(
+        'names alice-phone,alice-tablet, not this device'
+      );
+      debug.mockRestore();
+    });
+
+    it('answers when THIS device is among those named', async () => {
+      const { storage } = fakeStorage([heldSeed('sess-1', 0)]);
+      const sendMessage = wireWithMls(storage);
+
+      await handleDistributionFrame(
+        sessionsRequest({ answererDeviceIds: ['alice-phone', 'alice-laptop'] })
+      );
+
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers when the request names no device, as every requester before 1.2.5 sends it', async () => {
+      const { storage } = fakeStorage([heldSeed('sess-1', 0)]);
+      const sendMessage = wireWithMls(storage);
+
+      await handleDistributionFrame(sessionsRequest());
+
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses out loud, rather than answering the whole group, when the envelope named no device', async () => {
+      const { storage } = fakeStorage([heldSeed('sess-1', 0)]);
+      const sendMessage = wireWithMls(storage);
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      await handleDistributionFrame({ ...sessionsRequest(), senderDeviceId: undefined });
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(String(error.mock.calls[0]?.[0])).toContain('named no device');
+      error.mockRestore();
+    });
   });
 
   it('hands the request id of an inbound decline to the repair walk', async () => {
@@ -665,6 +813,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       workspaceId: 'ws-1',
       groupId: 'g-1',
       sender: 'bob',
+      senderDeviceId: 'bob-phone',
       plaintext: encodeAppMessage(
         mkGraineBundle({
           workspaceId: 'ws-1',
@@ -676,8 +825,9 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       ),
     });
 
-    // Dropping or emptying the id here would make every decline a no-op in the walk.
-    expect(noteSeedUnavailableSpy).toHaveBeenCalledWith('sess-9', 'bob', 'r-7');
+    // Dropping or emptying the id here would make every decline a no-op in the walk, and the device
+    // is what the walk counts a named device's "no" by (section 23).
+    expect(noteSeedUnavailableSpy).toHaveBeenCalledWith('sess-9', 'bob', 'r-7', 'bob-phone');
   });
 
   it('says which sessions it does not hold, rather than answering an empty hand with silence', async () => {
@@ -842,6 +992,7 @@ describe('a history request from a joiner (WP-34)', () => {
       workspaceId: 'ws-1',
       groupId: 'g-1',
       sender: 'newcomer',
+      senderDeviceId: 'newcomer-web',
       plaintext: encodeAppMessage(
         mkGraineRequest({
           workspaceId: 'ws-1',
@@ -946,10 +1097,7 @@ describe('a bundle answering our own request (WP-33)', () => {
         mkGraineBundle({
           workspaceId: 'ws-1',
           requestId: 'r-1',
-          seeds: [
-            { channelId: 'chan-1', sessionId: 's-a', seed: SEED, firstIndex: 0, createdAt: 1 },
-            { channelId: 'chan-2', sessionId: 's-b', seed: SEED, firstIndex: 3, createdAt: 1 },
-          ],
+          seeds: [await v2SeedFor('chan-1', 's-a', 0), await v2SeedFor('chan-2', 's-b', 3)],
         })
       ),
     });
@@ -973,10 +1121,7 @@ describe('a bundle answering our own request (WP-33)', () => {
         mkGraineBundle({
           workspaceId: 'ws-1',
           requestId: 'r-1',
-          seeds: [
-            { channelId: 'chan-1', sessionId: 's-a', seed: SEED, firstIndex: 0, createdAt: 1 },
-            { channelId: 'chan-2', sessionId: 's-b', seed: SEED, firstIndex: 3, createdAt: 1 },
-          ],
+          seeds: [await v2SeedFor('chan-1', 's-a', 0), await v2SeedFor('chan-2', 's-b', 3)],
         })
       ),
     });
@@ -1017,6 +1162,121 @@ describe('a bundle answering our own request (WP-33)', () => {
     // them means ask again.
     expect(warn.mock.calls.flat().join(' ')).toContain('TRUNCATED');
     warn.mockRestore();
+  });
+
+  it('stores the v2 seeds of a bundle and refuses its v1 seeds in ONE line (section 21.7)', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    // An honest answerer relays every session it holds, v1 ones included: a joiner's history
+    // bundle is where most v1 seeds arrive now, and per-seed lines would be one per session.
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'bob',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({
+          workspaceId: 'ws-1',
+          requestId: 'r-1',
+          seeds: [
+            await v2SeedFor('chan-1', 's-a', 0),
+            { channelId: 'chan-2', sessionId: 'v1-a', seed: SEED, firstIndex: 0, createdAt: 1 },
+            { channelId: 'chan-2', sessionId: 'v1-b', seed: SEED, firstIndex: 0, createdAt: 1 },
+          ],
+        })
+      ),
+    });
+
+    expect(saved.map((x) => x.sessionId)).toEqual(['s-a']);
+    expect(repaired).toEqual([['chan-1']]);
+    const refusals = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('v1 seed'));
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toContain('REFUSED 2 v1 seed(s) relayed by bob');
+    expect(refusals[0]).toContain('v1-a, v1-b');
+    setGraineRepairListener(null);
+    warn.mockRestore();
+  });
+
+  it('keeps its OWN held v1 session when a bundle relays it back: held, untouched, not refused', async () => {
+    const mine: StoredGraineSession = {
+      workspaceId: 'ws-1',
+      channelId: 'chan-2',
+      sessionId: 'v1-mine',
+      senderId: 'alice',
+      seedB64: toBase64(SEED),
+      firstIndex: 4,
+      createdAt: 1,
+      sentCount: 12,
+      distributionEpoch: 3,
+    };
+    const { storage, saved, rows } = fakeStorage([mine]);
+    wire(storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'bob',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({
+          workspaceId: 'ws-1',
+          requestId: 'r-1',
+          seeds: [
+            { channelId: 'chan-2', sessionId: 'v1-mine', seed: SEED, firstIndex: 0, createdAt: 1 },
+          ],
+        })
+      ),
+    });
+
+    // Held is not arriving: no refusal line, counted as ALREADY HELD (not absorbed - it repairs
+    // nothing), and NOT rewritten - a write would
+    // drop `sentCount` and re-use message keys.
+    expect(saved).toHaveLength(0);
+    expect(rows.get('v1-mine')).toEqual(mine);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('v1 seed'))).toBe(false);
+    expect(debug.mock.calls.flat().join(' ')).toContain('absorbed 0/1 seed(s) (1 already held)');
+    warn.mockRestore();
+    debug.mockRestore();
+  });
+
+  it('still lowers the floor of a v1 session it ALREADY holds - held is not arriving', async () => {
+    const { storage, saved } = fakeStorage([
+      {
+        workspaceId: 'ws-1',
+        channelId: 'chan-2',
+        sessionId: 'v1-held',
+        senderId: 'bob',
+        seedB64: toBase64(SEED),
+        firstIndex: 9,
+        createdAt: 1,
+      },
+    ]);
+    wire(storage);
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'carol',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({
+          workspaceId: 'ws-1',
+          requestId: 'r-1',
+          seeds: [
+            { channelId: 'chan-2', sessionId: 'v1-held', seed: SEED, firstIndex: 2, createdAt: 1 },
+          ],
+        })
+      ),
+    });
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ sessionId: 'v1-held', senderId: 'bob', firstIndex: 2 });
   });
 });
 
@@ -1075,5 +1335,91 @@ describe('a frame whose payload will not decode', () => {
 
     expect(warn.mock.calls.flat().join(' ')).toContain('undecodable frame');
     warn.mockRestore();
+  });
+});
+
+/**
+ * A bundle travels on the community's distribution group, so EVERY member receives the answer to
+ * ANY member's request. Re-reading a salon is owed only for what the frame made readable - a new
+ * session or a lower floor - never for a copy of what is held: that re-read was a full history
+ * refetch on every online member, per answer (18 refetches of one salon in three minutes on a web
+ * client that had asked for nothing, production console 2026-10-12).
+ */
+describe('a seed this device already holds', () => {
+  const held = (firstIndex: number): StoredGraineSession => ({
+    workspaceId: 'ws-1',
+    channelId: 'chan-1',
+    sessionId: 'sess-1',
+    senderId: 'bob',
+    seedB64: toBase64(SEED),
+    firstIndex,
+    createdAt: 1_700_000_000_000,
+  });
+
+  function bundleOf(firstIndex: number) {
+    return {
+      ...frame(),
+      sender: 'carol',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({
+          workspaceId: 'ws-1',
+          requestId: 'r-of-somebody-else',
+          seeds: [
+            {
+              channelId: 'chan-1',
+              sessionId: 'sess-1',
+              seed: SEED,
+              firstIndex,
+              createdAt: 1_700_000_000_000,
+            },
+          ],
+        })
+      ),
+    };
+  }
+
+  function listen(): string[][] {
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+    return repaired;
+  }
+
+  afterEach(() => setGraineRepairListener(null));
+
+  it('re-reads no salon when a bundle carries only seeds already held', async () => {
+    const { storage, saved } = fakeStorage([held(0)]);
+    wire(storage);
+    const repaired = listen();
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(bundleOf(0));
+
+    expect(saved).toHaveLength(0);
+    expect(repaired).toEqual([]);
+    // "absorbed 0" alone would read as a bundle whose seeds were all REFUSED; the held count is what
+    // tells the two apart.
+    expect(debug.mock.calls.flat().join(' ')).toContain('absorbed 0/1 seed(s) (1 already held)');
+    debug.mockRestore();
+  });
+
+  it('re-reads no salon when the distributed copy of a held seed comes back', async () => {
+    const { storage } = fakeStorage([held(0)]);
+    wire(storage);
+    const repaired = listen();
+
+    await handleDistributionFrame(frame());
+
+    expect(repaired).toEqual([]);
+  });
+
+  it('still re-reads the salon when the copy LOWERS the floor - more history became readable', async () => {
+    const { storage, saved } = fakeStorage([held(40)]);
+    wire(storage);
+    const repaired = listen();
+
+    await handleDistributionFrame(bundleOf(0));
+
+    expect(saved[0].firstIndex).toBe(0);
+    expect(repaired).toEqual([['chan-1']]);
   });
 });

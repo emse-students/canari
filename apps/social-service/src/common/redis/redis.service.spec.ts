@@ -125,6 +125,23 @@ describe('RedisService.onlineUserIds', () => {
     expect(scan.mock.calls[1][0]).toBe('7');
   });
 
+  it('names each online DEVICE once, sorted, under its lower-cased user', async () => {
+    scan
+      .mockResolvedValueOnce(['7', ['user:online:alice:web-b', 'user:online:carol:web']])
+      .mockResolvedValueOnce([
+        '0',
+        ['user:online:ALICE:tauri-a', 'user:online:alice:web-b', 'user:online:dave:web'],
+      ]);
+
+    const devices = await service.onlineDevicesByUser(['Alice', 'bob', 'dave']);
+
+    // bob has no key and is absent, carol is not on the roster, alice's repeat key counts once.
+    expect([...devices.entries()].sort(([a], [b]) => a.localeCompare(b))).toEqual([
+      ['alice', ['tauri-a', 'web-b']],
+      ['dave', ['web']],
+    ]);
+  });
+
   it('does not scan for an empty roster', async () => {
     expect((await service.onlineUserIds([])).size).toBe(0);
     expect(scan).not.toHaveBeenCalled();

@@ -6,6 +6,10 @@ vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 import { BaseMlsService } from './BaseMlsService';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
 import {
+  describeKeyGroupFrameLosses,
+  resetKeyGroupFrameLosses,
+} from '$lib/mls-client/keyGroupFrameLosses';
+import {
   channelScope,
   workspaceScope,
   type DistributionScope,
@@ -61,7 +65,12 @@ const proto = BaseMlsService.prototype as unknown as {
       activeEpoch: number;
     }
   ): Promise<ExternalJoinOutcome>;
-  routeDistributionFrame(groupId: string, sender: string, ciphertext: Uint8Array): Promise<boolean>;
+  routeDistributionFrame(
+    groupId: string,
+    sender: string,
+    ciphertext: Uint8Array,
+    senderDeviceId?: string
+  ): Promise<boolean>;
   noteDistributionGroup(groupId: string): void;
   forgetDistributionGroupById(groupId: string): Promise<boolean>;
   hydrateDistributionGroups(): Promise<void>;
@@ -404,6 +413,40 @@ describe('routing a frame that arrived on the group', () => {
       sender: 'peer',
       plaintext: new Uint8Array([9, 9]),
     });
+  });
+
+  it('hands the sending DEVICE over too, which a seed answer is addressed to (section 23)', async () => {
+    const ctx = registered();
+
+    await proto.routeDistributionFrame.call(
+      ctx as never,
+      'g-1',
+      'peer',
+      new Uint8Array([1]),
+      'peer-phone'
+    );
+
+    expect(ctx.distributionFrameHandler).toHaveBeenCalledWith(
+      expect.objectContaining({ sender: 'peer', senderDeviceId: 'peer-phone' })
+    );
+  });
+
+  it('counts a frame lost for good, by cause, for the seed requests that follow to print', async () => {
+    // F3 of the 2026-10-12 queue audit: a request line names what is missing and could not say why.
+    resetKeyGroupFrameLosses();
+    const ctx = registered({
+      processIncomingMessage: vi
+        .fn()
+        .mockRejectedValue(
+          new Error('Process error: past epoch application frame [msg_epoch=8, group_epoch=20]')
+        ),
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(true);
+
+    expect(describeKeyGroupFrameLosses('g-1')).toBe('past-epoch-application:1');
+    warn.mockRestore();
   });
 
   it('acknowledges a commit without involving the handler', async () => {
