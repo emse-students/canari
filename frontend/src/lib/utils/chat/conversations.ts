@@ -833,11 +833,27 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     });
   }
 
-  ctx.conversations.clear();
+  // THE RESTORE REPLACES THE ROWS IT OWNS, AND A SALON'S ROW IS NOT ONE OF THEM. The community load
+  // writes salon rows without persisting them, so storage holds a salon only once something saved
+  // it. This used to `clear()` the whole map: a restore that ran after the community load (the login
+  // path awaits the socket first; `onWelcomeProcessed` restores mid-session) erased every salon
+  // storage lacked while the sidebar still listed it, and the selection watchdog then deselected
+  // every tap on one - lit, never opened, until a restart (`restoreKeepsSalonRows.test.ts`). A
+  // salon row in memory is the community load's, kept with its messages; a stale one is pruned by
+  // that load, never by this one.
+  const keptSalons = new Set<string>();
+  for (const key of [...ctx.conversations.keys()]) {
+    if (isChannelConversationId(key)) keptSalons.add(key);
+    else ctx.conversations.delete(key);
+  }
+  if (keptSalons.size > 0) {
+    ctx.log(`[RESTORE] kept ${keptSalons.size} salon row(s) the community load owns`);
+  }
   ctx.messageReactions.clear();
 
   // Phase 1 - fast, immediately usable conversation stubs.
   for (const meta of mergedConvMetas) {
+    if (keptSalons.has(meta.id)) continue;
     const identity = deriveConversationIdentity(meta.name, ctx.userId, meta.id);
     const prev = snapshot.get(meta.id);
     const resolvedName =
