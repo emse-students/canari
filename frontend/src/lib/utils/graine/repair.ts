@@ -171,14 +171,13 @@ const askedOn = new Map<string, { groupId: string; epoch: number }>();
  * session. Counting it against the newer ask would strike a member who was never asked in this walk.
  * The request id is the durable fact that says WHICH ask a decline belongs to; no clock is involved.
  *
- * `awaiting` is the named devices of that member that have NOT declined yet (section 23). A member
- * is struck off only when it empties, because one device of theirs saying "not held" says nothing
- * about the others. `null` when the request named no device (an older social service): then nobody
- * can tell how many devices will answer, and the first decline strikes the member, as before 1.2.5.
+ * `named` is the devices of that member the request named (section 23): only one of them may decline
+ * for it. `null` when the request named no device (an older social service), and then any device of
+ * the member may.
  */
 const askedRequest = new Map<
   string,
-  { requestId: string; answerer: string; awaiting: Set<string> | null }
+  { requestId: string; answerer: string; named: ReadonlySet<string> | null }
 >();
 
 /**
@@ -377,8 +376,9 @@ function reachableThroughDevices(
 }
 
 /**
- * At most this many devices of one member are named on a request: the delivery service refuses an
- * addressed frame naming more (`MAX_ADDRESSED_DEVICES`), and a member past it is an anomaly.
+ * A bound on the size of a request's device list, nothing more. The request itself is transport to
+ * the whole key group, never an addressed frame, so this is not the delivery service's
+ * `MAX_ADDRESSED_DEVICES`. A member with more devices online than this is an anomaly.
  */
 const MAX_NAMED_ANSWERERS = 16;
 
@@ -389,8 +389,8 @@ const MAX_NAMED_ANSWERERS = 16;
  * **All of them, never one** (review of #1768): naming the lowest id named a backgrounded phone whose
  * socket stays open and whose script does not run (`tauri-` sorts before `web-`), and a silent named
  * device is a walk that never moves. Naming every device costs one addressed answer per device - to
- * the requesting device only - and the member counts as declined only once each named device has
- * said no ({@link noteSeedUnavailable}).
+ * the requesting device only. The first decline from a named device strikes the member
+ * ({@link noteSeedUnavailable}).
  */
 function answeringDevicesOf(answerer: string, answering: Map<string, string[]> | null): string[] {
   return (answering?.get(answerer.toLowerCase()) ?? []).slice(0, MAX_NAMED_ANSWERERS);
@@ -575,14 +575,10 @@ async function requestSeedsForChannel(
         requestId,
       })
     );
-    // Recorded BEFORE the send: the answer may land before `sendMessage` resolves. One awaiting set
-    // PER SESSION: a device may hold some of the sessions asked and decline the others.
+    // Recorded BEFORE the send: the answer may land before `sendMessage` resolves.
+    const named = answererDevices.length > 0 ? new Set(answererDevices) : null;
     sessionIds.forEach((id) =>
-      askedRequest.set(id, {
-        requestId,
-        answerer: answerer.toLowerCase(),
-        awaiting: answererDevices.length > 0 ? new Set(answererDevices) : null,
-      })
+      askedRequest.set(id, { requestId, answerer: answerer.toLowerCase(), named })
     );
     // Transport, never durable: a request restates state held elsewhere, so replaying it from the
     // shared log would be circular - and that log is capped per group, so writing requests into it
@@ -990,10 +986,11 @@ export function forgetAskedSession(sessionId: string): void {
  * asked for again in the whole app session.
  *
  * Driven entirely by the ARRIVAL of a declining bundle, so there is no cycle to bound and no clock
- * to be wrong: no answer, no re-ask. Each decline removes one named device from a finite set, and
- * the set emptying strikes one member off a finite roster, so the walk ends either on the seed or on
- * {@link resolveAnswerer} returning null, which is reported. A named device that never answers holds
- * the walk where it is - the same as a silent member before, and the only non-termination left.
+ * to be wrong: no answer, no re-ask. Each accepted decline strikes one member off a finite roster,
+ * so the walk ends either on the seed or on {@link resolveAnswerer} returning null, which is
+ * reported. The FIRST "no" from any device the request named is enough: a device of the same member
+ * that does hold the seed and answers late still lands it, because a bundle's seeds are stored
+ * whoever asked, and storing one ends the walk ({@link forgetAskedSession}).
  *
  * @param sessionId Session the answerer turned out not to hold.
  * @param answerer Who declined, lower-cased by the caller or here.
@@ -1031,30 +1028,23 @@ export function noteSeedUnavailable(
     return;
   }
 
-  // A MEMBER IS DECLINED WHEN EVERY DEVICE NAMED HAS DECLINED (section 23). One device not holding
-  // a session says nothing about the member's other devices - a phone that joined last week does
-  // not hold what the laptop minted - so striking the member on the first "no" lost the holder.
-  if (inFlight.awaiting) {
-    if (!inFlight.awaiting.has(answererDevice)) {
-      console.debug(
-        `[GRAINE] ignoring a decline of session ${sessionId} from ${answerer}:${answererDevice || '(no device)'}: ` +
-          `not a device request ${requestId} is still waiting on`
-      );
-      return;
-    }
-    inFlight.awaiting.delete(answererDevice);
-    if (inFlight.awaiting.size > 0) {
-      console.info(
-        `[GRAINE] ${answerer}:${answererDevice} does not hold session ${sessionId} - waiting on ` +
-          `${[...inFlight.awaiting].join(',')} before asking the next member`
-      );
-      return;
-    }
+  // ONLY A DEVICE THE REQUEST NAMED MAY DECLINE FOR IT (section 23): another device of the member
+  // was never asked in this walk.
+  if (inFlight.named && !inFlight.named.has(answererDevice)) {
+    console.debug(
+      `[GRAINE] ignoring a decline of session ${sessionId} from ${answerer}:${answererDevice || '(no device)'}: ` +
+        `request ${requestId} did not name that device`
+    );
+    return;
   }
 
   const tried = declined.get(sessionId) ?? new Set<string>();
-  // ONE STRIKE PER MEMBER. With no device named, every device of theirs may decline and the first
-  // "no" already moved the ask on, so a second one would send a duplicate request down the roster.
+  // ONE STRIKE PER MEMBER, ON THE FIRST "NO" FROM A NAMED DEVICE. Waiting for every named device
+  // would let one silent device - a backgrounded phone with its socket open - hold the walk for
+  // ever, with nothing to wake it. Striking early loses nothing: a device of this member that holds
+  // the seed and answers after the walk moved on still lands it (`absorbSeedBundle` stores whatever
+  // arrives, and `forgetAskedSession` then ends the walk). A second "no" from the same member would
+  // only send a duplicate request down the roster.
   if (tried.has(answerer.toLowerCase())) return;
   tried.add(answerer.toLowerCase());
   declined.set(sessionId, tried);

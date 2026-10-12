@@ -3202,29 +3202,33 @@ lowest device id. That was wrong twice:
 
 - **D1.** `tauri-` sorts before `web-`, so the device it named was usually a backgrounded phone. Its
   socket stays open while its script does not run. A silent named device is a walk that never moves.
-- **D2.** The first device to decline struck the whole member, though another of their devices may
-  hold the session. A phone that joined last week does not hold what the laptop minted.
+- **D2.** The other devices of that member stayed silent, though one of them could hold the session.
+  A phone that joined last week does not hold what the laptop minted.
 
-Naming every device keeps the cost bounded: each answer still goes to the requesting device alone,
+Naming every device keeps the cost bounded. Each answer still goes to the requesting device alone,
 so one ask costs one addressed frame per named device (1-3 in practice), never one per seat.
 
-**A member is declined only when every named device has declined.** `askedRequest` keeps, per
-session, the named devices that have not declined yet (`awaiting`). The declining bundle's envelope
-device is checked against it:
+**The FIRST decline from a named device strikes the member.** `askedRequest` records, per session,
+the request id, the member asked and the devices named (`named`). A decline is checked against them:
 
-- a device that was not named is ignored at `debug`;
-- a repeated decline from the same device changes nothing;
-- the set emptying strikes the member and moves the walk to the next member.
+- one that quotes another request, or comes from another member, is ignored (a replay, or an ask
+  since superseded);
+- one from a device that was not named is ignored at `debug`;
+- a second decline from the same member changes nothing;
+- the first accepted decline strikes the member and moves the walk to the next one.
 
-If the request named nobody (an older social service), nobody can tell how many devices will
-answer. Then the first decline strikes the member, as before 1.2.5.
+A second iteration waited for EVERY named device to decline. The re-review refuted it (D-A): it
+re-created the stall, because a named phone that stays silent held the walk and nothing woke it.
 
-**Termination, without a clock.** Each decline removes one device from a finite set. The set
-emptying removes one member from a finite roster. The walk therefore ends on the seed arriving or on
-`exhausted`, which is logged. The one way it does not end is a named device that never processes
-the request. That is the same as a silent elected member before this change, and it now needs EVERY
-named device of that member to be silent, not just the lowest one. A frozen phone that resumes
-processes the transport frame buffered on its socket, and then it answers.
+Striking early loses nothing. A device of the struck member that does hold the seed and answers
+later still lands it: a bundle's seeds are stored whoever asked, and storing one ends the walk
+(`forgetAskedSession`). The cost of a decline from a device that does not hold the seed, while
+another device of the same member does, is ONE extra ask to the next member.
+
+**Termination, without a clock.** Each accepted decline strikes one member off a finite roster, so
+the walk ends on the seed arriving or on `exhausted`, which is logged. The walk stops only if every
+named device of the elected member stays silent. That is the same residue as a silent elected
+member before this change, and it takes ALL of that member's online leaves being frozen.
 
 ### The reason on every ask (F3)
 
@@ -3269,10 +3273,11 @@ chat-delivery (`ADDRESSED_NOBODY` warns when the device that asked is no longer 
   generations forward per sender per epoch. Transport frames (requests) already skip offline
   devices the same way. An answerer would need 2 000 consecutive addressed frames within ONE epoch
   for this to bite.
-- **Frozen-online devices.** A backgrounded Android can keep its socket open without running. The walk
-  waits only if EVERY named device of the member stays silent: a device that answers with the seed
-  ends the walk, and one that declines leaves the walk waiting on the silent one. The walk moves once
-  the frozen device resumes and answers, or at the next start.
+- **Frozen-online devices.** A backgrounded Android can keep its socket open without running. The
+  walk waits only if EVERY named device of the member stays silent. One seed ends the walk, and one
+  decline moves it on. It waits until a frozen device resumes and answers, or until the next start.
+- **Early strike.** A device without the seed may decline while another device of the same member
+  holds it. That costs one extra ask down the roster, and the holder's late answer still lands.
 - **Refined reachability.** A member online only on a device that is not a leaf of this tree is not
   asked. Before, they were asked and could not have opened the request anyway.
 

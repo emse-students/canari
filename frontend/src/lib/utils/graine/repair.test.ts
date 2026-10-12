@@ -700,33 +700,98 @@ describe('noteSeedUnavailable', () => {
     warn.mockRestore();
   });
 
-  it('strikes a member only once EVERY device named has declined (review of #1768, D2)', async () => {
-    // bob's phone joined last week and does not hold what his laptop minted: its "no" alone used to
-    // strike bob off the roster while the laptop held the seed.
-    listMembers.mockResolvedValue([
-      { userId: 'Bob', online: true, onlineDevices: ['tauri-bob', 'web-bob'] },
-      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
-      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
-    ]);
-    treeLeaves = ['bob:tauri-bob', 'bob:web-bob', 'alice:device-1', 'carol:web-carol'];
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
-    await settle();
-    const ask = requestIdOf(sendMessage.mock.calls[0]);
+  describe('a member with two named devices (section 23)', () => {
+    beforeEach(() => {
+      listMembers.mockResolvedValue([
+        { userId: 'Bob', online: true, onlineDevices: ['tauri-bob', 'web-bob'] },
+        { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+        { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+      ]);
+      treeLeaves = ['bob:tauri-bob', 'bob:web-bob', 'alice:device-1', 'carol:web-carol'];
+    });
 
-    noteSeedUnavailable('sess-1', 'bob', ask, 'tauri-bob');
-    await settle();
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    // The same device saying no twice is not a second device.
-    noteSeedUnavailable('sess-1', 'bob', ask, 'tauri-bob');
-    await settle();
-    expect(sendMessage).toHaveBeenCalledTimes(1);
+    /** The session ids a request frame named. */
+    function sessionsOf(call: unknown[]): string[] {
+      return (decodeAppMessage(call[1] as Uint8Array)?.graineRequest?.sessionIds ?? []).map(String);
+    }
 
-    noteSeedUnavailable('sess-1', 'bob', ask, 'web-bob');
-    await settle();
-    expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
-    info.mockRestore();
+    it('strikes the member on the FIRST decline from a named device - a silent one never holds the walk', async () => {
+      // Waiting for every named device re-created the stall the device list exists to avoid: a
+      // backgrounded phone named and silent, and nothing to wake it (re-review of #1768, D-A).
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+      await settle();
+      const ask = requestIdOf(sendMessage.mock.calls[0]);
+
+      noteSeedUnavailable('sess-1', 'bob', ask, 'web-bob');
+      await settle();
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
+
+      // bob's other named device saying no too, and the same one repeating, move nothing.
+      noteSeedUnavailable('sess-1', 'bob', ask, 'tauri-bob');
+      noteSeedUnavailable('sess-1', 'bob', ask, 'web-bob');
+      await settle();
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      info.mockRestore();
+    });
+
+    it('re-asks only the session declined when one request carried two and the other landed', async () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+      noteMissingSeed('chan-1', 'sess-2', 'dave', SENT_AT);
+      await settle();
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sessionsOf(sendMessage.mock.calls[0]).sort()).toEqual(['sess-1', 'sess-2']);
+      const ask = requestIdOf(sendMessage.mock.calls[0]);
+
+      // The device's one bundle: it held sess-2 (stored, which ends that walk) and declined sess-1.
+      forgetAskedSession('sess-2');
+      noteSeedUnavailable('sess-1', 'bob', ask, 'web-bob');
+      await settle();
+
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
+      expect(sessionsOf(sendMessage.mock.calls[1])).toEqual(['sess-1']);
+      info.mockRestore();
+    });
+
+    it('stops at the seed when another named device delivers it after the strike - no further ask, no false alarm', async () => {
+      // The accepted cost of striking early: one ask to carol. Then bob's laptop answers late with the
+      // seed, which is stored whoever asked, and that ends the walk - carol's "no" changes nothing.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+      await settle();
+      noteSeedUnavailable('sess-1', 'bob', requestIdOf(sendMessage.mock.calls[0]), 'tauri-bob');
+      await settle();
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+
+      forgetAskedSession('sess-1');
+      noteSeedUnavailable('sess-1', 'carol', requestIdOf(sendMessage.mock.calls[1]), 'web-carol');
+      await settle();
+
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('no reachable holder');
+      warn.mockRestore();
+      info.mockRestore();
+    });
+
+    it('ignores a late decline of the first ask once the walk has re-asked', async () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
+      await settle();
+      const first = requestIdOf(sendMessage.mock.calls[0]);
+      noteSeedUnavailable('sess-1', 'bob', first, 'tauri-bob');
+      await settle();
+      expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
+
+      // bob's laptop answers the superseded ask: it may not move the walk on from carol.
+      noteSeedUnavailable('sess-1', 'bob', first, 'web-bob');
+      await settle();
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      info.mockRestore();
+    });
   });
 
   it('ignores a decline from a device of the member that the request did not name', async () => {
