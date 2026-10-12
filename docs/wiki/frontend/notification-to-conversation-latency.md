@@ -283,15 +283,33 @@ when the recipient's presence is alive (`scheduleDeferredPush`).
 5. **F1 routes ~1.15 s sooner when killed but the composer does not move** (3.63 -> 3.59 s): the
    pane still waits for `MLS ready`.
 
-### F10 - the stored page is drawn before the server probe (built, phone before/after PENDING)
+### F10 - the stored page is drawn before the server probe (measured: first row 773 -> 356 ms after the pane, killed)
 
 `loadHistoryForConversation`'s fast path probes the server cursor (`limit=1`) and, when nothing is
 newer, draws the stored page and stops. When something IS newer it went straight to the full replay,
 and the stored page - already read - was drawn only by the replay's end. The page is now drawn
 first; the replay merges what it adds into it (`mergeMessagePage`), so drawing first changes WHEN the
-held rows appear, never which. A failed probe, previously swallowed, is logged. Expected: the
-held rows at the composer instead of ~0.7-0.9 s after it; the notified message itself still comes
-with the replay.
+held rows appear, never which. A failed probe, previously swallowed, is logged.
+
+| killed, PIN (Mi 9T, local APKs against dev, n=6 each) | `main` | F10 |
+| --- | ---: | ---: |
+| pane open -> first history row | **773** [669-1081] | **356** [349-364] |
+| pane open -> the notified message's row | 1031 [902-1304] | 964 [914-1020] |
+
+Warm, the rows are still in memory and appear with the pane on both builds, so F10 changes nothing
+there. **What is left of the 356 ms** is the page read (~145 ms, `loadHistory start` -> page
+rendered) and one ~320 ms long frame drawing 60 rows.
+
+**The notified message itself is the next lever, and the trace names why it waits.** On a killed
+open the WebSocket drain fetches it at ~3.35 s, ~0.45 s after `MLS ready`, and leaves it queued:
+`[MLS] Message for absent conversation ... - retry after restore`. `loadExistingConversations`
+inserts every conversation as a stub at once (its phase 1), but `notifyConversationsRestored` - the
+trigger that re-fetches frames left behind as `absent-conversation` - fires only after its phase 2
+(`getUserGroups`, the batch history, the per-conversation replay), at ~4.64 s. The message then
+reaches the screen through the batch history's replay at ~4.55 s. Signalling availability once the
+stub exists would make it readable ~1.2 s sooner, but phase 2 then rewrites the same conversation
+entry, and whether that write can lose a message added in between has not been established - so it
+is written down, not built.
 
 ## iOS (iPhone 12) - NOT measured
 
