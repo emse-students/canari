@@ -259,7 +259,11 @@ every row the restore will ever create, synchronously, so right after it
   announced only AFTER `fetchPendingMessages` had awaited its ack ordering, so for one ack round trip
   a pull existed that no barrier could see. It is now announced in the tick it is asked for (the ack
   ordering moved inside it, still before the request). The live decrypt then lands first, is
-  ledgered, and the replay skips it - the reverse order is the `Duplicate delivery` noise.
+  ledgered, and the replay skips it - the reverse order is the `Duplicate delivery` noise. Two
+  pulls can now overlap (a reconnect and this one), so the slot is CHAINED rather than overwritten
+  and cleared only by the pull that still owns it: before the review, the first pull to finish
+  nulled it while the other was still fetching, and the barrier passed (found in review, covered by
+  `BaseMlsService.ackBarrier.test.ts`).
 - **Phase 2 must not erase what a live delivery wrote.** Its stored-page write ASSIGNED `messages`
   (now `mergeMessagePage`, the rule every other history write already follows), and the DM repair
   spread a copy of the row read before an `await` (now re-read after it).

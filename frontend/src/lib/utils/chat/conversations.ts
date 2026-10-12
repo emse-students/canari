@@ -978,7 +978,13 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               // RE-READ AFTER THE AWAIT: a live delivery may have written this row while the roster
               // was being asked, and spreading the copy read before it would erase that message.
               const latest = ctx.conversations.get(meta.id);
-              if (peer && peer !== self && latest) {
+              if (!latest) {
+                // Every swallowed branch logs: the row left the map while its roster was asked
+                // (a leave, a delete or an account switch), so there is nothing left to repair.
+                ctx.log(
+                  `[RESTORE] DM repair skipped for ${meta.id} - the conversation vanished while its peer was resolved`
+                );
+              } else if (peer && peer !== self) {
                 ctx.conversations.set(meta.id, {
                   ...latest,
                   conversationType: 'direct',

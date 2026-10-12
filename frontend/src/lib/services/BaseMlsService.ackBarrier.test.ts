@@ -138,6 +138,51 @@ describe('the ack barrier in front of a pull', () => {
     expect(order).toEqual(['pull', 'barrier']);
   });
 
+  /**
+   * TWO OVERLAPPING PULLS, AND THE FIRST TO FINISH MUST NOT BLIND THE BARRIER.
+   *
+   * The slot used to be overwritten by the second pull and nulled by whichever finished first, so a
+   * barrier entered after that saw no pull at all while the other was still fetching - and decrypted
+   * a frame that pull then delivered a second time.
+   */
+  it('keeps the barrier up until every overlapping pull has landed', async () => {
+    const firstPage = deferred();
+    const secondPage = deferred();
+    let pulls = 0;
+    poke(svc, {
+      delivery: {
+        ackMessages: vi.fn().mockResolvedValue(undefined),
+        pullPendingMessagesJson: vi.fn(async () => {
+          const mine = ++pulls;
+          await (mine === 1 ? firstPage.promise : secondPage.promise);
+          order.push(`pull-${mine}`);
+        }),
+      },
+    });
+
+    const first = inner(svc).fetchPendingMessages();
+    const second = inner(svc).fetchPendingMessages();
+    // Both have reached the server before either answers.
+    await vi.waitFor(() => expect(pulls).toBe(2));
+
+    // The SECOND pull's answer is still out when the first one lands.
+    firstPage.settle();
+    await vi.waitFor(() => expect(order).toEqual(['pull-1']));
+    const slot = (svc as unknown as { pendingPullInFlight: unknown }).pendingPullInFlight;
+    expect(slot).not.toBeNull();
+
+    const barrier = svc.waitForGroupQueueIdle('test', 'g-1').then(() => order.push('barrier'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(['pull-1']);
+
+    secondPage.settle();
+    await Promise.all([first, second, barrier]);
+    expect(order).toEqual(['pull-1', 'pull-2', 'barrier']);
+    // And the slot is released once nothing is behind it, so a later barrier does not wait forever.
+    expect((svc as unknown as { pendingPullInFlight: unknown }).pendingPullInFlight).toBeNull();
+  });
+
   it('serialises two acks so the second cannot overtake the first', async () => {
     const first = deferred();
     poke(svc, {

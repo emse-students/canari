@@ -2004,13 +2004,23 @@ export abstract class BaseMlsService implements IMlsService {
         );
       }
     })();
-    this.pendingPullInFlight = pull;
+    // CHAINED, NEVER OVERWRITTEN. Two pulls can overlap (a reconnect and the restore's seeded-rows
+    // pull), and the barrier must stand until EVERY one of them has landed. Assigning `pull` alone let
+    // the first to finish null the slot while the other was still fetching, so a
+    // `waitForGroupQueueIdle` passed and decrypted a frame that pull then delivered a second time.
+    const previous = this.pendingPullInFlight;
+    const announced = previous ? Promise.all([previous, pull]).then(() => {}) : pull;
+    if (previous) {
+      console.log('[PENDING] A pull is already in flight - the barrier now waits for both');
+    }
+    this.pendingPullInFlight = announced;
     try {
       await pull;
     } finally {
       // CLEARED BEFORE THE BARRIER, deliberately: the line below is that barrier, and a pull still
-      // announcing itself here would be waiting on its own completion.
-      this.pendingPullInFlight = null;
+      // announcing itself here would be waiting on its own completion. ONLY WHEN IT IS STILL OURS: a
+      // later pull chained onto it, and clearing would blind the barrier to that one.
+      if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
     }
     await this.settleMailbox();
     // Only now is the answer complete: the rows were enqueued, not handled, so what the handler
