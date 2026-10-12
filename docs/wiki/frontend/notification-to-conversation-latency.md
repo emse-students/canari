@@ -266,6 +266,53 @@ it.** Gains are not additive: 1 and 2 overlap.
 already refuted chunking as the lever twice, and the JavaScript itself is the cost; and the MLS load,
 which is ~10-30 ms here and must be re-read on a production-sized state before anyone touches it.
 
+### F11 - a text reply no longer asks the server whether the group exists before sending it (measured: -0.1 to -0.17 s per reply)
+
+**The send path, step by step** (Mi 9T, dev, 2026-10-12, a throwaway `[LATENCY]` build, ms after
+the send click, one warm run; the others agree within ~30 ms):
+
+| step | at | cost |
+| --- | ---: | ---: |
+| message + outbox entry written together (durable before send) | 133 | ~130 |
+| queued, mirror refreshed, flush scheduled | 182 | ~50 |
+| **`getGroupMeta` - `GET /api/mls/groups/:id`** | 330 | **148** (245 in another run) |
+| `isGroupActive`, catch-up gate, epoch barrier | 354 | ~24 |
+| MLS encrypt | 367 | 13 |
+| `POST` (delivery) | 551 | ~185 |
+| `persistSent`, outbox row deleted, `[OUTBOX] ... sent` | 619 | ~70 |
+
+No encrypted checkpoint write sits on this path (the ~345 ms suspected earlier is not there); the
+encrypt is 13 ms. **The one step that answers nothing the send needs is the pre-flight**: for a
+sendable group the delivery service refuses a deleted one with a typed 410 (`GroupDeletedError`,
+the `group-deleted` arm of `flushOne`'s catch), which reaches the same `failPermanently` with the
+same cause - and the pre-flight could never be the whole answer, a deletion landing inside its
+round trip. It is now asked only where the POST is not the next step: **an unsendable group** (its
+next step is the re-add, which would otherwise re-add a deleted group for ever) and **a media entry**
+(its upload precedes the POST). Its failure, swallowed before, is logged. **The 410 had a hole the
+pre-flight was hiding, closed in the same change**: `tombstoneGroups` sweeps the device memberships,
+so a send into a group deleted BEFORE it resolved an empty roster, skipped
+`enqueueForLiveGroup`'s liveness check, appended to the dead group's history stream and answered
+200 - the outbox would have marked the message sent. The delivery service now runs that check on
+an empty roster too, for every non-handshake frame (`messaging.send-race.spec.ts`). Expected: ~150-250 ms per text or control send.
+
+| Mi 9T, local APKs against dev, n=6 each, ms after the send click | without | F11 |
+| --- | ---: | ---: |
+| warm: `[OUTBOX] ... sent` (the server took it) | 638 [545-679] | **481** [442-638] |
+| warm: the reply on the other client | 590 [497-649] | **420** [398-546] |
+| killed: `[OUTBOX] ... sent` | 630 [603-720] | **556** [530-640] |
+| killed: the reply on the other client | 601 [551-679] | **483** [459-584] |
+| flush start -> sent (warm / killed) | 497 / 423 | **332 / 353** |
+
+`without` is the same tree minus this change (`main` plus F9, which does not touch the send path).
+**What the medians say, and how far the ranges let them be believed** (corrected 2026-10-12 after
+review - the first version claimed "0.1-0.17 s off every reply"): the reply reaches the other client
+**0.17 s sooner warm and 0.12 s sooner killed**; the server takes it **0.16 s sooner warm but only
+0.07 s sooner killed**. In every row ONE run of the six falls inside the baseline's range (the other
+five are below its fastest run), so these are medians of a real but noisy shift, not a floor. The
+two other builds without this change (`hf`, `pin2`, n=6 each) give the same picture: warm ack
+639 / 655, killed ack 647 / 666, warm delivery 617 / 616, killed delivery 619 / 611. The durable write is
+kept where it is: it is the outbox's durability rule ([offline-and-weak-network](offline-and-weak-network.md)).
+
 ### F5 - the warm diagnosis was wrong, and the fix it suggested measured to nothing
 
 **The JS foreground verdict is NOT late.** The `[LIFECYCLE] App in foreground` line now carries
