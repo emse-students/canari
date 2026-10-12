@@ -2782,6 +2782,14 @@ under the `+`. `CanariBrand`'s `fitContainer` draws the name only when its `@con
 link, now `flex-1`) is at least 8rem wide. Measured on 2026-09-27: at 360px, bird only; at 390px,
 name drawn with 3px to spare; on every non-feed tab, name drawn.
 
+**A room of 0px takes no verdict (2026-10-12).** `MobileHeader` is `md:hidden` and is re-mounted every
+time a conversation closes, so on a desktop each re-mount measured a `display: none` header and
+logged `CanariBrand: name does not fit in 0px`. In the owner's export of an inert salon tap that line
+sat beside every tap and read as a layout fault; it was only the witness of the selection being
+dropped, which `[SELECT] ... selection dropped` now names (see
+[chat](modules/chat.md)). The measure now returns while the room has no width, and the
+`ResizeObserver` decides once the header is shown (`CanariBrand.svelte.test.ts`).
+
 **Its hover painted the bar's own colour, and four other buttons did the same (user, 2026-09-29).**
 The class said `hover:text-text hover:bg-cn-surface`. `text-text` names no token (the scale is
 `text-text-main`), and `--cn-surface` is `#ffffff` in light, the colour of the bar it sits on, so

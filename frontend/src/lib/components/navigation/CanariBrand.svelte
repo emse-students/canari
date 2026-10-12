@@ -43,6 +43,12 @@
     const room = row?.parentElement;
     if (!fitContainer || !row || !name || !room) return;
     const measure = () => {
+      // A ROOM OF 0px IS A HEADER THAT IS NOT LAID OUT, NOT ONE THE NAME OVERFLOWS. `MobileHeader` is
+      // `md:hidden` and re-mounts every time a conversation closes, so on a desktop each re-mount
+      // measured `display: none`, hid the name of a header nobody sees and logged it - a line that
+      // landed beside every salon tap and read as a layout fault (2026-10-12 console export). No
+      // verdict until there is a width; the ResizeObserver measures again the moment it shows.
+      if (room.clientWidth === 0) return;
       const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
       const bird = row.firstElementChild?.getBoundingClientRect().width ?? 0;
       const fits = bird + gap + name.scrollWidth <= room.clientWidth;
