@@ -55,6 +55,7 @@
 - [Video preparation](frontend/video-preparation.md) - every video re-encoded ON the phone to one fragmented MP4 (H.264 + AAC, 720p, ~2.5 Mb/s): the `prepareVideoForUpload` seam, its faults, and the device readings
 - [The cold start, measured](frontend/cold-start.md) - every reading behind the under-1 s target, and every hypothesis refuted on the way
 - [From a notification tap to a sent reply, measured](frontend/notification-to-conversation-latency.md) - tap to usable conversation, killed and backgrounded, ranked costs and the fix plan
+- [Performance audit under a heavy MLS state, 2026-10-12](frontend/performance-audit-2026-10-12.md) - ranked by cost x frequency: the restore decrypting every message, one whole-state checkpoint per frame (and its WASM seal, measured), the open thread redrawn by every other conversation
 - [Web console log audit, 2026-10-12](frontend/web-console-log-audit-2026-10-12.md) - three idle minutes on `/communities`, ranked: a pdf.js worker per refetch, seed bundles that re-read salons for every member, a checkpoint per message
 - [Mobile architecture](frontend/mobile.md) — Tauri 2, iOS NSE, Android push, native FFI
 - [App icons](frontend/app-icons.md) — one drawing, the bird at half of what is seen, four generators
