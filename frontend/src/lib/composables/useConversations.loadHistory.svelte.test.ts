@@ -131,3 +131,104 @@ describe('loadHistoryForConversation - a conversation whose group is gone', () =
     expect(replayConversationHistory).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * A notification tap opens a conversation that HAS something new - the message it announced - so
+ * the cursor probe answers "yes, there is more" and the full replay runs. The page the device
+ * already holds used to be drawn only after that replay, which left the reader on an empty thread
+ * for the length of a network catch-up over history that was on disk all along (Mi 9T, 2026-10-12:
+ * ~0.7 s between the pane and its first row on a cold landing).
+ */
+describe('loadHistoryForConversation - the stored page is drawn before the server is asked', () => {
+  function storedRow(id: string, at: number) {
+    return { id, conversationId: GROUP_ID, senderId: 'peer', content: `held ${id}`, timestamp: at };
+  }
+
+  function ctxWithStorage(page: ReturnType<typeof storedRow>[]) {
+    const { ctx, log } = makeCtx();
+    const storage = { getMessagesPage: vi.fn().mockResolvedValue(page) };
+    return { ctx: { ...(ctx as object), storage } as never, log, storage };
+  }
+
+  it('shows the held rows while the probe and the replay are still in flight', async () => {
+    const convs = useConversations();
+    convs.conversations.set(DM, conversation());
+    convs.selectConversation(DM);
+    readHistoryStreamCursor.mockReturnValue('cursor-1');
+    const { ctx } = ctxWithStorage([storedRow('m1', 1_000), storedRow('m2', 2_000)]);
+    let releaseProbe: (v: { rows: unknown[] }) => void = () => {};
+    (ctx as unknown as { ensureMls: () => { fetchHistory: ReturnType<typeof vi.fn> } })
+      .ensureMls()
+      .fetchHistory.mockReturnValue(new Promise((r) => (releaseProbe = r)));
+    replayConversationHistory.mockResolvedValue(undefined);
+
+    const done = convs.loadHistoryForConversation(DM, GROUP_ID, ctx);
+    await vi.waitFor(() =>
+      expect(convs.conversations.get(DM)?.messages.map((m) => m.id)).toEqual(['m1', 'm2'])
+    );
+    // THE ORDER IS THE ASSERTION: the rows are on screen and the replay has not even started.
+    expect(replayConversationHistory).not.toHaveBeenCalled();
+
+    releaseProbe({ rows: [{ id: 'newer' }] });
+    await done;
+    expect(replayConversationHistory).toHaveBeenCalledTimes(1);
+    expect(convs.isLoadingHistory).toBe(false);
+  });
+
+  it('leaves no hole when the replay brings more than a page', async () => {
+    // Drawing first must change WHEN rows appear, never which: the scrollback pages below the
+    // OLDEST row in memory, so an early-drawn page kept under a fresh one that does not reach it
+    // would hide every stored row between the two windows for good.
+    const convs = useConversations();
+    convs.conversations.set(DM, conversation());
+    convs.selectConversation(DM);
+    readHistoryStreamCursor.mockReturnValue('cursor-1');
+    const held = Array.from({ length: 60 }, (_, i) => storedRow(`m${i + 1}`, (i + 1) * 1_000));
+    const fresh = Array.from({ length: 60 }, (_, i) => storedRow(`m${i + 101}`, (i + 101) * 1_000));
+    const { ctx, storage } = ctxWithStorage(held);
+    storage.getMessagesPage.mockResolvedValueOnce(held).mockResolvedValue(fresh);
+    (ctx as unknown as { ensureMls: () => { fetchHistory: ReturnType<typeof vi.fn> } })
+      .ensureMls()
+      .fetchHistory.mockResolvedValue({ rows: [{ id: 'newer' }] });
+    replayConversationHistory.mockResolvedValue(undefined);
+
+    await convs.loadHistoryForConversation(DM, GROUP_ID, ctx);
+
+    expect(convs.conversations.get(DM)?.messages.map((m) => m.id)).toEqual(fresh.map((r) => r.id));
+  });
+
+  it('keeps the early-drawn rows the fresh page overlaps', async () => {
+    const convs = useConversations();
+    convs.conversations.set(DM, conversation());
+    convs.selectConversation(DM);
+    readHistoryStreamCursor.mockReturnValue('cursor-1');
+    const held = [storedRow('m1', 1_000), storedRow('m2', 2_000)];
+    const fresh = [...held, storedRow('m3', 3_000)];
+    const { ctx, storage } = ctxWithStorage(held);
+    storage.getMessagesPage.mockResolvedValueOnce(held).mockResolvedValue(fresh);
+    (ctx as unknown as { ensureMls: () => { fetchHistory: ReturnType<typeof vi.fn> } })
+      .ensureMls()
+      .fetchHistory.mockResolvedValue({ rows: [{ id: 'm3' }] });
+    replayConversationHistory.mockResolvedValue(undefined);
+
+    await convs.loadHistoryForConversation(DM, GROUP_ID, ctx);
+
+    expect(convs.conversations.get(DM)?.messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+  });
+
+  it('still skips the replay when the probe finds nothing newer', async () => {
+    const convs = useConversations();
+    convs.conversations.set(DM, conversation());
+    convs.selectConversation(DM);
+    readHistoryStreamCursor.mockReturnValue('cursor-1');
+    const { ctx } = ctxWithStorage([storedRow('m1', 1_000)]);
+    (ctx as unknown as { ensureMls: () => { fetchHistory: ReturnType<typeof vi.fn> } })
+      .ensureMls()
+      .fetchHistory.mockResolvedValue({ rows: [] });
+
+    await convs.loadHistoryForConversation(DM, GROUP_ID, ctx);
+
+    expect(convs.conversations.get(DM)?.messages.map((m) => m.id)).toEqual(['m1']);
+    expect(replayConversationHistory).not.toHaveBeenCalled();
+  });
+});

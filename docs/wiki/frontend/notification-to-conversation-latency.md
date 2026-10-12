@@ -266,6 +266,53 @@ it.** Gains are not additive: 1 and 2 overlap.
 already refuted chunking as the lever twice, and the JavaScript itself is the cost; and the MLS load,
 which is ~10-30 ms here and must be re-read on a production-sized state before anyone touches it.
 
+### F11 - a text reply no longer asks the server whether the group exists before sending it (measured: -0.1 to -0.17 s per reply)
+
+**The send path, step by step** (Mi 9T, dev, 2026-10-12, a throwaway `[LATENCY]` build, ms after
+the send click, one warm run; the others agree within ~30 ms):
+
+| step | at | cost |
+| --- | ---: | ---: |
+| message + outbox entry written together (durable before send) | 133 | ~130 |
+| queued, mirror refreshed, flush scheduled | 182 | ~50 |
+| **`getGroupMeta` - `GET /api/mls/groups/:id`** | 330 | **148** (245 in another run) |
+| `isGroupActive`, catch-up gate, epoch barrier | 354 | ~24 |
+| MLS encrypt | 367 | 13 |
+| `POST` (delivery) | 551 | ~185 |
+| `persistSent`, outbox row deleted, `[OUTBOX] ... sent` | 619 | ~70 |
+
+No encrypted checkpoint write sits on this path (the ~345 ms suspected earlier is not there); the
+encrypt is 13 ms. **The one step that answers nothing the send needs is the pre-flight**: for a
+sendable group the delivery service refuses a deleted one with a typed 410 (`GroupDeletedError`,
+the `group-deleted` arm of `flushOne`'s catch), which reaches the same `failPermanently` with the
+same cause - and the pre-flight could never be the whole answer, a deletion landing inside its
+round trip. It is now asked only where the POST is not the next step: **an unsendable group** (its
+next step is the re-add, which would otherwise re-add a deleted group for ever) and **a media entry**
+(its upload precedes the POST). Its failure, swallowed before, is logged. **The 410 had a hole the
+pre-flight was hiding, closed in the same change**: `tombstoneGroups` sweeps the device memberships,
+so a send into a group deleted BEFORE it resolved an empty roster, skipped
+`enqueueForLiveGroup`'s liveness check, appended to the dead group's history stream and answered
+200 - the outbox would have marked the message sent. The delivery service now runs that check on
+an empty roster too, for every non-handshake frame (`messaging.send-race.spec.ts`). Expected: ~150-250 ms per text or control send.
+
+| Mi 9T, local APKs against dev, n=6 each, ms after the send click | without | F11 |
+| --- | ---: | ---: |
+| warm: `[OUTBOX] ... sent` (the server took it) | 638 [545-679] | **481** [442-638] |
+| warm: the reply on the other client | 590 [497-649] | **420** [398-546] |
+| killed: `[OUTBOX] ... sent` | 630 [603-720] | **556** [530-640] |
+| killed: the reply on the other client | 601 [551-679] | **483** [459-584] |
+| flush start -> sent (warm / killed) | 497 / 423 | **332 / 353** |
+
+`without` is the same tree minus this change (`main` plus F9, which does not touch the send path).
+**What the medians say, and how far the ranges let them be believed** (corrected 2026-10-12 after
+review - the first version claimed "0.1-0.17 s off every reply"): the reply reaches the other client
+**0.17 s sooner warm and 0.12 s sooner killed**; the server takes it **0.16 s sooner warm but only
+0.07 s sooner killed**. In every row ONE run of the six falls inside the baseline's range (the other
+five are below its fastest run), so these are medians of a real but noisy shift, not a floor. The
+two other builds without this change (`hf`, `pin2`, n=6 each) give the same picture: warm ack
+639 / 655, killed ack 647 / 666, warm delivery 617 / 616, killed delivery 619 / 611. The durable write is
+kept where it is: it is the outbox's durability rule ([offline-and-weak-network](offline-and-weak-network.md)).
+
 ### F5 - the warm diagnosis was wrong, and the fix it suggested measured to nothing
 
 **The JS foreground verdict is NOT late.** The `[LIFECYCLE] App in foreground` line now carries
@@ -295,6 +342,83 @@ before the flusher), so the lever is the `/chat` render on the warm landing, whi
 | `[LIFECYCLE] App in foreground` | 615 | 646 |
 | socket connected | 931 | ~920 |
 | reply accepted, after the click | 839 | 911 |
+
+## The whole cycle, tap to delivered reply (2026-10-12)
+
+**A second instrument, end to end on one clock.** `cycle.mjs` (scratch, not committed) sends the
+message from the other account's dev tab (gamma, `chrome-w2`), fires the notification's exact
+`PendingIntent` on the Mi 9T, waits for the composer, taps it for real, types a fixed marker with
+`adb input text`, clicks send, and reads the reply's arrival on the sender's tab. The phone's epoch
+and the workstation's are tied by an `adb shell date` round trip (skew error ~+-25 ms). Warm =
+backgrounded for 6 s (a 1.5 s park, used before, let the feed's progressive mount resume under the
+landing and polluted the reading). Killed = `force-stop`, then the PIN typed by the instrument.
+
+**DEV HAS NO PUSH, so T1 (notification shown) is not measured**: `DEV_FIREBASE_SERVICE_ACCOUNT_JSON`
+is absent ([dev-environment](../infrastructure/dev-environment.md)), so the tap is synthesised.
+Two facts from the same session matter for a real tap: a FORCE-STOPPED app receives no FCM at all
+(Android's stopped state) while a recents swipe does; and the delivery service holds a push 10 s
+when the recipient's presence is alive (`scheduleDeferredPush`).
+
+| ms after the tap, medians (n=6) | alpha warm | alpha killed | F1 warm | F1 killed |
+| --- | ---: | ---: | ---: | ---: |
+| app first line | - | 985 | - | 914 |
+| deep link parsed | 496 [162-769] | 1226 | 314 [95-729] | 1180 |
+| `MLS ready` (PIN typed in ~130 ms) | - | 2899 | - | 3000 |
+| route is `/chat` | 1193 | 3121 | 900 | 1967 |
+| composer usable | 1193 [709-1430] | 3632 [3529-3924] | 900 [752-1458] | 3586 [3301-4094] |
+| the notified message's row drawn | 1882 | 4606 | 1628 | 4435 |
+| send click -> outbox `sent` | +610 | +655 | +672 | +695 |
+| send click -> on the other client | +558 | +601 | +625 | +661 |
+
+`alpha` = `1.2.5-alpha.1`'s CI artifact, `F1` = PR #1770's (`0d7da4e6a`). What it says:
+
+1. **The row the person tapped for comes 0.73-0.95 s AFTER the composer, in every column.** The
+   stored page was drawn only after the server probe AND the replay behind it - a notification tap
+   is precisely the case where the probe says "newer rows exist". **Fixed (F10, below).**
+2. **Warm is ~1.2 s, not the <= 0.35 s recorded above** - that figure came from the 1.5 s park. The
+   deep link itself is parsed 0.1-0.8 s after the tap, behind main-thread work (`import.then`, a
+   ~0.95 s long frame on the first resume after an install).
+3. **The PIN path is ~0.93 s in series** (salt 350, verifier 117, device id 44, check 253, device
+   key 166) - F9.
+4. **The send is ~0.65 s to the ack**: ~125 ms to the outbox (its durable write), ~55 ms to the
+   flush, ~450 ms of flush (group meta pre-flight, encrypt, POST). The receiver has the message
+   ~50 ms before the sender's outbox logs it.
+5. **F1 routes ~1.15 s sooner when killed but the composer does not move** (3.63 -> 3.59 s): the
+   pane still waits for `MLS ready`.
+
+### F10 - the stored page is drawn before the server probe (measured: first row 773 -> 356 ms after the pane, killed)
+
+`loadHistoryForConversation`'s fast path probes the server cursor (`limit=1`) and, when nothing is
+newer, draws the stored page and stops. When something IS newer it went straight to the full replay,
+and the stored page - already read - was drawn only by the replay's end. The page is now drawn
+first; the replay merges what it adds into it (`mergeMessagePage`), so drawing first changes WHEN the
+held rows appear, never which. That claim needs one more step than the merge: when the replay brings MORE than a page, the reloaded page no longer reaches the
+early-drawn one, `mergeMessagePage` keeps memory outside its window, and the scrollback pages below
+the OLDEST row in memory - so every stored row between the two windows would be hidden for good
+(and an early-drawn row the replay edited would stay stale). The reload therefore withdraws the
+early-drawn rows that fall below its window (`renderStoredPage`'s `supersedes`, logged as
+`early-drawn row(s) ... withdrawn`), which gives the screen a load that never drew first gives.
+A failed probe, previously swallowed, is logged.
+
+| killed, PIN (Mi 9T, local APKs against dev, n=6 each) | `main` | F10 |
+| --- | ---: | ---: |
+| pane open -> first history row | **773** [669-1081] | **356** [349-364] |
+| pane open -> the notified message's row | 1031 [902-1304] | 964 [914-1020] |
+
+Warm, the rows are still in memory and appear with the pane on both builds, so F10 changes nothing
+there. **What is left of the 356 ms** is the page read (~145 ms, `loadHistory start` -> page
+rendered) and one ~320 ms long frame drawing 60 rows.
+
+**The notified message itself is the next lever, and the trace names why it waits.** On a killed
+open the WebSocket drain fetches it at ~3.35 s, ~0.45 s after `MLS ready`, and leaves it queued:
+`[MLS] Message for absent conversation ... - retry after restore`. `loadExistingConversations`
+inserts every conversation as a stub at once (its phase 1), but `notifyConversationsRestored` - the
+trigger that re-fetches frames left behind as `absent-conversation` - fires only after its phase 2
+(`getUserGroups`, the batch history, the per-conversation replay), at ~4.64 s. The message then
+reaches the screen through the batch history's replay at ~4.55 s. Signalling availability once the
+stub exists would make it readable ~1.2 s sooner, but phase 2 then rewrites the same conversation
+entry, and whether that write can lose a message added in between has not been established. **F12
+below established it and built the earlier trigger.**
 
 ### F12 - the notified message is asked for when the rows exist, not after the history restore
 
@@ -360,6 +484,30 @@ check before trying again: the bench DM's bubbles are one line, so 24 groups may
 and the fill loop widens back towards the old size, paying an extra layout pass on the way. The
 patch is not kept; the two lines it changes are `INITIAL_RENDER_GROUPS` and the fill step in
 `ChatArea.svelte`.
+
+### What is left after F9 to F13, ranked by evidence (2026-10-12)
+
+1. **The notified message waiting for the end of the restore is F12's**: the message now follows the
+   composer by ~0.4 s on a killed open instead of ~1.0 s (measured above).
+2. **Mounting the thread is ~0.3-0.35 s of main thread, warm or killed.** CPU profiles (CDP
+   `Profiler`, 200 us sampling, one warm and one killed run): the longest busy stretch is the
+   `/chat` route's Svelte flush (~190 ms warm) plus the layout it forces - `offsetHeight` read by
+   the composer-height effect (~35-46 ms) and `scrollHeight` read by the thread's scroll anchoring
+   (~40-55 ms), both simply the first layout of 60 freshly inserted rows (`insertBefore` ~44 ms
+   self). Mounting fewer rows first was tried as F13 and measured to nothing; its unverified reason
+   is the first thing to check before trying again.
+3. **Every request to the estate costs ~150-250 ms from the phone against a 25 ms ping to the
+   edge.** `tauri-plugin-http` 2.8.1 builds a new `reqwest` client per `fetch` (no connection
+   reuse, read in its source), but that is NOT the cost: the same GET took 142-251 ms through the
+   plugin and 237-389 ms through the WebView's own pooled `fetch` (`httpprobe`, n=8 each). The floor
+   is the path behind the edge, an infrastructure question.
+4. **Warm, the deep link is parsed 0.1-0.8 s after the tap** and the route renders behind it; the
+   resume preparation (F5) is the same main thread.
+
+**Instrument caveat**: the in-page recorder's PIN-gate predicate reads `document.body.innerText`
+every 16 ms, which the profile shows costing ~100 ms of main thread inside the landing window. It
+weighs on every build equally, so the comparisons hold, but absolute numbers are a little worse
+than a person's.
 
 ## iOS (iPhone 12) - NOT measured
 

@@ -234,6 +234,19 @@ with no `firstName` keeps the full name. `firstNameCache` is a `SvelteMap`, so a
 the profile lands. The current user's first name comes from that same one fetch (the saved login
 carries only `displayName`).
 
+### A derived that needs ONE key reads the SvelteMap by key, never by iterating it (2026-10-12)
+
+Iterating a `SvelteMap` (`for ... of`, `entries()`, `values()`, `forEach`) subscribes to the map's
+version AND to every key's own source; `get(key)` subscribes to that key's source only (and to the
+version while the key is absent, so an arrival is still seen). `useConversations.currentConvo`
+looped over the whole conversation map to find the open one, so a message landing in ANY of a heavy
+account's ~220 conversations and salons re-ran it, handed ChatArea a new object, and redid every
+full pass over the open thread (`groupMessages`, seen-by, the poll parse, the unread count) plus a
+props refresh of every mounted row. Counted in the test: 52 writes to OTHER conversations, 52
+recomputations before, 0 after ([test](../../../frontend/src/lib/composables/useConversations.currentConvoScope.svelte.test.ts)).
+A `set` of the SAME object notifies nobody either way (`prev_res !== value`), so this never relied
+on iteration to see an in-place mutation - every write path stores a new object.
+
 ### Svelte trims whitespace at a block boundary
 
 `{label}{#if x}<span>...</span>{/if}` renders `labelSuffix` with no space: the compiler treats the

@@ -1318,6 +1318,16 @@ export class MessagingService {
       await this.enqueueForLiveGroup(toDeliver, body.groupId, 'SEND', traceId);
       this.logger.log(`[SEND][${traceId}] QUEUED count=${toDeliver.length}`);
     } else {
+      // A GROUP DELETED BEFORE THIS SEND HAS NO ROSTER LEFT, SO IT LANDS HERE AND NOT ABOVE.
+      // `tombstoneGroups` sweeps the device memberships with everything else, so the recipient set
+      // resolves EMPTY and the liveness check inside `enqueueForLiveGroup` was never reached: the
+      // send answered 200, appended to the dead group's history stream below, and the client marked
+      // its message sent. The client's outbox no longer asks `GET /groups/:id` before a text send
+      // and relies on this refusal, so it is owed on the empty roster too. Handshake frames are
+      // left alone: their own paths decide what a dead group means for them.
+      if (body.proto && body.groupId && !body.isCommit && !body.isWelcome) {
+        await this.enqueueForLiveGroup([], body.groupId, 'SEND', traceId);
+      }
       // TWO CAUSES, AND THE SENTENCE USED TO NAME NEITHER. `toDeliver` empties for one of exactly
       // two reasons and they want opposite readings: a group that named no other device has nobody
       // to queue for and nothing is wrong, while a TRANSPORT frame whose every recipient went offline
@@ -2938,6 +2948,8 @@ export class MessagingService {
         );
         throw new GoneException({ error: 'group_deleted', groupId });
       }
+      // An empty batch is a liveness check alone (an emptied roster, see `sendMessage`).
+      if (rows.length === 0) return [];
       return manager.getRepository(QueuedMessage).save(rows);
     });
   }
