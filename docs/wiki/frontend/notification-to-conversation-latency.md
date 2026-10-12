@@ -247,7 +247,14 @@ an empty roster too, for every non-handshake frame (`messaging.send-race.spec.ts
 | killed: the reply on the other client | 601 [551-679] | **483** [459-584] |
 | flush start -> sent (warm / killed) | 497 / 423 | **332 / 353** |
 
-`without` is the same tree minus this change (`main` plus F9, which does not touch the send path). **~0.1-0.17 s off every reply**, a quarter of it. The durable write is
+`without` is the same tree minus this change (`main` plus F9, which does not touch the send path).
+**What the medians say, and how far the ranges let them be believed** (corrected 2026-10-12 after
+review - the first version claimed "0.1-0.17 s off every reply"): the reply reaches the other client
+**0.17 s sooner warm and 0.12 s sooner killed**; the server takes it **0.16 s sooner warm but only
+0.07 s sooner killed**. In every row ONE run of the six falls inside the baseline's range (the other
+five are below its fastest run), so these are medians of a real but noisy shift, not a floor. The
+two other builds without this change (`hf`, `pin2`, n=6 each) give the same picture: warm ack
+639 / 655, killed ack 647 / 666, warm delivery 617 / 616, killed delivery 619 / 611. The durable write is
 kept where it is: it is the outbox's durability rule ([offline-and-weak-network](offline-and-weak-network.md)).
 
 ### F5 - the warm diagnosis was wrong, and the fix it suggested measured to nothing
