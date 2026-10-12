@@ -654,15 +654,25 @@ export async function loginImpl(
       const salt = await (saltAhead ?? fetchPinSalt(ctx, ctx.getUserId(), accessToken));
       endBootSpan('pin-salt-fetch', { ahead: saltAhead !== undefined });
       cb.log(`[PIN] Salt ${saltAhead ? 'asked while the keypad was up' : 'asked at submit'}.`);
-      // THE TWO DERIVATIONS RUN TOGETHER, AND ONLY THE USE OF THE SECOND WAITS FOR THE CHECK. Both
-      // are PBKDF2 in WebCrypto, off the main thread, and neither needs the other: the verifier
-      // (100k) goes to the server, the device key (310k) stays here. The rule the old sequence
-      // enforced - nothing is decrypted with a key from an unproven PIN - is a rule about USING the
-      // key, and it still holds: `deviceKeyAhead` is awaited and stored only after `pin-check`
-      // answered `ok`/`registered`. On a mismatch it is dropped unread. Measured on the Mi 9T
-      // 2026-10-12: the device key was 166 ms after a 253 ms check it does not depend on.
-      // `resolveDeviceId` reads a stored id and decrypts nothing, so it joins them.
-      // PBKDF2-SHA256: 310k iterations for the device key, 100k for the verifier.
+      // THE DEVICE KEY IS DERIVED DURING THE PIN CHECK, AND ONLY ITS USE WAITS FOR THE ANSWER. The
+      // rule the old sequence enforced - nothing is decrypted with a key from an unproven PIN - is a
+      // rule about USING the key, and it still holds: `deviceKeyAhead` is awaited and stored only
+      // after `pin-check` answered and after the mismatch and revocation branches. On a mismatch it
+      // is dropped unread.
+      //
+      // AFTER THE VERIFIER, NOT BESIDE IT - measured, not assumed (Mi 9T, 2026-10-12, n=6): started
+      // together, the two PBKDF2 runs shared the WebCrypto worker and the verifier went from 112 to
+      // 215 ms, delaying the check it feeds by the same amount. Started once the verifier is in, the
+      // 310k-iteration derivation overlaps only the check's round trip, which waits on the network.
+      // `resolveDeviceId` reads a stored id and decrypts nothing, so it joins the verifier.
+      // PBKDF2-SHA256: 100k iterations for the verifier, 310k for the device key.
+      const [verifier, deviceId] = await Promise.all([
+        timeBootSpan(
+          'pin-verifier-pbkdf2',
+          computePinVerifier(ctx.getUserId(), ctx.getPin(), salt)
+        ),
+        timeBootSpan('resolve-device-id', mlsService.resolveDeviceId(ctx.getUserId())),
+      ]);
       const deviceKeyAhead = timeBootSpan(
         'device-key-pbkdf2',
         deriveDeviceKeyB64(ctx.getUserId(), pin, salt)
@@ -672,13 +682,6 @@ export async function loginImpl(
       deviceKeyAhead.catch((e: unknown) =>
         cb.log(`[PIN] Device key derivation failed: ${String(e)}`)
       );
-      const [verifier, deviceId] = await Promise.all([
-        timeBootSpan(
-          'pin-verifier-pbkdf2',
-          computePinVerifier(ctx.getUserId(), ctx.getPin(), salt)
-        ),
-        timeBootSpan('resolve-device-id', mlsService.resolveDeviceId(ctx.getUserId())),
-      ]);
       const verifierHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
@@ -713,8 +716,8 @@ export async function loginImpl(
       if (pinCheckData.status === 'registered') cb.log('First device: PIN registered.');
 
       // PIN accepted: only now is this device's at-rest key read and installed. It was derived
-      // alongside the verifier from the same server salt (see above); nothing used it before this
-      // line, which is the ordering that matters.
+      // during the check from the same server salt as the verifier (see above); nothing used it
+      // before this line, which is the ordering that matters.
       deviceKeyB64 = await deviceKeyAhead;
       ctx.setDeviceKey(deviceKeyB64);
     } else {

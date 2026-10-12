@@ -84,6 +84,16 @@ describe('loginImpl derives the device key early and uses it only after the PIN 
     expect(use).toBeLessThan(install);
   });
 
+  it('starts the device key after the verifier, so the two derivations do not share the worker', () => {
+    // Started together, the verifier went from 112 to 215 ms on the Mi 9T and delayed the check.
+    const verifier = login.indexOf('computePinVerifier(ctx.getUserId(), ctx.getPin(), salt)');
+    const derive = login.indexOf('deriveDeviceKeyB64(ctx.getUserId(), pin, salt)');
+    const check = login.indexOf('/api/mls/security/pin-check');
+    expect(verifier).toBeGreaterThan(-1);
+    expect(verifier).toBeLessThan(derive);
+    expect(derive).toBeLessThan(check);
+  });
+
   it('consumes the salt asked ahead before asking the server', () => {
     expect(login).toContain('takePinSaltAhead(ctx.getUserId())');
   });
