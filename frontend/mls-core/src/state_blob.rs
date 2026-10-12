@@ -32,11 +32,47 @@
 //! headered one. It is the format this product wrote for its entire life until now, sitting on every
 //! installed device, and reading it is the primary path for those bytes. It stops being one when no
 //! supported client can have written it, and not before.
+//!
+//! # Version 2 - the same header, an AES-256-GCM body sealed by the BROWSER (2026-10-12)
+//!
+//! Measured on a 7.7 MB state in desktop Chrome, the WASM ChaCha20-Poly1305 seal was 141 ms of a
+//! 175 ms checkpoint: `chacha20` has no SIMD backend on `wasm32` and runs at ~55 MB/s, while the
+//! browser's own WebCrypto AES-GCM runs on hardware AES at GB/s
+//! (`docs/wiki/frontend/performance-audit-2026-10-12.md`, finding 3). Version 2 is that body:
+//!
+//! `[MAGIC (7) || 2 || fingerprint (8)] [iv (12) || AES-256-GCM ciphertext || tag (16)]`
+//!
+//! - **The fingerprint is the DEVICE key's**, computed exactly as for version 1, so "sealed under
+//!   another key" is answered by the header in both versions and by the same function.
+//! - **The AES key is DERIVED, never the device key itself** - HKDF-SHA256 with [`V2_KDF_SALT`] and
+//!   [`V2_KDF_INFO`]. The device key already keys ChaCha20-Poly1305 for every legacy blob and the
+//!   fingerprint hash; one raw key under two AEADs is a cross-algorithm reuse nobody has to argue
+//!   about if it never happens.
+//! - **The 16 header bytes are the AAD**, so a flipped version or fingerprint byte fails the tag
+//!   instead of steering the reader into a different, plausible-looking path.
+//!
+//! **ONLY THE WEB WRITES IT, AND EVERY PLATFORM READS IT.** The writer is TypeScript
+//! (`frontend/src/lib/mls-client/mlsStateSeal.ts`); nothing in this crate seals version 2, so a
+//! native build cannot write it by construction. The reader lives HERE rather than beside the
+//! writer because a web blob does reach a phone: a `.canari` backup carries the sealed state as it
+//! was stored (`exportMlsStateAsHex` -> `saveMlsState`), and restoring a web export on Android must
+//! open it. One parser, one place the shape is decided, on every target - which is what this module
+//! existed for. **The one exception is measured, not convenient**: in a BROWSER the WASM build of
+//! this reader opens v2 with software AES, 2.6x slower than it opens ChaCha (610 ms against 240 ms
+//! on 7.7 MB), so the web's `loadAndInitWasm` opens v2 with WebCrypto and hands this crate the
+//! plain CBOR; every other shape still reaches [`parse`] sealed. Both v2 readers open the same
+//! committed fixture (`tests/state_blob_v2.rs`, `mlsStateSeal.test.ts`) and answer the same codes.
+//!
+//! **A BUILD THAT PREDATES VERSION 2 FAILS LOUDLY, NEVER SILENTLY.** One that knows version 1 refuses
+//! the version byte by name ([`parse`] - "written by a newer client, so this is a downgrade");
+//! one older than the header reads `CANARIS\x02...` as a nonce and fails the ChaCha tag. Both land
+//! on `STATE_UNDECRYPTABLE`, the existing path that destroys nothing and asks for the PIN. Neither
+//! can mistake the bytes for a state and load garbage: CBOR is never reached.
 
 use crate::MlsError;
 use openmls_traits::OpenMlsProvider;
 use openmls_traits::crypto::OpenMlsCrypto;
-use openmls_traits::types::HashType;
+use openmls_traits::types::{AeadType, HashType};
 
 /// Distinguishes a framed blob from a bare `[nonce || ciphertext]`.
 ///
@@ -47,10 +83,28 @@ use openmls_traits::types::HashType;
 /// framed blob into a confusing legacy one.
 pub const MAGIC: [u8; 7] = *b"CANARIS";
 
-/// The only framing version that exists. A blob announcing any other is refused by name rather than
-/// guessed at: it means a client newer than this one wrote it, and pretending to read it is how a
-/// downgrade turns into "your state is corrupt".
+/// Framing version 1: a ChaCha20-Poly1305 body under the device key. A blob announcing a version
+/// this build does not know is refused by name rather than guessed at: it means a client newer than
+/// this one wrote it, and pretending to read it is how a downgrade turns into "your state is corrupt".
 pub const VERSION_1: u8 = 1;
+
+/// Framing version 2: an AES-256-GCM body under a key derived from the device key, the header as
+/// AAD. Written by the web client only (see the module docs), read everywhere.
+pub const VERSION_2: u8 = 2;
+
+/// HKDF-SHA256 salt for the version 2 AES key. Mirrored byte for byte in `mlsStateSeal.ts`, and
+/// pinned on both sides by the same known-answer constant, so the two cannot drift silently.
+pub const V2_KDF_SALT: &[u8] = b"canari/mls-state-blob/v2/salt";
+
+/// HKDF-SHA256 info for the version 2 AES key - the domain separation from every other use of the
+/// device key.
+pub const V2_KDF_INFO: &[u8] = b"canari/mls-state-blob/v2/aes-256-gcm";
+
+/// Bytes of the version 2 IV, WebCrypto's and AES-GCM's 96-bit standard.
+pub const V2_IV_LEN: usize = 12;
+
+/// Bytes of the AES-GCM tag WebCrypto appends (its default `tagLength` of 128).
+pub const V2_TAG_LEN: usize = 16;
 
 /// `MAGIC` (7) + version (1) + key fingerprint (8).
 pub const HEADER_LEN: usize = 16;
@@ -71,6 +125,15 @@ pub enum Framed<'a> {
         /// Fingerprint of the key that sealed it - compare against [`key_fingerprint`].
         key_fingerprint: [u8; FINGERPRINT_LEN],
         /// The `[nonce || ciphertext]` body, ready for `security::decrypt_blob`.
+        sealed: &'a [u8],
+    },
+    /// `[MAGIC || 2 || fingerprint (8) || iv (12) || ciphertext || tag (16)]`.
+    V2 {
+        /// Fingerprint of the DEVICE key that sealed it - compare against [`key_fingerprint`].
+        key_fingerprint: [u8; FINGERPRINT_LEN],
+        /// The 16 header bytes, which are the AEAD's associated data.
+        header: &'a [u8],
+        /// The `[iv || ciphertext || tag]` body, ready for [`open_v2`].
         sealed: &'a [u8],
     },
 }
@@ -112,24 +175,40 @@ pub fn key_fingerprint(key: &[u8; 32]) -> [u8; FINGERPRINT_LEN] {
 pub fn parse(blob: &[u8]) -> Result<Framed<'_>, MlsError> {
     if blob.len() >= HEADER_LEN && blob[..MAGIC.len()] == MAGIC {
         let version = blob[MAGIC.len()];
-        if version != VERSION_1 {
-            return Err(MlsError::StateUndecryptable(format!(
-                "state blob announces framing version {version}, which this build does not know - it \
-                 was written by a newer client, so this is a downgrade and not corruption"
-            )));
-        }
+        // The smallest body each version can carry: a nonce for v1 (its tag is checked by the
+        // cipher), an IV AND a tag for v2, because an AES-GCM body shorter than that is a stub and
+        // not a ciphertext. Unknown versions are refused before any length is read.
+        let floor = match version {
+            VERSION_1 => 12,
+            VERSION_2 => V2_IV_LEN + V2_TAG_LEN,
+            _ => {
+                return Err(MlsError::StateUndecryptable(format!(
+                    "state blob announces framing version {version}, which this build does not know \
+                     - it was written by a newer client, so this is a downgrade and not corruption"
+                )));
+            }
+        };
         let body = &blob[HEADER_LEN..];
-        if body.len() < 12 {
+        if body.len() < floor {
             return Err(MlsError::StateUndecryptable(format!(
-                "framed state blob carries {} byte(s) after its header, too short to hold a nonce",
+                "framed state blob (version {version}) carries {} byte(s) after its header, too \
+                 short to hold its {floor}-byte minimum",
                 body.len()
             )));
         }
         let mut fp = [0u8; FINGERPRINT_LEN];
         fp.copy_from_slice(&blob[MAGIC.len() + 1..HEADER_LEN]);
-        return Ok(Framed::V1 {
-            key_fingerprint: fp,
-            sealed: body,
+        return Ok(if version == VERSION_1 {
+            Framed::V1 {
+                key_fingerprint: fp,
+                sealed: body,
+            }
+        } else {
+            Framed::V2 {
+                key_fingerprint: fp,
+                header: &blob[..HEADER_LEN],
+                sealed: body,
+            }
         });
     }
     // BOTH REMAINING ARMS ARE THE SAME SITUATION FOR THE PERSON HOLDING THE PHONE: the saved state
@@ -157,6 +236,50 @@ pub fn frame_v1(key: &[u8; 32], sealed: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&key_fingerprint(key));
     out.extend_from_slice(sealed);
     out
+}
+
+/// The AES-256-GCM key a version 2 body is sealed under: HKDF-SHA256 of the device key.
+///
+/// Public so the cross-implementation tests can pin it to the SAME known-answer constant the
+/// TypeScript writer's test pins (`mlsStateSeal.test.ts`) - two implementations of one derivation
+/// agree only if something checks both against the same bytes.
+pub fn v2_aead_key(device_key: &[u8; 32]) -> Result<[u8; 32], MlsError> {
+    let provider = openmls_rust_crypto::OpenMlsRustCrypto::default();
+    let crypto = provider.crypto();
+    let prk = crypto
+        .hkdf_extract(HashType::Sha2_256, V2_KDF_SALT, device_key)
+        .map_err(|e| MlsError::StateUndecryptable(format!("v2 key derivation (extract): {e:?}")))?;
+    let okm = crypto
+        .hkdf_expand(HashType::Sha2_256, prk.as_slice(), V2_KDF_INFO, 32)
+        .map_err(|e| MlsError::StateUndecryptable(format!("v2 key derivation (expand): {e:?}")))?;
+    let mut out = [0u8; 32];
+    out.copy_from_slice(okm.as_slice());
+    Ok(out)
+}
+
+/// Opens a version 2 body (`[iv || ciphertext || tag]`) with the header as AAD.
+///
+/// Every failure is `StateUndecryptable`: a tag that does not verify here has ALREADY passed the
+/// fingerprint check (the caller makes it first), so the key is the right one and the bytes - body
+/// or header - were altered. There is no "another key" reading of this error left to make.
+pub fn open_v2(device_key: &[u8; 32], header: &[u8], sealed: &[u8]) -> Result<Vec<u8>, MlsError> {
+    if sealed.len() < V2_IV_LEN + V2_TAG_LEN {
+        return Err(MlsError::StateUndecryptable(format!(
+            "v2 body is {} bytes, shorter than an IV and a tag",
+            sealed.len()
+        )));
+    }
+    let key = v2_aead_key(device_key)?;
+    let (iv, ct_tag) = sealed.split_at(V2_IV_LEN);
+    let provider = openmls_rust_crypto::OpenMlsRustCrypto::default();
+    provider
+        .crypto()
+        .aead_decrypt(AeadType::Aes256Gcm, &key, ct_tag, iv, header)
+        .map_err(|e| {
+            MlsError::StateUndecryptable(format!(
+                "v2 AES-GCM tag did not verify under the right key - the blob was altered: {e:?}"
+            ))
+        })
 }
 
 #[cfg(test)]
@@ -206,6 +329,41 @@ mod tests {
     fn the_fingerprint_is_deterministic_because_a_reader_recomputes_it_on_another_run() {
         assert_eq!(key_fingerprint(&KEY_A), key_fingerprint(&KEY_A));
         assert_ne!(key_fingerprint(&KEY_A), [0u8; FINGERPRINT_LEN]);
+    }
+
+    #[test]
+    fn a_version_2_blob_parses_with_its_header_as_aad_and_carries_the_device_key_fingerprint() {
+        let mut blob = frame_v1(&KEY_A, &sealed(V2_IV_LEN + V2_TAG_LEN + 8));
+        blob[MAGIC.len()] = VERSION_2;
+        match parse(&blob).expect("a v2 blob must parse") {
+            Framed::V2 {
+                key_fingerprint: fp,
+                header,
+                sealed: body,
+            } => {
+                assert_eq!(fp, key_fingerprint(&KEY_A));
+                assert_eq!(header, &blob[..HEADER_LEN]);
+                assert_eq!(body.len(), V2_IV_LEN + V2_TAG_LEN + 8);
+            }
+            other => panic!("expected V2, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_version_2_body_shorter_than_an_iv_and_a_tag_is_a_stub_and_refused() {
+        // 27 bytes would have passed v1's 12-byte nonce floor - the floor is per version.
+        let mut blob = frame_v1(&KEY_A, &sealed(V2_IV_LEN + V2_TAG_LEN - 1));
+        blob[MAGIC.len()] = VERSION_2;
+        let err = parse(&blob).expect_err("a v2 stub must be refused");
+        assert!(err.to_string().contains("version 2"), "{err}");
+    }
+
+    #[test]
+    fn the_v2_key_is_derived_and_is_not_the_device_key() {
+        let k = v2_aead_key(&KEY_A).expect("derive");
+        assert_ne!(k, KEY_A);
+        assert_eq!(k, v2_aead_key(&KEY_A).expect("derive"));
+        assert_ne!(k, v2_aead_key(&KEY_B).expect("derive"));
     }
 
     #[test]

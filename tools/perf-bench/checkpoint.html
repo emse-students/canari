@@ -4,12 +4,16 @@
 <!--
   What one encrypted MLS checkpoint costs IN A BROWSER, split into its parts, on states shaped like
   a heavy account: N groups of 44 leaves, 10 past epochs, 3 senders x 20 frames each.
-  Served by serve.ts, which maps /wasm/ to frontend/src/lib/wasm (run `bun run generate` first).
+  Served by serve.ts, which maps /wasm/ to frontend/src/lib/wasm (run `bun run generate` first)
+  and /seal/mlsStateSeal.js to the app's own WebCrypto writer, transpiled as it is read.
+  Measures BOTH at-rest formats on the same snapshot: v1 = the WASM ChaCha20-Poly1305 seal,
+  v2 = the WebCrypto AES-GCM seal (mlsStateSeal.ts), and what loading each costs in the WASM.
   The table is printed on the page and kept on window.__bench. See README.md.
 -->
 <pre id="out">loading</pre>
 <script type="module">
   import init, { WasmMlsClient, encrypt_mls_state_blob_with_key } from './wasm/mls_wasm.js';
+  import { sealMlsStateBlobV2, openMlsStateBlobV2 } from './seal/mlsStateSeal.js';
   const out = document.getElementById('out');
   const log = (s) => {
     out.textContent += '\n' + s;
@@ -63,13 +67,41 @@
       tx.oncomplete = res;
       tx.onerror = () => rej(tx.error);
     });
+  // The main thread's longest stall while `fn` runs: a MessageChannel ping loop that only advances
+  // when the thread is free. The WebCrypto seal's synchronous part (its input copy) shows here;
+  // the cipher work, which runs off the JavaScript thread, does not.
+  async function withGapProbe(fn) {
+    const ch = new MessageChannel();
+    let last = performance.now();
+    let maxGap = 0;
+    let running = true;
+    ch.port1.onmessage = () => {
+      const now = performance.now();
+      maxGap = Math.max(maxGap, now - last);
+      last = now;
+      if (running) ch.port2.postMessage(0);
+    };
+    ch.port2.postMessage(0);
+    const t0 = performance.now();
+    const r = await fn();
+    const dt = performance.now() - t0;
+    running = false;
+    ch.port1.onmessage = null;
+    return [r, dt, maxGap];
+  }
   const results = [];
   let built = 0;
-  log('groups\tbytes\tdecrypt_ms\tsave_state_ms\tslice_ms\tencrypt_ms\tidb_put_ms (medians of 5)');
+  log(
+    'groups\tbytes\tdecrypt_ms\tsave_state_ms\tslice_ms\tseal_v1_wasm_ms\tseal_v2_webcrypto_ms' +
+      '\tv2_main_thread_max_stall_ms\tidb_put_ms\tcheckpoint_v1_ms\tcheckpoint_v2_ms' +
+      '\tload_v1_ms\tload_v2_web_ms\tload_v2_in_wasm_ms (medians of 5; loads: medians of 3)'
+  );
   for (const target of SIZES) {
     while (built < target) build('g-' + built++);
     me.save_state(undefined);
     const rows = [];
+    let lastV1 = null;
+    let lastV2 = null;
     for (let rep = 0; rep < 5; rep++) {
       const ct = senders[rep % 3].send_message_bytes('g-0', enc.encode('x' + rep));
       let t = performance.now();
@@ -82,22 +114,70 @@
       const plain = raw.slice();
       const sl = performance.now() - t;
       t = performance.now();
-      const sealed = encrypt_mls_state_blob_with_key(plain, KEY);
-      const en = performance.now() - t;
+      const sealedV1 = encrypt_mls_state_blob_with_key(plain, KEY);
+      const en1 = performance.now() - t;
+      const [sealedV2, en2, stall] = await withGapProbe(() => sealMlsStateBlobV2(raw, KEY));
       t = performance.now();
-      await put(sealed);
+      await put(sealedV2);
       const idb = performance.now() - t;
-      rows.push([dec, save, sl, en, idb, sealed.length]);
+      lastV1 = sealedV1;
+      lastV2 = sealedV2;
+      rows.push([
+        dec,
+        save,
+        sl,
+        en1,
+        en2,
+        stall,
+        idb,
+        save + sl + en1 + idb,
+        save + en2 + idb,
+        sealedV2.length,
+      ]);
+    }
+    // THE READ SIDE - what a cold start pays to open each format, and the round trip itself.
+    //   v1      : the WASM constructor over the ChaCha blob (decrypt + CBOR load), today's path.
+    //   v2_web  : the app's v2 path on the web - WebCrypto opens it (`openMlsStateBlobV2`), the
+    //             WASM loads the plain CBOR (`loadAndInitWasm`'s dispatch).
+    //   v2_wasm : the same v2 blob through `mls-core`'s own reader in WASM (software AES) - NOT a
+    //             web path, measured because it is why the web opens v2 itself; natively the
+    //             reader runs on hardware AES.
+    const loads = { v1: [], v2web: [], v2wasm: [] };
+    for (let rep = 0; rep < 3; rep++) {
+      const runs = [
+        ['v1', () => new WasmMlsClient('me', 'd', lastV1, KEY, true)],
+        [
+          'v2web',
+          async () =>
+            new WasmMlsClient('me', 'd', await openMlsStateBlobV2(lastV2, KEY), undefined, true),
+        ],
+        ['v2wasm', () => new WasmMlsClient('me', 'd', lastV2, KEY, true)],
+      ];
+      for (const [k, make] of runs) {
+        const t = performance.now();
+        const c = await make();
+        loads[k].push(performance.now() - t);
+        if (!c.is_group_active('g-0')) throw new Error(k + ' blob loaded without its group');
+        c.free();
+      }
     }
     const med = (k) => rows.map((r) => r[k]).sort((a, b) => a - b)[2];
+    const med3 = (a) => a.slice().sort((x, y) => x - y)[1];
     const line = [
       target,
-      rows[0][5],
+      rows[0][9],
       med(0).toFixed(2),
       med(1).toFixed(1),
       med(2).toFixed(1),
       med(3).toFixed(1),
       med(4).toFixed(1),
+      med(5).toFixed(1),
+      med(6).toFixed(1),
+      med(7).toFixed(1),
+      med(8).toFixed(1),
+      med3(loads.v1).toFixed(1),
+      med3(loads.v2web).toFixed(1),
+      med3(loads.v2wasm).toFixed(1),
     ];
     results.push(line);
     log(line.join('\t'));

@@ -16,7 +16,19 @@ vi.mock('$lib/workers/mlsEncrypt.worker?worker', () => ({
   default: class MockWorker {},
 }));
 
-import { disposeMlsEncryptWorker, encryptMlsStateOffThread } from './mlsEncryptWorkerSession';
+const sealMlsStateBlobV2Mock = vi.fn().mockResolvedValue(new Uint8Array([2, 2]));
+vi.mock('./mlsStateSeal', () => ({
+  sealMlsStateBlobV2: (...args: any[]) => sealMlsStateBlobV2Mock(...args),
+}));
+
+const isTauriRuntimeMock = vi.fn(() => false);
+vi.mock('$lib/utils/tauriRuntime', () => ({ isTauriRuntime: () => isTauriRuntimeMock() }));
+
+import {
+  disposeMlsEncryptWorker,
+  encryptMlsStateOffThread,
+  sealWebMlsState,
+} from './mlsEncryptWorkerSession';
 import type { MlsEncryptRequest } from './mlsWorkerProtocol';
 
 describe('encryptMlsStateOffThread', () => {
@@ -101,5 +113,36 @@ describe('encryptMlsStateOffThread', () => {
       'device-key-b64'
     );
     expect(out).toEqual(new Uint8Array([9, 9, 9]));
+  });
+});
+
+describe('sealWebMlsState - the one choice of at-rest format on the web', () => {
+  afterEach(() => {
+    disposeMlsEncryptWorker();
+    vi.clearAllMocks();
+    isTauriRuntimeMock.mockReturnValue(false);
+  });
+
+  it('writes the legacy WASM blob while the v2 writer is off', async () => {
+    const plain = new Uint8Array([1]);
+    const out = await sealWebMlsState(plain, 'k', { v2: false, useEncryptWorker: false });
+    expect(out).toEqual(new Uint8Array([9, 9, 9]));
+    expect(sealMlsStateBlobV2Mock).not.toHaveBeenCalled();
+  });
+
+  it('writes v2 through WebCrypto when on, without touching the WASM seal', async () => {
+    const plain = new Uint8Array([1]);
+    const out = await sealWebMlsState(plain, 'k', { v2: true, useEncryptWorker: true });
+    expect(out).toEqual(new Uint8Array([2, 2]));
+    expect(sealMlsStateBlobV2Mock).toHaveBeenCalledWith(plain, 'k');
+    expect(encryptMlsStateOnMainThreadMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to write v2 inside Tauri - the checkpoint fails loudly instead', async () => {
+    isTauriRuntimeMock.mockReturnValue(true);
+    await expect(
+      sealWebMlsState(new Uint8Array([1]), 'k', { v2: true, useEncryptWorker: true })
+    ).rejects.toThrow(/web-only/);
+    expect(sealMlsStateBlobV2Mock).not.toHaveBeenCalled();
   });
 });

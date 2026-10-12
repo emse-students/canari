@@ -1,0 +1,178 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import {
+  MLS_STATE_BLOB_HEADER_LEN,
+  MLS_STATE_BLOB_MAGIC,
+  MLS_STATE_BLOB_V2_IV_LEN,
+  MLS_STATE_BLOB_V2_KDF_INFO,
+  MLS_STATE_BLOB_V2_KDF_SALT,
+  MLS_STATE_SEAL_V2_WRITER_ENABLED,
+  isMlsStateBlobV2,
+  mlsStateKeyFingerprint,
+  openMlsStateBlobV2,
+  resetMlsStateSealForTests,
+  sealMlsStateBlobV2,
+} from './mlsStateSeal';
+
+/**
+ * The web half of the v2 state blob. The Rust half (`mls-core/tests/state_blob_v2.rs`) opens bytes
+ * THIS module wrote; this file pins the same known-answer derivation, so a drift on either side
+ * fails on that side, by name, rather than as a state that stops loading.
+ */
+
+/** `params::DEVICE_KEY` in `mls-core/tests/cross_version/params.rs`. */
+const DEVICE_KEY = new Uint8Array(32).fill(7);
+const DEVICE_KEY_B64 = btoa(String.fromCharCode(...DEVICE_KEY));
+/** The same two constants `state_blob_v2.rs` asserts. */
+const KAT_FINGERPRINT = 'aeb248d2a1f6c577';
+const KAT_AES_KEY = 'fe75bd5d3621ef0d97fe8fa2c1bb53ce3c4121fe57ddb4b841a47692012dacb5';
+
+const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+
+/** The AES key derived independently of the module, from the exported constants. */
+async function derivedAesKey(): Promise<Uint8Array> {
+  const ikm = await crypto.subtle.importKey('raw', DEVICE_KEY, 'HKDF', false, ['deriveBits']);
+  return new Uint8Array(
+    await crypto.subtle.deriveBits(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256',
+        salt: MLS_STATE_BLOB_V2_KDF_SALT,
+        info: MLS_STATE_BLOB_V2_KDF_INFO,
+      },
+      ikm,
+      256
+    )
+  );
+}
+
+/** Opens a v2 blob the way `state_blob::open_v2` does - header as AAD - or throws. */
+async function openV2(blob: Uint8Array): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    (await derivedAesKey()) as Uint8Array<ArrayBuffer>,
+    'AES-GCM',
+    false,
+    ['decrypt']
+  );
+  const header = blob.slice(0, MLS_STATE_BLOB_HEADER_LEN);
+  const iv = blob.slice(MLS_STATE_BLOB_HEADER_LEN, MLS_STATE_BLOB_HEADER_LEN + 12);
+  const body = blob.slice(MLS_STATE_BLOB_HEADER_LEN + 12);
+  return new Uint8Array(
+    await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: header }, key, body)
+  );
+}
+
+const plain = new TextEncoder().encode('cbor-mls-snapshot'.repeat(1000));
+
+describe('sealMlsStateBlobV2', () => {
+  beforeEach(() => resetMlsStateSealForTests());
+
+  it('derives the same fingerprint and AES key as mls-core (known answer)', async () => {
+    expect(hex(await mlsStateKeyFingerprint(DEVICE_KEY))).toBe(KAT_FINGERPRINT);
+    expect(hex(await derivedAesKey())).toBe(KAT_AES_KEY);
+  });
+
+  it('writes the v2 header: magic, version 2, the device key fingerprint', async () => {
+    const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
+    expect(Array.from(blob.slice(0, 7))).toEqual(Array.from(MLS_STATE_BLOB_MAGIC));
+    expect(blob[7]).toBe(2);
+    expect(hex(blob.slice(8, 16))).toBe(KAT_FINGERPRINT);
+    // header + IV + ciphertext (same length as the plaintext) + 16-byte tag
+    expect(blob.length).toBe(16 + MLS_STATE_BLOB_V2_IV_LEN + plain.length + 16);
+  });
+
+  it('round-trips, and two seals of the same state never share an IV', async () => {
+    const a = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
+    const b = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
+    expect(await openV2(a)).toEqual(plain);
+    expect(await openV2(b)).toEqual(plain);
+    expect(hex(a.slice(16, 28))).not.toBe(hex(b.slice(16, 28)));
+  });
+
+  it.each([
+    ['the version byte', 7],
+    ['a fingerprint byte', 9],
+    ['an IV byte', 16],
+    ['a ciphertext byte', 40],
+    ['the last tag byte', -1],
+  ])('refuses a blob with %s flipped (the header is authenticated too)', async (_what, at) => {
+    const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
+    const i = at < 0 ? blob.length + at : at;
+    blob[i] ^= 0x01;
+    await expect(openV2(blob)).rejects.toThrow();
+  });
+
+  it('refuses a truncated blob', async () => {
+    const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
+    await expect(openV2(blob.slice(0, blob.length - 1))).rejects.toThrow();
+  });
+
+  it('refuses a device key that is not 32 bytes rather than sealing an unreadable blob', async () => {
+    await expect(sealMlsStateBlobV2(plain, btoa('short'))).rejects.toThrow(/32 bytes/);
+  });
+
+  it('does not cache a failed key preparation, and derives again for a new device key', async () => {
+    await expect(sealMlsStateBlobV2(plain, btoa('short'))).rejects.toThrow();
+    // let the rejection handler clear the cache
+    await Promise.resolve();
+    const other = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
+    const blob = await sealMlsStateBlobV2(plain, other);
+    expect(hex(blob.slice(8, 16))).toBe(
+      hex(await mlsStateKeyFingerprint(new Uint8Array(32).fill(9)))
+    );
+    const back = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
+    expect(hex(back.slice(8, 16))).toBe(KAT_FINGERPRINT);
+  });
+
+  it('the committed fixture mls-core opens is this writer output (same header)', () => {
+    const fixture = new Uint8Array(
+      readFileSync(
+        join(import.meta.dirname, '../../../mls-core/tests/fixtures/webcrypto-v2-peer-state.bin')
+      )
+    );
+    expect(hex(fixture.slice(0, 16))).toBe(hex(MLS_STATE_BLOB_MAGIC) + '02' + KAT_FINGERPRINT);
+  });
+
+  it('the web opener reads the committed fixture to the frozen plain state (same bytes Rust opens)', async () => {
+    const dir = join(import.meta.dirname, '../../../mls-core/tests/fixtures');
+    const blob = new Uint8Array(readFileSync(join(dir, 'webcrypto-v2-peer-state.bin')));
+    const frozen = new Uint8Array(readFileSync(join(dir, 'v0.14.14-peer-state.bin')));
+    expect(isMlsStateBlobV2(blob)).toBe(true);
+    expect(await openMlsStateBlobV2(blob, DEVICE_KEY_B64)).toEqual(frozen);
+  });
+
+  it('the web opener answers mls-core codes: another key, a stub, an altered body or header', async () => {
+    const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
+    const other = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
+    await expect(openMlsStateBlobV2(blob, other)).rejects.toThrow(/^STATE_KEY_MISMATCH: /);
+    await expect(openMlsStateBlobV2(blob.slice(0, 16 + 27), DEVICE_KEY_B64)).rejects.toThrow(
+      /^STATE_UNDECRYPTABLE: .*version 2/
+    );
+    for (const at of [16, 40, blob.length - 1]) {
+      const altered = blob.slice();
+      altered[at] ^= 1;
+      await expect(openMlsStateBlobV2(altered, DEVICE_KEY_B64)).rejects.toThrow(
+        /^STATE_UNDECRYPTABLE: /
+      );
+    }
+  });
+
+  it('recognises only version 2: legacy, v1 and unknown versions stay with mls-core', async () => {
+    const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
+    for (const version of [1, 3]) {
+      const other = blob.slice();
+      other[7] = version;
+      expect(isMlsStateBlobV2(other)).toBe(false);
+    }
+    expect(isMlsStateBlobV2(new Uint8Array(64).fill(0xab))).toBe(false);
+    expect(isMlsStateBlobV2(blob.slice(0, 15))).toBe(false);
+  });
+
+  it('ships with the writer OFF: the reader release comes first', () => {
+    // Read-first, write-later - see MLS_STATE_SEAL_V2_WRITER_ENABLED. Flipping it is the one-line
+    // change the wiki names, and this assertion moves with it, deliberately.
+    expect(MLS_STATE_SEAL_V2_WRITER_ENABLED).toBe(false);
+  });
+});

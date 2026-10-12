@@ -2,7 +2,8 @@ import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
-import { encryptMlsStateOffThread } from '$lib/mls-client/mlsEncryptWorkerSession';
+import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
+import { MLS_STATE_SEAL_V2_WRITER_ENABLED } from '$lib/mls-client/mlsStateSeal';
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
@@ -882,9 +883,16 @@ export class WebMlsService extends BaseMlsService {
     return tagMlsSnapshot(this.client.save_state(undefined) as Uint8Array, writer);
   }
 
-  /** Encrypts a plain CBOR snapshot (worker when enabled, else main-thread WASM). */
+  /**
+   * Seals a plain CBOR snapshot for storage: the framed v2 WebCrypto AES-GCM blob once
+   * {@link MLS_STATE_SEAL_V2_WRITER_ENABLED} is on, the legacy WASM ChaCha20 blob (worker when
+   * enabled, else main thread) until then. Both are read by `mls-core` on every platform.
+   */
   async encryptState(plain: Uint8Array, deviceKeyB64: string): Promise<Uint8Array> {
-    return encryptMlsStateOffThread(plain, deviceKeyB64, { enabled: this.useEncryptWorker });
+    return sealWebMlsState(plain, deviceKeyB64, {
+      v2: MLS_STATE_SEAL_V2_WRITER_ENABLED,
+      useEncryptWorker: this.useEncryptWorker,
+    });
   }
 
   /** Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over. */

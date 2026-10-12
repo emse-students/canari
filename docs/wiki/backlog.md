@@ -322,9 +322,9 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 Ranked, measured and located on [performance-audit-2026-10-12](frontend/performance-audit-2026-10-12.md); five draft pull requests carry the rest (#1771-#1775).
 
-### P2 - the web checkpoint is 82 % WASM ChaCha20 seal
+### P2 - the web checkpoint is 82 % WASM ChaCha20 seal - BUILT, WRITER OFF (draft PR, 2026-10-12)
 
-141 ms of 175 ms per 7.7 MB checkpoint in desktop Chrome: `chacha20` has no WASM SIMD backend (~55 MB/s). A WebCrypto seal under the framed `state_blob` V1 version byte would cut it about five-fold with no durability change - a format decision.
+The framed `state_blob` v2 (WebCrypto AES-GCM on the web, read by `mls-core` everywhere, opened by WebCrypto in the browser) takes a 7.7 MB checkpoint from ~198 to ~47 ms and the cold-start load from ~240 to ~97 ms ([performance-audit](frontend/performance-audit-2026-10-12.md#the-webcrypto-seal-v2---measured-2026-10-12)). **Owed after merge: the one-line flip of `MLS_STATE_SEAL_V2_WRITER_ENABLED`**, once a stable carrying the reader has served the web AND `minClientVersion` is at or past it ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)). Then the encrypt worker and `encryptMlsStateOnMainThread` have no checkpoint caller left and are deleted.
 
 ### P2 - IndexedDB message pages read the whole conversation
 
