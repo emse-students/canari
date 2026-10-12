@@ -66,6 +66,7 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
+  import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
@@ -462,11 +463,24 @@
     return true;
   }
 
-  /** Opens the PIN modal for the given user, computing isFirstSetup from the server. */
+  /**
+   * Opens the PIN modal for the given user.
+   *
+   * THE GATE IS DRAWN ON THE LOCAL FACT WHEN THERE IS ONE. A device that enrolled this user is a
+   * returning one, so the server's `pin-status` - which waited for the token refresh, then a round
+   * trip, ~0.5 s of a cold start behind a notification - is asked only by a device that never did.
+   * See {@link firstPinSetupFromDevice}.
+   */
   async function openPinModal(uid: string) {
     if (!mayPromptForPin()) return;
     globalSession.userId = uid;
-    isFirstPinSetup = await detectFirstPinSetup(uid);
+    const knownLocally = firstPinSetupFromDevice(localStorage, uid);
+    if (knownLocally !== null) {
+      appendLog('[PIN] Gate drawn from the enrolled device id - no pin-status round trip');
+      isFirstPinSetup = knownLocally;
+    } else {
+      isFirstPinSetup = await detectFirstPinSetup(uid);
+    }
     showPinModal = true;
   }
 
@@ -583,6 +597,7 @@
    * were all revoked/GC'd but who still has a registered PIN (picking a new PIN would
    * then fail the verifier with a confusing mismatch). Defaults to false on any
    * network/auth failure so the "first setup" wording is never shown by mistake.
+   * Asked only by a device holding no enrolled device id ({@link openPinModal}).
    */
   async function detectFirstPinSetup(uid: string): Promise<boolean> {
     try {
