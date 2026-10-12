@@ -5,6 +5,7 @@
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
+  import { createTapDisambiguator, tapBelongsToInnerControl } from '$lib/utils/tapDisambiguator';
   import {
     logMediaFailure,
     mediaFailureCause,
@@ -118,7 +119,7 @@
     onReact?: (messageId: string, emoji: string) => void;
     /** Called when the user votes on a poll message (channels only). */
     onVotePoll?: (messageId: string, optionIds: string[]) => void;
-    /** Called when the poll author closes their poll early (channels only). */
+    /** Called when the poll's author or a moderator (`canModerate`) closes it early (channels only). */
     onClosePoll?: (messageId: string) => void;
     /** Called when the user confirms message deletion. */
     onDelete?: (messageId: string) => void;
@@ -227,7 +228,6 @@
   // this repo already owns for exactly this question, and it is READ here rather than assumed.
   let coarsePointer = $state(isCoarsePointerDevice());
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastTapTime = 0;
   let pointerStartX = $state(0);
   let pointerStartY = $state(0);
   let swipeHandled = $state(false);
@@ -382,14 +382,23 @@
   /** Only the author's own text message can be edited, and only where the parent can take it. */
   const canEdit = $derived(!isDeleted && isOwn && !mediaRef && !pollEnvelope && !!onBeginEdit);
 
-  function handleBubbleClick(e: MouseEvent) {
-    // Double-tap on mobile: react with ❤️ instead of toggling info
-    if (isMobile && !isDeleted && onReact) {
-      const now = Date.now();
-      if (now - lastTapTime < 300) {
-        lastTapTime = 0;
+  /**
+   * ONE TAP OPENS THE INFO PANEL, TWO TAPS LIKE - NEVER BOTH (user, 2026-10-12). The first tap used
+   * to toggle the panel at once and the second to like and close it, so every heart flashed the
+   * readers' panel. The single tap now waits out the double-tap window in `tapDisambiguator`, and
+   * only where a second tap could mean something (`heartOnDoubleTap`); elsewhere it is immediate.
+   */
+  const bubbleTaps = createTapDisambiguator(
+    {
+      onSingle: () => {
+        Log.d('MESSAGE', `bubble tap on ${messageId.slice(0, 8)}: single, info panel`);
+        emojiPickerOrigin = null;
+        showInfo = !showInfo;
+      },
+      onDouble: () => {
+        Log.d('MESSAGE', `bubble tap on ${messageId.slice(0, 8)}: double, heart`);
         showInfo = false;
-        onReact(messageId, '❤️');
+        onReact?.(messageId, '❤️');
         if (
           settings.vibrationsEnabled &&
           typeof navigator !== 'undefined' &&
@@ -397,12 +406,30 @@
         ) {
           navigator.vibrate(12);
         }
-        return;
-      }
-      lastTapTime = now;
-    }
+      },
+    },
+    // A third quick tap after a heart is part of the same gesture: no panel opens behind the like.
+    { quietAfterDouble: true }
+  );
+  // A bubble unmounted mid-window must not open a panel on a component that is gone.
+  $effect(() => () => bubbleTaps.cancel());
 
-    toggleInfo(e);
+  /** A double tap means a heart only on a phone, on a live message, where reacting is wired. */
+  const heartOnDoubleTap = $derived(isMobile && !isDeleted && !!onReact);
+
+  function handleBubbleClick(e: MouseEvent) {
+    // A link, a mention, a poll option or a media button inside the bubble owns its tap: it acted,
+    // and it neither opens the panel nor counts towards a heart.
+    if (e.currentTarget instanceof Element && tapBelongsToInnerControl(e.target, e.currentTarget)) {
+      Log.d('MESSAGE', `bubble tap on ${messageId.slice(0, 8)}: inner control, ignored`);
+      return;
+    }
+    if (!heartOnDoubleTap) {
+      toggleInfo(e);
+      return;
+    }
+    e.stopPropagation();
+    bubbleTaps.tap({ x: e.clientX, y: e.clientY, t: Date.now() });
   }
 
   function confirmDelete() {
@@ -456,6 +483,8 @@
         // each action correctly hidden, the panel itself never asked whether it should exist. Same
         // family as the picker button below: the actions were gated, the surfaces were not.
         if (isDeleted) return;
+        // The sheet supersedes a tap still waiting out the double-tap window.
+        bubbleTaps.cancel();
         showMobileActions = true;
         emojiPickerOrigin = null;
         showInfo = false;
@@ -857,6 +886,8 @@
             ontouchcancel={endSwipeReply}
             oncontextmenu={(e) => {
               e.preventDefault();
+              // The sheet supersedes a tap still waiting out the double-tap window.
+              bubbleTaps.cancel();
               if (isDeleted) return; // see the long-press timer: the sheet has no items on a tombstone
               showMobileActions = true;
             }}
@@ -891,7 +922,7 @@
                 meta={pollMeta}
                 {currentUserId}
                 onVote={(optionIds) => onVotePoll?.(messageId, optionIds)}
-                canClose={isOwn && !!onClosePoll}
+                canClose={(isOwn || canModerate) && !!onClosePoll}
                 onClose={() => onClosePoll?.(messageId)}
               />
             {:else}
