@@ -72,7 +72,8 @@ async function saltForSubmit(deps: PinUnlockDeps): Promise<{ salt: string; sourc
  * once more. A second `stale-salt` is a reset racing the retry too, and is refused by name.
  *
  * @returns The installed device key.
- * @throws LoginFailure `pin_mismatch`, `device_revoked` or `pin_salt_rotated`.
+ * @throws LoginFailure `pin_mismatch`, `device_revoked` or `pin_salt_rotated`, and `other` for an
+ *   answer that is neither `ok` nor `registered` - only those two install the key.
  */
 export async function unlockWithPin(deps: PinUnlockDeps): Promise<string> {
   beginBootSpan('pin-salt-fetch');
@@ -117,6 +118,15 @@ export async function unlockWithPin(deps: PinUnlockDeps): Promise<string> {
       await deps.wipeRevokedDevice();
       deps.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
       throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
+    }
+    if (answer.status !== 'ok' && answer.status !== 'registered') {
+      // AN ALLOWLIST, NEVER "ANYTHING BUT A REFUSAL": a body this client does not recognise (an
+      // empty `{}`, a status added by a later server) has not said the PIN was accepted, so the key
+      // derived from it is dropped unread rather than installed.
+      deps.log(
+        `[PIN] Unrecognised pin-check answer (status ${String(answer.status)}) - the device key is NOT installed.`
+      );
+      throw new LoginFailure('other', m.auth_pin_check_unexpected());
     }
     if (answer.status === 'registered') deps.log('First device: PIN registered.');
 

@@ -70,6 +70,18 @@ describe('unlockWithPin', () => {
     expect(d.wipeRevokedDevice).not.toHaveBeenCalled();
   });
 
+  it('never installs the device key for an answer that is not ok or registered', async () => {
+    // A 200 with an empty body, and a status this client does not know: neither said "accepted".
+    for (const answer of [{}, { status: 'accepted-later' }]) {
+      order = [];
+      const d = deps([answer as unknown as PinCheckAnswer]);
+
+      expect(await failureCode(unlockWithPin(d))).toBe('other');
+      expect(d.installDeviceKey).not.toHaveBeenCalled();
+      expect(d.wipeRevokedDevice).not.toHaveBeenCalled();
+    }
+  });
+
   it('wipes a revoked device and never installs its key, even with the right PIN', async () => {
     const d = deps([{ status: 'ok', resetRequired: true }]);
 

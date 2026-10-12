@@ -219,6 +219,9 @@ all of it in series. Two of those steps wait on nothing they need:
     also closes the case where, with no row left, the old code REGISTERED a verifier under a salt the
     server never stored. The client asks the salt again and checks once more; a second `stale-salt`
     is refused by name (`pin_salt_rotated`). A client that sends no salt is answered as before.
+  - *The key is installed on an ALLOWLIST of answers*: only `ok` and `registered`. It used to be
+    installed for anything that was not `mismatch` or `stale-salt`, so a `200 {}` unlocked; any other
+    answer is now logged and refused (`other`, `auth_pin_check_unexpected`) with the key unread.
   - *Behavioural tests, not regexes*: the PIN half moved to `pinUnlock.ts` (`unlockWithPin`, every
     dependency passed in), and `pinUnlock.test.ts` answers `mismatch`, `resetRequired` and a double
     `stale-salt` and watches `installDeviceKey` stay uncalled.
