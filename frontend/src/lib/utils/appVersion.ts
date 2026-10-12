@@ -241,17 +241,6 @@ export function buildAppVersionCheckResult(
   };
 }
 
-/**
- * Returns whether the running client is at least as new as the server deployment.
- * `upToDate` is true when the server version is unknown (offline) or client >= server.
- */
-export async function checkAppVersion(
-  fetchFn: typeof fetch = fetch
-): Promise<AppVersionCheckResult> {
-  const server = await fetchServerAppVersionReliable(fetchFn);
-  return buildAppVersionCheckResult(server);
-}
-
 /** True when maintenance is active and the caller is not a global admin. */
 export function isMaintenanceBlockingUser(
   maintenance: PlatformMaintenanceInfo,

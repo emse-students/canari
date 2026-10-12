@@ -73,16 +73,6 @@ export function installAppLinkClickHandler(): void {
   document.addEventListener('click', handleAppLinkClick, true);
 }
 
-/** @deprecated Use {@link installAppLinkClickHandler}. */
-export function installExternalLinkClickHandler(): void {
-  installAppLinkClickHandler();
-}
-
-/** @deprecated Use {@link handleAppLinkClick}. */
-export function handleExternalLinkClick(event: MouseEvent): boolean {
-  return handleAppLinkClick(event);
-}
-
 /**
  * Open an external URL in the system browser on Tauri, or in a new tab on the web.
  *

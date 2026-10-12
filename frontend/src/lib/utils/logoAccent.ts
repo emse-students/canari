@@ -218,8 +218,3 @@ export async function loadLogoAccent(url: string): Promise<string | null> {
   cache.set(url, pending);
   return pending;
 }
-
-/** Test seam: forget every answer. Never called by the app - the cache lives as long as the tab. */
-export function resetLogoAccentCache(): void {
-  cache.clear();
-}

@@ -563,8 +563,3 @@ export class MlsPerGroupScheduler {
     for (const resolve of waiters) resolve();
   }
 }
-
-/** Maps a queue bucket key back to an optional MLS group id. */
-export function groupIdFromQueueKey(key: string): string | undefined {
-  return key === MLS_QUEUE_ORPHAN_KEY ? undefined : key;
-}
