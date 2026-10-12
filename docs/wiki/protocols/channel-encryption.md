@@ -3176,7 +3176,7 @@ a salon refetch until #1761.
 
 | Field | Where | Meaning |
 |---|---|---|
-| `recipientDevices: string[]` | `POST /api/mls/send` body | 1 to 16 `userId:deviceId` keys. The frame is queued only for those devices among the group's LIVE members (the same membership query as every send), and it is NEVER appended to the history stream. Refused (400) on a commit or a Welcome, as an empty list, as more than 16 keys or as a malformed key. If the field is absent, the frame goes to the whole group, as before. |
+| `recipientDevices: string[]` | `POST /api/mls/send` body | 1 to 16 `userId:deviceId` keys. The frame is queued only for those devices among the group's LIVE members (the same membership query as every send), and it is NEVER appended to the history stream. Refused (400) on a commit or a Welcome, on any group that is not a key-distribution group (a member could otherwise equivocate in a conversation), as an empty list, as more than 16 keys or as a malformed key. If the field is absent, the frame goes to the whole group, as before. |
 | `answerer_device_id` (field 6) | `GraineRequestMsg` | The one device of the elected answerer that must answer. If it is empty, every device answers (pre-1.2.5 requesters). |
 | `onlineDevices: string[]` | social-service roster `?presence=1` | Each member's online device ids, sorted, from the same single SCAN as `online`. |
 

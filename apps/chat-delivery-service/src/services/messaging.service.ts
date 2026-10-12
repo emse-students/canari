@@ -991,6 +991,27 @@ export class MessagingService {
         // performed BY a device that is legitimately not active yet - `validateCommit` promotes it
         // precisely because such a device never receives a Welcome - so gating commits and Welcomes
         // here would wall up the one door out of `pending`.
+        // AN ADDRESSED FRAME IS ALLOWED ON A KEY-DISTRIBUTION GROUP ONLY - an allowlist, not a
+        // denylist. Its one sender is a Graine answer (channel-encryption section 23). On a
+        // conversation group the same field would let a member show different ciphertexts to
+        // different members and keep each out of the shared history stream - an equivocation the
+        // ordinary fan-out (one ciphertext, every member) makes impossible.
+        if (addressed) {
+          const group = await this.groupRepo.findOne({
+            where: { id: groupId },
+            select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+          });
+          if (!group?.distributionWorkspaceId && !group?.distributionChannelId) {
+            this.logger.warn(
+              `[SEND][${traceId}] REJECT addressed_not_key_group group=${groupId} - ` +
+                `recipientDevices is accepted on a key-distribution group only`
+            );
+            throw new BadRequestException(
+              'recipientDevices is accepted on a key-distribution group only'
+            );
+          }
+        }
+
         const isHandshake = !!body.isCommit || !!body.isWelcome;
         if (!isHandshake && body.senderId && body.senderDeviceId) {
           const senderMembership = await this.deviceGroupRepo.findOne({

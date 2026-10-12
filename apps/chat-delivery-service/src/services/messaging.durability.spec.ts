@@ -118,6 +118,12 @@ describe('MessagingService - visibility vs durability', () => {
   });
 
   /**
+   * Groups. An addressed frame is accepted on a key-distribution group only, so the default row is
+   * one; a test about a conversation group says so.
+   */
+  const groupRepo = emptyRepo();
+
+  /**
    * Static KeyPackages - the server-side proof that a device is addressable at all (WP-GHOST-1).
    *
    * Held at this scope rather than built inside `beforeEach` so a test can say who exists.
@@ -147,6 +153,7 @@ describe('MessagingService - visibility vs durability', () => {
     deviceGroupRepo.find.mockResolvedValue([]);
     deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
     keyPackageRepo.find.mockResolvedValue([]);
+    groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'w1' });
     execResult = [
       [null, '1-0'],
       [null, 0],
@@ -160,7 +167,7 @@ describe('MessagingService - visibility vs durability', () => {
           useValue: queuedMessageRepo,
         },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
         {
           provide: getRepositoryToken(OneTimeKeyPackage),
@@ -510,6 +517,17 @@ describe('MessagingService - visibility vs durability', () => {
       await expect(
         service.sendMessage(send({ isWelcome: true, recipientDevices: ['u2:dB'] }))
       ).rejects.toThrow('refused on a commit or a Welcome');
+    });
+
+    it('refuses an addressed frame on a conversation group, where it would let a member equivocate', async () => {
+      groupOfThree();
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: null });
+
+      await expect(
+        service.sendMessage(send({ silent: true, durable: true, recipientDevices: ['u2:dB'] }))
+      ).rejects.toThrow('key-distribution group only');
+      expect(queuedMessageRepo.save).not.toHaveBeenCalled();
+      expect(redis.xadd).not.toHaveBeenCalled();
     });
 
     it('refuses an empty or malformed list rather than reading it as "the whole group"', async () => {
