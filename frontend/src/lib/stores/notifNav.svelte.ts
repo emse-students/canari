@@ -23,6 +23,8 @@ let pendingConvoId = $state<string | null>(null);
  * from a new one - this counter can, and it is what the landing's route-once guard compares.
  */
 let landingSeq = $state(0);
+/** The landing whose target route has been reached (`landingStep` answered `select`), 0 for none. */
+let arrivedSeq = $state(0);
 
 export const notifNav = {
   get pending(): string | null {
@@ -36,6 +38,21 @@ export const notifNav = {
   navigate(id: string) {
     landingSeq += 1;
     pendingConvoId = id;
+  },
+  /**
+   * True while a landing is pending AND has not yet reached the route that displays its target.
+   *
+   * NOT the same as `pending !== null`: the target stays pending after arrival, for as long as it
+   * is on screen and beyond (on a wide screen nothing releases it when the reader leaves `/chat`).
+   * A page that only defers work for a landing on its way somewhere else asks THIS, or it waits
+   * for a release that may never come.
+   */
+  get enRoute(): boolean {
+    return pendingConvoId !== null && arrivedSeq !== landingSeq;
+  },
+  /** Records that the CURRENT landing has reached its target's route. */
+  markArrived() {
+    arrivedSeq = landingSeq;
   },
   /** Ends the landing: displayed and moved on, or abandoned. */
   clear() {

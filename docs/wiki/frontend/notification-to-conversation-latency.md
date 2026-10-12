@@ -118,6 +118,42 @@ Ranked by what a cold PIN user pays, which is the default (the checkbox is untic
 - **The reply's own path is fine to the eye**: the bubble is on screen 54-337 ms after the click.
   What takes ~0.75-1.1 s is the acceptance, and the user does not wait on it unless it fails.
 
+### F2 - the feed no longer draws under a landing (cause confirmed, then measured)
+
+**The heartbeat named the block before anything was built.** A 50 ms main-thread probe plus the
+`long-animation-frame` observer, installed by the tap instrument, on three cold PIN runs: ONE block
+of 681-703 ms starting ~0.65 s into the device-key PBKDF2, attributed to the continuation of
+`listPosts`' `await res.json()` - the feed drawn from its first answer - then 8-10 frames of
+100-200 ms from the posts route's `requestAnimationFrame` (the progressive mount) across `mls-init`
+and the routing. The correlation was the cause.
+
+**The fix** (`feedHeldForLanding`, `routes/posts/+page.svelte`): while a landing is ON ITS WAY
+(`notifNav.enRoute`: a target is pending and its route has not been reached), the feed's FIRST draw
+is held (skeletons, nothing to mount). The landing effect calls `notifNav.markArrived()` the moment
+`landingStep` answers `select`, and an abandoned landing clears the target, so either ends the hold.
+**`pending` alone is the wrong release** - the first version used it, and review caught it: the
+target stays pending while displayed and, on a wide screen, after the reader leaves `/chat`, so a
+feed reached afterwards would have shown skeletons for ever. A feed already on screen is never
+blanked. The requests still go out - they cost the network, not the main thread. The measurement
+below was taken on the first version; the two hold identically until the route is reached, which on
+a phone is when the feed is unmounted, and the phone was handed to another session before a rebuild.
+
+| cold, PIN (n=6, medians, ms after the tap) | baseline (`main`) | F2 |
+| --- | ---: | ---: |
+| device-key PBKDF2 | 658 [115-713] | **125** [113-130] |
+| `mls-init` | 429 [155-582] | **46** [38-156] |
+| `MLS ready` | 4053 [3348-4446] | **3230** [2959-3557] |
+| route is `/chat` | 4696 [3595-4997] | **3446** [3204-3806] |
+| **pane + composer usable** | **5063** [3864-5307] | **3825** [3539-4077] |
+| first history row | 5605 [4502-5903] | 4565 [4201-4991] |
+
+**~1.24 s off the composer for a PIN user**, the high end of what the plan expected. Both builds
+are release APKs of the same tree but for the change (`android.yml` dispatched with
+`publish: false`), installed with `install -r` over the bench device. One baseline run had already
+shown it by accident: its feed answer came late, nothing was drawn under the landing, and it
+read PBKDF2 115 ms and the composer at 3.86 s. Back from the conversation, the feed draws its 20
+cards as before.
+
 ### Noise seen on the way (not on the critical path, written down so it is not rediscovered)
 
 - `[hooks] launch URL already acted on by this start, ignoring the replay` appears 2-4 times per

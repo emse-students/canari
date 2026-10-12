@@ -20,6 +20,8 @@
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
   import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
   import { progressiveCount } from '$lib/utils/progressiveMount.svelte';
+  import { feedHeldForLanding } from '$lib/posts/feedLandingHold';
+  import { notifNav } from '$lib/stores/notifNav.svelte';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import PostCornerBadge from '$lib/components/posts/PostCornerBadge.svelte';
@@ -54,6 +56,24 @@
   let postsOverride = $state<PostEntity[] | null>(null);
   /** Resolved value of data.posts - used as fallback when postsOverride is still null. */
   let initialPostsResolved = $state<PostEntity[] | null>(null);
+
+  /**
+   * THE FIRST DRAW WAITS WHILE A NOTIFICATION LANDING IS UNDER WAY - this page is about to be left,
+   * and drawing it cost the PIN path and the routing ~1-2 s of main thread on the Mi 9T. The rule and
+   * its measurement are on {@link feedHeldForLanding}.
+   */
+  let feedDrawn = $state(false);
+  const heldForLanding = $derived(
+    feedHeldForLanding({ landingEnRoute: notifNav.enRoute, feedDrawn })
+  );
+  $effect(() => {
+    if (heldForLanding) {
+      Log.d('POSTS', 'first draw held - a deep-link landing is taking the reader elsewhere');
+      return;
+    }
+    if ((postsOverride ?? initialPostsResolved) !== null) feedDrawn = true;
+  });
+
   let loading = $state(false);
   let loadingMore = $state(false);
   let hasMore = $state(true);
@@ -64,7 +84,8 @@
    * page the member had just released (Mi 9T, 2026-10-02).
    */
   const mounted = progressiveCount({
-    total: () => (postsOverride ?? initialPostsResolved)?.length ?? 0,
+    // Nothing to mount while the first draw is held, or every card would land in one frame on release.
+    total: () => (heldForLanding ? 0 : ((postsOverride ?? initialPostsResolved)?.length ?? 0)),
     resetKey: () => feedCacheKey(data.feedParams),
     initial: 3,
     batch: 2,
@@ -620,7 +641,9 @@
                promise, appeared to work. A successful refetch must be rendered whatever the
                initial promise did. -->
       <div class="space-y-5">
-        {#if postsOverride}
+        {#if heldForLanding}
+          {@render skeletonCards()}
+        {:else if postsOverride}
           {@render feedList(postsOverride)}
         {:else}
           {#await data.posts}
