@@ -387,7 +387,9 @@ void CanariMirrorPushStateToAppGroup(void) {
   }
   // The push secret lives in the Keychain (app-only). Copy it into the container so the NSE
   // can authenticate the backend fetch paths (omitted proto, commit catch-up, avatar); the
-  // common inline-ciphertext decrypt needs no secret.
+  // common inline-ciphertext decrypt needs no secret. This is NOT the copy's main writer:
+  // `store_push_secret` (push.rs) writes it the moment /register rotates the secret, which is
+  // after didBecomeActive's mirror - this rewrite only carries the same newest value again.
   NSString *secret = CanariRetrievePushSecret();
   if (secret.length > 0) {
     [[secret dataUsingEncoding:NSUTF8StringEncoding]
