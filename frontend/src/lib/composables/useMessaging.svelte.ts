@@ -1010,20 +1010,38 @@ export function useMessaging() {
     // conversation flash read/unread for the whole reconciliation. The watermark is persisted on
     // the conversation, so it is already loaded before any of this runs - the count was ignoring a
     // fact it held. Deriving it here makes the result independent of the order frames arrive in.
-    const myWatermark = watermarkFor(convo.readWatermarks, ctx.userId.toLowerCase());
-    const addedUnread = brandNew.filter((msg) => isUnreadForUser(msg, myWatermark)).length;
-    const nextUnreadCount = isConversationOpen ? 0 : (convo.unreadCount ?? 0) + addedUnread;
+    //
+    // AND AGAINST THE ROW AS IT IS NOW, NOT AS IT WAS BEFORE THE LOOP. The loop yields every 50
+    // messages, and the boot restore's second phase may merge its stored page into this row in
+    // between - the restore asks for the frames it refused as soon as the rows exist
+    // (`notifyConversationRowsSeeded`), so the two do overlap. Writing back the copy read before the
+    // loop would erase that page; a message the row gained meanwhile is not added a second time.
+    const current = ctx.conversations.get(normalized);
+    const base = current ?? convo;
+    const heldNow = current && current !== convo ? indexMessagesById(current.messages) : null;
+    const toAdd = heldNow ? brandNew.filter((m) => !heldNow.has(m.id)) : brandNew;
+    const myWatermark = watermarkFor(base.readWatermarks, ctx.userId.toLowerCase());
+    const addedUnread = toAdd.filter((msg) => isUnreadForUser(msg, myWatermark)).length;
+    const nextUnreadCount = isConversationOpen ? 0 : (base.unreadCount ?? 0) + addedUnread;
 
-    const withUpgrades = convo.messages.map((m) => upgradedById.get(m.id) ?? m);
-    const merged = mergeMessagesInInputOrder(withUpgrades, brandNew);
+    const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);
+    const merged = mergeMessagesInInputOrder(withUpgrades, toAdd);
     const batchMaxTs = merged.reduce((max, m) => Math.max(max, messageTime(m)), 0);
 
-    ctx.conversations.set(normalized, {
-      ...convo,
-      unreadCount: nextUnreadCount,
-      messages: merged,
-      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, batchMaxTs),
-    });
+    if (current) {
+      ctx.conversations.set(normalized, {
+        ...current,
+        unreadCount: nextUnreadCount,
+        messages: merged,
+        lastMessageAt: Math.max(current.lastMessageAt ?? 0, batchMaxTs),
+      });
+    } else {
+      // Same rule as the vanished-conversation return at the top: never silent. The rows are still
+      // persisted below, so the store keeps what the map could not show.
+      console.warn(
+        `[ADD_MSG] conversation "${normalized}" vanished during the batch - ${brandNew.length} message(s) persisted, not rendered`
+      );
+    }
 
     // THE ONLY INBOUND PATH WITH NO SUCCESS LINE, until 2026-08-20. The live path says
     // `Message added` per message; this one said nothing at all, so a message that took the buffered

@@ -101,6 +101,43 @@ describe('the ack barrier in front of a pull', () => {
     expect(order).toEqual(['ack:row-1', 'ack:landed', 'ack:(flush)', 'ack:landed', 'pull']);
   });
 
+  /**
+   * THE PULL IS ANNOUNCED IN THE TICK IT IS ASKED FOR, even while it waits for an ack to land.
+   *
+   * The ack ordering used to be awaited BEFORE `pendingPullInFlight` was set, so for one ack round
+   * trip a pull had been asked for and no barrier could see it: an archive replay reaching
+   * `waitForGroupQueueIdle` then passed straight through, decrypted the frame, and the pull
+   * delivered it again (`Duplicate delivery`). The boot restore now asks for that pull before its
+   * replays start, so the window would be crossed on every cold start.
+   */
+  it('lets a barrier entered while the ack is in flight wait for the pull', async () => {
+    const ackLanding = deferred();
+    poke(svc, {
+      delivery: {
+        ackMessages: vi.fn(async () => {
+          await ackLanding.promise;
+        }),
+        pullPendingMessagesJson: vi.fn(async () => {
+          order.push('pull');
+        }),
+      },
+    });
+
+    void inner(svc).announceAck(['row-1']);
+    const pulling = inner(svc).fetchPendingMessages();
+    expect((svc as unknown as { pendingPullInFlight: unknown }).pendingPullInFlight).not.toBeNull();
+
+    const barrier = svc.waitForGroupQueueIdle('test', 'g-1').then(() => order.push('barrier'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual([]);
+
+    ackLanding.settle();
+    await pulling;
+    await barrier;
+    expect(order).toEqual(['pull', 'barrier']);
+  });
+
   it('serialises two acks so the second cannot overtake the first', async () => {
     const first = deferred();
     poke(svc, {
