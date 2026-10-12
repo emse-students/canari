@@ -28,6 +28,9 @@ const mounted: Record<string, unknown>[] = [];
 
 const FRAME = { left: 0, top: 0, right: 200, bottom: 400, width: 200, height: 400 };
 const TRASH = { left: 80, top: 330, right: 120, bottom: 390, width: 40, height: 60 };
+const NOWHERE = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+/** The tool tray's box: not laid out (covers nothing) unless a test places it. */
+const tray = vi.fn(() => NOWHERE);
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -41,10 +44,14 @@ beforeEach(() => {
       ? TRASH
       : this.hasAttribute('data-reel-surface')
         ? FRAME
-        : { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+        : this.hasAttribute('data-reel-tray')
+          ? tray()
+          : NOWHERE;
     return { ...box, x: box.left, y: box.top, toJSON: () => box } as DOMRect;
   });
   HTMLElement.prototype.setPointerCapture = vi.fn();
+  tray.mockReset();
+  tray.mockReturnValue(NOWHERE);
   localStorage.clear();
   showConfirm.mockReset();
   render.mockReset();
@@ -165,6 +172,25 @@ it('deletes an overlay released over the trash, and not one released elsewhere',
   fire(frame, 'pointermove', 1, 100, 360);
   fire(frame, 'pointerup', 1, 100, 360); // inside the trash rect
   expect(target.querySelectorAll('[data-overlay-id]')).toHaveLength(0);
+});
+
+it('keeps a dragged overlay whole inside the frame, and settles one released on the tray above it', () => {
+  const target = mountEditor();
+  addEmoji(target);
+  const frame = target.querySelector('[data-reel-surface]')!;
+  // Off the left edge and down onto the tray (300..400), away from the trash: the emoji (40 px in a
+  // 200 px wide frame) stops with its box 4 px short of the edge (the inset, 2 % of the short side),
+  // and its centre settles at the tray's top.
+  tray.mockReturnValue({ left: 0, top: 300, right: 200, bottom: 400, width: 200, height: 100 });
+  fire(overlay(target), 'pointerdown', 1, 100, 200);
+  fire(frame, 'pointermove', 1, -200, 395);
+  const at = (axis: 'left' | 'top') =>
+    Number(new RegExp(`${axis}: ([0-9.]+)%`).exec(overlay(target).getAttribute('style')!)![1]);
+  expect(at('left')).toBeCloseTo(12);
+  expect(at('top')).toBeCloseTo(94);
+  fire(frame, 'pointerup', 1, -200, 395);
+  expect(at('top')).toBeCloseTo(75);
+  expect(target.querySelectorAll('[data-overlay-id]')).toHaveLength(1);
 });
 
 it('a cancelled gesture never deletes', () => {

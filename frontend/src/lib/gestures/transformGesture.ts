@@ -86,6 +86,7 @@ export class TransformGesture {
   private transform: Transform = { x: 0.5, y: 0.5, scale: 1, rotation: 0 };
   private last: Reference | null = null;
   private travelled = 0;
+  private constrain: (next: Transform) => Transform = (next) => next;
 
   /** @param stageSize The stage's size in the same pixels as the pointers (read at each move). */
   constructor(private readonly stageSize: () => { width: number; height: number }) {}
@@ -105,8 +106,14 @@ export class TransformGesture {
     return this.travelled;
   }
 
-  /** Starts a gesture on an element placed at `from`. Only meaningful while no finger is down. */
-  begin(from: Transform): void {
+  /**
+   * Starts a gesture on an element placed at `from`. Only meaningful while no finger is down.
+   * `constrain` is where the element may be (the reel editor keeps an overlay's whole box inside
+   * the frame); it is applied to every step and the gesture continues from the constrained result,
+   * so pushing past a limit and coming back has no dead zone.
+   */
+  begin(from: Transform, constrain?: (next: Transform) => Transform): void {
+    this.constrain = constrain ?? ((next) => next);
     this.transform = { ...from };
     this.travelled = 0;
     this.last = null;
@@ -135,9 +142,9 @@ export class TransformGesture {
       next.scale = clampScale(next.scale * (now.distance / this.last.distance));
       next.rotation += wrapAngle(now.angle - this.last.angle);
     }
-    this.transform = next;
+    this.transform = this.constrain(next);
     this.last = now;
-    return next;
+    return this.transform;
   }
 
   /** A finger lifts; the remaining one (if any) carries on from where it is, without a jump. */

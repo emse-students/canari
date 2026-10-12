@@ -55,8 +55,8 @@ re-encodes it AGAIN at publish. Two lossy encodes, real-time duration, and the a
   over it (plus a 12 px margin) deletes the overlay. A cancelled gesture never deletes.
 - **The helper applies increments**, so a finger lifting or landing mid-gesture does not jump the
   element, and a twist past half a turn keeps turning. Pointer events with pointer capture on the
-  frame; `touch-action: none` there. The centre is clamped to the frame so an element cannot be lost
-  off-screen.
+  frame; `touch-action: none` there. Where an overlay may be is the reach rule (last section): its
+  whole box stays inside the frame, and a release settles its centre clear of the controls.
 - **Safe areas** (layout superseded 2026-10-11, see the last section): the header pads the top inset, the tool tray the bottom one; the stage was the
   space between, so nothing overlaps and the keyboard (which resizes the layout viewport on both
   platforms, [durable-rules](../../durable-rules.md)) only shortens the stage.
@@ -196,9 +196,10 @@ shows is what the editor shows and what viewers see; no crop that differs, no ov
   (the keyboard closing) so the frame does not jump. Every other surface follows the box, so
   `CameraScreen.previewBox` records the visible box. The editor's header and tool tray are overlays on
   `cn-scrim` gradients that let touches through (`pointer-events-none`, only their controls take them),
-  so an overlay dragged under them can be grabbed again; the tray rides above the keyboard. The trash
+  and the tray rides above the keyboard (the scrims alone did NOT keep a dropped overlay grabbable: see
+  the next section). The trash
   circle sits in the editor root at `z-20`, above the tray.
-- **Overlays live inside the frame**: `x`, `y` are 0..1 of it, centres clamped (`clampCentre`), and the
+- **Overlays live inside the frame**: `x`, `y` are 0..1 of it, kept in by the reach rule (next section), and the
   export paints at `frameToPixels(overlay, media size)` (`drawDecorations`, tested), the same share the
   preview writes as `left`/`top` percentages. **A new text starts at y = 0.3** (`TEXT_START_Y`): the
   member has just typed it under the keyboard and tray, so the centre would be hidden. The viewer's
@@ -210,3 +211,55 @@ Android WebView; the viewer with a legacy reel and the caption over the bar on 3
 keyboard (the stage latch follows the box, not `visualViewport`, so an engine that does NOT shrink the
 layout viewport is unreleased by that path); the iPhone's `<video>` layer inside a rounded
 `overflow-hidden` box (a WebKit clip bug is possible).
+
+## The reach rule: an overlay stays whole in the frame and grabbable (2026-10-12)
+
+Read on the Mi 9T (`v1.2.4-alpha.2`, [device-verification](../../device-verification.md)): a text
+dropped on the tool tray was drawn over the tray icons, could not be grabbed again (the only free
+part was at the screen edge, where Android takes a grab as its Back gesture and the editor asked
+"Abandonner vos modifications"), and was published clipped at the frame edge ("Test reel al").
+
+**Causes.** (1) The gesture clamped only the CENTRE to 0..1 of the frame (`clampCentre`), so half an
+overlay could sit outside it, and the export, which paints into the frame's pixels, cut it there.
+(2) The tray's scrim lets touches through, but its rows do not: the tool row is a full-width child
+with `pointer-events: auto`, so an overlay under it was covered everywhere but the 12 px gutters.
+(3) Nothing decided what a release over the tray means. (4) **Found on the phone while fixing it:
+the preview's text was smaller than the published text.** The Mi 9T runs `font_scale` 0.85, and
+Android's WebView multiplies FONT sizes by the system text size (lengths stay as they are:
+[textZoom](../../../../frontend/src/lib/utils/textZoom.ts)). So `7cqmin` drew at 25.9 px instead of 30.5 px,
+while the export's canvas `700 50.4px` is never scaled: the caption came out 18 % wider than the
+screen showed it (measured 244 vs 287 CSS px). A text placed flush with the edge on screen would
+still have been published clipped, and at 200 % text it would come out half the size it showed.
+
+**The rule (`reels/overlayReach.ts`, pure, tested):**
+
+- **Inside the frame, always**: every gesture step goes through `keptInFrame`, handed to
+  `TransformGesture.begin` as its constraint. The scale is capped at `fitScale` (the largest at which
+  the TURNED box fits) and the centre is held so the whole box is in, less an inset of 2 % of the
+  short side on every edge (`OVERLAY_EDGE_INSET`): the frame's 12 px corners and a width rounded to
+  whole pixels must not decide whether the last glyph is published. The gesture continues from the
+  constrained result, so pushing past an edge and coming back has no dead zone. What the member sees
+  during the drag is what the export paints.
+- **One rule for a release**: on the trash it is deleted; ANYWHERE ELSE (the tray, the header, a
+  cancelled gesture such as the system Back) it stays and settles with `settledClearOfControls`: its
+  centre moved vertically to the nearest place clear of the header and the tray, whose bands are read
+  from their boxes at that moment (`controlBands`; a selected text's style rows are already part of
+  the tray). The centre is the point a finger grabs, and it is then never under a control nor only at
+  the screen edge. If the controls leave no room, the centre takes the middle between them, still
+  inside the frame: never clipped does not give way.
+- **Extent**: an emoji's and a stroke's box come from the data; a text's is its span as the screen drew
+  it (`offsetWidth/offsetHeight`, untransformed, the same font the export measures). A text whose words
+  or face change settles again once redrawn, so a long caption is shrunk to fit at creation.
+- **The text's size undoes the system text size**: `font-size: calc(7cqmin * scale / var(--text-zoom, 1))`,
+  the factor `publishTextZoom` already measures for the avatar initials. The text is part of the
+  picture, not reading text, and the export never scales it; the span's measured width then equals
+  the canvas's `measureText` (287 vs 287.4 px on the Mi 9T).
+
+**Read on the Mi 9T (2026-10-12)**, with the REAL editor component served to the installed
+`alpha.2` app's own WebView over `adb reverse` from a temporary route (never committed), and real
+touches (`input swipe`). A text was dragged from the middle to the bottom-right corner, onto the tray.
+It stopped with its box 8.6 px short of the right edge, and its centre settled at the top of the tray
+(top 85.09 %, the tray's edge). It was grabbed again from its centre, away from the screen edge, and
+moved. The exported 720x1280 picture shows the whole caption ("Test reel alpha deux") with its
+margin. **Not read:** the iPhone, a video take, and the signed-in app shell (a build carrying this
+change is needed for both).
