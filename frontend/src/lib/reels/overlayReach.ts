@@ -96,60 +96,102 @@ function clamp(value: number, low: number, high: number): number {
 }
 
 /**
+ * The range a centre may take on one axis, `half` from each edge, WIDENED to include `start` (where
+ * the gesture began) when given. Never empty: a box wider than the frame has only the middle.
+ */
+function centreRange(half: number, start?: number): [number, number] {
+  let low = half;
+  let high = 1 - half;
+  if (low > high) low = high = 0.5;
+  if (start !== undefined) {
+    low = Math.min(low, start);
+    high = Math.max(high, start);
+  }
+  return [low, high];
+}
+
+/**
  * The transform kept inside the frame: the scale no larger than {@link fitScale}, then the centre
  * moved so the whole turned box lies within the frame. Applied on every move of a gesture, so what
  * the member sees during the drag is what the export will paint - never a clipped overlay.
+ *
+ * `from` is where the gesture began: the bounds are widened to include it, so a gesture never
+ * pushes an overlay FURTHER out than it was and never makes it jump. That is the case of a stroke
+ * drawn to the frame's edge, whose round cap and the inset stick out of the bounds from the start:
+ * moved inwards it is held to the frame, and it was never placed outside by this rule.
  */
 export function keptInFrame(
   transform: Transform,
   extent: OverlayExtent,
-  frame: StageSize
+  frame: StageSize,
+  from?: Transform
 ): Transform {
   if (frame.width <= 0 || frame.height <= 0) return transform;
-  const scale = Math.min(transform.scale, fitScale(extent, transform.rotation, frame));
+  const fit = fitScale(extent, transform.rotation, frame);
+  const scale = Math.min(transform.scale, from ? Math.max(fit, from.scale) : fit);
   const half = halfExtents(extent, scale, transform.rotation, frame);
+  const [left, right] = centreRange(half.x, from?.x);
+  const [top, bottom] = centreRange(half.y, from?.y);
   return {
     ...transform,
     scale,
-    x: clamp(transform.x, half.x, 1 - half.x),
-    y: clamp(transform.y, half.y, 1 - half.y),
+    x: clamp(transform.x, left, right),
+    y: clamp(transform.y, top, bottom),
   };
 }
 
 /**
  * Where an overlay settles when the finger lets go anywhere but the trash: inside the frame (as
- * {@link keptInFrame}) AND with its centre clear of the header and the tray, moved vertically to the
- * nearest such place. When the controls leave no room at all, the centre takes the middle of the
- * space between them, still inside the frame: never clipped is the rule that does not give way.
+ * {@link keptInFrame}, with the same `from`) AND with its centre clear of the header and the tray,
+ * moved vertically to the nearest such place. When the controls leave no room at all, the centre
+ * takes the middle of the space between them, still inside the frame: never clipped does not give way.
  */
 export function settledClearOfControls(
   transform: Transform,
   extent: OverlayExtent,
   frame: StageSize,
-  bands: ControlBands
+  bands: ControlBands,
+  from?: Transform
 ): Transform {
-  const kept = keptInFrame(transform, extent, frame);
+  const kept = keptInFrame(transform, extent, frame, from);
   if (frame.width <= 0 || frame.height <= 0) return kept;
   const half = halfExtents(extent, kept.scale, kept.rotation, frame);
+  const [frameTop, frameBottom] = centreRange(half.y, from?.y);
   const top = clamp(bands.top, 0, 1);
   const bottom = clamp(1 - bands.bottom, 0, 1);
-  const low = Math.max(half.y, top);
-  const high = Math.min(1 - half.y, bottom);
-  const y = low <= high ? clamp(kept.y, low, high) : clamp((top + bottom) / 2, half.y, 1 - half.y);
+  const low = Math.max(frameTop, top);
+  const high = Math.min(frameBottom, bottom);
+  const y =
+    low <= high ? clamp(kept.y, low, high) : clamp((top + bottom) / 2, frameTop, frameBottom);
   return { ...kept, y };
 }
 
 /**
- * The control bands from the boxes on screen: the share of the frame's height under the header's
- * bottom edge and above the tray's top edge. A control with no box (not laid out) covers nothing.
+ * Whether a release settles the overlay. NOT while the text field is open: the keyboard is up, and
+ * the settle runs once on commit instead. NOT after a tap: a gesture that changed nothing moves
+ * nothing and takes no undo step.
+ */
+export function settlesOnRelease(composing: boolean, layoutChanged: boolean): boolean {
+  return !composing && layoutChanged;
+}
+
+/**
+ * The control bands, as they stand with the keyboard CLOSED whatever it is doing now: the header
+ * from its bottom edge, and the tray from its HEIGHT laid against the bottom of the latched stage.
+ * The tray rides above the keyboard, so its top edge measures the keyboard; its height does not.
+ * The frame is centred in the latched stage (`containFrame`), so that stage's bottom is the frame's
+ * bottom plus the frame's offset from the stage's top. A control with no box covers nothing.
  */
 export function controlBands(
   frame: { top: number; height: number },
+  stageTop: number,
   header: { bottom: number; height: number } | null,
-  tray: { top: number; height: number } | null
+  trayHeight: number
 ): ControlBands {
   if (frame.height <= 0) return NO_BANDS;
+  const stageBottom = frame.top + frame.height + (frame.top - stageTop);
   const top = header && header.height > 0 ? (header.bottom - frame.top) / frame.height : 0;
-  const bottom = tray && tray.height > 0 ? (frame.top + frame.height - tray.top) / frame.height : 0;
+  const bottom =
+    trayHeight > 0 ? (frame.top + frame.height - (stageBottom - trayHeight)) / frame.height : 0;
   return { top: clamp(top, 0, 1), bottom: clamp(bottom, 0, 1) };
 }

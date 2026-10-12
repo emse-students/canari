@@ -7,6 +7,7 @@ import {
   keptInFrame,
   overlayExtent,
   settledClearOfControls,
+  settlesOnRelease,
 } from './overlayReach';
 import { createEmojiOverlay, createTextOverlay, EMOJI_BASE_SIZE } from './reelOverlays';
 
@@ -102,19 +103,72 @@ describe('settledClearOfControls', () => {
 });
 
 describe('controlBands', () => {
-  it('reads the share of the frame under the header and above the tray', () => {
+  it('reads the share of the frame under the header and the tray laid against the stage bottom', () => {
     const frame = { top: 0, height: 800 };
-    expect(controlBands(frame, { bottom: 80, height: 80 }, { top: 600, height: 200 })).toEqual({
+    expect(controlBands(frame, 0, { bottom: 80, height: 80 }, 200)).toEqual({
       top: 0.1,
       bottom: 0.25,
     });
   });
 
-  it('counts only what overlaps a frame centred lower on the screen, and a control not laid out as nothing', () => {
+  it('gives the same bands with the keyboard up: the tray HEIGHT, never its raised top edge', () => {
+    // The Mi 9T frame (latched, 102..877) in a 945 px box; the keyboard raises the tray but not its height.
+    const frame = { top: 102, height: 775 };
+    const keyboardDown = controlBands(frame, 0, { bottom: 90, height: 90 }, 184);
+    const keyboardUp = controlBands(frame, 0, { bottom: 90, height: 90 }, 184);
+    expect(keyboardUp).toEqual(keyboardDown);
+    // The latched stage ends at 877 + 102 = 979; the tray covers 979 - 184 = 795 .. 877 of the frame.
+    expect(keyboardDown.bottom).toBeCloseTo((877 - 795) / 775);
+  });
+
+  it('counts only what overlaps the frame, and a control not laid out as nothing', () => {
     const frame = { top: 100, height: 600 };
-    expect(controlBands(frame, { bottom: 80, height: 80 }, { top: 0, height: 0 })).toEqual(
-      NO_BANDS
-    );
-    expect(controlBands(frame, null, { top: 640, height: 200 }).bottom).toBeCloseTo(0.1);
+    expect(controlBands(frame, 0, { bottom: 80, height: 80 }, 0)).toEqual(NO_BANDS);
+    expect(controlBands(frame, 0, null, 160).bottom).toBeCloseTo(0.1);
+  });
+});
+
+describe('settlesOnRelease', () => {
+  it('settles a gesture that changed the layout, never a tap, never while the text field is open', () => {
+    expect(settlesOnRelease(false, true)).toBe(true);
+    expect(settlesOnRelease(false, false)).toBe(false);
+    expect(settlesOnRelease(true, true)).toBe(false);
+  });
+});
+
+describe('the gesture start widens the bounds', () => {
+  // A stroke drawn to the left edge: its centre sits where its cap and the inset stick out.
+  const stroke = { width: 0.3, height: 0.012 };
+  const start = { ...UPRIGHT, x: 0.15 };
+
+  it('never makes an overlay jump inwards at the first move, and never pushes it further out', () => {
+    expect(keptInFrame(start, stroke, FRAME).x).toBeGreaterThan(0.15);
+    expect(keptInFrame(start, stroke, FRAME, start).x).toBe(0.15);
+    expect(keptInFrame({ ...start, x: 0.05 }, stroke, FRAME, start).x).toBe(0.15);
+    expect(keptInFrame({ ...start, x: 0.3 }, stroke, FRAME, start).x).toBe(0.3);
+  });
+
+  it('keeps a scale already above the fit, and lets it shrink', () => {
+    const big = { ...UPRIGHT, scale: 0.9 };
+    expect(keptInFrame(big, WIDE, FRAME, big).scale).toBe(0.9);
+    expect(keptInFrame({ ...big, scale: 1.2 }, WIDE, FRAME, big).scale).toBe(0.9);
+    expect(keptInFrame({ ...big, scale: 0.4 }, WIDE, FRAME, big).scale).toBe(0.4);
+  });
+
+  it('settles with the same widened bounds, so a release does not jump either', () => {
+    const settled = settledClearOfControls(start, stroke, FRAME, { top: 0.1, bottom: 0.25 }, start);
+    expect(settled.x).toBe(0.15);
+  });
+});
+
+describe('a rotation that shrank a wide text', () => {
+  it('does not give the size back when turned upright again: the gesture continues from the cap', () => {
+    // A landscape frame: 1.5 short sides (600 px) fit across 711 px, not down 400 px.
+    const landscape = { width: 711, height: 400 };
+    const text = { width: 1.5, height: 0.1 };
+    expect(keptInFrame(UPRIGHT, text, landscape).scale).toBe(1);
+    const turned = keptInFrame({ ...UPRIGHT, rotation: Math.PI / 2 }, text, landscape);
+    expect(turned.scale).toBeCloseTo(0.64);
+    expect(keptInFrame({ ...turned, rotation: 0 }, text, landscape).scale).toBe(turned.scale);
   });
 });

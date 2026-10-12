@@ -45,6 +45,7 @@
     keptInFrame,
     overlayExtent,
     settledClearOfControls,
+    settlesOnRelease,
     type OverlayExtent,
   } from '$lib/reels/overlayReach';
   import {
@@ -133,6 +134,8 @@
   let erasedSomething = false;
   /** The layout when the running arrange gesture began, to tell a move from a mere tap. */
   let gestureStart: ReelOverlay[] = [];
+  /** The handled overlay's placement when the running gesture began: the reach bounds include it. */
+  let gestureFrom: ReelOverlay | undefined;
 
   const colors = ['#ffffff', '#050505', '#ffcf33', '#f05b5b', '#5bd0f0'];
   const source = $derived(URL.createObjectURL(clip.blob));
@@ -188,18 +191,21 @@
 
   /**
    * THE ONE RULE FOR A RELEASE THAT IS NOT ON THE TRASH: the overlay stays, whole inside the frame,
-   * its centre moved clear of the header and the tray (bands read from the boxes on screen now).
+   * its centre moved clear of the header and the tray, measured as they stand with the keyboard
+   * closed (`controlBands`). Never while the text field is open: the commit settles once it closes.
    */
-  function settle(id: string) {
+  function settle(id: string, from?: ReelOverlay) {
     const overlay = overlays.find((candidate) => candidate.id === id);
-    if (!overlay || !frame) return;
+    if (!overlay || !frame || composing) return;
     const bounds = frame.getBoundingClientRect();
+    const stage = frame.closest('[data-reel-stage]')?.getBoundingClientRect();
     const bands = controlBands(
       bounds,
+      stage?.top ?? bounds.top,
       header?.getBoundingClientRect() ?? null,
-      tray?.getBoundingClientRect() ?? null
+      tray?.offsetHeight ?? 0
     );
-    const settled = settledClearOfControls(overlay, extentOf(overlay), bounds, bands);
+    const settled = settledClearOfControls(overlay, extentOf(overlay), bounds, bands, from);
     if (settled.x === overlay.x && settled.y === overlay.y && settled.scale === overlay.scale)
       return;
     console.debug(
@@ -242,7 +248,9 @@
         background = handled.background;
       }
       const extent = extentOf(handled);
-      gesture.begin(handled, (next) => keptInFrame(next, extent, liveFrameSize()));
+      const from = handled;
+      gestureFrom = from;
+      gesture.begin(handled, (next) => keptInFrame(next, extent, liveFrameSize(), from));
     }
     // A second finger joins the running gesture wherever it lands: that is the pinch.
     if (!gestureId) return;
@@ -272,8 +280,8 @@
       console.debug(`[reel-editor] overlay ${id} dropped on the trash`);
       overlays = withoutOverlay(overlays, id);
       selectedId = null;
-    } else {
-      settle(id);
+    } else if (settlesOnRelease(composing !== null, layoutChanged(gestureStart, overlays))) {
+      settle(id, gestureFrom);
     }
     if (!dropped && event.type === 'pointerup' && gesture.travel <= TAP_SLOP_PX && wasSelected) {
       const tapped = overlays.find((overlay) => overlay.id === id);

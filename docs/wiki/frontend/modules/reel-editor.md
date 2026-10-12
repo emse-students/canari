@@ -239,12 +239,21 @@ still have been published clipped, and at 200 % text it would come out half the 
   short side on every edge (`OVERLAY_EDGE_INSET`): the frame's 12 px corners and a width rounded to
   whole pixels must not decide whether the last glyph is published. The gesture continues from the
   constrained result, so pushing past an edge and coming back has no dead zone. What the member sees
-  during the drag is what the export paints.
+  during the drag is what the export paints. **The cost of having no dead zone: a turn that shrank
+  a wide text keeps it shrunk when it is turned back** (the scale continues from the cap); a pinch
+  regrows it.
+- **The bounds include where the gesture began** (`from`): a gesture never pushes an overlay further
+  out than it was, and never makes it jump. A stroke drawn to the frame's edge has its round cap and
+  the inset outside the strict bounds from the start; without this, its first move snapped it inwards.
 - **One rule for a release**: on the trash it is deleted; ANYWHERE ELSE (the tray, the header, a
   cancelled gesture such as the system Back) it stays and settles with `settledClearOfControls`: its
-  centre moved vertically to the nearest place clear of the header and the tray, whose bands are read
-  from their boxes at that moment (`controlBands`; a selected text's style rows are already part of
-  the tray). The centre is the point a finger grabs, and it is then never under a control nor only at
+  centre moved vertically to the nearest place clear of the header and the tray (a selected text's
+  style rows are already part of the tray). **Only a gesture that changed the layout settles**
+  (`settlesOnRelease`): a tap moves nothing and takes no undo step. **Never while the text field is
+  open**: a restyle while typing is not settled, and the commit settles once. **The bands are the
+  ones the keyboard does not move** (`controlBands`): the header's bottom edge, and the tray's HEIGHT
+  laid against the bottom of the latched stage. The tray rides above the keyboard, so its top edge
+  measures the keyboard; read that way, it pushed a caption up for good. The centre is the point a finger grabs, and it is then never under a control nor only at
   the screen edge. If the controls leave no room, the centre takes the middle between them, still
   inside the frame: never clipped does not give way.
 - **Extent**: an emoji's and a stroke's box come from the data; a text's is its span as the screen drew
@@ -257,9 +266,11 @@ still have been published clipped, and at 200 % text it would come out half the 
 
 **Read on the Mi 9T (2026-10-12)**, with the REAL editor component served to the installed
 `alpha.2` app's own WebView over `adb reverse` from a temporary route (never committed), and real
-touches (`input swipe`). A text was dragged from the middle to the bottom-right corner, onto the tray.
+touches (`input swipe`), before the review's fixes (keyboard bands, taps, `from`). A text was dragged from the middle to the bottom-right corner, onto the tray.
 It stopped with its box 8.6 px short of the right edge, and its centre settled at the top of the tray
 (top 85.09 %, the tray's edge). It was grabbed again from its centre, away from the screen edge, and
 moved. The exported 720x1280 picture shows the whole caption ("Test reel alpha deux") with its
-margin. **Not read:** the iPhone, a video take, and the signed-in app shell (a build carrying this
+margin. After the review's fixes, same rig: a caption at 69.3 % stayed at 69.3 % through a tap to
+reword, a pill switched on with the keyboard up (the tray's top raised from 761 to 383 px) and the
+commit. **Not read:** the iPhone, a video take, and the signed-in app shell (a build carrying this
 change is needed for both).
