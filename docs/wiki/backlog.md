@@ -316,6 +316,10 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 `openPdfDocument` passes no `worker`, so each thumbnail and the reader start and tear down a worker of their own. One shared `PDFWorker` would remove the spawn per document; after the refetch fix this costs one spawn per PDF per mount, no longer per refetch.
 
+## P3 - an expired poll stays in the open-poll list until the conversation changes (found reviewing #1773, 2026-10-12)
+
+`ChatArea.svelte` `activePolls` (~:528) compares each poll's `endsAt` with `Date.now()` inside a `$derived`; a clock is not a dependency, so the list only refreshes when its inputs change. Before #1773 any message in ANY conversation re-ran it, which hid this; once the open conversation is read by its own key, a poll whose deadline passes stays listed until the open conversation itself changes. The fix needs a dependency that changes AT the nearest deadline (one timer to the next `endsAt`, not a poll). Owned by the poll UI work (handed over, not edited here).
+
 ## Open defects, in severity order
 
 ### P1 - owed: ONE live reading of the in-session join fix (2026-10-08)
