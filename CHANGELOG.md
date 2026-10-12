@@ -14,6 +14,36 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-10-12
+
+### Fixed - a seed bundle answering somebody else no longer makes every member re-read the salon
+
+A bundle reaches every member of a community, and a seed already held announced its salon as repaired, so each answer cost every online member a history refetch; only a new seed or a lower floor does now ([channel-encryption](docs/wiki/protocols/channel-encryption.md#the-repair-that-worked-said-nothing---fixed-2026-08-20)).
+
+### Documented - the Mi 9T readings of v1.2.4-alpha.3
+
+On the Mi 9T, the reel overlay fix and the PDF reader pass, and a cold notification tap reaches a usable composer at 3.3 s behind the PIN. One defect is left: the PDF zoom buttons lose the reading position ([device-verification](docs/wiki/device-verification.md#the-mi-9t-readings-of-v124-alpha3-2026-10-12)).
+
+### Fixed - a refetch of a salon no longer re-downloads its attachments and restarts a pdf.js worker per PDF
+
+Every attachment row re-ran its download when the thread was refetched with unchanged content, and each PDF thumbnail spawned a new pdf.js worker: 36 worker loads in three minutes on one salon ([web-console-log-audit](docs/wiki/frontend/web-console-log-audit-2026-10-12.md)).
+
+### Fixed - the PDF zoom buttons keep the page being read, and a copy keeps its line ends
+
+"Agrandir"/"Réduire" now zoom about the viewport's centre like the pinch does, so the reader stays on page 40 instead of landing on page 27, and copied text no longer joins two lines ("lesautres") ([posts](docs/wiki/frontend/modules/posts.md#the-pinch-and-why-it-needs-a-focal-point)).
+
+### Documentation - why the production delivery queue reached 93 k rows (2026-10-12)
+
+Repair answers on a new community's key group are queued for every seat, and 42 % of seats belong to devices with no session left. The audit refutes external-join churn and finds no stuck client. It ranks four fixes and rejects a reaper by age ([prod-queue-and-epoch-audit](docs/wiki/infrastructure/prod-queue-and-epoch-audit-2026-10-12.md)).
+
+### Fixed - a reel text restyled with the keyboard up stays inside the frame
+
+A wider face (serif, the pill) no longer pushes the text past the screen edge during the edit, and "OK" no longer moves it ([reel-editor](docs/wiki/frontend/modules/reel-editor.md)).
+
+### Changed - release notes of 1.2.5
+
+The store notes of the 1.2.5 stable: no more PDF preview flicker, a zoom that keeps the page, whole reel texts, fewer needless salon refetches ([web-console-log-audit-2026-10-12](docs/wiki/frontend/web-console-log-audit-2026-10-12.md)).
+
 ## [1.2.4] - 2026-10-12
 
 ### Changed - a notification tapped on a killed app opens the conversation ~1.2 s sooner behind the PIN
