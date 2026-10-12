@@ -240,6 +240,54 @@ before the flusher), so the lever is the `/chat` render on the warm landing, whi
 | socket connected | 931 | ~920 |
 | reply accepted, after the click | 839 | 911 |
 
+### F12 - the notified message is asked for when the rows exist, not after the history restore
+
+**What the killed timeline showed** (Mi 9T, 2026-10-12): the socket's first pull lands before the
+restore has seeded a single row, so the notified frame is refused `absent-conversation` and left in
+the server queue. It was asked for again only by `notifyConversationsRestored`, at the END of
+`loadExistingConversations` phase 2 - after `getUserGroups`, the batch history, and every
+conversation's stored page and archive replay. The conversation pane and its composer were up
+~1.0 s before the message they were opened for.
+
+**The fix is an earlier trigger, and what had to be proven is phase 2's side of it.** Phase 1 creates
+every row the restore will ever create, synchronously, so right after it
+`notifyConversationRowsSeeded` re-fetches the refused frames. A live decrypt can now land while phase
+2 still runs, and four things decide whether that is safe:
+
+- **The archive replay must not deliver the frame a second time.** It pins its head, then waits for
+  the mailbox at `waitForGroupQueueIdle`, which awaits `pendingPullInFlight`. That pull used to be
+  announced only AFTER `fetchPendingMessages` had awaited its ack ordering, so for one ack round trip
+  a pull existed that no barrier could see. It is now announced in the tick it is asked for (the ack
+  ordering moved inside it, still before the request). The live decrypt then lands first, is
+  ledgered, and the replay skips it - the reverse order is the `Duplicate delivery` noise.
+- **Phase 2 must not erase what a live delivery wrote.** Its stored-page write ASSIGNED `messages`
+  (now `mergeMessagePage`, the rule every other history write already follows), and the DM repair
+  spread a copy of the row read before an `await` (now re-read after it).
+- **A bulk flush must not either.** `batchAddMessages` yields every 50 messages and wrote back the row
+  it had read before its loop; it now merges into the row as it is when it writes, without adding a
+  message twice.
+- **Durability is unchanged.** Live drains already ran inside phase 2's persist-only window for any
+  frame arriving during it; this change makes that overlap routine, not new.
+
+**And measuring it found a second delay, in a mechanism nothing watched.** Half the runs still drew
+the message ~1 s late. Bulk-ingest windows were closed as a LIFO stack, but they overlap: a selected
+conversation's history load opened one DURING the drain and outlived it, so the drain's close ended
+the history load's persist-only window and the drained message waited in the UI buffer until the
+history load closed (`bulk ingest depth=3` opening 60 ms after `Drain start`, the batch flush 630 ms
+after `Drain complete`). `beginBulkIngest` now returns a handle and `endBulkIngest(handle)` closes
+that window.
+
+| Mi 9T, killed, local APKs against dev, n=6 each, ms after the tap | without | rows-seeded trigger only | **F12** (with handles) |
+| --- | ---: | ---: | ---: |
+| notified message drawn | 4557 [4449-5041] | 4362 [4029-4992] | **4090** [3927-4405] |
+| composer usable -> notified message drawn | 1002 [948-1051] | 768 [500-1060], bimodal | **396** [365-609] |
+| warm (bg): notified message drawn | 1750 [1555-1925] | 1609 [1557-2101] | 1789 [1504-2240] (unchanged, expected) |
+
+**~0.47 s off the killed open, and the message now follows the composer by ~0.4 s instead of ~1.0 s**;
+no run of the fix overlaps the baseline's range. The warm path never had the defect (its rows exist).
+One killed run's reply ack took 2.1 s: the flush waited behind the post-login KeyPackage publication,
+the F8 item, unrelated to this change.
+
 ## iOS (iPhone 12) - NOT measured
 
 The WebDriverAgent answered, but the installed build is a TestFlight build with no WebKit inspector
