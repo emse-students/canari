@@ -289,7 +289,13 @@ when the recipient's presence is alive (`scheduleDeferredPush`).
 newer, draws the stored page and stops. When something IS newer it went straight to the full replay,
 and the stored page - already read - was drawn only by the replay's end. The page is now drawn
 first; the replay merges what it adds into it (`mergeMessagePage`), so drawing first changes WHEN the
-held rows appear, never which. A failed probe, previously swallowed, is logged.
+held rows appear, never which. A failed probe, previously swallowed, is logged. That claim needs one more step
+than the merge: when the replay brings MORE than a page, the reloaded page no longer reaches the
+early-drawn one, `mergeMessagePage` keeps memory outside its window, and the scrollback pages below
+the OLDEST row in memory - so every stored row between the two windows would be hidden for good
+(and an early-drawn row the replay edited would stay stale). The reload therefore withdraws the
+early-drawn rows that fall below its window (`renderStoredPage`'s `supersedes`, logged as
+`early-drawn row(s) ... withdrawn`), which gives the screen a load that never drew first gives.
 
 | killed, PIN (Mi 9T, local APKs against dev, n=6 each) | `main` | F10 |
 | --- | ---: | ---: |
