@@ -95,6 +95,17 @@ export interface SendMessageBody {
    * the split can be interpreted as.
    */
   durable?: boolean;
+  /**
+   * `userId:deviceId` keys this frame is ADDRESSED to, when it is meant for them and nobody else
+   * in the group - a Graine answer to one device's seed request (channel-encryption section 23).
+   *
+   * It can only NARROW the recipient set, never widen it: the set is still resolved from the
+   * membership table, and a key naming a device that is not a live member of the group addresses
+   * nobody. An addressed frame is never appended to the group's shared history stream, because
+   * that stream is read by every member. Refused on a commit or a Welcome, which every member must
+   * receive. Absent (every client before 1.2.5, and every other send) means the whole group.
+   */
+  recipientDevices?: string[];
   // legacy fields (frontend fallback / group fan-out)
   content?: string;
   type?: string;
@@ -231,6 +242,48 @@ const MAX_HISTORY_EXCLUSIONS = 128;
  * characters is 32 kB at worst.
  */
 const MAX_MEMBER_KEY_LENGTH = 256;
+
+/**
+ * How many devices one addressed frame may name. A Graine answer names ONE (the device that asked);
+ * the bound is what a hostile client can make the server hold and compare per send.
+ */
+const MAX_ADDRESSED_DEVICES = 16;
+
+/**
+ * Reads `SendMessageBody.recipientDevices` into lower-cased `userId:deviceId` keys, or `null` when
+ * the frame is addressed to the whole group (field absent).
+ *
+ * Refused outright, never trimmed into something else: an empty list, a malformed key, too many
+ * keys, or an addressed commit or Welcome. Each would otherwise be read as a DIFFERENT instruction -
+ * an empty list as "the whole group" would undo the one thing the sender asked for, and an addressed
+ * commit would split the group's epoch between the devices that got it and the ones that did not.
+ */
+export function readAddressedDevices(body: SendMessageBody): Set<string> | null {
+  const raw: unknown = body.recipientDevices;
+  if (raw === undefined || raw === null) return null;
+  if (body.isCommit || body.isWelcome) {
+    throw new BadRequestException('recipientDevices is refused on a commit or a Welcome');
+  }
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_ADDRESSED_DEVICES) {
+    throw new BadRequestException(
+      `recipientDevices must name 1 to ${MAX_ADDRESSED_DEVICES} userId:deviceId keys`
+    );
+  }
+  const keys = new Set<string>();
+  for (const key of raw) {
+    const at = typeof key === 'string' ? key.indexOf(':') : -1;
+    if (
+      typeof key !== 'string' ||
+      key.length > MAX_MEMBER_KEY_LENGTH ||
+      at <= 0 ||
+      at === key.length - 1
+    ) {
+      throw new BadRequestException('recipientDevices contains a key that is not userId:deviceId');
+    }
+    keys.add(`${key.slice(0, at).toLowerCase()}:${key.slice(at + 1)}`);
+  }
+  return keys;
+}
 
 export interface NotifyHistoryRequestBody extends NotifyWelcomeRequestBody {
   /**
@@ -898,9 +951,11 @@ export class MessagingService {
 
     const ops: QueuedMessage[] = [];
     let sentCount = 0;
+    const addressed = readAddressedDevices(body);
 
     this.logger.log(
-      `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}`
+      `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}` +
+        (addressed ? ` addressed=${[...addressed].join(',')}` : '')
     );
 
     if (body.proto) {
@@ -936,6 +991,27 @@ export class MessagingService {
         // performed BY a device that is legitimately not active yet - `validateCommit` promotes it
         // precisely because such a device never receives a Welcome - so gating commits and Welcomes
         // here would wall up the one door out of `pending`.
+        // AN ADDRESSED FRAME IS ALLOWED ON A KEY-DISTRIBUTION GROUP ONLY - an allowlist, not a
+        // denylist. Its one sender is a Graine answer (channel-encryption section 23). On a
+        // conversation group the same field would let a member show different ciphertexts to
+        // different members and keep each out of the shared history stream - an equivocation the
+        // ordinary fan-out (one ciphertext, every member) makes impossible.
+        if (addressed) {
+          const group = await this.groupRepo.findOne({
+            where: { id: groupId },
+            select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+          });
+          if (!group?.distributionWorkspaceId && !group?.distributionChannelId) {
+            this.logger.warn(
+              `[SEND][${traceId}] REJECT addressed_not_key_group group=${groupId} - ` +
+                `recipientDevices is accepted on a key-distribution group only`
+            );
+            throw new BadRequestException(
+              'recipientDevices is accepted on a key-distribution group only'
+            );
+          }
+        }
+
         const isHandshake = !!body.isCommit || !!body.isWelcome;
         if (!isHandshake && body.senderId && body.senderDeviceId) {
           const senderMembership = await this.deviceGroupRepo.findOne({
@@ -1018,12 +1094,35 @@ export class MessagingService {
               ).map((kp) => `${kp.userId}:${kp.deviceId}`)
             )
           : new Set<string>();
-        const targets = recipients.filter(
+        const members = recipients.filter(
           (m) =>
             !isSender(m) &&
             !excludeSet.has(`${m.userId}:${m.deviceId}`) &&
             liveDeviceIds.has(`${m.userId}:${m.deviceId}`)
         );
+        // AN ADDRESSED FRAME NARROWS THE SET RESOLVED ABOVE AND NEVER ADDS TO IT: a key that names no
+        // live member of this group addresses nobody, so a client cannot use it to reach a device
+        // outside the group. Measured on production 2026-10-12, an answer to one seed request was
+        // queued for every seat of a 112-seat key group (`prod-queue-and-epoch-audit-2026-10-12`).
+        const targets = addressed
+          ? members.filter((m) => addressed.has(`${m.userId.toLowerCase()}:${m.deviceId}`))
+          : members;
+        if (addressed) {
+          this.logger.log(
+            `[SEND][${traceId}] ADDRESSED group=${groupId} matched=${targets.length} of ` +
+              `${addressed.size} addressed, ${members.length} member device(s) not addressed: ` +
+              `${members.length - targets.length}`
+          );
+          if (targets.length === 0) {
+            // NOT refused: the addressee may have left the group or been revoked between its request
+            // and this answer, which is an ordinary race and leaves nobody to deliver to. Said at
+            // warn because it is also the shape of a client addressing the wrong key.
+            this.logger.warn(
+              `[SEND][${traceId}] ADDRESSED_NOBODY group=${groupId} - no live member device matches ` +
+                `${[...addressed].join(',')}`
+            );
+          }
+        }
         const ghosts = recipients.filter(
           (m) =>
             !isSender(m) &&
@@ -1245,11 +1344,13 @@ export class MessagingService {
     // construction, that excluded every reaction, edit, deletion and read receipt from the only
     // shared copy that exists - the defect this rework removes
     // (`docs/wiki/protocols/history-reconciliation.md`).
+    //  - an ADDRESSED frame: the stream is read by every member, and the frame is for some of them.
     if (
       body.proto &&
       !body.isWelcome &&
       !body.isCommit &&
       durable &&
+      !addressed &&
       body.groupId &&
       body.senderId
     ) {
