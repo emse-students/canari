@@ -3,29 +3,29 @@
  * persistence. These are pure functions that accept state by reference so they
  * work with Svelte 5's $state without requiring a specific composable wrapper.
  */
-import { SvelteMap } from "svelte/reactivity";
-import { m } from "$lib/paraglide/messages";
-import type { IStorage, ConversationMeta, StoredMessage } from "$lib/db";
+import { SvelteMap } from 'svelte/reactivity';
+import { m } from '$lib/paraglide/messages';
+import type { IStorage, ConversationMeta, StoredMessage } from '$lib/db';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
   replayConversationHistory,
   retroactivelyResolveHexIds,
   type MlsReplayCommit,
-} from "./history";
-import { withMlsBulkIngest } from "$lib/mls-client/mlsBulkIngest";
-import { HISTORY_BATCH_MAX_GROUPS } from "$lib/mls-client/mlsDeliveryApi";
-import { buildUserGroupSyncIndex } from "./groupSyncEligibility";
-import { migrateFromLocalStorage } from "../migration";
-import type { IMlsService } from "$lib/mlsService";
-import type { Conversation, ConversationLifecycle } from "$lib/types";
-import { getUserDisplayNameSync, peekUserDisplayName } from "$lib/utils/users/displayName";
-import { foldForSearch } from "$lib/utils/textFold";
-import { forgetGroupReconciliation } from "./historyReconcile";
-import { mergeMessagePage } from "./messageMerge";
-import { isUnreadForUser, watermarkFor } from "./readState";
-import { messageTime } from "./messageOrder";
-import { isChannelConversationId } from "./channelCrypto";
+} from './history';
+import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
+import { HISTORY_BATCH_MAX_GROUPS } from '$lib/mls-client/mlsDeliveryApi';
+import { buildUserGroupSyncIndex } from './groupSyncEligibility';
+import { migrateFromLocalStorage } from '../migration';
+import type { IMlsService } from '$lib/mlsService';
+import type { Conversation, ConversationLifecycle } from '$lib/types';
+import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
+import { foldForSearch } from '$lib/utils/textFold';
+import { forgetGroupReconciliation } from './historyReconcile';
+import { mergeMessagePage } from './messageMerge';
+import { isUnreadForUser, watermarkFor } from './readState';
+import { messageTime } from './messageOrder';
+import { isChannelConversationId } from './channelCrypto';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -48,7 +48,7 @@ export function isRawId(value: string): boolean {
 
 /** True when `value` is the persisted direct-conversation key (`userId::peerId`). */
 export function isCanonicalDirectKey(value: string): boolean {
-  return value.includes("::");
+  return value.includes('::');
 }
 
 /**
@@ -57,7 +57,7 @@ export function isCanonicalDirectKey(value: string): boolean {
  */
 export function parseDirectPeerFromName(rawName: string, userId: string): string | null {
   const parts = rawName
-    .split("::")
+    .split('::')
     .map((p) => p.trim().toLowerCase())
     .filter(Boolean);
   if (parts.length < 2) return null;
@@ -83,12 +83,12 @@ export function canonicalDirectName(userId: string, peerId: string): string {
 export function toConversationMeta(
   id: string,
   convo: Conversation,
-  userId: string,
+  userId: string
 ): ConversationMeta {
   return {
     id,
     name:
-      (convo.conversationType ?? "group") === "direct"
+      (convo.conversationType ?? 'group') === 'direct'
         ? canonicalDirectName(userId, convo.directPeerId ?? convo.contactName)
         : convo.name,
     lifecycle: convo.lifecycle,
@@ -124,7 +124,7 @@ export function toConversationMeta(
  * cannot be a merge target or a merge source.
  */
 export function canRepresentThePeer(record: { lifecycle: ConversationLifecycle }): boolean {
-  return record.lifecycle !== "removed";
+  return record.lifecycle !== 'removed';
 }
 
 /**
@@ -141,11 +141,11 @@ export function canRepresentThePeer(record: { lifecycle: ConversationLifecycle }
  * null result as "unknown yet" and retry later rather than inventing a self peer.
  */
 export async function resolveDirectPeerId(
-  mlsService: Pick<IMlsService, "getGroupUserMembers">,
+  mlsService: Pick<IMlsService, 'getGroupUserMembers'>,
   groupId: string,
   rawName: string,
   userId: string,
-  log?: (msg: string) => void,
+  log?: (msg: string) => void
 ): Promise<string | null> {
   const self = userId.toLowerCase();
   const fromName = parseDirectPeerFromName(rawName, userId);
@@ -156,7 +156,7 @@ export async function resolveDirectPeerId(
     const peer = members.map((m) => m.userId.toLowerCase()).find((u) => u !== self) ?? null;
     if (peer) {
       log?.(
-        `[DM_PEER] ${groupId.slice(0, 8)}... peer resolved from roster: ${peer.slice(0, 8)}... (name was malformed)`,
+        `[DM_PEER] ${groupId.slice(0, 8)}... peer resolved from roster: ${peer.slice(0, 8)}... (name was malformed)`
       );
     } else {
       log?.(`[DM_PEER] ${groupId.slice(0, 8)}... roster has no peer yet - deferring`);
@@ -177,7 +177,7 @@ export const INITIAL_MESSAGES_PAGE = 60;
  */
 export function findConversationKeyByGroupId(
   conversations: Map<string, Conversation>,
-  groupId: string,
+  groupId: string
 ): string | undefined {
   if (conversations.has(groupId)) return groupId;
   for (const [key, convo] of conversations) {
@@ -219,8 +219,8 @@ export async function retireConversation(params: {
 }): Promise<boolean> {
   const { conversations, key, groupId, saveConversation, patch } = params;
   const convo = conversations.get(key);
-  if (!convo || convo.lifecycle === "removed") return false;
-  conversations.set(key, { ...convo, ...patch, lifecycle: "removed" });
+  if (!convo || convo.lifecycle === 'removed') return false;
+  conversations.set(key, { ...convo, ...patch, lifecycle: 'removed' });
   forgetGroupReconciliation(groupId);
   await saveConversation?.(key).catch(() => {});
   return true;
@@ -254,8 +254,8 @@ export async function markAwaitingReAdmission(params: {
 }): Promise<boolean> {
   const { conversations, key, saveConversation } = params;
   const convo = conversations.get(key);
-  if (!convo || convo.lifecycle !== "active") return false;
-  conversations.set(key, { ...convo, lifecycle: "pending" });
+  if (!convo || convo.lifecycle !== 'active') return false;
+  conversations.set(key, { ...convo, lifecycle: 'pending' });
   await saveConversation?.(key).catch(() => {});
   return true;
 }
@@ -303,12 +303,12 @@ export function markConversationDeletedRemotely(
   conversations: Map<string, Conversation>,
   groupId: string,
   userId: string,
-  saveConversation?: (key: string) => Promise<void>,
+  saveConversation?: (key: string) => Promise<void>
 ): boolean {
   const key = findConversationKeyByGroupId(conversations, groupId);
   if (!key) return false;
   const convo = conversations.get(key);
-  if (!convo || convo.lifecycle === "removed") return false;
+  if (!convo || convo.lifecycle === 'removed') return false;
   void retireConversation({ conversations, key, groupId, saveConversation });
   return true;
 }
@@ -358,9 +358,9 @@ export function persistArchivedConversations(uid: string, ids: string[]) {
 export function deriveConversationIdentity(
   metaName: string,
   userId: string,
-  metaId?: string,
+  metaId?: string
 ): {
-  conversationType: "direct" | "group";
+  conversationType: 'direct' | 'group';
   contactName: string;
   displayName: string;
   directPeerId?: string;
@@ -368,16 +368,16 @@ export function deriveConversationIdentity(
   const normalizedName = metaName.trim();
   const currentUser = userId.toLowerCase();
 
-  if (normalizedName.includes("::")) {
+  if (normalizedName.includes('::')) {
     const parts = normalizedName
-      .split("::")
+      .split('::')
       .map((v) => v.trim().toLowerCase())
       .filter(Boolean);
     const unique = [...new Set(parts)];
     const peer = unique.find((p) => p !== currentUser);
     if (peer) {
       return {
-        conversationType: "direct",
+        conversationType: 'direct',
         contactName: peer,
         displayName: peer,
         directPeerId: peer,
@@ -385,15 +385,15 @@ export function deriveConversationIdentity(
     }
   }
 
-  if (normalizedName.includes(" & ")) {
+  if (normalizedName.includes(' & ')) {
     const participants = normalizedName
-      .split(" & ")
+      .split(' & ')
       .map((v) => v.trim().toLowerCase())
       .filter(Boolean);
     if (participants.length === 2 && participants.includes(currentUser)) {
       const peer = participants.find((p) => p !== currentUser) || participants[0];
       return {
-        conversationType: "direct",
+        conversationType: 'direct',
         contactName: peer,
         displayName: peer,
         directPeerId: peer,
@@ -401,11 +401,11 @@ export function deriveConversationIdentity(
     }
   }
 
-  if (metaId?.startsWith("dm_")) {
+  if (metaId?.startsWith('dm_')) {
     const peer = normalizedName.toLowerCase();
     if (peer && peer !== currentUser) {
       return {
-        conversationType: "direct",
+        conversationType: 'direct',
         contactName: peer,
         displayName: peer,
         directPeerId: peer,
@@ -413,13 +413,13 @@ export function deriveConversationIdentity(
     }
   }
 
-  return { conversationType: "group", contactName: normalizedName, displayName: normalizedName };
+  return { conversationType: 'group', contactName: normalizedName, displayName: normalizedName };
 }
 
 /** What a site KNOWS about who a conversation is with - the shape {@link deriveConversationIdentity} returns. */
 export interface ConversationIdentity {
   /** Omit when the site cannot tell; the builder then reads the id and falls back to `group`. */
-  conversationType?: "direct" | "group" | "channel";
+  conversationType?: 'direct' | 'group' | 'channel';
   contactName: string;
   displayName: string;
   directPeerId?: string;
@@ -444,9 +444,9 @@ export interface ConversationRowSpec {
   /** Explicit `null` means "this conversation has no avatar"; absent means "this site does not know". */
   imageMediaId?: string | null;
   lastMessageAt?: number;
-  readWatermarks?: Conversation["readWatermarks"];
-  historyFloor?: Conversation["historyFloor"];
-  startedAt?: Conversation["startedAt"];
+  readWatermarks?: Conversation['readWatermarks'];
+  historyFloor?: Conversation['historyFloor'];
+  startedAt?: Conversation['startedAt'];
 }
 
 /**
@@ -477,7 +477,7 @@ export interface ConversationRowSpec {
 export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const { id, lifecycle, identity, existing } = spec;
   const isChannel = isChannelConversationId(id);
-  const conversationType = isChannel ? "channel" : (identity.conversationType ?? "group");
+  const conversationType = isChannel ? 'channel' : (identity.conversationType ?? 'group');
   // `??` WOULD BE WRONG HERE. `imageMediaId: null` is a site SAYING this conversation has no
   // avatar, and `null ?? existing` silently restores the one it was replacing.
   const imageMediaId = spec.imageMediaId !== undefined ? spec.imageMediaId : existing?.imageMediaId;
@@ -506,7 +506,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
 }
 
 export interface ConversationListPresentation {
-  conversationType: "direct" | "group";
+  conversationType: 'direct' | 'group';
   contactId: string;
   displayName: string;
   /**
@@ -533,20 +533,20 @@ export function resolveConversationListPresentation(
     id: string;
     name: string;
     contactName: string;
-    conversationType?: "direct" | "group" | "channel";
+    conversationType?: 'direct' | 'group' | 'channel';
     directPeerId?: string;
     /** Persisted IndexedDB name (often `userId::peerId` for DMs). */
     metaName?: string;
     /** Previously resolved label to keep across reloads. */
     fallbackDisplayName?: string;
   },
-  userId: string,
+  userId: string
 ): ConversationListPresentation {
   const metaName = input.metaName?.trim();
   const identity = deriveConversationIdentity(metaName || input.name, userId, input.id);
   const conversationType = input.conversationType ?? identity.conversationType;
 
-  if (conversationType === "direct") {
+  if (conversationType === 'direct') {
     const peerRaw =
       input.directPeerId ??
       identity.directPeerId ??
@@ -557,9 +557,9 @@ export function resolveConversationListPresentation(
     if (!peerRaw?.trim()) {
       // Stale/partial row during route switch or MLS reload - avoid throwing on .toLowerCase().
       return {
-        conversationType: "group",
+        conversationType: 'group',
         contactId: input.id,
-        displayName: input.fallbackDisplayName?.trim() || input.name.trim() || "Discussion",
+        displayName: input.fallbackDisplayName?.trim() || input.name.trim() || 'Discussion',
         displayNameResolved: true,
       };
     }
@@ -580,9 +580,9 @@ export function resolveConversationListPresentation(
         : undefined;
 
     // `peek` never invents a label, so `known` is the answer only when there really is one.
-    const known = needsResolve ? (peekUserDisplayName(peerId) ?? fallback?.trim() ?? "") : rawName;
+    const known = needsResolve ? (peekUserDisplayName(peerId) ?? fallback?.trim() ?? '') : rawName;
     return {
-      conversationType: "direct",
+      conversationType: 'direct',
       contactId: peerId,
       // Still the placeholder when nothing is known, so consumers that only read `displayName`
       // keep rendering a label rather than a blank row.
@@ -595,7 +595,7 @@ export function resolveConversationListPresentation(
     const trimmed = candidate?.trim();
     if (trimmed && !isRawId(trimmed) && !isCanonicalDirectKey(trimmed)) {
       return {
-        conversationType: "group",
+        conversationType: 'group',
         contactId: input.id,
         displayName: trimmed,
         displayNameResolved: true,
@@ -605,7 +605,7 @@ export function resolveConversationListPresentation(
 
   const fb = input.name.trim();
   return {
-    conversationType: "group",
+    conversationType: 'group',
     contactId: input.id,
     // The last resort, and the ONE place the word is written now that the Welcome handler's early
     // placeholder no longer invents it: a raw id is not a name, and saying "Groupe" is the honest
@@ -635,7 +635,7 @@ export async function mergeDirectConversationDuplicates(
   deviceKeyB64: string,
   storage: IStorage,
   log: (msg: string) => void,
-  mlsService?: IMlsService,
+  mlsService?: IMlsService
 ): Promise<ConversationMeta[]> {
   const directByPeer = new Map<string, ConversationMeta[]>();
   for (const meta of convMetas) {
@@ -644,7 +644,7 @@ export async function mergeDirectConversationDuplicates(
     // conversation the user has just started, destroyed for both parties by the reconciler.
     if (!canRepresentThePeer(meta)) continue;
     const identity = deriveConversationIdentity(meta.name, userId, meta.id);
-    if (identity.conversationType !== "direct" || !identity.directPeerId) continue;
+    if (identity.conversationType !== 'direct' || !identity.directPeerId) continue;
     const peer = identity.directPeerId.toLowerCase();
     const list = directByPeer.get(peer) ?? [];
     list.push(meta);
@@ -742,7 +742,7 @@ export async function mergeDirectConversationDuplicates(
   const normalizedMetas: ConversationMeta[] = [];
   for (const meta of merged) {
     const identity = deriveConversationIdentity(meta.name, userId, meta.id);
-    if (identity.conversationType !== "direct" || !identity.directPeerId) {
+    if (identity.conversationType !== 'direct' || !identity.directPeerId) {
       normalizedMetas.push(meta);
       continue;
     }
@@ -806,12 +806,12 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     ctx.deviceKeyB64,
     ctx.storage,
     ctx.log,
-    ctx.mlsService,
+    ctx.mlsService
   );
 
   const validConversationIds = new Set(mergedConvMetas.map((meta) => meta.id.toLowerCase()));
   const prunedArchivedIds = ctx.archivedConversationIds.filter((id) =>
-    validConversationIds.has(id),
+    validConversationIds.has(id)
   );
   if (prunedArchivedIds.length !== ctx.archivedConversationIds.length) {
     ctx.onArchivedIdsChange(prunedArchivedIds);
@@ -822,7 +822,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // not stored in ConversationMeta and would otherwise flash away on every login.
   const snapshot = new SvelteMap<
     string,
-    Pick<Conversation, "name" | "imageMediaId" | "conversationType" | "directPeerId">
+    Pick<Conversation, 'name' | 'imageMediaId' | 'conversationType' | 'directPeerId'>
   >();
   for (const [key, conv] of ctx.conversations.entries()) {
     snapshot.set(key, {
@@ -881,9 +881,9 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       prev?.name &&
       prev.name.trim() &&
       prev.name !== identity.displayName &&
-      identity.conversationType === "group"
+      identity.conversationType === 'group'
         ? prev.name
-        : identity.conversationType === "direct" && identity.directPeerId
+        : identity.conversationType === 'direct' && identity.directPeerId
           ? identity.directPeerId
           : identity.displayName;
     ctx.conversations.set(
@@ -894,7 +894,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         identity: {
           conversationType: prev?.conversationType ?? identity.conversationType,
           contactName:
-            identity.conversationType === "direct" && identity.directPeerId
+            identity.conversationType === 'direct' && identity.directPeerId
               ? identity.directPeerId
               : identity.contactName,
           displayName: resolvedName,
@@ -911,7 +911,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         readWatermarks: meta.readWatermarks,
         historyFloor: meta.historyFloor,
         startedAt: meta.startedAt,
-      }),
+      })
     );
   }
 
@@ -930,11 +930,11 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       const groups = await ctx.mlsService.getUserGroups(ctx.userId);
       serverGroupIndex = buildUserGroupSyncIndex(groups);
     } catch {
-      ctx.log("[WARN] getUserGroups unavailable — DM/group classification from the local cache");
+      ctx.log('[WARN] getUserGroups unavailable — DM/group classification from the local cache');
     }
 
     const replayMetas = mergedConvMetas.filter((m) => !isChannelConversationId(m.id));
-    let batchFirstPages: Map<string, import("$lib/mls-client/historyTypes").HistoryPage> =
+    let batchFirstPages: Map<string, import('$lib/mls-client/historyTypes').HistoryPage> =
       new Map();
     if (replayMetas.length > 0 && ctx.mlsService.fetchHistoryBatch) {
       try {
@@ -942,14 +942,14 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           replayMetas.map((meta) => ({
             groupId: meta.id,
             afterStreamId: readHistoryStreamCursor(ctx.userId, meta.id),
-          })),
+          }))
         );
         // Naming the request count, not "1 request": the list is chunked at
         // HISTORY_BATCH_MAX_GROUPS, and a gap between asked and primed is a refused chunk.
         const requests = Math.ceil(replayMetas.length / HISTORY_BATCH_MAX_GROUPS);
         ctx.log(
           `[CATCHUP] batch history: ${batchFirstPages.size}/${replayMetas.length} group(s) ` +
-            `primed in ${requests} request(s)`,
+            `primed in ${requests} request(s)`
         );
       } catch (e) {
         ctx.log(`[WARN] batch history failed: ${String(e)} — sequential fallback`);
@@ -970,9 +970,9 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             // or stored as direct but with a missing/self peer (legacy self-only group name).
             // resolveDirectPeerId falls back to the authoritative roster when the name is unusable.
             const self = ctx.userId.toLowerCase();
-            const currentPeer = (existingConvo.directPeerId ?? "").toLowerCase();
+            const currentPeer = (existingConvo.directPeerId ?? '').toLowerCase();
             const needsRepair =
-              (existingConvo.conversationType ?? "group") !== "direct" ||
+              (existingConvo.conversationType ?? 'group') !== 'direct' ||
               !currentPeer ||
               currentPeer === self;
             if (needsRepair) {
@@ -981,12 +981,12 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
                 meta.id,
                 row.name ?? meta.name,
                 ctx.userId,
-                ctx.log,
+                ctx.log
               );
               if (peer && peer !== self) {
                 ctx.conversations.set(meta.id, {
                   ...existingConvo,
-                  conversationType: "direct",
+                  conversationType: 'direct',
                   directPeerId: peer,
                   contactName: peer,
                   name: peer,
@@ -1006,13 +1006,13 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         const storedMessages = await ctx.storage.getMessagesPage(
           meta.id,
           ctx.deviceKeyB64,
-          INITIAL_MESSAGES_PAGE,
+          INITIAL_MESSAGES_PAGE
         );
         const msgs = await retroactivelyResolveHexIds(
           mapStoredMessagesToChatMessages(storedMessages, ctx.userId),
           ctx.storage,
           meta.id,
-          ctx.deviceKeyB64,
+          ctx.deviceKeyB64
         );
         const preReplayMsgIds = new Set(msgs.map((m) => m.id));
         const existing = ctx.conversations.get(meta.id);
@@ -1050,13 +1050,13 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         const refreshed = await ctx.storage.getMessagesPage(
           meta.id,
           ctx.deviceKeyB64,
-          INITIAL_MESSAGES_PAGE,
+          INITIAL_MESSAGES_PAGE
         );
         const refreshedMsgs = await retroactivelyResolveHexIds(
           mapStoredMessagesToChatMessages(refreshed, ctx.userId),
           ctx.storage,
           meta.id,
-          ctx.deviceKeyB64,
+          ctx.deviceKeyB64
         );
         const current = ctx.conversations.get(meta.id);
         if (current) {
@@ -1070,7 +1070,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           const myWatermark = watermarkFor(current.readWatermarks, ctx.userId.toLowerCase());
           const messages = mergeMessagePage(current.messages, refreshedMsgs);
           const newUnreadCount = messages.filter(
-            (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, myWatermark),
+            (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, myWatermark)
           ).length;
           ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
           for (const m of refreshedMsgs) {
@@ -1104,7 +1104,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
  * @returns the key, 0 for a conversation with no message and no seed
  */
 export function conversationRecency(
-  convo: Pick<Conversation, "messages" | "lastMessageAt">,
+  convo: Pick<Conversation, 'messages' | 'lastMessageAt'>
 ): number {
   const newest = convo.messages.at(-1);
   if (newest) {
@@ -1116,8 +1116,8 @@ export function conversationRecency(
 
 /** Newest first; equal keys fall back to the id so every device breaks a tie the same way. */
 export function compareConversationRecency(
-  a: Pick<Conversation, "id" | "messages" | "lastMessageAt">,
-  b: Pick<Conversation, "id" | "messages" | "lastMessageAt">,
+  a: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'>,
+  b: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'>
 ): number {
   return conversationRecency(b) - conversationRecency(a) || a.id.localeCompare(b.id);
 }
@@ -1141,7 +1141,7 @@ export function compareConversationRecency(
 export function conversationMatchesQuery(
   displayName: string,
   lastMessageContent: string,
-  query: string,
+  query: string
 ): boolean {
   const q = foldForSearch(query.trim());
   if (!q) return true;
@@ -1177,18 +1177,18 @@ export function recentDirectPeers(
   rows: readonly {
     resolved: Pick<
       ConversationListPresentation,
-      "conversationType" | "contactId" | "displayName" | "displayNameResolved"
+      'conversationType' | 'contactId' | 'displayName' | 'displayNameResolved'
     >;
     /** Epoch millis of the last message, absent for a conversation that has none yet. */
     lastMessageAt?: number | null;
   }[],
-  limit = 8,
+  limit = 8
 ): RecentDirectPeer[] {
   const byPeer = new Map<string, { peer: RecentDirectPeer; at: number }>();
 
   for (const row of rows) {
     const { conversationType, contactId, displayName, displayNameResolved } = row.resolved;
-    if (conversationType !== "direct" || !contactId || !displayNameResolved) continue;
+    if (conversationType !== 'direct' || !contactId || !displayNameResolved) continue;
 
     const at = row.lastMessageAt ?? 0;
     const seen = byPeer.get(contactId);
