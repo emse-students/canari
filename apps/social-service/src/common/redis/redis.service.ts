@@ -148,20 +148,40 @@ export class RedisService implements OnModuleDestroy {
    * every member is offline, and a caller would act on it.
    */
   async onlineUserIds(userIds: readonly string[]): Promise<Set<string>> {
+    return new Set((await this.onlineDevicesByUser(userIds)).keys());
+  }
+
+  /**
+   * Of `userIds`, the DEVICES online right now, by lower-cased user id - sorted, and present only
+   * for a user with at least one.
+   *
+   * The same single `SCAN` as {@link onlineUserIds}, which is derived from it. The device is what a
+   * Graine seed request names since 1.2.5 (channel-encryption section 23): one device of the elected
+   * member answers, and only a device with a socket open can, because a request is transport.
+   *
+   * Throws on a Redis failure, for the reason {@link onlineUserIds} does.
+   */
+  async onlineDevicesByUser(userIds: readonly string[]): Promise<Map<string, string[]>> {
     const wanted = new Set(userIds.map((id) => id.trim().toLowerCase()));
-    const online = new Set<string>();
+    const online = new Map<string, string[]>();
     if (wanted.size === 0) return online;
     let cursor = '0';
     do {
       const [next, keys] = await this.client.scan(cursor, 'MATCH', 'user:online:*', 'COUNT', 1000);
       cursor = next;
       for (const key of keys) {
-        // `user:online:{userId}:{deviceId}` - the user id is the third field, and neither id
-        // carries a colon.
-        const userId = key.split(':')[2]?.toLowerCase();
-        if (userId && wanted.has(userId)) online.add(userId);
+        // `user:online:{userId}:{deviceId}` - the user id is the third field and the device the
+        // fourth, and neither id carries a colon.
+        const [, , rawUserId, deviceId] = key.split(':');
+        const userId = rawUserId?.toLowerCase();
+        if (!userId || !deviceId || !wanted.has(userId)) continue;
+        const devices = online.get(userId) ?? [];
+        // A SCAN may return a key twice across iterations; a device is listed once.
+        if (!devices.includes(deviceId)) devices.push(deviceId);
+        online.set(userId, devices);
       }
     } while (cursor !== '0');
+    for (const devices of online.values()) devices.sort();
     return online;
   }
 

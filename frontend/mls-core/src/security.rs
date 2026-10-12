@@ -78,7 +78,8 @@ pub fn decrypt_blob(key: &[u8; 32], encrypted_data: &[u8]) -> Result<Vec<u8>, St
 }
 
 /// Generates a random 16-byte salt for the legacy Argon2id format.
-/// Only used by the pre-v0.11.0 backup path in `mls-wasm` (`encrypt_with_pin`).
+/// Nothing in the app writes that format any more; only the legacy-envelope test and the
+/// cross-version fixture generator use it, to build pre-v0.11.0 blobs the readers must still open.
 pub fn generate_salt() -> Result<[u8; 16], String> {
     let mut salt = [0u8; 16];
     fill_from_os(&mut salt)?;

@@ -67,8 +67,8 @@ to signal that a pointer is over something.
 
 **ONE EXCEPTION, DECIDED (user, 2026-09-30): STATIC CHROME THAT FLOATS OVER CONTENT IS GLASS.** *"Only
 static ui element, that are apart from content, should be liquid glass"* - the iOS tab bar, and IN THE
-PHONE APPS (not the website) the conversation's header pieces and the composer's "+", which content
-scrolls UNDER. Nothing
+PHONE APPS (not the website) the conversation's header pieces, its polls and pinned pills
+(2026-10-12) and the composer's "+", which content scrolls UNDER. Nothing
 that IS content - a bubble, a card, a panel, a list - and no structural surface: this section still
 holds for all of them. On iOS the chrome is Apple's native Liquid Glass; elsewhere it is
 `.glass-chrome` in `app.css` (translucent `--glass-chrome-bg`, `backdrop-filter: blur(18px)

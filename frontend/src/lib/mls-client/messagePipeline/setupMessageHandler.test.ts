@@ -107,16 +107,27 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     setupMessageHandler(deps as any);
     const cb = mls.onMessage.mock.calls[0][0];
 
-    const acked = await cb('peer', new Uint8Array([1, 2]), distributionGroup, false);
+    const acked = await cb(
+      'peer',
+      new Uint8Array([1, 2]),
+      distributionGroup,
+      false,
+      undefined,
+      false,
+      { senderDeviceId: 'peer-phone' }
+    );
 
     // The branch has to come FIRST. This group has no conversation, so the known-group path would
     // return without acknowledging and the seed would be redelivered for ever; and it is joined by
     // external commit, so the unknown-group path would ask for a Welcome nobody sends.
     expect(acked).toBe(true);
+    // The sending DEVICE travels too: a seed answer is addressed to the device that asked
+    // (channel-encryption section 23).
     expect(mls.routeDistributionFrame).toHaveBeenCalledWith(
       distributionGroup,
       'peer',
-      new Uint8Array([1, 2])
+      new Uint8Array([1, 2]),
+      'peer-phone'
     );
     expect(deps.addMessageToChat).not.toHaveBeenCalled();
   });

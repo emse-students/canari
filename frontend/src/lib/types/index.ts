@@ -45,13 +45,22 @@ export type MessageReference = {
   content: string;
 };
 
+/**
+ * Where an own message stands on its way to the server. `unconfirmed` exists for a salon message
+ * only (WP-OFF-2): the request left and NO answer came back (the link dropped, or a gateway 5xx after
+ * the server may have stored it). Nobody knows whether the server holds it, so it is neither `sent`
+ * nor `error`: a retry could post it twice, so the row offers Delete and "put back in the composer"
+ * instead, and the frame or a history page settles it if the server did take it.
+ */
+export type MessageSendStatus = 'pending' | 'sending' | 'sent' | 'error' | 'unconfirmed';
+
 /** Options accepted by all addMessageToChat call sites. Centralised here so every interface stays in sync. */
 export interface AddMessageToChatOptions {
   replyTo?: MessageReference;
   isSystem?: boolean;
   messageId?: string;
   timestamp?: Date;
-  status?: 'pending' | 'sending' | 'sent' | 'error';
+  status?: MessageSendStatus;
   /** True when content came from FCM preview cache (plain text, upgradeable by MLS envelope). */
   isFcmPreview?: boolean;
   /** When true, keep the message in memory only (e.g. server-authoritative community channels). */
@@ -79,6 +88,18 @@ export interface AddMessageToChatOptions {
    * Set from `queuedCreatedAt` in the MLS delivery envelope.
    */
   serverTimestamp?: number;
+  /**
+   * A community-salon echo shown before the server has a row (WP-OFF-2): flags the row
+   * `awaitingServerId` and keeps it OUT of the cross-tab announcements, which would hand a sibling
+   * tab a row it can never reconcile (it would show the message twice once the server row arrives).
+   */
+  salonEcho?: boolean;
+  /**
+   * The client UUID sealed inside an OWN salon message's ciphertext, carried to the sibling tabs
+   * with its `message_added` so the tab that composed it settles its echo instead of drawing the
+   * server's row beside it (WP-OFF-2).
+   */
+  clientMessageId?: string;
 }
 
 /**
@@ -107,9 +128,10 @@ export interface ChatMessage {
   /**
    * Optimistic send state: undefined = received/confirmed, 'pending' = queued in the outbox
    * (group not yet sendable / offline), 'sending' = handed to MLS and in-flight, 'sent' =
-   * confirmed by the server, 'error' = permanent failure (group deleted server-side).
+   * confirmed by the server, 'error' = permanent failure (group deleted server-side, or a salon
+   * send the server refused), 'unconfirmed' = a salon send with no answer (see {@link MessageSendStatus}).
    */
-  status?: 'pending' | 'sending' | 'sent' | 'error';
+  status?: MessageSendStatus;
   replyTo?: MessageReference;
   reactions?: MessageReaction[];
   isEdited?: boolean;
@@ -123,6 +145,12 @@ export interface ChatMessage {
   serverTimestamp?: number;
   /** True when displayed from FCM preview before full MLS envelope arrives. */
   isFcmPreview?: boolean;
+  /**
+   * A community-salon message shown BEFORE the server has a row for it (WP-OFF-2): `id` is the
+   * client UUID, not the server's, so every action addressed by a server id (react, edit, delete,
+   * pin) is unavailable until `settleSalonEcho` re-keys it. Memory only, never persisted.
+   */
+  awaitingServerId?: boolean;
 }
 
 /**

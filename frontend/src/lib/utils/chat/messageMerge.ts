@@ -54,7 +54,12 @@ export function mergeMessageUpgrade(
 
 /** True when a message has been composed but not yet confirmed by the server. */
 function isUnsent(msg: ChatMessage): boolean {
-  return msg.status === 'pending' || msg.status === 'sending' || msg.status === 'error';
+  return (
+    msg.status === 'pending' ||
+    msg.status === 'sending' ||
+    msg.status === 'error' ||
+    msg.status === 'unconfirmed'
+  );
 }
 
 /**

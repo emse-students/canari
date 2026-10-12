@@ -106,6 +106,13 @@ export interface DistributionFrame {
   groupId: string;
   /** Lower-cased sender user id. */
   sender: string;
+  /**
+   * The sending DEVICE the delivery envelope names, when it names one - what a seed answer is
+   * addressed to (channel-encryption section 23). Self-asserted by the sender, and that is enough
+   * for an address: the server delivers only to a `userId:deviceId` that is a live member of the
+   * group, so a lie about it reaches nobody else.
+   */
+  senderDeviceId?: string;
   /** The decrypted payload - a Graine control message, never a chat message. */
   plaintext: Uint8Array;
 }
@@ -836,7 +843,12 @@ export interface IMlsService {
    * Decrypts a frame that arrived on a key-distribution group and hands it to the Graine handler.
    * Returns whether the frame may be acknowledged.
    */
-  routeDistributionFrame(groupId: string, sender: string, ciphertext: Uint8Array): Promise<boolean>;
+  routeDistributionFrame(
+    groupId: string,
+    sender: string,
+    ciphertext: Uint8Array,
+    senderDeviceId?: string
+  ): Promise<boolean>;
   /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
   /**
