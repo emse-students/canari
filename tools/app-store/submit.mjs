@@ -159,7 +159,11 @@ export const VERSION_EDITABLE = new Set([
   'READY_FOR_REVIEW',
   ...VERSION_REJECTED,
 ]);
-export const VERSION_IN_REVIEW = new Set(['WAITING_FOR_REVIEW', 'IN_REVIEW', 'PENDING_DEVELOPER_RELEASE']);
+export const VERSION_IN_REVIEW = new Set([
+  'WAITING_FOR_REVIEW',
+  'IN_REVIEW',
+  'PENDING_DEVELOPER_RELEASE',
+]);
 export const VERSION_DONE = new Set([
   'READY_FOR_SALE',
   'PENDING_APPLE_RELEASE',
@@ -340,6 +344,36 @@ export function versionIsAlreadySubmissionItem({ state, items, versionId }) {
 }
 
 /**
+ * The items of a review submission that App Review REJECTED and that must be marked resolved
+ * before the submission can be sent again.
+ *
+ * A REJECTION DOES NOT CLOSE THE SUBMISSION. It stays open as `UNRESOLVED_ISSUES`, its item stays
+ * `REJECTED`, and the version goes back to an editable state - so the next release renames the
+ * version, attaches its build, writes its notes, and then `PATCH submitted: true` is refused 409
+ * "Version is not ready to be submitted yet" however long it waits (four retries over three
+ * minutes, 2026-10-12). The App Store Connect button is "Resubmit to App Review"; its API is
+ * `resolved: true` on the rejected item. Without this, ONE rejection makes every later stable's iOS
+ * arm red, and the production estate - a success dependency on it - stops shipping.
+ *
+ * Only items of THIS version: an item for anything else (an in-app purchase, another version) is a
+ * human's to resolve, and a release script must not declare someone else's rejection answered.
+ *
+ * @param {{items?: Array<{id?: string, attributes?: {state?: string},
+ *          relationships?: {appStoreVersion?: {data?: {id?: string}}}}>, versionId: string}} input
+ * @returns {string[]} the ids to mark resolved
+ */
+export function rejectedItemsOfVersion({ items, versionId }) {
+  return (items ?? [])
+    .filter(
+      (i) =>
+        i?.attributes?.state === 'REJECTED' &&
+        i?.relationships?.appStoreVersion?.data?.id === versionId &&
+        i?.id
+    )
+    .map((i) => i.id);
+}
+
+/**
  * Which App Store version slot should this release use, given EVERY version the app has?
  *
  * WHY THIS EXISTS, AND IT COST A RELEASE. The first version of this script asked Apple *"is there
@@ -484,12 +518,58 @@ export function readWhatsNew({ file, version }) {
         `${APPLE_WHATS_NEW_MAX}). Shorten them, or the Android arm fails at the store step after a ` +
         `full build.`,
     };
+  const named = text.match(PLATFORM_NAMES);
+  if (named)
+    return {
+      ok: false,
+      why:
+        `${file} names a platform ("${named[0]}"), and the same text reaches the App Store AND ` +
+        `Google Play - each store reads the other's name as metadata about a third-party ` +
+        `platform. Apple rejected 1.2.1 for exactly this (guideline 2.3.10, 2026-10-12). Say what ` +
+        `changed, not where.`,
+    };
   return { ok: true, text };
 }
+
+/**
+ * THE WORDS ONE STORE REFUSES TO READ ABOUT THE OTHER.
+ *
+ * ONE TEXT, TWO STORES: `store/whats-new.txt` is written once and published to both, so a sentence
+ * true of one platform ("plus rapide sur Android") is third-party metadata on the other. App Review
+ * rejected the 1.2.1 submission on 2026-10-12 under guideline 2.3.10 for the 1.2.0 notes'
+ * "ouvrent la bonne page sur Android", after two earlier stables had passed with the same kind of
+ * sentence - so passing review once proves nothing about the next one. Word-bounded and
+ * case-insensitive, so "iOS" and "ios" both match and no French word containing one does.
+ */
+const PLATFORM_NAMES = /\b(android|ios|iphone|ipad|google play|play store|app store)\b/i;
 
 // -------------------------------------------------------------------------------------------------
 // The API
 // -------------------------------------------------------------------------------------------------
+
+/**
+ * Apple's error body as one line, INCLUDING the errors it nests under `meta.associatedErrors`.
+ *
+ * THE OUTER ERROR IS OFTEN A WRAPPER. On 2026-10-12 `PATCH /v1/reviewSubmissions` answered 409
+ * "This resource cannot be reviewed, please check associated errors to see why" - and the reason
+ * ("Version is not ready to be submitted yet") was only in `meta.associatedErrors`, which the log
+ * did not print. The line a reader acts on was the one being dropped.
+ *
+ * @param {any} json the parsed body, or null when Apple answered something that is not JSON
+ * @returns {string | null} null when the body carries no `errors`, so the caller prints the raw text
+ */
+export function describeAppleErrors(json) {
+  if (!Array.isArray(json?.errors)) return null;
+  const one = (e) => `${e?.title}: ${e?.detail ?? ''}`;
+  return json.errors
+    .map((e) => {
+      const nested = Object.entries(e?.meta?.associatedErrors ?? {}).flatMap(([path, list]) =>
+        (Array.isArray(list) ? list : []).map((a) => `${path}: ${one(a)}`)
+      );
+      return nested.length ? `${one(e)} [associated: ${nested.join(' ; ')}]` : one(e);
+    })
+    .join(' | ');
+}
 
 /**
  * A REFUSAL FROM APPLE, CLASSIFIED AT THE THROW.
@@ -520,61 +600,62 @@ export class ApiError extends Error {
  * @type {(token: string) => (method: string, path: string, body?: unknown,
  *   opts?: {appleRefusesDuplicate?: boolean}) => Promise<any>}
  */
-const client = (token) => async (method, path, body, opts = {}) => {
-  const { appleRefusesDuplicate = false } = opts;
-  for (let attempt = 1; ; attempt++) {
-    /** @type {Response} */
-    let res;
-    try {
-      res = await fetch(`${API}${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
-        },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-      });
-    } catch (e) {
-      // No response at all. `status: 0` is how the policy above spells that.
-      if (attempt < API_ATTEMPTS && shouldRetry(method, 0, appleRefusesDuplicate)) {
+const client =
+  (token) =>
+  async (method, path, body, opts = {}) => {
+    const { appleRefusesDuplicate = false } = opts;
+    for (let attempt = 1; ; attempt++) {
+      /** @type {Response} */
+      let res;
+      try {
+        res = await fetch(`${API}${path}`, {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            ...(body ? { 'Content-Type': 'application/json' } : {}),
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        });
+      } catch (e) {
+        // No response at all. `status: 0` is how the policy above spells that.
+        if (attempt < API_ATTEMPTS && shouldRetry(method, 0, appleRefusesDuplicate)) {
+          const wait = API_RETRY_BASE_MS * attempt;
+          log(`  ${method} ${path} did not reach Apple (${e}) - retrying in ${wait / 1000}s`);
+          await sleep(wait);
+          continue;
+        }
+        throw new ApiError({ method, path, status: 0, detail: String(e), attempts: attempt });
+      }
+
+      if (res.status === 204) return null;
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        // Apple answers HTML for some gateway errors; the status and the body are what a reader needs.
+      }
+      if (res.ok) return json;
+
+      // THE ERROR DETAIL IS THE WHOLE VALUE OF THIS BRANCH. Apple's errors say exactly what is wrong
+      // ("You must provide a value for 'whatsNew'"), and a bare status turns that into a guess.
+      const detail = describeAppleErrors(json) ?? text.slice(0, 400);
+
+      if (attempt < API_ATTEMPTS && shouldRetry(method, res.status, appleRefusesDuplicate)) {
         const wait = API_RETRY_BASE_MS * attempt;
-        log(`  ${method} ${path} did not reach Apple (${e}) - retrying in ${wait / 1000}s`);
+        log(
+          `  ${method} ${path} -> ${res.status} (Apple did not answer) - attempt ${attempt} of ` +
+            `${API_ATTEMPTS}, retrying in ${wait / 1000}s: ${detail}`
+        );
         await sleep(wait);
         continue;
       }
-      throw new ApiError({ method, path, status: 0, detail: String(e), attempts: attempt });
+
+      // The attempt count is part of the message: "500 once" and "500 four times, a minute apart"
+      // are different findings, and only one of them is worth reporting to Apple.
+      throw new ApiError({ method, path, status: res.status, detail, attempts: attempt });
     }
-
-    if (res.status === 204) return null;
-    const text = await res.text();
-    let json = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      // Apple answers HTML for some gateway errors; the status and the body are what a reader needs.
-    }
-    if (res.ok) return json;
-
-    // THE ERROR DETAIL IS THE WHOLE VALUE OF THIS BRANCH. Apple's errors say exactly what is wrong
-    // ("You must provide a value for 'whatsNew'"), and a bare status turns that into a guess.
-    const detail =
-      json?.errors?.map((e) => `${e.title}: ${e.detail ?? ''}`).join(' | ') ?? text.slice(0, 400);
-
-    if (attempt < API_ATTEMPTS && shouldRetry(method, res.status, appleRefusesDuplicate)) {
-      const wait = API_RETRY_BASE_MS * attempt;
-      log(
-        `  ${method} ${path} -> ${res.status} (Apple did not answer) - attempt ${attempt} of ` +
-          `${API_ATTEMPTS}, retrying in ${wait / 1000}s: ${detail}`
-      );
-      await sleep(wait);
-      continue;
-    }
-
-    // The attempt count is part of the message: "500 once" and "500 four times, a minute apart"
-    // are different findings, and only one of them is worth reporting to Apple.
-    throw new ApiError({ method, path, status: res.status, detail, attempts: attempt });
-  }
-};
+  };
 
 const log = (msg) => process.stdout.write(`${msg}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -878,6 +959,15 @@ async function main() {
     log(`  the version is already an item of this submission - ${seen.how}`);
   } else {
     await addVersionToSubmission(api, submission.id, version.id);
+  }
+
+  // A SUBMISSION APP REVIEW SENT BACK is resent only once its rejected item is marked resolved -
+  // see `rejectedItemsOfVersion`. The list read above is still current: nothing since touched it.
+  for (const itemId of rejectedItemsOfVersion({ items: items?.data, versionId: version.id })) {
+    await api('PATCH', `/v1/reviewSubmissionItems/${itemId}`, {
+      data: { type: 'reviewSubmissionItems', id: itemId, attributes: { resolved: true } },
+    });
+    log(`  marked the rejected item ${itemId} resolved - this release is the answer to App Review`);
   }
 
   await api('PATCH', `/v1/reviewSubmissions/${submission.id}`, {
