@@ -250,7 +250,13 @@ still have been published clipped, and at 200 % text it would come out half the 
   centre moved vertically to the nearest place clear of the header and the tray (a selected text's
   style rows are already part of the tray). **Only a gesture that changed the layout settles**
   (`settlesOnRelease`): a tap moves nothing and takes no undo step. **Never while the text field is
-  open**: a restyle while typing is not settled, and the commit settles once. **The bands are the
+  open**: a restyle while typing is not settled against the controls, and the commit settles once.
+  **But it IS kept in the frame** (`placedAfterResize`, 2026-10-12): a restyle to a wider face
+  (serif, the pill) used to push the box past the screen edge for the whole edit, and "OK" then
+  moved it at once (Mi 9T on `alpha.3`: right edge 1094 then 1138 px of a 1079 px screen, 61-73 px
+  jump at "OK"). With the field open, only `keptInFrame` applies, never the bands, because the
+  keyboard has shrunk the stage the tray rides on; the commit then has no width left to correct
+  (same pass on the fix: right edge 1077 after each restyle, 0 px at "OK"). **The bands are the
   ones the keyboard does not move** (`controlBands`): the header's bottom edge, and the tray's HEIGHT
   laid against the bottom of the latched stage. The tray rides above the keyboard, so its top edge
   measures the keyboard; read that way, it pushed a caption up for good. The centre is the point a finger grabs, and it is then never under a control nor only at

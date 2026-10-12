@@ -111,6 +111,30 @@ export function nearestBoxIndex(y: number, boxes: readonly { top: number; height
   return best;
 }
 
+/** WHICH box of a paged column a focal point is on, and where within it. */
+export interface PageAnchor extends AnchorFraction {
+  index: number;
+}
+
+/**
+ * The anchor of a zoom about `focal`: the page under it (the nearest one when it falls in a gutter)
+ * and the fraction of that page it sits at. `null` when there is no page, or none with an area.
+ *
+ * One function for the pinch and the zoom buttons, because they are the same zoom with a different
+ * focal point: the fingers' midpoint for one, the viewport's centre for the other. The buttons used
+ * to change the zoom and keep `scrollTop`, so every page grew under a scroll that did not move and
+ * the reader landed at page / zoom (page 40 -> page 27 at x1.5, Mi 9T, 2026-10-12).
+ */
+export function pageAnchor(
+  focal: { x: number; y: number },
+  boxes: readonly RelativeBox[]
+): PageAnchor | null {
+  const index = nearestBoxIndex(focal.y, boxes);
+  if (index < 0) return null;
+  const fraction = anchorFraction(focal, boxes[index]);
+  return fraction ? { index, ...fraction } : null;
+}
+
 /**
  * Index of the entry in `steps` closest to `value`.
  *

@@ -546,6 +546,12 @@ What each number came from, and the fix that bounds it:
   each zoom step re-fit thousands of spans. The batched fit alone removed most of the freeze, so
   the window is wide rather than tight; an in-viewer search over `getPageText` would lift the
   find-in-page limit and is not built.
+- **A copy kept no line ends** ("les**autres**", Mi 9T, 2026-10-12): the spans are absolutely
+  placed, so nothing between them serialises as a break. Each run now carries pdf.js's `hasEOL`
+  (an EMPTY item that ends a line gives it to the run before it: 3 of 230 items on page 40 of the
+  scan) and the layer puts a `<br>` after it, as pdf.js's own viewer does. Read in the WebView: the
+  same selection copies `les
+autres` with the `<br>`, `lesautres` without.
 - **And the layer was font-size times too wide, on every PDF.** `textRunBox` multiplied pdf.js's
   `item.width` by the run's scale, but pdf.js gives that width already in page units: a 43-character
   line measured 3.3 page widths. Selection and highlight boxes now match the glyphs
@@ -597,6 +603,15 @@ Two consequences worth keeping:
 - **The transform transition must be suppressed while the settle measures.** The column animates
   back to `scale(1)` over 120 ms and `getBoundingClientRect` reports the *animating* box, so a
   measurement taken mid-transition reads part of the gesture's own preview. `settling` gates it.
+- **The zoom buttons are the same anchored zoom, about the viewport's CENTRE** (`pageAnchor`, then
+  `anchorScroll`; one `zoomAbout` in the component serves both). Until 2026-10-12 they changed the
+  zoom and left `scrollTop` alone, so every page grew under a scroll that did not move and the
+  reader landed at page / zoom. Read with real taps on the Mi 9T (`pic86.pdf`, from page 40): before,
+  x1.5 / x2 / x3 landed on pages 27 / 20 / 14; after, page 40 at every step and back down, the
+  position within the page within 0.0005 of a page; sharp 0.6-0.9 s after the tap, longest task
+  0.26-0.36 s. A real tap on the icon's SVG stroke itself produced no `click` in that WebView
+  (`input tap`; pointerdown and pointerup arrive, no click), one on the button's padding did - the
+  rig taps the padding.
 - The module is deliberately pure and tested rather than inlined: it is the seed of the shared
   gesture WP-VIEWER-1 wants, and the arithmetic is the part worth pinning. MiGallery's `PhotoModal`
   can keep the ratio form because it scales ONE bitmap about its centre with no unscaled chrome
