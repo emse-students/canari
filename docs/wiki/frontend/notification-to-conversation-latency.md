@@ -210,7 +210,7 @@ it.** Gains are not additive: 1 and 2 overlap.
 already refuted chunking as the lever twice, and the JavaScript itself is the cost; and the MLS load,
 which is ~10-30 ms here and must be re-read on a production-sized state before anyone touches it.
 
-### F11 - a text reply no longer asks the server whether the group exists before sending it (built, phone before/after PENDING)
+### F11 - a text reply no longer asks the server whether the group exists before sending it (measured: -0.1 to -0.17 s per reply)
 
 **The send path, step by step** (Mi 9T, dev, 2026-10-12, a throwaway `[LATENCY]` build, ms after
 the send click, one warm run; the others agree within ~30 ms):
@@ -232,8 +232,17 @@ the `group-deleted` arm of `flushOne`'s catch), which reaches the same `failPerm
 same cause - and the pre-flight could never be the whole answer, a deletion landing inside its
 round trip. It is now asked only where the POST is not the next step: **an unsendable group** (its
 next step is the re-add, which would otherwise re-add a deleted group for ever) and **a media entry**
-(its upload precedes the POST). Its failure, swallowed before, is logged. Expected: **~150-250 ms**
-off every text or control send on dev - about a third of the acknowledgement. The durable write is
+(its upload precedes the POST). Its failure, swallowed before, is logged. Expected: ~150-250 ms per text or control send.
+
+| Mi 9T, local APKs against dev, n=6 each, ms after the send click | without | F11 |
+| --- | ---: | ---: |
+| warm: `[OUTBOX] ... sent` (the server took it) | 638 [545-679] | **481** [442-638] |
+| warm: the reply on the other client | 590 [497-649] | **420** [398-546] |
+| killed: `[OUTBOX] ... sent` | 630 [603-720] | **556** [530-640] |
+| killed: the reply on the other client | 601 [551-679] | **483** [459-584] |
+| flush start -> sent (warm / killed) | 497 / 423 | **332 / 353** |
+
+`without` is the same tree minus this change (`main` plus F9, which does not touch the send path). **~0.1-0.17 s off every reply**, a quarter of it. The durable write is
 kept where it is: it is the outbox's durability rule ([offline-and-weak-network](offline-and-weak-network.md)).
 
 ### F5 - the warm diagnosis was wrong, and the fix it suggested measured to nothing
