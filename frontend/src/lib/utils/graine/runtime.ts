@@ -1,5 +1,5 @@
 import { GraineSealUnavailableError } from './sealUnavailable';
-import type { IMlsService } from '$lib/mls-client/IMlsService';
+import type { BulkIngestObserver, IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { resetChannelReadSignals } from '$lib/utils/chat/channelReadSignal';
@@ -72,6 +72,9 @@ export function setGraineRuntime(next: GraineRuntime | null): void {
     seedCache.clear();
     openedKeys.clear();
     repairListener = null;
+    // Salons of the account that is leaving. The DEPTH is kept: it counts windows the MLS service
+    // opened and will close, and zeroing it here would turn their closes into unmatched releases.
+    heldRepairs.clear();
     // Same reason: the markers name salons of this account, and "already told my other devices" is
     // a claim about THIS account's devices. The next one inherits none of it.
     resetChannelReadSignals();
@@ -143,9 +146,87 @@ export function setGraineRepairListener(listener: ((channelIds: string[]) => voi
   repairListener = listener;
 }
 
-/** Announces repaired channels, if anyone is listening. */
+/**
+ * How many bulk-ingest windows are open, and the salons repaired inside them.
+ *
+ * ONE RE-READ PER SALON PER DRAIN, NOT ONE PER SEED. A device coming back reads its queued frames in
+ * one drain, and every member who started a session while it was away put a seed in that queue. Each
+ * seed announced its salon on arrival, and each announcement re-read the salon's whole page
+ * (`messages?limit=200` + `read-marks`) and re-decrypted it: measured on a production web console
+ * 2026-10-12 (`v1.2.5`), 26 seeds for 3 salons in 1.8 s became 26 history reloads - 52 requests, 14
+ * of them for one salon - where 3 would have drawn the same rows.
+ *
+ * HELD BY THE DRAIN'S OWN WINDOW, NOT BY A TIMER. `beginBulkIngest`/`endBulkIngest` pair exactly
+ * (`IMlsService.BulkIngestObserver`), so the release is the moment the last queued frame has been
+ * read - the one moment after which a re-read sees every seed the drain brought. A debounce would be
+ * a guess at that moment; the window IS it. Nested windows release at the outermost close.
+ */
+let repairHoldDepth = 0;
+const heldRepairs = new Set<string>();
+
+/** Opens a hold: repairs announced until the matching {@link releaseGraineRepairs} are deferred. */
+export function holdGraineRepairs(): void {
+  repairHoldDepth += 1;
+}
+
+/**
+ * Closes a hold; at the outermost close, announces every salon repaired inside it, once each.
+ *
+ * An unmatched release is said and ignored rather than driving the depth negative, which would
+ * defer every later repair for the rest of the session.
+ */
+export function releaseGraineRepairs(): void {
+  if (repairHoldDepth === 0) {
+    console.warn('[GRAINE] repair hold released without a matching hold - ignored');
+    return;
+  }
+  repairHoldDepth -= 1;
+  if (repairHoldDepth > 0 || heldRepairs.size === 0) return;
+  const channelIds = [...heldRepairs];
+  heldRepairs.clear();
+  console.debug(
+    `[GRAINE] drain over - re-reading ${channelIds.length} salon(s) once for the seeds it brought`
+  );
+  deliverRepair(channelIds);
+}
+
+/**
+ * The hold, wired to the MLS service's bulk-ingest windows - but ONLY to the queue drain's.
+ *
+ * A bulk-ingest window is not always a drain. A history restore opens one too
+ * (`withMlsBulkIngest`, `bufferUi: false`), and the startup restore wraps every conversation's
+ * replay in ONE window that lasts as long as all of them - minutes on an account rejoining many
+ * conversations. Holding on that window kept a salon's repair from a live seed until every
+ * conversation had been replayed, so a salon opened at startup stayed blank for all that time
+ * although its seed had arrived. The drain is the window that carries the seeds, and it is the one
+ * that buffers the UI (`bufferUi: true`), so that flag - on BOTH sides, since a close replays the
+ * exact phase its open used - is what names it.
+ */
+export const graineRepairHoldObserver: BulkIngestObserver = {
+  onBulkIngestStart(phase) {
+    if (phase.bufferUi) holdGraineRepairs();
+  },
+  onBulkIngestEnd(phase) {
+    if (phase.bufferUi) releaseGraineRepairs();
+  },
+};
+
+/**
+ * Announces repaired channels, if anyone is listening - or, inside a drain, notes them for its end.
+ *
+ * @see holdGraineRepairs
+ */
 export function announceGraineRepair(channelIds: string[]): void {
   if (channelIds.length === 0) return;
+  if (repairHoldDepth > 0) {
+    for (const id of channelIds) heldRepairs.add(id);
+    return;
+  }
+  deliverRepair(channelIds);
+}
+
+/** Hands repaired channels to the listener, or says that nobody will re-read them. */
+function deliverRepair(channelIds: string[]): void {
   if (!repairListener) {
     // Not silent: the seeds DID arrive, and the only remaining symptom would be a salon whose
     // history stays blank until the user leaves and comes back to it.

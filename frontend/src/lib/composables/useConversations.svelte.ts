@@ -317,22 +317,25 @@ export function useConversations() {
   // ── Derived ───────────────────────────────────────────────────────────────
   /**
    * Resolves the open conversation synchronously.
-   * Iterates the map so Svelte 5 tracks set/delete; shallow-clones the entry so prop
-   * consumers (ChatArea on Android WebView) always see a fresh reference when messages
-   * or flags change.
+   *
+   * READ BY KEY, NEVER BY ITERATION. `SvelteMap.get(key)` tracks that key's own source - bumped when
+   * the key is set to a new value or deleted - plus the map's version while the key is absent, so it
+   * also sees the conversation arrive. Iterating the map, which this used to do, subscribes to EVERY
+   * key's source: a message landing in any of a heavy account's ~220 conversations and salons re-ran
+   * this, handed ChatArea a new object, and regrouped the open thread's whole history (`groupMessages`,
+   * the seen-by pass, the poll parse, the unread count) - several full passes over a 5k-message thread
+   * per frame received elsewhere. Every write path stores a NEW object (`set(key, { ...convo, ... })`),
+   * which is what a key source compares; a same-object `set` never notified anybody, iterated or not.
+   *
+   * Shallow-clones the entry so prop consumers (ChatArea on Android WebView) see a fresh reference
+   * whenever the open conversation itself changes.
    */
   const currentConvo = $derived.by(() => {
     const key = selectedContact;
     if (!key) return null;
-    for (const [k, v] of conversations) {
-      if (k !== key) continue;
-      void v.messages.length;
-      void v.lastMessageAt;
-      void v.lifecycle;
-      void v.unreadCount;
-      return { ...v, messages: v.messages };
-    }
-    return null;
+    const v = conversations.get(key);
+    if (!v) return null;
+    return { ...v, messages: v.messages };
   });
 
   /**
@@ -382,14 +385,23 @@ export function useConversations() {
    *
    * `page` is passed by the caller that has already read it, so extracting this costs no second
    * IndexedDB read on the path whose whole purpose is to be cheap.
+   *
+   * `supersedes` names the rows an EARLIER draw of this same load put on screen. Any of them that
+   * fall below the window of this page are withdrawn: when the replay in between brought more than
+   * a page, keeping them would leave a hole between the two windows that the scrollback never fills
+   * (it pages below the OLDEST row in memory), and a row the replay edited or deleted down there
+   * would stay stale. Withdrawing them gives exactly the screen a load that never drew first gives.
+   *
+   * @returns the rows of the page drawn, so a later draw of the same load can supersede them.
    */
   async function renderStoredPage(
     contactName: string,
     id: string,
     ctx: ConversationContext,
-    page?: Awaited<ReturnType<NonNullable<ConversationContext['storage']>['getMessagesPage']>>
-  ) {
-    if (!ctx.storage) return;
+    page?: Awaited<ReturnType<NonNullable<ConversationContext['storage']>['getMessagesPage']>>,
+    supersedes?: readonly ChatMessage[]
+  ): Promise<ChatMessage[]> {
+    if (!ctx.storage) return [];
     const stored =
       page ?? (await ctx.storage.getMessagesPage(id, ctx.deviceKeyB64, INITIAL_MESSAGES_PAGE));
     const msgs = await retroactivelyResolveHexIds(
@@ -399,14 +411,31 @@ export function useConversations() {
       ctx.deviceKeyB64
     );
     const current = conversations.get(contactName);
-    if (!current) return;
+    if (!current) return msgs;
+    let base = current.messages;
+    if (supersedes && supersedes.length > 0 && msgs.length > 0) {
+      const oldest = [...msgs].sort(compareMessageOrder)[0];
+      const inPage = new SvelteSet(msgs.map((m) => m.id));
+      const withdrawn = new SvelteSet(
+        supersedes
+          .filter((m) => !inPage.has(m.id) && compareMessageOrder(m, oldest) < 0)
+          .map((m) => m.id)
+      );
+      if (withdrawn.size > 0) {
+        ctx.log(
+          `[HISTORY] ${id.slice(0, 8)}… ${withdrawn.size} early-drawn row(s) below the fresh page withdrawn`
+        );
+        base = base.filter((m) => !withdrawn.has(m.id));
+      }
+    }
     conversations.set(contactName, {
       ...current,
-      messages: mergeMessagePage(current.messages, msgs),
+      messages: mergeMessagePage(base, msgs),
     });
     for (const m of msgs) {
       if (m.reactions && m.reactions.length > 0) ctx.messageReactions.set(m.id, m.reactions);
     }
+    return msgs;
   }
 
   /** Fetches and decrypts conversation history from the network, then reloads the latest page from IndexedDB. For channel conversations delegates to loadChannelHistory instead of MLS replay. */
@@ -441,10 +470,19 @@ export function useConversations() {
 
     const isSelected = selectedContact === contactName;
     if (isSelected) isLoadingHistory = true;
+    // The rows the fast path drew before the probe, which the reload after a replay supersedes.
+    let drawnFirst: ChatMessage[] = [];
     try {
       // Fast-path: when user clicks a conversation, probe the server cursor with `limit=1`.
-      // If there is nothing new, skip the heavy decrypt/replay and just render the latest
-      // IndexedDB page we already have.
+      // If there is nothing new, skip the heavy decrypt/replay.
+      //
+      // THE STORED PAGE IS DRAWN BEFORE THE PROBE, NOT AFTER IT. The probe answers "is there
+      // anything newer than what this device holds", and a notification tap is exactly the case
+      // where the answer is yes - so the page waited for the probe AND the whole replay behind it,
+      // and the reader looked at an empty thread over history that was already on disk (Mi 9T,
+      // cold landing: ~0.7 s between the pane and its first row, docs/wiki/frontend/
+      // notification-to-conversation-latency.md). The replay below merges what it adds into this
+      // page (`mergeMessagePage`), so drawing first changes WHEN the held rows appear, never which.
       if (!options?.force && ctx.storage) {
         const cursor = readHistoryStreamCursor(ctx.userId, id);
         if (cursor) {
@@ -455,14 +493,21 @@ export function useConversations() {
           );
           // If local DB is empty, let `replayConversationHistory` handle cursor reset safely.
           if (existingPage.length > 0) {
+            drawnFirst = await renderStoredPage(contactName, id, ctx, existingPage);
+            ctx.log(
+              `[HISTORY] ${id.slice(0, 8)}… stored page drawn (${existingPage.length} row(s)) before the server probe`
+            );
             try {
               const probe = await ctx.ensureMls().fetchHistory(id, cursor, 1);
               if (probe.rows.length === 0) {
-                await renderStoredPage(contactName, id, ctx, existingPage);
                 return;
               }
-            } catch {
-              /* non-blocking: fallback to full replay */
+            } catch (e) {
+              // Not a decision: the replay below asks the server itself and reports its own
+              // failure. This line is all that is left of the probe's.
+              ctx.log(
+                `[HISTORY] ${id.slice(0, 8)}… probe failed (${String(e)}), replaying in full`
+              );
             }
           }
         }
@@ -489,7 +534,7 @@ export function useConversations() {
         );
         commit?.();
         // Reload from DB so display reflects the latest saved state
-        await renderStoredPage(contactName, id, ctx);
+        await renderStoredPage(contactName, id, ctx, undefined, drawnFirst);
       } catch (e) {
         // Previously unhandled: this call is fired with `void` by every caller, so a throw here
         // (network hiccup, decrypt error, IndexedDB contention - all realistic during a
