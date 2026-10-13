@@ -45,6 +45,7 @@
     unbindPosition = bindFixedPopover(panelEl, {
       anchor: () => anchor,
       alignEnd: true,
+      centreWhenWide: true,
       estimatedHeight: 440,
     });
 

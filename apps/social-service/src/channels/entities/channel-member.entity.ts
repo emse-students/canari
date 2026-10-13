@@ -39,6 +39,19 @@ export class ChannelMember {
   @Column('jsonb', { default: {} })
   readMarks: Record<string, number>;
 
+  /**
+   * How far this member has CLEARED each salon's unread count without reading it ("Marquer tout
+   * comme lu", migration 082), keyed by channelId like `readMarks` - but private: never a receipt.
+   *
+   * Declared so `synchronize` (on outside production) creates it and does not DROP it: an
+   * undeclared column is removed at every local boot, and the unread count names it. Kept out of
+   * every TypeORM SELECT and UPDATE (`select`/`insert`/`update: false`), so before migration 082
+   * runs on a deploy only the INSERT of a new membership names it (its RETURNING), never a read.
+   * Read and written by raw SQL only (`listUnreadCounts`, `clearWorkspaceUnread`).
+   */
+  @Column({ type: 'jsonb', default: {}, select: false, insert: false, update: false })
+  clearedMarks?: Record<string, number>;
+
   /** Display order of this member's workspaces in their own sidebar (ascending). Personal, not shared across members. */
   @Column({ type: 'int', default: 0 })
   sortOrder: number;

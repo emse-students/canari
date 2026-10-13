@@ -83,15 +83,28 @@ export function truncateLogIds(text: string): string {
  * WHAT IT CANNOT REACH IS A WORKER. Each worker has its own global console and never runs this
  * file, so `mlsKeyPackage.worker` and its siblings still print unstamped. They are the one place a
  * reader must fall back to ordering.
+ *
+ * `sink`, when given, receives every non-`debug` line AFTER it is printed - the in-app log
+ * (`appLog.captureConsoleLine`) is wired here and nowhere else. It is a parameter rather than an
+ * import so this module stays a leaf: the sink's redaction imports {@link truncateLogIds}.
  */
-export function installConsoleIdTruncation(): void {
+export function installConsoleIdTruncation(sink?: ConsoleSink): void {
   if (installed) return;
   installed = true;
 
   const methods = ['log', 'debug', 'info', 'warn', 'error'] as const;
   for (const method of methods) {
     const original = console[method].bind(console) as (...args: unknown[]) => void;
-    console[method] = (...args: unknown[]): void =>
-      original(logPrefix(), ...args.map((a) => (typeof a === 'string' ? truncateLogIds(a) : a)));
+    console[method] = (...args: unknown[]): void => {
+      const condensed = args.map((a) => (typeof a === 'string' ? truncateLogIds(a) : a));
+      original(logPrefix(), ...condensed);
+      if (sink && method !== 'debug') sink(method, condensed);
+    };
   }
 }
+
+/** Where a printed console line goes next. `debug` never reaches it. */
+export type ConsoleSink = (
+  level: 'log' | 'info' | 'warn' | 'error',
+  args: readonly unknown[]
+) => void;

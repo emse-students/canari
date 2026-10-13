@@ -99,6 +99,43 @@ describe('channelEventHandler - channel.read', () => {
     expect(log).not.toHaveBeenCalled();
   });
 
+  // "Marquer tout comme lu" from another device of this account (2026-10-13): no watermark moves -
+  // the clear is not a reading - and the counts are re-read, because the clearing device's bound is
+  // not this device's to apply.
+  it('a community cleared on a device of this account re-reads the counts and moves no mark', async () => {
+    const conversations = new Map<string, unknown>([
+      ['channel_c1', { id: 'channel_c1', unreadCount: 2, messages: [], readWatermarks: {} }],
+    ]);
+    const onSalonUnreadCleared = vi.fn();
+    await handleChannelEvent(
+      {
+        type: 'channel.unread.cleared',
+        data: { workspaceId: 'ws', userId: 'me', cleared: { c1: 200 } },
+      },
+      { ...ctx(conversations), onSalonUnreadCleared }
+    );
+    expect(onSalonUnreadCleared).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'ws' });
+    expect(conversations.get('channel_c1')).toEqual({
+      id: 'channel_c1',
+      unreadCount: 2,
+      messages: [],
+      readWatermarks: {},
+    });
+  });
+
+  it('accuses a cleared event with no community to address', async () => {
+    const log = vi.fn();
+    const onSalonUnreadCleared = vi.fn();
+    await handleChannelEvent(
+      { type: 'channel.unread.cleared', data: {} },
+      { ...ctx(new Map(), log), onSalonUnreadCleared }
+    );
+    expect(onSalonUnreadCleared).not.toHaveBeenCalled();
+    expect(log.mock.calls.join('\n')).toContain(
+      'channel.unread.cleared arrived with no workspaceId'
+    );
+  });
+
   it('accuses an event with no reader to address', async () => {
     const log = vi.fn();
     await handleChannelEvent(

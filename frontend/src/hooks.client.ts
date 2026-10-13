@@ -18,14 +18,17 @@ import { prefetchMlsWasmAtBoot } from '$lib/mls-client/wasmPrefetch';
 import { openClaimedAppLink } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
+import { captureConsoleLine, installAppLogFlushTriggers } from '$lib/utils/appLog';
 import { apiServiceOrigins } from '$lib/utils/apiUrl';
 import { createRoutedFetch } from '$lib/utils/fetchRouting';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 import { CHECKOUT_RETURN_HOSTS } from '$lib/utils/checkoutCallbacks';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
-// web logs stay as readable as adb ones.
-installConsoleIdTruncation();
+// web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
+// log a store build keeps (docs/wiki/frontend/mobile.md#the-in-app-log).
+installConsoleIdTruncation(captureConsoleLine);
+installAppLogFlushTriggers();
 
 // ════════════════════════════════════════════════════════════════════════════
 // THE BOOT BENCH OPENS HERE, NOT AT THE PIN

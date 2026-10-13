@@ -1,6 +1,9 @@
 //! MLS Tauri commands: initialisation, groups, encryption, decryption.
 
-use crate::concurrency::{write_mls_state_blob, ForegroundCritical};
+use crate::concurrency::{
+    checkpoint_live_manager, foreground_checkpoint_lock, persist_locked_manager,
+    write_mls_state_blob, ForegroundCritical,
+};
 use crate::keystore_bridge::PluginDeviceKeyStore;
 use crate::state::{
     decrypt_messages_batch, AppState, BatchDecryptItem, DecryptedFrame, KeyPackageBatchResult,
@@ -213,23 +216,17 @@ pub(crate) async fn sauvegarder_mls_et_persister(
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let lock = manager_state
-            .lock()
-            .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
         // HELD ACROSS THE SERIALISE, NOT JUST THE WRITE. `save_encrypted_with_key` cost 48 s on a
         // Mi 9T; `write_mls_state_blob` is the first thing that refreshes the heartbeat deadline,
         // so without this the guard lapses mid-checkpoint on a backgrounded app and a background
         // engine writes back the state it loaded BEFORE this one started (see `concurrency.rs`).
         let _checkpoint = ForegroundCritical::enter();
         let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
-        let encrypted = manager
-            .save_encrypted_with_key(&key)
-            .map_err(|e| e.to_string())?;
-        write_mls_state_blob(&app, &encrypted)?;
-        Ok::<usize, String>(encrypted.len())
+        // The manager lock spans the export only; the seal and the write run on the copy, in
+        // checkpoint order - see `checkpoint_live_manager` for what that freed and what it kept.
+        checkpoint_live_manager(&manager_state, &key, |sealed| {
+            write_mls_state_blob(&app, sealed)
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -266,6 +263,9 @@ pub(crate) async fn oublier_key_packages(
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Checkpoint order first: this writes `mls.bin` from the live manager, so it must not
+        // interleave with a checkpoint that exported before it (see `foreground_checkpoint_lock`).
+        let _ordered = foreground_checkpoint_lock();
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
@@ -285,10 +285,7 @@ pub(crate) async fn oublier_key_packages(
 
         if outcome.forgotten > 0 {
             let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
-            let encrypted_state = manager
-                .save_encrypted_with_key(&key)
-                .map_err(|e| e.to_string())?;
-            write_mls_state_blob(&app, &encrypted_state)?;
+            persist_locked_manager(manager, &key, |sealed| write_mls_state_blob(&app, sealed))?;
         }
         Ok::<usize, String>(outcome.forgotten)
     })
@@ -328,6 +325,9 @@ pub(crate) async fn generer_key_packages_et_persister(
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Checkpoint order first: this writes `mls.bin` from the live manager, so it must not
+        // interleave with a checkpoint that exported before it (see `foreground_checkpoint_lock`).
+        let _ordered = foreground_checkpoint_lock();
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
@@ -414,14 +414,12 @@ pub(crate) async fn generer_key_packages_et_persister(
         // write that is genuinely owed.
         if count > 0 || minted_fallback {
             let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
-            let encrypted_state = manager
-                .save_encrypted_with_key(&key)
-                .map_err(|e| e.to_string())?;
-            write_mls_state_blob(&app, &encrypted_state)?;
+            let state_bytes =
+                persist_locked_manager(manager, &key, |sealed| write_mls_state_blob(&app, sealed))?;
             log::debug!(
                 "generer_key_packages_et_persister done count={} state_bytes={}",
                 count,
-                encrypted_state.len()
+                state_bytes
             );
         } else {
             log::debug!(
@@ -491,50 +489,72 @@ pub(crate) fn recenser_key_packages(state: tauri::State<AppState>) -> Result<Str
 /// Whether this device is still a member of the group (false once a Remove commit naming it was
 /// applied). See `MlsManager::is_group_active`: the fact that makes an eviction knowable at the
 /// commit rather than at the refused send.
+///
+/// **ASYNC, SO A WAIT FOR THE MANAGER PARKS A RUST THREAD AND NOT THE WEBVIEW.** As a plain `fn` it
+/// ran inside Android's JavaScript bridge call and froze the screen for whatever held the lock -
+/// 2.8-3.2 s per call during a rejoin on the Mi 9T (2026-10-13). No caller can tell the two apart:
+/// every one `await`s the answer, which reaches JS asynchronously either way, and the answer is the
+/// state at the moment the lock is taken - inside the interval between the call and its result in
+/// both shapes, which is all a reader that resumes after an `await` could ever rely on.
 #[tauri::command]
-pub(crate) fn groupe_actif(
+pub(crate) async fn groupe_actif(
     group_id: String,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    let lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
-    manager
-        .is_group_active(&group_id)
-        .map_err(|e| e.to_string())
+    let manager_state = state.mls_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_ref()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        manager
+            .is_group_active(&group_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
+/// The group's current epoch. Async for the reason [`groupe_actif`] is; its callers already order
+/// concurrent readings themselves (`TauriMlsService`'s cache stamps), so none relies on FIFO.
 #[tauri::command]
-pub(crate) fn obtenir_epoch(
+pub(crate) async fn obtenir_epoch(
     group_id: String,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<u64, String> {
-    let lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
-    // u64: no truncation; Tauri serializes it as a JSON number (exact <= 2^53, never reached). [[S4]]
-    manager.get_epoch(&group_id).map_err(|e| e.to_string())
+    let manager_state = state.mls_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_ref()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        // u64: no truncation; Tauri serializes it as a JSON number (exact <= 2^53, never reached). [[S4]]
+        manager.get_epoch(&group_id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
+
+/// What [`ajouter_membres_bulk`] hands back: the staged commit, the Welcome (none when nobody was
+/// added), the added leaf indices, the key packages skipped, and the external-join base.
+type StagedBulkAdd = (
+    Vec<u8>,
+    Option<Vec<u8>>,
+    Vec<u32>,
+    Vec<mls_core::SkippedKeyPackage>,
+    Vec<u8>,
+);
 
 #[tauri::command]
 pub(crate) fn ajouter_membres_bulk(
     group_id: String,
     key_packages_bytes: Vec<Vec<u8>>,
     state: tauri::State<AppState>,
-) -> Result<
-    (
-        Vec<u8>,
-        Option<Vec<u8>>,
-        Vec<u32>,
-        Vec<mls_core::SkippedKeyPackage>,
-        Vec<u8>,
-    ),
-    String,
-> {
+) -> Result<StagedBulkAdd, String> {
     let mut lock = state
         .mls_manager
         .lock()

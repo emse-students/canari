@@ -84,7 +84,7 @@
       const plaintext = await decryptDocument(key, iv, ciphertext);
 
       await downloadDecryptedFile(new Blob([plaintext], { type: doc.mimeType }), downloadName(doc));
-      console.log(`[Reviewer] Download complete: ${doc.name}`);
+      console.log(`[Reviewer] Download complete: ${doc.id}`);
     } catch (e) {
       // Gone for good: a reviewer cannot re-upload, so the notice says who must.
       if (isMediaPurgedError(e)) {

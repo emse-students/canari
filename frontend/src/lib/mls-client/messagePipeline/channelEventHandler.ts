@@ -30,6 +30,7 @@ export interface ChannelEventContext extends Pick<
   | 'onRolePermissionsChanged'
   | 'onChannelDeleted'
   | 'onWorkspaceUpdated'
+  | 'onSalonUnreadCleared'
   | 'onWorkspaceRoleChanged'
   | 'onWorkspaceDeleted'
   | 'onChannelMessageDeleted'
@@ -75,6 +76,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onRolePermissionsChanged,
     onChannelDeleted,
     onWorkspaceUpdated,
+    onSalonUnreadCleared,
     onWorkspaceRoleChanged,
     onWorkspaceDeleted,
     onChannelMessageDeleted,
@@ -301,6 +303,21 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             return merged ? { ...convo, readWatermarks: merged } : convo;
           })();
     if (next !== convo) conversations.set(key, next);
+    return;
+  }
+
+  // THIS ACCOUNT EMPTIED A COMMUNITY'S UNREAD ("Marquer tout comme lu") on one of its devices. The
+  // server addresses it to this account alone - the salon's other members learn nothing, which is
+  // why it is not a `channel.read`. The marks it carries are the CLEARING device's bound; a device
+  // holding other messages cannot apply them locally without guessing, so it re-reads the counts.
+  if (event.type === 'channel.unread.cleared') {
+    const data = event.data || {};
+    const workspaceId = String(data.workspaceId || '');
+    if (!workspaceId) return unaddressable(log, event.type, 'workspaceId');
+    log(
+      `[CHANNEL_CLEAR] community ${workspaceId.slice(0, 8)} cleared on a device of this account (${Object.keys(data.cleared || {}).length} salon(s)) - re-reading counts`
+    );
+    onSalonUnreadCleared?.({ workspaceId });
     return;
   }
 

@@ -499,7 +499,7 @@ export async function discoverMissingGroups(params: {
       //    or we would delete a group we just re-joined.
       if (dismissedGroupIds.has(convo.id)) {
         if (!serverGroupIds.has(convo.id)) {
-          log(`[DISCOVERY] UI group "${convo.name || convo.id}" dismissed by user - removing`);
+          log(`[DISCOVERY] UI group "${convo.id}" dismissed by user - removing`);
           await purgeLocalConversationRecord({
             conversations,
             contactKey: key,
@@ -560,7 +560,7 @@ export async function discoverMissingGroups(params: {
           serverStatus,
           isStillUserMember,
         });
-        const label = convo.name || convo.id;
+        const label = convo.id;
 
         if (fate.action === 'purge') {
           log(`[DISCOVERY] UI group "${label}" - ${fate.reason} - removing`);

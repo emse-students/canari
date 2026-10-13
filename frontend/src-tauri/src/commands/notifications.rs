@@ -43,6 +43,7 @@
 /// `covers` is how many inbound messages this one banner stands for (a catch-up flush raises one
 /// banner for N), which the Kotlin `GenericBannerLedger` credits against refused pushes.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn notifier_message_natif(
     group_id: String,
     sender_id: String,

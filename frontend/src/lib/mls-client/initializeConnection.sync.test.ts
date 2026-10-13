@@ -47,6 +47,9 @@ describe('syncConnectionAfterWsOpen - a departed leaf is collected by a holder',
       getLocalGroups: vi.fn().mockReturnValue(['g-live']),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['u1:dev-1', 'gone:web-7']),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'u1' }]),
+      getGroupRosters: vi
+        .fn()
+        .mockResolvedValue({ rosters: new Map([['g-live', ['u1']]]), refused: new Set() }),
       removeMember,
       getEpoch: vi.fn().mockReturnValue(9),
       ...forgetPair(),
@@ -68,6 +71,10 @@ describe('syncConnectionAfterWsOpen - a departed leaf is collected by a holder',
     });
 
     expect(removeMember).toHaveBeenCalledExactlyOnceWith('g-live', ['gone']);
+    // Every roster came from the ONE batch read; the single read is paid only by the group the
+    // batch named a stray in, decided again right before its commit.
+    expect(mls.getGroupRosters).toHaveBeenCalledExactlyOnceWith(['g-live']);
+    expect(mls.getGroupUserMembers).toHaveBeenCalledExactlyOnceWith('g-live');
     // An epoch that only ever existed in memory is an epoch the next load walks back into, and the
     // removed leaf would come back with it.
     expect(mls.persistCheckpoint).toHaveBeenCalled();
