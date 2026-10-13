@@ -83,8 +83,9 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
 - **`GlassMenuButton`** (`components/shared`) is the growing menu: a round `glass-chrome` button whose
   panel scales out of the button's own corner (`data-popover-side` picks the origin), portalled -
   `backdrop-filter` would otherwise confine a fixed panel to the button - and positioned with
-  `bindFixedPopover`'s new `stayAnchored`, since a panel that grows OUT OF its button must not be
-  centred however wide it is. Its `plain` variant is the same menu without glass: the website's phone
+  `bindFixedPopover`, which keeps a panel on its anchor however wide it is (centring is opt-in,
+  `centreWhenWide`, for the emoji pickers only since 2026-10-13), since a panel that grows OUT OF its
+  button must not be centred. Its `plain` variant is the same menu without glass: the website's phone
   paperclip. An entry with an on/off state (search, members) is a `menuitemcheckbox`.
 
 - **The polls and pinned bars are glass pills too (user, 2026-10-12)** - they were opaque white
@@ -692,11 +693,17 @@ cause is a different stale number on each phone.
   until the inset catches up.
 
 **Fixed 2026-10-09 in `keyboardViewport.svelte.ts`, both halves proven in unit tests only.**
-- **Android**: `computeSnapshot` reads a visual viewport that is more than 0.35 x threshold SHORTER
-  than a layout viewport that already gave up a keyboard's worth (`baseline - winH > threshold`) as
-  that layout viewport's own height - it can only be counting the keyboard again (a pan keeps `winH`
-  full, a pinch-zoom bails out on `scale`). The test replays 945 / 588 / 230 and gets the settled
-  snapshot, keyboard height 357.
+- **Android**: `computeSnapshot` reads a double-reported visual viewport as the layout viewport's
+  own height. **Since 2026-10-13 the report is recognised by its SHAPE, not by a height**
+  (`isDoubleReport`): the visual viewport stands below the layout viewport by exactly what the
+  layout gave up (`winH - vv == baseline - winH`, within 2 CSS px of independent rounding). The
+  first version asked the layout to have shrunk by more than the 160 px keyboard threshold, so the
+  bench's 90 px ADB keyboard got past it and the composer drew one frame at 702 before resting at
+  792 (2 of 5 rises, [check W](../../device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)).
+  Nothing else has that shape: a pan gives nothing up, a pinch-zoom bails out on `scale`, a settled
+  keyboard leaves the viewports equal, and a URL bar plus a keyboard agree only if both are the same
+  height to the pixel. The tests replay the bench's LatinIME rise (945 / 588 / 230.3 / 587.9), a
+  90 px rise, and keyboards from 40 to 450 px.
 - **iOS**: the "must not visibly shrink" comment on the footer rule is about the RESTING state, and
   the resting inset with the keyboard open is already 0 (the footer settles at 0.75rem), so pinning
   `--safe-area-inset-bottom: 0px` inline while an iOS keyboard is open (`keyboardSafeAreaBottomOverride`,
@@ -3180,6 +3187,26 @@ message then typing at +50 ms, typing then a message at +80 ms, message + stop +
 during a conversation's entry, a switch with typing in flight) all ended at the bottom, as did a
 smooth scroll interrupted by the bubble. If a phone still shows the bubble UNDER the composer
 rather than flush on it, it is a different defect, owed a reading with the keyboard closed.
+
+**IT WAS A DIFFERENT DEFECT: THE RESERVATION MISSED THE FOOTER'S PADDING** (user, 2026-10-13, phone
+app: the dots half under the composer, keyboard closed). `--chat-composer-height` is the footer's
+`offsetHeight`, padding included, and the footer pads `max(0.75rem, var(--safe-area-inset-bottom))`.
+Its `ResizeObserver` watched the default CONTENT box, which a padding change does not touch - so when
+the bottom inset changed after the composer mounted (Android's navigation-bar inset reaching the
+WebView, the keyboard's open/close), the footer grew and nothing republished. Measured on the real
+`ChatArea` at 390x844, glass chrome: a 24 px inset arriving late left the footer at 76 px against a
+published 64 (bubble 4.5 px clear), a 48 px inset (three-button navigation) at 100 against 64 - the
+bubble 19.5 px UNDER the composer. `publishComposerHeight` (`utils/chat/composerHeight.ts`) observes
+`border-box`, the box it publishes: 16.5 px clear at 0, 24 and 48 px, long and short thread, keyboard
+simulated open (390x500) and closed. #1780's measurement held because its inset never changed under
+it. **Not run:** a real Android inset change and iOS WebKit (the home indicator's inset is pinned to 0
+while the keyboard is open, `keyboardViewport.svelte.ts`, which this now follows too). **And the
+publish waits for the next frame:** written inside the `ResizeObserver` callback, the value resized
+the SHALLOWER scroller, which the engine cannot notify in the same pass, so every composer growth (a
+wrapped line as well, since long before this change) raised "ResizeObserver loop completed with
+undelivered notifications" and delivered the scroller's notification a frame later anyway. The
+callback now only schedules one `requestAnimationFrame`, cancelled at teardown; the scroller resizes
+in an ordinary layout and is notified in its own frame - the same frame the follow already landed in.
 
 ### The day label and its floating pill (2026-10-01)
 

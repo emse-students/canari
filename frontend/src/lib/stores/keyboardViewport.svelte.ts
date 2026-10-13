@@ -5,6 +5,7 @@
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { rememberKeyboardHeight } from './keyboardHeightMemory';
+import { Log } from '$lib/utils/Log';
 
 export type KeyboardViewportSnapshot = {
   isOpen: boolean;
@@ -62,6 +63,48 @@ function keyboardOpenThresholdPx(): number {
 }
 
 /**
+ * How far apart two heights may be and still be the SAME height, in CSS px.
+ *
+ * Not a size: three numbers enter the comparison below and each is rounded on its own -
+ * `innerHeight` to a whole CSS px (twice: the baseline and `winH`), `visualViewport.height` to a
+ * device pixel (0.4 CSS px on the Mi 9T). Measured there, the two halves of a double report differ by
+ * 0.7 (588 - 230.3 = 357.7 against 945 - 588 = 357). A keyboard of any height passes or fails it the
+ * same way.
+ */
+const SAME_HEIGHT_ROUNDING_PX = 2;
+
+/**
+ * Whether this measurement is the Android WebView's DOUBLE REPORT of one keyboard rise.
+ *
+ * Mi 9T, 2026-10-02: for one frame of most rises the layout viewport has ALREADY given up the
+ * keyboard's room (`winH` 588 of a 945 baseline) while the visual viewport reads 230 tall -
+ * 945 - 2 x 357, the keyboard taken off twice. Trusted, it pinned the shell at 230 and the composer
+ * jumped 358 px up and back.
+ *
+ * THE REPORT IS RECOGNISED BY ITS OWN SHAPE, NOT BY A HEIGHT. It used to require the layout viewport
+ * to have shrunk by more than the keyboard-open threshold (160 px on Android), so a keyboard shorter
+ * than that - the bench's 90 px ADB keyboard, a floating or one-row IME - was trusted and the
+ * composer spent a frame at 702 instead of 792 (2 of 5 rises, 2026-10-13). What the double report IS
+ * does not depend on the keyboard's size: the visual viewport stands below the layout viewport by
+ * EXACTLY what the layout viewport gave up, the same inset applied a second time. Nothing else has
+ * that shape: a pan keeps `winH` at the baseline (nothing given up), a pinch-zoom is `scale` and is
+ * bailed out before this is asked, a settled keyboard leaves the two viewports equal, and a browser
+ * whose URL bar slid (`winH` short by the bar) while a keyboard covers the visual viewport has the
+ * keyboard's height below the layout and the bar's above, which agree only if the two are the same
+ * height to the pixel.
+ *
+ * @param m the raw viewport measurement of this event.
+ * @param baselineHeight the tallest the layout viewport has been with no keyboard.
+ * @returns true when the visual viewport must be read as the layout viewport's own height.
+ */
+export function isDoubleReport(m: ViewportMeasurement, baselineHeight: number): boolean {
+  const layoutGaveUp = baselineHeight - m.winH;
+  if (layoutGaveUp <= SAME_HEIGHT_ROUNDING_PX) return false;
+  const visualBelowLayout = m.winH - m.vvHeight;
+  return Math.abs(visualBelowLayout - layoutGaveUp) <= SAME_HEIGHT_ROUNDING_PX;
+}
+
+/**
  * Pure geometry: turns raw viewport numbers into a keyboard snapshot.
  * Fix (root cause): when `scale > 1` the visual viewport shrank because of a pinch-zoom, not a
  * keyboard - bail out with `zoomed: true` and a full-height, closed snapshot so the shell is
@@ -88,15 +131,13 @@ export function computeSnapshot(
     };
   }
 
-  // A DOUBLE REPORT IS ONE KEYBOARD, NOT TWO (Android WebView, Mi 9T, 2026-10-02). For 60-100 ms of
-  // every keyboard rise the layout viewport had ALREADY given up the keyboard's room (`winH` 588 of a
-  // 945 baseline) while the visual viewport was reported 230 tall - 945 - 2 x 357: the height taken
-  // off twice. Trusted, it pinned the shell at 230 and the composer jumped 358 px up and back. A
-  // visual viewport can only be SHORTER than a layout viewport that shrank by a keyboard's worth if
-  // it is counting that keyboard again (a pan keeps `winH` full, a pinch-zoom is `scale` and bailed
-  // out above), so it is read as the layout viewport's own height.
-  const layoutGaveUpKeyboard = baselineHeight - m.winH > thresholdPx;
-  const doubleReported = layoutGaveUpKeyboard && m.winH - m.vvHeight > thresholdPx * 0.35;
+  const doubleReported = isDoubleReport(m, baselineHeight);
+  if (doubleReported) {
+    Log.d(
+      'keyboardViewport',
+      `double report absorbed: visual ${m.vvHeight} read as layout ${m.winH} (baseline ${baselineHeight})`
+    );
+  }
   const vvHeight = doubleReported ? m.winH : m.vvHeight;
 
   const insetBottom = Math.max(0, m.winH - vvHeight - m.offsetTop);
