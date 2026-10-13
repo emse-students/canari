@@ -30,7 +30,15 @@ object ChannelReadMark {
      * server's message time and is NEVER this phone's clock, because a read mark only rises and a
      * fast clock would mark future messages read for good. No instant, no action - rather than one
      * that would say something invented.
+     *
+     * AND IT NEEDS THE BANNER TO SHOW THE MESSAGE ([showsMessage]). The action moves the salon's
+     * read mark, which is the "Lu par" receipt every other member sees, and it is kept on the shade
+     * because there the reader read the message in the banner. A BLIND banner (no seed yet, no
+     * ciphertext inlined, a refused decryption) shows "Nouveau message" and nothing else, so tapping
+     * it told the sender their message had been read by somebody who never saw a word of it -
+     * measured on prod: 15 blind Android salon banners in one day (2026-10-13). A blind banner
+     * redrawn with its plaintext once the seed arrives offers the action again.
      */
-    fun offered(conversationId: String, sentAt: Long): Boolean =
-        sentAt > 0L && channelIdOf(conversationId) != null
+    fun offered(conversationId: String, sentAt: Long, showsMessage: Boolean): Boolean =
+        showsMessage && sentAt > 0L && channelIdOf(conversationId) != null
 }
