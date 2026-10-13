@@ -1265,15 +1265,26 @@ by the heads sampler (it is installed before the tap on the phone, after the ope
 
 **Met on the way, not asked about:**
 
-- **The creator of a community is not offered "Epingler" until a reload.** Gamma created `Bench126`
+- **The creator of a community is not offered "Epingler" until a reload** (FIXED 2026-10-13: the
+  creation answer omitted `viewerCanModerate`, which also hid the close of another member's poll,
+  [social-service](services/social-service.md)). Gamma created `Bench126`
   in the web tab; the message menu in its salon showed Transferer / Modifier / Supprimer and no
   Epingler, although the database gives gamma the Administrateur role (`channel.moderate`). After a
   reload the same menu has Epingler. One observation; whether "Cloturer le sondage" was also missing
   before the reload was not read.
 - **The poll close confirmation is the system dialog with English buttons** ("CANCEL" / "OK") over a
-  French sentence (`poll-close-1.png`).
+  French sentence (`poll-close-1.png`). FIXED 2026-10-13: `ChannelPoll` asks through the app's
+  `showConfirm`; no `window.confirm` is left in the frontend.
 - **The sticky "AUJOURD'HUI" pill sits partly under the pinned pill** after the pinned jump
-  (`pinned-jump.png`).
+  (`pinned-jump.png`). **RE-READ 2026-10-13: the pill in that frame is NOT the sticky one** - its
+  letters are spaced (`tracking-widest`) and its padding is wider, which is the IN-THREAD date
+  separator (`ChatMessageGroups`), a content row scrolling under the floating glass chrome as every
+  row does; the sticky pill is `letter-spacing: normal`. The sticky pill's own placement was
+  measured in desktop Chrome at 390 px with the glass chrome forced on: `--chat-header-height`
+  follows the pinned list closing (159 -> 113 -> 111 px within 100 ms) and the pill lands 13.6 px
+  below the pinned bar. Nothing to fix on the sticky pill. Still unexplained: the jumped-to message
+  in that frame was not centred, and the frame does not say which message was pinned - the next
+  reading should name it.
 - **The phone's long-press menu has no "Epingler" for a plain member**, which matches
   `mayPinMessage`.
 
