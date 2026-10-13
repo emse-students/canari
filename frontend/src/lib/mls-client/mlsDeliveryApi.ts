@@ -36,6 +36,22 @@ export const PENDING_PAGE_STALL_MS = 10_000;
 export const HISTORY_BATCH_MAX_GROUPS = 50;
 
 /**
+ * The largest number of groups `POST /api/mls/group-rosters` answers in one request.
+ *
+ * MIRRORS `GROUP_ROSTERS_MAX_GROUPS` in chat-delivery-service's `members.controller.ts`, for the
+ * reason {@link HISTORY_BATCH_MAX_GROUPS} gives: a client must not learn a limit by being refused.
+ */
+export const GROUP_ROSTERS_MAX_GROUPS = 200;
+
+/** What one {@link MlsDeliveryApi.fetchGroupRosters} read answered. */
+export interface GroupRosterBatch {
+  /** Roster user ids by group, for every group the server answered. */
+  rosters: Map<string, string[]>;
+  /** Groups the server refused because the caller is not in them (the single read's 403). */
+  refused: Set<string>;
+}
+
+/**
  * The delivery service refused this device id: it was explicitly deleted, and the denylist is
  * permanent. Typed rather than message-matched, because the only cure is structural - enrol under
  * a fresh device id ({@link BaseMlsService.rotateDeviceIdentity}), never a retry of the same call.
@@ -1454,6 +1470,53 @@ export class MlsDeliveryApi {
       if (!res.ok) throw new Error(`getGroupUserMembers failed: ${res.status}`);
       return await res.json();
     });
+  }
+
+  /**
+   * The user-level rosters of many groups, `GROUP_ROSTERS_MAX_GROUPS` per `POST /api/mls/group-rosters`.
+   *
+   * Never throws, like {@link fetchHistoryBatch}, and for the same reason: a group this read did not
+   * answer is simply absent from both sets, and the caller reads it on its own with
+   * {@link getGroupUserMembers} - the ordinary path every group took before this route existed. That
+   * is also what keeps a client working against a delivery service that predates the route (its
+   * 404 is logged once per chunk, with the server's words, and nothing else changes).
+   *
+   * `refused` is the server ANSWERING that the caller is not in that group - the single read's 403,
+   * per group - so the caller knows it without asking again.
+   */
+  async fetchGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
+    const out: GroupRosterBatch = { rosters: new Map(), refused: new Set() };
+    for (let i = 0; i < groupIds.length; i += GROUP_ROSTERS_MAX_GROUPS) {
+      const chunk = groupIds.slice(i, i + GROUP_ROSTERS_MAX_GROUPS);
+      try {
+        const res = await this.f(`${this.historyUrl}/api/mls/group-rosters`, {
+          method: 'POST',
+          headers: await this.auth({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ groupIds: chunk }),
+        });
+        if (!res.ok) {
+          console.warn(
+            `[ROSTER] batch of ${chunk.length} group(s) not answered: ${res.status} ` +
+              `body=${(await res.text()).slice(0, 200)} - each roster is read on its own`
+          );
+          continue;
+        }
+        const data = (await res.json()) as {
+          rosters?: Record<string, string[]>;
+          refused?: string[];
+        };
+        for (const [groupId, userIds] of Object.entries(data.rosters ?? {})) {
+          out.rosters.set(groupId, userIds ?? []);
+        }
+        for (const groupId of data.refused ?? []) out.refused.add(groupId);
+      } catch (e) {
+        console.warn(
+          `[ROSTER] batch of ${chunk.length} group(s) could not be sent - each roster is read on its own:`,
+          e
+        );
+      }
+    }
+    return out;
   }
 
   /** Requests currently on the wire, by key: a second identical ask joins instead of repeating. */

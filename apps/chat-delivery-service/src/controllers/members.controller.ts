@@ -9,6 +9,7 @@ import {
   UseGuards,
   Headers,
   ForbiddenException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -33,6 +34,16 @@ import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { ensureGroupMember } from '../utils/group-membership';
+
+/**
+ * The most groups `POST /api/mls/group-rosters` answers in one request.
+ *
+ * MIRRORED BY `GROUP_ROSTERS_MAX_GROUPS` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`, which
+ * chunks by it: a client must not learn a limit by being refused (the lesson of the history batch,
+ * whose cap went unnoticed while every catch-up was refused). The production account the request
+ * was sized on held 89 groups.
+ */
+export const GROUP_ROSTERS_MAX_GROUPS = 200;
 
 /** Group membership management: add/remove members, list members, list user groups. */
 @Controller()
@@ -533,6 +544,74 @@ export class MembersController {
       userId: r.userId,
       displayName: nameMap.get(r.userId) ?? null,
     }));
+  }
+
+  /**
+   * The user-level rosters of many groups in ONE request - what `GET .../user-members` answers for
+   * one group, minus the display names nobody reading a roster in bulk asks for.
+   *
+   * **WHY IT EXISTS.** The connection sync compares every held conversation's tree with its roster
+   * (`removeStrayLeaves`, client side) and read the roster one group at a time: 81 sequential
+   * `GET user-members` per connection, 5.0 s, on the 2026-10-12 production console. The answer is
+   * the same rows; only the round trips were the cost.
+   *
+   * **THE SAME AUTHORIZATION AS THE SINGLE READ, PER GROUP.** A caller is answered for a group only
+   * when it holds a row in that group's roster (or is a global admin, or the deployment injects no
+   * `x-user-id`, as `assertCallerIsGroupMember` allows). Every other group - one the caller is not
+   * in, or one that does not exist - is listed in `refused` rather than failing the whole request:
+   * the single read's 403 per group, carried as a FACT the client reads by group, so it never has
+   * to learn it by asking again.
+   *
+   * **OLD CLIENTS ARE UNTOUCHED**: `GET mls/groups/:groupId/user-members` stays, and is still what
+   * every other caller (membership guards, peer resolution) reads.
+   *
+   * A path of its own (`mls/group-rosters`) rather than one under `mls/groups/`, so it can never be
+   * matched by a `mls/groups/:groupId/...` route.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/group-rosters')
+  async getGroupRosters(
+    @Body() body: { groupIds?: unknown } | undefined,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
+  ): Promise<{ rosters: Record<string, string[]>; refused: string[] }> {
+    const requested = body?.groupIds;
+    if (!Array.isArray(requested)) {
+      throw new BadRequestException('groupIds must be an array');
+    }
+    if (requested.length > GROUP_ROSTERS_MAX_GROUPS) {
+      throw new BadRequestException(`At most ${GROUP_ROSTERS_MAX_GROUPS} groups per request`);
+    }
+    const groupIds = [...new Set(requested.map((g) => sanitizeQueryValue(g, 'groupId')))];
+    if (groupIds.length === 0) return { rosters: {}, refused: [] };
+
+    const rows = await this.groupMemberRepo.find({
+      where: { groupId: In(groupIds) },
+      select: { groupId: true, userId: true },
+    });
+    const byGroup = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const members = byGroup.get(row.groupId) ?? new Set<string>();
+      members.add(row.userId);
+      byGroup.set(row.groupId, members);
+    }
+
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    const unrestricted = headerGlobalAdmin === 'true' || !caller;
+    const rosters: Record<string, string[]> = {};
+    const refused: string[] = [];
+    for (const groupId of groupIds) {
+      const members = byGroup.get(groupId) ?? new Set<string>();
+      if (!unrestricted && !members.has(caller)) {
+        refused.push(groupId);
+        continue;
+      }
+      rosters[groupId] = [...members];
+    }
+    this.logger.log(
+      `[GROUP_ROSTERS] asked=${groupIds.length} answered=${groupIds.length - refused.length} refused=${refused.length} rows=${rows.length}`
+    );
+    return { rosters, refused };
   }
 
   @UseGuards(HeaderAuthGuard)

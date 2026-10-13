@@ -953,8 +953,44 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
 | POST | `/api/mls/groups/:groupId/members` | Add member record to group |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members |
+| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused }`) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
+
+#### Many rosters in one read - `POST /api/mls/group-rosters` (2026-10-13)
+
+**Why.** Every connection compares each held conversation's tree with its roster (`removeStrayLeaves`,
+the collection of a leaver's leaf) and read the rosters one `GET user-members` at a time: 81 in
+series, 5.0 s, on the 2026-10-12 production console
+([startup-load-audit](../frontend/startup-load-audit-2026-10-12.md), finding 5).
+
+**What.** Body `{ groupIds: string[] }`, at most `GROUP_ROSTERS_MAX_GROUPS` = 200 (mirrored in
+`mlsDeliveryApi.ts`, which chunks by it). Answer `{ rosters: { [groupId]: userId[] }, refused:
+groupId[] }`, from ONE `dm_group_members ... WHERE groupId IN (...)` query. **The authorization is
+the single read's, per group**: a group the caller holds no roster row in - or that does not exist -
+is listed in `refused` instead of failing the request; a global admin, or a deployment injecting no
+`x-user-id`, is answered for every group, as `assertCallerIsGroupMember` allows. No display names:
+nobody reading rosters in bulk asks for them.
+
+**Compatibility.** The single `GET .../user-members` is unchanged and is still what every other
+caller reads (membership guards, peer resolution). A client meeting a server without the route
+(a store build ahead of the production deploy) gets a 404, logs one `[ROSTER] batch ... not answered`
+warning per connection, and reads each roster on its own - the path every group took before. Nothing
+to retire: once every estate carries the route that branch is simply never reached.
+
+**The order that keeps the batch sound** (client, `strayLeaves.ts`): every TREE is read before the
+rosters, so a leaf joining after the read is in no tree this pass compares and is never a candidate;
+right before a commit the tree is read again and only users still holding a leaf are named. The
+batch widens the roster-to-commit window from one round trip to the length of the pass, which
+matters only for a member who leaves AND rejoins inside it - the per-group read had the same race over
+one round trip.
+
+**Measured.** Same server build, same scratch database (81 groups of 9 members among 18 729 rows),
+loopback, 7 rounds: 81 serial `GET` **182 ms** median [168-240] against one `POST` **4 ms** [3-5]
+(first round 164 ms, cold), identical rosters. That is the server and database half only; the
+production cost is the round trips (81 x ~62 ms on the console above), which the batch replaces by
+one. Pinned by `members.controller.group-rosters.spec.ts` (one query, refusal per group) and
+`strayLeaves.test.ts` (one roster read for every held group, after every tree).
 
 ### Messaging
 
