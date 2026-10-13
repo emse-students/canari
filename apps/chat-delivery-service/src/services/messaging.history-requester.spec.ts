@@ -97,6 +97,24 @@ describe('a history read names who asked', () => {
   });
 
   /**
+   * `after=X until=X entries=0` was read on 2026-10-13 as a client asking for an empty window. The
+   * client had sent no `until`: the line printed the head it found there. A caught-up group on the
+   * batch route is now a count, not a line, and a line prints the caller's bound and the head apart.
+   */
+  it('counts a caught-up group on the batch route and prints the bound it was asked', async () => {
+    redis.xrevrange.mockResolvedValue([['9-0', ['content', 'ciphertext']]]);
+
+    await service.getHistoryBatch([{ groupId: GROUP, after: '9-0' }], USER, ADMIN, DEVICE);
+    expect(lines()).not.toContain('[HISTORY] ');
+    expect(lines()).toContain('groups=1 authorized=1 caughtUp=1');
+
+    log.mockClear();
+    await service.getHistoryBatch([{ groupId: GROUP, after: '8-0' }], USER, ADMIN, DEVICE);
+    expect(lines()).toContain(`group=${GROUP} after=8-0 until=none head=9-0`);
+    expect(lines()).toContain('caughtUp=0');
+  });
+
+  /**
    * A client old enough not to send the header is not a defect and must not read as one: `unstated`
    * says "nobody told us", which is a different fact from "somebody told us something unusable".
    */

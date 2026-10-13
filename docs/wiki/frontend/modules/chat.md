@@ -2733,6 +2733,19 @@ rule needs no timer and does not care how large the conversation is:
 - an UNSENT message is kept wherever it sits, because no page can ever carry it;
 - an empty page asserts nothing and therefore removes nothing.
 
+**Authoritative means a STALE page is destructive, so a salon's loads are ordered (2026-10-13).** A
+load that started earlier and finishes later used to merge last: load A reads the page before seed S
+is held and leaves row R out, S lands and starts load B, B decodes R, then A merges and R - inside
+A's window - is removed. The redundant refetch that every held seed triggered hid it until #1761
+removed it. `loadChannelHistory` now takes a generation per salon (`utils/chat/loadGenerations.ts`):
+only the latest load STARTED merges, an older one logs `superseded` and merges nothing - its poll
+tallies included, since `setPollMeta` overwrites and the older load read them earlier. The loading
+skeleton is lowered by the load that last RAISED it, not by the latest one: a newer load started while
+the salon is off screen (a repair after the reader left) raises nothing, and the superseded load would
+otherwise leave it up for good. If the newer load FAILS, the older page is still not merged: the salon
+keeps what it held, is not marked loaded, and the next open asks again. Pinned by
+`useConversations.staleLoad.svelte.test.ts`. The refetch is not to come back: it was a heal, not a fix.
+
 Two corrections ride on the same seam, because they are the same stale read wearing different
 clothes. `readBy` is unioned rather than taken from the page: reading is applied optimistically in
 memory before the network ACK, so taking the page's array un-reads what the user just read and the
@@ -3323,6 +3336,14 @@ already delete the salons. This is NOT the community rail's order, which is pers
   press, and `handleChannelDndFinalize` delivers it as the row's own tap (`activateChannelRow`) and
   persists no order; a drag that moved, even back home, or left the list, stays a reorder. A
   member who cannot reorder never had a drag zone, so never had the defect.
+- **Enter and Space on a focused row open it (2026-10-13).** The library also claims both keys on its
+  draggables as "start a keyboard drag" (`preventDefault` + `stopPropagation`), and here the
+  draggable IS the row's button, so Enter opened nothing for whoever may reorder. The zone carries
+  `keepRowActivationKeys` (`utils/dndActivationKeys.ts`): a capture listener stops an Enter or Space
+  aimed at a row - WITH OR WITHOUT a modifier, since the library reads `e.key` alone and a let-through
+  Shift + Enter started its silent keyboard drag - before the library sees it, and leaves its default
+  alone, so the button activates. The library's keyboard drag is therefore unreachable here, deliberately: the keyboard
+  reorder is Alt + arrows. `setKeyboardDragTrigger` cannot do this - it is global and keeps one key.
 
 **Name.** A salon name is a DISPLAY string, stored as typed (case, accents, emoji, spaces). Server
 `validateChannelName` refuses only: empty after trim, over 80 characters (code points), a control

@@ -3126,14 +3126,25 @@ export class MessagingService {
    *
    * The head is read only when the caller has no bound yet - one `XREVRANGE ... COUNT 1` on the
    * first page of a walk, and nothing at all on the pages after it.
+   *
+   * THE LINE PRINTS WHAT WAS ASKED, NOT WHAT WAS FOUND. It used to print the head it had just read
+   * as `until=`, so a device whose cursor already WAS the head logged `after=X until=X entries=0` -
+   * read on 2026-10-13 as a client asking for a window empty by construction (210 of 258 batch lines
+   * over three launches of one store phone). The client sends no `until` on a batch: it asked "what
+   * is after my cursor", and the answer was "nothing". `until=` is now the caller's bound and `head=`
+   * the stream's.
+   *
+   * @param quietWhenCaughtUp the batch route's: a group whose cursor IS the head writes no line, and
+   *   is counted in `[HISTORY_BATCH]` instead - 83 of 85 lines per launch said only that.
    */
   private async readHistoryStreamPage(
     groupId: string,
     after: string | undefined,
     limit: number,
     until: string | undefined,
-    requester: string
-  ): Promise<{ rows: Record<string, unknown>[]; head?: string }> {
+    requester: string,
+    quietWhenCaughtUp = false
+  ): Promise<{ rows: Record<string, unknown>[]; head?: string; caughtUp: boolean }> {
     const streamKey = `history:${groupId}`;
     const startId = after ? `(${after}` : '-';
     const endId = until ?? '+';
@@ -3141,11 +3152,14 @@ export class MessagingService {
     const head = until
       ? until
       : ((await this.redis.xrevrange(streamKey, '+', '-', 'COUNT', 1))[0]?.[0] ?? undefined);
-    this.logger.log(
-      `[HISTORY] ${requester} group=${groupId} after=${after ?? 'start'} ` +
-        `until=${until ?? head ?? 'empty'} limit=${limit} entries=${entries.length}`
-    );
-    return { rows: this.mapHistoryEntries(entries), head };
+    const caughtUp = entries.length === 0 && after !== undefined && head === after;
+    if (!(quietWhenCaughtUp && caughtUp)) {
+      this.logger.log(
+        `[HISTORY] ${requester} group=${groupId} after=${after ?? 'start'} ` +
+          `until=${until ?? 'none'} head=${head ?? 'empty'} limit=${limit} entries=${entries.length}`
+      );
+    }
+    return { rows: this.mapHistoryEntries(entries), head, caughtUp };
   }
 
   /**
@@ -3297,6 +3311,7 @@ export class MessagingService {
 
     const histories: Record<string, Record<string, unknown>[]> = {};
     const heads: Record<string, string> = {};
+    let caughtUp = 0;
     await Promise.all(
       normalized.map(async ({ groupId, after, until, limit }) => {
         if (!authorized.has(groupId)) {
@@ -3304,9 +3319,17 @@ export class MessagingService {
           return;
         }
         try {
-          const page = await this.readHistoryStreamPage(groupId, after, limit, until, requester);
+          const page = await this.readHistoryStreamPage(
+            groupId,
+            after,
+            limit,
+            until,
+            requester,
+            true
+          );
           histories[groupId] = page.rows;
           if (page.head) heads[groupId] = page.head;
+          if (page.caughtUp) caughtUp++;
         } catch (e) {
           this.logger.error(`[HISTORY_BATCH] ${requester} group=${groupId} error=${String(e)}`);
           histories[groupId] = [];
@@ -3319,7 +3342,8 @@ export class MessagingService {
     await this.enrichHistoryWithDisplayNames(allEntries);
 
     this.logger.log(
-      `[HISTORY_BATCH] ${requester} groups=${normalized.length} authorized=${authorized.size}`
+      `[HISTORY_BATCH] ${requester} groups=${normalized.length} authorized=${authorized.size} ` +
+        `caughtUp=${caughtUp}`
     );
     return { histories, heads };
   }

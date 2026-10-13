@@ -142,6 +142,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
 | POST | `/api/mls/groups/:groupId/members` | Add member record |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members |
+| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 

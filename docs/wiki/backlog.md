@@ -277,16 +277,6 @@ The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu 
 
 ### P3 - the harness gamma bench PIN is refused on dev
 
-## Seen on the Mi 9T reading of `v1.2.4-alpha.2` (2026-10-11)
-
-### P3 - deleting a post asks for no confirmation
-
-The post menu's "Supprimer" deletes at once (`PostCard.handleDeletePost` calls the API with no `showConfirm` in between), whereas the reel editor and the review ask before discarding far less. Read on the Mi 9T ([device-verification](device-verification.md)).
-
-### P3 - on dev, the "Environnement de test" banner and the slow-link badge overlap (dev only)
-
-The slow-link badge (`slow-link-indicator`, `OfflineBanner.svelte`, a 28 px disc at the top right) is drawn over the `EnvironmentBanner` strip that only `dev.canari-emse.fr` shows. Production has no such banner, so no member sees it; it hides the badge from whoever reads a weak-network row on dev.
-
 ## Seen on the 2026-10-13 bench pass (Mi 9T `v1.2.6-alpha.1`, iPhone `1.2.3-alpha.5`)
 
 The readings are in [device-verification](device-verification.md#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
@@ -306,12 +296,6 @@ built and uploaded their IPA. So no pre-release reaches the iPhone bench and eve
 newer fix waits. Owed: read in App Store Connect whether those builds exist, finished processing and
 were added to the tester group.
 
-### P3 - Android at 200 % text: two overruns in the agenda
-
-`calendar/+page.svelte:670`: "S'abonner au calendrier" is wider than its card and spills 33 px out
-of the card's left edge (`flex-wrap justify-end`). `CalendarScheduleList.svelte:226`: today's day
-number is 40 px in a fixed 36 px circle (`h-9 w-9`), the class `.text-zoom-exempt` was made for.
-
 ### P3 - a keyboard under 160 px escapes the double-report guard
 
 `computeSnapshot` only discards a double-reported visual viewport when the layout viewport has
@@ -324,10 +308,6 @@ Mi 9T is that short; a floating or one-row keyboard would be.
 At the largest standard text size the app draws exactly as at the default, warm and cold: the
 WebView does not follow the setting. Whether that is accepted (Android's 200 % does scale, through
 the WebView) or the root font should follow `-apple-system-body` is the user's call.
-
-## P2 - a stale salon history load can remove a row a newer load just decoded (found reviewing #1761, 2026-10-12)
-
-`loadChannelHistory` (`frontend/src/lib/composables/useConversations.svelte.ts`, ~:485) has no in-flight guard, and `mergeMessagePage` (`frontend/src/lib/utils/chat/messageMerge.ts`, :100-122) treats a page as AUTHORITATIVE for its window: a held row inside `[oldest, newest]` that the page does not carry is dropped. The exact sequence: (1) load A fetches the salon's page while seed S is not yet held, so row R decodes as unreadable and is left out of A's page; (2) S lands, `announceGraineRepair` starts load B; (3) B fetches, decodes R and merges it; (4) A's decode finishes AFTER B and merges its page - R lies inside A's window and is not in it, so R is removed. Until #1761, the redundant refetch that every held seed triggered usually ran a load C after A and put R back, which hid the race; #1761 removes those refetches, so the race is now visible. **The fix is a per-salon generation token**: each load takes the next number and merges only if no later load has started (or completed) for that salon. **Do not bring the refetch back**: it was a heal, not a fix.
 
 ## P1 - A community key group sends every repair answer to every seat, and 42 % of seats have no device behind them (production, 2026-10-12)
 
@@ -343,7 +323,7 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 ### P3 - 80 roster reads per connection for the stray-leaf sweep
 
-`removeStrayLeaves` reads `GET /api/mls/groups/<id>/user-members` once per held group (80 in 6.3 s, all `304`). A batched roster read, or a roster version carried by `/mls/users/<me>/groups`, needs a server endpoint.
+**Built (2026-10-13, draft PR `perf/group-rosters-batch`)**: one `POST /api/mls/group-rosters` per connection ([chat-delivery](services/chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13)). Owed once shipped: the per-connection count on a production console (expected 1 request where there were 80-81).
 
 ### P3 - the key-distribution groups are asked about twice per connection
 
@@ -380,10 +360,6 @@ The microtask flush in `history.ts:190-208` coalesces only marks of one synchron
 ### P3 - native checkpoints hold the MLS mutex across export, seal and file write
 
 `src-tauri/src/commands/mls.rs:216-231`: a send or decrypt waits for a whole checkpoint. Snapshot under the lock, seal and write outside it.
-
-### P3 - nothing resets the announcement state at sign-out
-
-`resetAnnouncementState` (`stores/announcement.svelte.ts:126`) says the next account must be asked on its own behalf and has no caller, so a second account in the same tab is probably never shown its announcements.
 
 ## Open defects, in severity order
 
@@ -422,9 +398,9 @@ G2-0 to G2-4 and the writer G2-5 are SHIPPED (#1221; the writer in the stable `v
 
 | WP | What is left |
 | --- | --- |
-| G2-5 | **v1 ends (user, 2026-09-28)**. Step one, refusing an ARRIVING v1 seed, MERGED (#1749, 2026-10-12, [§21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)) and is not in `v1.2.5` (shipped from an earlier alpha): it reaches users with the next stable; both floors are `1.0.3`. Step two, deleting the v1 reader, waits for the count in [legacy-compatibility](legacy-compatibility.md) |
+| G2-5 | **v1 ends (user, 2026-09-28)**. Step one, refusing an ARRIVING v1 seed, SHIPPED in the stable `v1.2.6` (#1749, 2026-10-13, [§21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)); both floors are `1.0.3`, so a client from `1.0.3` to `1.2.5` still accepts a v1 seed until it updates (raising the floor is the user's call). Step two, deleting the v1 reader, waits for the count in [legacy-compatibility](legacy-compatibility.md) |
 | G2-6b | a salon edit from a v1 session has an unsigned, server-supplied `senderId` (a deliberate level, no code owed, [§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05)); closes with the v1 reader. **Only if a channel ever gets an older-page load:** `listMessages` with a `before` cursor omits edit and reaction rows made after the cursor |
-| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **GRAINE-AUTH-1..3 are `PASS` since 2026-10-05 on the local estate** ([board](cross-client-testing.md#20---graine---an-author-that-is-proven), the claim that they were owed was stale); **owed: NOTIF-19/20 on the Mi 9T against a G2-5 build** (needs adb), **GRAINE-AUTH-4** (no runner can exist without a decision on a mutating dev hook, see the board row) and the iPhone reading ([device-verification](device-verification.md)) |
+| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **GRAINE-AUTH-1..3 are `PASS` since 2026-10-05 and GRAINE-AUTH-5/6 (G2-5b, live and history) since 2026-10-13, on the local estate** ([board](cross-client-testing.md#20---graine---an-author-that-is-proven)); NOTIF-19/20 on a v2 session are `PASS` since 2026-10-05 (APK `7ab8f1780`, the claim that they were owed was stale); **owed: GRAINE-AUTH-4** (no runner can exist without a decision on a mutating dev hook, see the board row) and the iPhone reading ([device-verification](device-verification.md)) |
 
 What v2 does not close: the server can still admit a device it controls or publish a false device key
 (BasicCredential's limit, §21).

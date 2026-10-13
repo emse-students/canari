@@ -688,6 +688,7 @@
   "post_unpin_action_label": "Unpin",
   "post_edit_post_label": "Edit post",
   "post_delete_post_label": "Delete post",
+  "post_delete_confirm": "Delete this post? This cannot be undone.",
   "post_report_post_title": "Report this post",
   "post_more_actions_label": "More actions",
   "post_report_label": "Report",

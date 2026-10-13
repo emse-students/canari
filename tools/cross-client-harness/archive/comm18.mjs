@@ -28,8 +28,9 @@
  * AND IT IS READ FROM LOGCAT. The line is written while the client initialises, so it is already
  * gone by the time a cold-started process has a devtools socket to attach to: read from the
  * attached console, this row reported the handler as never having run WHILE the salon was open -
- * not a defect, an instrument arriving after its event. `attachConsole` mirrors the console into
- * logcat, and that buffer existed before the launch.
+ * not a defect, an instrument arriving after its event. On the debug bench build, wry's
+ * `onConsoleMessage` copies the console into logcat (release builds log no JavaScript), and that
+ * buffer existed before the launch.
  *
  * THE MARKER IS POSTED BEFORE THE APP IS EVEN STOPPED. A cold start that has to receive a live
  * message as well would be measuring two things and blaming this one; what this row asks is whether
@@ -324,10 +325,10 @@ const landing = armed
         // that accused the native chain of failing while the person was demonstrably standing in
         // the salon. `hooks.client.ts` writes the line during client init, which is BEFORE the
         // process has a devtools socket to forward, so `watch()` here cannot attach until after
-        // the event it was asked to witness. `attachConsole` mirrors the app's console into
-        // logcat, whose buffer predates the launch, so the line was never missing - the
-        // instrument was late, and an instrument that cannot see an event must not report it
-        // absent.
+        // the event it was asked to witness. On a debug build wry's `onConsoleMessage` copies the
+        // app's console into logcat, whose buffer predates the launch, so the line was never
+        // missing - the instrument was late, and an instrument that cannot see an event must not
+        // report it absent.
         const shell = phone.console_(4000);
         const lines = consoleLines(wb.cx);
         return {

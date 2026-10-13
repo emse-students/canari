@@ -1479,6 +1479,21 @@ describe('a seed this device already holds', () => {
     debug.mockRestore();
   });
 
+  it('reads a held session from the store ONCE, however many copies arrive (2026-10-13)', async () => {
+    // A store phone read `graine` 358 times in its first 30 s: one row read and decrypted per
+    // arriving copy of a seed it already held.
+    const { storage } = fakeStorage([held(0)]);
+    const reads = vi.spyOn(storage, 'getGraineSession');
+    wire(storage);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    for (let i = 0; i < 5; i++) await handleDistributionFrame(bundleOf(0));
+    await handleDistributionFrame(frame());
+
+    expect(reads).toHaveBeenCalledTimes(1);
+    debug.mockRestore();
+  });
+
   it('re-reads no salon when the distributed copy of a held seed comes back', async () => {
     const { storage } = fakeStorage([held(0)]);
     wire(storage);

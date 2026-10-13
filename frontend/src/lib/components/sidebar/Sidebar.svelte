@@ -5,6 +5,7 @@
   import { flip } from 'svelte/animate';
   import { SvelteMap } from 'svelte/reactivity';
   import { dndzone, TRIGGERS, type DndEvent } from 'svelte-dnd-action';
+  import { keepRowActivationKeys } from '$lib/utils/dndActivationKeys';
   import { longPress } from '$lib/actions/longPress';
   import CommunityRailMenu from './CommunityRailMenu.svelte';
   import { Hash, Lock, MessageSquarePlus, Plus, Settings, X } from '@lucide/svelte';
@@ -766,7 +767,11 @@
             {#if canReorderChannels}
               <p id="channel-reorder-hint" class="sr-only">{m.sidebar_channel_reorder_hint()}</p>
             {/if}
+            <!-- `keepRowActivationKeys`: each row IS the draggable, and the library takes Enter and
+                 Space for a keyboard drag, cancelling the button - Enter opened no salon for whoever
+                 may reorder them. Reordering by keyboard is Alt + arrows, never the library's. -->
             <div
+              use:keepRowActivationKeys
               use:dndzone={{
                 items: draggedChannels ?? currentWorkspace.channels,
                 flipDurationMs: 150,
