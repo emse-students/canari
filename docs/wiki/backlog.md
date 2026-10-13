@@ -277,16 +277,6 @@ The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu 
 
 ### P3 - the harness gamma bench PIN is refused on dev
 
-## Seen on the Mi 9T reading of `v1.2.4-alpha.2` (2026-10-11)
-
-### P3 - deleting a post asks for no confirmation
-
-The post menu's "Supprimer" deletes at once (`PostCard.handleDeletePost` calls the API with no `showConfirm` in between), whereas the reel editor and the review ask before discarding far less. Read on the Mi 9T ([device-verification](device-verification.md)).
-
-### P3 - on dev, the "Environnement de test" banner and the slow-link badge overlap (dev only)
-
-The slow-link badge (`slow-link-indicator`, `OfflineBanner.svelte`, a 28 px disc at the top right) is drawn over the `EnvironmentBanner` strip that only `dev.canari-emse.fr` shows. Production has no such banner, so no member sees it; it hides the badge from whoever reads a weak-network row on dev.
-
 ## Seen on the 2026-10-13 bench pass (Mi 9T `v1.2.6-alpha.1`, iPhone `1.2.3-alpha.5`)
 
 The readings are in [device-verification](device-verification.md#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
@@ -324,10 +314,6 @@ Mi 9T is that short; a floating or one-row keyboard would be.
 At the largest standard text size the app draws exactly as at the default, warm and cold: the
 WebView does not follow the setting. Whether that is accepted (Android's 200 % does scale, through
 the WebView) or the root font should follow `-apple-system-body` is the user's call.
-
-## P2 - a stale salon history load can remove a row a newer load just decoded (found reviewing #1761, 2026-10-12)
-
-`loadChannelHistory` (`frontend/src/lib/composables/useConversations.svelte.ts`, ~:485) has no in-flight guard, and `mergeMessagePage` (`frontend/src/lib/utils/chat/messageMerge.ts`, :100-122) treats a page as AUTHORITATIVE for its window: a held row inside `[oldest, newest]` that the page does not carry is dropped. The exact sequence: (1) load A fetches the salon's page while seed S is not yet held, so row R decodes as unreadable and is left out of A's page; (2) S lands, `announceGraineRepair` starts load B; (3) B fetches, decodes R and merges it; (4) A's decode finishes AFTER B and merges its page - R lies inside A's window and is not in it, so R is removed. Until #1761, the redundant refetch that every held seed triggered usually ran a load C after A and put R back, which hid the race; #1761 removes those refetches, so the race is now visible. **The fix is a per-salon generation token**: each load takes the next number and merges only if no later load has started (or completed) for that salon. **Do not bring the refetch back**: it was a heal, not a fix.
 
 ## P1 - A community key group sends every repair answer to every seat, and 42 % of seats have no device behind them (production, 2026-10-12)
 
@@ -380,10 +366,6 @@ The microtask flush in `history.ts:190-208` coalesces only marks of one synchron
 ### P3 - native checkpoints hold the MLS mutex across export, seal and file write
 
 `src-tauri/src/commands/mls.rs:216-231`: a send or decrypt waits for a whole checkpoint. Snapshot under the lock, seal and write outside it.
-
-### P3 - nothing resets the announcement state at sign-out
-
-`resetAnnouncementState` (`stores/announcement.svelte.ts:126`) says the next account must be asked on its own behalf and has no caller, so a second account in the same tab is probably never shown its announcements.
 
 ## Open defects, in severity order
 
