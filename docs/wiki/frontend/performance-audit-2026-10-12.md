@@ -208,10 +208,28 @@ file write. On the phone the ratio carries over and the absolute numbers do not.
 spent 1.4-5.8 s per checkpoint, and nearly all of it now runs off the lock. Owed: the phone's own
 `[MLS] checkpoint: manager lock held N ms` line, which this change adds at debug level.
 
+**Three holes the review closed in the same PR:**
+
+- **A failed seal or write left the ratchet flag DOWN** over a file that is behind (the export had
+  cleared it). The next resume reload would then install that file and re-derive spent
+  generations. This was older than the change, but the change made the export and the write two
+  steps. Both writers (`checkpoint_live_manager`, and `persist_locked_manager` for the mint and the
+  reclaim) now re-raise it through `MlsManager::restore_unsaved_ratchet_advance` when they saw it up
+  before exporting.
+- **A poisoned ordering lock would have stopped every later checkpoint, mint and resume** for the
+  life of the process. It guards an order and no data, so it is taken anyway and the panic is logged
+  at error.
+- **A commit of an older mark snapshot overwrote the stored ledger.** The live path flushes the same
+  set on its own microtask, so a frame read live mid-checkpoint lost its durable mark. The snapshot
+  is now merged with what is already stored (`withDurableMarks`), never written over it.
+
 **Pinned by** `concurrency::tests::the_manager_lock_is_free_while_a_checkpoint_seals_and_writes`
 (fails with `WouldBlock` on the old shape), `an_older_checkpoint_never_lands_over_a_newer_one` (fails
-without the ordering lock), `history.checkpointBoundMarks.test.ts` and
-`BaseMlsService.checkpointLedgers.test.ts` (both fail when the marks are read after the write).
+without the ordering lock), `storage::tests::a_resume_reload_waits_for_a_checkpoint_that_has_exported_but_not_written`
+(fails without the ordering lock in `reload_in_checkpoint_order`),
+`a_failed_write_puts_the_ratchet_flag_back`, `a_decrypt_during_the_write_stays_owed_to_the_next_checkpoint`,
+`history.checkpointBoundMarks.test.ts` and `BaseMlsService.checkpointLedgers.test.ts` (both fail when
+the marks are read after the write, and the first also fails when an older snapshot overwrites a live mark).
 
 **Owed**: a dev pre-release and a Mi 9T reading of the same walk, before a stable. Not changed:
 `envoyer_message_bytes` and `confirmer_commit` stay synchronous and now wait only for the export.

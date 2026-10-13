@@ -411,8 +411,9 @@ export function snapshotPendingHistoryMarks(userId: string): PendingHistoryMarks
  * It writes what {@link snapshotPendingHistoryMarks} captured before the write, not the live set: a
  * page decrypted while the seal ran is marked in a set whose ratchet advance the file does not hold,
  * and declaring it here would be the unsurvivable direction above. A group marked again since the
- * snapshot is written as the snapshot had it and STAYS pending, so the next checkpoint, or the
- * walk's own thunk, carries the rest.
+ * snapshot is written as the snapshot had it - merged with what the ledger already holds durably,
+ * never over it - and STAYS pending, so the next checkpoint, or the walk's own thunk, carries the
+ * rest.
  *
  * @param snapshot taken by {@link snapshotPendingHistoryMarks} before the checkpoint's write
  */
@@ -427,8 +428,39 @@ export function commitPendingHistoryMarks(snapshot: PendingHistoryMarksSnapshot)
       pendingReplayMarks.delete(group.key);
       continue;
     }
-    saveSeenCipherHashes(snapshot.userId, group.groupId, group.marks);
+    saveSeenCipherHashes(
+      snapshot.userId,
+      group.groupId,
+      withDurableMarks(snapshot.userId, group.groupId, group.marks)
+    );
   }
+}
+
+/**
+ * `marks` plus whatever the ledger already holds DURABLY, so writing an older snapshot can never
+ * take back a mark another writer has already made durable.
+ *
+ * The live path flushes this same set on its own microtask ({@link scheduleSeenFlush}), so between a
+ * snapshot and its commit the stored ledger can hold marks the snapshot predates. Writing the
+ * snapshot verbatim would drop them - a frame this device read live, re-accused as lost on the next
+ * walk. The extras go LAST so the bound keeps them as the newest entries; they were already durable,
+ * so carrying them over makes nothing durable that was not.
+ */
+function withDurableMarks(userId: string, groupId: string, marks: Set<string>): Set<string> {
+  let stored: unknown;
+  try {
+    stored = JSON.parse(localStorage.getItem(seenHistoryKey(userId, groupId)) ?? '[]');
+  } catch (err) {
+    console.warn(
+      `[HISTORY] The stored seen-ciphertext set for ${groupId.slice(0, 8)} is unreadable - ` +
+        `the checkpoint writes its snapshot alone: ${String(err)}`
+    );
+    return marks;
+  }
+  if (!Array.isArray(stored)) return marks;
+  const merged = new Set(marks);
+  for (const entry of stored) if (typeof entry === 'string') merged.add(entry);
+  return merged;
 }
 
 /** @internal Drops the shared sets between Vitest cases, so one case cannot answer another's question. */

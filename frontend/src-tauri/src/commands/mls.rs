@@ -1,7 +1,8 @@
 //! MLS Tauri commands: initialisation, groups, encryption, decryption.
 
 use crate::concurrency::{
-    checkpoint_live_manager, foreground_checkpoint_lock, write_mls_state_blob, ForegroundCritical,
+    checkpoint_live_manager, foreground_checkpoint_lock, persist_locked_manager,
+    write_mls_state_blob, ForegroundCritical,
 };
 use crate::keystore_bridge::PluginDeviceKeyStore;
 use crate::state::{
@@ -264,9 +265,7 @@ pub(crate) async fn oublier_key_packages(
     tauri::async_runtime::spawn_blocking(move || {
         // Checkpoint order first: this writes `mls.bin` from the live manager, so it must not
         // interleave with a checkpoint that exported before it (see `foreground_checkpoint_lock`).
-        let _ordered = foreground_checkpoint_lock()
-            .lock()
-            .map_err(|_| "foreground checkpoint lock poisoned".to_string())?;
+        let _ordered = foreground_checkpoint_lock();
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
@@ -286,10 +285,7 @@ pub(crate) async fn oublier_key_packages(
 
         if outcome.forgotten > 0 {
             let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
-            let encrypted_state = manager
-                .save_encrypted_with_key(&key)
-                .map_err(|e| e.to_string())?;
-            write_mls_state_blob(&app, &encrypted_state)?;
+            persist_locked_manager(manager, &key, |sealed| write_mls_state_blob(&app, sealed))?;
         }
         Ok::<usize, String>(outcome.forgotten)
     })
@@ -331,9 +327,7 @@ pub(crate) async fn generer_key_packages_et_persister(
     tauri::async_runtime::spawn_blocking(move || {
         // Checkpoint order first: this writes `mls.bin` from the live manager, so it must not
         // interleave with a checkpoint that exported before it (see `foreground_checkpoint_lock`).
-        let _ordered = foreground_checkpoint_lock()
-            .lock()
-            .map_err(|_| "foreground checkpoint lock poisoned".to_string())?;
+        let _ordered = foreground_checkpoint_lock();
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
@@ -420,14 +414,12 @@ pub(crate) async fn generer_key_packages_et_persister(
         // write that is genuinely owed.
         if count > 0 || minted_fallback {
             let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
-            let encrypted_state = manager
-                .save_encrypted_with_key(&key)
-                .map_err(|e| e.to_string())?;
-            write_mls_state_blob(&app, &encrypted_state)?;
+            let state_bytes =
+                persist_locked_manager(manager, &key, |sealed| write_mls_state_blob(&app, sealed))?;
             log::debug!(
                 "generer_key_packages_et_persister done count={} state_bytes={}",
                 count,
-                encrypted_state.len()
+                state_bytes
             );
         } else {
             log::debug!(

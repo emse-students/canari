@@ -25,6 +25,7 @@ import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
 import { toBase64 } from '$lib/utils/hex';
 import {
   commitPendingHistoryMarks,
+  markHistoryFrameConsumed,
   replayConversationHistory,
   resetSeenCipherCacheForTests,
   snapshotPendingHistoryMarks,
@@ -128,6 +129,27 @@ describe('marks the replay has made but not committed', () => {
 
     checkpoint(); // and the next checkpoint, which does hold it, declares it
     expect(durable()).toContain(frameFingerprint(later));
+  });
+
+  it('never takes back a mark the live path made durable while the checkpoint wrote', async () => {
+    // The live path flushes the same shared set on its own microtask. A frame read live between the
+    // snapshot and the commit is ALREADY durable when the commit lands; writing the older snapshot
+    // verbatim over it would erase that mark and re-accuse a frame this device displayed.
+    await replayOnePage({ ok: true, plaintext: null });
+    const snapshot = snapshotPendingHistoryMarks(USER);
+
+    const live = new Uint8Array([0xaa, 0xbb, 0xcc]);
+    markHistoryFrameConsumed(USER, GROUP, frameFingerprint(live));
+    await flush();
+    expect(durable()).toContain(frameFingerprint(live)); // the premise: the live mark is durable
+    await replayOnePage(
+      { ok: true, plaintext: null },
+      { ...row, id: '1786655250948-0', content: toBase64(new Uint8Array([1, 2])), timestamp: '1' }
+    );
+    commitPendingHistoryMarks(snapshot);
+
+    expect(durable()).toContain(frameFingerprint(wire));
+    expect(durable()).toContain(frameFingerprint(live));
   });
 
   it('are still committed by the thunk when NO checkpoint fired during the walk', async () => {

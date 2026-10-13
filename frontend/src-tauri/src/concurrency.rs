@@ -34,9 +34,21 @@ pub(crate) fn mls_bin_write_lock() -> &'static Mutex<()> {
 ///
 /// Lock order: THIS, then the manager mutex, then [`mls_bin_write_lock`]. Background JNI engines
 /// never take it: they are fenced by [`ForegroundCritical`] and the deadline, exactly as before.
-pub(crate) fn foreground_checkpoint_lock() -> &'static Mutex<()> {
+///
+/// **IT RETURNS THE GUARD, AND A POISONED LOCK IS TAKEN ANYWAY.** It guards an ORDER, not data: a
+/// writer that panicked while holding it left nothing behind to be inconsistent (the file write is
+/// tmp + rename), so refusing every later checkpoint, mint and resume for the rest of the process
+/// would turn one panic into an app that can never persist again. The panic is named, not hidden.
+pub(crate) fn foreground_checkpoint_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| {
+            log::error!(
+                "[MLS] the checkpoint ordering lock was poisoned by a writer that PANICKED while holding it - taken anyway, it guards an order and no data"
+            );
+            poisoned.into_inner()
+        })
 }
 
 /// Checkpoints the live manager, holding the manager lock ONLY for the export, and returns the
@@ -59,24 +71,46 @@ pub(crate) fn checkpoint_live_manager(
     key: &[u8; 32],
     write: impl FnOnce(&[u8]) -> Result<(), String>,
 ) -> Result<usize, String> {
-    let _ordered = foreground_checkpoint_lock()
-        .lock()
-        .map_err(|_| "foreground checkpoint lock poisoned".to_string())?;
+    let _ordered = foreground_checkpoint_lock();
     let started = std::time::Instant::now();
-    let plain = {
+    let (plain, ratchet_was_unsaved) = {
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
         let manager = lock
             .as_ref()
             .ok_or_else(|| "MLS Manager not initialized".to_string())?;
-        manager.save_state().map_err(|e| e.to_string())?
+        let ahead = manager.has_unsaved_ratchet_advance();
+        (manager.save_state().map_err(|e| e.to_string())?, ahead)
     };
     let exported = started.elapsed();
-    let sealed = mls_core::MlsManager::encrypt_state_blob_with_key(&plain, key)
-        .map_err(|e| e.to_string())?;
-    drop(plain);
-    write(&sealed)?;
+    let written = mls_core::MlsManager::encrypt_state_blob_with_key(&plain, key)
+        .map_err(|e| e.to_string())
+        .and_then(|sealed| {
+            drop(plain);
+            write(&sealed).map(|()| sealed)
+        });
+    let sealed = match written {
+        Ok(sealed) => sealed,
+        Err(e) => {
+            // The export cleared the ratchet flag for a file that never received it. Still under
+            // the ordering lock, so no resume reload can have read the flag down in between.
+            if ratchet_was_unsaved {
+                match manager_state.lock() {
+                    Ok(lock) => match lock.as_ref() {
+                        Some(manager) => restore_ratchet_flag_after_failed_write(manager, &e),
+                        None => log::error!(
+                            "[MLS] checkpoint failed ({e}) and the manager is gone - no ratchet flag to restore"
+                        ),
+                    },
+                    Err(_) => log::error!(
+                        "[MLS] checkpoint failed ({e}) and the manager lock is poisoned - the ratchet flag stays DOWN over a file that is behind"
+                    ),
+                }
+            }
+            return Err(e);
+        }
+    };
     log::debug!(
         "[MLS] checkpoint: manager lock held {} ms (export), seal + write {} ms off it, {} bytes",
         exported.as_millis(),
@@ -84,6 +118,36 @@ pub(crate) fn checkpoint_live_manager(
         sealed.len()
     );
     Ok(sealed.len())
+}
+
+/// Serialises, seals and writes a manager the CALLER already holds locked (a mint, a reclaim), and
+/// re-raises the ratchet flag when the seal or the write fails - see
+/// [`mls_core::MlsManager::restore_unsaved_ratchet_advance`] for why a failed write must not leave it
+/// down. Returns the sealed length.
+pub(crate) fn persist_locked_manager(
+    manager: &mls_core::MlsManager,
+    key: &[u8; 32],
+    write: impl FnOnce(&[u8]) -> Result<(), String>,
+) -> Result<usize, String> {
+    let ratchet_was_unsaved = manager.has_unsaved_ratchet_advance();
+    let written = manager
+        .save_encrypted_with_key(key)
+        .map_err(|e| e.to_string())
+        .and_then(|sealed| write(&sealed).map(|()| sealed.len()));
+    if let Err(e) = &written {
+        if ratchet_was_unsaved {
+            restore_ratchet_flag_after_failed_write(manager, e);
+        }
+    }
+    written
+}
+
+/// The one gesture both writers owe a failed write that followed a ratchet-clearing export.
+fn restore_ratchet_flag_after_failed_write(manager: &mls_core::MlsManager, error: &str) {
+    manager.restore_unsaved_ratchet_advance();
+    log::error!(
+        "[MLS] mls.bin write FAILED after the export cleared the ratchet flag ({error}) - flag re-raised so a resume reload refuses the older file instead of rewinding the ratchet"
+    );
 }
 
 /// Deadline (ms since epoch) until which the foreground is considered active. While
@@ -209,16 +273,39 @@ pub(crate) fn write_mls_state_blob(app: &tauri::AppHandle, data: &[u8]) -> Resul
     write_mls_bin_atomically(&data_dir.join("mls.bin"), data)
 }
 
+/// Fixtures shared by every test module that exercises the process-global locks above.
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod test_support {
+    use super::Mutex;
+    use mls_core::MlsManager;
 
     /// The guards under test are PROCESS-global, so these tests cannot run beside each other or
     /// beside anything else touching them - `cargo test` threads one process.
-    fn serialise() -> std::sync::MutexGuard<'static, ()> {
+    pub(crate) fn serialise() -> std::sync::MutexGuard<'static, ()> {
         static M: Mutex<()> = Mutex::new(());
         M.lock().unwrap_or_else(|e| e.into_inner())
     }
+
+    /// Alice and Bob in one group, Bob joined by Welcome - so Alice's frames move Bob's ratchet.
+    pub(crate) fn joined_pair(tag: &str) -> (MlsManager, MlsManager, String) {
+        let gid = format!("g-{tag}");
+        let mut alice = MlsManager::load_or_create(&format!("{tag}-alice"), "d1", None).unwrap();
+        let mut bob = MlsManager::load_or_create(&format!("{tag}-bob"), "d1", None).unwrap();
+        alice.create_group(gid.clone()).unwrap();
+        let kp = bob.generate_key_package().unwrap();
+        let (_, welcome, _, _) = alice.add_members_bulk(&gid, &[&kp]).unwrap();
+        alice.merge_pending_commit_for(&gid).unwrap();
+        let tree = alice.export_ratchet_tree_for(&gid).unwrap();
+        bob.process_welcome(welcome.as_deref().unwrap(), Some(&tree))
+            .unwrap();
+        (alice, bob, gid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::{joined_pair, serialise};
+    use super::*;
 
     /// The defect this file was changed for: the deadline has lapsed (the app is backgrounded and
     /// the heartbeat stopped) while the checkpoint it was supposed to cover is still running.
@@ -447,5 +534,103 @@ mod tests {
             "the file must hold the NEWER export, mutation included"
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// A FRAME DECRYPTED BETWEEN THE EXPORT AND THE WRITE IS OWED TO THE NEXT CHECKPOINT, and the
+    /// flag says so. The export cleared `has_unsaved_ratchet_advance`; the decrypt, which the released
+    /// manager now lets through mid-checkpoint, must raise it again AFTER that clear - otherwise the
+    /// completed write would read as covering a generation it does not hold.
+    #[test]
+    fn a_decrypt_during_the_write_stays_owed_to_the_next_checkpoint() {
+        let _s = serialise();
+        let path =
+            std::env::temp_dir().join(format!("canari-ckpt-owed-{}.bin", std::process::id()));
+        let (mut alice, bob, gid) = joined_pair("ckpt-owed");
+        let manager = std::sync::Arc::new(Mutex::new(Some(bob)));
+        let (written_tx, _written_rx) = std::sync::mpsc::channel();
+        let (release, handle) =
+            checkpoint_stalled_in_write(manager.clone(), path.clone(), written_tx);
+
+        let frame = alice.send_message(&gid, b"read mid-checkpoint").unwrap();
+        {
+            let mut guard = manager.lock().unwrap();
+            let live = guard.as_mut().unwrap();
+            assert!(
+                !live.has_unsaved_ratchet_advance(),
+                "precondition: the export cleared the flag"
+            );
+            live.process_incoming_message(&gid, &frame).unwrap();
+        }
+
+        release.send(()).unwrap();
+        handle.join().unwrap().unwrap();
+        assert!(
+            manager
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .has_unsaved_ratchet_advance(),
+            "the write that just landed predates the decrypt - the flag must still say the file is behind"
+        );
+
+        checkpoint_live_manager(&manager, &CKPT_KEY, |sealed| {
+            std::fs::write(&path, sealed).map_err(|e| e.to_string())
+        })
+        .unwrap();
+        let mut on_disk = mls_core::MlsManager::load_with_key(
+            "ckpt-owed-bob",
+            "d1",
+            Some(std::fs::read(&path).unwrap()),
+            &CKPT_KEY,
+        )
+        .unwrap();
+        assert!(
+            on_disk.process_incoming_message(&gid, &frame).is_err(),
+            "the next checkpoint holds the generation the mid-checkpoint decrypt spent"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A WRITE THAT FAILS MUST NOT LEAVE THE RATCHET FLAG DOWN. The export cleared it; if the file
+    /// never received the export, a resume reload reading the flag down installs a file behind the
+    /// live ratchet and re-derives a generation this device already spent. Both writers - the
+    /// checkpoint that releases the manager and the mint that holds it - put it back.
+    #[test]
+    fn a_failed_write_puts_the_ratchet_flag_back() {
+        let _s = serialise();
+        let (mut alice, mut bob, gid) = joined_pair("ckpt-fail");
+        let frame = alice.send_message(&gid, b"one").unwrap();
+        bob.process_incoming_message(&gid, &frame).unwrap();
+        assert!(bob.has_unsaved_ratchet_advance(), "precondition");
+
+        let refused = persist_locked_manager(&bob, &CKPT_KEY, |_| Err("disk full".into()));
+        assert!(refused.is_err());
+        assert!(
+            bob.has_unsaved_ratchet_advance(),
+            "a mint whose write failed left the flag down over a file that is behind"
+        );
+
+        let manager = Mutex::new(Some(bob));
+        let refused = checkpoint_live_manager(&manager, &CKPT_KEY, |_| Err("disk full".into()));
+        assert!(refused.is_err());
+        let guard = manager.lock().unwrap();
+        let bob = guard.as_ref().unwrap();
+        assert!(
+            bob.has_unsaved_ratchet_advance(),
+            "a checkpoint whose write failed left the flag down over a file that is behind"
+        );
+        drop(guard);
+
+        checkpoint_live_manager(&manager, &CKPT_KEY, |_| Ok(())).unwrap();
+        assert!(
+            !manager
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .has_unsaved_ratchet_advance(),
+            "and a write that lands clears it - the flag is not latched"
+        );
     }
 }

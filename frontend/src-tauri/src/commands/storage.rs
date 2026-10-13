@@ -98,16 +98,30 @@ pub(crate) async fn recharger_mls_au_resume(
         // export and its write, the live manager says it is not ahead of a file that is still
         // behind it. Waiting for the checkpoint's own lock is what keeps this read after its write
         // (`foreground_checkpoint_lock`, which also fixes the order of the three locks).
-        let _ordered = foreground_checkpoint_lock()
-            .lock()
-            .map_err(|_| "foreground checkpoint lock poisoned".to_string())?;
-        let mut live = manager_state
-            .lock()
-            .map_err(|_| "Failed to lock state".to_string())?;
-        reload_into(&mut live, &path, &user_id, &device_id, &device_key_b64)
+        reload_in_checkpoint_order(&manager_state, &path, &user_id, &device_id, &device_key_b64)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The resume reload's critical section, in the lock order the comment above sets out: the
+/// checkpoint ordering lock, then the manager, then (inside [`reload_into`]) the file lock.
+///
+/// A function rather than inline so the ORDER is what the tests exercise: taking the manager without
+/// the ordering lock first compiles, works whenever no checkpoint is mid-write, and reads a file the
+/// in-flight checkpoint is about to replace while the live ratchet flag says nothing is owed.
+fn reload_in_checkpoint_order(
+    manager_state: &std::sync::Mutex<Option<MlsManager>>,
+    path: &std::path::Path,
+    user_id: &str,
+    device_id: &str,
+    device_key_b64: &str,
+) -> Result<ReloadOutcome, String> {
+    let _ordered = foreground_checkpoint_lock();
+    let mut live = manager_state
+        .lock()
+        .map_err(|_| "Failed to lock state".to_string())?;
+    reload_into(&mut live, path, user_id, device_id, device_key_b64)
 }
 
 /// Reads `mls.bin`, grades it against the live manager and installs it - all while the caller holds
@@ -783,6 +797,77 @@ mod tests {
                 .process_incoming_message(gid, &frame)
                 .is_err(),
             "the installed snapshot holds the spent generation"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE RESUME RELOAD WAITS FOR A CHECKPOINT THAT HAS EXPORTED BUT NOT WRITTEN (2026-10-13).
+    ///
+    /// The checkpoint releases the manager after its export, and the export cleared the ratchet
+    /// flag: in that window the live manager says it is NOT ahead of `mls.bin`, while the file is
+    /// still the one from before the frame. A reload taking only the manager lock would install that
+    /// file and let the spent generation decrypt a second time. Taking the checkpoint's ordering lock
+    /// first makes it wait for the write and read the file that holds the frame.
+    #[test]
+    fn a_resume_reload_waits_for_a_checkpoint_that_has_exported_but_not_written() {
+        let _s = crate::concurrency::test_support::serialise();
+        let dir = temp_dir("resume-mid-checkpoint");
+        let path = dir.join("mls.bin");
+        let (mut alice, mut bob, gid) = crate::concurrency::test_support::joined_pair("resume-mid");
+        persist(&bob, &path); // the file from BEFORE the frame
+        let frame = alice
+            .send_message(&gid, b"read before the checkpoint")
+            .unwrap();
+        bob.process_incoming_message(&gid, &frame).unwrap();
+
+        let live = std::sync::Arc::new(std::sync::Mutex::new(Some(bob)));
+        let key = mls_core::crypto::decode_base64_to_32_bytes(DEV_KEY_B64).unwrap();
+        let (in_write_tx, in_write_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let checkpoint = {
+            let live = live.clone();
+            let path = path.clone();
+            std::thread::spawn(move || {
+                crate::concurrency::checkpoint_live_manager(&live, &key, |sealed| {
+                    in_write_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    crate::concurrency::write_mls_bin_atomically(&path, sealed)
+                })
+            })
+        };
+        in_write_rx
+            .recv()
+            .expect("the checkpoint reached its write");
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let reload = {
+            let live = live.clone();
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let outcome =
+                    reload_in_checkpoint_order(&live, &path, "resume-mid-bob", "d1", DEV_KEY_B64);
+                done_tx.send(()).unwrap();
+                outcome
+            })
+        };
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "the reload ran while the checkpoint was still writing - it read the file from before the frame"
+        );
+
+        release_tx.send(()).unwrap();
+        checkpoint.join().unwrap().unwrap();
+        assert_eq!(reload.join().unwrap().unwrap(), ReloadOutcome::Reloaded);
+        assert!(
+            live.lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .process_incoming_message(&gid, &frame)
+                .is_err(),
+            "the installed state must hold the generation the frame spent"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
