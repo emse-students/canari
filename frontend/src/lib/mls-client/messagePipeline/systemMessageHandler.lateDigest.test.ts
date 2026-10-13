@@ -23,12 +23,14 @@ import {
  * addressed to ONE responder because only the device that asked holds an outstanding solicitation.
  */
 
-const { answerHistoryDigest } = vi.hoisted(() => ({
+const { answerHistoryDigest, pullFromOverheardDigest } = vi.hoisted(() => ({
   answerHistoryDigest: vi.fn().mockResolvedValue(undefined),
+  pullFromOverheardDigest: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('$lib/utils/chat/historyDiffAnswer', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/chat/historyDiffAnswer')>()),
   answerHistoryDigest,
+  pullFromOverheardDigest,
 }));
 
 const ME = 'me';
@@ -83,6 +85,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   resetHistoryDigestRendezvousForTests();
   answerHistoryDigest.mockClear();
+  pullFromOverheardDigest.mockClear();
 });
 
 describe('a digest that arrives after the wait ended', () => {
@@ -93,6 +96,8 @@ describe('a digest that arrives after the wait ended', () => {
     await settle();
 
     expect(answerHistoryDigest).toHaveBeenCalledTimes(1);
+    // The answer's own diff pulls what we lack; a second, overheard-digest pull would ask twice.
+    expect(pullFromOverheardDigest).not.toHaveBeenCalled();
     const call = answerHistoryDigest.mock.calls[0][0];
     expect(call.groupId).toBe(GROUP);
     expect(call.requesterIdentity).toBe(PEER);
@@ -102,9 +107,10 @@ describe('a digest that arrives after the wait ended', () => {
     expect(call.since).toBe(0);
   });
 
-  it('is IGNORED when we never asked - every member sees this broadcast', async () => {
+  it('is NOT ANSWERED when we never asked - every member sees this broadcast', async () => {
     // The election picks ONE responder. Answering an unsolicited digest would put every member of
-    // the group on the same frame, which is the fan-out the election exists to prevent.
+    // the group on the same frame, which is the fan-out the election exists to prevent. What we LACK
+    // is still read from it - see `systemMessageHandler.overheardDigest.test.ts`.
     await handleSystemEvent('history_digest', DIGEST_FRAME, makeCtx() as any);
     await settle();
 
@@ -156,5 +162,7 @@ describe('a digest that arrives after the wait ended', () => {
 
     await expect(waiting).resolves.toMatchObject({ kind: 'digest' });
     expect(answerHistoryDigest).not.toHaveBeenCalled();
+    // Nor read as overheard: the waiter's diff already pulls what we lack.
+    expect(pullFromOverheardDigest).not.toHaveBeenCalled();
   });
 });

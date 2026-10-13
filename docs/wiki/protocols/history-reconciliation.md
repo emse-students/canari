@@ -522,6 +522,60 @@ false for a session that stays up - so the swallow is now LOGGED rather than sil
 `history.ts` announces *reconciling* before calling and a silent decline made that line a claim
 about something that did not happen.
 
+### A digest overheard is evidence: the member that lacks something asks its author (2026-10-13)
+
+**Measured on production 2026-10-13, group `656597dc`.** A user's phone (`mtxpgiiv`) came back
+after ~100 minutes away, asked, and the server elected the same user's other phone (`mv6mmuu1`):
+`history_state`, `history_digest_request`, `history_digest` (7 ids), `history_pull`. The user's
+browser (`muh72dix`) is a member, so it received all four legs. It held 6 rows, logged
+`[HISTORY_DIGEST] From ... 7 id(s)`, then logged nothing and sent nothing. The message the phone
+showed never reached the browser.
+
+**Every one of the browser's own triggers was right to stay quiet.** No unreadable frame was held,
+the server had no queued row left for it (the send logs show every frame of the group either
+`PUBLISHED` to it or read by its stream walk, whose cursor reached the stream head), and the
+connection pass logged `no sweep - away 0 d ... every group already audited`. The gap had no local
+witness. Its one piece of evidence was a digest addressed to somebody else, and the
+`history_digest` branch dropped a digest it had not solicited, without a line. The responder could
+not repair the browser either: `mv6mmuu1` joined by external commit at 11:58 and got its past as
+bundles from the browser itself, so it lacked the same id. Its own pull to the phone at 13:11:03 hit
+`TRANSPORT_SKIPPED_OFFLINE`: the phone had gone to the background seven seconds after its digest.
+
+**The rule now.** `pullFromOverheardDigest` (`historyDiffAnswer.ts`) handles a digest that no waiter
+took and no solicitation claims. After its own mailbox for that group drains, the device diffs the
+digest against its store and sends an addressed `history_pull` to the AUTHOR for what it lacks,
+stating its OWN `since`. It never answers on the author's behalf: what the author lacks is the elected
+responder's job. Both roads go through one `pullWhatWeLack`, so the elected responder and the
+overhearing member cannot drift into two pulls. This is the bundle rule ("an answer meant for a peer is
+simply free messages") applied to the question:
+
+| | cost | why it is acceptable |
+| --- | --- | --- |
+| store read per overheard digest | one walk per member device | a digest goes out only after two state keys DIFFER, so it is the exception |
+| pull | one addressed frame, only when the diff is non-empty | the author answers with a bundle, and a bundle asks for nothing |
+| ids below our window | the author clips them (`Held N ... below the asker's window`) | the same cost the elected responder already pays: an id list carries no dates |
+
+Both outcomes are logged, as `overheard ...'s digest naming N id(s)/slice(s) we lack - asked it for
+them` and `... we hold everything it lists`. The silence is what made this one take a console export
+to find.
+
+**What this does NOT close, stated so nobody believes it closed.**
+
+- **A pull to an author that has already left is dropped.** It is a transport frame, so the server
+  delivers it only to online devices. A phone backgrounded between its digest and our pull still leaves
+  the gap open until the next digest we overhear or the next trigger of our own. That is the same race
+  that stopped `mv6mmuu1`'s pull here. It is narrower now (the overhearing member asks within its own
+  drain, not after a diff round trip), but it is still a race, and it is open in
+  [backlog](../backlog.md#p2---a-device-holding-a-message-only-it-has-is-the-only-repair-and-nothing-retries-it-when-it-leaves-2026-10-13).
+- **HOW the browser lost the message is NOT established.** Every frame of the group in the server
+  stream (`history:{gid}`, 19 entries) reached the browser by queue or stream walk, and the server
+  logs cannot tell which id the phone holds that the browser lacks (ids are inside the ciphertext).
+  It is consistent with a frame decrypted once and then not stored (the queue/stream double
+  presentation, [WP-DUPDELIVERY-1](#wp-dupdelivery-1---the-ledger-was-the-witness-and-the-overlap-was-one-await-wide)),
+  but that is inferred. **To confirm it:** compare the phone's 7 ids with the browser's 6. The odd id's
+  timestamp places it among the stream entries, and that entry's `send-*` trace names the delivery
+  path the browser took.
+
 ### The fourth trigger: an answer that does not reach far enough back
 
 **SHIPPED 2026-08-16.** The other three triggers are things a device notices about ITSELF - a
