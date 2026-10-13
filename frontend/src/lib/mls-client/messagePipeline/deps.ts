@@ -87,6 +87,8 @@ export interface MessageHandlerDeps {
     /** The community's salons were rearranged: re-read the order, the event names no salon. */
     channelsReordered?: boolean;
   }) => void;
+  /** This account cleared a community's unread on some device - see `sessionTypes.onSalonUnreadCleared`. */
+  onSalonUnreadCleared?: (event: { workspaceId: string }) => void;
   /** This device's own role in a community changed - see `sessionTypes.onWorkspaceRoleChanged`. */
   onWorkspaceRoleChanged?: (event: {
     workspaceId: string;

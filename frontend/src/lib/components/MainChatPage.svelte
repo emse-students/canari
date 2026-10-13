@@ -444,6 +444,8 @@
         void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx()),
       onReorderCommunities: (newOrder: typeof channels.channelWorkspaces) =>
         void channels.reorderWorkspaces(newOrder, channelsCtx()),
+      onMarkCommunityRead: (workspaceId: string) =>
+        void channels.markCommunityRead(workspaceId, channelsCtx()),
       onReorderChannels: (
         workspaceSlug: string,
         newOrder: (typeof channels.channelWorkspaces)[number]['channels']

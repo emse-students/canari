@@ -254,6 +254,59 @@ next pre-release - reader on `/posts` with a salon selected, owner posts: the ti
 notification is raised, no `POST /read` leaves; reader returns: count cleared, one `read` and one
 `read-mark`.
 
+### Mark a whole community as read (2026-10-13)
+
+**Asked by the user** (Discord's gesture): a long press on a community icon of the rail under a
+finger, a right click with a mouse (or the Menu key), opens a menu with **Marquer tout comme lu**.
+Nothing like it existed before: the app had no context menu on the rail at all, and the only
+"Marquer comme lu" was the Android notification action for ONE salon (`POST /api/mls/push/channel-read`,
+[social-service](../../services/social-service.md#read-receipts-in-a-salon)), which moves the read mark.
+
+**The decision: clearing a badge is not reading, so no receipt moves.** A salon's read mark
+(`readMarks`) is also the "Lu par" heads other members see; the server already refused to SEED marks
+for exactly that reason (`listUnreadCounts`), and the receipt waits for focus so "a phone in a pocket
+never tells a sender it read anything". A member who clears a community from a menu has not opened a
+single message, so the clear moves a PRIVATE mark instead: `channel_members."clearedMarks"`
+(migration 082), which `listUnreadCounts` adds to the floor of what it counts, and which is never
+published to anyone but the member's own devices. Opening a salon afterwards sends the ordinary
+receipt, because that IS reading. (The shade's "Marquer comme lu" keeps moving the receipt: there the
+reader saw the message in the banner. Not changed here.)
+
+| Piece | Where |
+|---|---|
+| The gesture | `actions/longPress.ts` - the hold primitive extracted from `reactorsTrigger` (which now composes it): 450 ms, slop, the click that ends a hold swallowed in capture, the native menu refused; a `contextmenu` that is not a touch hold goes to `onContextMenu` |
+| The rail | `Sidebar.svelte`: touch/pen hold and right click open `CommunityRailMenu.svelte`; the mouse's main button is left to the drag |
+| One request | `POST /api/channels/workspaces/:workspaceId/unread/clear { upTo }` -> `clearWorkspaceUnread`: one `UPDATE` for every salon the caller may read (`canAccessChannel`) |
+| Other devices | `channel.unread.cleared` to the caller alone; each device re-reads `unread-counts` (one request), plus one silent `channel_read` push per salon that moved, which dismisses its banners |
+
+**The bound.** `upTo` is `communityUnreadUpTo`: the later of the last server count's `asOf` and the
+newest message held in those salons - both on the SERVER's clock (a salon row's timestamp is its
+`createdAt`). The server stores per salon `LEAST(upTo, newest row createdAt)`, merged as
+`GREATEST` against the row being updated, so a mark never covers a message that did not exist, never
+covers one created after the badge the user cleared, and never falls. Silent rows are not counted
+(the count's own rule). This device's badges fall at once (`clearSalonUnreadLocally`: only falls,
+watermark untouched); a refusal is a toast and a re-read of the server's counts.
+
+**The rail is also a drag zone** (`svelte-dnd-action`, no touch delay: a 3 px move starts a drag and
+the library prevents the `touchstart`, then dispatches its own `click` on `touchend`). The hold asks
+the DRAG, not a slop tuned to the library: `consider` with `DRAG_STARTED` sets `railDragActive`, so a
+hold the drag took opens nothing, and a hold that turns into a drag closes the menu. The library's
+synthetic click after a hold is swallowed by `longPress`.
+
+**Measured in headless Chrome at 390 px with touch emulation** (trusted CDP touches against the real
+`Sidebar`, the real library and the real `pressedClickGuard`): a tap selects the community (one
+script click, as before); a still 700 ms hold, and one with a 2 px jitter, open the menu and select
+nothing; a tap on the entry calls the action once; a 70 px drag reorders and opens nothing; a hold
+then a drag opens the menu and closes it at the drag; a community with no salon offers the entry
+greyed; a mouse right click opens it; a mouse left hold of 700 ms still just selects.
+
+**Not verified:** a real phone (Android's native long-press `contextmenu`, iOS WebKit's callout - both
+handled in code, neither seen); the menu's position on screen (the probe page rendered without the
+app's CSS); the SQL against a database (the local Docker daemon stopped answering during the session:
+the statement is asserted by `channel-unread-clear.spec.ts`, not run). **Owed:** one reading on dev -
+clear a community with unread salons on the web, watch the phone's badges and banners go, and check
+that no "Lu par" head appears for the clearing member on the sender's side.
+
 ### A community joined in-session is listed whole (2026-10-08)
 
 Measured on the local estate (`UNR-11`: three public salons, the joiner a workspace member of all):
