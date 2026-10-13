@@ -268,7 +268,7 @@ export async function ensureConversationForServerGroup(
       log(`[WARN] Placeholder persistence failed for ${groupId}: ${String(e)}`);
     }
   }
-  log(`[DISCOVERY] Placeholder "${displayName}" created.`);
+  log(`[DISCOVERY] Placeholder ${groupId} created.`);
   // A FRAME MAY ALREADY BE WAITING ON THIS EXACT CONVERSATION EXISTING. The inbound handler returns
   // `false` for a group whose conversation row is missing, leaving the frame in the server queue -
   // and the only global trigger that collects those is the boot restore, which cannot produce a

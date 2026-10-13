@@ -1046,7 +1046,7 @@
       const name = detail.name || `gif-${Date.now()}.${mime.split('/')[1] ?? 'gif'}`;
       handleFilesSelected([new File([bytes], name, { type: mime })]);
     } catch (e) {
-      appendLog(`[keyboard-media] failed to handle committed content: ${e}`);
+      appendLog(`[keyboard-media] failed to handle committed content - ${e}`);
     }
   }
 

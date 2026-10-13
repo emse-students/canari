@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Info, Download } from '@lucide/svelte';
+  import { Info, Download, FileText } from '@lucide/svelte';
   import {
     getClientAppVersion,
     openLatestAppUpdate,
@@ -14,6 +14,8 @@
     refreshAppVersionCheck,
   } from '$lib/stores/appVersionCheck.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { exportAppLog } from '$lib/utils/appLogExport';
+  import { showToast } from '$lib/stores/toast.svelte';
 
   // The app stores own updating a store-distributed app, so nothing here interrupts the
   // user: this is the passive counterpart of the blocking minimum-version gate, and the
@@ -38,6 +40,22 @@
       target = resolved;
     });
   });
+
+  let exportingLog = $state(false);
+
+  // The ONLY way the in-app log leaves the device: this button, pressed by the member.
+  async function handleExportLog() {
+    exportingLog = true;
+    try {
+      await exportAppLog();
+    } catch (err) {
+      // The save itself reports its own failure; what lands here is the log that could not be read.
+      console.error('[APPLOG] export failed', err);
+      showToast(m.settings_about_log_failed(), 'error');
+    } finally {
+      exportingLog = false;
+    }
+  }
 
   async function handleUpdate() {
     updating = true;
@@ -92,5 +110,19 @@
     {:else}
       <p class="text-text-muted text-sm">{m.settings_about_up_to_date()}</p>
     {/if}
+
+    <div class="border-cn-border space-y-2 border-t pt-4">
+      <p class="text-text-main text-sm font-bold">{m.settings_about_log_label()}</p>
+      <p class="text-text-muted text-xs leading-relaxed">{m.settings_about_log_desc()}</p>
+      <button
+        type="button"
+        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-bold transition-colors disabled:opacity-60"
+        disabled={exportingLog}
+        onclick={() => void handleExportLog()}
+      >
+        <FileText size={16} />
+        {exportingLog ? m.settings_about_log_busy() : m.settings_about_log_button()}
+      </button>
+    </div>
   </div>
 </div>

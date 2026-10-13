@@ -919,7 +919,7 @@
               )
             );
         }
-        appendLog(`Joined channel #${event.channelName || event.channelId}`);
+        appendLog(`Joined channel ${event.channelId}`);
 
         // Add a system message to the channel so the inviter (and other members) see who joined.
         if (event.invitedBy && event.joinedBy) {
@@ -999,7 +999,7 @@
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
           globalChannels.selectedChannelConversationId = '';
         }
-        appendLog(`Removed from channel #${event.channelName || event.channelId}`);
+        appendLog(`Removed from channel ${event.channelId}`);
         showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
       },
       onRolePermissionsChanged: (event: { roleId: string; permissions: string[] }) => {

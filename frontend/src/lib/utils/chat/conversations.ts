@@ -702,7 +702,7 @@ export async function mergeDirectConversationDuplicates(
           // Non-blocking: cleaned up at the next server GC
         }
       }
-      log(`Merged duplicate 1:1 conversation: ${duplicate.name} -> ${canonical.name}`);
+      log(`Merged duplicate 1:1 conversation: ${duplicate.id} -> ${canonical.id}`);
     } catch (error) {
       log(`Direct-conversation merge error: ${String(error)}`);
     }

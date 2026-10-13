@@ -1137,7 +1137,7 @@ export function useChannelWorkspaces() {
       );
       await ctx.saveConversation(channelId);
       ctx.selectConversation(channelId);
-      ctx.log(`Channel created: #${normalizedChannelName} (${visibility})`);
+      ctx.log(`Channel created: ${channelId} (${visibility})`);
     } catch (error) {
       ctx.log(toUiActionError(m.channel_action_channel_create(), error));
     }
@@ -1284,7 +1284,7 @@ export function useChannelWorkspaces() {
         }
       }
 
-      ctx.log(`Member invited to channel (${roleName}): ${displayName}`);
+      ctx.log(`Member invited to channel (${roleName}): ${memberId}`);
     } catch (error) {
       // Suppress the toast: the invite modal re-surfaces this error inline via inviteStatus.
       const msg = toUiActionError(m.channel_action_channel_invite(), error, false);

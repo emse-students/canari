@@ -89,7 +89,7 @@ function writeAll(userId: string, entries: UnsentSalonText[]): void {
     if (entries.length === 0) localStorage.removeItem(keyFor(userId));
     else localStorage.setItem(keyFor(userId), JSON.stringify(entries));
   } catch (e) {
-    console.warn(`[SALON-UNSENT] ledger not written - a kill now loses the text: ${String(e)}`);
+    console.warn(`[SALON-UNSENT] ledger not written - a kill now loses the text - ${String(e)}`);
   }
 }
 
