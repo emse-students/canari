@@ -3058,7 +3058,67 @@ log. Pinned by `ProfileParrainageSection.svelte.test.ts` (fails with `each_key_d
 
 ## A click belongs to the element its press began on (2026-10-08)
 
-Reported on the Pixel 6a: tapping the `bureau` salon landed on a member's profile, and the salon opened with the read receipts of a bubble already showing. A press that changes the layout (opening a salon) can have its click dispatched at the NEW layout, so it hits whatever is now under the finger. `installPressedClickGuard` (`frontend/src/lib/utils/pressedClickGuard.ts`, installed in the root layout) refuses, in the capture phase, a click whose `pointerdown` began on an unrelated element; same element, ancestor/descendant, a label and its control, and `detail === 0` clicks (keyboard, `.click()`) pass. No timer: the press is state. The refusal logs `pressedClickGuard: click refused`. The exact browser mechanism was not isolated; the Pixel reading after the next pre-release is what confirms it. The read-receipt popover also wraps now (`max-w` of 20rem or the screen, names break) instead of one `whitespace-nowrap` line.
+Reported on the Pixel 6a: tapping the `bureau` salon landed on a member's profile, and the salon opened with the read receipts of a bubble already showing. A press that changes the layout (opening a salon) can have its click dispatched at the NEW layout, so it hits whatever is now under the finger. `installPressedClickGuard` (`frontend/src/lib/utils/pressedClickGuard.ts`, installed in the root layout) refuses, in the capture phase, a click whose `pointerdown` began on an unrelated element; same element, ancestor/descendant, a label and its control, and `detail === 0` clicks (keyboard, `.click()`) pass. No timer: the press is state. The refusal logs `pressedClickGuard: click refused`. The exact browser mechanism was not isolated on that day - it was on 2026-10-13, below, and it had defeated this guard. The read-receipt popover also wraps now (`max-w` of 20rem or the screen, names break) instead of one `whitespace-nowrap` line.
+
+### The mechanism: two clicks per tap on the salon list, and the first one disarmed the guard (2026-10-13)
+
+Reported again after the guard shipped: a tap on a salon also opened the read receipts ("Lu par") of
+the message the salon put under the finger - on a Pixel 6a store 1.2.6 about 1 s after the open,
+which is the open's main-thread freeze plus the bubble's 250 ms tap window. **It happens only to
+whoever may reorder the salons** (`viewerCanManageChannels`), which is why it read as "sometimes".
+
+**Measured with the real library and the real guard** (a scratch page with the salon list's exact
+`dndzone` options over a "message" under the same pixels), on the Mi 9T Chrome with an OS tap
+(`adb shell input tap`) and in headless Chrome with a CDP tap; the two logs are identical:
+
+| Sequence on one tap | shipped (reorderable list) | shipped, member who cannot reorder | after the fix |
+| --- | --- | --- | --- |
+| `pointerdown`/`touchstart`/`pointerup`/`touchend` | on the row | on the row | on the row |
+| a click during `touchend`, `isTrusted=false`, a plain `Event` | **on the row: the salon opens** | - | - |
+| the browser's `mousedown`/`mouseup`/`click` (`PointerEvent`, `detail 1`) | **on the message: it activates** | on the row | on the row: the salon opens |
+
+The untrusted click is `svelte-dnd-action`'s `handleFalseAlarm`: on a touch that ends before the
+drag starts it dispatches its own click, because a drag zone normally `preventDefault`s the
+`touchstart` and the browser then sends none. With `delayTouchStart` (the salon list, 350 ms) the
+library prevents nothing, so the browser's click comes too - a second click on the same tap. It hits
+the new layout. With a 1.6 s open frozen in the handler, the browser's click arrives 1.6 s later
+(measured: `5433ms click on message` after a `3824ms` tap), on the content the open painted.
+
+**And the guard let it through because the first click consumed the press.** It cleared `pressed`
+on every click, script ones included, so the browser's click found no press to be judged against.
+Two fixes, each proven by reverting it:
+
+- **The cause, in the library**: `frontend/patches/svelte-dnd-action@0.9.80.patch` (bun
+  `patchedDependencies`) dispatches that click only when the library prevented the `touchstart`. The
+  community rail (no delay) keeps it. `Sidebar.tapClickCount.svelte.test.ts` pins one tap = one
+  activation against the REAL library (2 calls without the patch), so a version bump that drops the
+  patch fails there by name. Upstream still has it in 0.9.80, the latest on 2026-10-13.
+- **The guard**: only a pointer's click (`isPointerClick`: a `MouseEvent` with `detail >= 1`) is
+  judged and consumes the press; a script click passes and leaves it. `pressedClickGuard.test.ts`
+  replays the measured sequence.
+
+**What else acts on a press rather than a click, audited 2026-10-13** - measured on the same page:
+activating on `pointerdown`, `pointerup` or `touchend` and changing the layout sends the browser's
+click to the new content (the guard refuses it); activating on `mousedown` sends it to the common
+ancestor (`BODY`), which nothing handles. A press held past the 350 ms hold sends its click to the
+library's dragged clone, and past the browser's long press (600 ms) no click at all.
+
+| Surface | Acts on | Verdict |
+| --- | --- | --- |
+| Salon list (`Sidebar`, reorderable) | library click on `touchend` | **the defect** - fixed by the patch |
+| Community rail (`Sidebar`) | `onclick`; the library ignores a touch that starts on a button (`value` is set) | one click |
+| Conversation list, sidebar scrim, drawer close | `onclick` | one click |
+| `MentionDropdown`, `UserAutocomplete`, `CoOwnerPicker` | `mousedown` (beats the input's blur) | click goes to the common ancestor |
+| `ReactorsPanel` | closes on a window `pointerdown` outside it | the tapped element was visible; its click is its own |
+| `reactorsTrigger`, `MessageBubble` long press | timer, the click after it swallowed / none after a long press | no click |
+| `VoiceRecorder` release, `swipeBack`, `pullToRefresh`, `ReelViewer`, tab swipe | `pointerup`/`touchend` after a move or a hold | no click, or the guard |
+| Media, PDF, video scrub, cropper, poster, colour picker, minesweeper | pointer drags on their own surface | the layout under the finger does not change |
+
+What content appearing under a STILL-pressed finger does (a late mount, measured with the panel
+swapped 100 ms after `pointerdown`, released at 300 ms): the touch's `pointerup` stays on the row
+(implicit capture), the compatibility `mousedown`/`mouseup` and the click reach the new bubble, and
+the guard refuses the click. No bubble handler listens to `mouse*`. A fresh tap on the new content is
+a new press and acts normally.
 
 ## "Voir plus" is measured, never counted (2026-10-08)
 

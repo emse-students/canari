@@ -68,6 +68,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch",
+  },
   "overrides": {
     "brace-expansion": "^5.0.12",
     "cookie": "^0.7.0",
