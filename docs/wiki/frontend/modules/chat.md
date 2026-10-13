@@ -83,8 +83,9 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
 - **`GlassMenuButton`** (`components/shared`) is the growing menu: a round `glass-chrome` button whose
   panel scales out of the button's own corner (`data-popover-side` picks the origin), portalled -
   `backdrop-filter` would otherwise confine a fixed panel to the button - and positioned with
-  `bindFixedPopover`'s new `stayAnchored`, since a panel that grows OUT OF its button must not be
-  centred however wide it is. Its `plain` variant is the same menu without glass: the website's phone
+  `bindFixedPopover`, which keeps a panel on its anchor however wide it is (centring is opt-in,
+  `centreWhenWide`, for the emoji pickers only since 2026-10-13), since a panel that grows OUT OF its
+  button must not be centred. Its `plain` variant is the same menu without glass: the website's phone
   paperclip. An entry with an on/off state (search, members) is a `menuitemcheckbox`.
 
 - **The polls and pinned bars are glass pills too (user, 2026-10-12)** - they were opaque white
