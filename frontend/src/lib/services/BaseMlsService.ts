@@ -72,6 +72,7 @@ import { runAsEpochAdvance, runAsEpochSend } from '$lib/utils/chat/epochSendBarr
 import {
   parseServerTimestampMs,
   type DeliveryChannel,
+  deliveryMetaOf,
   type DeliveryRepeatShape,
 } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
@@ -1664,7 +1665,8 @@ export abstract class BaseMlsService implements IMlsService {
    */
   protected enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel): void {
     if (!this.admitDelivery(msg.queuedMessageId, channel)) return;
-    this.messageScheduler.enqueue(msg);
+    // Stamped HERE, after the dedup: the copy that was admitted is the one whose route is a fact.
+    this.messageScheduler.enqueue({ ...msg, channel });
     if (!this.messageScheduler.draining) {
       void this.processQueue();
     }
@@ -1776,16 +1778,7 @@ export abstract class BaseMlsService implements IMlsService {
             `[QUEUE] Processing ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} group=${groupId ?? 'unknown'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
           );
 
-          const deliveryMeta: IncomingDeliveryMeta | undefined =
-            msg.queuedCreatedAt !== undefined || msg.queuedMessageId || msg.senderDeviceId
-              ? {
-                  ...(msg.queuedCreatedAt !== undefined
-                    ? { queuedCreatedAt: msg.queuedCreatedAt }
-                    : {}),
-                  ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
-                  ...(msg.senderDeviceId ? { senderDeviceId: msg.senderDeviceId } : {}),
-                }
-              : undefined;
+          const deliveryMeta = deliveryMetaOf(msg);
 
           // The stuck-callback watchdog that used to sit here is gone, and it is not lost: it
           // covered ONE of the four awaits that can freeze the drain, and `MlsPerGroupScheduler`

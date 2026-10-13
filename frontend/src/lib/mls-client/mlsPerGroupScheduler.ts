@@ -1,4 +1,5 @@
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
+import type { DeliveryChannel } from '$lib/mls-client/incomingDelivery';
 
 /** Sentinel bucket key for messages without a `groupId`. */
 export const MLS_QUEUE_ORPHAN_KEY = '__no_group__';
@@ -17,6 +18,11 @@ export interface MlsQueuedMessage {
   queuedCreatedAt?: number;
   /** Tauri: persisted control frame (e.g. `group_reset`). */
   type?: string;
+  /**
+   * The route of the copy that was ADMITTED - set by `enqueueMessage` alone, never by a caller,
+   * because the same row can be offered by both routes and only the dedup decides which one counts.
+   */
+  channel?: DeliveryChannel;
 }
 
 /** `web`: Welcome at front of each group's message list. `tauri`: separate control/welcome tiers. */
