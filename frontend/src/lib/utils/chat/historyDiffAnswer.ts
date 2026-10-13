@@ -2,6 +2,7 @@ import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { HistoryDiff, HistoryDigest } from '$lib/utils/chat/historyManifest';
 import {
+  DIGEST_ID_MODE_MAX,
   diffHistoryDigest,
   isEmptyHistoryDiff,
   selectEntryIdsForPrefixes,
@@ -183,6 +184,22 @@ async function pullWhatWeLack(params: {
  * moment ago, to hold it. The pull is addressed, so only the author serves it, and a bundle asks for
  * nothing back: one overheard digest costs this device one store read and at most one pull, and the
  * exchange ends there.
+ *
+ * **EXACT IDS ONLY, AND NO MORE OF THEM THAN AN HONEST DIGEST CARRIES - the bound is the point.**
+ * The elected responder reads a digest once; an overheard one is read by EVERY other device of the
+ * group, so whatever one reading costs is multiplied by the group's size. Two shapes would make that
+ * product unbounded, and both are declined here with a line rather than pulled:
+ * - a `range` digest. A differing slice says the two stores differ, never who is short, and its
+ *   answer is the author's WHOLE slice broadcast to the group. The author is usually the device that
+ *   asked because it is behind, and a browser's 90 days differ from a phone's five years in nearly
+ *   every slice - so each overhearing member would draw the author's whole store, once per member.
+ *   The elected responder still settles a range digest, once.
+ * - an `ids` digest longer than {@link DIGEST_ID_MODE_MAX}. No client builds one (it switches to
+ *   `range` above it); the parser admits more, so only a forged frame reaches here with it, and it
+ *   would make every member send up to ten pulls on one frame from one co-member.
+ * So one overheard digest costs each device at most `ceil(DIGEST_ID_MODE_MAX / MAX_IDS_PER_PULL)`
+ * = 2 pull frames naming exact ids, and the author answers only ids it holds inside the puller's
+ * window - a bound by construction, with no clock in it.
  */
 export async function pullFromOverheardDigest(params: {
   groupId: string;
@@ -194,6 +211,19 @@ export async function pullFromOverheardDigest(params: {
 }): Promise<void> {
   const { groupId, holderIdentity, selfIdentity, digest, deps } = params;
   const short = groupId.slice(0, 8);
+
+  if (digest.mode === 'range') {
+    deps.log(
+      `[HISTORY_DIGEST] ${short}... overheard ${holderIdentity}'s range digest (${digest.ranges.length} slice(s)) - not pulled: a slice cannot say who is short and every member would draw it whole; the elected responder settles it`
+    );
+    return;
+  }
+  if (digest.ids.length > DIGEST_ID_MODE_MAX) {
+    deps.log(
+      `[HISTORY_DIGEST] ${short}... overheard ${holderIdentity}'s digest listing ${digest.ids.length} ids, above the ${DIGEST_ID_MODE_MAX} no client sends - not pulled`
+    );
+    return;
+  }
 
   const entries = await readHistoryEntries(groupId, deps);
   if (entries === null) {
@@ -214,7 +244,7 @@ export async function pullFromOverheardDigest(params: {
   });
   deps.log(
     pulled > 0
-      ? `[HISTORY_DIGEST] ${short}... overheard ${holderIdentity}'s digest naming ${pulled} id(s)/slice(s) we lack - asked it for them`
+      ? `[HISTORY_DIGEST] ${short}... overheard ${holderIdentity}'s digest naming ${pulled} id(s) we lack - asked it for them`
       : `[HISTORY_DIGEST] ${short}... overheard ${holderIdentity}'s digest - we hold everything it lists`
   );
 }

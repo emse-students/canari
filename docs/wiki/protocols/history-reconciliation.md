@@ -554,8 +554,18 @@ simply free messages") applied to the question:
 | store read per overheard digest | one walk per member device | a digest goes out only after two state keys DIFFER, so it is the exception |
 | pull | one addressed frame, only when the diff is non-empty | the author answers with a bundle, and a bundle asks for nothing |
 | ids below our window | the author clips them (`Held N ... below the asker's window`) | the same cost the elected responder already pays: an id list carries no dates |
+| a `range` digest | **not pulled**, one line (`overheard ...'s range digest ... not pulled`) | a slice names a difference, never who is short, and its answer is the author's whole slice broadcast to the group. Every overhearing member would draw it, and a browser's 90 days differ from a phone's five years in nearly every slice. The elected responder still settles it, once |
+| an `ids` digest above `DIGEST_ID_MODE_MAX` | **not pulled**, one line | no client builds one (it switches to `range`), so only a forged frame carries it; read as is, one frame from one co-member would make every member send up to ten pulls |
 
-Both outcomes are logged, as `overheard ...'s digest naming N id(s)/slice(s) we lack - asked it for
+**The bound, by construction and with no clock in it** (adversarial review, 2026-10-13): one
+overheard digest costs each device at most one store read and `ceil(1000 / 500)` = 2 pull frames
+naming exact ids, and the author answers only ids it holds inside the puller's window. A pull is
+answered by a bundle and a bundle asks for nothing, so no leg re-enters the exchange. What is NOT
+bounded below the group size: with N devices lacking the same id, the author serves it N times (each
+bundle is also ingested by everyone else, deduped by id). That is the price of asking without a
+second election, and it is paid only when a digest exposes a real gap.
+
+Every outcome is logged, as `overheard ...'s digest naming N id(s) we lack - asked it for
 them` and `... we hold everything it lists`. The silence is what made this one take a console export
 to find.
 
@@ -567,6 +577,9 @@ to find.
   that stopped `mv6mmuu1`'s pull here. It is narrower now (the overhearing member asks within its own
   drain, not after a diff round trip), but it is still a race, and it is open in
   [backlog](../backlog.md#p2---a-device-holding-a-message-only-it-has-is-the-only-repair-and-nothing-retries-it-when-it-leaves-2026-10-13).
+- **A conversation above 1 000 messages is not covered.** Its digests are `range`, which the
+  overhearing road declines (table above), so the same gap in a large conversation stays as silent as
+  before - now with a line saying the digest was seen and not pulled.
 - **HOW the browser lost the message is NOT established.** Every frame of the group in the server
   stream (`history:{gid}`, 19 entries) reached the browser by queue or stream walk, and the server
   logs cannot tell which id the phone holds that the browser lacks (ids are inside the ciphertext).

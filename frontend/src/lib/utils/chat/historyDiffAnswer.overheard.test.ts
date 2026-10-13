@@ -1,4 +1,4 @@
-import { buildHistoryDigest } from './historyManifest';
+import { DIGEST_ID_MODE_MAX, buildHistoryDigest } from './historyManifest';
 import { pullFromOverheardDigest } from './historyDiffAnswer';
 
 /**
@@ -60,7 +60,7 @@ describe('pullFromOverheardDigest', () => {
     const [groupId, request] = sendHistoryPull.mock.calls[0];
     expect(groupId).toBe(GROUP);
     expect(request).toMatchObject({ from: SELF, to: AUTHOR, ids: ['g'], since: OUR_SINCE });
-    expect(d.log).toHaveBeenCalledWith(expect.stringContaining('naming 1 id(s)/slice(s) we lack'));
+    expect(d.log).toHaveBeenCalledWith(expect.stringContaining('naming 1 id(s) we lack'));
   });
 
   it('never ANSWERS the author - what it lacks is the elected responder job', async () => {
@@ -96,27 +96,65 @@ describe('pullFromOverheardDigest', () => {
     expect(d.log).toHaveBeenCalledWith(expect.stringContaining('we hold everything it lists'));
   });
 
-  it('pulls by SLICE when the digest is a range manifest', async () => {
+  it('does NOT pull by slice: every member would draw the whole slice of the author', async () => {
+    // A differing slice says the stores differ, never who is short, and its answer is the author's
+    // whole slice broadcast to the group - once per overhearing member. The author is usually the
+    // device that is BEHIND (it asked), so here the slice holds nothing we lack at all.
     const held = Array.from({ length: 40 }, (_, i) => entry(`m-${String(i).padStart(3, '0')}`));
     readHistoryEntries.mockResolvedValue(held);
     // Forced into range mode, as a store above the id-mode cap would be.
-    const digest = await buildHistoryDigest([...held, entry('zz-missing')], 1);
+    const digest = await buildHistoryDigest(held.slice(0, 30), 1);
     expect(digest.mode).toBe('range');
+    const d = deps();
 
     await pullFromOverheardDigest({
       groupId: GROUP,
       holderIdentity: AUTHOR,
       selfIdentity: SELF,
       digest,
+      deps: d,
+    });
+
+    expect(sendHistoryPull).not.toHaveBeenCalled();
+    // Declined before the store is read: nothing it could say would change the answer.
+    expect(readHistoryEntries).not.toHaveBeenCalled();
+    expect(d.log).toHaveBeenCalledWith(expect.stringContaining('range digest'));
+  });
+
+  it('does NOT pull on an ids digest longer than any client builds - a forged frame', async () => {
+    // The parser admits up to 5000 ids; an honest builder switches to range above 1000. Read as is,
+    // one forged frame would make every member send ten pull frames.
+    readHistoryEntries.mockResolvedValue([]);
+    const ids = Array.from({ length: DIGEST_ID_MODE_MAX + 1 }, (_, i) => `x-${i}`);
+    const d = deps();
+
+    await pullFromOverheardDigest({
+      groupId: GROUP,
+      holderIdentity: AUTHOR,
+      selfIdentity: SELF,
+      digest: { mode: 'ids', ids },
+      deps: d,
+    });
+
+    expect(sendHistoryPull).not.toHaveBeenCalled();
+    expect(d.log).toHaveBeenCalledWith(expect.stringContaining('not pulled'));
+  });
+
+  it('still pulls the largest digest a client sends, which chunkIds splits into two frames', async () => {
+    // The bound by construction: DIGEST_ID_MODE_MAX ids, MAX_IDS_PER_PULL per frame.
+    readHistoryEntries.mockResolvedValue([]);
+    const ids = Array.from({ length: DIGEST_ID_MODE_MAX }, (_, i) => `x-${i}`);
+
+    await pullFromOverheardDigest({
+      groupId: GROUP,
+      holderIdentity: AUTHOR,
+      selfIdentity: SELF,
+      digest: { mode: 'ids', ids },
       deps: deps(),
     });
 
     expect(sendHistoryPull).toHaveBeenCalledTimes(1);
-    const request = sendHistoryPull.mock.calls[0][1];
-    expect(request.to).toBe(AUTHOR);
-    expect(request.ids).toEqual([]);
-    expect(request.prefixes.length).toBeGreaterThan(0);
-    expect(request.depth).toBe(digest.mode === 'range' ? digest.depth : undefined);
+    expect(sendHistoryPull.mock.calls[0][1].ids).toHaveLength(DIGEST_ID_MODE_MAX);
   });
 
   it('claims nothing about a store it could not read', async () => {
