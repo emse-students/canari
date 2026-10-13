@@ -39,8 +39,10 @@ Paths are under `frontend/src/lib/` unless they say otherwise. "Shipped" = a dra
 
 - `stores/announcement.svelte.ts:126` `resetAnnouncementState` is documented as "so the next account
   to sign in is asked on its own behalf" and nothing calls it: a second account signing in in the same
-  tab is probably never shown its announcements. Kept in #1775 and recorded in the
-  [backlog](../backlog.md).
+  tab is probably never shown its announcements. Kept in #1775; **wired 2026-10-13**: `logoutImpl`
+  now calls it (pinned by `session/logoutResetsAccountState.test.ts`), and the reset moves a
+  generation on so an ask still in flight when its account signs out cannot land its announcement
+  for the next one (`stores/announcement.test.ts`).
 - The web checkpoint comments still say "Argon2" (`services/WebMlsService.ts:68,878,900,904`,
   `mls-client/mlsEncryptWorkerSession.ts:74`); the seal has been a direct ChaCha20-Poly1305 under the
   device key since v0.11.0 (`mls-wasm/src/lib.rs:93`). Finding 3 is what the Argon2 story hid.
@@ -143,6 +145,34 @@ the per-change before/after numbers in each pull request (vitest on a desktop, `
   received application message, read from the code: one message batch write and one conversation row
   per drain, three `localStorage` writes (seen ledger + its index + the send-ratchet ledger), and one
   full checkpoint (finding 2) - the checkpoint dominates the bytes by three orders of magnitude.
+
+## A salon pressed on a heavy phone - 2026-10-13
+
+**Reported**: a store `1.2.6` Pixel 6a (85 groups, a 208-member community) opening its biggest
+salon warm froze the community list ~1.6 s with no press feedback, then painted in one frame;
+smaller salons took 300-700 ms.
+
+**What blocks, read on the Mi 9T** (`1.2.6` bench build on dev, CDP, `long-animation-frame`):
+
+- **The thread's mount is ONE task.** A warm open of a 48-message salon painted 428 ms after the
+  click, in a single 441 ms frame of which 382 ms is Svelte's microtask flush
+  (`queueMicrotask` -> the effect queue): the click handler set the selection, selected the
+  conversation and started the history load in one synchronous run, so the row's highlight and the
+  whole thread were painted together, after it. Nothing in it is a synchronous store read - the
+  history load is async and its rows come later.
+- **The faces add to the same main thread.** Each avatar mirrored to the notification cache cost
+  ~8 ms of main thread (`Array.from` + JSON of every byte): 50 faces, 360-440 ms - and on every
+  open, not once ([mobile](mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none),
+  fixed separately).
+
+**The fix here**: `onSelectChannelConversation` sets the selection - the row's highlight - and runs
+the rest after the next paint (`afterNextPaint`: a frame callback, then a posted task, no clock). A
+second press during that frame wins and the first salon is never mounted. **What it does not do**:
+make the mount cheaper. The list still freezes for the mount's length, but after showing the press.
+
+**Not measured**: the Pixel 6a itself (the user's phone, never a bench device); a salon with 50
+faces that have photos (dev serves none, so no avatar is fetched or mirrored on the bench); the
+mount's cost split by row type.
 
 ## Draft pull requests from this audit
 
