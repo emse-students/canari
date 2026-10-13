@@ -1407,9 +1407,12 @@ the next pre-release.
 
 ## Deleting a post asks first, through one path (2026-10-13)
 
-`deletePostAfterConfirm` (`lib/posts/postDeletion.ts`) is the only way a control deletes a post: the post
+`deletePostAfterConfirm` (`lib/posts/postDeletion.ts`) is the only way a MEMBER's control deletes a post
+(the admin moderation queue, `routes/admin/moderation`, calls `deletePost` with its own moderation wording):
+the post
 menu's "Supprimer" (`PostCard`) and the scheduled-posts panel (`routes/posts`) both called the API on the
 tap, so a slip of the finger destroyed a post while the reel editor and the review ask before discarding far
 less (Mi 9T reading of `v1.2.4-alpha.2`). It asks with the app's `showConfirm` (`danger`, "Supprimer"),
-returns `'declined'` without a request, and rejects on a failed request so each caller shows its own error.
+returns `'declined'` without a request, and rejects on a failed request so each caller shows its own error
+(the post card its error line, the scheduled panel a line under the strip).
 Pinned by `postDeletion.test.ts`.
