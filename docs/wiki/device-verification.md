@@ -1265,7 +1265,9 @@ by the heads sampler (it is installed before the tap on the phone, after the ope
 
 **Met on the way, not asked about:**
 
-- **The creator of a community is not offered "Epingler" until a reload.** Gamma created `Bench126`
+- **The creator of a community is not offered "Epingler" until a reload** (FIXED 2026-10-13: the
+  creation answer omitted `viewerCanModerate`, which also hid the close of another member's poll,
+  [social-service](services/social-service.md)). Gamma created `Bench126`
   in the web tab; the message menu in its salon showed Transferer / Modifier / Supprimer and no
   Epingler, although the database gives gamma the Administrateur role (`channel.moderate`). After a
   reload the same menu has Epingler. One observation; whether "Cloturer le sondage" was also missing
