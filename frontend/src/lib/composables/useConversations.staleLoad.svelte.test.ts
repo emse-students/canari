@@ -48,6 +48,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 const { useConversations } = await import('./useConversations.svelte');
+const { getPollMeta } = await import('$lib/stores/pollStore.svelte');
 
 const SALON = 'channel_7d2f0aa0-0000-4000-8000-000000000002';
 
@@ -132,5 +133,70 @@ describe('salon history - a superseded load does not merge', () => {
     answerB([{ id: 'm1', at: 1_000 }]);
     await loadB;
     expect(convs.isLoadingHistory).toBe(false);
+  });
+
+  it('lowers the skeleton it raised when the newer load started off screen', async () => {
+    // A starts on screen and raises the skeleton; the reader leaves; a repair starts B while the
+    // salon is not selected, so B raises nothing. A, superseded, must still lower what it raised.
+    let answerA: (rows: unknown[]) => void = () => {};
+    let answerB: (rows: unknown[]) => void = () => {};
+    listMessages.mockReturnValueOnce(new Promise((resolve) => (answerA = resolve)));
+    listMessages.mockReturnValueOnce(new Promise((resolve) => (answerB = resolve)));
+
+    const convs = useConversations();
+    convs.conversations.set(SALON, {
+      id: SALON,
+      name: SALON,
+      messages: [],
+    } as unknown as Conversation);
+    convs.selectConversation(SALON);
+    const ctx = makeCtx();
+
+    const loadA = convs.loadHistoryForConversation(SALON, SALON, ctx, { force: true });
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    expect(convs.isLoadingHistory).toBe(true);
+    convs.selectConversation('');
+    const loadB = convs.loadHistoryForConversation(SALON, SALON, ctx, { force: true });
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(2));
+
+    answerA([{ id: 'm1', at: 1_000 }]);
+    await loadA;
+    expect(convs.isLoadingHistory).toBe(false);
+
+    answerB([{ id: 'm1', at: 1_000 }]);
+    await loadB;
+    expect(convs.isLoadingHistory).toBe(false);
+  });
+
+  it("does not let a superseded load's poll tally undo the newer one", async () => {
+    const pollAt = (voters: string[]) => ({
+      optionIds: ['a', 'b'],
+      multipleChoice: false,
+      endsAt: null,
+      votesByUser: Object.fromEntries(voters.map((v) => [v, ['a']])),
+      closed: false,
+    });
+    let answerA: (rows: unknown[]) => void = () => {};
+    listMessages.mockReturnValueOnce(new Promise((resolve) => (answerA = resolve)));
+    listMessages.mockResolvedValueOnce([{ id: 'p1', at: 1_000, poll: pollAt(['x', 'y']) }]);
+
+    const convs = useConversations();
+    convs.conversations.set(SALON, {
+      id: SALON,
+      name: SALON,
+      messages: [],
+    } as unknown as Conversation);
+    const ctx = makeCtx();
+
+    const loadA = convs.loadHistoryForConversation(SALON, SALON, ctx, { force: true });
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    await convs.loadHistoryForConversation(SALON, SALON, ctx, { force: true });
+    expect(Object.keys(getPollMeta('p1')?.votesByUser ?? {})).toEqual(['x', 'y']);
+
+    // A read the row before y voted.
+    answerA([{ id: 'p1', at: 1_000, poll: pollAt(['x']) }]);
+    await loadA;
+
+    expect(Object.keys(getPollMeta('p1')?.votesByUser ?? {})).toEqual(['x', 'y']);
   });
 });

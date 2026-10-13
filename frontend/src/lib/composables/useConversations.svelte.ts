@@ -31,6 +31,7 @@ import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { applyChannelEdits, type DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { createLoadGenerations } from '$lib/utils/chat/loadGenerations';
+import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
   fetchUniqueGroupMembers,
@@ -232,6 +233,13 @@ export function useConversations() {
   const channelHistoryLoadedAt = new SvelteMap<string, { loadedAt: number; userId: string }>();
   /** Orders overlapping history loads of one salon: only the latest started merges its page. */
   const salonLoadGenerations = createLoadGenerations();
+  /**
+   * The generation of the salon load that last RAISED the skeleton, which is the one that lowers it.
+   * Not "the latest load of that salon": a newer load started while the salon is NOT on screen (a
+   * Graine repair after the reader switched away) raises nothing, so the superseded load that did
+   * would otherwise leave `isLoadingHistory` up for good.
+   */
+  let salonSkeletonOwner = 0;
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
     if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
@@ -579,11 +587,18 @@ export function useConversations() {
     // that was the heal that hid the race.
     const generation = salonLoadGenerations.begin(channelConversationId);
     const isSelected = selectedContact === channelConversationId;
-    if (isSelected) isLoadingHistory = true;
+    if (isSelected) {
+      isLoadingHistory = true;
+      salonSkeletonOwner = generation;
+    }
 
     try {
       if (ctx.storage) {
-        await ctx.storage.deleteMessagesForConversation(channelConversationId).catch(() => {});
+        await ctx.storage.deleteMessagesForConversation(channelConversationId).catch((e) => {
+          ctx.log(
+            `[CHANNEL] stale local rows of ${channelConversationId} not cleared before the load: ${String(e)}`
+          );
+        });
       }
       // Nothing to hydrate: a Graine seed is already in the local store or it is not, and the
       // server holds none to fetch. A row this device has no seed for is REPORTED unreadable by
@@ -607,6 +622,9 @@ export function useConversations() {
       // Server row id -> the client UUID its author sealed inside it (own rows only, see below).
       const clientIdOf = new SvelteMap<string, string>();
       const edits: DecodedChannelEdit[] = [];
+      // Applied only once this load is known to be the latest: a superseded load read its rows
+      // EARLIER, and `setPollMeta` overwrites - so its tallies would undo the newer load's.
+      const pollMetas: [string, ChannelPollMeta][] = [];
       const meLower = ctx.userId.toLowerCase();
 
       const tally = new UnreadableRowTally(rawId);
@@ -631,7 +649,7 @@ export function useConversations() {
           }
 
           // Seed the live poll tally from the server row, keyed by the server id.
-          if (msg.poll) setPollMeta(String(msg.id), msg.poll);
+          if (msg.poll) pollMetas.push([String(msg.id), msg.poll]);
 
           if (decoded.message.isOwn && decoded.message.clientMessageId) {
             clientIdOf.set(decoded.message.id, decoded.message.clientMessageId);
@@ -666,6 +684,7 @@ export function useConversations() {
         );
         return;
       }
+      for (const [messageId, meta] of pollMetas) setPollMeta(messageId, meta);
 
       let current = conversations.get(channelConversationId);
       if (current) {
@@ -715,9 +734,11 @@ export function useConversations() {
     } catch (e) {
       ctx.log(`[CHANNEL] History load failed: ${String(e)}`);
     } finally {
-      // A superseded load leaves the skeleton to the load that superseded it.
-      if (isSelected && salonLoadGenerations.isLatest(channelConversationId, generation)) {
+      // The load that raised the skeleton last lowers it: a superseded load leaves it to a newer one
+      // that raised it again, never to one that did not (see `salonSkeletonOwner`).
+      if (salonSkeletonOwner === generation) {
         isLoadingHistory = false;
+        salonSkeletonOwner = 0;
       }
     }
   }

@@ -2675,9 +2675,13 @@ load that started earlier and finishes later used to merge last: load A reads th
 is held and leaves row R out, S lands and starts load B, B decodes R, then A merges and R - inside
 A's window - is removed. The redundant refetch that every held seed triggered hid it until #1761
 removed it. `loadChannelHistory` now takes a generation per salon (`utils/chat/loadGenerations.ts`):
-only the latest load STARTED merges, an older one logs `superseded` and leaves the page and the
-loading skeleton to the newer one. Pinned by `useConversations.staleLoad.svelte.test.ts`. The refetch
-is not to come back: it was a heal, not a fix.
+only the latest load STARTED merges, an older one logs `superseded` and merges nothing - its poll
+tallies included, since `setPollMeta` overwrites and the older load read them earlier. The loading
+skeleton is lowered by the load that last RAISED it, not by the latest one: a newer load started while
+the salon is off screen (a repair after the reader left) raises nothing, and the superseded load would
+otherwise leave it up for good. If the newer load FAILS, the older page is still not merged: the salon
+keeps what it held, is not marked loaded, and the next open asks again. Pinned by
+`useConversations.staleLoad.svelte.test.ts`. The refetch is not to come back: it was a heal, not a fix.
 
 Two corrections ride on the same seam, because they are the same stale read wearing different
 clothes. `readBy` is unioned rather than taken from the page: reading is applied optimistically in
