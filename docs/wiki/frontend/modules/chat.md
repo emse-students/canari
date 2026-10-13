@@ -1424,6 +1424,19 @@ nulls it, which is what made *every* deep link land in the right tab with nothin
   `abandon`, because the list the target would have been in was never fetched.
 - The landing ends when the user opens another conversation, backs out of the thread, or leaves the
   target's route.
+- **The landing routes BEFORE the session is up, and before it selects only the local preview (F1,
+  2026-10-12).** The route step needs a pending target and a signed-in user on this device, not
+  `isLoggedIn`: `/chat` without a session is the opaque connecting panel, and behind the PIN the
+  gate covers it. The target is drawn from the local store by `previewLandingTarget` as soon as the
+  login holds the device key and the open store, and the pre-session pass selects it through
+  `previewSelect` (overlay entry, nothing else) only when the route has been reached - the same
+  `landingStep` precondition as the real selection. When the session comes up, the next pass ends
+  the preview and runs the ordinary `openNotificationTarget` over the same row, once: the "already
+  on screen" idle guard does not apply to a previewed selection. `notifNav` itself is unchanged
+  (`pending`, `landing`, `enRoute`, `markArrived`, `clear` keep their meaning); a landing cleared
+  before the session also discards the preview, and leaving the chat page while the preview is
+  selected discards it and clears the landing (`clear`, i.e. abandoned). The rules, the guarantees and the numbers are on
+  [notification-to-conversation-latency](../notification-to-conversation-latency.md#f1---the-conversation-is-drawn-from-the-local-store-before-the-session-is-up).
 
 `/chat` and `/communities` are **separate route components**, each rendering its own
 `MainChatPage`, so moving between them remounts it. Its route-mode switch clears the selection so

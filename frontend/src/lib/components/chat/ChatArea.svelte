@@ -52,6 +52,17 @@
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
     conversation: Conversation | null;
+    /**
+     * The conversation is a notification landing's LOCAL PREVIEW, drawn before the session is up
+     * (F1). Header and thread are shown but inert - every control there acts on the server - and
+     * the composer stays live: its sends are held by the page until the session is up.
+     */
+    localPreview?: boolean;
+    /**
+     * Shown while sends typed during a local preview wait for the session (F1), so the member sees
+     * them pending rather than lost and does not type them again. Empty when nothing waits.
+     */
+    heldNotice?: string;
     /** Current value of the composer text area (controlled). */
     messageText: string;
     /** Whether the active conversation is a community channel. */
@@ -214,6 +225,8 @@
 
   let {
     conversation,
+    localPreview = false,
+    heldNotice = '',
     messageText,
     isChannel = false,
     onMessageChange,
@@ -1076,7 +1089,7 @@
       published as `--chat-header-height`, which the list and the banner column (day pill included) reserve, the way
       the composer publishes `--chat-composer-height` at the bottom. In the flow on a desktop.
     -->
-    <div bind:this={chromeSlot} class="chat-chrome-slot">
+    <div bind:this={chromeSlot} class="chat-chrome-slot" inert={localPreview}>
       <ChatHeader
         contactName={chatView?.contactName ?? ''}
         groupId={chatView?.conversation.id ?? ''}
@@ -1267,7 +1280,7 @@
     </div>
 
     <!-- Messages (bottom padding so they scroll under the glass composer) -->
-    <div class="relative flex min-h-0 flex-1 flex-col">
+    <div class="relative flex min-h-0 flex-1 flex-col" inert={localPreview}>
       <!-- Sync banners live HERE, not beside the header: `absolute top-0` resolves against the
            nearest positioned ancestor, and the enclosing <section> is the one that also holds
            <ChatHeader> - so anchored there they paint over the avatar and the contact name. -->
@@ -1422,6 +1435,13 @@
         </div>
       </div>
     </div>
+
+    {#if heldNotice && !sendError}
+      <div class="chat-floating-alert is-pending md:text-sm" role="status">
+        <LoaderCircle size={16} class="animate-spin" />
+        <span>{heldNotice}</span>
+      </div>
+    {/if}
 
     {#if sendError}
       <div class="chat-floating-alert md:text-sm">

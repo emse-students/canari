@@ -9,7 +9,7 @@
 
 <script lang="ts">
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { foldForSearch } from '$lib/utils/textFold';
   import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
@@ -18,6 +18,7 @@
   import { sendReadWatermark, liveSalonSendIds } from '$lib/utils/chat/messaging';
   import { recordUnsentSalonText, takeOrphanedSalonTexts } from '$lib/utils/chat/salonUnsent';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
+  import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { isAppInForeground } from '$lib/utils/appForeground';
   import {
     watermarkAfterReading,
@@ -142,8 +143,15 @@
    * outbox flusher's `waitForMessageQueueIdle` barrier, which is what stops a message being
    * encrypted at a stale epoch and silently dropped by up-to-date peers.
    */
+  /**
+   * The notification landing's target, drawn from the local store while the session is not up yet
+   * (F1, `landingPreview.ts`). The page is shown for it, read-only but for the composer, whose sends
+   * are held until the session is up ({@link whenSessionUp}).
+   */
+  const isLocalPreview = $derived(!session.isLoggedIn && convs.landingPreviewKey !== null);
+
   const isMessagingBlocked = $derived(
-    !session.isLoggedIn || (isSyncing && !hasCachedConversations)
+    (!session.isLoggedIn && !isLocalPreview) || (isSyncing && !hasCachedConversations)
   );
 
   const messagingOverlayMessage = $derived(
@@ -861,6 +869,100 @@
    * goes to the log, where English is correct and where the cause is still recoverable.
    */
   function sendText(text: string, onRefused?: () => void) {
+    whenSessionUp(`text (${text.length} chars)`, () => sendTextNow(text, onRefused));
+  }
+
+  /**
+   * Sends made while the page shows a LOCAL PREVIEW (F1), held until the session is up - the queue
+   * and why it exists are `heldSends.ts`. The page adds what a queue cannot know: the count is
+   * SHOWN while anything waits (so nobody retypes it), and a held send that does not go - the login
+   * ended without a session, the selection moved, the page was left - is said out loud on a toast
+   * (which outlives this page and the redirect to /login) and in the log. Its text is not put back:
+   * the conversation it was written in is no longer on screen.
+   */
+  const heldSends = createHeldSendQueue();
+  let heldCount = $state(0);
+
+  function whenSessionUp(what: string, run: () => void) {
+    if (session.isLoggedIn) {
+      run();
+      return;
+    }
+    heldSends.hold({ what, target: convs.selectedContact, run });
+    heldCount = heldSends.size;
+    log(`[LANDING_PREVIEW] ${what} held until the session is up`);
+  }
+
+  /** Reports held sends that will never go: toast for the member, log line for the reader. */
+  function reportUnsent(dropped: { what: string }[], why: string, notice: string) {
+    if (dropped.length === 0) return;
+    showToast(notice, 'error', 8000);
+    log(
+      `[LANDING_PREVIEW] ${dropped.length} held send(s) NOT sent (${why}): ` +
+        dropped.map((h) => h.what).join(', ')
+    );
+  }
+
+  $effect(() => {
+    const up = session.isLoggedIn;
+    const previewing = isLocalPreview;
+    if (heldCount === 0) return;
+    untrack(() => {
+      if (up) {
+        const { sent, misdirected } = heldSends.release(convs.selectedContact);
+        heldCount = 0;
+        log(`[LANDING_PREVIEW] session up - sending ${sent.length} held send(s)`);
+        reportUnsent(
+          misdirected,
+          'the conversation changed before the session came up',
+          m.chat_send_held_misdirected({ count: misdirected.length })
+        );
+        return;
+      }
+      if (previewing) return;
+      const dropped = heldSends.drop();
+      heldCount = 0;
+      // A second notification replaced the landing: the sign-in did not fail, the conversation
+      // changed - which is what the member must be told, not "the sign-in did not complete".
+      const pending = notifNav.pending;
+      const replaced = pending !== null && dropped.some((h) => h.target !== pending);
+      reportUnsent(
+        dropped,
+        replaced
+          ? `another landing (${pending.slice(0, 8)}) replaced the preview before the session came up`
+          : 'the preview was withdrawn before the session came up',
+        replaced
+          ? m.chat_send_held_misdirected({ count: dropped.length })
+          : m.chat_send_held_not_sent({ count: dropped.length })
+      );
+    });
+  });
+
+  // LEAVING THE PAGE DURING A PREVIEW ENDS THE LANDING. What is held cannot be sent from a page
+  // that is gone, and the preview row would stay in the map with nothing on screen to show it -
+  // so both are ended here, explicitly: the held sends are reported, the preview is discarded and
+  // the landing is cleared (abandoned, in `notifNav`'s terms). Only when the preview is the
+  // SELECTION, which `previewSelect` sets on the landing's own page: the `/communities` page,
+  // unmounting while the landing routes to `/chat`, has not drawn it and must not end it.
+  onDestroy(() => {
+    const dropped = heldSends.drop();
+    reportUnsent(
+      dropped,
+      'the chat page was left before the session came up',
+      m.chat_send_held_not_sent({ count: dropped.length })
+    );
+    if (session.isLoggedIn) return;
+    const key = convs.landingPreviewKey;
+    if (key === null || convs.selectedContact !== key) return;
+    convs.discardLandingPreview(
+      'the chat page was left before the session came up',
+      messaging.messageReactions,
+      log
+    );
+    if (notifNav.pending === key) notifNav.clear();
+  });
+
+  function sendTextNow(text: string, onRefused?: () => void) {
     void messaging
       .handleSendChat(msgCtx(), text)
       .then((delivered) => {
@@ -893,7 +995,9 @@
 
   /** Forwards selected files to the messaging composable for upload. */
   function handleFilesSelected(files: File[]) {
-    void messaging.handleFilesSelected(files, msgCtx());
+    whenSessionUp(`${files.length} file(s)`, () => {
+      void messaging.handleFilesSelected(files, msgCtx());
+    });
   }
 
   /**
@@ -905,9 +1009,11 @@
    * nothing ever received.
    */
   function handleSendVoiceNote(file: File) {
-    void messaging.sendVoiceNote(file, msgCtx()).catch((e: unknown) => {
-      convs.sendError = m.chat_send_error_generic();
-      log(`[SEND] sendVoiceNote threw - the recording was NOT queued: ${String(e)}`);
+    whenSessionUp('a voice note', () => {
+      void messaging.sendVoiceNote(file, msgCtx()).catch((e: unknown) => {
+        convs.sendError = m.chat_send_error_generic();
+        log(`[SEND] sendVoiceNote threw - the recording was NOT queued: ${String(e)}`);
+      });
     });
   }
 
@@ -962,6 +1068,8 @@
   function handleTyping(isTyping: boolean) {
     const key = convs.selectedContact;
     if (!key) return;
+    // A typing signal is a frame on the session's socket; a local preview has neither (F1).
+    if (!session.isLoggedIn) return;
     if (isSelectedChannel) {
       void channelService.sendTyping(key, isTyping);
       return;
@@ -1167,7 +1275,7 @@
   (`openChannel`, 2026-09-05). Same one-attribute cost as `data-conversation-tile`, same reason.
 -->
 <div class="app-layout" data-route-mode={routeMode} in:fade>
-  {#if session.isLoggedIn}
+  {#if session.isLoggedIn || isLocalPreview}
     <!-- NO BANNERS HERE ANY MORE, and the two that were are why this comment exists. Both said what
          another banner was already saying: "En attente de connexion" duplicated `OfflineBanner` at
          the window scale (offline raised BOTH, three seconds apart), and the synchronisation strip
@@ -1177,7 +1285,10 @@
          at a channel row to the button below it. One fact, one banner, at one scale. -->
     <main class="main-content">
       <!-- Desktop sidebar (always mounted, hidden on mobile when chat is open) -->
-      <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
+      <!-- Not during a local preview: the list is the session's, and its rows act when tapped. -->
+      {#if session.isLoggedIn}
+        <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
+      {/if}
 
       <svelte:boundary onerror={(e) => appendLog(`[UI] ChatArea error recovered: ${e}`)}>
         {#snippet failed(_error, reset)}
@@ -1197,6 +1308,8 @@
         <ChatArea
           currentUserId={session.userId}
           conversation={activeConversation}
+          localPreview={isLocalPreview}
+          heldNotice={heldCount > 0 ? m.chat_send_held({ count: heldCount }) : ''}
           {messageText}
           isChannel={isSelectedChannel ?? false}
           imageMediaId={activeConversation?.imageMediaId ?? null}
