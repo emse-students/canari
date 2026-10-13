@@ -15,19 +15,21 @@
  * public repository); the key is `params::DEVICE_KEY`, `[7; 32]`. It REFUSES TO OVERWRITE: a
  * regenerated fixture is a round trip, which is the thing this file exists not to be.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { sealMlsStateBlobV2 } from '../src/lib/mls-client/mlsStateSeal';
 
 const fixtures = join(import.meta.dir, '..', 'mls-core', 'tests', 'fixtures');
 const out = join(fixtures, 'webcrypto-v2-peer-state.bin');
-if (existsSync(out)) {
-  console.error(`[freeze] ${out} exists - restore it from git rather than regenerating it`);
-  process.exit(1);
-}
 const plain = new Uint8Array(readFileSync(join(fixtures, 'v0.14.14-peer-state.bin')));
 const deviceKeyB64 = Buffer.from(new Uint8Array(32).fill(7)).toString('base64');
 const sealed = await sealMlsStateBlobV2(plain, deviceKeyB64);
-writeFileSync(out, sealed);
+try {
+  // 'wx' fails if the file exists, so the check and the write are one atomic step.
+  writeFileSync(out, sealed, { flag: 'wx' });
+} catch (err) {
+  console.error(`[freeze] ${out} exists or is not writable - restore it from git rather than regenerating it: ${err}`);
+  process.exit(1);
+}
 console.log(`[freeze] wrote ${out}: ${plain.length} B plain -> ${sealed.length} B sealed`);
