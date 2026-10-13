@@ -1148,7 +1148,21 @@ export class ChannelService {
     });
     await this.channelRepo.save(generalChannel);
 
-    return { ...savedWs, viewerCanManage: true, viewerCanManageChannels: true };
+    // THE CREATOR'S STANDING IS DERIVED FROM THE ROLE JUST SEEDED, through the same predicates the
+    // listing uses - never written out as literals. This answer used to name `viewerCanManage` and
+    // `viewerCanManageChannels` and omit `viewerCanModerate`, so the client took the creator for a
+    // plain member until the next listing: no "Epingler" and no close on another member's poll in
+    // the community they had just made, until a reload (Mi 9T reading of `v1.2.6-alpha.1`).
+    const creatorPermissions = savedAdminRole.permissions;
+    const standing = {
+      viewerCanManage: creatorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
+      viewerCanModerate: roleGrantsModeration(creatorPermissions),
+      viewerCanManageChannels: roleGrantsChannelManagement(creatorPermissions),
+    };
+    this.logger.log(
+      `[WORKSPACE] creator standing workspace=${savedWs.id} manage=${standing.viewerCanManage} moderate=${standing.viewerCanModerate} manageChannels=${standing.viewerCanManageChannels}`
+    );
+    return { ...savedWs, ...standing };
   }
 
   /**
