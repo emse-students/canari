@@ -250,6 +250,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   const { localGroups } = snapshot;
 
   let stateMutated = false;
+  const strayCandidates: string[] = [];
 
   for (const g of snapshot.serverGroups) {
     // Group deleted server-side (tombstone) -> purge WASM state and notify the UI.
@@ -324,19 +325,22 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       log(`[BASE] ${g.groupId.slice(0, 8)}… republish check failed: ${String(e).slice(0, 120)}`)
     );
 
-    // AND THE SECOND THING ONLY A HOLDER CAN DO: EVICT A LEAF ITS OWNER WALKED AWAY FROM.
-    //
-    // Leaving stages no Remove for the leaver's own leaf and cannot - a departing member is exactly
-    // the party that may not commit its own eviction - so the leaf stays in every remaining tree,
-    // holding key material for a conversation its owner has left. The repair existed for
-    // distribution groups only, the same sentence the branch above carries. See `strayLeaves.ts`
-    // for the diff, the cost it pays and why nothing is broadcast.
-    const evicted = await removeStrayLeaves(mlsService, g.groupId, userId, log).catch((e) => {
-      log(`[STRAY] ${g.groupId.slice(0, 8)}… reconciliation failed: ${String(e).slice(0, 120)}`);
-      return [];
-    });
-    if (evicted.length > 0) stateMutated = true;
+    // AND THE SECOND THING ONLY A HOLDER CAN DO: EVICT A LEAF ITS OWNER WALKED AWAY FROM - after the
+    // loop, for every held group at once, so the rosters are ONE read rather than one per group.
+    strayCandidates.push(g.groupId);
   }
+
+  // Leaving stages no Remove for the leaver's own leaf and cannot - a departing member is exactly
+  // the party that may not commit its own eviction - so the leaf stays in every remaining tree,
+  // holding key material for a conversation its owner has left. See `strayLeaves.ts` for the diff,
+  // the one roster read it pays, the order that keeps it sound and why nothing is broadcast.
+  const strayChanged = await removeStrayLeaves(mlsService, strayCandidates, userId, log).catch(
+    (e) => {
+      log(`[STRAY] reconciliation failed: ${String(e).slice(0, 120)}`);
+      return [];
+    }
+  );
+  if (strayChanged.length > 0) stateMutated = true;
 
   // 3. Purge WASM state for groups no longer known to the server - the same call discovery makes,
   // over the same snapshot, with the same guard and the same log vocabulary. The guard used to live

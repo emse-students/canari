@@ -12,7 +12,7 @@ let android = true;
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('$lib/utils/appVersion', () => ({ isAndroidTauriRuntime: () => android }));
 
-const { mirrorAvatarToNative } = await import('./avatarMirror');
+const { mirrorAvatarToNative, forgetMirroredAvatars } = await import('./avatarMirror');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TAURI = resolve(here, '../../../src-tauri');
@@ -27,22 +27,58 @@ const avatarSvelte = readFileSync(join(here, '../components/shared/Avatar.svelte
 beforeEach(() => {
   invoke.mockReset();
   android = true;
+  forgetMirroredAvatars();
 });
 
+const JPEG = () => new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10])]);
+
 describe('mirrorAvatarToNative', () => {
-  it('sends the bytes as a plain array, in the arguments the command declares', async () => {
+  it('sends the bytes as one base64 string, in the arguments the command declares', async () => {
     // NOT a raw invoke body: Android's IPC hands a typed array over as JSON, and the raw-body
-    // version was refused on the Mi 9T ("the body is not raw bytes").
+    // version was refused on the Mi 9T ("the body is not raw bytes"). NOT a number array either:
+    // that is ~3.6 JSON characters and one JS number per byte, on the main thread.
     invoke.mockResolvedValue(undefined);
-    await mirrorAvatarToNative('user-1', new Blob([new Uint8Array([0xff, 0xd8, 0xff])]));
+    await mirrorAvatarToNative('user-1', JPEG());
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith('store_avatar_mirror', {
       userId: 'user-1',
-      data: [0xff, 0xd8, 0xff],
+      dataB64: '/9j/4AAQ',
     });
     expect(rust).toMatch(
-      /fn store_avatar_mirror\(\s*app: tauri::AppHandle,\s*user_id: String,\s*data: Vec<u8>,/
+      /fn store_avatar_mirror\(\s*app: tauri::AppHandle,\s*user_id: String,\s*data_b64: String,/
     );
+  });
+
+  it('writes the same face once per process, however many salons draw it (Pixel 6a, 2026-10-13)', async () => {
+    // The store build re-mirrored every face on every salon open - 50 writes for "general", the
+    // same 50 on every repeat - because each mount revalidates and receives the same bytes again.
+    invoke.mockResolvedValue(undefined);
+    for (let open = 0; open < 4; open++) {
+      await Promise.all([
+        mirrorAvatarToNative('user-1', JPEG()),
+        mirrorAvatarToNative('user-2', JPEG()),
+      ]);
+    }
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it('writes again when the photo changed, and after a write that failed', async () => {
+    invoke.mockRejectedValueOnce(new Error('disk full')).mockResolvedValue(undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await mirrorAvatarToNative('user-1', JPEG());
+    await mirrorAvatarToNative('user-1', JPEG());
+    await mirrorAvatarToNative('user-1', JPEG());
+    await mirrorAvatarToNative('user-1', new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe1])]));
+    // failed, retried and landed, skipped, changed photo
+    expect(invoke).toHaveBeenCalledTimes(3);
+  });
+
+  it('writes a face again once the factory wipe has forgotten it', async () => {
+    invoke.mockResolvedValue(undefined);
+    await mirrorAvatarToNative('user-1', JPEG());
+    forgetMirroredAvatars();
+    await mirrorAvatarToNative('user-1', JPEG());
+    expect(invoke).toHaveBeenCalledTimes(2);
   });
 
   it('asks nothing off Android, and nothing for a face with no owner', async () => {

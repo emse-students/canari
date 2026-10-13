@@ -989,6 +989,15 @@ of distinct callers. **A rate is only a defect once it is measured against the p
 produced it**, and a burst from one device retrying is a different system from the same burst spread
 over an account's several devices.
 
+**`until=` is what the caller asked, `head=` what the stream holds (2026-10-13).** The line used to
+print the head it had just read as `until=` when the caller sent none, so a device already caught up
+logged `after=X until=X entries=0` - read from a store phone's three launches (210 of 258 lines) as a
+client asking for a window empty by construction. It was not: the batch catch-up sends only its
+cursor, and "nothing after it" is the answer. The batch route now writes no line for a group whose
+cursor IS the head and counts it in `[HISTORY_BATCH] ... caughtUp=N` instead; a caught-up group
+still costs its `XRANGE` and `XREVRANGE`, and the client still asks, because nothing it holds says
+the stream did not move while it was away. 85 groups ask in 2 requests (50 + 35), not 85.
+
 **The two halves are not worth the same and the line says so.** `user` is what nginx put on the
 request once `/internal/auth/verify` answered - a fact the service did not have to trust the caller
 for. `device` is the client's own `X-Canari-Device`, self-asserted, accepted for the same reason
