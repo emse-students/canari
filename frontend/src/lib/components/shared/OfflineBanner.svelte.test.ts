@@ -51,6 +51,8 @@ describe('OfflineBanner', () => {
     // An icon, not a strip: no visible text, nothing in the flow.
     expect(target.textContent?.trim()).toBe('');
     expect(target.textContent).not.toContain(m.offline_banner_title());
+    // Placed below the banner column, never over the dev environment strip that heads it.
+    expect(icon?.className).toContain('var(--app-banner-height');
   });
 
   it('the offline banner wins when the server is unreachable', async () => {

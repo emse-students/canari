@@ -677,7 +677,8 @@ next one's symptom names the wrong cause.
   for.
 - **Use PowerShell for any `adb shell` command carrying an absolute device path** - Git Bash rewrites
   `/sdcard/x` into a Windows-ish path and the command silently targets nothing.
-- The phone's entire web console is in logcat under `Tauri/Console`. Capture continuously to a file:
+- On a DEBUG build the phone's entire web console is in logcat under `Tauri/Console` (wry's
+  `onConsoleMessage`, gated on `BuildConfig.DEBUG`; a release build logs no JavaScript). Capture continuously to a file:
   a busy device overruns the ring buffer in minutes.
 - **The phone does not pick up a deploy at all**: `frontendDist` is `../build`, so it serves the
   bundle inside its APK. Verifying a UI change there means building and installing one.

@@ -119,3 +119,31 @@ describe('a salon row pressed past the reorder hold', () => {
     expect(onReorderChannels).toHaveBeenCalledOnce();
   });
 });
+
+/**
+ * ENTER ON A FOCUSED SALON ROW OPENED NOTHING for whoever may reorder the list: the row is the
+ * zone's draggable and the library claims Enter and Space for its keyboard drag, cancelling the
+ * button's activation. The keyboard reorder is Alt + arrows and must keep working.
+ */
+describe('a salon row driven from the keyboard', () => {
+  function key(el: Element, init: KeyboardEventInit): KeyboardEvent {
+    const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+    el.dispatchEvent(e);
+    flushSync();
+    return e;
+  }
+
+  it('leaves Enter and Space to the button, so the salon opens', () => {
+    mountList();
+    const row = document.querySelector('[data-channel-row="infos"]')!;
+    expect(key(row, { key: 'Enter' }).defaultPrevented).toBe(false);
+    expect(key(row, { key: ' ' }).defaultPrevented).toBe(false);
+  });
+
+  it('still reorders with Alt + arrows', () => {
+    const { onReorderChannels } = mountList();
+    const row = document.querySelector('[data-channel-row="infos"]')!;
+    key(row, { key: 'ArrowUp', altKey: true });
+    expect(onReorderChannels).toHaveBeenCalledExactlyOnceWith('w1', [infos, general, tract]);
+  });
+});
