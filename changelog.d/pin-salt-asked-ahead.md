@@ -1,3 +1,0 @@
-### Changed - a PIN unlock no longer waits for the salt after the PIN is typed, nor for the device key behind the check
-
-The salt is asked while the keypad is up, and the device key is derived during the PIN check but installed only after it passed: submit to MLS ready 0.3 s sooner on the Mi 9T. `pin-check` now answers `stale-salt` for a salt a PIN reset replaced, so a correct new PIN is never refused for it ([latency](docs/wiki/frontend/notification-to-conversation-latency.md#f9---the-pin-salt-is-asked-while-the-keypad-is-up-and-the-device-key-is-derived-during-the-check-measured-submit-to-mls-ready--03-s)).
