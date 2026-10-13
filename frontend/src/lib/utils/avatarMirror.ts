@@ -17,8 +17,10 @@ import { Log } from '$lib/utils/Log';
  * a changed photo (another digest) is written at once. The ETag would say the same thing, but a
  * cross-origin `fetch` cannot read it without an `Access-Control-Expose-Headers` nobody sends.
  *
- * Process-wide and never cleared: it describes files on THIS device, which outlive a sign-out. What
- * it gives up: the first write of a face per process refreshes the file's mtime, which the
+ * Process-wide, and cleared only by {@link forgetMirroredAvatars}: it describes files on THIS
+ * device, which outlive a sign-out but not the factory wipe (`clear_app_data` deletes every
+ * `avatar_*`), so the wipe forgets them too - otherwise the next account signed in on the same
+ * process would never be mirrored a face this memory still called written. What it gives up: the first write of a face per process refreshes the file's mtime, which the
  * notification reader ages at 24 h (`write_avatar_mirror`), so a process alive for over a day lets
  * the shade fall back to the network for a face it has kept drawing - the cost before any mirror.
  */
@@ -86,7 +88,11 @@ async function storeMirror(userId: string, bytes: Uint8Array): Promise<boolean> 
   }
 }
 
-/** Test seam: forgets what was written, as a new process would. */
-export function resetAvatarMirrorMemoryForTests(): void {
+/**
+ * Forgets every face this process wrote, as a new process would. Called by the factory wipe right
+ * after `clear_app_data` has deleted the files themselves (`deviceReset.ts`).
+ */
+export function forgetMirroredAvatars(): void {
+  Log.d('AvatarMirror', `forgetting ${mirrored.size} mirrored faces`);
   mirrored.clear();
 }

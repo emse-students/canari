@@ -12,7 +12,7 @@ let android = true;
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('$lib/utils/appVersion', () => ({ isAndroidTauriRuntime: () => android }));
 
-const { mirrorAvatarToNative, resetAvatarMirrorMemoryForTests } = await import('./avatarMirror');
+const { mirrorAvatarToNative, forgetMirroredAvatars } = await import('./avatarMirror');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TAURI = resolve(here, '../../../src-tauri');
@@ -27,7 +27,7 @@ const avatarSvelte = readFileSync(join(here, '../components/shared/Avatar.svelte
 beforeEach(() => {
   invoke.mockReset();
   android = true;
-  resetAvatarMirrorMemoryForTests();
+  forgetMirroredAvatars();
 });
 
 const JPEG = () => new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10])]);
@@ -71,6 +71,14 @@ describe('mirrorAvatarToNative', () => {
     await mirrorAvatarToNative('user-1', new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe1])]));
     // failed, retried and landed, skipped, changed photo
     expect(invoke).toHaveBeenCalledTimes(3);
+  });
+
+  it('writes a face again once the factory wipe has forgotten it', async () => {
+    invoke.mockResolvedValue(undefined);
+    await mirrorAvatarToNative('user-1', JPEG());
+    forgetMirroredAvatars();
+    await mirrorAvatarToNative('user-1', JPEG());
+    expect(invoke).toHaveBeenCalledTimes(2);
   });
 
   it('asks nothing off Android, and nothing for a face with no owner', async () => {

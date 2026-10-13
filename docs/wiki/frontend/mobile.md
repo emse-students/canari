@@ -1734,7 +1734,9 @@ salon open: the avatar answers `no-cache` + ETag, each mount revalidates (a `304
 cache turns back into the same bytes), and the blob pool forgets a face with its last mount - so a
 store Pixel 6a re-mirrored 7/50/11/24 faces for four salons, identically on every repeat.
 `avatarMirror.ts` keeps the SHA-256 of what it last wrote per user, for the life of the process,
-and writes only bytes it has not written; a failed write is forgotten so the next draw retries. What
+and writes only bytes it has not written; a failed write is forgotten so the next draw retries, and
+the factory wipe forgets them all right after `clear_app_data` deletes the files (`deviceReset.ts`),
+or the next account signed in on that process would never be mirrored a face. What
 that gives up: the first write per process refreshes the mtime, so a process alive over 24 h lets
 the shade fall back to the network for a face it keeps drawing - the cost before any mirror. A body that does not open like a JPEG/PNG/GIF/WebP is
 refused, so a proxy's `200` HTML page never becomes a face. iOS is not mirrored: the extension reads
