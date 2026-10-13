@@ -1,7 +1,8 @@
 <script lang="ts">
   import { formatTime24 } from '$lib/utils/dates';
   import { fly } from 'svelte/transition';
-  import { SvelteSet } from 'svelte/reactivity';
+  import { untrack } from 'svelte';
+  import { Log } from '$lib/utils/Log';
   import { Clock, Pencil, CheckCheck } from '@lucide/svelte';
   import {
     getUserDisplayNameSync,
@@ -36,22 +37,41 @@
 
   let resolvedReadByNames = $state<Record<string, string>>({});
 
-  $effect(() => {
-    const ids = new SvelteSet<string>();
-    for (const id of readBy) ids.add(id);
-
+  /**
+   * Names the readers of this message, in TWO writes at most: the names already cached, then the
+   * names the network answered. EVERY bubble mounts this tooltip, so it does nothing until the panel
+   * is shown, and the map is read untracked: an effect that read the map it writes re-ran once per
+   * name resolved and re-resolved every reader each time - O(readers^2) per bubble, 2.4 s of CPU on
+   * a 60-reader salon open (community-open-slowness-mi9t-2026-10-13, finding 3).
+   */
+  function resolveReaders(ids: string[]): void {
+    Log.d('MESSAGE', `info panel: resolving ${ids.length} reader name(s)`);
+    const known = untrack(() => resolvedReadByNames);
+    const cached: Record<string, string> = {};
     for (const userId of ids) {
-      if (!resolvedReadByNames[userId]) {
-        const cached = getUserDisplayNameSync(userId, userId);
-        if (cached !== userId) {
-          resolvedReadByNames = { ...resolvedReadByNames, [userId]: cached };
-        }
-      }
-      resolveUserDisplayName(userId).then((resolved) => {
-        if (!resolved || resolvedReadByNames[userId] === resolved) return;
-        resolvedReadByNames = { ...resolvedReadByNames, [userId]: resolved };
-      });
+      if (known[userId]) continue;
+      const name = getUserDisplayNameSync(userId, userId);
+      if (name !== userId) cached[userId] = name;
     }
+    if (Object.keys(cached).length > 0) resolvedReadByNames = { ...known, ...cached };
+
+    void Promise.all(
+      ids.map(async (userId) => [userId, await resolveUserDisplayName(userId)] as const)
+    ).then((answers) => {
+      const current = untrack(() => resolvedReadByNames);
+      const fresh: Record<string, string> = {};
+      for (const [userId, name] of answers) {
+        if (name && current[userId] !== name) fresh[userId] = name;
+      }
+      if (Object.keys(fresh).length > 0) resolvedReadByNames = { ...current, ...fresh };
+    });
+  }
+
+  $effect(() => {
+    if (!visible) return;
+    const ids = [...new Set(readBy)];
+    if (ids.length === 0) return;
+    untrack(() => resolveReaders(ids));
   });
 
   let readByLabels = $derived(
