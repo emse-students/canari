@@ -1177,6 +1177,15 @@ post menu, the ecosystem launcher, the uncontrolled `GlassMenuButton` (the conve
   leaves its entry behind (`releaseHistoryOverlay`), and the next Back then closed the conversation
   while the history stayed one entry out of step, so the Back after it did nothing. A landing that
   closes nothing now walks one more entry, so one Back always closes what the person sees.
+  **That includes a Back pressed ON a ghost with nothing open** (review, 2026-10-13): a picker sheet
+  closed by its choice, a confirmation answered, a post menu's entry tapped - the Back landed on the
+  page's own router entry and the page did not move (read in desktop Chrome at 390 px, real
+  `history.back()`: the first Back after a `Picker` choice stayed on the page). The module now keeps
+  the entry the pointer is on (`here`, with the page address); a Back that leaves a ghost of this
+  load for the same address walks one more entry, to the previous page. A walk's own landing never
+  counts, and the drain forgets `here`, since the router then pushes or replaces that entry. **Left
+  as it is:** on the history's first entry the walk is a no-op, so on a root tab Android's next Back
+  is the one that leaves the app.
 - **`bindHistoryOverlay` follows `getOpen` in its own effect and releases its entry when its
   component is destroyed while open** - a surface mounted only while open (the PDF viewer, the
   prompt) is closed by being unmounted, which no `getOpen` reports, and a live entry left behind

@@ -72,6 +72,21 @@ type StackEntry = {
 const stack: StackEntry[] = [];
 /** The id of the last entry pushed by this load. */
 let lastId = 0;
+/**
+ * The entry the history pointer is on, as far as this module moved it: the id of an entry this load
+ * pushed, or 0 for any other entry. With `hereHref`, it tells a landing whether the Back that caused
+ * it LEFT a ghost (see `settleArrival`).
+ */
+let here = 0;
+/** The page address when `here` was last set: a ghost and its router entry share it. */
+let hereHref = '';
+/** A `history.back()` issued by `settleArrival` has not landed yet: its landing is not a Back. */
+let walking = false;
+
+/** The page address now; empty where there is none (a test without a `location`). */
+function currentHref(): string {
+  return globalThis.location?.href ?? '';
+}
 let initialized = false;
 /**
  * How many upcoming `popstate` events to absorb silently.
@@ -102,13 +117,23 @@ export function initHistoryOverlayStack(): () => void {
   initialized = true;
 
   const onPopState = (event: PopStateEvent) => {
+    const from = here;
+    const fromHref = hereHref;
+    here = readArrival(event.state).id;
+    hereHref = currentHref();
     // Absorb events that are the deliberate side-effect of `abandonHistoryOverlay`
     // calling `history.back()` after already splicing the entry from the JS stack.
     if (skipPops > 0) {
       skipPops--;
       return;
     }
-    settleArrival(event.state);
+    const byWalk = walking;
+    walking = false;
+    // A Back pressed ON a ghost of this load, landing on the same page: the press went into the
+    // ghost and must still do what a Back does on the page.
+    const leftGhost =
+      !byWalk && from > 0 && fromHref === currentHref() && !stack.some((e) => e.id === from);
+    settleArrival(event.state, leftGhost);
   };
 
   window.addEventListener('popstate', onPopState);
@@ -117,6 +142,9 @@ export function initHistoryOverlayStack(): () => void {
     initialized = false;
     stack.length = 0;
     skipPops = 0;
+    here = 0;
+    hereHref = '';
+    walking = false;
   };
 }
 
@@ -126,6 +154,8 @@ export function pushHistoryOverlay(close: OverlayClose): void {
   const id = ++lastId;
   stack.push({ close, id });
   history.pushState({ [STATE_KEY]: id, [LOAD_KEY]: LOAD_ID }, '');
+  here = id;
+  hereHref = currentHref();
 }
 
 /**
@@ -158,8 +188,14 @@ function readArrival(state: unknown): { id: number; ghost: boolean } {
  * on one more entry: a ghost is stepped off (what the old code did only on an empty stack), and so is
  * a live entry reached from a ghost above it - the next landing closes that overlay. The walk ends at
  * the first landing that closes an overlay, or on a router entry with nothing open.
+ *
+ * `leftGhost` covers the last case: a Back pressed while the pointer sat ON a ghost (a picker that
+ * closed on its choice, a confirmation answered, nothing else open) lands on the page's own router
+ * entry and closes nothing - the press was spent on the ghost and the page did not move. It walks one
+ * more entry too, so the Back does what it does on the page: the previous page, or nothing at the
+ * history's first entry (where Android's next Back leaves the app).
  */
-function settleArrival(state: unknown): void {
+function settleArrival(state: unknown, leftGhost: boolean): void {
   const arrival = readArrival(state);
   const above: StackEntry[] = [];
   while (stack.length > 0 && stack[stack.length - 1].id > arrival.id) above.push(stack.pop()!);
@@ -168,11 +204,14 @@ function settleArrival(state: unknown): void {
     Log.d('historyOverlay', `Back closed ${above.length} overlay(s), ${stack.length} left open`);
     return;
   }
-  if (arrival.ghost || stack.length > 0) {
-    Log.d(
-      'historyOverlay',
-      `Back landed on ${arrival.ghost ? 'a ghost entry' : 'a live entry from a ghost above it'} - walking one more`
-    );
+  if (arrival.ghost || stack.length > 0 || leftGhost) {
+    const where = arrival.ghost
+      ? 'a ghost entry'
+      : stack.length > 0
+        ? 'a live entry from a ghost above it'
+        : 'the router entry from a ghost above it';
+    Log.d('historyOverlay', `Back landed on ${where} - walking one more`);
+    walking = true;
     history.back();
   }
 }
@@ -259,6 +298,10 @@ export function drainHistoryOverlayStack(): void {
   while (stack.length > 0) {
     stack.pop()?.close('navigation');
   }
+  // The router is about to push or REPLACE the entry the pointer is on: it is no longer a ghost of
+  // ours, and a Back from the next page must not be read as one pressed on it.
+  here = 0;
+  hereHref = '';
   // Do not reset skipPops: any pending absorptions from abandonHistoryOverlay
   // must still fire.
 }
@@ -267,6 +310,9 @@ export function drainHistoryOverlayStack(): void {
 export function clearHistoryOverlayStack(): void {
   stack.length = 0;
   skipPops = 0;
+  here = 0;
+  hereHref = '';
+  walking = false;
 }
 
 export function historyOverlayStackDepth(): number {

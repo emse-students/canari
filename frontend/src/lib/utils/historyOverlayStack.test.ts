@@ -96,6 +96,9 @@ function fakeHistory() {
       entries.push(state);
       index = entries.length - 1;
     },
+    replaceState(state: unknown) {
+      entries[index] = state;
+    },
     back() {
       if (index === 0) return;
       index--;
@@ -184,6 +187,53 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     await h.pressBack();
     expect(closeConversation).toHaveBeenCalledTimes(1);
     expect(h.index).toBe(0);
+  });
+
+  it('a Back pressed on a ghost with nothing open still leaves the page (a picker closed on its choice)', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    // The page is the SECOND router entry: a Back on it goes to the previous page.
+    history.pushState({ sveltekit: 1 }, '');
+    const closePicker = vi.fn();
+    pushHistoryOverlay(closePicker);
+    releaseHistoryOverlay(closePicker); // the choice closes the sheet through its owner's state
+
+    await h.pressBack();
+    expect(closePicker).not.toHaveBeenCalled();
+    // On the previous page, not on this page's own entry with the press spent on the ghost.
+    expect(h.index).toBe(0);
+  });
+
+  it('a Back on the router entry after a ghost was crossed is the router own: no second walk', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    history.pushState({ sveltekit: 1 }, '');
+    history.pushState({ sveltekit: 2 }, '');
+    const closeConversation = vi.fn();
+    const closeSheet = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeSheet);
+    releaseHistoryOverlay(closeSheet);
+
+    await h.pressBack();
+    expect(closeConversation).toHaveBeenCalledTimes(1);
+    // The walk landed on the page's router entry and stopped there: one Back, one thing closed.
+    expect(h.index).toBe(2);
+  });
+
+  it('a navigation away from a ghost forgets it: a Back from the next page is not read as one on it', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    history.pushState({ sveltekit: 1 }, '');
+    const close = vi.fn();
+    pushHistoryOverlay(close);
+    releaseHistoryOverlay(close);
+    // `goto(..., { replaceState: true })` from the ghost: the drain runs, the router replaces it.
+    drainHistoryOverlayStack();
+    history.replaceState({ sveltekit: 2 }, '');
+
+    await h.pressBack();
+    expect(h.index).toBe(1);
   });
 
   it('reads an entry left by an earlier page load as the router entry below every live overlay', () => {
