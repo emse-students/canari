@@ -29,7 +29,9 @@ try {
   // 'wx' fails if the file exists, so the check and the write are one atomic step.
   writeFileSync(out, sealed, { flag: 'wx' });
 } catch (err) {
-  console.error(`[freeze] ${out} exists or is not writable - restore it from git rather than regenerating it: ${err}`);
+  console.error(
+    `[freeze] ${out} exists or is not writable - restore it from git rather than regenerating it: ${err}`
+  );
   process.exit(1);
 }
 console.log(`[freeze] wrote ${out}: ${plain.length} B plain -> ${sealed.length} B sealed`);
