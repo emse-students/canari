@@ -3263,9 +3263,10 @@ already delete the salons. This is NOT the community rail's order, which is pers
 - **Enter and Space on a focused row open it (2026-10-13).** The library also claims both keys on its
   draggables as "start a keyboard drag" (`preventDefault` + `stopPropagation`), and here the
   draggable IS the row's button, so Enter opened nothing for whoever may reorder. The zone carries
-  `keepRowActivationKeys` (`utils/dndActivationKeys.ts`): a capture listener stops a bare Enter or
-  Space aimed at a row before the library sees it and leaves its default alone, so the button
-  activates. The library's keyboard drag is therefore unreachable here, deliberately: the keyboard
+  `keepRowActivationKeys` (`utils/dndActivationKeys.ts`): a capture listener stops an Enter or Space
+  aimed at a row - WITH OR WITHOUT a modifier, since the library reads `e.key` alone and a let-through
+  Shift + Enter started its silent keyboard drag - before the library sees it, and leaves its default
+  alone, so the button activates. The library's keyboard drag is therefore unreachable here, deliberately: the keyboard
   reorder is Alt + arrows. `setKeyboardDragTrigger` cannot do this - it is global and keeps one key.
 
 **Name.** A salon name is a DISPLAY string, stored as typed (case, accents, emoji, spaces). Server

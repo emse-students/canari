@@ -49,13 +49,24 @@ describe('keepRowActivationKeys', () => {
     destroy();
   });
 
-  it('lets a modified key through to the row (Alt + arrows reorders, Alt + Enter is not ours)', () => {
+  it('lets every other key through to the row (Alt + arrows reorders)', () => {
     const { row, destroy } = zoneWithRows(true);
     const seen = vi.fn();
     row.addEventListener('keydown', seen);
     press(row, { key: 'ArrowUp', altKey: true });
-    press(row, { key: 'Enter', altKey: true });
+    press(row, { key: 'Escape' });
     expect(seen).toHaveBeenCalledTimes(2);
+    destroy();
+  });
+
+  it('never lets a MODIFIED Enter or Space start the library keyboard drag either', () => {
+    // The library reads `e.key` and nothing else, so Shift + Enter used to start a silent
+    // keyboard drag (its announcements are off here) that the arrows then moved.
+    const { row, destroy } = zoneWithRows(true);
+    for (const mod of ['altKey', 'ctrlKey', 'metaKey', 'shiftKey'] as const) {
+      expect(press(row, { key: 'Enter', [mod]: true }).defaultPrevented).toBe(false);
+      expect(press(row, { key: ' ', [mod]: true }).defaultPrevented).toBe(false);
+    }
     destroy();
   });
 });

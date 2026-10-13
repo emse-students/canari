@@ -11,14 +11,18 @@ import { Log } from '$lib/utils/Log';
  * opened nothing. The app reorders rows with Alt + arrows (`handleChannelKeydown`), never through
  * the library's keyboard drag, so the library has no claim on those two keys here.
  *
- * HOW. A capture-phase listener on the ZONE stops a bare Enter or Space aimed at one of its direct
+ * HOW. A capture-phase listener on the ZONE stops an Enter or Space aimed at one of its direct
  * children before it reaches the row's listeners, and does NOT prevent its default - the browser
  * then activates the button exactly as it would outside a zone. `setKeyboardDragTrigger` cannot do
  * this: it is global and always keeps one of the two keys.
+ *
+ * WITH OR WITHOUT A MODIFIER. The library reads `e.key` alone, so letting Shift + Enter through
+ * started a keyboard drag nobody is told about (`autoAriaDisabled`) that the arrows then moved -
+ * the "unreachable" library drag reached by a modifier. The row's own handler reads only Alt +
+ * arrows, so stopping these two keys costs it nothing.
  */
 export function isRowActivationKey(e: KeyboardEvent, zone: Element): boolean {
   if (e.key !== 'Enter' && e.key !== ' ') return false;
-  if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
   const target = e.target;
   return target instanceof Element && target.parentElement === zone;
 }
