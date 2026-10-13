@@ -8,6 +8,9 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 
+/** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
+const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
+
 /**
  * WHO A CHANNEL EVENT REACHES.
  *
@@ -143,6 +146,7 @@ describe('channel audience', () => {
         nonce: 'BBBB',
         senderSessionId: 's-1',
         messageIndex: 0,
+        signature: SIGNATURE,
         silent: true,
       } as never);
       await flush();
@@ -165,6 +169,7 @@ describe('channel audience', () => {
         nonce: 'BBBB',
         senderSessionId: 's-1',
         messageIndex: 0,
+        signature: SIGNATURE,
         silent: true,
       } as never);
       await flush();

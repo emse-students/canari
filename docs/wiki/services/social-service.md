@@ -38,7 +38,10 @@ does, which is now almost nothing:
 1. A message names `senderSessionId` and `messageIndex`, and the row is refused without them
    (`CHANNEL_SESSION_REQUIRED`, `CHANNEL_MESSAGE_INDEX_REQUIRED`). The key is
    `HKDF(seed, sessionId, index)` and the seed never leaves the sending devices, so a row missing
-   either is a row NOBODY can open - including its own author.
+   either is a row NOBODY can open - including its own author. It must also carry a Graine v2
+   `signature` (64 bytes, base64), refused otherwise with `CHANNEL_SIGNATURE_REQUIRED` since every
+   client the floor admits signs ([channel-encryption 21.8](../protocols/channel-encryption.md#218-the-server-refuses-an-unsigned-salon-row-2026-10-13)).
+   The service checks its shape and cannot verify it.
 2. Seeds travel over the community's MLS distribution group, whose `groupInfo` this service serves
    to members only (`/workspaces/:id/distribution-group`). That GroupInfo IS the capability to read
    every seed on the group, which is why the membership check lives here: `channel_workspace_members`
