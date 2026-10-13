@@ -22,7 +22,12 @@
  * to be wrong.
  */
 import type { Conversation } from '$lib/types';
-import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
+import {
+  countUnreadForUser,
+  isUnreadForUser,
+  readOrderKey,
+  watermarkFor,
+} from '$lib/utils/chat/readState';
 
 /** A salon's conversation key is `channel_<uuid>`; kept local so this module stays pure. */
 const isSalonKey = (key: string): boolean => key.startsWith('channel_');
@@ -38,6 +43,11 @@ let ticks = 0;
 /** Bumped when the session ends: an answer asked under an earlier session belongs to nobody now. */
 let generation = 0;
 const openedAtTick = new Map<string, number>();
+/**
+ * The `asOf` of the last server count applied, 0 before the first one: the newest instant the
+ * server's half of every badge on screen speaks for. See {@link communityUnreadUpTo}.
+ */
+let lastAppliedAsOf = 0;
 
 /** Records that the reader opened `conversationId` now, for the reconcile that may be in flight. */
 export function noteSalonOpened(conversationId: string): void {
@@ -58,6 +68,7 @@ export function resetSalonUnread(): void {
   ticks = 0;
   generation++;
   openedAtTick.clear();
+  lastAppliedAsOf = 0;
 }
 
 /** Reads the wire answer defensively: a shape nobody recognises is reported, never half-applied. */
@@ -167,6 +178,7 @@ export async function reconcileSalonUnreadFromServer(opts: {
       opts.userId,
       token
     );
+    lastAppliedAsOf = Math.max(lastAppliedAsOf, answer.asOf);
     opts.log(
       `[UNREAD] ${opts.reason}: ${Object.keys(answer.counts).length} salon(s) unread on the server, ${changed.length} count(s) moved here`
     );
@@ -175,4 +187,61 @@ export async function reconcileSalonUnreadFromServer(opts: {
       `[UNREAD] ${opts.reason}: counts not refreshed - badges may be stale until the next load: ${String(e)}`
     );
   }
+}
+
+/**
+ * The newest instant the badges of `salonKeys` speak for, on the SERVER's clock: what "Marquer tout
+ * comme lu" may clear up to, and nothing later.
+ *
+ * A badge is the server's count (taken at {@link lastAppliedAsOf}) plus the messages that landed
+ * live, each dated by its row's `createdAt` - which a salon row's `timestamp` is on every client
+ * path (`readOrderKey`). So the later of the two covers every message the reader was SHOWN a count
+ * for, and a message created after it - posted while the menu was open, or in flight - stays unread.
+ * No device clock enters it: `Date.now()` here would clear messages the screen never counted.
+ *
+ * @returns 0 when nothing was ever counted for these salons - there is nothing to clear.
+ */
+export function communityUnreadUpTo(
+  conversations: Map<string, Conversation>,
+  salonKeys: readonly string[]
+): number {
+  let upTo = lastAppliedAsOf;
+  for (const key of salonKeys) {
+    for (const m of conversations.get(key)?.messages ?? []) {
+      upTo = Math.max(upTo, readOrderKey(m));
+    }
+  }
+  return upTo;
+}
+
+/**
+ * Empties the badges of `salonKeys` up to `upTo` on this device, at once, before the server answers.
+ *
+ * The count only FALLS, exactly like `withOwnReadAdvanced`: it becomes the smaller of what it
+ * was and the held messages still unread past `upTo` (and past the reader's own watermark). The
+ * watermark itself is NOT moved - it is the reader's "Lu par" receipt, and clearing a badge from a
+ * menu is not reading (see `clearWorkspaceUnread` on the server).
+ *
+ * @returns the keys whose count changed, for the log line.
+ */
+export function clearSalonUnreadLocally(
+  conversations: Map<string, Conversation>,
+  salonKeys: readonly string[],
+  upTo: number,
+  userId: string
+): string[] {
+  const me = userId.toLowerCase();
+  const changed: string[] = [];
+  for (const key of salonKeys) {
+    if (!isSalonKey(key)) continue;
+    const convo = conversations.get(key);
+    if (!convo) continue;
+    const held = convo.unreadCount ?? 0;
+    const floor = Math.max(watermarkFor(convo.readWatermarks, me), upTo);
+    const next = Math.min(held, countUnreadForUser(convo.messages, floor));
+    if (next === held) continue;
+    conversations.set(key, { ...convo, unreadCount: next });
+    changed.push(key);
+  }
+  return changed;
 }
