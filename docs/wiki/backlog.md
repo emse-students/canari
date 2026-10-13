@@ -371,10 +371,6 @@ The microtask flush in `history.ts:190-208` coalesces only marks of one synchron
 
 `src-tauri/src/commands/mls.rs:216-231`: a send or decrypt waits for a whole checkpoint. Snapshot under the lock, seal and write outside it.
 
-### P3 - nothing resets the announcement state at sign-out
-
-`resetAnnouncementState` (`stores/announcement.svelte.ts:126`) says the next account must be asked on its own behalf and has no caller, so a second account in the same tab is probably never shown its announcements.
-
 ## Open defects, in severity order
 
 ### P1 - owed: ONE live reading of the in-session join fix (2026-10-08)

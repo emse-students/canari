@@ -145,4 +145,58 @@ describe('refreshAnnouncement', () => {
 
     expect(mod.getPendingAnnouncement()).toEqual({ id: 'a1', title: 'Titre', body: 'Corps' });
   });
+
+  it('asks again on behalf of the next account once the state is reset', async () => {
+    const announcement = {
+      id: 'a1',
+      titleFr: 'Titre',
+      titleEn: 'Title',
+      bodyFr: 'Corps',
+      bodyEn: 'Body',
+    };
+    const apiFetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ announcement }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ announcement: null }) });
+    vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
+
+    const mod = await load();
+    await mod.refreshAnnouncement();
+    // Same account, same opening: the latch holds.
+    await mod.refreshAnnouncement();
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+
+    mod.resetAnnouncementState();
+    // The first account's announcement is not left for the next one to see.
+    expect(mod.getPendingAnnouncement()).toBeNull();
+    await mod.refreshAnnouncement();
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("never lands the leaving account's answer for the next one", async () => {
+    const announcement = {
+      id: 'a-of-the-first-account',
+      titleFr: 'Titre',
+      titleEn: 'Title',
+      bodyFr: 'Corps',
+      bodyEn: 'Body',
+    };
+    let answerFirst: (value: unknown) => void = () => {};
+    const apiFetch = vi
+      .fn()
+      .mockReturnValueOnce(new Promise((resolve) => (answerFirst = resolve)))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ announcement: null }) });
+    vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
+
+    const mod = await load();
+    const firstAsk = mod.refreshAnnouncement();
+    // The first account signs out while its ask is in flight, and the next one is asked for.
+    mod.resetAnnouncementState();
+    await mod.refreshAnnouncement();
+    answerFirst({ ok: true, json: async () => ({ announcement }) });
+    await firstAsk;
+
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+    expect(mod.getPendingAnnouncement()).toBeNull();
+  });
 });
