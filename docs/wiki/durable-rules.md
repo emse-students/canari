@@ -1028,6 +1028,10 @@ is the same instruction the people rule gives and for a sharper reason: afterwar
 and mitigation is not a fix. When a redaction does become necessary, say plainly that the history
 keeps the original rather than reporting the file as clean.
 
+### A DEEP LINK IS LOGGED AS ITS SHAPE, NEVER ITS TEXT
+
+A deep link carries post and conversation ids, invitation tokens, `returnTo` and OAuth callback parameters, and the in-app log is the one a member exports (`appLogRedact.ts` strips a query string but cannot tell a path id from a path word). Every deep-link log line goes through `describeDeepLink(url)` (`utils/logSanitize.ts`; native twin `CanariDescribeDeepLink` in `canari_push.mm`): scheme + host, the first path segment on http(s) only (on `fr.emse.canari://` the host is the route and the first segment is the id), and `+query` / `+fragment` flags.
+
 ### NO PATH OF ONE WORKSTATION ENTERS THE REPOSITORY - A PATH IS RELATIVE TO IT, OR IT IS LOCAL CONFIGURATION
 
 A drive letter, a home directory, a user name or a worktree folder describes ONE machine: it is
