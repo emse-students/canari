@@ -44,6 +44,19 @@ export function svelteFiles(dir: string, out: string[] = []): string[] {
 }
 
 /**
+ * Every shipped source file under `dir`, recursively: `.svelte` and `.ts`, tests excluded (a test
+ * may quote the very idiom a gate forbids). For the gates that read CODE as well as markup.
+ */
+export function shippedSourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) shippedSourceFiles(full, out);
+    else if (/\.(svelte|ts)$/.test(entry) && !entry.endsWith('.test.ts')) out.push(full);
+  }
+  return out;
+}
+
+/**
  * Cut every `open ... close` region out of `source`, first-close-wins.
  *
  * An unterminated opener is NOT a comment and is left where it is: a file ending mid-comment is a

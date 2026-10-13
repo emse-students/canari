@@ -147,6 +147,9 @@ local and receipts are only what OTHERS see. `Sidebar.communityUnreadDot.svelte.
 
 ### Unread counts of salons: the server counts, this device only merges (2026-10-08)
 
+**The chantier these three sections belong to is CLOSED (2026-10-14)**: every path that can move a
+salon's read mark, with its evidence, is on [read-receipt-privacy](../../read-receipt-privacy.md).
+
 **Reported by the user** (*"messages marked read though I never opened the community's salon"*), and
 **measured before anything was fixed**, with `tools/cross-client-harness/unread-communities.mjs` on the
 local estate: ten communities, 2-5 salons each (public, private and not joined), a reader (W2) and an
@@ -271,7 +274,8 @@ single message, so the clear moves a PRIVATE mark instead: `channel_members."cle
 (migration 082), which `listUnreadCounts` adds to the floor of what it counts, and which is never
 published to anyone but the member's own devices. Opening a salon afterwards sends the ordinary
 receipt, because that IS reading. (The shade's "Marquer comme lu" keeps moving the receipt: there the
-reader saw the message in the banner. Not changed here.)
+reader saw the message in the banner. Not changed here - and since 2026-10-14 not offered at all on a
+BLIND banner, where the reader saw nothing: [read-receipt-privacy](../../read-receipt-privacy.md).)
 
 | Piece | Where |
 |---|---|
