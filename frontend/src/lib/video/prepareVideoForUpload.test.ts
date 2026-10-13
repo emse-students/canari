@@ -4,11 +4,20 @@
  * (docs/wiki/frontend/video-preparation.md); what is pinned here is the CONTRACT a caller relies on:
  * the options reach the encoder as planned, a refusal is typed, and a dropped track is a refusal.
  */
-import { prepareVideoForUpload, VideoPrepareError } from './prepareVideoForUpload';
+import {
+  chooseAudioRoute,
+  prepareVideoForUpload,
+  VideoPrepareError,
+} from './prepareVideoForUpload';
+import { AUDIO_BITRATE, VIDEO_BUDGET_SHARE } from './videoEncodingPlan';
 
 interface Script {
   video: boolean;
   audio: boolean;
+  /** The audio track's codec parameter string (`opus` unless a test says otherwise). */
+  audioCodec?: string;
+  /** The audio track's measured average bitrate, bits per second. */
+  audioBitrate?: number;
   duration: number;
   width: number;
   height: number;
@@ -42,7 +51,11 @@ vi.mock('mediabunny', () => {
       };
     }
     async getPrimaryAudioTrack() {
-      return state.script.audio ? {} : null;
+      if (!state.script.audio) return null;
+      return {
+        getCodecParameterString: async () => state.script.audioCodec ?? 'opus',
+        computePacketStats: async () => ({ averageBitrate: state.script.audioBitrate ?? 96_000 }),
+      };
     }
     async computeDuration() {
       return state.script.duration;
@@ -164,9 +177,26 @@ describe('prepareVideoForUpload', () => {
     expect(await faultOf(prepareVideoForUpload(SOURCE, { removeAudio: true }))).toBe('unsupported');
   });
 
-  it('keeps the audio and its AAC options when the sound is kept', async () => {
+  it('encodes any audio that is not AAC-LC to AAC when the sound is kept', async () => {
     await prepareVideoForUpload(SOURCE, { removeAudio: false });
     expect(state.init!.audio).toMatchObject({ codec: 'aac', forceTranscode: true });
+  });
+
+  it('COPIES an AAC-LC track, asking no encoder for it, and budgets its own bitrate', async () => {
+    // The member's 49 s AV1 + AAC-LC clip on Firefox (2026-10-13): forcing an AAC encode there
+    // discarded the track as `no_encodable_target_codec` - Firefox has no AAC encoder - and the
+    // whole video was refused, although the MP4 carries that AAC as it is.
+    state.script.audioCodec = 'mp4a.40.2';
+    state.script.audioBitrate = 320_000;
+    state.script.duration = 200;
+    const maxBytes = 50 * 1024 * 1024;
+    await prepareVideoForUpload(SOURCE, { maxBytes });
+    // The codec alone: a quality, a sample rate or forceTranscode would each make it re-encode.
+    expect(state.init!.audio).toEqual({ codec: 'aac' });
+    const quality = (state.init!.video as { quality: { options: { bitrate: number } } }).quality;
+    expect(quality.options.bitrate).toBe(
+      Math.floor((maxBytes * 8 * VIDEO_BUDGET_SHARE) / 200 - 320_000)
+    );
   });
 
   it('refuses a source over maxSeconds, past the half-second grace only', async () => {
@@ -221,5 +251,27 @@ describe('prepareVideoForUpload', () => {
     });
     expect(await faultOf(run)).toBe('aborted');
     expect(state.cancelled).toBe(true);
+  });
+});
+
+describe('chooseAudioRoute', () => {
+  it('copies AAC-LC, encodes every other codec, and has no track to route when there is none', () => {
+    expect(chooseAudioRoute('mp4a.40.2', false)).toBe('copy');
+    expect(chooseAudioRoute('MP4A.40.2', false)).toBe('copy');
+    // HE-AAC is AAC too, but not the profile the output names: it is encoded to AAC-LC.
+    expect(chooseAudioRoute('mp4a.40.5', false)).toBe('encode');
+    expect(chooseAudioRoute('opus', false)).toBe('encode');
+    expect(chooseAudioRoute('mp4a.40.2', true)).toBe('none');
+    expect(chooseAudioRoute(null, false)).toBe('none');
+  });
+
+  it('budgets the plan AAC bitrate for an encoded track', async () => {
+    state.script.duration = 200;
+    const maxBytes = 50 * 1024 * 1024;
+    await prepareVideoForUpload(SOURCE, { maxBytes });
+    const quality = (state.init!.video as { quality: { options: { bitrate: number } } }).quality;
+    expect(quality.options.bitrate).toBe(
+      Math.floor((maxBytes * 8 * VIDEO_BUDGET_SHARE) / 200 - AUDIO_BITRATE)
+    );
   });
 });

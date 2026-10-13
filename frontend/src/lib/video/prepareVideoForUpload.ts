@@ -7,7 +7,9 @@
  * - **fragmented MP4** (`fastStart: 'fragmented'`), so the streaming reader can append it to MSE
  *   segment by segment (`segmentedMediaStream.ts`) and an old client still plays it whole;
  * - **H.264 + AAC**, the one pair both WebViews decode AND both encode in hardware (measured on the
- *   Mi 9T's WebView 152 and the iPhone 12's WKWebView, 2026-10-01);
+ *   Mi 9T's WebView 152 and the iPhone 12's WKWebView, 2026-10-01). The video is always re-encoded;
+ *   an AAC-LC audio track is COPIED, since it already is the output's format (`chooseAudioRoute`),
+ *   and only any other audio is encoded;
  * - **720p on its short side, ~2.5 Mb/s, at most 30 fps**, rotation baked into the frames - the
  *   numbers live in `videoEncodingPlan.ts`;
  * - and a `File` whose `type` NAMES ITS CODECS (`video/mp4; codecs="avc1...,mp4a.40.2"`), which is
@@ -187,6 +189,19 @@ export async function prepareVideoForUpload(
       );
     }
 
+    const audioRoute = chooseAudioRoute(
+      audioTrack ? await audioTrack.getCodecParameterString() : null,
+      removeAudio
+    );
+    // A copied track costs what it carries, measured over every packet; an encoded one, the plan's.
+    const audioBitrate =
+      audioRoute === 'copy' && audioTrack
+        ? (await audioTrack.computePacketStats()).averageBitrate
+        : audioRoute === 'encode'
+          ? AUDIO_BITRATE
+          : 0;
+    console.debug(`[video-prep] audio: ${audioRoute}, ${Math.round(audioBitrate / 1000)} kb/s`);
+
     const stats = await videoTrack.computePacketStats(120);
     const plan = planVideoEncoding(
       {
@@ -194,7 +209,7 @@ export async function prepareVideoForUpload(
         displayHeight: await videoTrack.getDisplayHeight(),
         durationSeconds,
         frameRate: stats.averagePacketRate,
-        hasAudio: audioTrack !== null && !removeAudio,
+        audioBitrate,
       },
       maxBytes
     );
@@ -235,7 +250,7 @@ export async function prepareVideoForUpload(
         allowTransformationMetadata: false,
         forceTranscode: true,
       },
-      audio: audioConversionOptions(mb, removeAudio),
+      audio: audioConversionOptions(mb, audioRoute),
     });
     // A dropped track is a refusal, never a quieter video: an engine that cannot decode the source
     // or encode the target says so here, as a FACT read before a frame is touched. The ONE track
@@ -300,18 +315,45 @@ export async function prepareVideoForUpload(
   }
 }
 
+/** The codec string of AAC-LC, the one audio format the output carries. */
+export const AAC_LC_CODEC_STRING = 'mp4a.40.2';
+
 /**
- * What the conversion does with the audio track: AAC at the plan's bitrate, or - when the member
- * removed the sound - nothing at all (`discard`), so the output carries no audio track.
+ * What happens to the source's audio track:
+ *
+ * - `none` - there is none, or the member removed the sound;
+ * - `copy` - it is ALREADY AAC-LC, the output's own audio format, so its packets go into the MP4
+ *   as they are. No encoder is involved, which is what lets an engine with no AAC encoder (Firefox
+ *   has none in WebCodecs) prepare an MP4 from a phone or camera, and no generation is lost;
+ * - `encode` - any other codec (the Android recorder's Opus, HE-AAC, PCM...) is encoded to AAC-LC.
+ *
+ * @param codecString The source track's codec parameter string (`mp4a.40.2`, `opus`...), or `null`
+ *                    when there is no audio track.
  */
-export function audioConversionOptions(mb: typeof import('mediabunny'), removeAudio: boolean) {
-  return removeAudio
-    ? { discard: true as const }
-    : {
-        codec: 'aac' as const,
-        quality: new mb.Quality({ bitrate: AUDIO_BITRATE }),
-        forceTranscode: true,
-      };
+export function chooseAudioRoute(
+  codecString: string | null,
+  removeAudio: boolean
+): 'none' | 'copy' | 'encode' {
+  if (codecString === null || removeAudio) return 'none';
+  return codecString.toLowerCase() === AAC_LC_CODEC_STRING ? 'copy' : 'encode';
+}
+
+/**
+ * The conversion's audio options for a route: `discard` (the output carries no audio track), the
+ * codec ALONE for a copy - a bitrate, a sample rate, a channel count or `forceTranscode` would each
+ * make mediabunny re-encode a track the output can carry as is - or AAC at the plan's bitrate.
+ */
+export function audioConversionOptions(
+  mb: typeof import('mediabunny'),
+  route: 'none' | 'copy' | 'encode'
+) {
+  if (route === 'none') return { discard: true as const };
+  if (route === 'copy') return { codec: 'aac' as const };
+  return {
+    codec: 'aac' as const,
+    quality: new mb.Quality({ bitrate: AUDIO_BITRATE }),
+    forceTranscode: true,
+  };
 }
 
 /** The plan, as the log line prints it. */
