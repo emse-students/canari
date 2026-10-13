@@ -184,6 +184,30 @@ describe('the owed retry of an overheard-digest pull', () => {
     expect(owedPullCount()).toBe(0);
   });
 
+  it('owes a retry when the store could not be read - the retry is what reads it again', async () => {
+    readHistoryEntries.mockResolvedValueOnce(null).mockResolvedValue([entry('a')]);
+    await overhear(['a', 'g']);
+    expect(sendHistoryPull).not.toHaveBeenCalled();
+
+    await authorSpeaksLive();
+
+    expect(pulledIds()).toEqual([['g']]);
+  });
+
+  it('matches the author whatever the case its digest named it in', async () => {
+    readHistoryEntries.mockResolvedValue([entry('a')]);
+    await pullFromOverheardDigest({
+      groupId: GROUP,
+      holderIdentity: 'Peer:Device-Peer',
+      selfIdentity: SELF,
+      digest: await buildHistoryDigest([entry('a'), entry('g')]),
+      ticket: owedPullTicket(GROUP),
+      deps: answerDeps(),
+    });
+
+    expect(takeOwedPulls('PEER:device-peer').map((o) => o.groupId)).toEqual([GROUP]);
+  });
+
   it('owes nothing for a digest this road declines', async () => {
     readHistoryEntries.mockResolvedValue([entry('a')]);
     await pullFromOverheardDigest({
