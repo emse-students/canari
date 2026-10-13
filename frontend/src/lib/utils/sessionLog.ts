@@ -1,6 +1,9 @@
 /**
- * Logs a session entry to the browser/device console. On Tauri, `attachConsole` in the layout
- * forwards these to adb logcat.
+ * Logs a session entry to the browser/device console, and nowhere else. `attachConsole` in the
+ * layout does NOT forward it to logcat - it copies Rust log records the other way, into this
+ * console. On Android a console line reaches logcat (tag `Tauri/Console`) only through wry's
+ * `RustWebChromeClient.onConsoleMessage`, gated on `BuildConfig.DEBUG`, so a release build keeps
+ * no trace of it outside the WebView's own devtools.
  *
  * **IT NO LONGER STAMPS THE LINE, AND THAT IS THE FIX RATHER THAN A LOSS.** It used to prepend
  * `new Date().toLocaleTimeString()` - a SECOND-resolution clock, on a project whose cold-start
