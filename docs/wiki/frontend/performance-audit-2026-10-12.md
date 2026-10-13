@@ -83,6 +83,12 @@ application-only ratchet advance costs once the frame is acked (TAB-3b in the
 levers, cheapest first: a faster seal (format, no semantics); not checkpointing a drain that only
 advanced receive ratchets (semantics - needs the TAB-3b answer); per-group storage (structure).
 
+**2026-10-13: the second lever is measured at the MLS layer and parked as a decision.** On the Mi 9T,
+native export + seal is 49 ms at 7.7 MB against a 0.49 ms decrypt. A file left behind by received
+frames re-reads them and never loses them, within the 2000-generation window. Three app-level
+consequences are unmeasured, the native resume reload first
+([open-questions](../open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)).
+
 ## The WebCrypto seal (v2) - measured 2026-10-12
 
 Lever one above, built: the framed `state_blob` v2 (AES-256-GCM through WebCrypto on the web, read
