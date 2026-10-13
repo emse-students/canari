@@ -65,6 +65,15 @@ function lengthPrefixed(...units: number[][]): Uint8Array {
 /** A key frame as Firefox writes it: access unit delimiter, SPS, PPS, then an IDR slice. */
 const KEY_FRAME = lengthPrefixed([0x09, 0x10], SPS, PPS, [0x65, 0x88, 0x84, 0x00, 0x33, 0xff]);
 
+/** A key frame as Chrome writes it: the parameter sets live in the record only, none in-band. */
+const KEY_FRAME_NO_PARAMETER_SETS = lengthPrefixed([0x65, 0x88, 0x84, 0x00, 0x33, 0xff]);
+
+/** What the fake encoder hands back for every frame; each test sets it. */
+let emitted: { data: Uint8Array; description: Uint8Array } = {
+  data: KEY_FRAME,
+  description: FIREFOX_AVCC,
+};
+
 class FakeEncodedVideoChunk {
   readonly type: 'key' | 'delta';
   readonly timestamp: number;
@@ -131,14 +140,14 @@ class FakeVideoEncoder {
       type: 'key',
       timestamp: frame.timestamp,
       duration: frame.duration ?? 33_333,
-      data: KEY_FRAME,
+      data: emitted.data,
     });
     this.init.output(chunk, {
       decoderConfig: {
         codec: this.config!.codec,
         codedWidth: this.config!.width,
         codedHeight: this.config!.height,
-        description: FIREFOX_AVCC,
+        description: emitted.description,
       },
     });
   }
@@ -166,32 +175,46 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Encodes two frames through the fake encoder and returns the `avcC` record the MP4 carries. */
+async function writtenAvcRecord(): Promise<number[]> {
+  const output = new Output({
+    format: new Mp4OutputFormat({ fastStart: 'fragmented' }),
+    target: new BufferTarget(),
+  });
+  const source = new VideoSampleSource({ codec: 'avc', bitrate: 1_000_000 });
+  output.addVideoTrack(source);
+  await output.start();
+  for (let i = 0; i < 2; i++) {
+    await source.add(
+      new VideoSample(new Uint8Array(16 * 16 * 4), {
+        format: 'RGBX',
+        codedWidth: 16,
+        codedHeight: 16,
+        timestamp: i / 30,
+        duration: 1 / 30,
+      })
+    );
+  }
+  await output.finalize();
+
+  const bytes = new Uint8Array(output.target.buffer!);
+  const avcC = indexOf(bytes, [0x61, 0x76, 0x63, 0x43]); // 'avcC'
+  expect(avcC).toBeGreaterThan(0);
+  const boxSize = new DataView(bytes.buffer, bytes.byteOffset).getUint32(avcC - 4);
+  return Array.from(bytes.subarray(avcC + 4, avcC - 4 + boxSize));
+}
+
 describe('mediabunny AVC description (patch for issue 559)', () => {
   it("writes the record rebuilt from the bitstream when the encoder's own is malformed", async () => {
-    const output = new Output({
-      format: new Mp4OutputFormat({ fastStart: 'fragmented' }),
-      target: new BufferTarget(),
-    });
-    const source = new VideoSampleSource({ codec: 'avc', bitrate: 1_000_000 });
-    output.addVideoTrack(source);
-    await output.start();
-    for (let i = 0; i < 2; i++) {
-      await source.add(
-        new VideoSample(new Uint8Array(16 * 16 * 4), {
-          format: 'RGBX',
-          codedWidth: 16,
-          codedHeight: 16,
-          timestamp: i / 30,
-          duration: 1 / 30,
-        })
-      );
-    }
-    await output.finalize();
+    emitted = { data: KEY_FRAME, description: FIREFOX_AVCC };
+    // High profile (100): the record ends on chroma_format 1, 8-bit luma and chroma, no SPS ext.
+    expect(await writtenAvcRecord()).toEqual([...WELL_FORMED_AVCC, 0xfd, 0xf8, 0xf8, 0x00]);
+  });
 
-    const bytes = new Uint8Array(output.target.buffer!);
-    const avcC = indexOf(bytes, [0x61, 0x76, 0x63, 0x43]); // 'avcC'
-    expect(avcC).toBeGreaterThan(0);
-    const record = Array.from(bytes.subarray(avcC + 4, avcC + 4 + WELL_FORMED_AVCC.length));
-    expect(record).toEqual(WELL_FORMED_AVCC);
+  it("keeps the encoder's record as is when its key frames carry no parameter sets", async () => {
+    // Chrome's shape: nothing in-band to compare, so the patch must not touch the record - even a
+    // malformed one, since it has no better source to rebuild it from.
+    emitted = { data: KEY_FRAME_NO_PARAMETER_SETS, description: FIREFOX_AVCC };
+    expect(await writtenAvcRecord()).toEqual(Array.from(FIREFOX_AVCC));
   });
 });
