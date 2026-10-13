@@ -68,12 +68,18 @@ function abortedSignal(input: RequestInfo | URL, init?: RequestInit): AbortSigna
  *   caller chose another) - the plugin throws `Error('Request cancelled')`, which nothing reads as a
  *   cancellation;
  * - EVERY OTHER rejection is a {@link TransportFailureError}: the plugin rejects only when no HTTP
- *   answer came back (no route, DNS, a reset socket, a scope refusal), since an answered request -
- *   any status - resolves with a `Response`.
+ *   answer came back (no route, DNS, a reset socket), since an answered request - any status -
+ *   resolves with a `Response`. That includes the plugin's DETERMINISTIC refusals (a URL outside the
+ *   scope, an invalid header value, an unsupported scheme): no answer either, but no link will ever
+ *   lift them. The plugin hands over only a string, so they are not told apart here; the raw
+ *   sentence in `cause` is what names them in the log.
  *
  * Used by BOTH places that hand the plugin to the app - the `window.fetch` override in
  * `hooks.client.ts` (through `createRoutedFetch`) and `TauriMlsService`'s delivery client - so no
- * Tauri request can reject with the raw shape.
+ * Tauri `fetch` CALL rejects with the raw shape. READING THE BODY is not covered: a link lost after
+ * the head, or an abort during the body, still rejects `res.json()` / `res.text()` with the
+ * plugin's bare string (`controller.error(...)` in its `ReadableStream`), where a browser throws a
+ * `TypeError` / `AbortError`.
  */
 export function conformPluginFetch(plugin: typeof fetch): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
