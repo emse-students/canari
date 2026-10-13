@@ -16,6 +16,75 @@ measurement or a device nobody here has. None of them is waiting on an implement
 
 ---
 
+### DECISION OWED - may a drain that only RECEIVED application frames skip its full checkpoint? (2026-10-13)
+
+**What happens today.** Every drain ends with a full encrypted checkpoint of the WHOLE MLS state,
+even a drain of one application frame. `mlsStatePersister.onBulkIngestEnd` sets
+`dirtyEncrypted = true` unconditionally, overriding the commit/application split
+`setupMessageHandler` makes (`persistNow` vs `scheduleDeferred`).
+
+**Measured.**
+
+| Mi 9T, native (`heavy_state_checkpoint` cross-built for aarch64) | 0.48 MB | 1.9 MB | 3.8 MB | 7.7 MB |
+| --- | ---: | ---: | ---: | ---: |
+| one decrypt | 0.55 ms | 0.48 ms | 0.49 ms | 0.49 ms |
+| export + seal | 2.7 ms | 11.7 ms | 25.6 ms | **49.3 ms** |
+
+The file write and the IPC come on top. On native the manager mutex is held across the export and
+the seal (performance-audit finding 12), so a send or a decrypt waits for all of it. On the bench
+account's small state the app logged 5-96 ms per checkpoint. On web the cost is the seal plus
+IndexedDB: 198 ms at 7.7 MB legacy, 47 ms with the v2 seal
+([performance-audit](frontend/performance-audit-2026-10-12.md#finding-2-and-3-read-together---the-checkpoint-question-the-backlog-owed)).
+Per frame, the checkpoint costs about 100 times the decrypt it follows.
+
+**What a crash then costs at the MLS layer** (`mls-core/tests/deferred_receive_checkpoint.rs`). The
+on-disk state is BEHIND by the frames received since the last checkpoint. The three tests show:
+
+- every one of those frames decrypts again from the restored state: a re-read, never a loss;
+- the next frame from that sender decrypts, and this device's next send is read by its peers;
+- the bound is the sender ratchet window (`maximum_forward_distance` = 2000, `group.rs`): 1990
+  unsaved receives still recover.
+
+Three things are out of scope: commits, which `persistNow` checkpoints at once under any policy; this
+device's own sends, which are checkpointed on the send path; and the replay marks, which are already
+bound to the checkpoint (`commitPendingHistoryMarks`).
+
+**Why this is a decision and not a fix.** Skipping the checkpoint WEAKENS durability. A process
+death leaves `mls.bin` behind by up to N received generations. The MLS layer recovers from that, but
+three app-level consequences are not measured:
+
+1. **The seen-cipher ledger is written per frame** (`noteFrameConsumed`, `localStorage`). After a
+   crash it can say "read" for a frame the restored state could still read. The rows for those frames
+   are written at the same drain end as today's checkpoint, so nothing new is lost. The open part is
+   that a replay skips the frame. This is the safe direction of TAB-3b; the defect it fixes runs the
+   other way ([history-reconciliation](protocols/history-reconciliation.md#a-cold-start-re-accuses-frames-it-already-read-the-mark-must-be-one-write-with-the-advance-tab-3b-measured-2026-09-08)).
+2. **The native resume reload would see `live-ahead` on most resumes instead of rarely.** It then
+   refuses the reload and persists the live state, which discards whatever the background FCM engine
+   wrote to `mls.bin` meanwhile (`TauriMlsService.reloadStateFromDisk`). Whether that loses a frame
+   the background engine read AND acknowledged is the question to measure first. The background
+   flush (`mlsStatePersisterLifecycle`, on the native foreground edge) runs before the engine
+   starts, but it is not awaited.
+3. **Forward secrecy at rest.** The keys of frames already read stay on disk until the next
+   checkpoint. The plaintext rows sit on the same disk under the same device key, so the exposure is
+   believed to be nil. That is a judgement, not a measurement.
+
+**The proposal, if the user takes it.**
+
+- `onBulkIngestEnd` checkpoints only when the drain set `persistNow` (a commit, a Welcome, a
+  structural change).
+- A receive-only drain marks the state dirty and leaves it for the next trigger that already exists:
+  a send, a commit, the background edge, logout.
+- A COUNT bound, never a clock: a checkpoint is forced after K deferred receive generations, with K
+  well under the 2000 window (for example 200).
+- Lever one (the v2 seal, writer OFF) cuts the web side about four-fold with no change in
+  semantics, and should be switched on first.
+
+**Not built, deliberately.** Item 2 must be measured on the Mi 9T before any of it:
+
+- kill the app (`am force-stop`) with deferred receives pending;
+- push frames while it is dead;
+- resume, and read the log for `live-ahead`, duplicates and `unreadable for good`.
+
 ### DECISION OWED - the ceiling's `postgres` arm names a test this estate's own upgrade path can never satisfy
 
 **Found by performing the thing the gate asks for, on 2026-09-15, and discovering the gate cannot
