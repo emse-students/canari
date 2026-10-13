@@ -1387,6 +1387,20 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   zoom: calc(1 / var(--text-zoom, 1));
 }
 
+/* THE OTHER ANSWER: A BOX THAT GROWS WITH ITS TEXT. When the glyph in a fixed box is READING text
+   (a day number), exempting it would refuse the reader the size they asked for, so the BOX is what
+   follows `--text-zoom`: `text-zoom-size-9` is `size-9` at 100 % and twice that at 200 %. Same
+   spacing scale as `size-*` and `w-*`, so no length is written at a call site. At 200 % today's day
+   number (40px) overran its 36px circle in the agenda (Mi 9T, 2026-10-13). */
+@utility text-zoom-size-* {
+  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
+  height: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
+}
+
+@utility text-zoom-w-* {
+  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
+}
+
 /* THE STATUS STRIP ABOVE THE PHONE HEADER IS PAINTED WITH THE HEADER'S SURFACE, so the top reads as
    ONE band instead of a page-ground strip over a lighter header (U8, phone-comparison). The strip is
    the shell's own top padding, so the shell paints it: a pseudo-element on the header cannot, the

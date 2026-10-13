@@ -31,6 +31,7 @@ import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.s
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
+import { resetAnnouncementState } from '$lib/stores/announcement.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
 import {
   flushPendingGroupExits,
@@ -1134,6 +1135,7 @@ export async function loginImpl(
       onRolePermissionsChanged: cb.onRolePermissionsChanged,
       onChannelDeleted: cb.onChannelDeleted,
       onWorkspaceUpdated: cb.onWorkspaceUpdated,
+      onSalonUnreadCleared: cb.onSalonUnreadCleared,
       onWorkspaceRoleChanged: cb.onWorkspaceRoleChanged,
       onWorkspaceDeleted: cb.onWorkspaceDeleted,
       onChannelMessageDeleted: cb.onChannelMessageDeleted,
@@ -2128,6 +2130,10 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
   tearDownLiveSession(ctx, cb, 'logout');
   notificationPreferences.reset();
+  // The announcement asked for, and the one waiting, belong to the account that is leaving: without
+  // this the next account signing in in the same tab was never asked on its own behalf (the store's
+  // `checked` latch stayed set) and could be shown the previous account's.
+  resetAnnouncementState();
   ctx.setStorage(null);
   ctx.setAuthToken('');
   clearUserLocally();

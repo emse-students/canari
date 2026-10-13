@@ -1,6 +1,10 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { slugify } from '$lib/utils/textFold';
-import { reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
+import {
+  clearSalonUnreadLocally,
+  communityUnreadUpTo,
+  reconcileSalonUnreadFromServer,
+} from '$lib/utils/chat/salonUnread';
 import { flushSalonReadMarks } from '$lib/utils/chat/salonReadMarkQueue';
 import { ChannelApiError, ChannelService } from '$lib/services/ChannelService';
 import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
@@ -883,6 +887,77 @@ export function useChannelWorkspaces() {
   // ---------- API operations ----------
 
   /**
+   * Asks the server for every salon's unread count and applies it - after a community load, after
+   * this account cleared a community on another device (`channel.unread.cleared`), and to put the
+   * truth back when a clear from here was refused. One request whatever the number of salons.
+   */
+  function refreshSalonUnread(ctx: ChannelWorkspaceContext, reason: string): Promise<void> {
+    return reconcileSalonUnreadFromServer({
+      conversations: ctx.conversations,
+      selectedId: ctx.getSelectedConversationId?.() ?? null,
+      userId: currentUserId() ?? '',
+      fetchCounts: () => service.listUnreadCounts(),
+      settleOwedMarks: () =>
+        flushSalonReadMarks(currentUserId() ?? '', (id, at, serverAt) =>
+          service.advanceReadMark(id, at, serverAt)
+        ),
+      log: ctx.log,
+      reason,
+    });
+  }
+
+  /**
+   * The salons of a community whose badge "Marquer tout comme lu" would clear: the ones this member
+   * may read (`hasAccess !== false`) - an administrator's row for a private salon they only SEE has
+   * no count to clear, and the server skips it too.
+   */
+  function readableSalonKeys(workspaceSlug: string): string[] {
+    const workspace = channelWorkspaces.find((ws) => ws.id === workspaceSlug);
+    return (workspace?.channels ?? []).filter((c) => c.hasAccess !== false).map((c) => c.id);
+  }
+
+  /**
+   * "Marquer tout comme lu" on a community (long press on its rail icon, or right click): every
+   * salon's badge goes at once on this device, then ONE request clears the same salons on the
+   * server, which tells this account's other devices.
+   *
+   * WHAT IT DOES NOT DO IS THE POINT: no read mark moves, so no "Lu par" head appears under anybody's
+   * message - the member cleared a badge, they did not read the salon (wiki: chat.md, "Mark a whole
+   * community as read"). Opening a salon afterwards sends the ordinary receipt, because that IS
+   * reading it.
+   *
+   * Cleared up to {@link communityUnreadUpTo}: the newest instant the screen counted, on the server's
+   * clock, so a message posted while the menu was open stays unread. A refusal is a toast and a
+   * re-read of the server's counts, which puts back exactly what the server still holds.
+   */
+  async function markCommunityRead(workspaceSlug: string, ctx: ChannelWorkspaceContext) {
+    const workspace = channelWorkspaces.find((ws) => ws.id === workspaceSlug);
+    const workspaceDbId = workspace?.workspaceDbId;
+    if (!workspaceDbId) {
+      ctx.log(`[CHANNEL_CLEAR] community ${workspaceSlug} has no server id yet - nothing sent`);
+      return;
+    }
+    const keys = readableSalonKeys(workspaceSlug);
+    const upTo = communityUnreadUpTo(ctx.conversations, keys);
+    if (upTo <= 0) {
+      ctx.log(
+        `[CHANNEL_CLEAR] community ${workspaceDbId.slice(0, 8)}: nothing counted, nothing sent`
+      );
+      return;
+    }
+    const changed = clearSalonUnreadLocally(ctx.conversations, keys, upTo, currentUserId() ?? '');
+    ctx.log(
+      `[CHANNEL_CLEAR] community ${workspaceDbId.slice(0, 8)}: ${keys.length} salon(s), ${changed.length} badge(s) cleared here, upTo=${upTo}`
+    );
+    try {
+      await service.clearWorkspaceUnread(workspaceDbId, upTo);
+    } catch (error) {
+      ctx.log(toUiActionError(m.channel_action_community_mark_read(), error));
+      await refreshSalonUnread(ctx, 'community clear refused');
+    }
+  }
+
+  /**
    * Fetches all workspaces and their channels from the backend, hydrates channel encryption keys,
    * and prunes stale local channel entries.
    *
@@ -932,18 +1007,7 @@ export function useChannelWorkspaces() {
           // this device keeps is empty after any reload. See `salonUnread.ts`.
           // NOT awaited: this runs under `isLoadingWorkspaces`, and a slow answer must not make
           // every other load refuse.
-          void reconcileSalonUnreadFromServer({
-            conversations: ctx.conversations,
-            selectedId: ctx.getSelectedConversationId?.() ?? null,
-            userId: currentUserId() ?? '',
-            fetchCounts: () => service.listUnreadCounts(),
-            settleOwedMarks: () =>
-              flushSalonReadMarks(currentUserId() ?? '', (id, at, serverAt) =>
-                service.advanceReadMark(id, at, serverAt)
-              ),
-            log: ctx.log,
-            reason: 'communities loaded',
-          });
+          void refreshSalonUnread(ctx, 'communities loaded');
           return true;
         } catch (error) {
           // NOT A FAILURE OF THIS SESSION'S LIST: the account signed out under it. Nothing to retry
@@ -1231,7 +1295,7 @@ export function useChannelWorkspaces() {
       );
       await ctx.saveConversation(channelId);
       ctx.selectConversation(channelId);
-      ctx.log(`Channel created: #${normalizedChannelName} (${visibility})`);
+      ctx.log(`Channel created: ${channelId} (${visibility})`);
     } catch (error) {
       ctx.log(toUiActionError(m.channel_action_channel_create(), error));
     }
@@ -1378,7 +1442,7 @@ export function useChannelWorkspaces() {
         }
       }
 
-      ctx.log(`Member invited to channel (${roleName}): ${displayName}`);
+      ctx.log(`Member invited to channel (${roleName}): ${memberId}`);
     } catch (error) {
       // Suppress the toast: the invite modal re-surfaces this error inline via inviteStatus.
       const msg = toUiActionError(m.channel_action_channel_invite(), error, false);
@@ -1970,6 +2034,10 @@ export function useChannelWorkspaces() {
     joinPrivateChannelAsAdmin,
     /** Fetches all workspaces and channels from the backend and prunes stale local entries. */
     loadChannelWorkspacesFromBackend,
+    /** Re-reads every salon's unread count from the server (one request). */
+    refreshSalonUnread,
+    /** "Marquer tout comme lu" on a community: every salon's badge, one request, no receipt. */
+    markCommunityRead,
     /** Creates a new community (workspace) and logs the outcome. */
     createNewCommunity,
     /** Creates a new public channel in the given workspace and selects it. */

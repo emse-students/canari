@@ -566,7 +566,7 @@ and `userAvatarCache.ts` forgot `none` with the mount.
   call with no local copy: unchanged, and not measured in a browser.
 - **`groups/:id` and `user-members`**: `MlsDeliveryApi` joins simultaneous identical reads (entry lives
   only as long as the request, no clock). `getGroupMeta` and `getGroupServerStatus` share one request.
-  **A `user-members` batch endpoint was NOT built**: its callers are membership guards and the stray
-  sweep, which walk one group at a time and need a fresh read; batching means restructuring them, and
-  the measured gain was 36-90 ms calls after the list had rendered. Guarded by
-  `mlsDeliveryApi.inFlight.test.ts`.
+  Guarded by `mlsDeliveryApi.inFlight.test.ts`. **The stray sweep no longer reads one roster per
+  group** (2026-10-13): it reads every held group's roster in ONE `POST /api/mls/group-rosters` - see
+  [chat-delivery](chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13).
+  The membership guards still read one group at a time, deliberately: each needs one fresh roster.

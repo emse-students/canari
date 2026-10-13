@@ -538,7 +538,7 @@
         <button
           type="button"
           onclick={openDeposit}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
         >
           <CalendarPlus size={18} />
           {m.calendar_deposit_button()}
@@ -615,11 +615,16 @@
       </div>
     {/snippet}
 
+    <!-- THESE ACTIONS MAY WRAP THEIR LABEL, AND ARE NEVER SHRINK-0 (nor is the deposit button above).
+         At Android's 200 % text the subscribe label is wider than its card; `shrink-0` held it at
+         that width and the row's `justify-end` pushed the overflow 33 px out of the card's LEFT
+         edge (Mi 9T, 2026-10-13). `max-w-full min-w-0` keep each action inside its row, and the
+         label breaks onto a second line instead. -->
     {#snippet exportActions()}
       {#if canExportPdf}
         <a
           href={resolve(internalPath(exportHref))}
-          class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-sm font-bold transition-colors"
+          class="border-cn-border text-text-main hover:bg-cn-bg inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-center text-sm font-bold transition-colors"
         >
           <FileDown size={18} />
           {m.calendar_export_pdf()}
@@ -629,7 +634,7 @@
         type="button"
         onclick={() => (showSubscribeModal = true)}
         data-calendar-subscribe
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
       >
         <CalendarCheck size={18} />
         {m.calendar_subscribe()}

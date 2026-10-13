@@ -90,3 +90,43 @@ describe('installConsoleIdTruncation stamps every line', () => {
     expect(printed[0]).toHaveLength(2);
   });
 });
+
+/**
+ * The in-app log is wired at this ONE seam, so what reaches it is decided here: every level but
+ * `debug`, AFTER the line is printed, with identifiers already condensed.
+ */
+describe('installConsoleIdTruncation feeds the in-app log', () => {
+  const methods = ['log', 'debug', 'info', 'warn', 'error'] as const;
+  let saved: Record<(typeof methods)[number], (...args: unknown[]) => void>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    saved = {
+      log: console.log,
+      debug: console.debug,
+      info: console.info,
+      warn: console.warn,
+      error: console.error,
+    };
+    for (const m of methods) console[m] = () => {};
+  });
+
+  afterEach(() => {
+    for (const m of methods) console[m] = saved[m];
+  });
+
+  it('hands every level except debug to the sink, ids condensed', async () => {
+    const sink = vi.fn();
+    const { installConsoleIdTruncation } = await import('./logTruncate');
+    installConsoleIdTruncation(sink);
+
+    console.debug('[TRACE] entry');
+    console.log('[A] user=d82cd2268993451edb547bdd7ff278447f6619f67d0d73a520897e54f0714df2');
+    console.info('[B] i');
+    console.warn('[C] w');
+    console.error('[D] e');
+
+    expect(sink.mock.calls.map(([level]) => level)).toEqual(['log', 'info', 'warn', 'error']);
+    expect(sink.mock.calls[0][1]).toEqual(['[A] user=d82cd226…']);
+  });
+});

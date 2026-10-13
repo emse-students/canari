@@ -1,6 +1,8 @@
 import { closeOpenIndexedDbStores } from '$lib/db';
 import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
+import { forgetMirroredAvatars } from '$lib/utils/avatarMirror';
 import { closeMlsDb } from '$lib/utils/hex';
+import { discardAppLog } from '$lib/utils/appLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
@@ -124,6 +126,13 @@ export async function wipeDeviceToFactory(): Promise<string[]> {
   // prod, 2026-08-29. It is closed HERE and not asked of the caller because no caller can see it.
   await step('the MLS database connection', closeMlsDb);
 
+  // The in-app log (`CanariDBLog`) goes with the rest: emptied, its connection closed so the
+  // prefix delete below does not block, and no longer written for the rest of this process so a
+  // flush cannot re-create it before the survey looks.
+  await step('the in-app log', async () => {
+    discardAppLog();
+  });
+
   // READ BEFORE ANYTHING IS CLEARED: the aliases live in the very store this wipe empties.
   const aliases = recordedKeystoreAliases();
 
@@ -139,6 +148,8 @@ export async function wipeDeviceToFactory(): Promise<string[]> {
     // because deleting them from under a running engine is what killed the process.
     await step('the native app data', async () => {
       await invoke('clear_app_data');
+      // The avatar files are gone, so the memory of having written them must go too.
+      forgetMirroredAvatars();
     });
   }
 

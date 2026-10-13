@@ -111,7 +111,10 @@ The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fi
 - the v1 READER goes when no v1 row is left:
   `SELECT count(*) FROM channel_messages WHERE "signature" IS NULL AND "senderSessionId" IS NOT NULL`
   on production answers 0. Rows age out of the 365-day window, so that is at most a year after the
-  writer ships. A count, not a date: a salon nobody prunes keeps its rows.
+  writer ships. A count, not a date: a salon nobody prunes keeps its rows. **Since the server refuses
+  an unsigned row (2026-10-13, see the section below) that count can only fall**, so a 0 stays 0.
+  On the same day, `channel_messages."signature"` becomes `NOT NULL` (a migration), and the DTO's
+  `signature?` and the `?? null` in `ChannelService.sendMessage` go with it.
 
 ### No date yet - a carte publish body that is the bare document, with no fingerprint
 
@@ -471,6 +474,26 @@ a subscription is restricted to the reader's own spaces by a signed URL, and the
   modal builds unsigned links until it updates: they are refused.
 - **Why nothing is removed later:** the signature IS the rule. Rotating `AGENDA_SIGNING_KEY` repeats this
   break on purpose (it is the revocation) and needs no code.
+
+## Nothing to remove, revisit 2027-10-13 - an UNSIGNED salon row now gets a 400 (2026-10-13)
+
+**A BREAK, not a shim.** `POST /api/channels/:channelId/messages` refuses a row with no Graine v2
+`signature`: a 400 with code `CHANNEL_SIGNATURE_REQUIRED`, logged `[CHANNEL_SIGNATURE] REFUSED` at
+ERROR (`ChannelService.assertSigned`,
+[channel-encryption 21.8](protocols/channel-encryption.md#218-the-server-refuses-an-unsigned-salon-row-2026-10-13)).
+It became possible when `minClientVersion` reached `1.0.3` (2026-10-11), the first release that
+signs every row.
+
+- **Who is affected:** no admitted client. A build below `1.0.3` cannot unlock MLS, so it cannot
+  seal a salon row at all. The only sender left is a process unlocked BEFORE the floor rose and still
+  running older code: its salon send shows the generic refusal and is not retried. And a modified
+  client minting v1, which is the point.
+- **The constraint it adds:** the floor must never go back below `1.0.3`. §21.7 already required it.
+- **Why nothing is removed later:** the refusal IS the rule. **Revisit on 2027-10-13** (365 days after
+  this refusal, the retention window): every unsigned row predates it, so the count in the v1-reader
+  entry above should then read 0. That is when the v1 reader, the nullable column and the optional
+  DTO field go together - and if it does not read 0, the salons keeping the old rows are named, not
+  the date.
 
 ## No date - `GET /api/mls/history/:groupId` answering with a bare array
 
