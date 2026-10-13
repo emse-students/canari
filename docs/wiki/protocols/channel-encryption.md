@@ -3058,7 +3058,11 @@ first after a merge), `useConversations.olderNotice.svelte.test.ts` (a real hist
 when a v1 message row is dropped, absent otherwise, first after a forced reload), and `background.rs`
 `a_v1_seed_is_refused_by_the_push_path`, which also checks `v1Refused` (the two push seed tests now carry
 an endorsed v2 seed). The Swift and Kotlin log lines are not compiled on a workstation: their
-reading is owed on a device.
+reading is owed on a device. **On a real estate** the rig rows GRAINE-AUTH-5 (the live unsigned row,
+refused at ERROR, nothing asked) and GRAINE-AUTH-6 (the same row from history, warn, the notice once)
+are `PASS` since 2026-10-13 ([board](../cross-client-testing.md#20---graine---an-author-that-is-proven)).
+**First shipped in the stable `v1.2.6` (2026-10-13)**: a store build older than that still accepts a v1
+seed, which is the receiving-side gap the floor (`1.0.3`) does not close.
 
 ### 21.8 The server refuses an unsigned salon row (2026-10-13)
 
