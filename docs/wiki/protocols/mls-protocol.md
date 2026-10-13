@@ -892,6 +892,8 @@ assert that the OLD PROSE no longer classifies. **The only exit from a damaged s
 ```
 legacy : [nonce (12) || ciphertext]                                  <- every installed device
 v1     : [b"CANARIS" || 1 || key_fingerprint (8) || nonce || ct]     <- nothing writes this yet
+v2     : [b"CANARIS" || 2 || key_fingerprint (8) || iv (12) || AES-256-GCM ct || tag (16)]
+                                                                     <- the WEB writer, switched off
 ```
 
 The fingerprint is what turns `undecryptable` into two verdicts: a header naming the key in hand
@@ -909,6 +911,58 @@ reads the magic as a nonce and reports the state unopenable - this very defect, 
 downgrade. So the reader shipped first (`v0.18.18`, behaviourally inert), and the writer flip
 (`state_blob::frame_v1` at `save_encrypted_with_key`, one line) waits until `minClientVersion`
 makes that reader the floor everywhere ([backlog](../backlog.md#p1---a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user-actually-holds-does-not-get-them-back-in-measured-2026-09-08)).
+
+#### v2 - the browser seals with WebCrypto, every platform reads it (2026-10-12)
+
+**Why.** On a 7.7 MB state the WASM ChaCha20-Poly1305 seal was 82 % of a web checkpoint (141 of
+175 ms, desktop Chrome): `chacha20` has no SIMD backend on `wasm32`. WebCrypto AES-GCM runs on
+hardware AES ([performance-audit](../frontend/performance-audit-2026-10-12.md#the-webcrypto-seal-v2---measured-2026-10-12)
+has the before/after table).
+
+**The decisions, each with its reason:**
+
+- **The fingerprint is the DEVICE key's**, the v1 function unchanged, so "sealed under another key"
+  is read from the header in both versions and `classifyStateLoadFailure` needs nothing new.
+- **The AES key is HKDF-SHA256(device key, `V2_KDF_SALT`, `V2_KDF_INFO`)**, never the device key: that
+  key already keys ChaCha20-Poly1305 for every legacy blob, and one raw key under two AEADs is a
+  question nobody has to answer if it never happens. Derived once per device key on the web, as a
+  non-extractable `CryptoKey`.
+- **The 16 header bytes are the AAD**, so a rewritten version or fingerprint fails the tag instead of
+  steering the reader somewhere plausible.
+- **The writer is TypeScript only** (`mlsStateSeal.ts`, routed by `sealWebMlsState` in
+  `mlsEncryptWorkerSession.ts`, which THROWS inside Tauri). `mls-core` has no v2 writer, so a native
+  build cannot produce one by construction.
+- **`mls-core` reads v2 on EVERY target**, because a web blob reaches a phone: a `.canari` backup
+  carries the stored state as-is (`exportMlsStateAsHex` -> `saveMlsState`).
+- **But in the browser, v2 is opened by WebCrypto** (`openMlsStateBlobV2`, dispatched in
+  `loadAndInitWasm`) and the WASM gets plain CBOR. Measured, not chosen: the WASM reader's software
+  AES opened 7.7 MB in 610 ms against 240 ms for ChaCha - a cold-start regression that would have
+  eaten the checkpoint saving. Every OTHER shape still goes to `mls-core` sealed. The two v2 readers
+  open the same committed fixture and throw the same codes (`STATE_KEY_MISMATCH` before the cipher,
+  `STATE_UNDECRYPTABLE` for a stub or a failed tag), which is what keeps them from drifting.
+- **The seal runs on the calling thread, not the encrypt worker**: WebCrypto already runs the cipher
+  off the JavaScript thread; what remains on it is the input copy, measured as the main thread's
+  longest stall.
+- **IV: 96 random bits per seal.** The random-IV GCM bound (~2^32 seals per key) is 136 years at one
+  checkpoint per second.
+
+**Downgrade story.** A build with the v1 reader (`>= v0.18.18`) refuses version 2 by name
+("written by a newer client, so this is a downgrade"); an older one reads `CANARIS\x02` as a nonce
+and fails the ChaCha tag. Both are `STATE_UNDECRYPTABLE`: loud, nothing destroyed, the user asked for
+the PIN - and holding a state that build cannot open. That is why **the writer ships OFF**
+(`MLS_STATE_SEAL_V2_WRITER_ENABLED = false`), read-first like v1. Three paths would hand a v2 blob to
+an old build: a web deploy rolled back; a tab still running the previous bundle that re-reads
+IndexedDB; and a web `.canari` backup restored on a phone whose store build predates the reader.
+**The flip is one line, owed once a stable carrying this reader has served the web AND
+`minClientVersion` is at or past it** (the second closes the backup path).
+
+**Pinned by** `mls-core/tests/state_blob_v2.rs` (the TypeScript writer's own bytes, frozen in
+`tests/fixtures/webcrypto-v2-peer-state.bin` by `frontend/scripts/freeze-v2-state-blob-fixture.ts`,
+must LOAD; every bit-flip region, truncation, wrong key, forged fingerprint and rewritten version
+fails as the right variant) and `mlsStateSeal.test.ts`; both assert the same known-answer fingerprint
+and derived key. **The known residue, pinned rather than hidden**: a corrupted FINGERPRINT byte reads
+as `rotated`, because the fingerprint is consulted before the tag - eight bytes of a multi-megabyte
+blob, the same in v1, and the recovery it leads to destroys nothing.
 
 Fresh start, in order:
 

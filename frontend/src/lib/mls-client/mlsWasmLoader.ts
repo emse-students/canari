@@ -9,6 +9,7 @@
  * WASM assets live under `$lib/wasm/` (built output).
  */
 import { beginBootSpan, endBootSpan, timeBootSpan } from './bootBenchmark';
+import { isMlsStateBlobV2, openMlsStateBlobV2 } from './mlsStateSeal';
 import type { GraineSignatureEngine, GraineSignatureVerdict } from '$lib/crypto/graineV2';
 
 export type MlsWasmBindings = typeof import('$lib/wasm/mls_wasm.js');
@@ -181,10 +182,21 @@ export async function loadAndInitWasm(
   stateWasExpected: boolean
 ): Promise<any> {
   const initWasm = await timeBootSpan('wasm-module', loadMlsWasmModule());
+  // A v2 blob is opened by WebCrypto and the WASM is handed plain CBOR (no key): the WASM's
+  // software AES opened it ~2.5x slower than it opens ChaCha (mlsStateSeal.ts says why and how
+  // much). Every other shape goes in sealed, so `mls-core` still decides legacy, v1 and unknown
+  // versions. A rejection carries mls-core's own code and propagates exactly as its throw would.
+  let input = state;
+  let key = deviceKeyB64;
+  if (state && deviceKeyB64 && isMlsStateBlobV2(state)) {
+    console.log(`[MLS] state blob is framed v2 (${state.length} B) - opening it with WebCrypto`);
+    input = await timeBootSpan('state-open-v2', openMlsStateBlobV2(state, deviceKeyB64));
+    key = undefined;
+  }
   // The constructor is synchronous, so begin/end around it is exact rather than a promise boundary.
   beginBootSpan('wasm-client-construct');
   try {
-    return new initWasm.WasmMlsClient(userId, deviceId, state, deviceKeyB64, stateWasExpected);
+    return new initWasm.WasmMlsClient(userId, deviceId, input, key, stateWasExpected);
   } finally {
     endBootSpan('wasm-client-construct');
   }

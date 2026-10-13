@@ -153,7 +153,7 @@ design differences between iOS and Android accepted, test data created on the LO
 | 2 | iOS safe areas: WebKit read every `env(safe-area-inset-*)` as 0, so "Publier" sat in the home indicator (finding C was NOT a defect: the last card clears the bar) | MERGED #1242, read on the iPhone - [parity §1.1](frontend/android-ios-parity.md) |
 | 3 | 44 px touch targets; a stacked list takes a real 44 px row, never `.tap-target` | MERGED #1243, read on the Mi 9T; the iPhone was read in the user's pass below, not as a separate row |
 | 4 | Readability: the iOS keyboard accessory bar (finding E, ~45 pt above every keyboard) | DONE - removed (the user's U4, READ on the iPhone 2026-09-30: no bar, themed keyboard) |
-| 5 | Coverage: the screens that need data, admin pages, Dynamic Type, landscape, iPad, Android at 200 % font, long-press and swipe overlays, three-button mode after `profile` | OPEN |
+| 5 | Coverage: the screens that need data, admin pages, Dynamic Type, landscape, iPad, Android at 200 % font, long-press and swipe overlays, three-button mode after `profile` | OPEN. **Read 2026-10-13** ([readings](device-verification.md#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle)): Android 200 % on 15 routes and a conversation (two P3 in the agenda), three-button mode on the same 15 routes plus the keyboard and the message action sheet (layout holds; one P2: Back closes sheet and conversation together), Dynamic Type (the iPhone ignores it - a decision). Left: admin pages, landscape, iPad, the data-bearing screens |
 
 **Tools the campaign left, each one a measurement that used to be a guess:**
 - `bun insets.mjs --mode ios --ios` reads the iPhone over `pymobiledevice3 webinspector cdp --port 9444`
@@ -209,9 +209,11 @@ navigation (the user flips that switch on the Mi 9T) - *"on peut accepter des di
 peut apprecier les choses aussi"*, so Android is improved, not only made acceptable; lot 5 keeps
 Dynamic Type, landscape and iPad, the long-press and swipe overlays, and the admin pages. Then ONE
 pre-release carrying all of it, read on both phones before the stable.
-**Not covered:** three-button navigation - `settings put global force_fsg_nav_bar 0` left the phone in
-gesture mode on this MIUI (restored with `settings delete`, the key was unset), so it needs the
-switch in the phone's own settings.
+**Three-button navigation, read 2026-10-13.** `settings put global force_fsg_nav_bar 0` left the phone in
+gesture mode when it ran MIUI; it runs LineageOS now, where
+`adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton`
+switches it (and `...navbar.gestural` switches back; either restarts the app, so the PIN is asked
+again). The verdicts are in [device-verification](device-verification.md#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
 
 **Android at 200 % text (Mi 9T, `settings put system font_scale 2.0`, 2026-09-30).** The PIN sheet,
 the feed, the chat list, the communities rail and the dashboard all REFLOW - the filters wrap, long

@@ -91,6 +91,9 @@ impl MlsManager {
                     }
                     Ok(crate::state_blob::Framed::V1 {
                         key_fingerprint, ..
+                    })
+                    | Ok(crate::state_blob::Framed::V2 {
+                        key_fingerprint, ..
                     }) => key_fingerprint == crate::state_blob::key_fingerprint(&key),
                     // Unreadable framing is not evidence about the KEY, and this probe's only power
                     // is to delete one. Keep it and let the load report the real reason.
@@ -114,8 +117,9 @@ impl MlsManager {
 
     /// Load using a pre-derived 32-byte key (no Argon2id needed).
     ///
-    /// The encrypted blob format is `[nonce (12) || ciphertext]`.
-    /// The key is used directly for ChaCha20-Poly1305 decryption.
+    /// Reads every shape [`crate::state_blob::parse`] knows: the legacy `[nonce (12) || ciphertext]`
+    /// (ChaCha20-Poly1305 under the key itself), the framed v1 (same cipher, behind a header) and
+    /// the framed v2 the web writes (AES-256-GCM under a key derived from this one).
     pub fn load_with_key(
         user_id: &str,
         device_id: &str,
@@ -126,29 +130,45 @@ impl MlsManager {
             // THE LENGTH FLOORS AND THE SHAPE DECISION BOTH LIVE IN `state_blob::parse`, because
             // three readers used to make them independently with a bare `len() >= 12` - and that
             // test passes for a framed blob carrying four bytes of body.
-            let sealed = match crate::state_blob::parse(&blob)? {
-                crate::state_blob::Framed::Legacy(body) => body,
+            // THE DISCRIMINATOR, AND IT IS CHECKED BEFORE THE CIPHER RATHER THAN AFTER IT - in both
+            // framed versions, by the same function. A failed AEAD tag cannot say whether the key
+            // was wrong or the bytes were altered; the fingerprint answers the first question on its
+            // own, so asking it first is the difference between "your PIN was changed on another
+            // device" being a fact and being a guess. *Never learn by failing what a fact could have
+            // told you.*
+            let require_this_key = |fp: [u8; crate::state_blob::FINGERPRINT_LEN]| {
+                if fp != crate::state_blob::key_fingerprint(key) {
+                    return Err(MlsError::StateSealedUnderAnotherKey(
+                        "the state's header names a different device key, so the PIN was rotated \
+                         on another device and the OLD one opens this state"
+                            .into(),
+                    ));
+                }
+                Ok(())
+            };
+            let plain = match crate::state_blob::parse(&blob)? {
+                crate::state_blob::Framed::Legacy(body) => crate::security::decrypt_blob(key, body)
+                    .map_err(|s| MlsError::StateUndecryptable(s.to_string()))?,
+                // Dormant until step 2 writes a v1 header - see `state_blob`'s module docs.
                 crate::state_blob::Framed::V1 {
                     key_fingerprint,
                     sealed,
                 } => {
-                    // THE DISCRIMINATOR, AND IT IS CHECKED BEFORE THE CIPHER RATHER THAN AFTER IT.
-                    // A failed AEAD tag cannot say whether the key was wrong or the bytes were
-                    // altered; the fingerprint answers the first question on its own, so asking it
-                    // first is the difference between "your PIN was changed on another device" being
-                    // a fact and being a guess. *Never learn by failing what a fact could have told
-                    // you.* Dormant until step 2 writes a header - see `state_blob`'s module docs.
-                    if key_fingerprint != crate::state_blob::key_fingerprint(key) {
-                        return Err(MlsError::StateSealedUnderAnotherKey(
-                            "the state's header names a different device key, so the PIN was                              rotated on another device and the OLD one opens this state"
-                                .into(),
-                        ));
-                    }
-                    sealed
+                    require_this_key(key_fingerprint)?;
+                    crate::security::decrypt_blob(key, sealed)
+                        .map_err(|s| MlsError::StateUndecryptable(s.to_string()))?
+                }
+                // Written by the web client's WebCrypto seal only; read here on every target
+                // because a `.canari` backup carries it to a phone.
+                crate::state_blob::Framed::V2 {
+                    key_fingerprint,
+                    header,
+                    sealed,
+                } => {
+                    require_this_key(key_fingerprint)?;
+                    crate::state_blob::open_v2(key, header, sealed)?
                 }
             };
-            let plain = crate::security::decrypt_blob(key, sealed)
-                .map_err(|s| MlsError::StateUndecryptable(s.to_string()))?;
             Some(plain)
         } else {
             None

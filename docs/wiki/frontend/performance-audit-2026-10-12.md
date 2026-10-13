@@ -20,7 +20,7 @@ Paths are under `frontend/src/lib/` unless they say otherwise. "Shipped" = a dra
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | 1   | **The restore decrypts every stored message to read a length.** The history replay checks its cursor against a wiped store with `getMessages(id).length === 0`, one AES-GCM decrypt per row                                                                                                                                                       | `utils/chat/history.ts:545`, called from the serial restore loop `utils/chat/conversations.ts:922-993`                                                                                                               | every cold start, every conversation                                     | 5000 rows: 158-190 ms -> 2.6-2.9 ms (desktop, fake IndexedDB); decrypts 5000 -> 0                                                                                                                                          | **#1772** (`countMessages`)                                                                                                    |
 | 2   | **One full encrypted checkpoint per drain, and a drain is often ONE frame.** `onBulkIngestEnd` sets `dirtyEncrypted = true` unconditionally, overwriting the commit/application distinction `setupMessageHandler.ts:965/983` made                                                                                                                 | `mls-client/mlsStatePersister.ts:130-135`                                                                                                                                                                            | every received frame on a live socket                                    | 7.7 MB state (80 groups x 44 leaves): desktop Chrome 2.3 ms export + 1 ms copy + **141 ms seal** + 31 ms IndexedDB put; native 3.8 ms export, 9.8 ms export+seal. One decrypt: 0.4 ms. The checkpoint is ~400x the message | Backlog (durability decision, see below)                                                                                       |
-| 3   | **The WASM seal is the checkpoint.** ChaCha20-Poly1305 in WASM has no SIMD backend (`chacha20` 0.10 ships avx2/sse2/neon/soft only) and runs at ~55 MB/s; it is off the main thread (encrypt worker) but costs CPU, battery and the durability window on every checkpoint                                                                         | `mls-wasm/src/lib.rs:93`, `mls-client/mlsEncryptWorkerSession.ts:77`                                                                                                                                                 | every checkpoint                                                         | 141-148 ms of 175 ms per 7.7 MB checkpoint (82 %) in desktop Chrome                                                                                                                                                        | Backlog: a WebCrypto seal (the framed `state_blob` V1 carries a version byte) or fewer/smaller checkpoints - a format decision |
+| 3   | **The WASM seal is the checkpoint.** ChaCha20-Poly1305 in WASM has no SIMD backend (`chacha20` 0.10 ships avx2/sse2/neon/soft only) and runs at ~55 MB/s; it is off the main thread (encrypt worker) but costs CPU, battery and the durability window on every checkpoint                                                                         | `mls-wasm/src/lib.rs:93`, `mls-client/mlsEncryptWorkerSession.ts:77`                                                                                                                                                 | every checkpoint                                                         | 141-148 ms of 175 ms per 7.7 MB checkpoint (82 %) in desktop Chrome                                                                                                                                                        | **Built, writer OFF**: the framed `state_blob` v2 ([below](#the-webcrypto-seal-v2---measured-2026-10-12)), 198 -> 47 ms per checkpoint |
 | 4   | **A message anywhere redraws the open thread.** `currentConvo` iterated the conversation `SvelteMap`, which subscribes to every key: each write to any of ~220 conversations re-ran it and ChatArea redid `groupMessages`, seen-by, one `parseEnvelope` per message (polls) and the unread count, plus a props refresh of every mounted row       | `composables/useConversations.svelte.ts:306-318` -> `components/chat/ChatArea.svelte:495-627`                                                                                                                        | every frame received outside the open thread                             | 52 writes elsewhere: 52 recomputations -> 0. Per recomputation on 5k messages: `groupMessages` 1.3-1.7 ms + 5000 `parseEnvelope` 1.2-2.7 ms (desktop, warm) + the row render (not measured)                                | **#1773** (`get(key)`)                                                                                                         |
 | 5   | **IndexedDB pages read the whole conversation.** `getMessagesPage` `getAll`s every row of the conversation, sorts, slices 50; there is no `[conversationId, timestamp]` index (SQLite has `LIMIT` but only `idx_messages_conv`, so it sorts in a temp B-tree)                                                                                     | `db/indexeddb.ts:609-635`, `db/sqlite.ts:183,598-616`                                                                                                                                                                | ~3 calls per conversation per cold start, every scroll-back              | 5000 rows: 28-31 ms per 50-row page                                                                                                                                                                                        | Backlog (needs an IndexedDB version bump)                                                                                      |
 | 6   | **A catch-up batch re-sorted the whole conversation once per message**                                                                                                                                                                                                                                                                            | `utils/chat/messageOrder.ts:36-59` (callers `useMessaging.svelte.ts:638,708,941`, `ChatBackgroundService.svelte:1186,1219,1231`)                                                                                     | every batch, every conversation                                          | 200 into 5000: 18.5-25.3 ms -> 0.1 ms; sorts 200 -> 1                                                                                                                                                                      | **#1774** (one stable sort)                                                                                                    |
@@ -39,8 +39,10 @@ Paths are under `frontend/src/lib/` unless they say otherwise. "Shipped" = a dra
 
 - `stores/announcement.svelte.ts:126` `resetAnnouncementState` is documented as "so the next account
   to sign in is asked on its own behalf" and nothing calls it: a second account signing in in the same
-  tab is probably never shown its announcements. Kept in #1775 and recorded in the
-  [backlog](../backlog.md).
+  tab is probably never shown its announcements. Kept in #1775; **wired 2026-10-13**: `logoutImpl`
+  now calls it (pinned by `session/logoutResetsAccountState.test.ts`), and the reset moves a
+  generation on so an ask still in flight when its account signs out cannot land its announcement
+  for the next one (`stores/announcement.test.ts`).
 - The web checkpoint comments still say "Argon2" (`services/WebMlsService.ts:68,878,900,904`,
   `mls-client/mlsEncryptWorkerSession.ts:74`); the seal has been a direct ChaCha20-Poly1305 under the
   device key since v0.11.0 (`mls-wasm/src/lib.rs:93`). Finding 3 is what the Argon2 story hid.
@@ -81,6 +83,48 @@ application-only ratchet advance costs once the frame is acked (TAB-3b in the
 levers, cheapest first: a faster seal (format, no semantics); not checkpointing a drain that only
 advanced receive ratchets (semantics - needs the TAB-3b answer); per-group storage (structure).
 
+**2026-10-13: the second lever is measured at the MLS layer and parked as a decision.** On the Mi 9T,
+native export + seal is 49 ms at 7.7 MB against a 0.49 ms decrypt. A file left behind by received
+frames re-reads them and never loses them, within the 2000-generation window. Three app-level
+consequences are unmeasured, the native resume reload first
+([open-questions](../open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)).
+
+## The WebCrypto seal (v2) - measured 2026-10-12
+
+Lever one above, built: the framed `state_blob` v2 (AES-256-GCM through WebCrypto on the web, read
+by `mls-core` everywhere - the design and the downgrade story are in
+[mls-protocol](../protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)).
+Same bench, same states, desktop Chrome, the app's own WASM and the app's own `mlsStateSeal.ts`,
+medians of 5 (loads: of 3) from two runs - a range is the two runs' medians, and the small states
+spread by up to ~40 % (20 groups: load 60-84 ms), so read the 80-group row. "legacy" is the
+unframed `[nonce || ChaCha20-Poly1305]` blob every web client writes today - NOT the framed v1,
+which nothing writes; the bench's own output calls these columns `v1`:
+
+| groups | state | seal legacy (WASM ChaCha) | seal v2 (WebCrypto) | checkpoint legacy | checkpoint v2 | load legacy | load v2 (web) | v2 through the WASM reader |
+| ------ | ----- | --------------------- | ------------------- | ------------- | ------------- | ------- | ------------- | -------------------------- |
+| 5      | 0.48 MB | 11 ms               | 0.3-0.5 ms          | 13 ms         | 2-3 ms        | 18-20 ms | 8-9 ms       | 44-52 ms                   |
+| 20     | 1.9 MB  | 40-44 ms            | 3 ms                | 50-60 ms      | 12-16 ms      | 60-84 ms | 25-39 ms     | 152-197 ms                 |
+| 40     | 3.8 MB  | 83 ms               | 6-7 ms              | 101-104 ms    | 22-27 ms      | 129-143 ms | 46-66 ms   | 327-360 ms                 |
+| 80     | 7.7 MB  | 158-163 ms          | 10-11 ms            | 196-200 ms    | **47 ms**     | 233-240 ms | **96-98 ms** | 610-618 ms               |
+
+"checkpoint" = export + (legacy only: the copy for the worker) + seal + IndexedDB put. "load" = what a
+cold start pays to construct the client from the stored blob.
+
+- **A 7.7 MB checkpoint goes from ~198 ms to ~47 ms (4.2x); the seal alone from ~160 to ~10 ms.**
+  What is left is the IndexedDB put (~34 ms) and the export.
+- **The cold-start load also halves (240 -> 97 ms)**, but ONLY because the web opens v2 with
+  WebCrypto: the WASM reader's software AES took 610 ms, ~2.5x WORSE than ChaCha. That column is
+  why `loadAndInitWasm` dispatches v2 to WebCrypto; it is not a web path.
+- **The main thread's longest stall during the v2 seal read 0.0 ms** (a `MessageChannel` ping loop,
+  resolution ~0.1 ms): Chrome copies and encrypts off the JavaScript thread. The legacy seal ran in the
+  encrypt worker, so its column is CPU and battery, never main-thread time - the v2 win is in the
+  durability window, CPU and battery, not in jank.
+- **THE WRITER SHIPS OFF** (`MLS_STATE_SEAL_V2_WRITER_ENABLED = false`, read-first): nothing above
+  reaches a user until the one-line flip the mls-protocol section conditions.
+
+**Not measured:** Firefox and Safari (WebCrypto off-thread there is believed, not seen); the Mi 9T's
+Chrome; a native read of a v2 blob on a phone (only a restored web backup does it, once).
+
 ## Phase 2 - what was measured, and what was not
 
 **Measured (reproducible, in the repository):** the checkpoint split above (browser and native), and
@@ -101,6 +145,34 @@ the per-change before/after numbers in each pull request (vitest on a desktop, `
   received application message, read from the code: one message batch write and one conversation row
   per drain, three `localStorage` writes (seen ledger + its index + the send-ratchet ledger), and one
   full checkpoint (finding 2) - the checkpoint dominates the bytes by three orders of magnitude.
+
+## A salon pressed on a heavy phone - 2026-10-13
+
+**Reported**: a store `1.2.6` Pixel 6a (85 groups, a 208-member community) opening its biggest
+salon warm froze the community list ~1.6 s with no press feedback, then painted in one frame;
+smaller salons took 300-700 ms.
+
+**What blocks, read on the Mi 9T** (`1.2.6` bench build on dev, CDP, `long-animation-frame`):
+
+- **The thread's mount is ONE task.** A warm open of a 48-message salon painted 428 ms after the
+  click, in a single 441 ms frame of which 382 ms is Svelte's microtask flush
+  (`queueMicrotask` -> the effect queue): the click handler set the selection, selected the
+  conversation and started the history load in one synchronous run, so the row's highlight and the
+  whole thread were painted together, after it. Nothing in it is a synchronous store read - the
+  history load is async and its rows come later.
+- **The faces add to the same main thread.** Each avatar mirrored to the notification cache cost
+  ~8 ms of main thread (`Array.from` + JSON of every byte): 50 faces, 360-440 ms - and on every
+  open, not once ([mobile](mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none),
+  fixed separately).
+
+**The fix here**: `onSelectChannelConversation` sets the selection - the row's highlight - and runs
+the rest after the next paint (`afterNextPaint`: a frame callback, then a posted task, no clock). A
+second press during that frame wins and the first salon is never mounted. **What it does not do**:
+make the mount cheaper. The list still freezes for the mount's length, but after showing the press.
+
+**Not measured**: the Pixel 6a itself (the user's phone, never a bench device); a salon with 50
+faces that have photos (dev serves none, so no avatar is fetched or mirrored on the bench); the
+mount's cost split by row type.
 
 ## Draft pull requests from this audit
 
