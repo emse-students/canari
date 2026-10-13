@@ -1212,6 +1212,50 @@ Also met: swiping right on `/posts` (three `input swipe` attempts, on the media 
 header) did not open `/camera` in this pass. The camera was reached through a link click. In the
 post composer, "Appareil photo" opens the system camera.
 
+## The Mi 9T readings of v1.2.6-alpha.1 (2026-10-13)
+
+Build `1.2.6 (100200601)`, the `v1.2.6-alpha.1` release APK (`app-universal-release.apk`, sha256
+`43b5b2a8...`), on `dev.canari-emse.fr` (`dev.7b97c2a`). The phone carried a debug-keystore build,
+so this was an **uninstall and a fresh install**: a NEW device, signed in again as the `fourth`
+account ("Canari Test Delta"), with "Rester connecte" unticked, so every cold open asks for the PIN.
+The peer is `canari-test-gamma` in the `chrome-w2` dev tab. Every number comes from CDP on the
+inspectable WebView. Evidence: `F:/Programmation/canari-harness/a1-bench/r1013-a126/` (run JSONs,
+`cycle-a126.ndjson`, the console captures `cons-*.ndjson`, frames). The salon items ran in a bench
+community, `Bench126`, created by gamma for this pass (gamma administrator, delta member).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| Killed notification tap to composer to the notified message, behind the PIN (n=6) | **`PASS`** | Same instrument and method as [the 1.2.5 reading](frontend/notification-to-conversation-latency.md#the-whole-cycle-tap-to-delivered-reply-2026-10-12). Medians [range], ms after the tap, `1.2.5-alpha.1` then this build: route `/chat` **3121 -> 1987** [1934-2092]; composer usable **3632 -> 3168** [3060-3536]; the notified message's row **4606 -> 3673** [3510-3995]; composer -> notified row **945 -> 455** [427-518]. `MLS ready` 2899 -> 2587. Warm (backgrounded 6 s, n=6): composer 1193 -> 935, notified row 1882 -> 1789. Send click -> outbox `sent`: killed 655 -> 638, warm 610 -> 514 |
+| F1: nothing drawn before the PIN is accepted | **`PASS`** | The route is `/chat` at ~2.0 s while the PIN gate is up. With the gate on screen, the DOM holds **0** message rows and no message text (read over CDP), and the frame shows the opaque keypad only (`f1-gate-6s.png`). In all six runs `[LANDING_PREVIEW] ... drawn from the local store` comes 85-190 ms after the `pin-check` request has answered |
+| PIN entry latency | **`PASS`** | PIN submitted -> `MLS ready`: median **436 ms** [397-1211] against **811 ms** [761-1099] on `1.2.5-alpha.1`. The salt is asked while the keypad is up (`[PIN] Salt asked while the keypad was up`, `pin-salt-fetch` 0-30 ms at submit). The one slow run is `mls-save-state` taking 535 ms, not the PIN path. The gate itself is unchanged: drawn at 1732 ms (1724 before) |
+| A salon message is shown at once and settles | **`PASS`** | Three sends with real taps (`adb input`): the bubble is drawn **27-45 ms** after the click with "Envoi...", re-keyed to the server id at **232-759 ms** with "Message envoye", the status line gone at ~2.4-2.9 s. One row on each side (no duplicate), and the peer has it |
+| Double tap likes WITHOUT opening the info panel; single tap opens it | **`PASS`** | Four double taps (two as CDP touch pairs 130 ms apart, one as two `adb input tap` in one shell, one in the logged session): one heart each, seen on gamma's tab, and **0 frames** with the info panel in the 1.5 s after. Single taps: the panel ("Envoye a ... Lu par ...") opens, 57-58 frames |
+| Polls: manual close, shortcut jump, pinned bar alignment | **`PASS`** | The author (delta, phone) closed poll A: "Cloturer le sondage", system confirm, OK; both clients then read "Termine", `closable: false`, and the "1 sondage actif" pill disappears on both. Gamma (administrator) is offered the close on delta's poll B and closing it from the web ends it on the phone. With 25 messages below, the poll entry of the pill brings the poll into view (its title at y=414 of 945 CSS px), and the pinned entry brings the pinned message into view. The three pills (title, polls, pinned) share one centre line (x=461 of 923 in the frame) |
+| The typing bubble stands clear of the composer | **`PASS`** | Gamma typing: the bubble's bottom is **16 CSS px** above the composer's top (wrapper 819.7-869.65, composer top 869.46, the wrapper's 16 px padding below the bubble) (`typing.png`) |
+| "Seen by" heads do not flicker in a community | **`PASS`** | Heads sampled every 16 ms. Live exchange: every move is one step to the newest read row, never back. Three reloads of gamma's tab: delta's head is under `seen-c` from the first sample (~200 ms) and never moves in 12 s. Two cold starts of the phone into the salon: gamma's head is under `seenphone3` from its first sample and never moves in 15 s. `canari-dev-social-service-1` logged **0** `[CHANNEL_READ] mark past the newest message bounded` in the 40 min of the pass |
+| Nothing fatal in the logs | **`PASS`** | 2326 console lines over the 12 timed runs plus two full captures (a cold start, a salon session; `Runtime.enable` replays from page load): **no** `error`/`warning` entry, **no** exception, **no** `[SELECT] selection dropped`. The only `[RESTORE]` line is the normal `N conversation row(s) seeded - history follows`. Logcat: no `FATAL`, no ANR; every process death is the instrument's own kill |
+
+**Not measured, and why.** T1 (the notification shown) and a REAL notification tap: dev has no push
+(`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent), so the tap is the notification's exact `PendingIntent`
+fired with `am start`, as in the 1.2.5 reading. The PIN is typed by the instrument (~130 ms); a
+person adds 1.5-3 s. The landing preview under the vault path ("Rester connecte" ticked) was not
+read, since this device is on the PIN path. The first ~100 ms after a salon opens are not covered
+by the heads sampler (it is installed before the tap on the phone, after the open on the web).
+
+**Met on the way, not asked about:**
+
+- **The creator of a community is not offered "Epingler" until a reload.** Gamma created `Bench126`
+  in the web tab; the message menu in its salon showed Transferer / Modifier / Supprimer and no
+  Epingler, although the database gives gamma the Administrateur role (`channel.moderate`). After a
+  reload the same menu has Epingler. One observation; whether "Cloturer le sondage" was also missing
+  before the reload was not read.
+- **The poll close confirmation is the system dialog with English buttons** ("CANCEL" / "OK") over a
+  French sentence (`poll-close-1.png`).
+- **The sticky "AUJOURD'HUI" pill sits partly under the pinned pill** after the pinned jump
+  (`pinned-jump.png`).
+- **The phone's long-press menu has no "Epingler" for a plain member**, which matches
+  `mayPinMessage`.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.

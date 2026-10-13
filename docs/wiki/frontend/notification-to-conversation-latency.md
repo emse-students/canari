@@ -479,6 +479,11 @@ when the recipient's presence is alive (`scheduleDeferredPush`).
 5. **F1 routes ~1.15 s sooner when killed but the composer does not move** (3.63 -> 3.59 s): the
    pane still waits for `MLS ready`.
 
+**The shipped series, read on `v1.2.6-alpha.1` (2026-10-13, same instrument, n=6):** killed with the
+PIN, route `/chat` 3121 -> **1987**, composer 3632 -> **3168**, the notified row 4606 -> **3673**
+(composer -> row 945 -> 455); PIN submitted -> `MLS ready` 811 -> **436**; warm composer 1193 ->
+935. Details and evidence: [device-verification](../device-verification.md#the-mi-9t-readings-of-v126-alpha1-2026-10-13).
+
 ### F10 - the stored page is drawn before the server probe (measured: first row 773 -> 356 ms after the pane, killed)
 
 `loadHistoryForConversation`'s fast path probes the server cursor (`limit=1`) and, when nothing is
