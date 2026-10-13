@@ -628,6 +628,11 @@ anything is how a reader learns by being ignored what a fact could have told the
 here already excluded the reader for the same reason - `SidebarNewChatModal` and `ChatGroupPanel`.
 This was the last one that did not.
 
+**Tab completes the open @mention list (2026-10-13).** `useMentionAutocomplete.handleKeydown` treats Tab
+like Enter on a row: the highlighted suggestion, else the first, through the same `select`. Shift+Tab,
+a modified Tab, a Tab during IME composition, and any Tab with the list closed or empty are left to
+the browser. No string is involved; touch keyboards have no Tab.
+
 **The exclusion lives in `useMentionAutocomplete`, not in its three callers.** `ChatComposer`,
 `PostComments` and `MarkdownComposerField` all reach the composable through
 `MentionComposerInput`, so threading a prop would have been three components carrying a fact that
