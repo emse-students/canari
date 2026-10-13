@@ -1379,22 +1379,6 @@ export function useMessaging() {
           ctx.playSendTone?.();
         }
       } catch (error) {
-        // THE ACCOUNT THAT MADE THIS SEND HAS LEFT: a held upload refused as `session-ended`.
-        // Nothing of it may reach the next account - this composable outlives a sign-out, so a
-        // re-staged file would sit in the NEXT account's composer, and the caption below would
-        // be held for the next session's gate and sealed by whoever signs in.
-        if (error instanceof SalonNotLoadableError && error.reason === 'session-ended') {
-          sessionEndedDuringSend = true;
-        }
-        if (sentMediaMessageCount < fileEntries.length) {
-          if (sessionEndedDuringSend) {
-            ctx.log(
-              `[MEDIA] ${fileEntries.length - sentMediaMessageCount} file(s) dropped, not re-staged: the session ended while the salon was loading`
-            );
-          } else {
-            pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
-          }
-        }
         // BOTH BRANCHES OF THE LOOP ABOVE LAND HERE AND ONLY ONE OF THEM ASKS A SERVER ANYTHING.
         // The MLS branch writes bytes to IndexedDB and returns; the channel branch uploads and
         // sends inline, and both of those now throw a typed refusal. So the status is READ rather
@@ -1410,12 +1394,36 @@ export function useMessaging() {
               (isEnqueueQuotaFailure(error)
                 ? m.chat_media_send_error_storage_full()
                 : m.chat_media_send_error_generic()));
-        // A held upload may be refused long after the click: the banner belongs to its conversation.
-        if (ctx.selectedContact === sentFrom) ctx.setSendError(mediaRefusal);
-        else ctx.log(`[MEDIA] banner not shown: the conversation changed since the send`);
-        ctx.log(
-          `[MEDIA] send failed (status=${status ?? 'none'}), ${fileEntries.length - sentMediaMessageCount} file(s) re-staged: ${String(error)}`
-        );
+        const unsent = fileEntries.length - sentMediaMessageCount;
+        // THE STAGING IS ONE QUEUE FOR EVERY CONVERSATION, so where an unsent file goes back is a
+        // question of WHICH conversation is on screen - a held salon upload may be refused long after
+        // the click.
+        if (error instanceof SalonNotLoadableError && error.reason === 'session-ended') {
+          // THE ACCOUNT THAT MADE THIS SEND HAS LEFT. Nothing of it may reach the next account: this
+          // composable outlives a sign-out, so a re-staged file would sit in the NEXT account's
+          // composer, and the caption below would be held for the next session's gate and sealed
+          // by whoever signs in. No banner either - it would be the next account's.
+          sessionEndedDuringSend = true;
+          ctx.log(
+            `[MEDIA] ${unsent} file(s) dropped, not re-staged: the session ended while the salon was loading`
+          );
+        } else if (ctx.selectedContact === sentFrom) {
+          if (unsent > 0) {
+            pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
+          }
+          ctx.setSendError(mediaRefusal);
+          ctx.log(
+            `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
+          );
+        } else {
+          // THE MEMBER MOVED ON. Re-staged here, the file would sit in ANOTHER conversation's
+          // composer and its next Send would post it there. Dropped, and said so on the banner of
+          // the conversation now on screen, with the cause.
+          ctx.setSendError(m.chat_media_dropped_other_conversation({ cause: mediaRefusal }));
+          ctx.log(
+            `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) DROPPED, not re-staged: the conversation changed since the send: ${String(error)}`
+          );
+        }
       } finally {
         isUploadingMedia = false;
       }

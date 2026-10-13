@@ -153,9 +153,11 @@ describe('a salon upload before its salon is loaded', () => {
 
     expect(uploadMock).not.toHaveBeenCalled();
     expect(ctx.setSendError).toHaveBeenLastCalledWith(m.chat_send_error_salon_listing_failed());
+    // Still on that salon: the file goes back to its composer.
+    expect(messaging.pendingMediaFiles).toHaveLength(1);
   });
 
-  it('sends the caption of a refused upload to the salon it was written in, not the one on screen', async () => {
+  it('sends the caption of a refused upload to the salon it was written in, and drops its file', async () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const messaging = useMessaging();
     const ctx = makeContext();
@@ -173,8 +175,12 @@ describe('a salon upload before its salon is loaded', () => {
 
     expect(sendChatMessageSpy).toHaveBeenCalledTimes(1);
     expect(sendChatMessageSpy.mock.calls[0][1]).toBe(CHANNEL);
-    // And the banner stays off the conversation now on screen.
-    expect(ctx.setSendError).not.toHaveBeenCalledWith(m.chat_send_error_salon_not_listed());
+    // The file is NOT put back in the composer of the conversation now on screen, where its next
+    // Send would post it; the banner there says it was removed, and why.
+    expect(messaging.pendingMediaFiles).toHaveLength(0);
+    expect(ctx.setSendError).toHaveBeenCalledWith(
+      m.chat_media_dropped_other_conversation({ cause: m.chat_send_error_salon_not_listed() })
+    );
   });
 
   /**

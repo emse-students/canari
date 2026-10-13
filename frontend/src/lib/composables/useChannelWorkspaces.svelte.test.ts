@@ -97,6 +97,7 @@ import { useChannelWorkspaces, type ChannelWorkspaceContext } from './useChannel
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
 import {
   beginSalonListing,
+  readSalonSendGate,
   resetSalonSendGate,
   salonSendWaiterCount,
   settleSalonListing,
@@ -974,6 +975,126 @@ describe('useChannelWorkspaces - hydrateJoinedCommunity', () => {
       expect(api.channelWorkspaces.find((w) => w.id === 'unr-11')?.channels).toHaveLength(3)
     );
     expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * A LISTING BELONGS TO ITS SESSION. `globalChannels` is a singleton: a listing still running when
+ * its account signs out used to keep `isLoadingWorkspaces` against the next account (whose
+ * post-login listing was refused, so its salon sends stayed `pending` for good behind the send
+ * gate) and to write the previous account's communities into the sidebar, the runtime and the gate.
+ */
+describe('useChannelWorkspaces - a listing that outlives its session', () => {
+  beforeEach(() => {
+    listUserWorkspaces.mockReset();
+    listChannels.mockReset();
+    resetSalonSendGate();
+  });
+
+  it('lets the next account list and send, and writes nothing of the account that left', async () => {
+    let releaseOld: (value: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces.mockImplementationOnce(
+      () => new Promise<WorkspaceDto[]>((resolve) => (releaseOld = resolve))
+    );
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws-b', 'Bravo', 'bravo')]);
+    listChannels.mockImplementation(async (workspaceId: string) =>
+      workspaceId === 'ws-b'
+        ? [makeChannelDto('salon-b', 'general')]
+        : [makeChannelDto('salon-a', 'general')]
+    );
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    // Account A's post-login listing is in flight when A signs out.
+    const oldListing = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    resetSalonSendGate();
+
+    // Account B signs in: its listing RUNS, and a send typed meanwhile waits for it.
+    const held = whenSalonSendable('channel_salon-b');
+    expect(await api.loadChannelWorkspacesFromBackend(ctx)).toBe(true);
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+    expect(await held).toEqual({ kind: 'ready' });
+
+    // A's answer lands afterwards: nothing of it is written, and B's state is left alone.
+    releaseOld([makeWorkspaceDto('ws-a', 'Alpha', 'alpha')]);
+    expect(await oldListing).toBe(false);
+    expect(api.channelWorkspaces.map((w) => w.id)).toEqual(['bravo']);
+    expect(workspaceForChannel('salon-a')).toBeNull();
+    expect(readSalonSendGate('channel_salon-a')).toEqual({
+      kind: 'refused',
+      reason: 'not-listed',
+    });
+    expect(api.workspacesLoadError).toBeNull();
+    expect(api.isLoadingWorkspaces).toBe(false);
+  });
+
+  it('does not hand the next session a superseded listing flag', async () => {
+    let releaseOld: (value: WorkspaceDto[]) => void = () => {};
+    let releaseNew: (value: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces
+      .mockImplementationOnce(() => new Promise<WorkspaceDto[]>((r) => (releaseOld = r)))
+      .mockImplementationOnce(() => new Promise<WorkspaceDto[]>((r) => (releaseNew = r)));
+    listChannels.mockResolvedValue([]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    const oldListing = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    resetSalonSendGate();
+    const newListing = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+
+    // The old one ends first: the flag is the new listing's, so a third call is still refused.
+    releaseOld([]);
+    expect(await oldListing).toBe(false);
+    expect(api.isLoadingWorkspaces).toBe(true);
+    expect(await api.loadChannelWorkspacesFromBackend(ctx)).toBe(false);
+
+    releaseNew([]);
+    expect(await newListing).toBe(true);
+    expect(api.isLoadingWorkspaces).toBe(false);
+  });
+
+  it("drops the reload a join owed the listing once that join's session signed out", async () => {
+    let releaseOld: (value: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces.mockImplementationOnce(
+      () => new Promise<WorkspaceDto[]>((resolve) => (releaseOld = resolve))
+    );
+    listUserWorkspaces.mockResolvedValue([]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    const oldListing = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    await api.hydrateJoinedCommunity(ctx);
+    resetSalonSendGate();
+    releaseOld([]);
+    await oldListing;
+    // The next account's own listing ends without paying the leaving account's owed reload.
+    expect(await api.loadChannelWorkspacesFromBackend(ctx)).toBe(true);
+    await tick();
+
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+    expect(api.isLoadingWorkspaces).toBe(false);
+  });
+
+  it('records no failure for the next session when the old listing fails after the sign-out', async () => {
+    let failOld: (error: unknown) => void = () => {};
+    listUserWorkspaces.mockImplementationOnce(
+      () => new Promise<WorkspaceDto[]>((_, reject) => (failOld = reject))
+    );
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    const oldListing = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    resetSalonSendGate();
+    failOld(new SessionExpiredError());
+
+    expect(await oldListing).toBe(false);
+    expect(api.workspacesLoadError).toBeNull();
+    expect(api.isLoadingWorkspaces).toBe(false);
   });
 });
 

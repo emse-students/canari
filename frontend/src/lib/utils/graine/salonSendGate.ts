@@ -136,6 +136,21 @@ export function beginSalonListing(): number {
 }
 
 /**
+ * Whether `token` (from {@link beginSalonListing}) still names the current session. A listing that
+ * outlived a sign-out reads `false` here and must stop writing: the communities, the runtime map and
+ * the gates it would fill are the NEXT account's. One counter for the gate and the listing, so the
+ * two can never disagree about which session a listing belongs to.
+ */
+export function isCurrentSalonSession(token: number): boolean {
+  return token === generation;
+}
+
+/** The current session's token, for a caller that must later ask {@link isCurrentSalonSession}. */
+export function currentSalonSession(): number {
+  return generation;
+}
+
+/**
  * A community listing ended. When none is left in flight, every salon still waiting is refused:
  * the listing that could have entered it answered without it (`loaded`) or gave up (`failed`).
  */

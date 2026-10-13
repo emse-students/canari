@@ -366,6 +366,7 @@
   "chat_send_error_seal_key_group_catching_up": "Rien n'a été envoyé : cet appareil rattrape les clés de la communauté. Réessayez dans un instant.",
   "chat_media_action_send": "Envoi du média",
   "chat_media_send_error_generic": "Échec de l'envoi du média. Réessayez dans un instant.",
+  "chat_media_dropped_other_conversation": "Une pièce jointe envoyée dans une autre conversation a été retirée. {cause}",
   "chat_media_send_error_storage_full": "Impossible de mettre le média en file d'attente : l'appareil n'a plus d'espace de stockage. Libérez de la place puis réessayez.",
   "outbox_edge_blocked": "Vos messages ne passent pas : le réseau est bloqué avant d'atteindre le serveur (filtre de sécurité). Ils sont conservés et seront envoyés automatiquement ; si cela dure, essayez une autre connexion.",
   "outbox_upload_too_large": "Ce fichier n'a pas pu être envoyé : il dépasse la taille maximale acceptée par le serveur. Envoyez une version plus petite ou compressée.",
