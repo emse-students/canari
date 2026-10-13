@@ -2026,10 +2026,10 @@ export const BLOCK_LIST_READ_NARRATION = [/^\[blocks\.listBlockedUsers\]$/];
 
 /**
  * WHAT ANY PAGE LOAD SAYS ABOUT ITSELF, so a row that RELOADS a client names it instead of widening
- * the classifier. Four lines, each a function-entry or restore log the project's standard requires
- * and each carrying no value that could be a finding: the brand's fit measurement, the text-zoom
- * measurement, the notification-preference fetch, and the Graine key-group registry being restored
- * before the drain (the boot step of the v2 reader - its COUNT is not asserted here).
+ * the classifier. Each is a function-entry or restore log the project's standard requires and none
+ * carries a value that could be a finding: the brand's fit measurement, the text-zoom measurement,
+ * the notification-preference fetch, the Graine key-group registry being restored before the drain
+ * (the boot step of the v2 reader - its COUNT is not asserted here), and the two unread-count reads.
  *
  * THEY ARE PINNED TO THEIR OWN SENTENCES and applied only by a row that provoked a reload
  * (`graineauth.mjs` reloads W2 on purpose to re-read history). A client that did not reload and
@@ -2040,6 +2040,9 @@ export const PAGE_BOOT_NARRATION = [
   /^\[textZoom: font \d+px over a \d+px rem box -> --text-zoom [\d.]+\]$/,
   /^\[notificationPreferences\.fetch\]$/,
   /^\[GRAINE\] key-group registry restored before the drain - \d+ group\(s\)/,
+  // The salon unread counts (2026-10-08) are read from the server at every boot, once when the
+  // communities load and once when the live stream opens. Seen first on GRAINE-AUTH-6, 2026-10-13.
+  /^\[UNREAD\] (?:communities loaded|live stream back): \d+ salon\(s\) unread on the server, \d+ count\(s\) moved here$/,
 ];
 
 /**

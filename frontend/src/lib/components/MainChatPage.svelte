@@ -39,6 +39,7 @@
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
   // whole service into this page's module graph for a `catch` - see `callFailure.ts`.
   import { describeCallFailure } from '$lib/utils/callFailure';
+  import { afterNextPaint } from '$lib/utils/afterNextPaint';
   import {
     claimChannelReadSignal,
     newestForeignMessageAt,
@@ -474,19 +475,28 @@
         void channels.joinPrivateChannelAsAdmin(channelId, channelName, channelsCtx());
       },
       onSelectChannelConversation: (channelId: string) => {
-        // THE RECEIPT IS OWED FOR WHAT WAS THERE TO READ, not for what this device had counted as
-        // unread. Read BEFORE selectConversation, which resets the conversation's state; the marker
-        // in `channelReadSignal` is what keeps an idle re-open from pushing to ourselves again.
-        const readUpTo = newestForeignMessageAt(
-          convs.conversations.get(channelId)?.messages ?? [],
-          session.userId
-        );
+        // THE PRESSED ROW LIGHTS UP FIRST, AND THE SALON MOUNTS AFTER THAT FRAME IS PAINTED. Both
+        // used to happen in one flush, so the thread's mount - 382 ms for a 48-message salon on the
+        // Mi 9T, ~1.6 s for a 50-face "general" on a Pixel 6a (store 1.2.6, 2026-10-13) - held the
+        // list frozen with no sign the press had been taken. The row's highlight is
+        // `selectedChannelId`; the thread follows `selectConversation`, below.
         channels.selectedChannelConversationId = channelId;
-        convs.selectConversation(channelId);
-        void convs.loadHistoryForConversation(channelId, channelId, convCtx());
-        if (claimChannelReadSignal(channelId, readUpTo)) {
-          void channelService.markChannelRead(channelId);
-        }
+        afterNextPaint(() => {
+          // A second press during the frame wins: the first salon is not mounted under it.
+          if (channels.selectedChannelConversationId !== channelId) return;
+          // THE RECEIPT IS OWED FOR WHAT WAS THERE TO READ, not for what this device had counted as
+          // unread. Read BEFORE selectConversation, which resets the conversation's state; the
+          // marker in `channelReadSignal` is what keeps an idle re-open from pushing to ourselves.
+          const readUpTo = newestForeignMessageAt(
+            convs.conversations.get(channelId)?.messages ?? [],
+            session.userId
+          );
+          convs.selectConversation(channelId);
+          void convs.loadHistoryForConversation(channelId, channelId, convCtx());
+          if (claimChannelReadSignal(channelId, readUpTo)) {
+            void channelService.markChannelRead(channelId);
+          }
+        });
       },
       onSelectCommunity: () => {
         // Switching community must not keep the previous channel open: clear the selection

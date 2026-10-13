@@ -33,6 +33,12 @@ vi.mock('$lib/db', () => ({ closeOpenIndexedDbStores: () => closeStoresMock() })
 const discardAppLogMock = vi.fn(() => {});
 vi.mock('$lib/utils/appLog', () => ({ discardAppLog: () => discardAppLogMock() }));
 
+/** The avatar mirror's memory of what it wrote, which `clear_app_data` makes false. */
+const forgetMirroredAvatarsMock = vi.fn(() => {});
+vi.mock('$lib/utils/avatarMirror', () => ({
+  forgetMirroredAvatars: () => forgetMirroredAvatarsMock(),
+}));
+
 const forgetMock = vi.fn(async (_alias?: string) => {});
 const disableMock = vi.fn(async (_alias?: string) => {});
 vi.mock('$lib/services/biometric', () => ({
@@ -287,6 +293,15 @@ describe('wipeDeviceToFactory on a native runtime', () => {
     expect(invoked).toContain('clear_app_data');
     // The half that was missing: a phone kept this.
     expect(deleted).toContain('CanariDB_u1');
+  });
+
+  it('forgets the mirrored faces once their files are deleted', async () => {
+    // Otherwise the next account on the same process is never mirrored a face this memory
+    // still calls written, though `clear_app_data` deleted every `avatar_*` file.
+    forgetMirroredAvatarsMock.mockClear();
+    await wipeDeviceToFactory();
+    expect(invoked).toContain('clear_app_data');
+    expect(forgetMirroredAvatarsMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not claim an empty device while a WebView database survives', async () => {

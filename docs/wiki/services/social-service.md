@@ -38,7 +38,10 @@ does, which is now almost nothing:
 1. A message names `senderSessionId` and `messageIndex`, and the row is refused without them
    (`CHANNEL_SESSION_REQUIRED`, `CHANNEL_MESSAGE_INDEX_REQUIRED`). The key is
    `HKDF(seed, sessionId, index)` and the seed never leaves the sending devices, so a row missing
-   either is a row NOBODY can open - including its own author.
+   either is a row NOBODY can open - including its own author. It must also carry a Graine v2
+   `signature` (64 bytes, base64), refused otherwise with `CHANNEL_SIGNATURE_REQUIRED` since every
+   client the floor admits signs ([channel-encryption 21.8](../protocols/channel-encryption.md#218-the-server-refuses-an-unsigned-salon-row-2026-10-13)).
+   The service checks its shape and cannot verify it.
 2. Seeds travel over the community's MLS distribution group, whose `groupInfo` this service serves
    to members only (`/workspaces/:id/distribution-group`). That GroupInfo IS the capability to read
    every seed on the group, which is why the membership check lives here: `channel_workspace_members`
@@ -252,6 +255,11 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   (`canManage`, `canManageChannels`, `canModerate`; an absent one means unchanged) - a fourth cached
   flag owes a fourth field here, never a derivation from `permissions` on the client. The invariant
   was already broken once: `viewerCanModerate` was cached and never announced until 2026-10-05.
+  **And broken a second time at the other source of the cache: `createWorkspace`'s answer** named
+  `viewerCanManage` and `viewerCanManageChannels` and omitted `viewerCanModerate`, so the creator of
+  a community was offered no "Epingler" (and no close on another member's poll) until a reload
+  (2026-10-13). The answer now derives all three from the seeded Administrateur role through the
+  listing's own predicates; any path that inserts a workspace into the client owes all three.
 - **Editing what a role grants re-announces its HOLDERS' standing** (2026-09-29). `workspace.role.permissions`
   only redraws the grid, so granting `channel.manage` to Moderateur left every moderator without the
   salon controls until a full load, and revoking it left them offered controls that fail.

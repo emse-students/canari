@@ -88,6 +88,15 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const SIGNATURE_BASE64_CHARS = 88;
 
 /**
+ * 400 code: a salon row carrying no Graine v2 signature (channel-encryption section 21.8).
+ *
+ * Every client `minClientVersion` admits (`1.0.3`, the G2-5 writer) signs every row it posts, so an
+ * unsigned one is a modified client minting v1 or a process unlocked before the floor rose. Exported
+ * so the tests name the refusal by its code, never by its sentence.
+ */
+export const CHANNEL_SIGNATURE_REQUIRED = 'CHANNEL_SIGNATURE_REQUIRED';
+
+/**
  * THE one rule for who may READ a channel, with no database in it.
  *
  *  - a public channel is readable by every community member;
@@ -1148,7 +1157,21 @@ export class ChannelService {
     });
     await this.channelRepo.save(generalChannel);
 
-    return { ...savedWs, viewerCanManage: true, viewerCanManageChannels: true };
+    // THE CREATOR'S STANDING IS DERIVED FROM THE ROLE JUST SEEDED, through the same predicates the
+    // listing uses - never written out as literals. This answer used to name `viewerCanManage` and
+    // `viewerCanManageChannels` and omit `viewerCanModerate`, so the client took the creator for a
+    // plain member until the next listing: no "Epingler" and no close on another member's poll in
+    // the community they had just made, until a reload (Mi 9T reading of `v1.2.6-alpha.1`).
+    const creatorPermissions = savedAdminRole.permissions;
+    const standing = {
+      viewerCanManage: creatorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
+      viewerCanModerate: roleGrantsModeration(creatorPermissions),
+      viewerCanManageChannels: roleGrantsChannelManagement(creatorPermissions),
+    };
+    this.logger.log(
+      `[WORKSPACE] creator standing workspace=${savedWs.id} manage=${standing.viewerCanManage} moderate=${standing.viewerCanModerate} manageChannels=${standing.viewerCanManageChannels}`
+    );
+    return { ...savedWs, ...standing };
   }
 
   /**
@@ -3088,7 +3111,7 @@ export class ChannelService {
     }
 
     await this.assertSeedFrame(channel, input);
-    this.assertSignatureShape(channel.id, input);
+    this.assertSigned(channel.id, input);
 
     // A poll is just an encrypted message carrying a label-free descriptor: we
     // store its option IDs/deadline server-side (for tallying + auto-pin) while
@@ -3171,21 +3194,34 @@ export class ChannelService {
   }
 
   /**
-   * Checks the seed frame a message carries (channel-encryption section 19), which the server
-   * passes to the recipients' pushes and NEVER stores.
+   * Accepts a salon row ONLY when it carries a well-formed Graine v2 signature (channel-encryption
+   * section 21.8). An ALLOWLIST of one shape: a signature of 88 base64 characters. Everything else -
+   * absent, null, the wrong length, not base64, not a string - is refused before anything is stored.
    *
-   * The frame is an MLS private message on a key group, opaque here; what the server CAN check is
-   * the one claim it knows the answer to: that `seedGroupId` is this salon's key group - the
-   * private salon's own, the community's otherwise, the same rule as the client's
-   * `scopeForChannel`. A mismatch is a sender whose idea of the salon is stale (a salon made
-   * private since), and its seed went to an audience that is no longer the salon's: refusing is
-   * what makes that visible instead of forwarding it.
+   * The server still cannot VERIFY it (it holds no key); that stays the reader's job. What changed
+   * is that it may now REQUIRE it: since `minClientVersion` reached `1.0.3` (2026-10-11) every
+   * admitted client signs every row it posts - text, poll, reaction, edit, system notice, all through
+   * the one `sealChannelMessage`, which throws before the POST when it holds no signing secret. And
+   * this route has no other caller: DMs, commits, Welcomes and seed frames are MLS on
+   * chat-delivery, and no native path (notification reply, push handler) posts a salon row. So an
+   * unsigned row here is never honest, and it is refused at ERROR, a line that accuses.
    *
-   * Absent on a silent message and on a sender older than section 19; both halves or neither.
+   * It closes the forgery v1 left open on the write side: a modified client minting an unsigned
+   * row under a v1 session another member still holds (21.7, "what it does NOT close").
    */
-  private assertSignatureShape(channelId: string, input: SendChannelMessageDto): void {
+  private assertSigned(channelId: string, input: SendChannelMessageDto): void {
     const { signature } = input;
-    if (signature === undefined) return;
+    if (signature === undefined || signature === null) {
+      this.logger.error(
+        `[CHANNEL_SIGNATURE] REFUSED unsigned row channel=${channelId} sender=${input.senderId.slice(0, 8)} ` +
+          `session=${input.senderSessionId.slice(0, 8)} index=${input.messageIndex} silent=${input.silent === true} ` +
+          `- every client admitted since minClientVersion 1.0.3 signs: a modified client, or a process unlocked before the floor rose`
+      );
+      throw new BadRequestException({
+        code: CHANNEL_SIGNATURE_REQUIRED,
+        message: 'signature is required: every salon row is a Graine v2 row',
+      });
+    }
     if (
       typeof signature !== 'string' ||
       signature.length !== SIGNATURE_BASE64_CHARS ||
@@ -3229,6 +3265,19 @@ export class ChannelService {
     }
   }
 
+  /**
+   * Checks the seed frame a message carries (channel-encryption section 19), which the server
+   * passes to the recipients' pushes and NEVER stores.
+   *
+   * The frame is an MLS private message on a key group, opaque here; what the server CAN check is
+   * the one claim it knows the answer to: that `seedGroupId` is this salon's key group - the
+   * private salon's own, the community's otherwise, the same rule as the client's
+   * `scopeForChannel`. A mismatch is a sender whose idea of the salon is stale (a salon made
+   * private since), and its seed went to an audience that is no longer the salon's: refusing is
+   * what makes that visible instead of forwarding it.
+   *
+   * Absent on a silent message and on a sender older than section 19; both halves or neither.
+   */
   private async assertSeedFrame(channel: Channel, input: SendChannelMessageDto): Promise<void> {
     const { seedFrame, seedGroupId } = input;
     if (seedFrame === undefined && seedGroupId === undefined) return;
