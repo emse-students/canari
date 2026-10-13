@@ -160,7 +160,11 @@ this session (or which byte length/etag), and skip the rest.
   request is how the client learns a member has no picture; `users/batch`, which it already called,
   could carry that fact (durable rule: never learn by failing what a fact could have told you).
 - **496 `[GRAINE] v2 endorsement of session ... verified ... from the tree`** debug lines, the
-  largest tag of the capture.
+  largest tag of the capture. **Fixed 2026-10-13**: a verification that succeeds is a seed being
+  stored, and the caller already says that once per distributed seed or once per bundle, so the
+  key that proved it (tree, or the server's published keys) is named in THAT line and the
+  verification has no line of its own. A 20-seed bundle prints 1 `[GRAINE]` line instead of 21
+  (`graine/frameHandler.test.ts`); a refusal still prints at error, unchanged.
 - **`[HISTORY_COVERAGE] ... 1735 d short of what we asked`** x49: the new device asks every rejoined
   group for history from `2021-10-14` and the account's own web device answers that it covers from
   `2026-07-15`; each answer re-enters the ask (`lf` -> `of`, i.e. one more `groupe_actif`) before

@@ -1213,6 +1213,51 @@ describe('a bundle answering our own request (WP-33)', () => {
     debug.mockRestore();
   });
 
+  // Mi 9T, 2026-10-13: a sign-in printed 496 `[GRAINE] v2 endorsement ... verified` lines, one per
+  // seed admitted, beside the line that already said each seed was stored. The verification is
+  // said ONCE, in the line that reports what it stored, with which key proved it.
+  it('says the endorsements it verified in its ONE line, never one line per seed', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const seeds = [];
+    for (let i = 0; i < 20; i++) seeds.push(await v2SeedFor(`chan-${i}`, `s-${i}`, 0));
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'bob',
+      plaintext: encodeAppMessage(mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-1', seeds })),
+    });
+
+    const graineLines = debug.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.startsWith('[GRAINE]'));
+    expect(graineLines).toHaveLength(1);
+    expect(graineLines[0]).toContain('absorbed 20/20 seed(s)');
+    expect(graineLines[0]).toContain('20 from the tree, 0 from the server');
+    debug.mockRestore();
+  });
+
+  it("names a seed checked against the server's published keys, in the stored-seed line", async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    tree.clear();
+    published = { kind: 'keys', keys: [CAROL_DEVICE_PK] };
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(frame(V2_WIRE));
+
+    expect(saved).toHaveLength(1);
+    const graineLines = debug.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.startsWith('[GRAINE]'));
+    expect(graineLines).toHaveLength(1);
+    expect(graineLines[0]).toContain("from the server's published keys");
+    debug.mockRestore();
+  });
+
   it('says out loud that a bundle was truncated, because a short list means nothing on its own', async () => {
     const { storage } = fakeStorage();
     wire(storage);
