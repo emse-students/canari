@@ -11,12 +11,12 @@
     listPosts,
     searchPosts,
     getMyScheduledPosts,
-    deletePost,
     type PostEntity,
     type PostFeed,
     type ScheduledPost,
   } from '$lib/posts/api';
   import { msUntilNextDue, stillScheduled } from '$lib/posts/scheduledDue';
+  import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
   import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
   import { progressiveCount } from '$lib/utils/progressiveMount.svelte';
@@ -207,13 +207,16 @@
   let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
   let scheduledPosts = $state<ScheduledPost[]>([]);
+  /** Shown under the scheduled strip when a confirmed deletion failed; cleared by the next try. */
+  let scheduledDeleteError = $state('');
 
   async function loadScheduled() {
     if (!currentUserId()) return;
     try {
       scheduledPosts = await getMyScheduledPosts();
-    } catch {
-      /* silent */
+    } catch (err) {
+      // The strip stays as it was; the next load reads it again.
+      Log.d('POSTS scheduled posts could not be loaded', err);
     }
   }
 
@@ -240,12 +243,17 @@
     return () => clearTimeout(timer);
   });
 
+  /** Deletes a scheduled post once its author confirms, through the one deletion path. */
   async function deleteScheduled(id: string) {
+    scheduledDeleteError = '';
     try {
-      await deletePost(id);
+      if ((await deletePostAfterConfirm(id)) === 'declined') return;
       scheduledPosts = scheduledPosts.filter((p) => p.id !== id);
-    } catch {
-      /* silent */
+    } catch (err) {
+      // The post stays listed, which is the truth: it was not deleted - and the author who
+      // confirmed is told so, rather than left reading a tap that did nothing.
+      Log.d(`POSTS scheduled post ${id} could not be deleted`, err);
+      scheduledDeleteError = m.post_unable_to_delete_post();
     }
   }
 
@@ -582,6 +590,9 @@
 
   {#if scheduledPosts.length > 0}
     <ScheduledPostsPanel posts={scheduledPosts} onDelete={deleteScheduled} />
+    {#if scheduledDeleteError}
+      <p class="text-red-err mb-4 text-sm" role="alert">{scheduledDeleteError}</p>
+    {/if}
   {/if}
 
   <Modal
