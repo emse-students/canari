@@ -1,5 +1,7 @@
 import MlsEncryptWorker from '../workers/mlsEncrypt.worker?worker';
 import { encryptMlsStateOnMainThread } from './mlsWasmLoader';
+import { sealMlsStateBlobV2 } from './mlsStateSeal';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import type { MlsEncryptRequest, MlsEncryptResponse } from './mlsWorkerProtocol';
 
 const ENCRYPT_WORKER_TIMEOUT_MS = 60_000;
@@ -71,7 +73,8 @@ function runEncryptOnWorker(
 }
 
 /**
- * Encrypts a plain MLS CBOR snapshot off the main thread (Argon2 + ChaCha20).
+ * Encrypts a plain MLS CBOR snapshot off the main thread (WASM ChaCha20-Poly1305 under the device
+ * key - there has been no Argon2 on this path since v0.11.0).
  * Falls back to main-thread WASM when workers are disabled or unavailable.
  */
 export async function encryptMlsStateOffThread(
@@ -96,4 +99,32 @@ export async function encryptMlsStateOffThread(
     () => undefined
   );
   return job;
+}
+
+/**
+ * The ONE decision of which at-rest format a web checkpoint is sealed in.
+ *
+ * `v2` is the framed WebCrypto AES-GCM blob (`mlsStateSeal.ts`), sealed on the calling thread
+ * because WebCrypto already does its cipher work off the JavaScript thread; otherwise the legacy
+ * WASM ChaCha20-Poly1305 blob, through the encrypt worker when `useEncryptWorker`.
+ *
+ * **V2 IS NEVER WRITTEN INSIDE TAURI.** No native path reaches this function today (native state is
+ * sealed in Rust and written by the Tauri command), so the guard below is not a branch anything
+ * takes - it is the invariant made executable, so a future caller that does reach it fails the
+ * checkpoint loudly instead of writing a format no native writer produces.
+ */
+export async function sealWebMlsState(
+  plain: Uint8Array,
+  deviceKeyB64: string,
+  options: { v2: boolean; useEncryptWorker: boolean }
+): Promise<Uint8Array> {
+  if (options.v2) {
+    if (isTauriRuntime()) {
+      throw new Error(
+        '[MLS] the v2 WebCrypto state seal is web-only and was reached inside Tauri - refusing to write it'
+      );
+    }
+    return sealMlsStateBlobV2(plain, deviceKeyB64);
+  }
+  return encryptMlsStateOffThread(plain, deviceKeyB64, { enabled: options.useEncryptWorker });
 }

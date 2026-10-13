@@ -26,6 +26,7 @@ import {
   resetMlsWasmModuleCacheForTests,
 } from './mlsWasmLoader';
 import { getBootReport, resetBootBench } from './bootBenchmark';
+import { sealMlsStateBlobV2 } from './mlsStateSeal';
 
 function wasmMagicResponse(): Response {
   const buf = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
@@ -102,6 +103,48 @@ describe('loadAndInitWasm', () => {
     );
     const span = getBootReport().spans.find((s) => s.name === 'wasm-client-construct');
     expect(span?.durationMs).not.toBeNull();
+  });
+
+  describe('the v2 dispatch - WebCrypto opens v2, mls-core gets every other shape sealed', () => {
+    const KEY_B64 = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+    const plain = new TextEncoder().encode('cbor-mls-snapshot');
+
+    it('hands the WASM the PLAIN snapshot and no key for a v2 blob', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      await loadAndInitWasm('u', 'd', blob, KEY_B64, true);
+      const [, , state, key, expected] = WasmMlsClient.mock.calls[0];
+      expect(Array.from(state as Uint8Array)).toEqual(Array.from(plain));
+      expect(key).toBeUndefined();
+      expect(expected).toBe(true);
+    });
+
+    it('hands a legacy blob to the WASM sealed, with its key, untouched', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const legacy = new Uint8Array(64).fill(0xab);
+      await loadAndInitWasm('u', 'd', legacy, KEY_B64, true);
+      expect(WasmMlsClient).toHaveBeenCalledWith('u', 'd', legacy, KEY_B64, true);
+    });
+
+    it('rejects a v2 blob under another key with mls-core code, never constructing a client', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      const other = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
+      await expect(loadAndInitWasm('u', 'd', blob, other, true)).rejects.toThrow(
+        /^STATE_KEY_MISMATCH: /
+      );
+      expect(WasmMlsClient).not.toHaveBeenCalled();
+    });
+
+    it('rejects an altered v2 blob as STATE_UNDECRYPTABLE, never constructing a client', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      blob[blob.length - 1] ^= 1;
+      await expect(loadAndInitWasm('u', 'd', blob, KEY_B64, true)).rejects.toThrow(
+        /^STATE_UNDECRYPTABLE: /
+      );
+      expect(WasmMlsClient).not.toHaveBeenCalled();
+    });
   });
 
   it('throws when body is not wasm magic', async () => {

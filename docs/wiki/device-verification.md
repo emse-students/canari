@@ -22,6 +22,8 @@ here and nothing else.**
 
 ## Where the pass stands
 
+**2026-10-13, the bench pass of the owed rows: Mi 9T on `v1.2.6-alpha.1`, iPhone 12 on `1.2.3-alpha.5` (the newest pre-release TestFlight serves it).** `PASS`: check V, check W on the Mi 9T, the "Rester connecte" cold path and its landing preview, #1603 both halves, #1605 on Android, #1548 and the send path on the iPhone. `FAIL`: Android at 200 % text (two P3 in the agenda) and, met in three-button mode, ONE system Back closing both the message action sheet and the conversation (P2). Answered in part: #1604. Detail: [the bench readings of 2026-10-13](#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
+
 **2026-10-11, `v1.2.3-alpha.5` on the iPhone 12 (iOS 27.0.1, TestFlight build 100200305, `dev.canari-emse.fr`, account `canari-test-gamma`).** `PASS`: the login page's "Ouvrir dans l'application" opens the app (#1605, iPhone half), the conversation's glass chrome (alignment, "+" > Photos opens ONE picker, the four accessible names), the camera opening full-bleed on the front lens 15 of 15 times with a home-and-return (#1370, front half), the emoji pictures in the composer and the bubble (rows 3 and 12, in part), the profile hub's breadcrumb, a 5 s video sent, the associations list scroll. **`FAIL` in a new shape: check W on the iPhone** (3 of 3 rises). Every reading, what is blocked and what waits for the next pre-release: [the inventory below](#the-iphone-12-owed-readings-inventory-2026-10-11).
 
 **2026-10-07, `v1.0.4-alpha.5` on the iPhone 12 (iOS 27.0.1, TestFlight build 100000405, `dev.canari-emse.fr`).** Read and `PASS`: the signed calendar subscription for the reader's own campus and formation, copied and opened in Calendar (#1541, #1551), the reel camera opening on the FRONT lens (#1552), the post composer draft per account (#1549), the glass tab bar, the profile page, the tab swipe and the reel review controls. **Not read: the reaction toast, the send path and the reply context (#1548)** - `canari-test-gamma` is the service account and cannot discover or be discovered by a non-admin peer. Detail and owed causes: [backlog](backlog.md).
@@ -1079,6 +1081,12 @@ iOS.
 
 A refusal here means some OTHER overlay is still registered: read `historyOverlayStackDepth()` over CDP.
 
+**`PASS` on the Mi 9T, `v1.2.6-alpha.1`, 2026-10-13, 4 of 4.** A post typed and published from the
+header's "Publier" (the modal closed by itself 658-1099 ms after the click), then at once one
+`adb input swipe 200 1200 1000 1200 180`: `/camera` every time. The swipe is injected, not a finger;
+the same swipe opens the camera from a feed nobody published on. The bench posts were deleted
+afterwards. Evidence: `F:/Programmation/canari-harness/a1-bench/r1013-owed/checkV*.json` and frames.
+
 ## iPad and rotation - owed on an iPad\n\nSwitching into Canari from another app does not rotate the window on an iPad (reported 2026-08-28); it needs an iPad. The Android phone rotation is decided and shipped: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)).\n
 
 ## X. The scroll after an edge swipe - owed on the Mi 9T
@@ -1120,6 +1128,19 @@ banner slides from y=333-353 pt up over the glass header. In points per frame: b
 333/282/204/117/72/60, composer 713/642/592/546/501/487. Frames:
 `F:/Programmation/canari-harness/ios-bench/r1011/kbd2`, `kbd3`, and the contact sheets
 `kbd2-contact*.png`.
+
+**Mi 9T, `v1.2.6-alpha.1`, 2026-10-13: `PASS` with the system keyboard (AOSP LatinIME), 5 of 5
+rises and 5 of 5 closes.** The composer's top goes from 869.5 straight to 524 CSS px in one frame
+and back to 869.5 in one frame on close; no frame near 174 and no other resting position. The raw
+double report is still there underneath: in 4 of 5 rises ONE frame reads `visualViewport.height`
+230.3 against an `innerHeight` already at 588 (945 - 2 x 357), so step 1's second clause, read
+literally, fails - and `computeSnapshot` absorbs it, which is the fix this check proves.
+**A short keyboard escapes that guard.** The bench's ADB keyboard is 90 px tall, under the 160 px
+`keyboardOpenThresholdPx`, so `layoutGaveUpKeyboard` is false and the double report is trusted: in
+2 of 5 rises the composer spends one frame (~60 ms) at 702.1 before resting at 791.8, and in the
+other 3 it spends 24 ms at 881.5. No real IME on this phone is that short; a floating or
+one-row keyboard would be. Evidence: `F:/Programmation/canari-harness/a1-bench/r1013-owed/checkW-mi9t.json`
+(the LatinIME run; the ADB-keyboard numbers above are the only record of that run).
 
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 
@@ -1252,11 +1273,61 @@ by the heads sampler (it is installed before the tap on the phone, after the ope
   reload the same menu has Epingler. One observation; whether "Cloturer le sondage" was also missing
   before the reload was not read.
 - **The poll close confirmation is the system dialog with English buttons** ("CANCEL" / "OK") over a
-  French sentence (`poll-close-1.png`).
+  French sentence (`poll-close-1.png`). FIXED 2026-10-13: `ChannelPoll` asks through the app's
+  `showConfirm`; no `window.confirm` is left in the frontend.
 - **The sticky "AUJOURD'HUI" pill sits partly under the pinned pill** after the pinned jump
-  (`pinned-jump.png`).
+  (`pinned-jump.png`). **RE-READ 2026-10-13: the pill in that frame is NOT the sticky one** - its
+  letters are spaced (`tracking-widest`) and its padding is wider, which is the IN-THREAD date
+  separator (`ChatMessageGroups`), a content row scrolling under the floating glass chrome as every
+  row does; the sticky pill is `letter-spacing: normal`. The sticky pill's own placement was
+  measured in desktop Chrome at 390 px with the glass chrome forced on: `--chat-header-height`
+  follows the pinned list closing (159 -> 113 -> 111 px within 100 ms) and the pill lands 13.6 px
+  below the pinned bar. Nothing to fix on the sticky pill. Still unexplained: the jumped-to message
+  in that frame was not centred, and the frame does not say which message was pinned - the next
+  reading should name it.
 - **The phone's long-press menu has no "Epingler" for a plain member**, which matches
   `mayPinMessage`.
+
+## The bench readings of 2026-10-13 - the owed rows a bench phone can settle
+
+Both bench phones, dev estate, bench accounts only. **Mi 9T**: the same `v1.2.6-alpha.1` release APK
+as the section above, account `fourth` ("Canari Test Delta"), every number from CDP on the
+inspectable WebView. **iPhone 12**: TestFlight `1.2.3 (100200305)` = `v1.2.3-alpha.5`, account
+`canari-test-gamma`, driven over WDA (not inspectable). Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1013-owed/` and `.../ios-bench/r1013/`. Frames in which a
+third-party app's heads-up notification showed a real person's message were deleted and re-taken
+under Do Not Disturb.
+
+**What the iPhone can run.** TestFlight offers this tester the `1.2.6 (100200699)` STABLE (a
+production build: not bench) and, under "Builds precedents", nothing newer than the `1.2.3` group:
+**no `1.2.4`, `1.2.5` or `1.2.6` pre-release build reaches the iPhone**, although every one of
+those release runs built and uploaded its IPA (`v1.2.6-alpha.1`: "App Store / Build iOS IPA",
+success). So every iPhone row below is on `1.2.3-alpha.5`, and every iPhone row whose fix is newer
+stays owed until a pre-release build is distributed to the tester group.
+
+| Reading | Phone | Verdict | What was seen |
+| --- | --- | --- | --- |
+| Android at 200 % text (lot 5) | Mi 9T | **`FAIL`, two P3 in the agenda; the rest `PASS`** | `font_scale 2.0` (root font 32 px). 15 routes walked through the client router plus a DM with the keyboard up: `scrollWidth - clientWidth = 0` everywhere, no text outside the viewport, the wordmark and the conversation name truncate, the composer fits over the keyboard, the PIN sheet scrolls to every option (at rest the `0` row is cut by the footer, reachable by a scroll). **`/calendar`**: (1) "S'abonner au calendrier" is wider than its card and spills 33 px out of the card's LEFT edge (button x=7, card x=41; `flex-wrap justify-end`, `calendar/+page.svelte:670`); (2) today's day number `13` is drawn at 40 px in a fixed 36 px circle and overruns it (`h-9 w-9 ... text-lg`, `CalendarScheduleList.svelte:226`) - the avatar-initials class of defect, not exempted by `.text-zoom-exempt`. Icons do not grow with the text (the WebView scales fonts, not lengths): not a defect by the 2026-09-30 decision. The dev banner takes two lines. Frames `t200-*.png`, audit `t200-audit.json` |
+| Three-button navigation (lot 5) | Mi 9T | **layout `PASS`; ONE P2 `FAIL`** | Switched with `cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton` (this phone runs LineageOS, where it works; restored to gestural afterwards). Insets read 34 px top, **49 px bottom**; the tab bar sits above the three buttons on all 15 routes, and the composer, the keyboard and the message action sheet clear them. **`FAIL`: with the message action sheet open (long press on a bubble), ONE system Back closes the sheet AND the conversation**, 3 of 3: `history.state` reads `{canariOverlay:1}` with the conversation open and stays at 1 with the sheet open - `MessageMobileActions.svelte` registers no history overlay, so Back pops the conversation's entry. Not specific to the three buttons: `KEYCODE_BACK` is the gesture's Back too. Frames `b3-*.png` |
+| Check W, the composer during a keyboard rise | Mi 9T | **`PASS`** | [W above](#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones): 869.5 -> 524 in one frame, 5 of 5; a 90 px keyboard escapes the double-report guard (P3) |
+| Check V, the camera swipe after publishing | Mi 9T | **`PASS`** | [V above](#v-the-camera-swipe-on-a-fresh-feed-after-publishing---owed-on-android), 4 of 4 |
+| "Rester connecte" path: cold open with no PIN, and the landing preview | Mi 9T | **`PASS`** | Unlocked once with the box ticked, then killed. A plain cold launch: no PIN gate in 40 samples over 11 s, `[PIN] Device key restored from PinVault - auto-login`, `Initialising MLS (vault device key path)`, `MLS ready` 0.53 s after the vault line. The notification's exact `PendingIntent` (`fr.emse.canari://chat/<id>`, `0x34000000`) on a killed app, n=4: no gate, `[LANDING_PREVIEW] ... drawn from the local store (60 message(s))` twice before and twice after the session is up, composer usable at 2.04-2.32 s of `performance.now()`, **0** error or warning lines. **The phone is LEFT on the vault path** (the box cannot be unticked without a sign-out): the next PIN-path reading must sign out and back in first |
+| #1603 half 1: no `pauseSocket: native disconnect failed` on a background | Mi 9T | **`PASS`** | Three HOME-and-return cycles: `[WS] Paused - disconnect sent, socket released until the next foreground.` then `[WS] app back in the foreground with no socket - reconnecting`, each time; nothing in logcat for `pauseSocket` or `disconnect failed` |
+| #1603 half 2: a scheduled post leaves the strip at its time | Mi 9T | **`PASS`** | The picker steps by 5 minutes, so the post was set for 11:20 at 11:15. "Publications programmees (1)" listed it until 11:19:31 at least; at 11:20 the strip was gone and the post was in "Tout", "A l'instant". The watcher's CDP call timed out once at the minute, so the second the strip left was not captured. Post deleted afterwards |
+| Android fluidity (#1361-#1363), tap -> conversation pane | Mi 9T | **re-measured** | `pointerdown` on the DM tile -> the frame after `.chat-composer-footer` exists, warm: first open 412 ms, then 287-315 ms (median of 6: 310 ms), each with one long task of 257-349 ms. Against 662 ms on the first open before the three changes, on a debug build: the comparison is release against debug and is not a like-for-like attribution |
+| #1605 "Ouvrir dans l'application", Android half | Mi 9T | **`PASS`** | `https://canari.emse.fr/login` in Chrome (not signed in) shows the link; the tap starts `act=VIEW cat=BROWSABLE dat=https://canari.emse.fr/... pkg=fr.emse.canari` from Chrome and Canari comes to the front |
+| #1548 the reply context is per conversation | iPhone | **`PASS`** | "Repondre" armed on a DM message ("Repondre a Canari Test Delta"); the `Bench126` salon opened with no reply bar; back in the DM the bar and its quote were still there; cancelled afterwards |
+| The send path on the iPhone (#1536 row) | iPhone | **`PASS`** | `ios1013send` in the DM: "Message envoye", the double check, and the Mi 9T's list shows it. **The reaction-failure toast was not read**: nothing here makes a reaction fail |
+| #1604, no PIN prompt after a later sign-in | iPhone | **answered in part: NOT the "Rester connecte" vault** | The install sat on the login page; a sign-in as gamma landed on the feed and `/chat` with NO PIN, history decrypting and a send working. A cold relaunch ~9 minutes later DID ask for the PIN - which a vault would not have - and its sheet has no "Rester connecte" row (`showStaySignedIn = !biometricConfigured`). So the unlock was skipped on a key the live process still held. **Then the right PIN on that cold launch answered "Vos messages enregistres sur cet appareil n'ont pas pu etre ouverts"** - the [account-switch P3](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable) met again, here with no switch inside this session (which account the install held before it is unknown). Remedy taken: uninstall, reinstall `100200305` from TestFlight, sign in (the PIN asked this time), unlock |
+| Dynamic Type at the largest standard size (lot 5) | iPhone | **no effect, warm or cold** | Reglages > Accessibilite > Affichage et taille du texte > Police plus grande, slider 50 % -> 100 %: a DM drew at exactly the size it had before, and so did the PIN sheet after a cold relaunch. The WebView ignores the setting, so Dynamic Type users get the default size. Whether that is accepted or wants `-apple-system-body` is a decision, not a reading. Restored to 50 % |
+
+**What a bench phone cannot settle, and why.** Every push row (check H step 4, NOTIF-10, D2/D3 with
+a shade reply typed by hand, the sender's face on a notification, NOTIF-6b, check K and C): dev sends
+no push (`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent) and the iPhone's development slot has no APNs
+key. Check X needs a real finger. The iPhone rear-lens letterbox (#1370) needs the phone held up.
+Check U and the iOS launch logo need a person (a face, a restart that kills WDA). The emoji
+`naturalWidth`, the liquid glass re-read and every fix newer than `1.2.3-alpha.5` need an iPhone
+build newer than the one TestFlight serves this tester.
 
 ## Traps that outlived the work that found them
 

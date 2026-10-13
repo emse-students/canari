@@ -224,7 +224,7 @@ reason `low`: [offline-and-weak-network](offline-and-weak-network.md#10-package-
 
 ## State persistence
 
-WASM state is serialized by `saveState(deviceKeyB64)` as an encrypted blob using ChaCha20-Poly1305 directly with `deviceKeyB64` (no Argon2id derivation). Storage backend:
+WASM state is serialized by `saveState(deviceKeyB64)` as an encrypted blob using ChaCha20-Poly1305 directly with `deviceKeyB64` (no Argon2id derivation). A framed v2 format sealed by WebCrypto AES-GCM is built and READ (opened by WebCrypto in `loadAndInitWasm`, by `mls-core` elsewhere) but not yet written - [mls-protocol](../protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12). Storage backend:
 
 | Platform | Storage |
 |---|---|
