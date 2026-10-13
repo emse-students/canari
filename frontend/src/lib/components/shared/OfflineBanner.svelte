@@ -35,9 +35,12 @@
 {#if showSlow}
   <!-- A hint, not a banner: a fixed 20 px badge in the top corner, so it takes no band of the screen
        and shifts nothing. Never focusable and never intercepting a tap (`pointer-events-none`); the
-       text lives in the live region and in `title` for a pointer hover. -->
+       text lives in the live region and in `title` for a pointer hover.
+       BELOW THE BANNER COLUMN, through `--app-banner-height`: being `fixed`, it reserves nothing and
+       learns nothing of the column it is rendered in, so at a bare `top` it was drawn over the dev
+       "Environnement de test" strip and its close button (Mi 9T reading of `v1.2.4-alpha.2`). -->
   <div
-    class="bg-banner text-text-muted border-cn-border pointer-events-none fixed top-[calc(var(--safe-area-inset-top,0px)+0.5rem)] right-2 z-(--z-banner) flex size-7 items-center justify-center rounded-full border opacity-80"
+    class="bg-banner text-text-muted border-cn-border pointer-events-none fixed top-[calc(var(--safe-area-inset-top,0px)+var(--app-banner-height,0px)+0.5rem)] right-2 z-(--z-banner) flex size-7 items-center justify-center rounded-full border opacity-80"
     role="status"
     aria-live="polite"
     aria-label={m.slow_indicator_label()}

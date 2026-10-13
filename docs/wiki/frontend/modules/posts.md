@@ -1404,3 +1404,12 @@ logged, exactly as before. What stays awaited on purpose: `refresh()` when NO us
 cannot tell who this is, nor whether to send them to login). Pinned by `routes/navigationNeverWaits.test.ts`
 (each `load` resolves while its network call is pending) and `sessionProfileCheck.test.ts`. Reaches users with
 the next pre-release.
+
+## Deleting a post asks first, through one path (2026-10-13)
+
+`deletePostAfterConfirm` (`lib/posts/postDeletion.ts`) is the only way a control deletes a post: the post
+menu's "Supprimer" (`PostCard`) and the scheduled-posts panel (`routes/posts`) both called the API on the
+tap, so a slip of the finger destroyed a post while the reel editor and the review ask before discarding far
+less (Mi 9T reading of `v1.2.4-alpha.2`). It asks with the app's `showConfirm` (`danger`, "Supprimer"),
+returns `'declined'` without a request, and rejects on a failed request so each caller shows its own error.
+Pinned by `postDeletion.test.ts`.

@@ -11,12 +11,12 @@
     listPosts,
     searchPosts,
     getMyScheduledPosts,
-    deletePost,
     type PostEntity,
     type PostFeed,
     type ScheduledPost,
   } from '$lib/posts/api';
   import { msUntilNextDue, stillScheduled } from '$lib/posts/scheduledDue';
+  import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
   import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
   import { progressiveCount } from '$lib/utils/progressiveMount.svelte';
@@ -240,12 +240,14 @@
     return () => clearTimeout(timer);
   });
 
+  /** Deletes a scheduled post once its author confirms, through the one deletion path. */
   async function deleteScheduled(id: string) {
     try {
-      await deletePost(id);
+      if ((await deletePostAfterConfirm(id)) === 'declined') return;
       scheduledPosts = scheduledPosts.filter((p) => p.id !== id);
-    } catch {
-      /* silent */
+    } catch (err) {
+      // The post stays listed, which is the truth: it was not deleted.
+      Log.d(`POSTS scheduled post ${id} could not be deleted`, err);
     }
   }
 
