@@ -29,6 +29,16 @@ vi.mock('$lib/utils/hex', () => ({ closeMlsDb: () => closeMlsDbMock() }));
 const closeStoresMock = vi.fn(async () => 2);
 vi.mock('$lib/db', () => ({ closeOpenIndexedDbStores: () => closeStoresMock() }));
 
+/** The in-app log: its connection would block the prefix delete, and a later flush re-create it. */
+const discardAppLogMock = vi.fn(() => {});
+vi.mock('$lib/utils/appLog', () => ({ discardAppLog: () => discardAppLogMock() }));
+
+/** The avatar mirror's memory of what it wrote, which `clear_app_data` makes false. */
+const forgetMirroredAvatarsMock = vi.fn(() => {});
+vi.mock('$lib/utils/avatarMirror', () => ({
+  forgetMirroredAvatars: () => forgetMirroredAvatarsMock(),
+}));
+
 const forgetMock = vi.fn(async (_alias?: string) => {});
 const disableMock = vi.fn(async (_alias?: string) => {});
 vi.mock('$lib/services/biometric', () => ({
@@ -93,6 +103,28 @@ describe('wipeDeviceToFactory', () => {
     await wipeDeviceToFactory();
 
     expect(order[0]).toBe('close');
+    expect(order).toContain('delete:CanariDB_u1');
+  });
+
+  it('discards the in-app log BEFORE deleting anything, so its database goes with the rest', async () => {
+    const order: string[] = [];
+    discardAppLogMock.mockImplementationOnce(() => {
+      order.push('discard');
+    });
+    vi.stubGlobal('indexedDB', {
+      databases: async () => present.map((name) => ({ name })),
+      deleteDatabase: (name: string) => {
+        const req: Record<string, unknown> = {};
+        order.push(`delete:${name}`);
+        present = present.filter((n) => n !== name);
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+
+    await wipeDeviceToFactory();
+
+    expect(order[0]).toBe('discard');
     expect(order).toContain('delete:CanariDB_u1');
   });
 
@@ -261,6 +293,15 @@ describe('wipeDeviceToFactory on a native runtime', () => {
     expect(invoked).toContain('clear_app_data');
     // The half that was missing: a phone kept this.
     expect(deleted).toContain('CanariDB_u1');
+  });
+
+  it('forgets the mirrored faces once their files are deleted', async () => {
+    // Otherwise the next account on the same process is never mirrored a face this memory
+    // still calls written, though `clear_app_data` deleted every `avatar_*` file.
+    forgetMirroredAvatarsMock.mockClear();
+    await wipeDeviceToFactory();
+    expect(invoked).toContain('clear_app_data');
+    expect(forgetMirroredAvatarsMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not claim an empty device while a WebView database survives', async () => {

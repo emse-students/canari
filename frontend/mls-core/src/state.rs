@@ -611,9 +611,21 @@ impl MlsManager {
     /// which a counter kept by the caller could.
     ///
     /// It is cleared by serialisation, not by the write that follows it: a failed write leaves the
-    /// file behind with the flag down, and that failure is the caller's to report.
+    /// file behind with the flag down, so a writer that read the flag up before serialising and
+    /// then failed to write puts it back with [`Self::restore_unsaved_ratchet_advance`].
     pub fn has_unsaved_ratchet_advance(&self) -> bool {
         self.state_snapshot.borrow().ratchet_unsaved
+    }
+
+    /// Re-raises [`Self::has_unsaved_ratchet_advance`] after a serialisation whose WRITE failed.
+    ///
+    /// The serialisation cleared the flag on the assumption that the file would hold what it
+    /// exported. When the seal or the write then fails, the file is still behind the live ratchet
+    /// with the flag down, and the next resume reload would install it - re-deriving generations
+    /// this device already spent. Only a writer that observed the flag UP before serialising may
+    /// call this; raising it otherwise refuses reloads for an advance that does not exist.
+    pub fn restore_unsaved_ratchet_advance(&self) {
+        self.mark_ratchet_advanced();
     }
 
     /// Invalidates the in-memory CBOR snapshot so the next [`Self::save_state`] rebuilds it.

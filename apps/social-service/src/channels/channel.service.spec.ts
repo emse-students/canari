@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { ChannelService } from './channel.service';
+import { CHANNEL_SIGNATURE_REQUIRED, ChannelService } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -20,6 +20,9 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   PIN_REQUIRES_MODERATION,
 } from './permissions';
+
+/** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
+const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
 
 describe('ChannelService security hardening', () => {
   const previousSecret = process.env.INTERNAL_SECRET;
@@ -734,6 +737,7 @@ describe('ChannelService security hardening', () => {
       nonce: 'n',
       senderSessionId: 's-1',
       messageIndex: 0,
+      signature: SIGNATURE,
       silent: true,
     });
 
@@ -772,6 +776,7 @@ describe('ChannelService security hardening', () => {
       nonce: 'n',
       senderSessionId: 's-1',
       messageIndex: 0,
+      signature: SIGNATURE,
       poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null },
     } as any);
 
@@ -968,6 +973,7 @@ describe('ChannelService security hardening', () => {
       nonce: 'def',
       senderSessionId: 'sess-1',
       messageIndex: 0,
+      signature: SIGNATURE,
     });
 
     // A falsy-index guard would refuse the first message of every session, which is the one
@@ -1003,6 +1009,7 @@ describe('ChannelService security hardening', () => {
         nonce: 'def',
         senderSessionId: 'sess-1',
         messageIndex: 0,
+        signature: SIGNATURE,
         ...extra,
       } as never);
       return { ...repos, done };
@@ -1063,7 +1070,6 @@ describe('ChannelService security hardening', () => {
   });
 
   describe('Graine v2 on the server: a signature relayed, one row per key (migration 065)', () => {
-    const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
     const send = (extra: Record<string, unknown>, save?: (row: any) => Promise<unknown>) => {
       const repos = makeService();
       repos.channelRepo.findOne.mockResolvedValue({
@@ -1083,6 +1089,7 @@ describe('ChannelService security hardening', () => {
         nonce: 'def',
         senderSessionId: 'sess-1',
         messageIndex: 3,
+        signature: SIGNATURE,
         ...extra,
       } as never);
       return { ...repos, done };
@@ -1110,10 +1117,134 @@ describe('ChannelService security hardening', () => {
       );
     });
 
-    it('stores null for a v1 sender, which carries none', async () => {
-      const { done, messageRepo } = send({});
-      await done;
-      expect(messageRepo.create).toHaveBeenCalledWith(expect.objectContaining({ signature: null }));
+    it.each([
+      ['absent', { signature: undefined }],
+      ['null', { signature: null }],
+      ['absent on a silent row (a reaction, an edit)', { signature: undefined, silent: true }],
+      [
+        'absent on a poll',
+        {
+          signature: undefined,
+          poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null },
+        },
+      ],
+    ])(
+      'REFUSES a row whose signature is %s with CHANNEL_SIGNATURE_REQUIRED, at ERROR, storing and sending nothing',
+      async (_label, extra) => {
+        const logError = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        try {
+          const { done, messageRepo, redis } = send(extra);
+          expect(await code(done)).toBe(CHANNEL_SIGNATURE_REQUIRED);
+          await new Promise((resolve) => setImmediate(resolve));
+          expect(messageRepo.save).not.toHaveBeenCalled();
+          expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+          // A line that ACCUSES: no admitted client sends this.
+          expect(
+            logError.mock.calls.some((call) =>
+              String(call[0]).includes('[CHANNEL_SIGNATURE] REFUSED unsigned row')
+            )
+          ).toBe(true);
+        } finally {
+          logError.mockRestore();
+        }
+      }
+    );
+
+    it('still answers a non-member 403 before reading the signature - authorization comes first', async () => {
+      const repos = makeService();
+      repos.channelRepo.findOne.mockResolvedValue({
+        id: 'ch1',
+        workspaceId: 'ws1',
+        isPrivate: false,
+      });
+      repos.memberRepo.findOne.mockResolvedValue(null);
+      await expect(
+        repos.service.sendMessage('ch1', {
+          senderId: 'stranger',
+          ciphertext: 'abc',
+          nonce: 'def',
+          senderSessionId: 'sess-1',
+          messageIndex: 0,
+        })
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    /**
+     * THE FLOOR BOUNDARY, as the two releases on either side of it put a row on the wire.
+     *
+     * The bodies are the exact field sets `sendEncryptedChannelMessage` posts at the tags: `v1.0.2`
+     * (the last release below `minClientVersion` 1.0.3) sends no `signature`; `v1.0.3` (the G2-5
+     * writer, the floor) sends one on every row. Each shape a current client posts - text with its
+     * seed frame, a silent reaction or edit, a poll, a system notice, a mention - is accepted signed.
+     */
+    describe('the floor boundary: what v1.0.2 and v1.0.3 put on the wire', () => {
+      const FRAME = { seedFrame: 'ZnJhbWU=', seedGroupId: 'dist-ws1' };
+      const sendAs = (body: Record<string, unknown>) => {
+        const repos = makeService();
+        repos.channelRepo.findOne.mockResolvedValue({
+          id: 'ch1',
+          workspaceId: 'ws1',
+          isPrivate: false,
+        });
+        repos.memberRepo.findOne.mockResolvedValue({
+          workspaceId: 'ws1',
+          userId: 'u1',
+          roleIds: [],
+        });
+        repos.memberRepo.find.mockResolvedValue([]);
+        repos.workspaceRepo.findOne.mockResolvedValue({
+          id: 'ws1',
+          distributionGroupId: 'dist-ws1',
+        });
+        repos.messageRepo.create.mockImplementation((row: any) => row);
+        repos.messageRepo.save.mockImplementation(async (row: any) => ({
+          ...row,
+          id: 'm1',
+          createdAt: new Date(),
+        }));
+        const done = repos.service.sendMessage('ch1', { senderId: 'u1', ...body } as never);
+        return { ...repos, done };
+      };
+      const sealed = {
+        ciphertext: 'abc',
+        nonce: 'def',
+        senderSessionId: 'sess-1',
+        messageIndex: 4,
+      };
+      const shapes: [string, Record<string, unknown>][] = [
+        ['a text message with its seed frame', { messageId: 'client-1', ...FRAME }],
+        ['a silent reaction or edit', { silent: true }],
+        [
+          'a poll',
+          { poll: { optionIds: ['a', 'b'], multipleChoice: true, endsAt: null }, ...FRAME },
+        ],
+        ['a system notice (no client id)', { ...FRAME }],
+        ['a message with mentions', { mentionedUserIds: ['u2'], ...FRAME }],
+      ];
+
+      it.each(shapes)('v1.0.3 (the floor): %s, signed, is ACCEPTED', async (_label, extra) => {
+        const { done, messageRepo } = sendAs({ ...sealed, signature: SIGNATURE, ...extra });
+        await expect(done).resolves.toBeDefined();
+        expect(messageRepo.create).toHaveBeenCalledWith(
+          expect.objectContaining({ signature: SIGNATURE })
+        );
+      });
+
+      it.each(shapes)(
+        'v1.0.2 (below the floor): %s, unsigned, is REFUSED',
+        async (_label, extra) => {
+          const logError = jest
+            .spyOn(Logger.prototype, 'error')
+            .mockImplementation(() => undefined);
+          try {
+            const { done, messageRepo } = sendAs({ ...sealed, ...extra });
+            expect(await code(done)).toBe(CHANNEL_SIGNATURE_REQUIRED);
+            expect(messageRepo.save).not.toHaveBeenCalled();
+          } finally {
+            logError.mockRestore();
+          }
+        }
+      );
     });
 
     it.each([

@@ -14,12 +14,15 @@
  * alone; the keyboard reaches the same list through focus (`:focus-visible`).
  */
 
-/** Hold time that turns a press into a "who reacted" request. */
-export const LONG_PRESS_MS = 450;
+import { longPress, LONG_PRESS_MS } from './longPress';
+
+/**
+ * Hold time that turns a press into a "who reacted" request. The hold itself - its timer, its slop,
+ * the click it swallows and the native menu it refuses - is the shared `longPress` primitive.
+ */
+export { LONG_PRESS_MS };
 /** Rest time on a badge, with a mouse or the keyboard, that opens the list - not a click on the way. */
 export const HOVER_INTENT_MS = 400;
-/** Pointer travel past which the press is a scroll or a drag, not a hold. */
-const LONG_PRESS_SLOP_PX = 10;
 
 export interface ReactorsTriggerParams {
   /** Open the "who reacted" list for this badge. */
@@ -34,18 +37,12 @@ export interface ReactorsTriggerParams {
  */
 export function reactorsTrigger(node: HTMLElement, initial: ReactorsTriggerParams) {
   let params = initial;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let origin: { x: number; y: number } | null = null;
-  let opened = false;
   let restTimer: ReturnType<typeof setTimeout> | null = null;
   /** True while the list is open because of a rest (hover or focus), which leaving must close. */
   let restOpened = false;
 
-  function cancel() {
-    if (timer) clearTimeout(timer);
-    timer = null;
-    origin = null;
-  }
+  // Every pointer holds, a mouse included (Discord's badge); the native menu is refused.
+  const hold = longPress(node, { onHold: (anchor) => params.open(anchor) });
 
   function cancelRest() {
     if (restTimer) clearTimeout(restTimer);
@@ -75,64 +72,30 @@ export function reactorsTrigger(node: HTMLElement, initial: ReactorsTriggerParam
   const onFocusIn = () => {
     if (node.matches(':focus-visible')) armRest();
   };
+  // A press is a click or a hold, never a rest: it must not open the list under its own click.
   const onDown = (e: PointerEvent) => {
-    // A mouse holds with its main button only; a right click is the context menu's.
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    cancel();
-    // A press is a click or a hold, never a rest: it must not open the list under its own click.
     cancelRest();
-    opened = false;
-    origin = { x: e.clientX, y: e.clientY };
-    timer = setTimeout(() => {
-      timer = null;
-      opened = true;
-      params.open(node);
-    }, LONG_PRESS_MS);
   };
-  const onMove = (e: PointerEvent) => {
-    if (!origin) return;
-    if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > LONG_PRESS_SLOP_PX) cancel();
-  };
-  const onLeave = () => {
-    cancel();
-    endRest();
-  };
-  const onClickCapture = (e: Event) => {
-    if (!opened) return;
-    opened = false;
-    e.stopPropagation();
-  };
-  // The native long-press menu would cover the list it just opened.
-  const onContextMenu = (e: Event) => e.preventDefault();
 
   node.addEventListener('pointerenter', onEnter);
   node.addEventListener('focusin', onFocusIn);
   node.addEventListener('focusout', endRest);
   node.addEventListener('pointerdown', onDown);
-  node.addEventListener('pointermove', onMove);
-  node.addEventListener('pointerup', cancel);
-  node.addEventListener('pointercancel', cancel);
-  node.addEventListener('pointerleave', onLeave);
-  node.addEventListener('click', onClickCapture, true);
-  node.addEventListener('contextmenu', onContextMenu);
+  node.addEventListener('pointerleave', endRest);
 
   return {
     update(next: ReactorsTriggerParams) {
       params = next;
     },
     destroy() {
-      cancel();
+      hold.destroy();
       cancelRest();
       node.removeEventListener('pointerenter', onEnter);
       node.removeEventListener('focusin', onFocusIn);
       node.removeEventListener('focusout', endRest);
       node.removeEventListener('pointerdown', onDown);
-      node.removeEventListener('pointermove', onMove);
-      node.removeEventListener('pointerup', cancel);
-      node.removeEventListener('pointercancel', cancel);
-      node.removeEventListener('pointerleave', onLeave);
-      node.removeEventListener('click', onClickCapture, true);
-      node.removeEventListener('contextmenu', onContextMenu);
+      node.removeEventListener('pointerleave', endRest);
     },
   };
 }

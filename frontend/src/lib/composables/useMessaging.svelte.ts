@@ -56,6 +56,12 @@ import {
 import { getUserDisplayNameSync, notificationSenderName } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+import {
+  readSalonSendGate,
+  SalonNotLoadableError,
+  whenSalonSendable,
+} from '$lib/utils/graine/salonSendGate';
+import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { MediaService } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
 import {
@@ -534,7 +540,10 @@ export function useMessaging() {
     if (!key || !convo) return;
     ctx.setSendError('');
     const refusal = await retrySalonSend(messageId, makeSendDeps(ctx, convo));
-    if (refusal) ctx.setSendError(refusal);
+    if (!refusal) return;
+    // A retry may wait for its salon to load: the banner goes to the conversation still on screen.
+    if (ctx.selectedContact === key) ctx.setSendError(refusal);
+    else ctx.log(`[SEND] retry refusal not shown: the conversation changed (${refusal})`);
   }
 
   /** Drops a failed salon message the member gave up on: its registration and its row. */
@@ -1158,6 +1167,8 @@ export function useMessaging() {
     const fileEntries = filesToSend;
     const mediaCaption = text || undefined;
     let sentMediaMessageCount = 0;
+    /** A held salon upload was refused because the account signed out - see the media catch. */
+    let sessionEndedDuringSend = false;
 
     ctx.log(
       `[SEND] handleSendChat: contact="${ctx.selectedContact}" text="${text.slice(0, 40)}" files=${filesToSend.length}`
@@ -1177,6 +1188,7 @@ export function useMessaging() {
       return;
     }
 
+    const sentFrom = ctx.selectedContact;
     const isChannel = isChannelConversationId(ctx.selectedContact);
     ctx.log(
       `[SEND] convo: groupId="${convo.id}" lifecycle=${convo.lifecycle} isChannel=${isChannel}`
@@ -1201,15 +1213,15 @@ export function useMessaging() {
         // `null`: a click on the send button, never a stack inside a decrypt session.
         .waitForMessageQueueIdle('media send', null)
         .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
-      const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
+      const stillMember = await ctx.verifyCurrentUserMembership(sentFrom);
       if (!stillMember || convo.lifecycle !== 'active') {
         ctx.setSendError(m.chat_send_session_establishing());
         return;
       }
     }
 
-    const currentReplyingTo = replyByConversation.get(ctx.selectedContact) ?? null;
-    replyByConversation.delete(ctx.selectedContact);
+    const currentReplyingTo = replyByConversation.get(sentFrom) ?? null;
+    replyByConversation.delete(sentFrom);
     ctx.setSendError('');
     const channelSvc = isChannel ? new ChannelService() : null;
 
@@ -1235,6 +1247,19 @@ export function useMessaging() {
           if (isChannel && channelSvc) {
             // Channels are server-authoritative + always available: encrypt + upload + send inline.
             isUploadingMedia = true;
+            // THE SALON MUST BE LOADED BEFORE ANYTHING IS UPLOADED OR SEALED, and one that is not
+            // yet is WAITED FOR, as a text is (`salonSendGate.ts`): the upload indicator stays up
+            // meanwhile, and a refusal re-stages the file below. Before the upload, so a salon that
+            // never loads leaves no orphan blob behind.
+            const gateReading = readSalonSendGate(sentFrom);
+            if (gateReading.kind === 'wait') {
+              ctx.log(
+                `[MEDIA] ${messageId.slice(0, 8)}... HELD: salon ${sentFrom.slice(0, 16)} is not loaded on this device yet`
+              );
+            }
+            const gate =
+              gateReading.kind === 'wait' ? await whenSalonSendable(sentFrom) : gateReading;
+            if (gate.kind === 'refused') throw new SalonNotLoadableError(gate.reason);
             // `ctx.authToken` is a COPY taken at sign-in: it is empty or EXPIRED far more often than it
             // is live, and a 15-minute-old copy sent the upload out as `401 JWT expired` ("your session
             // expired") on a tab that was perfectly signed in. `getToken` is the one place that knows
@@ -1267,7 +1292,8 @@ export function useMessaging() {
               messageId,
               sentAt,
             });
-            const actualChannelId = ctx.selectedContact!.replace('channel_', '');
+            // The salon the send was MADE in: the selection may have moved during the wait above.
+            const actualChannelId = sentFrom.replace('channel_', '');
             await sendEncryptedChannelMessage(actualChannelId, protoBytes, messageId);
           } else {
             // MLS: queue the media. The flusher uploads then sends once the group is ready
@@ -1299,7 +1325,7 @@ export function useMessaging() {
             const endInflight = beginOutboxEnqueue(messageId);
             try {
               const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
-              await addMessageToChat(ctx.userId, placeholder, ctx.selectedContact!, ctx, {
+              await addMessageToChat(ctx.userId, placeholder, sentFrom, ctx, {
                 messageId,
                 status: 'pending',
                 timestamp: new SvelteDate(sentAt),
@@ -1333,9 +1359,9 @@ export function useMessaging() {
                 ctx.log(
                   `[MEDIA] ${messageId.slice(0, 8)}… not queued, withdrawing its placeholder: ${String(enqueueError)}`
                 );
-                const current = ctx.conversations.get(ctx.selectedContact!);
+                const current = ctx.conversations.get(sentFrom);
                 if (current) {
-                  ctx.conversations.set(ctx.selectedContact!, {
+                  ctx.conversations.set(sentFrom, {
                     ...current,
                     messages: current.messages.filter((m) => m.id !== messageId),
                   });
@@ -1353,9 +1379,6 @@ export function useMessaging() {
           ctx.playSendTone?.();
         }
       } catch (error) {
-        if (sentMediaMessageCount < fileEntries.length) {
-          pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
-        }
         // BOTH BRANCHES OF THE LOOP ABOVE LAND HERE AND ONLY ONE OF THEM ASKS A SERVER ANYTHING.
         // The MLS branch writes bytes to IndexedDB and returns; the channel branch uploads and
         // sends inline, and both of those now throw a typed refusal. So the status is READ rather
@@ -1364,25 +1387,60 @@ export function useMessaging() {
         // route answers for an oversized file is the one a member can act on, and it is the
         // reason this catch gained a status instead of a second sentence.
         const status = refusalStatus(error);
-        ctx.setSendError(
-          describeApiRefusal(status, m.chat_media_action_send()) ??
-            (isEnqueueQuotaFailure(error)
-              ? m.chat_media_send_error_storage_full()
-              : m.chat_media_send_error_generic())
-        );
-        ctx.log(
-          `[MEDIA] send failed (status=${status ?? 'none'}), ${fileEntries.length - sentMediaMessageCount} file(s) re-staged: ${String(error)}`
-        );
+        const mediaRefusal =
+          error instanceof SalonNotLoadableError
+            ? salonGateRefusalMessage(error.reason)
+            : (describeApiRefusal(status, m.chat_media_action_send()) ??
+              (isEnqueueQuotaFailure(error)
+                ? m.chat_media_send_error_storage_full()
+                : m.chat_media_send_error_generic()));
+        const unsent = fileEntries.length - sentMediaMessageCount;
+        // THE STAGING IS ONE QUEUE FOR EVERY CONVERSATION, so where an unsent file goes back is a
+        // question of WHICH conversation is on screen - a held salon upload may be refused long after
+        // the click.
+        if (error instanceof SalonNotLoadableError && error.reason === 'session-ended') {
+          // THE ACCOUNT THAT MADE THIS SEND HAS LEFT. Nothing of it may reach the next account: this
+          // composable outlives a sign-out, so a re-staged file would sit in the NEXT account's
+          // composer, and the caption below would be held for the next session's gate and sealed
+          // by whoever signs in. No banner either - it would be the next account's.
+          sessionEndedDuringSend = true;
+          ctx.log(
+            `[MEDIA] ${unsent} file(s) dropped, not re-staged: the session ended while the salon was loading`
+          );
+        } else if (ctx.selectedContact === sentFrom) {
+          if (unsent > 0) {
+            pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
+          }
+          ctx.setSendError(mediaRefusal);
+          ctx.log(
+            `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
+          );
+        } else {
+          // THE MEMBER MOVED ON. Re-staged here, the file would sit in ANOTHER conversation's
+          // composer and its next Send would post it there. Dropped, and said so on the banner of
+          // the conversation now on screen, with the cause.
+          ctx.setSendError(m.chat_media_dropped_other_conversation({ cause: mediaRefusal }));
+          ctx.log(
+            `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) DROPPED, not re-staged: the conversation changed since the send: ${String(error)}`
+          );
+        }
       } finally {
         isUploadingMedia = false;
       }
     }
 
+    if (sessionEndedDuringSend) {
+      ctx.log('[SEND] caption not sent: the session ended while its upload was held');
+      return;
+    }
     if (sentMediaMessageCount > 0 || !text) return;
 
+    // THE CONVERSATION THE SEND WAS MADE IN, never the one on screen now: a salon upload may have
+    // been held for its salon above, and a caption falling through to here after a refused upload
+    // went to whichever conversation the member had moved to meanwhile.
     const result = await sendChatMessage(
       text,
-      ctx.selectedContact!,
+      sentFrom,
       currentReplyingTo,
       makeSendDeps(ctx, convo)
     );
@@ -1391,8 +1449,11 @@ export function useMessaging() {
     // (deleted group) or a channel error surfaces a message to the user.
     if (!result.success) {
       if (result.error) {
-        ctx.setSendError(result.error);
         ctx.log(`[SEND] Failed: ${result.error}`);
+        // A SALON SEND MAY ANSWER LONG AFTER THE CLICK - held until its salon loads - and the
+        // banner belongs to the conversation on screen. Its row keeps the failure either way.
+        if (ctx.selectedContact === sentFrom) ctx.setSendError(result.error);
+        else ctx.log(`[SEND] banner not shown: the conversation changed since the send`);
       }
       // THE TEXT LIVES IN A ROW (failed, with its retry) when the send was echoed: the composer has
       // nothing to take back, and restoring it would put the message in the thread twice (WP-OFF-2).
@@ -1400,7 +1461,7 @@ export function useMessaging() {
       // Nothing was drawn: the reply target goes back too, so the caller can restore the draft and
       // lose nothing (WP-OFF-1).
       if (isChannel && currentReplyingTo) {
-        replyByConversation.set(ctx.selectedContact, currentReplyingTo);
+        replyByConversation.set(sentFrom, currentReplyingTo);
       }
       return false;
     }
@@ -1451,7 +1512,9 @@ export function useMessaging() {
         // The LOG is dev-facing and stays English, and it names the file the banner cannot: the
         // banner tells the user one file was too big, this says WHICH, so a report of "it refused my
         // picture" is answerable without asking them to reproduce it.
-        ctx.log(`[MEDIA] refused "${file.name}" - ${size} Mo over the ${mediaMaxSizeMb} Mo limit`);
+        ctx.log(
+          `[MEDIA] refused a ${file.type || 'typeless'} file - ${size} Mo over the ${mediaMaxSizeMb} Mo limit`
+        );
         continue;
       }
       let entry: import('$lib/media').PendingMediaFile = { file };
@@ -1485,7 +1548,7 @@ export function useMessaging() {
         const { readImageDimensions } = await import('$lib/media');
         const dims = await readImageDimensions(file);
         if (dims) entry = { file, width: dims.width, height: dims.height };
-        else ctx.log(`[MEDIA] GIF "${file.name}" has no readable size - sent without one`);
+        else ctx.log(`[MEDIA] a GIF of ${file.size} bytes has no readable size - sent without one`);
       }
       if (entry.file.type.startsWith('image/')) {
         // The receiver's box shows this while the blob downloads (`MediaMsg.placeholder`).
@@ -1533,10 +1596,10 @@ export function useMessaging() {
       if (!isVideoPrepareError(e)) throw e;
       const message = videoPrepareFailureMessage(e);
       if (message === null) {
-        ctx.log(`[MEDIA] video "${file.name}" not staged: cancelled`);
+        ctx.log(`[MEDIA] video of ${file.size} bytes not staged: cancelled`);
         return null;
       }
-      ctx.log(`[MEDIA] video "${file.name}" refused: ${e.fault} - ${e.message}`);
+      ctx.log(`[MEDIA] video of ${file.size} bytes refused: ${e.fault} - ${e.message}`);
       ctx.setSendError(message);
       return null;
     } finally {

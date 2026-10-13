@@ -166,6 +166,10 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
 
+## P2 - How the browser lost the message an overheard digest exposed is not established (2026-10-13)
+
+Production, group `656597dc`: the browser lacked one message the owner's phone held. The repair is shipped: the overhearing device asks the digest's author, and asks once more on the author's next live frame ([history-reconciliation](protocols/history-reconciliation.md#a-digest-overheard-is-evidence-the-member-that-lacks-something-asks-its-author-2026-10-13)). **Open**: the CAUSE. Compare the phone's 7 ids with the browser's 6 to find how the browser lost it (inferred, not shown).
+
 ## P2 - Key-group requests sealed 3-6 epochs behind are unreadable by every current member (console export, 2026-10-12)
 
 Four senders' devices sealed seed requests at epochs 135-138 while the key group was at 141. No current member can open them (`max_past_epochs` 2), and each loss drives a re-ask. The drain order was REFUTED as the cause ([channel-encryption §23](protocols/channel-encryption.md#not-the-cause-the-drain-order)). **Candidate**: chat-delivery answers `stale_epoch` to an application frame on a key group whose MLS epoch is below active - 2, so the sender catches up and re-seals instead of sending something nobody can read. **First measure**: the `at epoch E` of the new `[GRAINE] asked` line, on the sender side, to find out which client versions lag.
@@ -296,18 +300,13 @@ built and uploaded their IPA. So no pre-release reaches the iPhone bench and eve
 newer fix waits. Owed: read in App Store Connect whether those builds exist, finished processing and
 were added to the tester group.
 
-### P3 - Android at 200 % text: two overruns in the agenda
+### P3 - a 90 px keyboard: the composer spends 24 ms 12 px low on 3 of 5 rises
 
-`calendar/+page.svelte:670`: "S'abonner au calendrier" is wider than its card and spills 33 px out
-of the card's left edge (`flex-wrap justify-end`). `CalendarScheduleList.svelte:226`: today's day
-number is 40 px in a fixed 36 px circle (`h-9 w-9`), the class `.text-zoom-exempt` was made for.
-
-### P3 - a keyboard under 160 px escapes the double-report guard
-
-`computeSnapshot` only discards a double-reported visual viewport when the layout viewport has
-shrunk by more than `keyboardOpenThresholdPx` (160 on Android). The 90 px ADB keyboard does not, so
-the composer spends one frame at 702 (2 of 5 rises) or 24 ms 12 px low (3 of 5). No real IME on the
-Mi 9T is that short; a floating or one-row keyboard would be.
+The other half of the 90 px reading of 2026-10-13 (the one-frame drop to 702 was the double report,
+now recognised at any keyboard height, [chat](frontend/modules/chat.md#every-keyboard-rise-moves-the-composer-for-a-moment-on-both-phones-measured-2026-10-02-fixed-2026-10-09-reading-owed)).
+Below the 160 px keyboard threshold no keyboard is ever "open", so `computeSnapshot` pins nothing in
+those frames; the 12 px (one `0.75rem`) comes from somewhere it does not reach. Cause not read: owed
+a per-frame record of `innerHeight`, `visualViewport.height` and the footer's padding on that rise.
 
 ### A decision - the iPhone ignores Dynamic Type
 
@@ -329,7 +328,7 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 ### P3 - 80 roster reads per connection for the stray-leaf sweep
 
-`removeStrayLeaves` reads `GET /api/mls/groups/<id>/user-members` once per held group (80 in 6.3 s, all `304`). A batched roster read, or a roster version carried by `/mls/users/<me>/groups`, needs a server endpoint.
+**Built (2026-10-13, draft PR `perf/group-rosters-batch`)**: one `POST /api/mls/group-rosters` per connection ([chat-delivery](services/chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13)). Owed once shipped: the per-connection count on a production console (expected 1 request where there were 80-81).
 
 ### P3 - the key-distribution groups are asked about twice per connection
 
@@ -404,9 +403,9 @@ G2-0 to G2-4 and the writer G2-5 are SHIPPED (#1221; the writer in the stable `v
 
 | WP | What is left |
 | --- | --- |
-| G2-5 | **v1 ends (user, 2026-09-28)**. Step one, refusing an ARRIVING v1 seed, MERGED (#1749, 2026-10-12, [§21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)) and is not in `v1.2.5` (shipped from an earlier alpha): it reaches users with the next stable; both floors are `1.0.3`. Step two, deleting the v1 reader, waits for the count in [legacy-compatibility](legacy-compatibility.md) |
+| G2-5 | **v1 ends (user, 2026-09-28)**. Step one, refusing an ARRIVING v1 seed, SHIPPED in the stable `v1.2.6` (#1749, 2026-10-13, [§21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)); both floors are `1.0.3`, so a client from `1.0.3` to `1.2.5` still accepts a v1 seed until it updates (raising the floor is the user's call). Step two, deleting the v1 reader, waits for the count in [legacy-compatibility](legacy-compatibility.md) |
 | G2-6b | a salon edit from a v1 session has an unsigned, server-supplied `senderId` (a deliberate level, no code owed, [§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05)); closes with the v1 reader. **Only if a channel ever gets an older-page load:** `listMessages` with a `before` cursor omits edit and reaction rows made after the cursor |
-| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **GRAINE-AUTH-1..3 are `PASS` since 2026-10-05 on the local estate** ([board](cross-client-testing.md#20---graine---an-author-that-is-proven), the claim that they were owed was stale); **owed: NOTIF-19/20 on the Mi 9T against a G2-5 build** (needs adb), **GRAINE-AUTH-4** (no runner can exist without a decision on a mutating dev hook, see the board row) and the iPhone reading ([device-verification](device-verification.md)) |
+| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **GRAINE-AUTH-1..3 are `PASS` since 2026-10-05 and GRAINE-AUTH-5/6 (G2-5b, live and history) since 2026-10-13, on the local estate** ([board](cross-client-testing.md#20---graine---an-author-that-is-proven)); NOTIF-19/20 on a v2 session are `PASS` since 2026-10-05 (APK `7ab8f1780`, the claim that they were owed was stale); **owed: GRAINE-AUTH-4** (no runner can exist without a decision on a mutating dev hook, see the board row) and the iPhone reading ([device-verification](device-verification.md)) |
 
 What v2 does not close: the server can still admit a device it controls or publish a false device key
 (BasicCredential's limit, §21).

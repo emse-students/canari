@@ -1436,20 +1436,6 @@
       </div>
     </div>
 
-    {#if heldNotice && !sendError}
-      <div class="chat-floating-alert is-pending md:text-sm" role="status">
-        <LoaderCircle size={16} class="animate-spin" />
-        <span>{heldNotice}</span>
-      </div>
-    {/if}
-
-    {#if sendError}
-      <div class="chat-floating-alert md:text-sm">
-        <TriangleAlert size={16} />
-        <span>{sendError}</span>
-      </div>
-    {/if}
-
     {#if !isNearBottom}
       <button
         type="button"
@@ -1501,6 +1487,23 @@
         </p>
       </div>
     {:else}
+      <!-- THE SEND'S OWN LINE - its refusal, or what it waits for - drawn INSIDE the composer stack
+           (`notice`), never floating over the thread: it floated at `bottom: 10rem`, translucent,
+           and its text collided with the messages under it (user's screenshot, 2026-10-13). In the
+           footer it is counted in `--chat-composer-height`, so the thread makes room for it. -->
+      {#snippet sendNotice()}
+        {#if sendError}
+          <div class="chat-send-notice" role="alert">
+            <TriangleAlert size={16} class="shrink-0" />
+            <span>{sendError}</span>
+          </div>
+        {:else if heldNotice}
+          <div class="chat-send-notice is-pending" role="status">
+            <LoaderCircle size={16} class="shrink-0 animate-spin" />
+            <span>{heldNotice}</span>
+          </div>
+        {/if}
+      {/snippet}
       <div bind:this={composerBand} class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
         <!-- NOT LOCKED DURING A DRAIN. `interactionLocked={isCatchingUpMessages}` used to sit on
              <ChatComposer> below - a fourth, undocumented reader of a flag whose three real guards
@@ -1531,6 +1534,7 @@
           {onRemovePendingFile}
           {videoPreparation}
           {isUploading}
+          notice={sendError || heldNotice ? sendNotice : undefined}
         />
       </div>
     {/if}

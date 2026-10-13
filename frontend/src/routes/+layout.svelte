@@ -72,7 +72,6 @@
   import { setTabUnread, startTabIndicator } from '$lib/stores/tabIndicator';
   import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
-  import { isTauriRuntime } from '$lib/utils/openExternal';
   import { purgeRetiredAvatarCache } from '$lib/utils/userAvatarCache';
   import { publishTextZoom } from '$lib/utils/textZoom';
   import { m } from '$lib/paraglide/messages';
@@ -151,12 +150,6 @@
 
     // Reclaim the avatar bucket this client no longer writes. Idempotent, and free once it is gone.
     void purgeRetiredAvatarCache();
-
-    // Redirect console.log/warn/error to tauri-plugin-log → adb logcat on Android.
-    // Dynamic import prevents @tauri-apps/plugin-log from being bundled in the Web build.
-    if (isTauriRuntime()) {
-      import('@tauri-apps/plugin-log').then(({ attachConsole }) => attachConsole()).catch(() => {});
-    }
 
     const onVersionCheckTrigger = () => void refreshAppVersionCheck();
     void refreshAppVersionCheck();

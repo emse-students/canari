@@ -22,7 +22,34 @@ export type IncomingDeliveryMeta = {
    * so it is compared with the verified credential, never believed (`verifiedSender`).
    */
   senderDeviceId?: string;
+  /**
+   * The route the ADMITTED copy took. `live` is the one that says something about the SENDER now:
+   * the server pushed it the moment it was sent, so its sender was online seconds ago. A `pull`
+   * copy is a queue row and may be hours old. Read by the overheard-pull retry
+   * (`historyOverheardPull`), which needs exactly that proof.
+   */
+  channel?: DeliveryChannel;
 };
+
+/**
+ * What the pipeline is told about how a queued frame ARRIVED, or `undefined` when nothing is known.
+ * One place, because the route (`channel`) is read downstream as a proof - a field dropped here would
+ * silently turn that proof off rather than fail.
+ */
+export function deliveryMetaOf(msg: {
+  queuedCreatedAt?: number;
+  queuedMessageId?: string;
+  senderDeviceId?: string;
+  channel?: DeliveryChannel;
+}): IncomingDeliveryMeta | undefined {
+  const meta: IncomingDeliveryMeta = {
+    ...(msg.channel ? { channel: msg.channel } : {}),
+    ...(msg.queuedCreatedAt !== undefined ? { queuedCreatedAt: msg.queuedCreatedAt } : {}),
+    ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
+    ...(msg.senderDeviceId ? { senderDeviceId: msg.senderDeviceId } : {}),
+  };
+  return Object.keys(meta).length > 0 ? meta : undefined;
+}
 
 /**
  * Parses a server-side timestamp (queue `createdAt`, Redis history, WS envelope).

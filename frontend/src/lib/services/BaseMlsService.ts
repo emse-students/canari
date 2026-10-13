@@ -19,6 +19,7 @@ import {
   KEY_PACKAGE_ROUND_DEADLINE_MS,
   raceDeadline,
   NotAGroupMemberError,
+  type GroupRosterBatch,
   type MlsDeliveryFetch,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
@@ -71,6 +72,7 @@ import { runAsEpochAdvance, runAsEpochSend } from '$lib/utils/chat/epochSendBarr
 import {
   parseServerTimestampMs,
   type DeliveryChannel,
+  deliveryMetaOf,
   type DeliveryRepeatShape,
 } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
@@ -103,7 +105,11 @@ import type {
 } from '$lib/mls-client/IMlsService';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { commitPendingHistoryMarks, noteFrameConsumed } from '$lib/utils/chat/history';
+import {
+  commitPendingHistoryMarks,
+  noteFrameConsumed,
+  snapshotPendingHistoryMarks,
+} from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits } from '$lib/mls-client/commitAdmits';
@@ -1659,7 +1665,8 @@ export abstract class BaseMlsService implements IMlsService {
    */
   protected enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel): void {
     if (!this.admitDelivery(msg.queuedMessageId, channel)) return;
-    this.messageScheduler.enqueue(msg);
+    // Stamped HERE, after the dedup: the copy that was admitted is the one whose route is a fact.
+    this.messageScheduler.enqueue({ ...msg, channel });
     if (!this.messageScheduler.draining) {
       void this.processQueue();
     }
@@ -1771,16 +1778,7 @@ export abstract class BaseMlsService implements IMlsService {
             `[QUEUE] Processing ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} group=${groupId ?? 'unknown'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
           );
 
-          const deliveryMeta: IncomingDeliveryMeta | undefined =
-            msg.queuedCreatedAt !== undefined || msg.queuedMessageId || msg.senderDeviceId
-              ? {
-                  ...(msg.queuedCreatedAt !== undefined
-                    ? { queuedCreatedAt: msg.queuedCreatedAt }
-                    : {}),
-                  ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
-                  ...(msg.senderDeviceId ? { senderDeviceId: msg.senderDeviceId } : {}),
-                }
-              : undefined;
+          const deliveryMeta = deliveryMetaOf(msg);
 
           // The stuck-callback watchdog that used to sit here is gone, and it is not lost: it
           // covered ONE of the four awaits that can freeze the drain, and `MlsPerGroupScheduler`
@@ -2831,6 +2829,10 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getGroupUserMembers(groupId);
   }
 
+  async getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
+    return this.delivery.fetchGroupRosters(groupIds);
+  }
+
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
     return this.delivery.getUserGroups(userId);
   }
@@ -2998,6 +3000,9 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async persistCheckpoint(): Promise<void> {
     const emitted = snapshotEmitted(this.userId);
+    // The replay marks are captured BEFORE the write for the same reason as `emitted`: a page
+    // decrypted while the seal runs is marked in memory, and this write does not hold its advance.
+    const replayMarks = snapshotPendingHistoryMarks(this.userId);
     await this.writeCheckpoint(this.currentDeviceKeyB64);
     commitPersisted(this.userId, emitted);
     // TWO LEDGERS, ONE WRITE, AND THE SECOND ONE WAS BOUND TO THE WRONG EVENT UNTIL 2026-09-08.
@@ -3012,7 +3017,7 @@ export abstract class BaseMlsService implements IMlsService {
     //
     // AFTER the write, never before, for the reason spelt out on `commitPendingHistoryMarks`: the two
     // orderings are not symmetric, and only "ratchet ahead of ledger" is survivable.
-    commitPendingHistoryMarks(this.userId);
+    commitPendingHistoryMarks(replayMarks);
   }
 
   /**

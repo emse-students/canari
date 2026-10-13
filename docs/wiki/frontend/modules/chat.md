@@ -83,8 +83,9 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
 - **`GlassMenuButton`** (`components/shared`) is the growing menu: a round `glass-chrome` button whose
   panel scales out of the button's own corner (`data-popover-side` picks the origin), portalled -
   `backdrop-filter` would otherwise confine a fixed panel to the button - and positioned with
-  `bindFixedPopover`'s new `stayAnchored`, since a panel that grows OUT OF its button must not be
-  centred however wide it is. Its `plain` variant is the same menu without glass: the website's phone
+  `bindFixedPopover`, which keeps a panel on its anchor however wide it is (centring is opt-in,
+  `centreWhenWide`, for the emoji pickers only since 2026-10-13), since a panel that grows OUT OF its
+  button must not be centred. Its `plain` variant is the same menu without glass: the website's phone
   paperclip. An entry with an on/off state (search, members) is a `menuitemcheckbox`.
 
 - **The polls and pinned bars are glass pills too (user, 2026-10-12)** - they were opaque white
@@ -253,6 +254,69 @@ question about the communities sidebar and was not measured. **Owed:** one readi
 next pre-release - reader on `/posts` with a salon selected, owner posts: the title count rises, an OS
 notification is raised, no `POST /read` leaves; reader returns: count cleared, one `read` and one
 `read-mark`.
+
+### Mark a whole community as read (2026-10-13)
+
+**Asked by the user** (Discord's gesture): a long press on a community icon of the rail under a
+finger, a right click with a mouse (or the Menu key), opens a menu with **Marquer tout comme lu**.
+Nothing like it existed before: the app had no context menu on the rail at all, and the only
+"Marquer comme lu" was the Android notification action for ONE salon (`POST /api/mls/push/channel-read`,
+[social-service](../../services/social-service.md#read-receipts-in-a-salon)), which moves the read mark.
+
+**The decision: clearing a badge is not reading, so no receipt moves.** A salon's read mark
+(`readMarks`) is also the "Lu par" heads other members see; the server already refused to SEED marks
+for exactly that reason (`listUnreadCounts`), and the receipt waits for focus so "a phone in a pocket
+never tells a sender it read anything". A member who clears a community from a menu has not opened a
+single message, so the clear moves a PRIVATE mark instead: `channel_members."clearedMarks"`
+(migration 082), which `listUnreadCounts` adds to the floor of what it counts, and which is never
+published to anyone but the member's own devices. Opening a salon afterwards sends the ordinary
+receipt, because that IS reading. (The shade's "Marquer comme lu" keeps moving the receipt: there the
+reader saw the message in the banner. Not changed here.)
+
+| Piece | Where |
+|---|---|
+| The gesture | `actions/longPress.ts` - the hold primitive extracted from `reactorsTrigger` (which now composes it): 450 ms, slop, the click that ends a hold swallowed in capture, the native menu refused; a `contextmenu` that is not a touch hold goes to `onContextMenu` |
+| The rail | `Sidebar.svelte`: touch/pen hold and right click open `CommunityRailMenu.svelte`; the mouse's main button is left to the drag |
+| One request | `POST /api/channels/workspaces/:workspaceId/unread/clear { upTo }` -> `clearWorkspaceUnread`: one `UPDATE` for every salon the caller may read (`canAccessChannel`) |
+| Other devices | `channel.unread.cleared` to the caller alone; each device re-reads `unread-counts` (one request), plus one silent `channel_read` push per salon that moved, which dismisses its banners |
+
+**The bound.** `upTo` is `communityUnreadUpTo`: the later of the last server count's `asOf` and the
+newest message held in those salons - both on the SERVER's clock (a salon row's timestamp is its
+`createdAt`). The server stores per salon `LEAST(upTo, newest row createdAt)`, merged as
+`GREATEST` against the row being updated, so a mark never covers a message that did not exist, never
+covers one created after the badge the user cleared, and never falls. Silent rows are not counted
+(the count's own rule). This device's badges fall at once (`clearSalonUnreadLocally`: only falls,
+watermark untouched); a refusal is a toast and a re-read of the server's counts.
+
+**The rail is also a drag zone** (`svelte-dnd-action`, no touch delay: a 3 px move starts a drag and
+the library prevents the `touchstart`, then dispatches its own `click` on `touchend`). The hold asks
+the DRAG, not a slop tuned to the library: `consider` with `DRAG_STARTED` sets `railDragActive`, so a
+hold the drag took opens nothing, and a hold that turns into a drag closes the menu. The library's
+synthetic click after a hold is swallowed by `longPress`.
+
+**Measured in headless Chrome at 390 px with touch emulation** (trusted CDP touches against the real
+`Sidebar`, the real library and the real `pressedClickGuard`): a tap selects the community (one
+script click, as before); a still 700 ms hold, and one with a 2 px jitter, open the menu and select
+nothing; a tap on the entry calls the action once; a 70 px drag reorders and opens nothing; a hold
+then a drag opens the menu and closes it at the drag; a community with no salon offers the entry
+greyed; a mouse right click opens it; a mouse left hold of 700 ms still just selects.
+
+**Not verified:** a real phone (Android's native long-press `contextmenu`, iOS WebKit's callout - both
+handled in code, neither seen); the menu's position on screen (the probe page rendered without the
+app's CSS); two devices clearing at ONCE (one connection only: argued, not measured - the `UPDATE`
+re-reads the locked row, so the stored mark is right and only the answer's `prev` can be stale, which
+at worst repeats an event and a silent push). **The SQL IS run**, by
+`channel-unread-clear.integration.spec.ts` (gated on `SOCIAL_IT_DATABASE_URL`; at review on PGlite,
+Postgres 17 in WASM, Docker did not answer): microsecond rows clear exactly, a lower or repeated `upTo`
+moves nothing, and it found two defects, both fixed. `LEAST` ignores a NULL, so an EMPTY salon took
+`upTo` itself as its mark and a future `upTo` hid that salon's next messages; an empty salon now gets
+no mark. And the column was off the entity, so `synchronize` (every boot outside production) dropped
+it and the count failed locally; it is declared `select`/`insert`/`update: false`. **Measured cost of
+the deploy window** (column absent, before 082 runs): a membership read and save work; the unread
+count and a NEW membership's insert (its `RETURNING` names the defaulted column) fail until the
+migration lands - seconds, nothing at boot. **Owed:** one reading on dev -
+clear a community with unread salons on the web, watch the phone's badges and banners go, and check
+that no "Lu par" head appears for the clearing member on the sender's side.
 
 ### A community joined in-session is listed whole (2026-10-08)
 
@@ -629,11 +693,17 @@ cause is a different stale number on each phone.
   until the inset catches up.
 
 **Fixed 2026-10-09 in `keyboardViewport.svelte.ts`, both halves proven in unit tests only.**
-- **Android**: `computeSnapshot` reads a visual viewport that is more than 0.35 x threshold SHORTER
-  than a layout viewport that already gave up a keyboard's worth (`baseline - winH > threshold`) as
-  that layout viewport's own height - it can only be counting the keyboard again (a pan keeps `winH`
-  full, a pinch-zoom bails out on `scale`). The test replays 945 / 588 / 230 and gets the settled
-  snapshot, keyboard height 357.
+- **Android**: `computeSnapshot` reads a double-reported visual viewport as the layout viewport's
+  own height. **Since 2026-10-13 the report is recognised by its SHAPE, not by a height**
+  (`isDoubleReport`): the visual viewport stands below the layout viewport by exactly what the
+  layout gave up (`winH - vv == baseline - winH`, within 2 CSS px of independent rounding). The
+  first version asked the layout to have shrunk by more than the 160 px keyboard threshold, so the
+  bench's 90 px ADB keyboard got past it and the composer drew one frame at 702 before resting at
+  792 (2 of 5 rises, [check W](../../device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)).
+  Nothing else has that shape: a pan gives nothing up, a pinch-zoom bails out on `scale`, a settled
+  keyboard leaves the viewports equal, and a URL bar plus a keyboard agree only if both are the same
+  height to the pixel. The tests replay the bench's LatinIME rise (945 / 588 / 230.3 / 587.9), a
+  90 px rise, and keyboards from 40 to 450 px.
 - **iOS**: the "must not visibly shrink" comment on the footer rule is about the RESTING state, and
   the resting inset with the keyboard open is already 0 (the footer settles at 0.75rem), so pinning
   `--safe-area-inset-bottom: 0px` inline while an iOS keyboard is open (`keyboardSafeAreaBottomOverride`,
@@ -3118,6 +3188,26 @@ during a conversation's entry, a switch with typing in flight) all ended at the 
 smooth scroll interrupted by the bubble. If a phone still shows the bubble UNDER the composer
 rather than flush on it, it is a different defect, owed a reading with the keyboard closed.
 
+**IT WAS A DIFFERENT DEFECT: THE RESERVATION MISSED THE FOOTER'S PADDING** (user, 2026-10-13, phone
+app: the dots half under the composer, keyboard closed). `--chat-composer-height` is the footer's
+`offsetHeight`, padding included, and the footer pads `max(0.75rem, var(--safe-area-inset-bottom))`.
+Its `ResizeObserver` watched the default CONTENT box, which a padding change does not touch - so when
+the bottom inset changed after the composer mounted (Android's navigation-bar inset reaching the
+WebView, the keyboard's open/close), the footer grew and nothing republished. Measured on the real
+`ChatArea` at 390x844, glass chrome: a 24 px inset arriving late left the footer at 76 px against a
+published 64 (bubble 4.5 px clear), a 48 px inset (three-button navigation) at 100 against 64 - the
+bubble 19.5 px UNDER the composer. `publishComposerHeight` (`utils/chat/composerHeight.ts`) observes
+`border-box`, the box it publishes: 16.5 px clear at 0, 24 and 48 px, long and short thread, keyboard
+simulated open (390x500) and closed. #1780's measurement held because its inset never changed under
+it. **Not run:** a real Android inset change and iOS WebKit (the home indicator's inset is pinned to 0
+while the keyboard is open, `keyboardViewport.svelte.ts`, which this now follows too). **And the
+publish waits for the next frame:** written inside the `ResizeObserver` callback, the value resized
+the SHALLOWER scroller, which the engine cannot notify in the same pass, so every composer growth (a
+wrapped line as well, since long before this change) raised "ResizeObserver loop completed with
+undelivered notifications" and delivered the scroller's notification a frame later anyway. The
+callback now only schedules one `requestAnimationFrame`, cancelled at teardown; the scroller resizes
+in an ordinary layout and is notified in its own frame - the same frame the follow already landed in.
+
 ### The day label and its floating pill (2026-10-01)
 
 Reported by the user: scrolling a conversation, the floating "Mercredi 23 septembre" was not
@@ -3369,6 +3459,30 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 **Why it matters, measured (production web console, `v1.2.5`, 2026-10-12).** One salon send: click 17:12:08.052, bubble 17:12:14.191 - **6.1 s with nothing on screen**, because the bubble was the server's broadcast. The time was two round trips in series on a slow link (`[CONNECTIVITY] slow link (latency floor 1123 ms)`): the community's key group had taken a commit 10 s earlier, so the send minted a new Graine session and distributed its seed (`POST /api/mls/send`, 4055 ms) before posting the message (`POST /channels/<id>/messages`, 2049 ms). With the echo the row is on screen at the click and only its status waits for those two. DMs and groups were already drawn at the click (`[ADD_MSG]` at +3 ms, bubble ~+120 ms on the Mi 9T), so both now share one status model.
 
 **What it is not:** durable as a row. A reload loses the echo (WP-OFF-3); the text comes back from the ledger. Tests: `salonUnsent.test.ts`, `salonEcho.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`, `channelEventHandler.salonEcho.test.ts`, `messagingChannelRefusal.test.ts`, `MessageMetadata.retry.svelte.test.ts`.
+
+### A salon not yet loaded holds the send, it does not refuse it (2026-10-13)
+
+**Reported on both phones (prod `1.2.6`):** a message sent right after opening the app showed `Rien n'a été envoyé : ce salon n'est pas encore chargé sur cet appareil` and the member restarted the app. **Cause:** a salon is drawn from the local store (cold start, resume, notification landing F1) long before `loadChannelWorkspacesFromBackend` has called `registerChannelWorkspace` for it, and `sealChannelMessage` throws `GraineUnknownChannelError` (`unknown-channel`) when `scopeForChannel` is empty. The listing walks every community in parallel, but each one awaits `ensureMls`, the key-group join and `listChannels` before registering its salons, which takes seconds on a slow link. Nothing was wrong except the order. This is read from the code, not from a device log: it is the only throw that carries `unknown-channel`. The row did stay as `error` with Retry (WP-OFF-2), but a Retry while the listing was still running was refused the same way, and one after a listing that GAVE UP (offline start) was refused for good.
+
+**Now the send waits for the salon** (`utils/graine/salonSendGate.ts`). `deliverSalonSend` asks the gate BEFORE sealing, so the fact is read where it is known and not learnt from the seal's refusal:
+
+- `ready`: the salon was ENTERED this session. `openSalonSendGate` is called where an entry ends, after the private salon's own group is joined, not at the scope registration (a private salon registered but not yet entered would refuse its seal `key-group-not-held`). There are four call sites: the listing walk, `registerJoinedChannel`, community creation and salon creation.
+- `wait`: a listing is in flight, or none has settled since the session began. The row stays `pending` ("En attente"), nothing is sealed, the text is in the unsent ledger, and there is no banner.
+- refused: a listing settled without entering it (`not-listed` if it answered, `listing-failed` if it gave up), its community was purged (`forgetWorkspaceGraineState` -> `left`), or the session ended (`setGraineRuntime(null)` -> `session-ended`). The row turns `error` with its Retry, and the banner names the cause (`salonGateRefusalMessage`, four Paraglide sentences).
+
+**The wait has no timer.** Each way out is an event (entered, listing settled, purge, sign-out), and a listing always settles because it has a bounded retry ladder. `settleSalonListing` refuses waiters only when NO listing is left in flight, and it runs after the reload owed to a join has begun, so a held send waits for that reload too. A listing that began before a sign-out carries the previous session's token, and its settle is ignored.
+
+**The signature rule is unchanged.** The held message is cleartext in memory, never a queued unsealed row. It is sealed and signed when released, through the ordinary `sealChannelMessage`. The seal keeps its own `unknown-channel` refusal for any path that reaches it without the gate.
+
+**No duplicate on reload.** A held send has sent nothing. A reload loses the row (memory only, as before) and the ledger hands the text back to the composer. Held sends to the same salon are released in arrival order, and each one exactly once (the resolvers are removed before they run). A Retry on a refused row asks the gate again, so it waits if a listing is in flight. The banner of an answer that arrives after the member moved to another conversation is not shown there: the row keeps the state, and the log says so.
+
+**A salon upload waits too** (the channel branch of `handleSendChat`), BEFORE the upload so a salon that never loads leaves no orphan blob. The upload indicator stays up meanwhile. A refusal throws `SalonNotLoadableError`, the file is re-staged and the banner names the cause - **only if the same conversation is still on screen**: staging is one queue for every conversation, so otherwise the file is dropped and the banner of the conversation on screen says so with the cause (`chat_media_dropped_other_conversation`) - and the caption falls through to a text send in the salon the upload was MADE in (`sentFrom`, never the conversation on screen). **Except `session-ended`:** `globalMessaging` outlives a sign-out, so a re-staged file would sit in the NEXT account's composer and the caption would be held by the next session's gate and sealed as whoever signs in; both are dropped, and the log says so. There is still no echo row for a salon upload.
+
+**A salon entered in-session holds too.** `registerJoinedChannel` brackets its joins with `beginSalonEntry` / `settleSalonEntry`: the event draws the salon before the joins end, and a send typed then would otherwise be refused by a listing that settled before the salon existed. An entry ends without changing the last listing's outcome.
+
+**The banner is no longer drawn over the thread.** `.chat-floating-alert` sat at `bottom: 10rem` on a 95 %-opaque pink in raw hex, and the messages under it showed through and collided with its text (user's screenshot). It is now `.chat-send-notice`, rendered by `ChatComposer`'s `notice` snippet at the top of the footer, so `--chat-composer-height` counts it and the thread makes room. It uses opaque tokens (`--banner-danger-bg`, `--red-err`, `--radius-lg`) and the type scale (`--text-xs`, and `--text-sm` from 768 px).
+
+Not covered: reactions, edits and polls (`toUiActionError`) still refuse on `unknown-channel`, because they are a toggle and not a message. A context where the runtime is installed but no listing ever begins would wait until sign-out; the post-login effect in `ChatBackgroundService` begins one. **A listing belongs to its session** (its gate token is the session, `isCurrentSalonSession`): one still running at sign-out stops at its next write (`assertListingSession` after every await of the walk, so nothing of the leaving account reaches the sidebar, the runtime map or the gate), records no `workspacesLoadError`, drops the reload a join owed it, and does not hold `isLoadingWorkspaces` against the next account - the next session's call supersedes it. Tests: `useChannelWorkspaces.svelte.test.ts` ("a listing that outlives its session").
 
 ## The restore keeps the salon rows the community load wrote (2026-10-12)
 

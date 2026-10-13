@@ -175,7 +175,7 @@
     uploading = true;
     uploadError = '';
     try {
-      console.log(`[Vault] Uploading: ${file.name} (${file.size} bytes)`);
+      console.log(`[Vault] Uploading ${file.size} bytes`);
 
       // Check for name collision before upload
       const duplicate = stats?.documents.find(
@@ -320,7 +320,7 @@
     const plaintext = await decryptDocument(cek, iv, ciphertext);
 
     await downloadDecryptedFile(new Blob([plaintext], { type: detail.mimeType }), detail.name);
-    console.log(`[Vault] Download complete: ${detail.name}`);
+    console.log(`[Vault] Download complete: ${doc.id}`);
   }
 
   async function submitPwPrompt() {

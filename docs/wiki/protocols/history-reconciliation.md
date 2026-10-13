@@ -522,6 +522,82 @@ false for a session that stays up - so the swallow is now LOGGED rather than sil
 `history.ts` announces *reconciling* before calling and a silent decline made that line a claim
 about something that did not happen.
 
+### A digest overheard is evidence: the member that lacks something asks its author (2026-10-13)
+
+**Measured on production 2026-10-13, group `656597dc`.** A user's phone (`mtxpgiiv`) came back
+after ~100 minutes away, asked, and the server elected the same user's other phone (`mv6mmuu1`):
+`history_state`, `history_digest_request`, `history_digest` (7 ids), `history_pull`. The user's
+browser (`muh72dix`) is a member, so it received all four legs. It held 6 rows, logged
+`[HISTORY_DIGEST] From ... 7 id(s)`, then logged nothing and sent nothing. The message the phone
+showed never reached the browser.
+
+**Every one of the browser's own triggers was right to stay quiet.** No unreadable frame was held,
+the server had no queued row left for it (the send logs show every frame of the group either
+`PUBLISHED` to it or read by its stream walk, whose cursor reached the stream head), and the
+connection pass logged `no sweep - away 0 d ... every group already audited`. The gap had no local
+witness. Its one piece of evidence was a digest addressed to somebody else, and the
+`history_digest` branch dropped a digest it had not solicited, without a line. The responder could
+not repair the browser either: `mv6mmuu1` joined by external commit at 11:58 and got its past as
+bundles from the browser itself, so it lacked the same id. Its own pull to the phone at 13:11:03 hit
+`TRANSPORT_SKIPPED_OFFLINE`: the phone had gone to the background seven seconds after its digest.
+
+**The rule now.** `pullFromOverheardDigest` (`historyDiffAnswer.ts`) handles a digest that no waiter
+took and no solicitation claims. After its own mailbox for that group drains, the device diffs the
+digest against its store and sends an addressed `history_pull` to the AUTHOR for what it lacks,
+stating its OWN `since`. It never answers on the author's behalf: what the author lacks is the elected
+responder's job. Both roads go through one `pullWhatWeLack`, so the elected responder and the
+overhearing member cannot drift into two pulls. This is the bundle rule ("an answer meant for a peer is
+simply free messages") applied to the question:
+
+| | cost | why it is acceptable |
+| --- | --- | --- |
+| store read per overheard digest | one walk per member device | a digest goes out only after two state keys DIFFER, so it is the exception |
+| pull | one addressed frame, only when the diff is non-empty | the author answers with a bundle, and a bundle asks for nothing |
+| ids below our window | the author clips them (`Held N ... below the asker's window`) | the same cost the elected responder already pays: an id list carries no dates |
+| a `range` digest | **not pulled**, one line (`overheard ...'s range digest ... not pulled`) | a slice names a difference, never who is short, and its answer is the author's whole slice broadcast to the group. Every overhearing member would draw it, and a browser's 90 days differ from a phone's five years in nearly every slice. The elected responder still settles it, once |
+| an `ids` digest above `DIGEST_ID_MODE_MAX` | **not pulled**, one line | no client builds one (it switches to `range`), so only a forged frame carries it; read as is, one frame from one co-member would make every member send up to ten pulls |
+
+**The bound, by construction and with no clock in it** (adversarial review, 2026-10-13): one
+overheard digest costs each device at most one store read and `ceil(1000 / 500)` = 2 pull frames
+naming exact ids, and the author answers only ids it holds inside the puller's window. A pull is
+answered by a bundle and a bundle asks for nothing, so no leg re-enters the exchange. What is NOT
+bounded below the group size: with N devices lacking the same id, the author serves it N times (each
+bundle is also ingested by everyone else, deduped by id). That is the price of asking without a
+second election, and it is paid only when a digest exposes a real gap.
+
+Every outcome is logged, as `overheard ...'s digest naming N id(s) we lack - asked it for
+them` and `... we hold everything it lists`. The silence is what made this one take a console export
+to find.
+
+**What this does NOT close, stated so nobody believes it closed.**
+
+- **A pull to an author that has already left gets ONE more chance, not a guarantee.** A pull is a
+  transport frame, so the server drops it for an offline author and never says so (that race stopped
+  `mv6mmuu1`'s pull here). `historyOverheardPull.ts` keeps, per conversation and author, the LATEST
+  digest that made this device ask (a newer one replaces it; one that leaves nothing to ask drops it),
+  and spends it ONCE on the next frame from that author that arrives LIVE (`deliveryMeta.channel`,
+  stamped by `enqueueMessage` after the dedup) with its device checked by `verifiedSender`, in any
+  conversation. The author's own `history_digest` does not spend it: it supersedes it. The retry
+  waits for that conversation's mailbox and diffs the same digest against the store as it is NOW, so
+  whatever the first ask brought is not asked again. It records nothing, so there is no third ask:
+  ids below our window (which the author answers with silence) cost two pulls, never a loop. No clock:
+  an author that never comes back costs one map entry and no traffic. The memory is session-bound:
+  emptied by `resetHistoryReconciliation` (sign-out, account switch), forgotten per conversation by
+  `forgetGroupReconciliation`, and a ticket taken when the digest arrived stops a pull still in
+  flight from recording across either. **What still escapes it**: a reload in between, an author
+  that sends us no live frame in this session, and an author gone again before the retry lands.
+- **A conversation above 1 000 messages is not covered.** Its digests are `range`, which the
+  overhearing road declines (table above), so the same gap in a large conversation stays as silent as
+  before - now with a line saying the digest was seen and not pulled.
+- **HOW the browser lost the message is NOT established.** Every frame of the group in the server
+  stream (`history:{gid}`, 19 entries) reached the browser by queue or stream walk, and the server
+  logs cannot tell which id the phone holds that the browser lacks (ids are inside the ciphertext).
+  It is consistent with a frame decrypted once and then not stored (the queue/stream double
+  presentation, [WP-DUPDELIVERY-1](#wp-dupdelivery-1---the-ledger-was-the-witness-and-the-overlap-was-one-await-wide)),
+  but that is inferred. **To confirm it:** compare the phone's 7 ids with the browser's 6. The odd id's
+  timestamp places it among the stream entries, and that entry's `send-*` trace names the delivery
+  path the browser took.
+
 ### The fourth trigger: an answer that does not reach far enough back
 
 **SHIPPED 2026-08-16.** The other three triggers are things a device notices about ITSELF - a
@@ -988,6 +1064,15 @@ day could be COUNTED and not ATTRIBUTED - not to a device, not to an account, no
 of distinct callers. **A rate is only a defect once it is measured against the population that
 produced it**, and a burst from one device retrying is a different system from the same burst spread
 over an account's several devices.
+
+**`until=` is what the caller asked, `head=` what the stream holds (2026-10-13).** The line used to
+print the head it had just read as `until=` when the caller sent none, so a device already caught up
+logged `after=X until=X entries=0` - read from a store phone's three launches (210 of 258 lines) as a
+client asking for a window empty by construction. It was not: the batch catch-up sends only its
+cursor, and "nothing after it" is the answer. The batch route now writes no line for a group whose
+cursor IS the head and counts it in `[HISTORY_BATCH] ... caughtUp=N` instead; a caught-up group
+still costs its `XRANGE` and `XREVRANGE`, and the client still asks, because nothing it holds says
+the stream did not move while it was away. 85 groups ask in 2 requests (50 + 35), not 85.
 
 **The two halves are not worth the same and the line says so.** `user` is what nginx put on the
 request once `/internal/auth/verify` answered - a fact the service did not have to trust the caller
