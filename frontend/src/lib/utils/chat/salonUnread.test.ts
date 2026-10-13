@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Conversation } from '$lib/types';
 import {
   beginUnreadReconcile,
+  clearSalonUnreadLocally,
+  communityUnreadUpTo,
   noteSalonOpened,
   parseSalonUnreadAnswer,
   reconcileSalonUnread,
@@ -159,6 +161,85 @@ describe('reconcileSalonUnreadFromServer', () => {
     });
     expect(map.get(SALON)?.unreadCount).toBe(0);
     expect(logs.join()).toContain('dropped');
+  });
+});
+
+/**
+ * "Marquer tout comme lu" on a community (2026-10-13). The clear covers what the screen COUNTED, on
+ * the server's clock, and nothing later; and it empties the badge without moving the reader's own
+ * watermark, which is the "Lu par" receipt the other members see.
+ */
+describe('communityUnreadUpTo', () => {
+  beforeEach(() => resetSalonUnread());
+
+  it('is 0 when nothing was ever counted - there is nothing to clear', () => {
+    expect(communityUnreadUpTo(new Map([[SALON, convo()]]), [SALON])).toBe(0);
+  });
+
+  it('is the later of the last server count and the newest message held in those salons', async () => {
+    const map = new Map([
+      [SALON, convo({ messages: [msg('a', 1500)] as never })],
+      [OTHER, convo({ id: OTHER, messages: [msg('z', 9000)] as never })],
+    ]);
+    await reconcileSalonUnreadFromServer({
+      conversations: map,
+      selectedId: null,
+      userId: ME,
+      reason: 'test',
+      log: () => {},
+      fetchCounts: async () => ({ asOf: 2000, counts: {} }),
+    });
+    // OTHER is not in this community: its newer message must not stretch the clear.
+    expect(communityUnreadUpTo(map, [SALON])).toBe(2000);
+    expect(communityUnreadUpTo(map, [SALON, OTHER])).toBe(9000);
+  });
+
+  it('forgets the last count when the session ends', async () => {
+    const map = new Map([[SALON, convo()]]);
+    await reconcileSalonUnreadFromServer({
+      conversations: map,
+      selectedId: null,
+      userId: ME,
+      reason: 'test',
+      log: () => {},
+      fetchCounts: async () => ({ asOf: 2000, counts: {} }),
+    });
+    resetSalonUnread();
+    expect(communityUnreadUpTo(map, [SALON])).toBe(0);
+  });
+});
+
+describe('clearSalonUnreadLocally', () => {
+  it('empties a badge the server counted, and keeps the watermark where it was', () => {
+    const map = new Map([[SALON, convo({ unreadCount: 4, readWatermarks: { me: 100 } })]]);
+    const changed = clearSalonUnreadLocally(map, [SALON], 2000, ME);
+    expect(changed).toEqual([SALON]);
+    expect(map.get(SALON)?.unreadCount).toBe(0);
+    expect(map.get(SALON)?.readWatermarks).toEqual({ me: 100 });
+  });
+
+  it('keeps a message that landed after the instant cleared', () => {
+    const map = new Map([
+      [SALON, convo({ unreadCount: 3, messages: [msg('a', 1500), msg('late', 2500)] as never })],
+    ]);
+    clearSalonUnreadLocally(map, [SALON], 2000, ME);
+    expect(map.get(SALON)?.unreadCount).toBe(1);
+  });
+
+  it('never raises a count, and leaves salons outside the list alone', () => {
+    const map = new Map([
+      [SALON, convo({ unreadCount: 0, messages: [msg('late', 2500)] as never })],
+      [OTHER, convo({ id: OTHER, unreadCount: 5 })],
+    ]);
+    expect(clearSalonUnreadLocally(map, [SALON], 2000, ME)).toEqual([]);
+    expect(map.get(SALON)?.unreadCount).toBe(0);
+    expect(map.get(OTHER)?.unreadCount).toBe(5);
+  });
+
+  it('ignores a key that is not a salon, and one this device does not hold', () => {
+    const map = new Map([['some-group-id', convo({ id: 'some-group-id', unreadCount: 2 })]]);
+    expect(clearSalonUnreadLocally(map, ['some-group-id', OTHER], 2000, ME)).toEqual([]);
+    expect(map.get('some-group-id')?.unreadCount).toBe(2);
   });
 });
 

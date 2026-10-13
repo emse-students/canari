@@ -1072,6 +1072,10 @@
           });
         }
       },
+      onSalonUnreadCleared: () => {
+        // One request for every salon, whichever community was cleared: the answer is per account.
+        void globalChannels.refreshSalonUnread(channelsCtx(), 'community cleared on a device');
+      },
       onWorkspaceRoleChanged: (event: {
         workspaceId: string;
         roleName: string;

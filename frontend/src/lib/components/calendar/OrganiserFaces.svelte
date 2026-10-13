@@ -43,7 +43,9 @@
       class="ring-cn-surface bg-cn-surface-alt text-text-muted text-2xs -ml-2 flex shrink-0 items-center justify-center rounded-full font-bold ring-2 {pillSize}"
       data-organiser-more={faces.hidden.length}
     >
-      +{faces.hidden.length}
+      <!-- A mark in an avatar-sized disc, exempt like the avatars' own initials: at 200 % text it
+           would otherwise overrun the disc it extends (`.text-zoom-exempt`, app.css). -->
+      <span class="text-zoom-exempt">+{faces.hidden.length}</span>
     </span>
   {/if}
 </span>

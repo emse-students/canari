@@ -296,18 +296,13 @@ built and uploaded their IPA. So no pre-release reaches the iPhone bench and eve
 newer fix waits. Owed: read in App Store Connect whether those builds exist, finished processing and
 were added to the tester group.
 
-### P3 - Android at 200 % text: two overruns in the agenda
+### P3 - a 90 px keyboard: the composer spends 24 ms 12 px low on 3 of 5 rises
 
-`calendar/+page.svelte:670`: "S'abonner au calendrier" is wider than its card and spills 33 px out
-of the card's left edge (`flex-wrap justify-end`). `CalendarScheduleList.svelte:226`: today's day
-number is 40 px in a fixed 36 px circle (`h-9 w-9`), the class `.text-zoom-exempt` was made for.
-
-### P3 - a keyboard under 160 px escapes the double-report guard
-
-`computeSnapshot` only discards a double-reported visual viewport when the layout viewport has
-shrunk by more than `keyboardOpenThresholdPx` (160 on Android). The 90 px ADB keyboard does not, so
-the composer spends one frame at 702 (2 of 5 rises) or 24 ms 12 px low (3 of 5). No real IME on the
-Mi 9T is that short; a floating or one-row keyboard would be.
+The other half of the 90 px reading of 2026-10-13 (the one-frame drop to 702 was the double report,
+now recognised at any keyboard height, [chat](frontend/modules/chat.md#every-keyboard-rise-moves-the-composer-for-a-moment-on-both-phones-measured-2026-10-02-fixed-2026-10-09-reading-owed)).
+Below the 160 px keyboard threshold no keyboard is ever "open", so `computeSnapshot` pins nothing in
+those frames; the 12 px (one `0.75rem`) comes from somewhere it does not reach. Cause not read: owed
+a per-frame record of `innerHeight`, `visualViewport.height` and the footer's padding on that rise.
 
 ### A decision - the iPhone ignores Dynamic Type
 

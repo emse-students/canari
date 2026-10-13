@@ -3058,7 +3058,73 @@ log. Pinned by `ProfileParrainageSection.svelte.test.ts` (fails with `each_key_d
 
 ## A click belongs to the element its press began on (2026-10-08)
 
-Reported on the Pixel 6a: tapping the `bureau` salon landed on a member's profile, and the salon opened with the read receipts of a bubble already showing. A press that changes the layout (opening a salon) can have its click dispatched at the NEW layout, so it hits whatever is now under the finger. `installPressedClickGuard` (`frontend/src/lib/utils/pressedClickGuard.ts`, installed in the root layout) refuses, in the capture phase, a click whose `pointerdown` began on an unrelated element; same element, ancestor/descendant, a label and its control, and `detail === 0` clicks (keyboard, `.click()`) pass. No timer: the press is state. The refusal logs `pressedClickGuard: click refused`. The exact browser mechanism was not isolated; the Pixel reading after the next pre-release is what confirms it. The read-receipt popover also wraps now (`max-w` of 20rem or the screen, names break) instead of one `whitespace-nowrap` line.
+Reported on the Pixel 6a: tapping the `bureau` salon landed on a member's profile, and the salon opened with the read receipts of a bubble already showing. A press that changes the layout (opening a salon) can have its click dispatched at the NEW layout, so it hits whatever is now under the finger. `installPressedClickGuard` (`frontend/src/lib/utils/pressedClickGuard.ts`, installed in the root layout) refuses, in the capture phase, a click whose `pointerdown` began on an unrelated element; same element, ancestor/descendant, a label and its control, and `detail === 0` clicks (keyboard, `.click()`) pass. No timer: the press is state. The refusal logs `pressedClickGuard: click refused`. The exact browser mechanism was not isolated on that day - it was on 2026-10-13, below, and it had defeated this guard. The read-receipt popover also wraps now (`max-w` of 20rem or the screen, names break) instead of one `whitespace-nowrap` line.
+
+### The mechanism: two clicks per tap on the salon list, and the first one disarmed the guard (2026-10-13)
+
+Reported again after the guard shipped: a tap on a salon also opened the read receipts ("Lu par") of
+the message the salon put under the finger - on a Pixel 6a store 1.2.6 about 1 s after the open,
+which is the open's main-thread freeze plus the bubble's 250 ms tap window. **It happens only to
+whoever may reorder the salons** (`viewerCanManageChannels`), which is why it read as "sometimes".
+
+**Measured with the real library and the real guard** (a scratch page with the salon list's exact
+`dndzone` options over a "message" under the same pixels), on the Mi 9T Chrome with an OS tap
+(`adb shell input tap`) and in headless Chrome with a CDP tap; the two logs are identical:
+
+| Sequence on one tap | shipped (reorderable list) | shipped, member who cannot reorder | after the fix |
+| --- | --- | --- | --- |
+| `pointerdown`/`touchstart`/`pointerup`/`touchend` | on the row | on the row | on the row |
+| a click during `touchend`, `isTrusted=false`, a plain `Event` | **on the row: the salon opens** | - | - |
+| the browser's `mousedown`/`mouseup`/`click` (`PointerEvent`, `detail 1`) | **on the message: it activates** | on the row | on the row: the salon opens |
+
+The untrusted click is `svelte-dnd-action`'s `handleFalseAlarm`: on a touch that ends before the
+drag starts it dispatches its own click, because a drag zone normally `preventDefault`s the
+`touchstart` and the browser then sends none. With `delayTouchStart` (the salon list, 350 ms) the
+library prevents nothing, so the browser's click comes too - a second click on the same tap. It hits
+the new layout. With a 1.6 s open frozen in the handler, the browser's click arrives 1.6 s later
+(measured: `5433ms click on message` after a `3824ms` tap), on the content the open painted.
+
+**And the guard let it through because the first click consumed the press.** It cleared `pressed`
+on every click, script ones included, so the browser's click found no press to be judged against.
+Two fixes, each proven by reverting it:
+
+- **The cause, in the library**: `frontend/patches/svelte-dnd-action@0.9.80.patch` (bun
+  `patchedDependencies`) dispatches that click only when the library prevented the `touchstart`. The
+  community rail (no delay) keeps it. `Sidebar.tapClickCount.svelte.test.ts` pins one tap = one
+  activation against the REAL library (2 calls without the patch; 0 on the rail's avatar if a patch
+  dropped the library's click everywhere). Upstream still has it in 0.9.80, the latest on 2026-10-13.
+- **A version bump drops the patch WITHOUT A WORD**: bun keys the patch to `0.9.80`, applies nothing
+  to any other version, removes the entry from `bun.lock` and `--frozen-lockfile` passes (measured
+  with 0.9.79). `frontend/src/lib/patchedDependencies.test.ts` therefore asserts that every
+  `patchedDependencies` key is the version installed, and its message says to re-create the patch
+  or delete it. `ci.yml`'s frontend filter names `frontend/bun.lock` and `frontend/patches/`, so a
+  lockfile-only bump runs it.
+- **The guard**: only a pointer's click (`isPointerClick`: a `MouseEvent` with `detail >= 1`) is
+  judged and consumes the press; a script click passes and leaves it. `pressedClickGuard.test.ts`
+  replays the measured sequence.
+
+**What else acts on a press rather than a click, audited 2026-10-13** - measured on the same page:
+activating on `pointerdown`, `pointerup` or `touchend` and changing the layout sends the browser's
+click to the new content (the guard refuses it); activating on `mousedown` sends it to the common
+ancestor (`BODY`), which nothing handles. A press held past the 350 ms hold sends its click to the
+library's dragged clone, and past the browser's long press (600 ms) no click at all.
+
+| Surface | Acts on | Verdict |
+| --- | --- | --- |
+| Salon list (`Sidebar`, reorderable) | library click on `touchend` | **the defect** - fixed by the patch |
+| Community rail (`Sidebar`) | `onclick`. A touch on the avatar (nearly all of the button) is prevented by the library, whose click is then the only one; a touch on the button itself is skipped by the library (`value` is set) and the browser clicks | one click either way |
+| Conversation list, sidebar scrim, drawer close | `onclick` | one click |
+| `MentionDropdown`, `UserAutocomplete`, `CoOwnerPicker` | `mousedown` (beats the input's blur) | click goes to the common ancestor |
+| `ReactorsPanel` | closes on a window `pointerdown` outside it | the tapped element was visible; its click is its own |
+| `reactorsTrigger`, `MessageBubble` long press | timer, the click after it swallowed / none after a long press | no click |
+| `VoiceRecorder` release, `swipeBack`, `pullToRefresh`, `ReelViewer`, tab swipe | `pointerup`/`touchend` after a move or a hold | no click, or the guard |
+| Media, PDF, video scrub, cropper, poster, colour picker, minesweeper | pointer drags on their own surface | the layout under the finger does not change |
+
+What content appearing under a STILL-pressed finger does (a late mount, measured with the panel
+swapped 100 ms after `pointerdown`, released at 300 ms): the touch's `pointerup` stays on the row
+(implicit capture), the compatibility `mousedown`/`mouseup` and the click reach the new bubble, and
+the guard refuses the click. No bubble handler listens to `mouse*`. A fresh tap on the new content is
+a new press and acts normally.
 
 ## "Voir plus" is measured, never counted (2026-10-08)
 
@@ -3071,6 +3137,10 @@ The reaction pill carried `title=<every reactor's name>` beside `ReactorsPanel`,
 ## A popover's height comes from its content, never from a constant (2026-10-09)
 
 `ReactorsPanel` passed `estimatedHeight: 200` to `bindFixedPopover`, which turns it into the frame's `max-height`; past ~7 names the rows overflowed the frame onto the comment below (user report, 11 reactors). The panel cannot scroll (any scroll closes it), so `ReactorsPanel` now passes the viewport as the only cap, measures how many rows the real `maxHeight` holds, and lays the names out in as many columns as fit (`layoutReactors`, 8rem minimum column); what still does not fit is one `+K` line. Measured in headless Chrome at 360x640, 390x844 and 1280x800 with 1, 3, 11, 40 and 200 reactors, at centre, bottom, right and top anchors and a very long name: 63 of 63 cases have `scrollHeight <= clientHeight`, every row inside the frame and the frame inside the viewport. The other `bindFixedPopover` callers scroll inside their own box (pickers, autocomplete, `FloatingSurface`) or hold fixed menus, so their constants only bound a scroller.
+
+## A panel that points at something is never centred (2026-10-13)
+
+User report, phone app: the "who reacted" list opened in the middle of the screen above the composer, not on the chip that was pressed. `computeFixedPopoverPosition` centred EVERY panel wider than its anchor and wider than half the viewport, a rule written for the 352 px reaction picker (durable-rules, "a panel that is a screen of its own is centred"). `ReactorsPanel` is up to 224 px (`max-w-56`, more with columns), so at 390 or 412 px it qualified against a 41 px chip. Measured on the real `MessageReactions` at 390x844 with a 205 px panel: chips at 60-101 and 297-338 both opened the list at 93-298. Centring is now opt-in (`centreWhenWide`) and only the two emoji pickers ask; after the fix the same chips open it at 60-284 and 158-382 (clamped, still spanning the chip), above a chip near the bottom and below one near the top, long press and mouse alike. Same rule removed from `PostActionsMenu` (224 px) and `EcosystemLauncher` (256 px), which were centred on every phone, and from `FloatingSurface`'s popover between 640 and ~700 px. `GlassMenuButton`'s `stayAnchored` is gone, being the default now. 1280 px is unchanged (the rule never fired there). iOS WebKit not run; the placement is arithmetic on `getBoundingClientRect`, with no engine branch.
 
 ## Tooltips: one convention, audited 2026-10-08
 

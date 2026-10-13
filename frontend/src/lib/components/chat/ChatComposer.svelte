@@ -62,8 +62,8 @@
   import ComposerEmojiPicker from './ComposerEmojiPicker.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
-  import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { Log } from '$lib/utils/Log';
+  import { publishComposerHeight } from '$lib/utils/chat/composerHeight';
   import type { PendingMediaFile } from '$lib/media';
   import type { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
@@ -815,21 +815,7 @@
   onMount(() => {
     const footer = composerFooter;
     if (!footer || typeof document === 'undefined') return;
-
-    const publishHeight = () => {
-      document.documentElement.style.setProperty(
-        '--chat-composer-height',
-        `${Math.ceil(footer.offsetHeight)}px`
-      );
-    };
-
-    publishHeight();
-    const ro = new ResizeObserver(publishHeight);
-    ro.observe(footer);
-    return () => {
-      ro.disconnect();
-      document.documentElement.style.removeProperty('--chat-composer-height');
-    };
+    return publishComposerHeight(footer);
   });
 
   $effect(() => {

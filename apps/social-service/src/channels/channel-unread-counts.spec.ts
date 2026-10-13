@@ -63,6 +63,20 @@ describe('ChannelService - unread counts', () => {
     expect(answer.asOf).toBeGreaterThan(UNREAD_TRACKED_SINCE_MS);
   });
 
+  // "Marquer tout comme lu" raises `clearedMarks`, never the read mark (the receipt others see), so
+  // the count must skip what the member cleared as well as what they read.
+  it('counts from the later of the read mark and the cleared mark', async () => {
+    const { service, messageRepo } = makeService(
+      [{ id: 'open', workspaceId: 'ws', isPrivate: false, allowedUsers: [] }],
+      []
+    );
+    await service.listUnreadCounts(ME);
+    const [sql] = messageRepo.query.mock.calls[0] as [string];
+    expect(sql).toMatch(
+      /GREATEST\(\s*COALESCE\(\(cm\."readMarks" ->> ch\.id::text\)::bigint, 0\),\s*COALESCE\(\(cm\."clearedMarks" ->> ch\.id::text\)::bigint, 0\),/
+    );
+  });
+
   it('answers empty, without a query, for a caller in no community', async () => {
     const { service, messageRepo } = makeService([], [], []);
     await expect(service.listUnreadCounts(ME)).resolves.toMatchObject({ counts: {} });

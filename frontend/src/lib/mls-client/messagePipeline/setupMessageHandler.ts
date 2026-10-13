@@ -161,6 +161,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       onRolePermissionsChanged: deps.onRolePermissionsChanged,
       onChannelDeleted: deps.onChannelDeleted,
       onWorkspaceUpdated: deps.onWorkspaceUpdated,
+      onSalonUnreadCleared: deps.onSalonUnreadCleared,
       onWorkspaceRoleChanged: deps.onWorkspaceRoleChanged,
       onWorkspaceDeleted: deps.onWorkspaceDeleted,
       onChannelMessageDeleted: deps.onChannelMessageDeleted,

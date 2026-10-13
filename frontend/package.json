@@ -101,5 +101,8 @@
     "dompurify": "^3.4.16",
     "nanoid": "^3.3.18",
     "postcss": "^8.5.10"
+  },
+  "patchedDependencies": {
+    "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch"
   }
 }
