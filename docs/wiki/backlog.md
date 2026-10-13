@@ -397,15 +397,28 @@ Both media show "Format non supporte / Telecharger" on the Mi 9T while the iPhon
 v1 proves nothing about who wrote a salon message or where; the table is
 [channel-encryption §7](protocols/channel-encryption.md#7-what-the-server-can-still-do-stated-rather-than-implied),
 the design [§21](protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)
-(all three decisions of 2026-09-28: the whole of it, a relayed endorsement, the DMs included). R1 =
-G2-0 to G2-4 and the writer G2-5 are SHIPPED (#1221; the writer in the stable `v1.0.3`, 2026-10-05).
-`minClientVersion` is `1.0.3` since 2026-10-11, so G2-5's refusal is unblocked; the floor is still raised only on the user's yes.
+(all three decisions of 2026-09-28: the whole of it, a relayed endorsement, the DMs included).
+**EVERYTHING TO BUILD IS BUILT (re-verified against `main` 2026-10-14)**: the reader R1 (G2-0 to
+G2-4b), the verified MLS sender that covers the DMs (G2-1b, web and native), the writer G2-5
+(`v1.0.3`), the refusal of an arriving v1 seed G2-5b (`v1.2.6`), and the server's refusal of an
+unsigned row ([§21.8](protocols/channel-encryption.md#218-the-server-refuses-an-unsigned-salon-row-2026-10-13),
+#1802). Settled by decision, not owed: the floor stays `1.0.3` (a store build from `1.0.3` to
+`1.2.5` still accepts a v1 seed until it updates), and GRAINE-AUTH-4 is a unit test, not a rig row
+(no mutating dev hook). **The chantier closes when the three rows below are done**; what is left
+after that is a dated shim, and it lives in [legacy-compatibility](legacy-compatibility.md) alone.
 
-| WP | What is left |
+| What is owed | Blocked on |
 | --- | --- |
-| G2-5 | **v1 ends (user, 2026-09-28)**. Step one, refusing an ARRIVING v1 seed, SHIPPED in the stable `v1.2.6` (#1749, 2026-10-13, [§21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)); both floors are `1.0.3`, so a client from `1.0.3` to `1.2.5` still accepts a v1 seed until it updates (raising the floor is the user's call). Step two, deleting the v1 reader, waits for the count in [legacy-compatibility](legacy-compatibility.md) |
-| G2-6b | a salon edit from a v1 session has an unsigned, server-supplied `senderId` (a deliberate level, no code owed, [§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05)); closes with the v1 reader. **Only if a channel ever gets an older-page load:** `listMessages` with a `before` cursor omits edit and reaction rows made after the cursor |
-| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **GRAINE-AUTH-1..3 are `PASS` since 2026-10-05 and GRAINE-AUTH-5/6 (G2-5b, live and history) since 2026-10-13, on the local estate** ([board](cross-client-testing.md#20---graine---an-author-that-is-proven)); NOTIF-19/20 on a v2 session are `PASS` since 2026-10-05 (APK `7ab8f1780`, the claim that they were owed was stale); **owed: GRAINE-AUTH-4** (no runner can exist without a decision on a mutating dev hook, see the board row) and the iPhone reading ([device-verification](device-verification.md)) |
+| §21.8 in production, then the count re-run (§21.8's SQL: 0 unsigned rows a day after the deploy) | the stable `v1.2.7` (the user's gesture); on dev since `v1.2.7-alpha.1` |
+| The rig: GRAINE-AUTH-1..3 and -6 re-run (the runner changed, `rows.mjs` flags them) and -7 first run, all on one estate carrying #1802 ([board](cross-client-testing.md#20---graine---an-author-that-is-proven)) | a running local estate (none was up on 2026-10-14, so nothing was run) |
+| One reading on a device of the native v1-seed refusal lines (Kotlin `REFUSED N v1 seed(s)`, the NSE's `openSeedFrame: REFUSED v1 seed(s)`), compiled and never run ([§21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)) | a pre-floor v1 frame replayed to a phone, the only path that reaches them |
+
+The v1 reader, the nullable `signature` column and the edit trust level of
+[§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05) (G2-6b) all go
+together when production counts 0 unsigned rows (373 on 2026-10-14; revisit 2027-10-13), in
+[legacy-compatibility](legacy-compatibility.md). Not Graine work, noted where it was found: `listMessages`
+with a `before` cursor omits edit and reaction rows made after the cursor, which matters only if a
+channel ever gets an older-page load.
 
 What v2 does not close: the server can still admit a device it controls or publish a false device key
 (BasicCredential's limit, §21).
