@@ -3249,6 +3249,10 @@ carries it with `no-session` and `unknown-channel`. The seal logs it at `error`.
 (`sendChatMessage`, `toUiActionError`) show `sealUnavailableMessage(reason)`: one Paraglide sentence
 per fact, in place of "Échec de l'envoi" or "pas encore prêt".
 
+**Since 2026-10-13 a salon TEXT no longer reaches `unknown-channel`.** It waits for its salon to be
+entered (`salonSendGate.ts`) and is sealed and signed only when released. It is never queued
+unsealed. See [chat](../frontend/modules/chat.md#a-salon-not-yet-loaded-holds-the-send-it-does-not-refuse-it-2026-10-13).
+
 **Old clients (1.0.3 to 1.1.2) carry the same cache and keep re-joining until they update.** No
 server change can stop the loop without making it worse. The re-join FORGETS the tree before it
 asks to join, so refusing a "redundant" external join would leave a device holding nothing for the

@@ -14,7 +14,11 @@ import { m } from '$lib/paraglide/messages';
 import { cutReplyPreview, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
-import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
+import {
+  salonGateRefusalMessage,
+  sealUnavailableMessage,
+} from '$lib/utils/graine/sealUnavailableMessage';
+import { readSalonSendGate, whenSalonSendable } from '$lib/utils/graine/salonSendGate';
 import type { SalonEchoChange } from './salonEcho';
 import { clearUnsentSalonText, recordUnsentSalonText } from './salonUnsent';
 
@@ -69,8 +73,18 @@ export function liveSalonSendIds(): ReadonlySet<string> {
 }
 
 /**
- * POSTs one salon send and moves its echo: `sending` while in flight, `settled` on the server's
- * answer, `error` on a refusal (the entry stays registered so the row can be retried).
+ * POSTs one salon send and moves its echo: `pending` while the salon is not loaded yet, `sending`
+ * while in flight, `settled` on the server's answer, `error` on a refusal (the entry stays
+ * registered so the row can be retried).
+ *
+ * A SALON NOT YET LOADED HOLDS THE SEND, IT DOES NOT REFUSE IT (2026-10-13). A salon is drawn from
+ * the local store before the community listing has taught this session its scope, and the seal
+ * used to throw `GraineUnknownChannelError` for a message typed in that window - nothing lost but
+ * the order. The gate (`salonSendGate.ts`) is asked FIRST, so that fact is read where it is known
+ * instead of learnt from the seal's refusal: the row stays `pending` until the salon is entered,
+ * then goes through the ordinary seal - sealed and signed THEN, never queued unsealed. A listing
+ * that ends without the salon, a community that leaves, a sign-out: each refuses the hold, and the
+ * row turns `error` with its Retry. The wait is bounded by those events, never by a clock.
  *
  * THE OUTCOME IS CLASSIFIED AT THE THROW. A status code is an ANSWER: the server saw the request and
  * said no, so the row is `error`. A throw that carries NO status (the network dropped, the reply was
@@ -88,6 +102,25 @@ async function deliverSalonSend(
   send: SalonSend,
   deps: SendMessageDeps
 ): Promise<string | null> {
+  const reading = readSalonSendGate(send.channelId);
+  if (reading.kind === 'wait') {
+    deps.log(
+      `[SEND] channel send ${messageId.slice(0, 8)}... HELD: salon ${send.channelId.slice(0, 8)} is not loaded on this device yet`
+    );
+    deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'pending' });
+  }
+  const gate = reading.kind === 'wait' ? await whenSalonSendable(send.channelId) : reading;
+  if (gate.kind === 'refused') {
+    // NOTHING WAS SEALED: an answer, so the row is `error` and its Retry is safe.
+    deps.log(
+      `[SEND] channel send ${messageId.slice(0, 8)}... NOT sent: salon ${send.channelId.slice(0, 8)} cannot be loaded (reason=${gate.reason})`
+    );
+    deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'error' });
+    return salonGateRefusalMessage(gate.reason);
+  }
+  if (reading.kind === 'wait') {
+    deps.log(`[SEND] channel send ${messageId.slice(0, 8)}... released: its salon is loaded`);
+  }
   deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'sending' });
   try {
     const row = await sendEncryptedChannelMessage(
@@ -165,8 +198,9 @@ const retrying = new Set<string>();
 /**
  * Re-sends a REFUSED salon message from its row's "retry". Same payload, same client id.
  *
- * SAFE BECAUSE IT IS OFFERED ONLY WHERE THE SERVER PROVED IT STORED NOTHING: a 4xx refusal, or a
- * seal that never left this device (`error`). An `unconfirmed` row - no answer, or a 5xx - gets no
+ * SAFE BECAUSE IT IS OFFERED ONLY WHERE THE SERVER PROVED IT STORED NOTHING: a 4xx refusal, a
+ * seal that never left this device, or a salon that could not be loaded (`error`). A retry of the
+ * last one waits for the salon again if a listing is in flight. An `unconfirmed` row - no answer, or a 5xx - gets no
  * retry, because a repeat the server did take would post twice until the server dedupes on the
  * client id (WP-OFF-3).
  *

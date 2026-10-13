@@ -95,6 +95,7 @@ import { useChannelWorkspaces, type ChannelWorkspaceContext } from './useChannel
 // NOT MOCKED, DELIBERATELY: the channel-to-community map is the fact the send path reads, so the
 // test asserting it survives a failed join has to read the real one.
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
+import { resetSalonSendGate, whenSalonSendable } from '$lib/utils/graine/salonSendGate';
 
 function makeContext(overrides: Partial<ChannelWorkspaceContext> = {}): ChannelWorkspaceContext {
   return {
@@ -163,6 +164,25 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
     expect(store.workspacesLoadError).toBeNull();
     expect(store.channelWorkspaces).toHaveLength(1);
     expect(store.channelWorkspaces[0].channels[0].id).toBe('channel_ch1');
+  });
+
+  // User report 2026-10-13: a message sent right after opening the app was refused as "not loaded
+  // yet". The load is what ENTERS a salon, so it is what releases a send held for it - and its end
+  // is what refuses one it did not enter.
+  it('releases a send held for a salon the load enters, and refuses one it does not', async () => {
+    resetSalonSendGate();
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
+    const listed = whenSalonSendable('channel_ch1');
+    const gone = whenSalonSendable('channel_not-listed');
+
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+
+    expect(await listed).toEqual({ kind: 'ready' });
+    expect(await gone).toEqual({ kind: 'refused', reason: 'not-listed' });
   });
 
   // Production web console 2026-10-12 (v1.2.5): 7 communities walked one after another, 21+

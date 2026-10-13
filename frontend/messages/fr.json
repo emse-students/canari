@@ -356,6 +356,10 @@
     }
   ],
   "chat_send_error_seal_no_session": "Rien n'a été envoyé : le chiffrement de cet appareil n'est pas encore prêt. Réessayez dans un instant.",
+  "chat_send_error_salon_not_listed": "Rien n'a été envoyé : ce salon ne figure plus parmi vos communautés sur cet appareil.",
+  "chat_send_error_salon_listing_failed": "Rien n'a été envoyé : vos communautés n'ont pas pu être chargées. Réessayez une fois la connexion revenue.",
+  "chat_send_error_salon_left": "Rien n'a été envoyé : cette communauté a quitté cet appareil.",
+  "chat_send_error_salon_session_ended": "Rien n'a été envoyé : la session s'est terminée avant que le salon soit chargé.",
   "chat_send_error_seal_unknown_channel": "Rien n'a été envoyé : ce salon n'est pas encore chargé sur cet appareil. Réessayez dans un instant.",
   "chat_send_error_seal_key_group_missing": "Rien n'a été envoyé : cet appareil n'a pas encore rejoint le groupe de clés de la communauté. Réessayez dans un instant.",
   "chat_send_error_seal_key_group_unsettled": "Rien n'a été envoyé : le groupe de clés de la communauté est en cours de création. Réessayez dans un instant.",

@@ -47,6 +47,11 @@ import {
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
 import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
+import {
+  beginSalonListing,
+  openSalonSendGate,
+  settleSalonListing,
+} from '$lib/utils/graine/salonSendGate';
 import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
@@ -347,6 +352,8 @@ export function useChannelWorkspaces() {
         ensureMls: ctx.ensureMls,
         log: ctx.log,
       });
+      // ENTERED: a send typed into this salon before the walk reached it goes now (`salonSendGate`).
+      openSalonSendGate(actualId);
 
       const channelConversationId = `channel_${actualId}`;
       if (!validChannelConversationIds.includes(channelConversationId)) {
@@ -787,6 +794,7 @@ export function useChannelWorkspaces() {
       ensureMls,
       log,
     });
+    openSalonSendGate(channelId);
   }
 
   // ---------- API operations ----------
@@ -808,6 +816,10 @@ export function useChannelWorkspaces() {
     if (isLoadingWorkspaces) return false;
     isLoadingWorkspaces = true;
     workspacesLoadError = null;
+    // A salon send waiting for its salon to load waits for THIS listing; its end is what refuses
+    // the ones it did not enter (`salonSendGate`). Synchronous with the flag, so no await separates
+    // the guard from the count.
+    const listingToken = beginSalonListing();
 
     // N DELAYS IS N+1 ATTEMPTS, and the count is named once here rather than being spelt as
     // `<= length` at the loop and `length + 1` in the log. `<=` against a length reads as an
@@ -881,6 +893,9 @@ export function useChannelWorkspaces() {
       const owed = joinedCommunityReloadOwed;
       joinedCommunityReloadOwed = false;
       if (owed) void loadChannelWorkspacesFromBackend(ctx);
+      // AFTER the owed reload has begun (synchronously, above): a send waiting for a salon that
+      // reload may enter keeps waiting for it instead of being refused by this one's end.
+      settleSalonListing(listingToken, workspacesLoadError === null ? 'loaded' : 'failed');
     }
   }
 
@@ -960,6 +975,8 @@ export function useChannelWorkspaces() {
           if (!actualId) continue;
 
           registerChannelWorkspace(actualId, workspaceId, channel.visibility === 'private');
+          // The community's group was ensured above; a salon of a community just created is entered.
+          openSalonSendGate(actualId);
 
           const channelConversationId = `channel_${actualId}`;
           addChannelToWorkspace(sidebarWorkspace.id, {
@@ -1051,6 +1068,7 @@ export function useChannelWorkspaces() {
         ensureMls: ctx.ensureMls,
         log: ctx.log,
       });
+      openSalonSendGate(actualId);
 
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
       if (sidebarWorkspace) {

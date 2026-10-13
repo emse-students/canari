@@ -56,6 +56,12 @@ import {
 import { getUserDisplayNameSync, notificationSenderName } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+import {
+  readSalonSendGate,
+  SalonNotLoadableError,
+  whenSalonSendable,
+} from '$lib/utils/graine/salonSendGate';
+import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { MediaService } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
 import {
@@ -534,7 +540,10 @@ export function useMessaging() {
     if (!key || !convo) return;
     ctx.setSendError('');
     const refusal = await retrySalonSend(messageId, makeSendDeps(ctx, convo));
-    if (refusal) ctx.setSendError(refusal);
+    if (!refusal) return;
+    // A retry may wait for its salon to load: the banner goes to the conversation still on screen.
+    if (ctx.selectedContact === key) ctx.setSendError(refusal);
+    else ctx.log(`[SEND] retry refusal not shown: the conversation changed (${refusal})`);
   }
 
   /** Drops a failed salon message the member gave up on: its registration and its row. */
@@ -1177,6 +1186,7 @@ export function useMessaging() {
       return;
     }
 
+    const sentFrom = ctx.selectedContact;
     const isChannel = isChannelConversationId(ctx.selectedContact);
     ctx.log(
       `[SEND] convo: groupId="${convo.id}" lifecycle=${convo.lifecycle} isChannel=${isChannel}`
@@ -1235,6 +1245,19 @@ export function useMessaging() {
           if (isChannel && channelSvc) {
             // Channels are server-authoritative + always available: encrypt + upload + send inline.
             isUploadingMedia = true;
+            // THE SALON MUST BE LOADED BEFORE ANYTHING IS UPLOADED OR SEALED, and one that is not
+            // yet is WAITED FOR, as a text is (`salonSendGate.ts`): the upload indicator stays up
+            // meanwhile, and a refusal re-stages the file below. Before the upload, so a salon that
+            // never loads leaves no orphan blob behind.
+            const gateReading = readSalonSendGate(sentFrom);
+            if (gateReading.kind === 'wait') {
+              ctx.log(
+                `[MEDIA] ${messageId.slice(0, 8)}... HELD: salon ${sentFrom.slice(0, 16)} is not loaded on this device yet`
+              );
+            }
+            const gate =
+              gateReading.kind === 'wait' ? await whenSalonSendable(sentFrom) : gateReading;
+            if (gate.kind === 'refused') throw new SalonNotLoadableError(gate.reason);
             // `ctx.authToken` is a COPY taken at sign-in: it is empty or EXPIRED far more often than it
             // is live, and a 15-minute-old copy sent the upload out as `401 JWT expired` ("your session
             // expired") on a tab that was perfectly signed in. `getToken` is the one place that knows
@@ -1267,7 +1290,8 @@ export function useMessaging() {
               messageId,
               sentAt,
             });
-            const actualChannelId = ctx.selectedContact!.replace('channel_', '');
+            // The salon the send was MADE in: the selection may have moved during the wait above.
+            const actualChannelId = sentFrom.replace('channel_', '');
             await sendEncryptedChannelMessage(actualChannelId, protoBytes, messageId);
           } else {
             // MLS: queue the media. The flusher uploads then sends once the group is ready
@@ -1365,10 +1389,12 @@ export function useMessaging() {
         // reason this catch gained a status instead of a second sentence.
         const status = refusalStatus(error);
         ctx.setSendError(
-          describeApiRefusal(status, m.chat_media_action_send()) ??
-            (isEnqueueQuotaFailure(error)
-              ? m.chat_media_send_error_storage_full()
-              : m.chat_media_send_error_generic())
+          error instanceof SalonNotLoadableError
+            ? salonGateRefusalMessage(error.reason)
+            : (describeApiRefusal(status, m.chat_media_action_send()) ??
+                (isEnqueueQuotaFailure(error)
+                  ? m.chat_media_send_error_storage_full()
+                  : m.chat_media_send_error_generic()))
         );
         ctx.log(
           `[MEDIA] send failed (status=${status ?? 'none'}), ${fileEntries.length - sentMediaMessageCount} file(s) re-staged: ${String(error)}`
@@ -1391,8 +1417,11 @@ export function useMessaging() {
     // (deleted group) or a channel error surfaces a message to the user.
     if (!result.success) {
       if (result.error) {
-        ctx.setSendError(result.error);
         ctx.log(`[SEND] Failed: ${result.error}`);
+        // A SALON SEND MAY ANSWER LONG AFTER THE CLICK - held until its salon loads - and the
+        // banner belongs to the conversation on screen. Its row keeps the failure either way.
+        if (ctx.selectedContact === sentFrom) ctx.setSendError(result.error);
+        else ctx.log(`[SEND] banner not shown: the conversation changed since the send`);
       }
       // THE TEXT LIVES IN A ROW (failed, with its retry) when the send was echoed: the composer has
       // nothing to take back, and restoring it would put the message in the thread twice (WP-OFF-2).

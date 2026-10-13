@@ -4,6 +4,7 @@ import type { Conversation } from '$lib/types';
 import { m } from '$lib/paraglide/messages';
 import { GraineDistributionUnavailableError } from '$lib/utils/graine/seedDistribution';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
+import { openSalonSendGate, resetSalonSendGate } from '$lib/utils/graine/salonSendGate';
 
 const sendEncryptedChannelMessage = vi.fn();
 vi.mock('$lib/utils/chat/channelCrypto', async (orig) => {
@@ -50,6 +51,9 @@ describe('a refused channel send is described from its status, never from its bo
 
   beforeEach(() => {
     sendEncryptedChannelMessage.mockReset();
+    // The salon is loaded: these tests are about what the SEAL and the server answer.
+    resetSalonSendGate();
+    openSalonSendGate('c1');
   });
 
   it('turns a mapped status into our own sentence', async () => {

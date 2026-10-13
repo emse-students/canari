@@ -29,6 +29,15 @@ await import('./useMessaging.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
+import {
+  beginSalonListing,
+  forgetSalonSendGates,
+  openSalonSendGate,
+  resetSalonSendGate,
+  salonSendWaiterCount,
+  settleSalonListing,
+} from '$lib/utils/graine/salonSendGate';
+import { m } from '$lib/paraglide/messages';
 
 const CHANNEL = 'channel_12cf41f3-0000-0000-0000-000000000000';
 
@@ -59,6 +68,9 @@ describe('a salon text send', () => {
     sendMock.mockReset();
     localStorage.clear();
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    // The salon is LOADED for every test below unless one says otherwise (`salonSendGate`).
+    resetSalonSendGate();
+    openSalonSendGate(CHANNEL);
   });
 
   it('shows the row at once and re-keys it to the server id on the answer', async () => {
@@ -213,5 +225,161 @@ describe('a salon text send', () => {
     expect(sendMock).toHaveBeenCalledTimes(2); // the original send and ONE retry
     expect(rows(ctx)).toHaveLength(1);
     expect(rows(ctx)[0]).toMatchObject({ id: 'srv-once', status: 'sent' });
+  });
+});
+
+/**
+ * A SALON NOT YET LOADED HOLDS THE SEND (user report 2026-10-13: "ce salon n'est pas encore charge",
+ * sent right after opening the app, and the message was lost to a restart). The row stays `pending`,
+ * NOTHING reaches the seal while held, and the event that ends the wait decides the outcome.
+ */
+describe('a salon text sent before its salon is loaded', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sendMock.mockReset();
+    localStorage.clear();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    // A fresh session: no listing has settled, and this salon is not entered yet.
+    resetSalonSendGate();
+  });
+
+  it('is HELD as a pending row and sent once the salon is entered', async () => {
+    sendMock.mockResolvedValue({ id: 'server-held-1', serverMs: 2_000 });
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    const token = beginSalonListing();
+
+    const done = messaging.handleSendChat(ctx, 'typed too early');
+    await vi.waitFor(() => expect(salonSendWaiterCount(CHANNEL)).toBe(1));
+
+    // Held: on screen as pending, nothing sealed, no banner, the text owed to a reload.
+    expect(rows(ctx)).toHaveLength(1);
+    expect(rows(ctx)[0]).toMatchObject({ status: 'pending', awaitingServerId: true });
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(ctx.setSendError).not.toHaveBeenCalledWith(expect.stringMatching(/./));
+    const { takeOrphanedSalonTexts } = await import('$lib/utils/chat/salonUnsent');
+    expect(await takeOrphanedSalonTexts('me', CHANNEL, new Set())).toEqual([
+      expect.objectContaining({ text: 'typed too early' }),
+    ]);
+
+    // The listing enters the salon: the held send goes, sealed THEN, under its own client id.
+    openSalonSendGate(CHANNEL);
+    expect(await done).toBe(true);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock.mock.calls[0][0]).toBe(CHANNEL.replace(/^channel_/, ''));
+    expect(rows(ctx)).toHaveLength(1);
+    expect(rows(ctx)[0]).toMatchObject({ id: 'server-held-1', status: 'sent' });
+
+    // The listing settling afterwards releases nothing a second time.
+    settleSalonListing(token, 'loaded');
+    await Promise.resolve();
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds two sends and sends each of them exactly once', async () => {
+    let n = 0;
+    sendMock.mockImplementation(async () => ({ id: `srv-${++n}` }));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    beginSalonListing();
+
+    const first = messaging.handleSendChat(ctx, 'one');
+    const second = messaging.handleSendChat(ctx, 'two');
+    await vi.waitFor(() => expect(salonSendWaiterCount(CHANNEL)).toBe(2));
+    expect(sendMock).not.toHaveBeenCalled();
+
+    openSalonSendGate(CHANNEL);
+    await Promise.all([first, second]);
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    const sentIds = sendMock.mock.calls.map((c) => c[2]);
+    expect(new Set(sentIds).size).toBe(2);
+    expect(rows(ctx).map((r) => r.status)).toEqual(['sent', 'sent']);
+  });
+
+  it('turns failed - with its Retry - when the listing settles without the salon', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    const token = beginSalonListing();
+
+    const done = messaging.handleSendChat(ctx, 'never listed');
+    await vi.waitFor(() => expect(salonSendWaiterCount(CHANNEL)).toBe(1));
+    settleSalonListing(token, 'loaded');
+
+    expect(await done).toBe(true); // echoed: the text lives in the failed row
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(rows(ctx)[0]).toMatchObject({ status: 'error', awaitingServerId: true });
+    expect(ctx.setSendError).toHaveBeenLastCalledWith(m.chat_send_error_salon_not_listed());
+
+    // A later listing enters it after all: the row's Retry sends the SAME message, once.
+    sendMock.mockResolvedValueOnce({ id: 'srv-late' });
+    openSalonSendGate(CHANNEL);
+    const localId = rows(ctx)[0].id;
+    await messaging.retrySend(ctx, localId);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock.mock.calls[0][2]).toBe(localId);
+    expect(rows(ctx)[0]).toMatchObject({ id: 'srv-late', status: 'sent' });
+  });
+
+  it('names a listing that GAVE UP, not a salon that is gone', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    const token = beginSalonListing();
+
+    const done = messaging.handleSendChat(ctx, 'offline');
+    await vi.waitFor(() => expect(salonSendWaiterCount(CHANNEL)).toBe(1));
+    settleSalonListing(token, 'failed');
+
+    await done;
+    expect(rows(ctx)[0]).toMatchObject({ status: 'error' });
+    expect(ctx.setSendError).toHaveBeenLastCalledWith(m.chat_send_error_salon_listing_failed());
+  });
+
+  it('is refused as LEFT when its community leaves the device while held', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    beginSalonListing();
+
+    const done = messaging.handleSendChat(ctx, 'too late');
+    await vi.waitFor(() => expect(salonSendWaiterCount(CHANNEL)).toBe(1));
+    forgetSalonSendGates([CHANNEL]);
+
+    await done;
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(rows(ctx)[0]).toMatchObject({ status: 'error' });
+    expect(ctx.setSendError).toHaveBeenLastCalledWith(m.chat_send_error_salon_left());
+  });
+
+  it('is refused on sign-out, and the banner stays off a conversation it was not sent from', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    beginSalonListing();
+
+    const done = messaging.handleSendChat(ctx, 'signing out');
+    await vi.waitFor(() => expect(salonSendWaiterCount(CHANNEL)).toBe(1));
+    (ctx as { selectedContact: string | null }).selectedContact = 'channel_somewhere-else';
+    resetSalonSendGate();
+
+    await done;
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(rows(ctx)[0]).toMatchObject({ status: 'error' });
+    expect(ctx.setSendError).not.toHaveBeenCalledWith(m.chat_send_error_salon_session_ended());
+  });
+
+  it('is refused at once, never held, when a listing has already settled without the salon', async () => {
+    settleSalonListing(beginSalonListing(), 'loaded');
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+
+    await messaging.handleSendChat(ctx, 'not mine');
+    expect(salonSendWaiterCount(CHANNEL)).toBe(0);
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(rows(ctx)[0]).toMatchObject({ status: 'error' });
   });
 });

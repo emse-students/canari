@@ -3349,6 +3349,28 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 
 **What it is not:** durable as a row. A reload loses the echo (WP-OFF-3); the text comes back from the ledger. Tests: `salonUnsent.test.ts`, `salonEcho.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`, `channelEventHandler.salonEcho.test.ts`, `messagingChannelRefusal.test.ts`, `MessageMetadata.retry.svelte.test.ts`.
 
+### A salon not yet loaded holds the send, it does not refuse it (2026-10-13)
+
+**Reported on both phones (prod `1.2.6`):** a message sent right after opening the app showed `Rien n'a été envoyé : ce salon n'est pas encore chargé sur cet appareil` and the member restarted the app. **Cause:** a salon is drawn from the local store (cold start, resume, notification landing F1) long before `loadChannelWorkspacesFromBackend` has called `registerChannelWorkspace` for it, and `sealChannelMessage` throws `GraineUnknownChannelError` (`unknown-channel`) when `scopeForChannel` is empty. The listing walks every community in parallel, but each one awaits `ensureMls`, the key-group join and `listChannels` before registering its salons, which takes seconds on a slow link. Nothing was wrong except the order. This is read from the code, not from a device log: it is the only throw that carries `unknown-channel`. The row did stay as `error` with Retry (WP-OFF-2), but a Retry while the listing was still running was refused the same way, and one after a listing that GAVE UP (offline start) was refused for good.
+
+**Now the send waits for the salon** (`utils/graine/salonSendGate.ts`). `deliverSalonSend` asks the gate BEFORE sealing, so the fact is read where it is known and not learnt from the seal's refusal:
+
+- `ready`: the salon was ENTERED this session. `openSalonSendGate` is called where an entry ends, after the private salon's own group is joined, not at the scope registration (a private salon registered but not yet entered would refuse its seal `key-group-not-held`). There are four call sites: the listing walk, `registerJoinedChannel`, community creation and salon creation.
+- `wait`: a listing is in flight, or none has settled since the session began. The row stays `pending` ("En attente"), nothing is sealed, the text is in the unsent ledger, and there is no banner.
+- refused: a listing settled without entering it (`not-listed` if it answered, `listing-failed` if it gave up), its community was purged (`forgetWorkspaceGraineState` -> `left`), or the session ended (`setGraineRuntime(null)` -> `session-ended`). The row turns `error` with its Retry, and the banner names the cause (`salonGateRefusalMessage`, four Paraglide sentences).
+
+**The wait has no timer.** Each way out is an event (entered, listing settled, purge, sign-out), and a listing always settles because it has a bounded retry ladder. `settleSalonListing` refuses waiters only when NO listing is left in flight, and it runs after the reload owed to a join has begun, so a held send waits for that reload too. A listing that began before a sign-out carries the previous session's token, and its settle is ignored.
+
+**The signature rule is unchanged.** The held message is cleartext in memory, never a queued unsealed row. It is sealed and signed when released, through the ordinary `sealChannelMessage`. The seal keeps its own `unknown-channel` refusal for any path that reaches it without the gate.
+
+**No duplicate on reload.** A held send has sent nothing. A reload loses the row (memory only, as before) and the ledger hands the text back to the composer. Held sends to the same salon are released in arrival order, and each one exactly once (the resolvers are removed before they run). A Retry on a refused row asks the gate again, so it waits if a listing is in flight. The banner of an answer that arrives after the member moved to another conversation is not shown there: the row keeps the state, and the log says so.
+
+**A salon upload waits too** (the channel branch of `handleSendChat`), BEFORE the upload so a salon that never loads leaves no orphan blob. The upload indicator stays up meanwhile. A refusal throws `SalonNotLoadableError`, the file is re-staged and the banner names the cause. There is still no echo row for a salon upload.
+
+**The banner is no longer drawn over the thread.** `.chat-floating-alert` sat at `bottom: 10rem` on a 95 %-opaque pink in raw hex, and the messages under it showed through and collided with its text (user's screenshot). It is now `.chat-send-notice`, rendered by `ChatComposer`'s `notice` snippet at the top of the footer, so `--chat-composer-height` counts it and the thread makes room. It uses opaque tokens (`--banner-danger-bg`, `--red-err`, `--radius-lg`) and the type scale (`--text-xs`, and `--text-sm` from 768 px).
+
+Not covered: reactions, edits and polls (`toUiActionError`) still refuse on `unknown-channel`, because they are a toggle and not a message. A context where the runtime is installed but no listing ever begins would wait until sign-out; the post-login effect in `ChatBackgroundService` always begins one. Tests: `salonSendGate.test.ts`, `useMessaging.salonRefusal.svelte.test.ts` ("a salon text sent before its salon is loaded"), `useMessaging.channelUploadToken.svelte.test.ts`, `useChannelWorkspaces.svelte.test.ts` ("releases a send held for a salon the load enters").
+
 ## The restore keeps the salon rows the community load wrote (2026-10-12)
 
 Reported from an iPhone: after a notification tap into a salon, tapping the other salons lit the
