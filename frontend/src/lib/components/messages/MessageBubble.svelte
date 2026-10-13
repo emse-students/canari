@@ -14,6 +14,7 @@
   import { parseEnvelope } from '$lib/envelope';
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import MessageMediaRenderer from './MessageMediaRenderer.svelte';
   import {
     retryUpload,
@@ -211,6 +212,15 @@
    */
   let emojiPickerOrigin = $state<MessagePickerOrigin>(null);
   const showEmojiPicker = $derived(emojiPickerOrigin !== null);
+  /**
+   * The picker the long-press sheet hands over to holds a history entry of its own, as the sheet
+   * does: on a phone the system Back closes the picker, not the conversation under it. The hover
+   * toolbar's picker is a desktop popover and is left out.
+   */
+  const emojiPickerHistory = bindHistoryOverlay(
+    () => emojiPickerOrigin === 'sheet',
+    () => (emojiPickerOrigin = null)
+  );
   let showInfo = $state(false);
   let showMobileActions = $state(false);
   let showDeleteModal = $state(false);

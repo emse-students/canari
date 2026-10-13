@@ -46,6 +46,7 @@
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
 
   /** Which rung of `app.css`'s ladder this modal sits on. Names, never numbers. */
   type Layer = 'sheet' | 'modal' | 'critical';
@@ -53,8 +54,13 @@
   interface Props {
     /** Whether the modal is mounted at all. */
     open: boolean;
-    /** Called for every dismissal - the scrim, Escape, and nothing else. */
+    /** Called for every dismissal - the scrim, Escape and the system Back. */
     onClose: () => void;
+    /**
+     * False for a sheet the person must answer (the biometric enrolment gate): it then holds no
+     * history entry, so the system Back cannot close it, exactly as `Modal`'s flag of the same name.
+     */
+    dismissible?: boolean;
     /** The dialog's accessible name. Required: an unnamed dialog is announced as "dialog". */
     label: string;
     /**
@@ -74,6 +80,7 @@
   let {
     open,
     onClose,
+    dismissible = true,
     label,
     layer = 'modal',
     role = 'dialog',
@@ -94,6 +101,18 @@
     modal: 'z-(--z-modal)',
     critical: 'z-(--z-critical)',
   };
+
+  /**
+   * THE SYSTEM BACK IS A DISMISSAL TOO, so an open overlay holds a history entry. None of the seven
+   * consumers did, so on a phone one Back closed whatever was UNDER the dialog - the conversation
+   * under the poll composer, the page under a confirmation - and left the dialog standing
+   * (audit of 2026-10-13, after the message sheet). The scrim and Escape close it through the
+   * owner's state; the entry left behind is a ghost the stack crosses without costing a Back.
+   */
+  bindHistoryOverlay(
+    () => open && dismissible,
+    () => onClose()
+  );
 
   /**
    * Escape closes, and nothing typed inside the modal reaches the app's own shortcuts.

@@ -1155,6 +1155,46 @@ entry becomes the ghost `onPopState` already skips. Tests: `Modal.dismissal.svel
 `historyOverlayStack.test.ts`. The mechanism is proven in jsdom; **the reading owed** is the original
 one on a phone ([device-verification](../device-verification.md#v-the-camera-swipe-on-a-fresh-feed-after-publishing---owed-on-android)).
 
+### One Back with the message sheet open closed the sheet AND the conversation, and ten more surfaces shared the cause (2026-10-13)
+
+Mi 9T, 3 of 3, three-button and gesture Back alike: with the long-press sheet open, one Back closed
+the sheet and the conversation under it. `history.state` read `{canariOverlay:1}` with the
+conversation open and still 1 with the sheet open: `MessageMobileActions` held no history entry, so
+the Back popped the conversation's. An audit of every surface that covers the screen found the same
+omission in the sheet's emoji picker, `ModalOverlay` (so the poll composer, every `showConfirm`,
+`GifPickerModal`, the biometric offer, the document manager's dialogs, the agenda's reject dialog),
+`FloatingSurface`'s sheet (every `Picker` and `DateTimeField` on a phone - inside a `Modal`, Back
+closed the MODAL and left the sheet standing), the PDF viewer, the payer e-mail prompt, the feed's
+post menu, the ecosystem launcher, the uncontrolled `GlassMenuButton` (the conversation header's
+"..." on Android), the community admin drawer and the agenda's event form. Each now registers.
+
+**Two changes to the mechanism came with it.**
+
+- **`settleArrival` closes every overlay pushed after the entry a traversal LANDED on**, read off
+  the entry's id (`{canariOverlay: id, canariLoad}`; ids grow per page load, and an entry from an
+  earlier load reads as the router entry). It used to pop the top on any landing, which was wrong
+  as soon as a GHOST sat above a live overlay: a sheet closed by a tapped action ("Repondre")
+  leaves its entry behind (`releaseHistoryOverlay`), and the next Back then closed the conversation
+  while the history stayed one entry out of step, so the Back after it did nothing. A landing that
+  closes nothing now walks one more entry, so one Back always closes what the person sees.
+- **`bindHistoryOverlay` follows `getOpen` in its own effect and releases its entry when its
+  component is destroyed while open** - a surface mounted only while open (the PDF viewer, the
+  prompt) is closed by being unmounted, which no `getOpen` reports, and a live entry left behind
+  stands the tab swipe down.
+
+**The gate is `lib/styles/historyOverlayCoverage.test.ts`**: a file that marks a node
+`use:coversScreen`, renders `SidePanel` or `FullScreenViewer`, or portals a `role="menu"`/`"dialog"`
+must register, or sit in its `EXEMPT` list with a reason and the files that register in its place
+(each checked to still register). Exempt today: `EventFormModal` (its two hosts register),
+`ComposerGifPanel` (the composer registers), `ConversationSidePanel` and the `SidePanel` wrapper
+(`useConversations` and `Sidebar` register), `FullScreenViewer` (its two consumers register),
+`CallOverlay` (calling is held off; at revival the expanded call registers with Back = minimise),
+and the card editor (fine pointer only). Not caught by the markers: inline dropdowns and hover
+tooltips, which are not screen-level. Known and left: the lightbox's info sheet has no entry of its
+own, so Back closes the whole lightbox. Proven in unit tests and on desktop Chrome at 390 px with a
+real `history.back()`; **the phone reading is owed**: the original one (long-press, Back, the
+conversation stays) on a build carrying this.
+
 ### The bar icons follow the page's theme, handed over by the page (2026-10-01)
 
 Light theme, status bar icons WHITE on a white page (only the green battery showed). `enableEdgeToEdge()`

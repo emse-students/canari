@@ -14,6 +14,8 @@
 </script>
 
 <script lang="ts">
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
+  import { isMobileOverlayLayout } from '$lib/utils/historyOverlayStack';
   import { scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { clickOutside } from '$lib/actions/clickOutside';
@@ -95,6 +97,18 @@
     if (onOpenChange) onOpenChange(next, reason);
     else ownOpen = next;
   }
+
+  // UNCONTROLLED, ON A PHONE, THE OPEN MENU HOLDS A HISTORY ENTRY: the system Back closes the menu
+  // and not the conversation under it (the header's "..." on Android, audit of 2026-10-13). A
+  // controlled menu is its owner's to register - the composer's "+" already does, and a second entry
+  // would cost a second Back.
+  bindHistoryOverlay(
+    () => controlledOpen === undefined && ownOpen && isMobileOverlayLayout(),
+    () => {
+      Log.d('GlassMenuButton', `${label}: closed (back)`);
+      ownOpen = false;
+    }
+  );
 
   // Escape closes the menu wherever focus is - a tap leaves it on the button, not in the panel.
   $effect(() => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -373,6 +374,13 @@
   );
 
   let depositModalOpen = $state(false);
+  // `EventFormModal` is drawn by hand, not through `Modal`, so its host registers it: the system Back
+  // closes the form, not the agenda under it (`AssociationCalendarSection` does the same for its
+  // own modals; audit of 2026-10-13).
+  bindHistoryOverlay(
+    () => depositModalOpen,
+    () => (depositModalOpen = false)
+  );
   let depositValues = $state<EventFormValues>(blankEventFormValues());
   /** Non-null when the modal is editing an existing event instead of depositing a new one. */
   let editingEventId = $state<string | null>(null);

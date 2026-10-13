@@ -291,13 +291,6 @@ The slow-link badge (`slow-link-indicator`, `OfflineBanner.svelte`, a 28 px disc
 
 The readings are in [device-verification](device-verification.md#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
 
-### P2 - one system Back with the message action sheet open closes the sheet AND the conversation
-
-3 of 3 on the Mi 9T (three-button mode; `KEYCODE_BACK` is the gesture's Back too). The conversation
-is one history entry (`{canariOverlay:1}`) and the sheet adds none: `MessageMobileActions.svelte`
-binds no history overlay, unlike `Modal.svelte` (`bindHistoryOverlay`). Expected: the first Back
-closes the sheet only.
-
 ### P2 - TestFlight serves this tester no pre-release after `1.2.3-alpha.5`
 
 The iPhone 12's TestFlight lists the `1.2.6 (100200699)` stable and, under previous builds, nothing

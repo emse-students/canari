@@ -2,6 +2,7 @@
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { untrack } from 'svelte';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { flip } from 'svelte/animate';
   import { SvelteMap } from 'svelte/reactivity';
   import { dndzone, type DndEvent } from 'svelte-dnd-action';
@@ -410,6 +411,10 @@
   function closeCommunityAdminPanel() {
     showCommunityAdminPanel = false;
   }
+  // The admin drawer holds a history entry: the system Back closes the drawer, not the community
+  // under it. `SidePanel` registers none by design - its other consumer's owner already does
+  // (audit of 2026-10-13).
+  bindHistoryOverlay(() => showCommunityAdminPanel, closeCommunityAdminPanel);
 
   /**
    * Runs one creation and decides what the panel does with the answer.
