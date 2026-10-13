@@ -499,6 +499,9 @@ the socket and the replay have all finished) and it should be its own package wi
   workable), 2G-like 960 ms (**hint after 2.9 s**, three requests). Never set while offline. UI: a small
   fixed icon (`SignalLow`, 20 px badge in the top corner, `aria-label` + `title` from Paraglide
   `slow_indicator_label`), NOT a strip; nothing disabled; the offline banner wins when both could show.
+  It is placed BELOW the banner column (`top` adds `--app-banner-height`): being `fixed` it reserves
+  nothing, and at a bare `top` it covered the dev "Environnement de test" strip and its close button
+  (2026-10-13).
 - **Lanes in the outbox** ([chat](modules/chat.md#one-lane-per-conversation-three-frames-on-the-wire-at-most-wp-off-5-2026-10-09)).
 
 **Measured, before and after** (headless Chrome `headless=new` on a private profile, real `apiFetch`,

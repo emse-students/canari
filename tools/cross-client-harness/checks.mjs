@@ -385,10 +385,11 @@ export const PHASES = {
   // A SALON ROW THE SERVER ALTERS (Graine v2, channel-encryption section 21): W1 writes, a database
   // edit relabels or moves the row, W2 re-reads history and must REFUSE it with its line. Edits are
   // undone in `finally`. GRAINE-AUTH-4 (a seed relayed from a departed member) has no runner yet.
+  // `--only 5` records GRAINE-AUTH-5 AND -6: one unsigned row W1 posts, read live then from history.
   GRAINE: {
     title: 'Graine v2 - an author that is proven',
-    scripts: only('graineauth.mjs', 1, 3),
-    needs: ['W1', 'W2'],
+    scripts: [...only('graineauth.mjs', 1, 3), 'graineauth.mjs --only 5'],
+    needs: ['W1', 'W2', 'W3'],
   },
   CORRUPT: {
     title: 'deliberate store damage',
@@ -493,6 +494,9 @@ export const SCRATCH_SCRIPTS = {
   // MULTI-8 and MULTI-9 enrol a second web device of the owner; MULTI-7 and MULTI-10 do not, and
   // MULTI-10 opens no client at all.
   MULTI: ['roster.mjs --row 8', 'roster.mjs --row 9'],
+  // GRAINE-AUTH-5/6 read the injected v1 row on the owner's scratch device, which holds no session
+  // the row could name; arms 1-3 read on W2 and never open W3.
+  GRAINE: ['graineauth.mjs --only 5'],
 };
 
 /**

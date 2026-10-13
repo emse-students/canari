@@ -273,8 +273,13 @@ jobs:
           #
           # Ask what the gate READS. These read `frontend/` whole, so the trigger is `frontend/`
           # whole, minus nothing that is not separately covered.
+          #
+          # `bun.lock` and `patches/` decide which library code the suite runs (2026-10-13): a
+          # lockfile-only bump of a patched dependency drops its patch silently, and only
+          # `patchedDependencies.test.ts` and the behavioural test behind the patch would say so.
           if has '^frontend/src/' || has '^frontend/src-tauri/' || has '^frontend/static/' || \
-             has '^frontend/package\.json' || has '^frontend/svelte\.config' || \
+             has '^frontend/package\.json' || has '^frontend/bun\.lock' || has '^frontend/patches/' || \
+             has '^frontend/svelte\.config' || \
              has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
              has '^frontend/tsconfig' || has '^frontend/\.oxlintrc' || has '^oxfmt\.json' || has '^\.oxlintrc' || has '^rust-toolchain\.toml' || has '^scripts/install-oxvelte\.sh' || \
              has '^frontend/mls-wasm/' || has '^frontend/mls-core/' || has '^libs/proto/' || has '^libs/contracts/'; then
