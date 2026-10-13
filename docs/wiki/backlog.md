@@ -57,6 +57,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | the composer stands still while the keyboard rises (2026-10-09, Android double report and iOS stale inset, unit-proven only) | the Mi 9T half PASSED on 2026-10-13 (869.5 -> 524 in one frame, 5 of 5, [check W](device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)); owed: the iPhone, on a build newer than `1.2.3-alpha.5`. **iPhone 12, 2026-10-11: no 465 plateau any more, but a NEW defect, 3 of 3 rises**: the native "+" twin jumps to 487 pt at once while the web layer is drawn a keyboard height lower and slides up over ~250 ms, so the web composer is hidden and the "+" floats alone (an OPEN P3, cause not looked at) |
 | a salon carries read receipts (#1235, `v0.18.32`) | `READ-6` on the rig, then one look in a real community: a member who is not an admin sees the double check and "Lu par" under their own last message ([social-service](services/social-service.md#read-receipts-in-a-salon)) |
 | a salon's settings are offered only to who may change them (#1228, `v0.18.32`) | one look with a Membre account: the access tab reads only, rename and delete are absent; then grant `channel.manage` to Moderateur in the grid with a moderator's panel open - the controls must appear without a reload |
+| every menu is a fixed segmented control or a hub of route sections (chantier CLOSED 2026-10-14) | one look on each phone: a hub, one section, Back and the Android hardware back, a reload on a section ([section-navigation](frontend/section-navigation.md#closed-2026-10-14---the-final-shape-do-not-reopen)) |
 | `/forms/success` no longer asks for a form called `success` | after a completed payment on production, social-service logs no `invalid input syntax for type uuid: "success"` (once per payment, so ONE payment settles it) |
 | the `apiFetch` fallback now names its cause | the next run's logs separate "a container is restarting" from "refresh is broken"; if one cause dominates, measure its RATE against the population before the name "transient" is believed |
 | the `[PENDING]` line that called a routine race "Non-recoverable" | the next run reports it in `notable` from an ANCHORED rule; the two old spellings stay pinned until A1 runs a build emitting the new line (an APK embeds its frontend) |
@@ -398,15 +399,28 @@ Both media show "Format non supporte / Telecharger" on the Mi 9T while the iPhon
 v1 proves nothing about who wrote a salon message or where; the table is
 [channel-encryption §7](protocols/channel-encryption.md#7-what-the-server-can-still-do-stated-rather-than-implied),
 the design [§21](protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)
-(all three decisions of 2026-09-28: the whole of it, a relayed endorsement, the DMs included). R1 =
-G2-0 to G2-4 and the writer G2-5 are SHIPPED (#1221; the writer in the stable `v1.0.3`, 2026-10-05).
-`minClientVersion` is `1.0.3` since 2026-10-11, so G2-5's refusal is unblocked; the floor is still raised only on the user's yes.
+(all three decisions of 2026-09-28: the whole of it, a relayed endorsement, the DMs included).
+**EVERYTHING TO BUILD IS BUILT (re-verified against `main` 2026-10-14)**: the reader R1 (G2-0 to
+G2-4b), the verified MLS sender that covers the DMs (G2-1b, web and native), the writer G2-5
+(`v1.0.3`), the refusal of an arriving v1 seed G2-5b (`v1.2.6`), and the server's refusal of an
+unsigned row ([§21.8](protocols/channel-encryption.md#218-the-server-refuses-an-unsigned-salon-row-2026-10-13),
+#1802). Settled by decision, not owed: the floor stays `1.0.3` (a store build from `1.0.3` to
+`1.2.5` still accepts a v1 seed until it updates), and GRAINE-AUTH-4 is a unit test, not a rig row
+(no mutating dev hook). **The chantier closes when the three rows below are done**; what is left
+after that is a dated shim, and it lives in [legacy-compatibility](legacy-compatibility.md) alone.
 
-| WP | What is left |
+| What is owed | Blocked on |
 | --- | --- |
-| G2-5 | **v1 ends (user, 2026-09-28)**. Step one, refusing an ARRIVING v1 seed, SHIPPED in the stable `v1.2.6` (#1749, 2026-10-13, [§21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)); both floors are `1.0.3`, so a client from `1.0.3` to `1.2.5` still accepts a v1 seed until it updates (raising the floor is the user's call). Step two, deleting the v1 reader, waits for the count in [legacy-compatibility](legacy-compatibility.md) |
-| G2-6b | a salon edit from a v1 session has an unsigned, server-supplied `senderId` (a deliberate level, no code owed, [§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05)); closes with the v1 reader. **Only if a channel ever gets an older-page load:** `listMessages` with a `before` cursor omits edit and reaction rows made after the cursor |
-| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **GRAINE-AUTH-1..3 are `PASS` since 2026-10-05 and GRAINE-AUTH-5/6 (G2-5b, live and history) since 2026-10-13, on the local estate** ([board](cross-client-testing.md#20---graine---an-author-that-is-proven)); NOTIF-19/20 on a v2 session are `PASS` since 2026-10-05 (APK `7ab8f1780`, the claim that they were owed was stale); **owed: GRAINE-AUTH-4** (no runner can exist without a decision on a mutating dev hook, see the board row) and the iPhone reading ([device-verification](device-verification.md)) |
+| §21.8 in production, then the count re-run (§21.8's SQL: 0 unsigned rows a day after the deploy) | the stable `v1.2.7` (the user's gesture); on dev since `v1.2.7-alpha.1` |
+| The rig: GRAINE-AUTH-1..3 and -6 re-run (the runner changed, `rows.mjs` flags them) and -7 first run, all on one estate carrying #1802 ([board](cross-client-testing.md#20---graine---an-author-that-is-proven)) | a running local estate (none was up on 2026-10-14, so nothing was run) |
+| One reading on a device of the native v1-seed refusal lines (Kotlin `REFUSED N v1 seed(s)`, the NSE's `openSeedFrame: REFUSED v1 seed(s)`), compiled and never run ([§21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)) | a pre-floor v1 frame replayed to a phone, the only path that reaches them |
+
+The v1 reader, the nullable `signature` column and the edit trust level of
+[§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05) (G2-6b) all go
+together when production counts 0 unsigned rows (373 on 2026-10-14; revisit 2027-10-13), in
+[legacy-compatibility](legacy-compatibility.md). Not Graine work, noted where it was found: `listMessages`
+with a `before` cursor omits edit and reaction rows made after the cursor, which matters only if a
+channel ever gets an older-page load.
 
 What v2 does not close: the server can still admit a device it controls or publish a false device key
 (BasicCredential's limit, §21).
@@ -1061,12 +1075,6 @@ WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominativ
 - **User decision:** let the directory be widened for grantees? (not widened now; only posts, comments, reactions and events are).
 - **Ambiguity to answer:** what "an institution of another campus" means for a reader (the grant reaches it today).
 - The document-reviewer rows were NOT moved into the grants table (a separate capability on the same page).
-
-## Navigation, tooltips and the camera (2026-10-08)
-
-### Sections in depth: built for every menu (lots 1-6, 2026-10-10); owed ONE look on both phones
-
-Hub, one section, Back (and the Android hardware back), reload on a section, on each hub ([section-navigation](frontend/section-navigation.md)); the profile hub (lot 6) was not read in a signed-in browser.
 
 ## Tooltips: one remaining inconsistency (audit 2026-10-08)
 
