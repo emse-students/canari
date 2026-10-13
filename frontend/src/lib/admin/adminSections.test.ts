@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { adminHubGroups, adminTrail, mayOpenAdminPath, type AdminTiers } from './adminSections';
-import { parseTab, tabUrl } from './tabQuery';
+import { parseTab, tabUrl } from '$lib/navigation/tabQuery';
 
 const NONE: AdminTiers = {
   isGlobalAdmin: false,

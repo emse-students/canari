@@ -4,7 +4,7 @@
   import { onMount } from 'svelte';
   import { goto, replaceState } from '$app/navigation';
   import { page as routePage } from '$app/state';
-  import { parseTab, tabUrl } from '$lib/admin/tabQuery';
+  import { parseTab, tabUrl } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
   import { isGlobalAdmin } from '$lib/stores/user';
   import {
