@@ -20,9 +20,16 @@ class ChannelReadMarkTest {
 
     @Test
     fun `the action needs a salon AND the instant the notification stands for`() {
-        assertTrue(ChannelReadMark.offered("channel_abc", 1_700_000_000_000L))
-        assertFalse(ChannelReadMark.offered("channel_abc", 0L))
-        assertFalse(ChannelReadMark.offered("channel_abc", -5L))
-        assertFalse(ChannelReadMark.offered("dm-group", 1_700_000_000_000L))
+        assertTrue(ChannelReadMark.offered("channel_abc", 1_700_000_000_000L, showsMessage = true))
+        assertFalse(ChannelReadMark.offered("channel_abc", 0L, showsMessage = true))
+        assertFalse(ChannelReadMark.offered("channel_abc", -5L, showsMessage = true))
+        assertFalse(ChannelReadMark.offered("dm-group", 1_700_000_000_000L, showsMessage = true))
+    }
+
+    @Test
+    fun `a blind banner never offers it - the receipt would say a message nobody saw was read`() {
+        // "Nouveau message" with the instant known in clear: the one shape that used to offer the
+        // public "Lu par" receipt for a message whose text the reader never saw.
+        assertFalse(ChannelReadMark.offered("channel_abc", 1_700_000_000_000L, showsMessage = false))
     }
 }

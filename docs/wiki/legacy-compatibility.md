@@ -113,6 +113,9 @@ The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fi
   on production answers 0. Rows age out of the 365-day window, so that is at most a year after the
   writer ships. A count, not a date: a salon nobody prunes keeps its rows. **Since the server refuses
   an unsigned row (2026-10-13, see the section below) that count can only fall**, so a 0 stays 0.
+  **Measured 2026-10-14 on production: 373 rows in 15 salons, none pinned**, oldest 2026-09-02,
+  newest 2026-10-09. A pinned row escapes the retention purge, so pinning one of them would hold the
+  count above 0 after the date: then name the salon, as the section below says.
   On the same day, `channel_messages."signature"` becomes `NOT NULL` (a migration), and the DTO's
   `signature?` and the `?? null` in `ChannelService.sendMessage` go with it.
 
