@@ -1271,7 +1271,8 @@ by the heads sampler (it is installed before the tap on the phone, after the ope
   reload the same menu has Epingler. One observation; whether "Cloturer le sondage" was also missing
   before the reload was not read.
 - **The poll close confirmation is the system dialog with English buttons** ("CANCEL" / "OK") over a
-  French sentence (`poll-close-1.png`).
+  French sentence (`poll-close-1.png`). FIXED 2026-10-13: `ChannelPoll` asks through the app's
+  `showConfirm`; no `window.confirm` is left in the frontend.
 - **The sticky "AUJOURD'HUI" pill sits partly under the pinned pill** after the pinned jump
   (`pinned-jump.png`).
 - **The phone's long-press menu has no "Epingler" for a plain member**, which matches
