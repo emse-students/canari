@@ -3125,6 +3125,26 @@ during a conversation's entry, a switch with typing in flight) all ended at the 
 smooth scroll interrupted by the bubble. If a phone still shows the bubble UNDER the composer
 rather than flush on it, it is a different defect, owed a reading with the keyboard closed.
 
+**IT WAS A DIFFERENT DEFECT: THE RESERVATION MISSED THE FOOTER'S PADDING** (user, 2026-10-13, phone
+app: the dots half under the composer, keyboard closed). `--chat-composer-height` is the footer's
+`offsetHeight`, padding included, and the footer pads `max(0.75rem, var(--safe-area-inset-bottom))`.
+Its `ResizeObserver` watched the default CONTENT box, which a padding change does not touch - so when
+the bottom inset changed after the composer mounted (Android's navigation-bar inset reaching the
+WebView, the keyboard's open/close), the footer grew and nothing republished. Measured on the real
+`ChatArea` at 390x844, glass chrome: a 24 px inset arriving late left the footer at 76 px against a
+published 64 (bubble 4.5 px clear), a 48 px inset (three-button navigation) at 100 against 64 - the
+bubble 19.5 px UNDER the composer. `publishComposerHeight` (`utils/chat/composerHeight.ts`) observes
+`border-box`, the box it publishes: 16.5 px clear at 0, 24 and 48 px, long and short thread, keyboard
+simulated open (390x500) and closed. #1780's measurement held because its inset never changed under
+it. **Not run:** a real Android inset change and iOS WebKit (the home indicator's inset is pinned to 0
+while the keyboard is open, `keyboardViewport.svelte.ts`, which this now follows too). **And the
+publish waits for the next frame:** written inside the `ResizeObserver` callback, the value resized
+the SHALLOWER scroller, which the engine cannot notify in the same pass, so every composer growth (a
+wrapped line as well, since long before this change) raised "ResizeObserver loop completed with
+undelivered notifications" and delivered the scroller's notification a frame later anyway. The
+callback now only schedules one `requestAnimationFrame`, cancelled at teardown; the scroller resizes
+in an ordinary layout and is notified in its own frame - the same frame the follow already landed in.
+
 ### The day label and its floating pill (2026-10-01)
 
 Reported by the user: scrolling a conversation, the floating "Mercredi 23 septembre" was not
