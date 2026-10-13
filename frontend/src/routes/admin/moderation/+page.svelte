@@ -39,7 +39,7 @@
   import { ensureContentModerator } from '$lib/associations/api';
   import { goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
-  import { parseTab, tabUrl } from '$lib/admin/tabQuery';
+  import { parseTab, tabUrl } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
