@@ -570,7 +570,7 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
     expect(salonSendWaiterCount('channel_ch1')).toBe(1);
 
     // The reconnect (`connectivity.onReconnect` in ChatBackgroundService) lists again.
-    store.retryFailedListing(ctx, 'connectivity regained');
+    store.retryFailedListing(ctx, 'reconnect');
     await vi.waitFor(() => expect(store.workspacesLoadError).toBeNull());
     expect(await held).toEqual({ kind: 'ready' });
     expect(listUserWorkspaces).toHaveBeenCalledTimes(5);
@@ -592,7 +592,7 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
     const first = store.loadChannelWorkspacesFromBackend(ctx);
     await tick();
     // Not doubled: the listing in flight is still the only one.
-    store.retryFailedListing(ctx, 'connectivity regained');
+    store.retryFailedListing(ctx, 'reconnect');
     expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1_000 + 3_000 + 7_000);
@@ -621,9 +621,61 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
     const store = useChannelWorkspaces();
     const ctx = makeContext();
     await store.loadChannelWorkspacesFromBackend(ctx);
-    store.retryFailedListing(ctx, 'connectivity regained');
+    store.retryFailedListing(ctx, 'reconnect');
 
     expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+  });
+
+  // THE BOUND (review of #1843). A reconnect is any answer after a transport failure, so an endpoint
+  // that keeps failing while other calls answer would cycle for ever: give up -> unreachable -> a
+  // probe answers -> reconnect -> list again. One reconnect retry per give-up, none for the give-up
+  // of a reconnect's own listing.
+  it('a persistently failing listing stops after ONE reconnect retry, however many reconnects follow', async () => {
+    resetSalonSendGate();
+    listUserWorkspaces.mockRejectedValue(await tauriNetworkFailure());
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    const first = store.loadChannelWorkspacesFromBackend(ctx);
+    await vi.advanceTimersByTimeAsync(1_000 + 3_000 + 7_000);
+    await first;
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(4);
+
+    for (let reconnect = 0; reconnect < 5; reconnect++) {
+      store.retryFailedListing(ctx, 'reconnect');
+      await vi.advanceTimersByTimeAsync(1_000 + 3_000 + 7_000);
+      await vi.waitFor(() => expect(store.isLoadingWorkspaces).toBe(false));
+    }
+
+    // The first listing (4 attempts) and its ONE reconnect retry (4 attempts) - and nothing more.
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(8);
+    expect(ctx.log).toHaveBeenCalledWith(
+      expect.stringContaining('NOT listing again: this give-up already had its one reconnect retry')
+    );
+    // The foreground - the member's return - still lists again, and earns a new reconnect retry.
+    store.retryFailedListing(ctx, 'foreground');
+    await vi.advanceTimersByTimeAsync(1_000 + 3_000 + 7_000);
+    await vi.waitFor(() => expect(store.isLoadingWorkspaces).toBe(false));
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(12);
+  });
+
+  it("owes nothing to a reconnect that lands while the listing's own request is on the wire", async () => {
+    resetSalonSendGate();
+    let fail: (e: unknown) => void = () => {};
+    listUserWorkspaces.mockImplementationOnce(() => new Promise((_, reject) => (fail = reject)));
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    const first = store.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    // The listing's request is in flight: this reconnect may be its own answer.
+    store.retryFailedListing(ctx, 'reconnect');
+    fail(new ChannelApiError(403, null, 'Forbidden'));
+    await first;
+    await tick();
+
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('nothing owed'));
   });
 
   // A ROLE CHANGE PUSHED TO THE PERSON IT IS ABOUT, applied without a round trip.

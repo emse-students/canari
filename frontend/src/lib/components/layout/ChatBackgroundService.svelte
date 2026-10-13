@@ -60,7 +60,10 @@
   import { removalOutcome } from '$lib/utils/chat/memberRemoval';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
-  import type { WorkspacePurgeContext } from '$lib/composables/useChannelWorkspaces.svelte';
+  import type {
+    ListingRetryTrigger,
+    WorkspacePurgeContext,
+  } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import type { BulkIngestPhase } from '$lib/mls-client';
   import { Phone, PhoneOff, Video } from '@lucide/svelte';
@@ -1189,9 +1192,9 @@
     // AND when the server answers again after a transport failure - the one proof that a listing
     // which gave up on a dead link can now succeed. The decision (retry, or owe it to the listing in
     // flight) is the composable's: `retryFailedListing`.
-    function handleReconnect(reason: string) {
+    function handleReconnect(trigger: ListingRetryTrigger) {
       if (!globalSession.isLoggedIn) return;
-      globalChannels.retryFailedListing(channelsCtx(), reason);
+      globalChannels.retryFailedListing(channelsCtx(), trigger);
     }
 
     function handleVisibility() {
@@ -1199,7 +1202,7 @@
       handleReconnect('foreground');
     }
 
-    const stopReconnect = connectivity.onReconnect(() => handleReconnect('connectivity regained'));
+    const stopReconnect = connectivity.onReconnect(() => handleReconnect('reconnect'));
     document.addEventListener('visibilitychange', handleVisibility);
 
     // The refresh endpoint is the only place that learns a session is dead, and it can learn it
