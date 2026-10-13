@@ -74,6 +74,12 @@ const ABSENT_TTL_MS = 10 * 60 * 1000;
  */
 const MAX_CACHED_AVATARS = 500;
 
+/**
+ * The shape a user id must have before it is forwarded to the gallery - in a path or a query.
+ * Prevents SSRF and path traversal: only a safe alphanumeric identifier leaves this service.
+ */
+export const AVATAR_SUBJECT_ID = /^[a-zA-Z0-9_-]{1,128}$/;
+
 @Injectable()
 export class AvatarService {
   private readonly logger = new Logger(AvatarService.name);
@@ -102,6 +108,56 @@ export class AvatarService {
   }
 
   /**
+   * Which of `userIds` have a photo, asked of MiGallery in ONE request
+   * (`GET /api/users/avatar-presence`), or `null` when nobody could say.
+   *
+   * WHY IT EXISTS (Mi 9T, 2026-10-13): a salon open asked the avatar of every member and learned
+   * that a member has no photo by being refused - 37 `404`s in one walk, each a console error line,
+   * 25 of them in one open. The gallery's own table already holds the fact; asking it for the list
+   * is one request where the refusals were one per face.
+   *
+   * - an estate with no provider (`disabled`) answers an EMPTY set: nobody has a photo here, which is
+   *   exactly what every avatar request would have answered;
+   * - a gallery that cannot answer - unreachable, our key refused, or an older build without the
+   *   route (its `404`) - is `null`: not an answer about anybody's photo, so the caller asks each
+   *   avatar as before. Logged once per call at warn, since the client then pays the refusals again.
+   */
+  async fetchAvatarPresence(userIds: readonly string[]): Promise<Set<string> | null> {
+    if (!this.avatarApiKey) return new Set();
+    if (userIds.length === 0) return new Set();
+    try {
+      const response = await axios.get<{ withPhoto?: unknown }>(
+        `${this.avatarApiUrl}/api/users/avatar-presence`,
+        {
+          headers: { 'x-api-key': this.avatarApiKey },
+          params: { ids: userIds.join(',') },
+          timeout: UPSTREAM_TIMEOUT_MS,
+          maxRedirects: 0,
+        }
+      );
+      const withPhoto = response.data?.withPhoto;
+      if (!Array.isArray(withPhoto)) {
+        this.logger.warn(
+          `Avatar presence from ${this.avatarApiUrl} carried no withPhoto list - clients will ask each avatar`
+        );
+        return null;
+      }
+      return new Set(withPhoto.filter((id): id is string => typeof id === 'string'));
+    } catch (error) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      const detail = axios.isAxiosError(error)
+        ? `${error.code ?? `HTTP ${status ?? 'no status'}`} ${error.message}`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+      this.logger.warn(
+        `Avatar presence unavailable from ${this.avatarApiUrl} for ${userIds.length} id(s): ${detail} - clients will ask each avatar`
+      );
+      return null;
+    }
+  }
+
+  /**
    * Fetch one user's avatar from MiGallery.
    *
    * NEVER THROWS FOR AN UPSTREAM CONDITION. An avatar is an optional decoration: whatever happens
@@ -113,8 +169,7 @@ export class AvatarService {
    * the common case rather than the edge one. What is logged is every cause that is ours.
    */
   async fetchUserAvatar(userId: string): Promise<AvatarOutcome> {
-    // Prevent SSRF / path traversal: userId must be a safe alphanumeric identifier.
-    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) {
+    if (!AVATAR_SUBJECT_ID.test(userId)) {
       throw new HttpException('Invalid user ID', HttpStatus.BAD_REQUEST);
     }
 

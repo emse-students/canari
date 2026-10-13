@@ -1,6 +1,7 @@
 import { Log } from '$lib/utils/Log';
 import { BlobUrlPool } from '$lib/utils/blobUrlPool';
 import { mirrorAvatarToNative } from '$lib/utils/avatarMirror';
+import { avatarPhotoPresence } from '$lib/utils/avatarPresence';
 import { registerPerReaderCache } from '$lib/utils/sharedCache';
 
 /**
@@ -127,6 +128,19 @@ export async function resolveUserAvatarDisplayUrl(
 
   const held = blobs.tryRetain(url);
   if (held) return { kind: 'blob', url: held };
+
+  // A FACE WITH NO PHOTO IS NEVER REQUESTED. Whether it has one is asked for the whole list at once
+  // (`avatarPresence.ts`); a `false` is the 404 this request would have collected, known without it.
+  // `null` - nobody could say - requests the avatar as before.
+  if (subjectUserId) {
+    if ((await avatarPhotoPresence(subjectUserId)) === false) {
+      absentUrls.add(url);
+      return { kind: 'none' };
+    }
+    // Another mount of the same face may have loaded it while this one waited.
+    const loadedMeanwhile = blobs.tryRetain(url);
+    if (loadedMeanwhile) return { kind: 'blob', url: loadedMeanwhile };
+  }
 
   // ONE REQUEST FOR N SIMULTANEOUS MOUNTS. The map above cannot dedupe them - it is only written
   // once the bytes are in - so without this every face in a freshly rendered list would ask for

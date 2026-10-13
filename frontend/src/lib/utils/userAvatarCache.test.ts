@@ -23,6 +23,10 @@ import {
 import { mirrorAvatarToNative } from './avatarMirror';
 
 vi.mock('./avatarMirror', () => ({ mirrorAvatarToNative: vi.fn(async () => {}) }));
+// "Nobody could say" unless a test states otherwise: the avatar is then requested, as before the
+// presence answer existed - which is what every test below the presence one measures.
+const presence = vi.fn<(userId: string) => Promise<boolean | null>>(async () => null);
+vi.mock('./avatarPresence', () => ({ avatarPhotoPresence: (id: string) => presence(id) }));
 
 /** A fresh URL per test: the module holds live blobs keyed by URL, so tests must not share one. */
 let urlCounter = 0;
@@ -71,6 +75,30 @@ describe('resolveUserAvatarDisplayUrl', () => {
     await resolveUserAvatarDisplayUrl(anonymous);
     releaseUserAvatarDisplayUrl(anonymous);
     expect(mirror).toHaveBeenCalledTimes(1);
+  });
+
+  // Mi 9T, 2026-10-13: 25 refused avatar requests in one salon open. The list's presence answer
+  // says which faces exist, and a face without one is never requested.
+  it('requests nothing for a face the presence answer says has no photo, and remembers it', async () => {
+    const url = nextUrl();
+    const fetchSpy = vi.fn(async () => new Response(new Blob(['img']), { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    presence.mockResolvedValueOnce(false);
+
+    expect(await resolveUserAvatarDisplayUrl(url, 'no-photo')).toEqual({ kind: 'none' });
+    expect(await resolveUserAvatarDisplayUrl(url, 'no-photo')).toEqual({ kind: 'none' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('requests a face the presence answer says has a photo', async () => {
+    const url = nextUrl();
+    const fetchSpy = vi.fn(async () => new Response(new Blob(['img']), { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    presence.mockResolvedValueOnce(true);
+
+    expect((await resolveUserAvatarDisplayUrl(url, 'with-photo')).kind).toBe('blob');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    releaseUserAvatarDisplayUrl(url);
   });
 
   it('asks once and reports `none` when the server says there is no avatar', async () => {
