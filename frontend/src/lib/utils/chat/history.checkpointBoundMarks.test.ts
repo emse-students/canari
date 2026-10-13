@@ -25,8 +25,10 @@ import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
 import { toBase64 } from '$lib/utils/hex';
 import {
   commitPendingHistoryMarks,
+  markHistoryFrameConsumed,
   replayConversationHistory,
   resetSeenCipherCacheForTests,
+  snapshotPendingHistoryMarks,
 } from './history';
 
 const USER = 'user-ckpt';
@@ -47,8 +49,15 @@ const durable = (): string[] => JSON.parse(localStorage.getItem(KEY) ?? '[]');
 /** Lets the live path's coalesced microtask drain, so a case cannot mistake it for the fix. */
 const flush = () => Promise.resolve().then(() => undefined);
 
+/** A checkpoint whose write lands at once: the snapshot, then the declaration. */
+const checkpoint = (userId: string = USER) =>
+  commitPendingHistoryMarks(snapshotPendingHistoryMarks(userId));
+
 /** Drives one replay page and hands back its commit thunk, exactly as the caller would receive it. */
-const replayOnePage = async (result: { ok: boolean; plaintext?: null; error?: string }) => {
+const replayOnePage = async (
+  result: { ok: boolean; plaintext?: null; error?: string },
+  page: typeof row = row
+) => {
   const mlsService = createMlsServiceStub({
     getLocalGroups: vi.fn().mockReturnValue([GROUP]),
     createDecryptSession: vi.fn().mockResolvedValue({
@@ -68,7 +77,7 @@ const replayOnePage = async (result: { ok: boolean; plaintext?: null; error?: st
     setConversation: () => undefined,
     messageReactions: new Map(),
     log: () => undefined,
-    primedFirstPage: { rows: [row] },
+    primedFirstPage: { rows: [page] },
   });
 };
 
@@ -95,9 +104,52 @@ describe('marks the replay has made but not committed', () => {
     // checkpoint and leave the ratchet durable with the ledger empty.
     await replayOnePage({ ok: true, plaintext: null });
 
-    commitPendingHistoryMarks(USER);
+    checkpoint();
 
     expect(durable()).toContain(frameFingerprint(wire));
+  });
+
+  it('a mark made WHILE the checkpoint writes waits for the next one', async () => {
+    // The native checkpoint releases the manager once it has exported (2026-10-13), and the web
+    // one seals in a worker: a page can decrypt and mark between the export and the write landing.
+    // That mark's ratchet advance is not in the file being written, so declaring it would make the
+    // ledger durable ahead of the ratchet - the direction that skips a frame for good.
+    await replayOnePage({ ok: true, plaintext: null });
+    const snapshot = snapshotPendingHistoryMarks(USER); // the checkpoint starts: export follows
+
+    const later = new Uint8Array([0x66, 0x77, 0x88, 0x99]);
+    await replayOnePage(
+      { ok: true, plaintext: null },
+      { ...row, id: '1786655250947-0', content: toBase64(later), timestamp: '1786655250947' }
+    );
+    commitPendingHistoryMarks(snapshot); // the write lands
+
+    expect(durable()).toContain(frameFingerprint(wire));
+    expect(durable()).not.toContain(frameFingerprint(later));
+
+    checkpoint(); // and the next checkpoint, which does hold it, declares it
+    expect(durable()).toContain(frameFingerprint(later));
+  });
+
+  it('never takes back a mark the live path made durable while the checkpoint wrote', async () => {
+    // The live path flushes the same shared set on its own microtask. A frame read live between the
+    // snapshot and the commit is ALREADY durable when the commit lands; writing the older snapshot
+    // verbatim over it would erase that mark and re-accuse a frame this device displayed.
+    await replayOnePage({ ok: true, plaintext: null });
+    const snapshot = snapshotPendingHistoryMarks(USER);
+
+    const live = new Uint8Array([0xaa, 0xbb, 0xcc]);
+    markHistoryFrameConsumed(USER, GROUP, frameFingerprint(live));
+    await flush();
+    expect(durable()).toContain(frameFingerprint(live)); // the premise: the live mark is durable
+    await replayOnePage(
+      { ok: true, plaintext: null },
+      { ...row, id: '1786655250948-0', content: toBase64(new Uint8Array([1, 2])), timestamp: '1' }
+    );
+    commitPendingHistoryMarks(snapshot);
+
+    expect(durable()).toContain(frameFingerprint(wire));
+    expect(durable()).toContain(frameFingerprint(live));
   });
 
   it('are still committed by the thunk when NO checkpoint fired during the walk', async () => {
@@ -113,17 +165,17 @@ describe('marks the replay has made but not committed', () => {
   it('belong to their own account - a checkpoint for somebody else writes nothing', async () => {
     await replayOnePage({ ok: true, plaintext: null });
 
-    commitPendingHistoryMarks('a-different-user');
+    checkpoint('a-different-user');
 
     expect(localStorage.getItem(KEY)).toBeNull();
   });
 
   it('drain once - a second checkpoint with nothing new in between rewrites nothing', async () => {
     await replayOnePage({ ok: true, plaintext: null });
-    commitPendingHistoryMarks(USER);
+    checkpoint();
     const setItem = vi.spyOn(localStorage, 'setItem');
 
-    commitPendingHistoryMarks(USER);
+    checkpoint();
 
     expect(setItem.mock.calls.filter(([k]) => k === KEY)).toHaveLength(0);
     setItem.mockRestore();
@@ -132,7 +184,7 @@ describe('marks the replay has made but not committed', () => {
   it('does not write a set the replay never touched', () => {
     // Registering at the top of the walk instead of at the mark would make every checkpoint rewrite
     // a set capped at five thousand entries, for nothing.
-    commitPendingHistoryMarks(USER);
+    checkpoint();
 
     expect(localStorage.getItem(KEY)).toBeNull();
   });

@@ -29,7 +29,7 @@ Paths are under `frontend/src/lib/` unless they say otherwise. "Shipped" = a dra
 | 9   | **The thread's render window only grows.** After a scroll to the top of a 5k thread every group stays mounted (~25-40 nodes per bubble), and every bubble registers its own `matchMedia('(pointer: coarse)')` listener, a non-passive `touchmove`, and (non-phone) a `<svelte:window onkeydown>` in its toolbar                                   | `utils/chat/renderWindow.ts:74-76`, `components/messages/MessageBubble.svelte:219,529-545`, `components/messages/MessageBubbleToolbar.svelte:190`                                                                    | per mounted message                                                      | not measured (needs a browser on a seeded 5k thread: `document.querySelectorAll('[id^="msg-"]').length`, `getEventListeners(window).keydown.length`)                                                                       | Backlog                                                                                                                                |
 | 10  | **The seen-cipher ledger is re-stringified per frame.** The microtask flush coalesces only marks made in one synchronous turn, and the drain awaits a decrypt between frames, so each frame stringifies and writes the whole set (up to 5000 + 5000 entries) to `localStorage`, synchronously                                                     | `utils/chat/history.ts:171-208`                                                                                                                                                                                      | every received frame                                                     | not measured (proof: count `setItem` on `history_seen_cipher:*` while draining N frames through an async stub - expected N, the comment claims 1)                                                                          | Backlog                                                                                                                                |
 | 11  | **Restore and replay do two more full reads** when the replay produced rows (`existingById`, the post-update pass)                                                                                                                                                                                                                                | `utils/chat/history.ts:1136,1209`                                                                                                                                                                                    | cold start, only for conversations with new rows                         | not measured                                                                                                                                                                                                               | Backlog (a `getMessagesByIds`)                                                                                                         |
-| 12  | **Native: the manager mutex is held across export + seal + file write**, so a send (`envoyer_message_bytes`, a sync command) or a decrypt waits for a whole checkpoint                                                                                                                                                                            | `src-tauri/src/commands/mls.rs:216-231`                                                                                                                                                                              | every checkpoint on Android/iOS                                          | not measured on the phone                                                                                                                                                                                                  | Backlog                                                                                                                                |
+| 12  | **Native: the manager mutex is held across export + seal + file write**, so a send (`envoyer_message_bytes`, a sync command) or a decrypt waits for a whole checkpoint                                                                                                                                                                            | `src-tauri/src/commands/mls.rs:216-231`                                                                                                                                                                              | every checkpoint on Android/iOS                                          | Mi 9T debug, 2026-10-13: sync commands blocked the WebView 1.6-3.2 s each, 21.8 s of a 38.9 s profile                                                                                                                      | **Draft PR** - lock released at the export ([below](#finding-12---the-manager-lock-released-at-the-export-2026-10-13))                 |
 | 13  | **Sidebar rebuilds and re-sorts every conversation row on any write**, salon traffic included                                                                                                                                                                                                                                                     | `components/sidebar/Sidebar.svelte:340-370`                                                                                                                                                                          | every frame                                                              | O(220) per frame; not measured                                                                                                                                                                                             | Recorded                                                                                                                               |
 | 14  | **Every PDF opened started its own pdf.js worker** (one per mount after #1760)                                                                                                                                                                                                                                                                    | `utils/pdfDocument.ts:146`                                                                                                                                                                                           | per PDF mount                                                            | workers for 4 documents: 4 -> 1                                                                                                                                                                                            | **#1771** (shared `PDFWorker`)                                                                                                         |
 | 15  | **Calls code ships at startup with `CALLS_ENABLED = false`**: `CallService` (static in `useChatSession.svelte.ts:20`) and `CallOverlay` (static in `ChatBackgroundService.svelte:56`) are reachable from the root layout                                                                                                                          | `composables/useChatSession.svelte.ts:20`                                                                                                                                                                            | every cold start (parse)                                                 | not measured                                                                                                                                                                                                               | Recorded - the cold-start page says parse time must be MEASURED before any split                                                       |
@@ -186,6 +186,68 @@ salons read by 60-70 people). Now nothing runs until the panel is shown, the map
 Pinned by `MessageInfoTooltip.svelte.test.ts`, 60 readers each answering on its own macrotask:
 hidden, 1830 name lookups before and **0** after; opened, 3660 before (61 effect runs) and **60**
 after (one).
+
+## Finding 12 - the manager lock released at the export (2026-10-13)
+
+**Measured on the Mi 9T** (debug build, prod, a device rejoining every conversation): a synchronous
+native command runs inside Android's JavaScript bridge call, so `groupe_actif`, `obtenir_epoch`,
+`envoyer_message_bytes` and `confirmer_commit` waiting for a checkpoint froze the WebView 1.6-3.2 s
+per call. The full reading is in the community-opening report of PR #1824.
+
+**The change** (`src-tauri/src/concurrency.rs`, `checkpoint_live_manager`):
+
+- The manager lock spans the EXPORT only (`MlsManager::save_state`, the CBOR copy). The seal
+  (`encrypt_state_blob_with_key`) and the atomic write run on the copy. `persistState` still
+  resolves only once the file is written.
+- **Writer order** is a new process-global `foreground_checkpoint_lock`, held from before the export
+  to the end of the write. Every foreground path that writes `mls.bin` from the live manager takes
+  it (the checkpoint, the key-package mint, the key-package reclaim), so an older, slower checkpoint
+  never lands over a newer one. The lock order is checkpoint lock, then manager, then
+  `mls_bin_write_lock`.
+- **The resume reload** takes that lock first too. The export clears `has_unsaved_ratchet_advance`,
+  so between an export and its write the live manager would say it is not ahead of a file that
+  still is. The reload therefore waits for the write.
+- `groupe_actif` and `obtenir_epoch` are `async` (`spawn_blocking`). Every caller `await`s, and the
+  answer is the state when the lock is taken, inside the call-to-result interval in either shape.
+  The epoch readers already order concurrent readings with cache stamps.
+- **The history replay's marks** are now captured BEFORE the write (`snapshotPendingHistoryMarks`,
+  paired like `snapshotEmitted`). A replay page can now decrypt while the seal runs, and its mark
+  must not be declared durable by a write that lacks its advance. Web sealed in a worker and already
+  had this window.
+
+**Native lock window, measured** (x86, release, `heavy_state_checkpoint`, 80 groups, 7.7 MB): the
+manager is held for the export, 4.7 ms. It used to be held for export + seal, 10.9 ms, plus the
+file write. On the phone the ratio carries over and the absolute numbers do not. The debug Mi 9T
+spent 1.4-5.8 s per checkpoint, and nearly all of it now runs off the lock. Owed: the phone's own
+`[MLS] checkpoint: manager lock held N ms` line, which this change adds at debug level.
+
+**Three holes the review closed in the same PR:**
+
+- **A failed seal or write left the ratchet flag DOWN** over a file that is behind (the export had
+  cleared it). The next resume reload would then install that file and re-derive spent
+  generations. This was older than the change, but the change made the export and the write two
+  steps. Both writers (`checkpoint_live_manager`, and `persist_locked_manager` for the mint and the
+  reclaim) now re-raise it through `MlsManager::restore_unsaved_ratchet_advance` when they saw it up
+  before exporting.
+- **A poisoned ordering lock would have stopped every later checkpoint, mint and resume** for the
+  life of the process. It guards an order and no data, so it is taken anyway and the panic is logged
+  at error.
+- **A commit of an older mark snapshot overwrote the stored ledger.** The live path flushes the same
+  set on its own microtask, so a frame read live mid-checkpoint lost its durable mark. The snapshot
+  is now merged with what is already stored (`withDurableMarks`), never written over it.
+
+**Pinned by** `concurrency::tests::the_manager_lock_is_free_while_a_checkpoint_seals_and_writes`
+(fails with `WouldBlock` on the old shape), `an_older_checkpoint_never_lands_over_a_newer_one` (fails
+without the ordering lock), `storage::tests::a_resume_reload_waits_for_a_checkpoint_that_has_exported_but_not_written`
+(fails without the ordering lock in `reload_in_checkpoint_order`),
+`a_failed_write_puts_the_ratchet_flag_back`, `a_decrypt_during_the_write_stays_owed_to_the_next_checkpoint`,
+`history.checkpointBoundMarks.test.ts` and `BaseMlsService.checkpointLedgers.test.ts` (both fail when
+the marks are read after the write, and the first also fails when an older snapshot overwrites a live mark).
+
+**Owed**: a dev pre-release and a Mi 9T reading of the same walk, before a stable. Not changed:
+`envoyer_message_bytes` and `confirmer_commit` stay synchronous and now wait only for the export.
+`save_mls_state` (JS-supplied bytes) and `initialiser_mls` do not take the ordering lock. Neither
+held the manager lock across a checkpoint's write before this change either.
 
 ## Draft pull requests from this audit
 
