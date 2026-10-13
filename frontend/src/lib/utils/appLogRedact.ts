@@ -118,6 +118,12 @@ const PROSE_LAST_WORDS = new Set([
   'content',
   'plaintext',
   'ciphertext',
+  // `[SEND] ... contact="jolan"`: the name of who a member writes to, lower case and one word.
+  'contact',
+  'comment',
+  'draft',
+  'snippet',
+  'excerpt',
 ]);
 
 /** `code` and `key` are sensitive only after these words: `statusCode` and `conversationKey` are not. */
@@ -172,7 +178,7 @@ function fieldSensitivity(name: string): false | 'secret' | 'prose' {
  * scanned again, so `mode=x pin=1234` still loses the PIN.
  */
 const FIELD_RE =
-  /\b([A-Za-z][\w-]*)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*(?:"|$)|'[^']*(?:'|$)|\[[^\]]*(?:\]|$)|\{[^}]*(?:\}|$)|[^\s,;&}\])|]+)((?:[ \t]+[^\s,;&}\])|"]+)*)/g;
+  /\b([A-Za-z][\w-]*)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*(?:"|$)|'[^']*(?:'|$)|\[[^\]]*(?:\]|$)|\{[^}]*(?:\}|$)|[^\s,;&}\])|]+)((?:[ \t]+(?!["']?[A-Za-z][\w-]*["']?\s*[:=])[^\s,;&}\])|"]+)*)/g;
 
 /**
  * What follows a prose value past a comma or a semicolon, up to the next field: `description:
@@ -211,6 +217,14 @@ function isHarmlessFieldValue(name: string, value: string, tail: string): boolea
   return name.toLowerCase() === 'code' && /^\d{1,4}$/.test(value);
 }
 
+/** `[N chars]` for a content value (`"[N chars]"` when it was quoted), N excluding the quotes. */
+function proseMarker(value: string, tail: string): string {
+  const quoted = value.startsWith('"');
+  const bare = quoted ? value.replace(/^"/, '').replace(/"$/, '') : value;
+  const marker = `[${bare.length + tail.length} chars]`;
+  return quoted ? `"${marker}"` : marker;
+}
+
 /**
  * Replaces the value of every sensitive field by `[redacted]`, calling `onRedact` once per value.
  * Recursion is on a strictly shorter span (a value or a tail), so it ends.
@@ -224,7 +238,9 @@ function redactFields(text: string, onRedact: () => void): string {
         return `${name}${sep}${redactFields(value, onRedact)}${redactFields(tail, onRedact)}`;
       }
       onRedact();
-      if (sensitivity === 'prose') return `${name}${sep}[redacted]${PROSE_END}`;
+      // A CONTENT field is replaced by its LENGTH whatever the value looks like: `text="ok"` is
+      // an identifier by shape and a member's whole message by meaning.
+      if (sensitivity === 'prose') return `${name}${sep}${proseMarker(value, tail)}${PROSE_END}`;
       return `${name}${sep}[redacted]${redactFields(tail, onRedact)}`;
     }
   );

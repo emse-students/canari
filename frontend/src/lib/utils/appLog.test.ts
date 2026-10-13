@@ -107,7 +107,7 @@ describe('the batch', () => {
   it('renders an object argument as text, under the same redaction', async () => {
     appLog.captureConsoleLine('log', ['[WS] frame', { kind: 'msg', body: 'see you at 6' }]);
     const { text } = await appLog.readAppLog();
-    expect(text).toContain('[WS] frame {"kind":"msg","body":[redacted]}');
+    expect(text).toContain('[WS] frame {"kind":"msg","body":"[12 chars]"}');
   });
 
   it('keeps the order across flushes, and what arrived during one', async () => {
