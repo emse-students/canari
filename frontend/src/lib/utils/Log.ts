@@ -33,8 +33,11 @@ const MAX_PAYLOAD = 240;
  * IDS SHRINK ON THE WAY OUT AND THAT IS NOT THIS FUNCTION'S DOING. `installConsoleIdTruncation`
  * condenses long hex runs and UUIDs in STRING arguments only, so rendering here is also what puts a
  * payload's identifiers under the same rule as every other log line in the app.
+ *
+ * Exported because the in-app log (`appLog.ts`) renders a console call's non-string arguments
+ * with it: one rendering for every text reader, never a second one that could disagree.
  */
-function render(payload: unknown): string {
+export function renderLogPayload(payload: unknown): string {
   if (typeof payload === 'string') return payload;
   // An Error's own text, never `{}`: `JSON.stringify(new Error('x'))` serialises no own enumerable
   // property and would report an empty object about a failure.
@@ -43,6 +46,10 @@ function render(payload: unknown): string {
     const seen = new WeakSet<object>();
     const text = JSON.stringify(payload, (_key, value: unknown) => {
       if (typeof value === 'bigint') return `${value}n`;
+      // Bytes are a SIZE in a log line, never their content: `JSON.stringify` writes a Uint8Array
+      // as `{"0":12,"1":34,...}`, which is a key or a seed spelled out (review of #1819, 2026-10-13).
+      if (ArrayBuffer.isView(value)) return `[bytes:${value.byteLength}]`;
+      if (value instanceof ArrayBuffer) return `[bytes:${value.byteLength}]`;
       if (typeof value === 'object' && value !== null) {
         if (seen.has(value)) return '[circular]';
         seen.add(value);
@@ -73,10 +80,10 @@ function d(tag: string, payload?: unknown): void {
   // cannot carry and the one thing a developer opens an error for. Everything else is rendered and
   // not repeated: a payload printed twice is a line twice as wide for no second reader.
   if (payload instanceof Error) {
-    console.debug(`[${ts}] [${tag}] ${render(payload)}`, payload);
+    console.debug(`[${ts}] [${tag}] ${renderLogPayload(payload)}`, payload);
     return;
   }
-  console.debug(`[${ts}] [${tag}] ${render(payload)}`);
+  console.debug(`[${ts}] [${tag}] ${renderLogPayload(payload)}`);
 }
 
 export const Log = { d } as const;

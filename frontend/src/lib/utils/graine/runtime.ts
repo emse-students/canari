@@ -3,6 +3,7 @@ import type { BulkIngestObserver, IMlsService } from '$lib/mls-client/IMlsServic
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { resetChannelReadSignals } from '$lib/utils/chat/channelReadSignal';
+import { forgetSalonSendGates, resetSalonSendGate } from './salonSendGate';
 import {
   channelScope,
   workspaceScope,
@@ -78,6 +79,9 @@ export function setGraineRuntime(next: GraineRuntime | null): void {
     // Same reason: the markers name salons of this account, and "already told my other devices" is
     // a claim about THIS account's devices. The next one inherits none of it.
     resetChannelReadSignals();
+    // The sends still waiting for a salon of the account that is leaving are refused, out loud,
+    // and the gate waits for the next account's own first listing.
+    resetSalonSendGate();
   }
 }
 
@@ -353,6 +357,8 @@ export function forgetWorkspaceGraineState(
 ): void {
   for (const sessionId of sessionIds) seedCache.delete(sessionId);
   for (const channelId of channelIds) scopeByChannel.delete(rawChannelId(channelId));
+  // A send still waiting for one of these salons can never be sealed now: refused as `left`.
+  forgetSalonSendGates(channelIds);
   historyVisibilityByWorkspace.delete(workspaceId);
 }
 

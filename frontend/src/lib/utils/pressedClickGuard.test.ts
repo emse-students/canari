@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { clickMatchesPress, installPressedClickGuard } from './pressedClickGuard';
+import { clickMatchesPress, installPressedClickGuard, isPointerClick } from './pressedClickGuard';
 
 describe('pressedClickGuard', () => {
   afterEach(() => {
@@ -44,5 +44,41 @@ describe('pressedClickGuard', () => {
     b.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
     expect(hits).toBe(1);
     dispose();
+  });
+
+  // The sequence measured on the Mi 9T (2026-10-13): pointerdown on the salon row, a script click on
+  // the row during touchend (svelte-dnd-action's, a plain `Event`), then the browser's click on the
+  // message the salon put under the finger. The script click used to CONSUME the press, so the
+  // browser's click found none and passed.
+  it.each([
+    [
+      'a plain Event, as svelte-dnd-action dispatches it',
+      () => new Event('click', { bubbles: true }),
+    ],
+    ['a .click() (detail 0)', () => new MouseEvent('click', { bubbles: true, detail: 0 })],
+  ])(
+    'a script click on the pressed element (%s) leaves the press to the pointer click',
+    (_, make) => {
+      document.body.innerHTML = '<button id="row"></button><button id="message"></button>';
+      const row = document.getElementById('row')!;
+      const message = document.getElementById('message')!;
+      let rowHits = 0;
+      let messageHits = 0;
+      row.addEventListener('click', () => rowHits++);
+      message.addEventListener('click', () => messageHits++);
+      const dispose = installPressedClickGuard(document);
+      row.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      row.dispatchEvent(make());
+      message.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+      expect(rowHits).toBe(1);
+      expect(messageHits).toBe(0);
+      dispose();
+    }
+  );
+
+  it('isPointerClick tells the pointer click apart from script ones', () => {
+    expect(isPointerClick(new MouseEvent('click', { detail: 1 }))).toBe(true);
+    expect(isPointerClick(new MouseEvent('click', { detail: 0 }))).toBe(false);
+    expect(isPointerClick(new Event('click'))).toBe(false);
   });
 });

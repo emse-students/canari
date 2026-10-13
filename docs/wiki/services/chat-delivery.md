@@ -953,8 +953,53 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
 | POST | `/api/mls/groups/:groupId/members` | Add member record to group |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members |
+| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused }`) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
+
+#### Many rosters in one read - `POST /api/mls/group-rosters` (2026-10-13)
+
+**Why.** Every connection compares each held conversation's tree with its roster (`removeStrayLeaves`,
+the collection of a leaver's leaf) and read the rosters one `GET user-members` at a time: 81 in
+series, 5.0 s, on the 2026-10-12 production console
+([startup-load-audit](../frontend/startup-load-audit-2026-10-12.md), finding 5).
+
+**What.** Body `{ groupIds: string[] }`, at most `GROUP_ROSTERS_MAX_GROUPS` = 200 (mirrored in
+`mlsDeliveryApi.ts`, which chunks by it). Answer `{ rosters: { [groupId]: userId[] }, refused:
+groupId[] }`, from ONE `dm_group_members ... WHERE groupId IN (...)` query. **The authorization is
+the single read's, per group**: a group the caller holds no roster row in - or that does not exist -
+is listed in `refused` instead of failing the request, so a refusal and a nonexistent group read
+alike; a global admin is answered for every group. **An absent `x-user-id` is NOT a wildcard here**,
+unlike `assertCallerIsGroupMember`: `HeaderAuthGuard` refuses it first anyway, and a route reading
+many rosters at once does not carry a branch that would hand every one of them to a caller nobody
+identified. No display names: nobody reading rosters in bulk asks for them.
+
+**Compatibility, and no second path.** The single `GET .../user-members` is unchanged and is still
+what every other caller reads (membership guards, peer resolution). A client meeting a server
+without the route (a store build ahead of the production deploy) gets a 404, logs one `[ROSTER]
+batch ... not answered` warning per connection, and **removes nobody** in those groups until the
+server deploys - the direction the sweep already fails in. It deliberately does NOT read each roster
+on its own instead: that would be a fallback silent the day the batch broke, and on a failing
+network the very storm the batch removed. So nothing is registered on
+[legacy-compatibility](../legacy-compatibility.md): there is no shim to retire. **Deploy the server
+before the client** (a pre-release does both in one run).
+
+**What keeps the batch sound** (client, `strayLeaves.ts`): every TREE is read before the rosters,
+so a leaf joining after the read is in no tree this pass compares and is never a candidate. The
+batch roster is as old as the start of the pass, and a removal by user id takes EVERY leaf of that
+user - so a member who left before the batch read and rejoined after it would lose the fresh leaf
+with the stale one. **The batch therefore only says which groups need no work**: a group it names a
+stray in is decided again - its tree, then its single `GET user-members`, then the diff - right
+before the commit, which puts the roster-to-commit window back at the one round trip the per-group
+read had. That extra read is paid only by a group holding a stray.
+
+**Measured.** Same server build, same scratch database (81 groups of 9 members among 18 729 rows),
+loopback, 7 rounds: 81 serial `GET` **182 ms** median [168-240] against one `POST` **4 ms** [3-5]
+(first round 164 ms, cold), identical rosters. That is the server and database half only; the
+production cost is the round trips (81 x ~62 ms on the console above), which the batch replaces by
+one. Pinned by `members.controller.group-rosters.spec.ts` (one query, refusal per group) and
+`strayLeaves.test.ts` (one roster read for every held group, after every tree; a leaver who
+rejoined after the batch read is spared).
 
 ### Messaging
 

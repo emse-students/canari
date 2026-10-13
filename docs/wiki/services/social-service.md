@@ -38,7 +38,10 @@ does, which is now almost nothing:
 1. A message names `senderSessionId` and `messageIndex`, and the row is refused without them
    (`CHANNEL_SESSION_REQUIRED`, `CHANNEL_MESSAGE_INDEX_REQUIRED`). The key is
    `HKDF(seed, sessionId, index)` and the seed never leaves the sending devices, so a row missing
-   either is a row NOBODY can open - including its own author.
+   either is a row NOBODY can open - including its own author. It must also carry a Graine v2
+   `signature` (64 bytes, base64), refused otherwise with `CHANNEL_SIGNATURE_REQUIRED` since every
+   client the floor admits signs ([channel-encryption 21.8](../protocols/channel-encryption.md#218-the-server-refuses-an-unsigned-salon-row-2026-10-13)).
+   The service checks its shape and cannot verify it.
 2. Seeds travel over the community's MLS distribution group, whose `groupInfo` this service serves
    to members only (`/workspaces/:id/distribution-group`). That GroupInfo IS the capability to read
    every seed on the group, which is why the membership check lives here: `channel_workspace_members`
@@ -600,6 +603,8 @@ server's, `createdAt`) never reached the row's `sentAt` key. Pinned by `salonRow
 under the last message: 2 before the reload, 2 after; 0 before the fix).
 
 **"Mark as read" from a salon NOTIFICATION, app shut (Android, 2026-10-10).** A shut phone has no session, so the two public calls above are out of reach. Its action calls chat-delivery's `POST /api/mls/push/channel-read` `{ userId, deviceId, channelId, at }` under `Authorization: PushSecret` (which proves the caller is a device of `userId`); chat-delivery forwards it with `x-internal-secret` to `POST /api/internal/channels/:channelId/read` (`InternalChannelReadController`, never exposed by the edge), which runs `advanceChannelReadMark` (membership still checked here, `at` bounded by the newest message) and then `markChannelRead` so the user's other devices clear their banner. `at` is the notification's own `createdAt`, never the phone's clock. A refused or failed call is logged on both sides (`[CHANNEL_READ_PUSH]`) and never retried: the banner is already gone locally and the receipt rises the next time the salon is opened. Reply is NOT offered on a salon: see [mobile](../frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android).
+
+**Clearing a community without reading it (2026-10-13).** `POST /api/channels/workspaces/:workspaceId/unread/clear` `{ upTo }` (`clearWorkspaceUnread`) raises `channel_members."clearedMarks"` (migration 082) for every salon the caller may read, in one statement, to `LEAST(upTo, the salon's newest createdAt)` and never lower; `listUnreadCounts` counts from the later of `readMarks` and `clearedMarks`. It never touches `readMarks` and never publishes `channel.read`: only `channel.unread.cleared` to the caller, and one silent `channel_read` push per salon that moved. The column is on the TypeORM entity with `select`/`insert`/`update: false` (raw SQL only): off the entity, `synchronize` DROPPED it at every local boot; as a plain column it would be in every membership `SELECT` during the deploy's window before migrations run. A salon with no message gets no mark (`LEAST` ignores a NULL, so it is filtered first; measured on Postgres). Why: [chat](../frontend/modules/chat.md#mark-a-whole-community-as-read-2026-10-13).
 
 **Unread counts (2026-10-08).** `GET /api/channels/unread-counts` answers `{ asOf, counts: { [channelId]: n } }`
 (zero absent): per salon the caller may read (`canAccessChannel`, so a private salon the caller is not in is

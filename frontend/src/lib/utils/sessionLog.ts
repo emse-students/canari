@@ -1,9 +1,8 @@
 /**
- * Logs a session entry to the browser/device console, and nowhere else. `attachConsole` in the
- * layout does NOT forward it to logcat - it copies Rust log records the other way, into this
- * console. On Android a console line reaches logcat (tag `Tauri/Console`) only through wry's
- * `RustWebChromeClient.onConsoleMessage`, gated on `BuildConfig.DEBUG`, so a release build keeps
- * no trace of it outside the WebView's own devtools.
+ * Logs a session entry to the browser/device console, and through the console wrapper into the
+ * in-app log (`appLog.ts`) - the only place a STORE build keeps it: wry forwards the console to
+ * logcat only in a debug build, and nothing ever forwarded it to `tauri-plugin-log` (the
+ * `attachConsole()` call once credited with that listened the other way, and is gone).
  *
  * **IT NO LONGER STAMPS THE LINE, AND THAT IS THE FIX RATHER THAN A LOSS.** It used to prepend
  * `new Date().toLocaleTimeString()` - a SECOND-resolution clock, on a project whose cold-start

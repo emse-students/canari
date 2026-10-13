@@ -333,6 +333,8 @@
   --control-fill: #e4e6eb;
   --banner-bg: color-mix(in srgb, var(--cn-surface) 92%, var(--cn-dark) 8%);
   --banner-warn-bg: color-mix(in srgb, var(--cn-surface) 84%, var(--amber-warn) 16%);
+  /* OPAQUE: both operands are, so a refusal drawn above the thread never shows text through it. */
+  --banner-danger-bg: color-mix(in srgb, var(--cn-surface) 90%, var(--red-err) 10%);
   /* GLASS, FOR STATIC CHROME ONLY - see `.glass-chrome`. */
   --glass-chrome-bg: color-mix(in srgb, var(--cn-surface) 64%, transparent);
   --glass-chrome-edge: color-mix(in srgb, var(--cn-surface) 70%, transparent);
@@ -443,6 +445,7 @@
      a near-white), so reusing the light recipe would have produced a pale strip in dark mode. */
   --banner-bg: color-mix(in srgb, var(--cn-surface) 88%, #ffffff 12%);
   --banner-warn-bg: color-mix(in srgb, var(--cn-surface) 80%, var(--amber-warn) 20%);
+  --banner-danger-bg: color-mix(in srgb, var(--cn-surface) 84%, var(--red-err) 16%);
   /* Mixed towards white for the edge, as `--banner-bg` is: `cn-dark` is inverted in this theme. */
   --glass-chrome-bg: color-mix(in srgb, var(--cn-surface) 58%, transparent);
   --glass-chrome-edge: color-mix(in srgb, #ffffff 14%, transparent);
@@ -1384,6 +1387,20 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   zoom: calc(1 / var(--text-zoom, 1));
 }
 
+/* THE OTHER ANSWER: A BOX THAT GROWS WITH ITS TEXT. When the glyph in a fixed box is READING text
+   (a day number), exempting it would refuse the reader the size they asked for, so the BOX is what
+   follows `--text-zoom`: `text-zoom-size-9` is `size-9` at 100 % and twice that at 200 %. Same
+   spacing scale as `size-*` and `w-*`, so no length is written at a call site. At 200 % today's day
+   number (40px) overran its 36px circle in the agenda (Mi 9T, 2026-10-13). */
+@utility text-zoom-size-* {
+  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
+  height: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
+}
+
+@utility text-zoom-w-* {
+  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
+}
+
 /* THE STATUS STRIP ABOVE THE PHONE HEADER IS PAINTED WITH THE HEADER'S SURFACE, so the top reads as
    ONE band instead of a page-ground strip over a lighter header (U8, phone-comparison). The strip is
    the shell's own top padding, so the shell paints it: a pseudo-element on the header cannot, the
@@ -1922,26 +1939,29 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   color: color-mix(in srgb, var(--text-muted) 60%, transparent);
 }
 
-.chat-floating-alert {
-  position: absolute;
-  left: 0.75rem;
-  right: 0.75rem;
-  bottom: 10rem;
+/* THE SEND'S OWN LINE, IN THE COMPOSER STACK (ChatArea's sendNotice). It used to float over the
+   thread at `bottom: 10rem` on a 95%-opaque pink in raw hex, and the messages under it showed through
+   and collided with its text (user's screenshot, 2026-10-13). It is now in the flow of the footer -
+   counted in --chat-composer-height, so the thread makes room - on opaque tokens and the type scale. */
+.chat-send-notice {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+  margin: 0 0.75rem 0.5rem;
   padding: 0.5rem 0.75rem;
-  border: 1px solid #fecaca;
-  border-radius: 0.5rem;
-  background: rgba(254, 242, 242, 0.95);
-  color: #dc2626;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  z-index: 10;
+  border: 1px solid color-mix(in srgb, var(--red-err) 35%, var(--cn-surface));
+  border-radius: var(--radius-lg);
+  background: var(--banner-danger-bg);
+  color: var(--red-err);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 500;
+  text-align: center;
 }
 
-/* A held send waiting for the session (F1): the same slot as the send error, without its alarm. */
-.chat-floating-alert.is-pending {
+/* A send waiting for something (the session, F1): the same line, without its alarm. */
+.chat-send-notice.is-pending {
   border-color: var(--cn-border);
   background: var(--cn-popover);
   color: var(--text-muted);
@@ -2265,10 +2285,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     padding: 0.375rem;
   }
 
-  .chat-floating-alert {
-    left: 1.5rem;
-    right: 1.5rem;
-    bottom: 6.5rem;
+  .chat-send-notice {
+    margin-inline: 1.5rem;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
   }
 
   .chat-scroll-bottom-button {

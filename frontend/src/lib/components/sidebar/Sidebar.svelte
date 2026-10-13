@@ -4,8 +4,10 @@
   import { untrack } from 'svelte';
   import { flip } from 'svelte/animate';
   import { SvelteMap } from 'svelte/reactivity';
-  import { dndzone, type DndEvent } from 'svelte-dnd-action';
+  import { dndzone, TRIGGERS, type DndEvent } from 'svelte-dnd-action';
   import { keepRowActivationKeys } from '$lib/utils/dndActivationKeys';
+  import { longPress } from '$lib/actions/longPress';
+  import CommunityRailMenu from './CommunityRailMenu.svelte';
   import { Hash, Lock, MessageSquarePlus, Plus, Settings, X } from '@lucide/svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -163,6 +165,11 @@
     onDeleteWorkspace?: (workspaceDbId: string, confirmationName: string) => void;
     /** Callback fired when the user drags a community to a new position in the rail. */
     onReorderCommunities?: (newOrder: ChannelWorkspace[]) => void;
+    /**
+     * "Marquer tout comme lu" picked from a community's rail menu (long press, right click). Absent,
+     * the menu is not offered at all.
+     */
+    onMarkCommunityRead?: (workspaceId: string) => void;
     /** Callback fired when a salon manager rearranges a community's salons (drag or keyboard). */
     onReorderChannels?: (workspaceSlug: string, newOrder: ChannelItem[]) => void;
     /** Callback fired when the user selects a direct or group conversation. */
@@ -215,6 +222,7 @@
     onLeaveWorkspace,
     onDeleteWorkspace,
     onReorderCommunities,
+    onMarkCommunityRead,
     onReorderChannels,
     onSelectConversation,
     onSelectChannelConversation,
@@ -310,11 +318,42 @@
       : channelWorkspaces;
   });
 
+  /**
+   * The community whose rail menu is open, and the icon it is placed against; null when closed.
+   * One at a time: opening another closes this one.
+   */
+  let railMenu = $state<{ workspaceId: string; anchor: HTMLElement } | null>(null);
+  /**
+   * True from a rail drag's start to its finalize, read from the drag's own `consider` - THE fact
+   * that decides whether a hold on an icon is a menu or the start of a reorder. The rail zone has no
+   * touch delay, so a finger that drifts 3 px starts a drag well inside the hold's 450 ms; asking
+   * the drag rather than tuning a slop to the library's threshold is what keeps the two from both
+   * firing.
+   */
+  let railDragActive = false;
+
+  /** A hold or a right click on a rail icon: opens its menu, unless a drag took the press. */
+  function openRailMenu(workspaceId: string, anchor: HTMLElement): boolean {
+    if (railDragActive) {
+      Log.d('sidebar.railMenu', { workspaceId, opened: false, reason: 'drag in progress' });
+      return false;
+    }
+    Log.d('sidebar.railMenu', { workspaceId, opened: true });
+    railMenu = { workspaceId, anchor };
+    return true;
+  }
+
   function handleCommunityDndConsider(e: CustomEvent<DndEvent<ChannelWorkspace>>) {
+    if (e.detail.info.trigger === TRIGGERS.DRAG_STARTED) {
+      railDragActive = true;
+      // A hold that became a drag (the finger moved after the menu opened) is a reorder now.
+      railMenu = null;
+    }
     orderedWorkspaces = e.detail.items;
   }
 
   function handleCommunityDndFinalize(e: CustomEvent<DndEvent<ChannelWorkspace>>) {
+    railDragActive = false;
     orderedWorkspaces = e.detail.items;
     onReorderCommunities?.(orderedWorkspaces);
   }
@@ -533,8 +572,26 @@
         {#each orderedWorkspaces as workspace (workspace.id)}
           {@const hasUnread = communityHasUnread(workspace.channels, conversations)}
           <div animate:flip={{ duration: 150 }} class="relative">
+            <!-- THE MENU IS A HOLD UNDER A FINGER AND A RIGHT CLICK UNDER A MOUSE (`longPress`), and
+                 the mouse's main button is left to the drag: held on an icon, it starts a reorder.
+                 The hold swallows the click that ends it - the browser's and the one the drag
+                 library dispatches on `touchend` - so opening the menu never also switches
+                 community. `select-none` and no touch callout: iOS would otherwise answer the same
+                 hold with its own text-selection bubble. -->
             <button
-              class="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl transition-all duration-200 {selectedCommunityWorkspaceId ===
+              use:longPress={{
+                pointerTypes: ['touch', 'pen'],
+                onHold: (anchor) =>
+                  onMarkCommunityRead ? openRailMenu(workspace.id, anchor) : false,
+                onContextMenu: (anchor) => {
+                  if (onMarkCommunityRead) openRailMenu(workspace.id, anchor);
+                },
+              }}
+              aria-haspopup={onMarkCommunityRead ? 'menu' : undefined}
+              aria-expanded={onMarkCommunityRead
+                ? railMenu?.workspaceId === workspace.id
+                : undefined}
+              class="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl transition-all duration-200 select-none [-webkit-touch-callout:none] {selectedCommunityWorkspaceId ===
               workspace.id
                 ? 'ring-cn-yellow ring-offset-cn-bg ring-2 ring-offset-2'
                 : 'opacity-70 hover:rounded-xl hover:opacity-100'}"
@@ -565,6 +622,18 @@
                 aria-hidden="true"
                 class="ring-cn-bg pointer-events-none absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full bg-red-500 ring-2"
               ></span>
+            {/if}
+            {#if railMenu?.workspaceId === workspace.id && onMarkCommunityRead}
+              {@const menuWorkspaceId = workspace.id}
+              <CommunityRailMenu
+                anchor={railMenu.anchor}
+                communityName={workspace.name}
+                {hasUnread}
+                onMarkRead={() => onMarkCommunityRead(menuWorkspaceId)}
+                onClose={() => {
+                  railMenu = null;
+                }}
+              />
             {/if}
           </div>
         {/each}

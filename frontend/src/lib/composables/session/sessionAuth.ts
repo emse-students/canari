@@ -1135,6 +1135,7 @@ export async function loginImpl(
       onRolePermissionsChanged: cb.onRolePermissionsChanged,
       onChannelDeleted: cb.onChannelDeleted,
       onWorkspaceUpdated: cb.onWorkspaceUpdated,
+      onSalonUnreadCleared: cb.onSalonUnreadCleared,
       onWorkspaceRoleChanged: cb.onWorkspaceRoleChanged,
       onWorkspaceDeleted: cb.onWorkspaceDeleted,
       onChannelMessageDeleted: cb.onChannelMessageDeleted,

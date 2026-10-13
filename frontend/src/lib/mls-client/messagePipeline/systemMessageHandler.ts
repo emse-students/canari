@@ -524,7 +524,7 @@ export async function handleSystemEvent(
       convoKey,
       { isSystem: true, messageId }
     );
-    log(`📝 Group renamed to "${data.newName}" by ${getName(senderNorm)}`);
+    log(`📝 Group renamed by ${senderNorm}`);
     return true;
   }
 
@@ -542,7 +542,7 @@ export async function handleSystemEvent(
       convoKey,
       { isSystem: true, messageId }
     );
-    log(`🖼️ Group photo changed by ${getName(senderNorm)} (media=${imageMediaId ?? 'null'})`);
+    log(`🖼️ Group photo changed by ${senderNorm} (media=${imageMediaId ?? 'null'})`);
     return true;
   }
 
@@ -572,7 +572,7 @@ export async function handleSystemEvent(
         addMessageToChat,
         log,
       });
-      log(`[INFO] Excluded from group "${convoKey}" by ${getName(senderNorm)} - marked removed`);
+      log(`[INFO] Excluded from group "${convoKey}" by ${senderNorm} - marked removed`);
     } else {
       await addMessageToChat(
         'system',
@@ -629,7 +629,7 @@ export async function handleSystemEvent(
         messageId,
       }
     );
-    log(`[INFO] ${getName(leaver)} left group "${convoKey}"`);
+    log(`[INFO] ${leaver} left group "${convoKey}"`);
     return true;
   }
 
@@ -692,7 +692,7 @@ export async function handleSystemEvent(
         groupId: convo.id,
         saveConversation,
       });
-      log(`[INFO] Group deleted by ${senderName} - conversation marked removed`);
+      log(`[INFO] Group deleted by ${senderNorm} - conversation marked removed`);
     }
     return true;
   }
