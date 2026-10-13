@@ -329,7 +329,7 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 ### P3 - 80 roster reads per connection for the stray-leaf sweep
 
-`removeStrayLeaves` reads `GET /api/mls/groups/<id>/user-members` once per held group (80 in 6.3 s, all `304`). A batched roster read, or a roster version carried by `/mls/users/<me>/groups`, needs a server endpoint.
+**Built (2026-10-13, draft PR `perf/group-rosters-batch`)**: one `POST /api/mls/group-rosters` per connection ([chat-delivery](services/chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13)). Owed once shipped: the per-connection count on a production console (expected 1 request where there were 80-81).
 
 ### P3 - the key-distribution groups are asked about twice per connection
 
