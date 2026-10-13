@@ -1,0 +1,92 @@
+diff --git a/dist/index.js b/dist/index.js
+index 84e9c46c424c3b50c60c03de2e839952773d6d6f..cb4f9cd56803a3686a94b7e3e1eb35c186fd53b1 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1504,6 +1504,8 @@
+   var multiScroller;
+   var touchDragHoldTimer;
+   var touchHoldElapsed = false;
++  // Canari patch: see src/pointerAction.js.
++  var pendingTouchClickIsNative = false;
+   var useCursorForDetectionActive = false;
+   var pendingDragOwner;
+   var watchedDropZones = new Set();
+@@ -1992,7 +1994,7 @@
+       cancelPendingDrag();
+ 
+       // dragging initiated by touch events prevents onclick from initially firing
+-      if (e.type === "touchend") {
++      if (e.type === "touchend" && !pendingTouchClickIsNative) {
+         var clickEvent = new (getWindowOf(e.target).Event)("click", {
+           bubbles: true,
+           cancelable: true
+@@ -2058,6 +2060,7 @@
+       if (!useDelay) {
+         e.preventDefault();
+       }
++      pendingTouchClickIsNative = useDelay;
+       e.stopPropagation();
+       pendingDragOwner = node;
+       var c = isTouchStart ? e.touches[0] : e;
+diff --git a/dist/index.mjs b/dist/index.mjs
+index bd96b61e21f973427bc5cb79a9da6140b3a6070e..ad549d0721c54193ec1fc59a96c4b14a35804368 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1498,6 +1498,8 @@ var scheduledForRemovalAfterDrop = [];
+ var multiScroller;
+ var touchDragHoldTimer;
+ var touchHoldElapsed = false;
++// Canari patch: see src/pointerAction.js.
++var pendingTouchClickIsNative = false;
+ var useCursorForDetectionActive = false;
+ var pendingDragOwner;
+ var watchedDropZones = new Set();
+@@ -1986,7 +1988,7 @@ function dndzone$2(node, options) {
+     cancelPendingDrag();
+ 
+     // dragging initiated by touch events prevents onclick from initially firing
+-    if (e.type === "touchend") {
++    if (e.type === "touchend" && !pendingTouchClickIsNative) {
+       var clickEvent = new (getWindowOf(e.target).Event)("click", {
+         bubbles: true,
+         cancelable: true
+@@ -2052,6 +2054,7 @@ function dndzone$2(node, options) {
+     if (!useDelay) {
+       e.preventDefault();
+     }
++    pendingTouchClickIsNative = useDelay;
+     e.stopPropagation();
+     pendingDragOwner = node;
+     var c = isTouchStart ? e.touches[0] : e;
+diff --git a/src/pointerAction.js b/src/pointerAction.js
+index f38a75dcf719b41dca17366d5607827738ae2526..65cd3c9cb49edd88d6f75592231546e7f188cd4f 100644
+--- a/src/pointerAction.js
++++ b/src/pointerAction.js
+@@ -63,6 +63,10 @@ let scheduledForRemovalAfterDrop = [];
+ let multiScroller;
+ let touchDragHoldTimer;
+ let touchHoldElapsed = false;
++// Canari patch: whether the pending touch's touchstart was left to the browser (the delayTouchStart
++// path, which does not preventDefault it). The browser then fires its own click on release, and a
++// synthesized one would be a second click on the same tap.
++let pendingTouchClickIsNative = false;
+ let useCursorForDetectionActive = false;
+ let pendingDragOwner;
+ let watchedDropZones = new Set();
+@@ -457,7 +461,7 @@ export function dndzone(node, options) {
+         cancelPendingDrag();
+ 
+         // dragging initiated by touch events prevents onclick from initially firing
+-        if (e.type === "touchend") {
++        if (e.type === "touchend" && !pendingTouchClickIsNative) {
+             const clickEvent = new (getWindowOf(e.target).Event)("click", {
+                 bubbles: true,
+                 cancelable: true
+@@ -520,6 +524,7 @@ export function dndzone(node, options) {
+         if (!useDelay) {
+             e.preventDefault();
+         }
++        pendingTouchClickIsNative = useDelay;
+         e.stopPropagation();
+         pendingDragOwner = node;
+ 

@@ -429,8 +429,8 @@ LOGCAT_TAGS = [
     "PushSecretKeystore:D",  # Push secret at rest, and its migration out of SharedPreferences
     "KeyboardMedia:D",       # Keyboard media bridge (GIF/sticker paste)
     "fr.emse.canari:D",      # Tauri log plugin, tagged with the package name
-    "chromium:I",            # console.log() from the WebView when the Tauri plugin misses it
-    "Tauri/Console:V",       # WebView console through the Tauri plugin
+    "chromium:I",            # console.log() from the WebView when wry's forwarder misses it
+    "Tauri/Console:V",       # WebView console via wry's onConsoleMessage (debug builds only)
     "MainActivity:D",        # FCM token sync at startup
     "FirebaseMessaging:W",   # FCM SDK (token and connection errors)
     "WM-WorkerWrapper:W",    # WorkManager internals (retry / failure)

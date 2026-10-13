@@ -194,7 +194,7 @@ describe('computeFixedPopoverPosition', () => {
     } as HTMLElement;
     const panel = { offsetWidth: 352, offsetHeight: 400 } as HTMLElement;
 
-    const pos = computeFixedPopoverPosition(anchor, panel, {});
+    const pos = computeFixedPopoverPosition(anchor, panel, { centreWhenWide: true });
     expect(pos.left).toBe(42);
     expect(436 - pos.left - pos.width).toBe(42);
   });
@@ -216,7 +216,9 @@ describe('computeFixedPopoverPosition', () => {
     } as HTMLElement;
     const panel = { offsetWidth: 352, offsetHeight: 400 } as HTMLElement;
 
-    expect(computeFixedPopoverPosition(anchor, panel, { alignEnd: true }).left).toBe(42);
+    expect(
+      computeFixedPopoverPosition(anchor, panel, { alignEnd: true, centreWhenWide: true }).left
+    ).toBe(42);
   });
 
   /**
@@ -240,8 +242,110 @@ describe('computeFixedPopoverPosition', () => {
     } as HTMLElement;
     const panel = { offsetWidth: 352, offsetHeight: 400 } as HTMLElement;
 
-    expect(computeFixedPopoverPosition(anchor, panel, {}).left).toBe(420);
-    expect(computeFixedPopoverPosition(anchor, panel, { alignEnd: true }).left).toBe(711 - 352);
+    expect(computeFixedPopoverPosition(anchor, panel, { centreWhenWide: true }).left).toBe(420);
+    expect(
+      computeFixedPopoverPosition(anchor, panel, { alignEnd: true, centreWhenWide: true }).left
+    ).toBe(711 - 352);
+  });
+
+  /**
+   * CENTRING IS OPT-IN, AND A PANEL THAT POINTS AT SOMETHING NEVER ASKS FOR IT (user report,
+   * 2026-10-13, phone app): the "who reacted" list - 224 px of names against a 41 px chip at 390 px -
+   * passed "wider than half the screen" and floated in the middle of the thread above the composer.
+   * Measured on the real `MessageReactions` before the fix: a 205 px panel opened at 93-298 for a
+   * chip at 60-101 AND for one at 297-338 - the same place for two chips a screen apart.
+   */
+  const chipAt = (left: number, top: number) =>
+    ({
+      getBoundingClientRect: () => ({
+        top,
+        bottom: top + 22,
+        left,
+        right: left + 41,
+        width: 41,
+        height: 22,
+        x: left,
+        y: top,
+        toJSON: () => ({}),
+      }),
+    }) as HTMLElement;
+
+  it('keeps a wide panel on its anchor when it did not ask to be centred', () => {
+    vi.stubGlobal('innerWidth', 390);
+    vi.stubGlobal('innerHeight', 844);
+    const panel = { offsetWidth: 224, offsetHeight: 94 } as HTMLElement;
+
+    // A received message's chip, at the left: the list opens from the chip's left edge.
+    const left = computeFixedPopoverPosition(chipAt(60, 297), panel, { offset: 6 });
+    expect(left.left).toBe(60);
+    // An own message's chip, at the right: the same edge rule, clamped back into the screen - the
+    // panel still spans the chip it names.
+    const right = computeFixedPopoverPosition(chipAt(297, 718), panel, { offset: 6 });
+    expect(right.left).toBe(390 - 224 - 8);
+    expect(right.left).toBeLessThanOrEqual(297);
+    expect(right.left + right.width).toBeGreaterThanOrEqual(297 + 41);
+    // Two chips a screen apart never share a position.
+    expect(left.left).not.toBe(right.left);
+  });
+
+  it('puts the panel above a chip near the bottom and below one near the top', () => {
+    vi.stubGlobal('innerWidth', 390);
+    vi.stubGlobal('innerHeight', 844);
+    const panel = { offsetWidth: 224, offsetHeight: 94 } as HTMLElement;
+
+    const low = computeFixedPopoverPosition(chipAt(60, 780), panel, { offset: 6 });
+    expect(low.side).toBe('top');
+    expect(low.top + 94).toBe(780 - 6);
+
+    const high = computeFixedPopoverPosition(chipAt(60, 120), panel, { offset: 6 });
+    expect(high.side).toBe('bottom');
+    expect(high.top).toBe(120 + 22 + 6);
+  });
+
+  /**
+   * THE SWEEP BEHIND "NEVER CENTRED UNLESS ASKED": every width the app is read at, an anchor in each
+   * corner and one half off each side, the panel widths of every caller that does not opt in
+   * (`ReactorsPanel` 160-224, `PostActionsMenu` 224, `EcosystemLauncher` 256, `FloatingSurface` 352),
+   * both alignments, and a keyboard-open height. Three things hold for every one: the panel is inside
+   * the viewport, it shares at least one column with the visible part of its anchor, and it leaves the
+   * anchor uncovered whenever one side has the room.
+   */
+  it('keeps every non-centred panel on screen, over its anchor, and off it when there is room', () => {
+    const margin = 8;
+    const offset = 6;
+    const failures: string[] = [];
+    for (const vw of [320, 360, 390, 430, 768, 1280]) {
+      for (const vh of [844, 400]) {
+        vi.stubGlobal('innerWidth', vw);
+        vi.stubGlobal('innerHeight', vh);
+        const xs = [-20, margin, vw / 2 - 20, vw - 41 - margin, vw - 21];
+        const ys = [margin, vh / 2, vh - 22 - margin];
+        for (const pw of [160, 224, 256, 352]) {
+          for (const alignEnd of [false, true]) {
+            for (const x of xs) {
+              for (const y of ys) {
+                const panel = { offsetWidth: pw, offsetHeight: 94 } as HTMLElement;
+                const p = computeFixedPopoverPosition(chipAt(x, y), panel, {
+                  alignEnd,
+                  offset,
+                  estimatedHeight: vh,
+                });
+                const where = `${vw}x${vh} panel ${pw} alignEnd ${alignEnd} chip ${x},${y}`;
+                const visL = Math.max(0, x);
+                const visR = Math.min(vw, x + 41);
+                if (p.left < margin || p.left + p.width > vw - margin) failures.push(`x ${where}`);
+                if (p.top < margin || p.top + 94 > vh - margin) failures.push(`y ${where}`);
+                if (p.left >= visR || p.left + p.width <= visL) failures.push(`off ${where}`);
+                const roomy = vh - (y + 22) - margin >= 94 + offset || y - margin >= 94 + offset;
+                const covers = p.top < y + 22 && p.top + 94 > y;
+                if (roomy && covers) failures.push(`covers ${where}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(failures).toEqual([]);
   });
 
   it('clamps an anchor wider than the viewport', () => {
@@ -392,17 +496,16 @@ describe('an anchor with no box', () => {
 
   it('still positions against an anchor that is a line with no height', () => {
     // Not a width check: an inline anchor can legitimately measure 0 tall and still have a place.
-    // 40px, not the anchor's 50px: a 320px panel on a 400px viewport against a 120px anchor is the
-    // fills-the-screen case, so it is centred - (400 - 320) / 2. What this test pins is that a
-    // zero-HEIGHT anchor is laid out at all and draws no warning; which horizontal policy applies
-    // is decided, and asserted, in `computeFixedPopoverPosition` above.
+    // 50px, the anchor's own left edge: centring is opt-in (`centreWhenWide`) and this panel did not
+    // ask. What this test pins is that a zero-HEIGHT anchor is laid out at all and draws no warning;
+    // which horizontal policy applies is decided, and asserted, in `computeFixedPopoverPosition`.
     const panel = panelNode();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const unbind = bindFixedPopover(panel, { anchor: () => anchorWith(120, 0) });
 
     expect({ left: panel.style.left, warned: warn.mock.calls.length }).toEqual({
-      left: '40px',
+      left: '50px',
       warned: 0,
     });
     unbind();

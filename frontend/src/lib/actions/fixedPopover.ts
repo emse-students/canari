@@ -15,11 +15,18 @@ export interface FixedPopoverLayoutOptions {
    */
   matchAnchorWidth?: boolean;
   /**
-   * Keep the panel's edge on the anchor's even when it is wide - never centred. For a panel that
-   * GROWS OUT OF its button (`GlassMenuButton`), the attachment is the whole point: centred, it
-   * would appear from nowhere. It is still clamped into the viewport.
+   * Centre the panel on a narrow screen once it is wider than its anchor AND than half the
+   * viewport, instead of keeping its edge on the anchor's. OPT-IN, for a panel that is a SCREEN of
+   * its own (the emoji pickers): its position says nothing about which control opened it.
+   *
+   * Every other panel exists to point at something - a menu at its button, a tooltip at its chip, a
+   * dropdown at its field - and centring it severs that link. It was the DEFAULT until 2026-10-13,
+   * and it reached the "who reacted" panel: 224 px of names against a 41 px reaction chip at 390 px
+   * is "wider than half the screen", so the list floated in the middle of the thread, over the
+   * composer, pointing at nothing (user report, phone app). `PostActionsMenu` (224 px) and
+   * `EcosystemLauncher` (256 px) met the same rule on every phone.
    */
-  stayAnchored?: boolean;
+  centreWhenWide?: boolean;
   /**
    * Rest on the bottom edge of the viewport, centred, and ignore the anchor's position entirely.
    * For a panel that REPLACES a bottom sheet: anchored to a message that fills the screen it opened
@@ -122,8 +129,10 @@ export function computeFixedPopoverPosition(
   // Nothing changes on a wide window, and that is checkable rather than hoped: at 1280px the same
   // panel is 352px against a 640px half, so the second condition is false and the anchor decides,
   // as it did before.
+  // ONLY FOR A PANEL THAT ASKED (`centreWhenWide`): a menu, a tooltip or a dropdown is positioned
+  // BY its anchor, and centred it points at nothing - see the option.
   const fillsTheScreen =
-    !options.stayAnchored && panelWidth > window.innerWidth / 2 && panelWidth > anchorRect.width;
+    !!options.centreWhenWide && panelWidth > window.innerWidth / 2 && panelWidth > anchorRect.width;
   let left = fillsTheScreen
     ? (window.innerWidth - panelWidth) / 2
     : options.alignEnd

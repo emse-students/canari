@@ -152,7 +152,12 @@
     // Reclaim the avatar bucket this client no longer writes. Idempotent, and free once it is gone.
     void purgeRetiredAvatarCache();
 
-    // Redirect console.log/warn/error to tauri-plugin-log → adb logcat on Android.
+    // attachConsole() runs the OPPOSITE way to what its name suggests: it subscribes to the
+    // `log://log` event and copies Rust log records INTO this JS console. Only a `Webview` target
+    // emits that event, and `lib.rs` configures none (the plugin's defaults, Stdout + LogDir), so it
+    // currently receives nothing. It never sends console.log/warn/error anywhere: JavaScript reaches
+    // logcat only through wry's `RustWebChromeClient.onConsoleMessage`, whose `Logger.shouldLog()`
+    // is `BuildConfig.DEBUG`, so a release build logs no JavaScript to logcat or to a file.
     // Dynamic import prevents @tauri-apps/plugin-log from being bundled in the Web build.
     if (isTauriRuntime()) {
       import('@tauri-apps/plugin-log').then(({ attachConsole }) => attachConsole()).catch(() => {});

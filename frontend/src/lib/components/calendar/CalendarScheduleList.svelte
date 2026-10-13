@@ -220,10 +220,12 @@
               <li class="flex gap-3 px-3 py-3">
                 <!-- The date gutter. Fixed width so every day's events start on the same line,
                      which is what makes the list scannable as a column rather than as a ragged
-                     edge. -->
-                <div class="w-11 shrink-0 text-center">
+                     edge. Gutter and circle are sized by `text-zoom-*` (app.css): the day number
+                     is reading text, so at Android's 200 % it grows and its circle grows with it
+                     rather than being overrun by it (Mi 9T, 2026-10-13). -->
+                <div class="text-zoom-w-11 shrink-0 text-center">
                   <div
-                    class="mx-auto flex h-9 w-9 items-center justify-center rounded-full text-lg font-bold {today
+                    class="text-zoom-size-9 mx-auto flex items-center justify-center rounded-full text-lg font-bold {today
                       ? 'bg-cn-yellow text-cn-ink'
                       : 'text-text-main'}"
                   >

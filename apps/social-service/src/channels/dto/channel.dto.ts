@@ -202,11 +202,14 @@ export interface SendChannelMessageDto {
   messageIndex: number;
   /**
    * Graine v2 (channel-encryption section 21): the session key's Ed25519 signature over the
-   * message's header, nonce and ciphertext - 64 bytes, base64. Absent from a v1 sender.
+   * message's header, nonce and ciphertext - 64 bytes, base64.
    *
-   * Checked for SHAPE only. The server cannot verify it (it holds no key) and cannot require it
-   * (it cannot tell a v2 session from a v1 one): the READER refuses a row under a v2 session that
-   * carries none, which is what keeps a downgrade impossible.
+   * REQUIRED since 2026-10-13 (channel-encryption section 21.8): a row without one is refused with
+   * `CHANNEL_SIGNATURE_REQUIRED`. The server still cannot VERIFY it (it holds no key) nor tell a v2
+   * session from a v1 one; it requires it because every client `minClientVersion` admits (`1.0.3`,
+   * the G2-5 writer) signs every row, so an unsigned one is never honest. Typed optional because it
+   * is untrusted input, checked at runtime by `assertSigned`. The READER still refuses a row under a
+   * v2 session that carries none, which is what keeps a downgrade impossible whatever the server does.
    */
   signature?: string;
   /**

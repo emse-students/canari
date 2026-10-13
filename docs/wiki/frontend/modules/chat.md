@@ -83,8 +83,9 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
 - **`GlassMenuButton`** (`components/shared`) is the growing menu: a round `glass-chrome` button whose
   panel scales out of the button's own corner (`data-popover-side` picks the origin), portalled -
   `backdrop-filter` would otherwise confine a fixed panel to the button - and positioned with
-  `bindFixedPopover`'s new `stayAnchored`, since a panel that grows OUT OF its button must not be
-  centred however wide it is. Its `plain` variant is the same menu without glass: the website's phone
+  `bindFixedPopover`, which keeps a panel on its anchor however wide it is (centring is opt-in,
+  `centreWhenWide`, for the emoji pickers only since 2026-10-13), since a panel that grows OUT OF its
+  button must not be centred. Its `plain` variant is the same menu without glass: the website's phone
   paperclip. An entry with an on/off state (search, members) is a `menuitemcheckbox`.
 
 - **The polls and pinned bars are glass pills too (user, 2026-10-12)** - they were opaque white
@@ -629,11 +630,17 @@ cause is a different stale number on each phone.
   until the inset catches up.
 
 **Fixed 2026-10-09 in `keyboardViewport.svelte.ts`, both halves proven in unit tests only.**
-- **Android**: `computeSnapshot` reads a visual viewport that is more than 0.35 x threshold SHORTER
-  than a layout viewport that already gave up a keyboard's worth (`baseline - winH > threshold`) as
-  that layout viewport's own height - it can only be counting the keyboard again (a pan keeps `winH`
-  full, a pinch-zoom bails out on `scale`). The test replays 945 / 588 / 230 and gets the settled
-  snapshot, keyboard height 357.
+- **Android**: `computeSnapshot` reads a double-reported visual viewport as the layout viewport's
+  own height. **Since 2026-10-13 the report is recognised by its SHAPE, not by a height**
+  (`isDoubleReport`): the visual viewport stands below the layout viewport by exactly what the
+  layout gave up (`winH - vv == baseline - winH`, within 2 CSS px of independent rounding). The
+  first version asked the layout to have shrunk by more than the 160 px keyboard threshold, so the
+  bench's 90 px ADB keyboard got past it and the composer drew one frame at 702 before resting at
+  792 (2 of 5 rises, [check W](../../device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)).
+  Nothing else has that shape: a pan gives nothing up, a pinch-zoom bails out on `scale`, a settled
+  keyboard leaves the viewports equal, and a URL bar plus a keyboard agree only if both are the same
+  height to the pixel. The tests replay the bench's LatinIME rise (945 / 588 / 230.3 / 587.9), a
+  90 px rise, and keyboards from 40 to 450 px.
 - **iOS**: the "must not visibly shrink" comment on the footer rule is about the RESTING state, and
   the resting inset with the keyboard open is already 0 (the footer settles at 0.75rem), so pinning
   `--safe-area-inset-bottom: 0px` inline while an iOS keyboard is open (`keyboardSafeAreaBottomOverride`,
@@ -2670,6 +2677,19 @@ rule needs no timer and does not care how large the conversation is:
 - an UNSENT message is kept wherever it sits, because no page can ever carry it;
 - an empty page asserts nothing and therefore removes nothing.
 
+**Authoritative means a STALE page is destructive, so a salon's loads are ordered (2026-10-13).** A
+load that started earlier and finishes later used to merge last: load A reads the page before seed S
+is held and leaves row R out, S lands and starts load B, B decodes R, then A merges and R - inside
+A's window - is removed. The redundant refetch that every held seed triggered hid it until #1761
+removed it. `loadChannelHistory` now takes a generation per salon (`utils/chat/loadGenerations.ts`):
+only the latest load STARTED merges, an older one logs `superseded` and merges nothing - its poll
+tallies included, since `setPollMeta` overwrites and the older load read them earlier. The loading
+skeleton is lowered by the load that last RAISED it, not by the latest one: a newer load started while
+the salon is off screen (a repair after the reader left) raises nothing, and the superseded load would
+otherwise leave it up for good. If the newer load FAILS, the older page is still not merged: the salon
+keeps what it held, is not marked loaded, and the next open asks again. Pinned by
+`useConversations.staleLoad.svelte.test.ts`. The refetch is not to come back: it was a heal, not a fix.
+
 Two corrections ride on the same seam, because they are the same stale read wearing different
 clothes. `readBy` is unioned rather than taken from the page: reading is applied optimistically in
 memory before the network ACK, so taking the page's array un-reads what the user just read and the
@@ -3280,6 +3300,14 @@ already delete the salons. This is NOT the community rail's order, which is pers
   press, and `handleChannelDndFinalize` delivers it as the row's own tap (`activateChannelRow`) and
   persists no order; a drag that moved, even back home, or left the list, stays a reorder. A
   member who cannot reorder never had a drag zone, so never had the defect.
+- **Enter and Space on a focused row open it (2026-10-13).** The library also claims both keys on its
+  draggables as "start a keyboard drag" (`preventDefault` + `stopPropagation`), and here the
+  draggable IS the row's button, so Enter opened nothing for whoever may reorder. The zone carries
+  `keepRowActivationKeys` (`utils/dndActivationKeys.ts`): a capture listener stops an Enter or Space
+  aimed at a row - WITH OR WITHOUT a modifier, since the library reads `e.key` alone and a let-through
+  Shift + Enter started its silent keyboard drag - before the library sees it, and leaves its default
+  alone, so the button activates. The library's keyboard drag is therefore unreachable here, deliberately: the keyboard
+  reorder is Alt + arrows. `setKeyboardDragTrigger` cannot do this - it is global and keeps one key.
 
 **Name.** A salon name is a DISPLAY string, stored as typed (case, accents, emoji, spaces). Server
 `validateChannelName` refuses only: empty after trim, over 80 characters (code points), a control
