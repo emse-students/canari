@@ -172,4 +172,31 @@ describe('refreshAnnouncement', () => {
     await mod.refreshAnnouncement();
     expect(apiFetch).toHaveBeenCalledTimes(2);
   });
+
+  it("never lands the leaving account's answer for the next one", async () => {
+    const announcement = {
+      id: 'a-of-the-first-account',
+      titleFr: 'Titre',
+      titleEn: 'Title',
+      bodyFr: 'Corps',
+      bodyEn: 'Body',
+    };
+    let answerFirst: (value: unknown) => void = () => {};
+    const apiFetch = vi
+      .fn()
+      .mockReturnValueOnce(new Promise((resolve) => (answerFirst = resolve)))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ announcement: null }) });
+    vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
+
+    const mod = await load();
+    const firstAsk = mod.refreshAnnouncement();
+    // The first account signs out while its ask is in flight, and the next one is asked for.
+    mod.resetAnnouncementState();
+    await mod.refreshAnnouncement();
+    answerFirst({ ok: true, json: async () => ({ announcement }) });
+    await firstAsk;
+
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+    expect(mod.getPendingAnnouncement()).toBeNull();
+  });
 });
