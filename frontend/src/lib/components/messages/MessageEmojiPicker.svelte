@@ -84,6 +84,7 @@
       anchor: positioningAnchor,
       alignEnd: pickerAlignsToEnd(origin, isOwn),
       dockBottom: pickerDocksToBottom(origin),
+      centreWhenWide: true,
       estimatedHeight: 460,
     });
 
