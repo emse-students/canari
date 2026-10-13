@@ -3105,6 +3105,24 @@ during a conversation's entry, a switch with typing in flight) all ended at the 
 smooth scroll interrupted by the bubble. If a phone still shows the bubble UNDER the composer
 rather than flush on it, it is a different defect, owed a reading with the keyboard closed.
 
+**IT WAS A DIFFERENT DEFECT: THE RESERVATION MISSED THE FOOTER'S PADDING** (user, 2026-10-13, phone
+app: the dots half under the composer, keyboard closed). `--chat-composer-height` is the footer's
+`offsetHeight`, padding included, and the footer pads `max(0.75rem, var(--safe-area-inset-bottom))`.
+Its `ResizeObserver` watched the default CONTENT box, which a padding change does not touch - so when
+the bottom inset changed after the composer mounted (Android's navigation-bar inset reaching the
+WebView, the keyboard's open/close), the footer grew and nothing republished. Measured on the real
+`ChatArea` at 390x844, glass chrome: a 24 px inset arriving late left the footer at 76 px against a
+published 64 (bubble 4.5 px clear), a 48 px inset (three-button navigation) at 100 against 64 - the
+bubble 19.5 px UNDER the composer. `publishComposerHeight` (`utils/chat/composerHeight.ts`) observes
+`border-box`, the box it publishes: 16.5 px clear at 0, 24 and 48 px, long and short thread, keyboard
+simulated open (390x500) and closed. #1780's measurement held because its inset never changed under
+it. **Not run:** a real Android inset change and iOS WebKit (the home indicator's inset is pinned to 0
+while the keyboard is open, `keyboardViewport.svelte.ts`, which this now follows too). **Seen and not
+changed:** any composer growth (a wrapped line as well) publishes inside a `ResizeObserver` callback a
+value that resizes the SHALLOWER scroller, so the engine reports "ResizeObserver loop completed with
+undelivered notifications" and delivers the scroller's notification a frame later; it was already
+there for text growth before this change, and the app installs no global `error` handler that logs it.
+
 ### The day label and its floating pill (2026-10-01)
 
 Reported by the user: scrolling a conversation, the floating "Mercredi 23 septembre" was not
