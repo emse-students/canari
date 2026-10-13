@@ -411,16 +411,51 @@ other 117. **All 118 calls answered HTTP 200**, and the delivery log holds **0 e
 | Seats (`dm_device_group_memberships`) | **329** |
 | One-time key packages | about 4 000 |
 
-**The queue total went from 336 539 to 305 535.** OPEN QUESTION: the morning audit (section 1)
-measured 93 580 rows, and the first pass saw 117 641. Nothing here explains how the queue reached
-336 539 by the second pass. It is not established whether that is fan-out from the community of
-section 2, a different count, or something new. It must be measured before the next reading of
-this page is believed.
+**The queue total went from 336 539 to 305 535.** The morning audit (section 1) measured 93 580
+rows and the first pass saw 117 641. That jump was an open question, now answered by
+[the measurement of 2026-10-13](#why-the-queue-holds-300-000-rows---measured-2026-10-13).
 
 **The backup** is on the Portail-etu host, in `~/canari-reaper-pass2-2026-10-12/` of the operator account,
 mode `700`, files `600`, with `SHA256SUMS`. It holds one CSV per table, filtered to the 118 devices.
 **To restore**, `\copy` each table's CSV back into its table, as the first pass's procedure above
 does, from this directory.
+
+## Why the queue holds 300 000 rows - measured 2026-10-13
+
+**Question:** the morning audit counted 93 580 rows, and the second pass found 336 539. Where do
+they come from? The user authorised a read-only measurement, run on production on 2026-10-13 at
+about 09:00 UTC. Nothing was written.
+
+**Short answer: one group, and the rows are for LIVE devices.** The reaper cannot help here.
+
+| Age of row | Rows |
+| --- | --- |
+| < 1 hour | 13 393 |
+| < 1 day | 248 261 |
+| < 7 days | 27 098 |
+| < 30 days | 12 446 |
+| >= 30 days | 741 |
+| **Total** | **301 937** |
+
+- **One group holds nearly all of the last day.** 255 475 rows belong to group `1b1687d0`, the
+  community of section 2: 106 recipient users and 90 sender users. Every other group holds at most
+  1 165 rows.
+- **By kind, last day:** 254 241 plain application frames, 5 575 commits and 27 Welcomes. So this
+  is application traffic, not epoch churn.
+- **By platform:** web 238 235 rows over 298 devices, tauri 61 928 over 150 devices. The deepest
+  devices hold 7 000 to 11 000 rows each, and all of them are web.
+- **266 of the 448 devices with a queue have a session.** So most of the queue is addressed to live
+  devices that are not draining, not to abandoned ones. Predicate R does not name them, and it
+  should not.
+- **By hour:** the peak was 57 737 rows at 20:00 UTC on 2026-10-12, during the heavy console
+  sessions. The 08:00 UTC hour of 2026-10-13 still added about 13 000.
+
+**Hypothesis, NOT proven:** `1b1687d0` is the community key group whose seed requests and answers
+were broadcast to every member (F1 and F3 in section 7). #1768 addresses each answer to the device
+that asked. It shipped in `v1.2.6` on 2026-10-13, so the rate should fall as clients update. The
+measurement that settles it is in the
+[backlog](../backlog.md#p1---a-community-key-group-sends-every-repair-answer-to-every-seat-and-42--of-seats-have-no-device-behind-them-production-2026-10-12).
+No deletion is proposed: these rows belong to live devices.
 
 ## How to re-measure
 
