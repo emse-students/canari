@@ -1676,7 +1676,7 @@ export function useConversations() {
       });
       conversations.set(selectedContact, { ...convo, name });
       await saveConversation(selectedContact, ctx);
-      ctx.log(`Groupe renomme en "${name}"`);
+      ctx.log(`Group ${selectedContact} renamed`);
     } catch (e) {
       ctx.log(`Erreur renommage: ${String(e)}`);
     }

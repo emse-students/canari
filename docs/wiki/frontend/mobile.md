@@ -361,6 +361,65 @@ iOS, the OS save panel on desktop). Two rules come with it:
 there they are unreachable by class name, and the failure only appears in the release build, which
 is the [first real Kotlin compile](../cicd.md).
 
+## The in-app log
+
+**A store build logged no JavaScript anywhere** (read on a store 1.2.6 Pixel 6a, 2026-10-13). wry's
+`RustWebChromeClient.onConsoleMessage` forwards `console.*` to logcat (`Tauri/Console`) only when
+`BuildConfig.DEBUG`; WKWebView keeps it to Safari's inspector; and the layout's
+`attachConsole()` - credited with "redirecting console to logcat" - did the opposite: it LISTENS for
+`log://log` and writes Rust records INTO the JS console, an event only a `Webview` target emits, and
+`lib.rs` configures none (its defaults are `Stdout` and `LogDir`). A dead listener on every
+platform, so it is **removed**, with the `@tauri-apps/plugin-log` JS package nothing imports any
+more. The Rust crate stays: Rust `log::` lines still reach logcat and the private `Canari.log`
+exactly as before. The `log:` grants stay too, because `tauriCapabilities.test.ts` requires one for
+every plugin with a JS command surface, and an exemption there is how that test stops working.
+
+**What replaced it** (`utils/appLog.ts`, `appLogRedact.ts`, `appLogExport.ts`):
+
+| Part | Decision |
+| --- | --- |
+| Source | The ONE console wrapper, `installConsoleIdTruncation(captureConsoleLine)` in `hooks.client.ts`. `log`, `info`, `warn`, `error` enter; **`debug` does not** (it is `Log.d` at every function entry - the volume that would evict the `[SELECT]`/`[QUEUE]`/`[GRAINE]` lines a reading needs, none of which is debug). Workers have their own console and do not enter. |
+| Privacy | Every line goes through `redactLogLine` BEFORE it is stored; the raw line never is. See below. |
+| Storage | IndexedDB `CanariDBLog`, store `chunks`, auto-increment keys (two web tabs never collide), an index on each record's size. The same database on the web and in the Tauri WebView: one implementation, nothing native to verify. |
+| Write | Batched in memory, written as **one new record per batch**: at 32 KiB or 200 lines, when the app leaves the screen (`onAppScreenChange`, which is the only honest signal on Android, plus `pagehide`), and before an export. **Never on a timer.** Nothing already written is rewritten. |
+| Bound | After each write, the oldest records are deleted until the total is under **2 MiB** (UTF-16 code units; a redacted line is ASCII). Rotation is by SIZE. The newest record is never evicted. |
+| Failure | No IndexedDB, or a failed write: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. Not a second storage path. |
+| Wipe | `wipeDeviceToFactory` calls `discardAppLog()` (empties, closes, stops writing for the process) before the `CanariDB*` prefix delete removes the database; `onversionchange` closes the connection too, so the delete cannot block. A sign-out does NOT clear it: "I was logged out" is exactly the report it must survive. |
+| Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, iOS's Files picker, the desktop save panel). A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
+
+**Why IndexedDB and not a file through the log or fs plugin.** A plugin-log `Webview`/`LogDir`
+forward would cost an IPC crossing per line - on Android a JSON `postMessage` - on the hot path,
+and only native builds would have it. The IndexedDB record is written from the page with no bridge,
+in batches. **Measured write cost** (`appLog.test.ts`, the amplification case): logging 3 MiB writes
+exactly the logged characters minus one newline per batch, in `ceil(logged / 32 KiB)` `add`
+calls and zero `put`s - an amplification of **1.0** for the log itself, against the MLS state that
+is rewritten whole (15 MB on the heavy phone) at every checkpoint. Captured sessions put the
+non-debug volume at ~6.5 KB for a cold boot and ~20 KB per active minute (Mi 9T captures,
+2026-10-01 and 2026-10-13), so a batch lands roughly once a minute of active use and the ring holds
+on the order of 1-2 hours of activity, more for an idle phone. The engine's own overhead (LevelDB
+on Chromium, SQLite on WebKit) is NOT measured: no phone was used.
+
+**Redaction - an allowlist where it carries weight, a scrubber around it.** In order: the input is
+cut at 1000 characters back to the last space (several patterns rescan from every position of an
+unbroken run, so an uncut 32 KB line took MINUTES - measured), control characters become ` | `,
+then JWTs, `Bearer`/`Basic` values, URL query strings and fragments (`?[query]`), e-mail addresses,
+the value of any field named like a secret or a content (`pin`, `password`, `token`, `code`,
+`cookie`, `seed`, `cek`, `body`, `text`, `content`, `email`, `phone`, ... -> `pin=[redacted]`),
+phone numbers, the existing 8-character id truncation, base64 runs of 20+ characters mixing digits
+and letters (`[key:N]`; a path is judged segment by segment), then **every double-quoted value
+that does not have an identifier / enum / number shape** (`"[21 chars]"`), an unbalanced quote's
+tail, pictographs, and **every word holding a non-ASCII letter** (`[text]` - French prose; log
+lines are English ASCII by rule). The result is capped at 400 characters. Cost: **3.1 us per line**
+on desktop over 256 real captured lines (bun, 2026-10-13); a phone is slower by an unmeasured factor.
+
+**What it cannot catch, for the reviewer:** an UNQUOTED single ASCII word that is a name
+(`Joined channel #bureau`) - no pattern separates `bureau` from `ready` - and a quoted single-word
+name (`"Bureau"`), which has an identifier's shape. The call sites that interpolated names were
+changed to log an id or a size (channel join/leave/create, member invite, group rename and
+creation, vault and reviewer documents); the `[MEDIA]` file-name lines keep their quoted name on
+the console by an earlier decision, and only multi-word names are withheld from the log. A new
+call site logging a name is a review finding.
+
 ## The app owns which URLs its own WebView may load
 
 **A URL `http::Uri` cannot parse used to abort the whole process, and nothing on either side of the

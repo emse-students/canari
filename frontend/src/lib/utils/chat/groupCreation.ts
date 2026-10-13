@@ -250,7 +250,7 @@ export async function createNewGroup(
     selectConversation(conversationKey);
     await saveConversation(conversationKey);
     log(`[OK] Group "${groupDisplayName}" created.`);
-    console.log(`[GROUP] Group "${groupDisplayName}" created successfully (id=${groupId})`);
+    console.log(`[GROUP] Group created successfully (id=${groupId})`);
     // MLS commits from group setup can leave the catch-up overlay stuck on mobile if begin/end desync.
     queueMicrotask(() => {
       if (globalMessaging.isMessageCatchupActive) {
