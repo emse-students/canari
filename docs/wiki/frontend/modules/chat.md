@@ -3117,11 +3117,13 @@ bubble 19.5 px UNDER the composer. `publishComposerHeight` (`utils/chat/composer
 `border-box`, the box it publishes: 16.5 px clear at 0, 24 and 48 px, long and short thread, keyboard
 simulated open (390x500) and closed. #1780's measurement held because its inset never changed under
 it. **Not run:** a real Android inset change and iOS WebKit (the home indicator's inset is pinned to 0
-while the keyboard is open, `keyboardViewport.svelte.ts`, which this now follows too). **Seen and not
-changed:** any composer growth (a wrapped line as well) publishes inside a `ResizeObserver` callback a
-value that resizes the SHALLOWER scroller, so the engine reports "ResizeObserver loop completed with
-undelivered notifications" and delivers the scroller's notification a frame later; it was already
-there for text growth before this change, and the app installs no global `error` handler that logs it.
+while the keyboard is open, `keyboardViewport.svelte.ts`, which this now follows too). **And the
+publish waits for the next frame:** written inside the `ResizeObserver` callback, the value resized
+the SHALLOWER scroller, which the engine cannot notify in the same pass, so every composer growth (a
+wrapped line as well, since long before this change) raised "ResizeObserver loop completed with
+undelivered notifications" and delivered the scroller's notification a frame later anyway. The
+callback now only schedules one `requestAnimationFrame`, cancelled at teardown; the scroller resizes
+in an ordinary layout and is notified in its own frame - the same frame the follow already landed in.
 
 ### The day label and its floating pill (2026-10-01)
 

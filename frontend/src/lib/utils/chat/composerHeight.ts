@@ -17,8 +17,8 @@ export const COMPOSER_HEIGHT_PROPERTY = '--chat-composer-height';
  * with a 48 px inset (three-button navigation) the bubble goes UNDER the composer, keyboard closed
  * (user report, phone app, 2026-10-13).
  *
- * Returns the teardown, which also removes the property so a thread with no composer reserves the
- * stylesheet's own fallback.
+ * Returns the teardown, which also cancels a pending publish and removes the property so a thread
+ * with no composer reserves the stylesheet's own fallback.
  */
 export function publishComposerHeight(
   footer: HTMLElement,
@@ -33,11 +33,30 @@ export function publishComposerHeight(
     root.style.setProperty(COMPOSER_HEIGHT_PROPERTY, value);
   };
 
+  // A RESIZE IS PUBLISHED ON THE NEXT FRAME, NEVER INSIDE THE OBSERVER'S CALLBACK. The value is the
+  // thread's `padding-bottom`, so writing it there resizes the scroller - a SHALLOWER node than the
+  // footer, which the engine cannot deliver in the same pass: every growth (a wrapped line, an inset
+  // arriving) raised "ResizeObserver loop completed with undelivered notifications" and delivered
+  // the scroller's notification a frame later anyway. Published at the next frame's start, the
+  // scroller resizes in an ordinary layout and is notified in that frame's own pass (measured in
+  // Chrome: five inset changes, five loop errors synchronous, none deferred). What the reader sees
+  // does not change - the pane's follow already landed one frame after the growth.
+  let frame = 0;
+  const schedule = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      publish();
+    });
+  };
+
   publish();
-  const observer = new ResizeObserver(publish);
+  const observer = new ResizeObserver(schedule);
   observer.observe(footer, { box: 'border-box' });
   return () => {
     observer.disconnect();
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
     root.style.removeProperty(COMPOSER_HEIGHT_PROPERTY);
   };
 }

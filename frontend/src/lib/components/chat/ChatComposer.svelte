@@ -62,7 +62,6 @@
   import ComposerEmojiPicker from './ComposerEmojiPicker.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
-  import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { Log } from '$lib/utils/Log';
   import { publishComposerHeight } from '$lib/utils/chat/composerHeight';
   import type { PendingMediaFile } from '$lib/media';
