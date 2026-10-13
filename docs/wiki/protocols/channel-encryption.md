@@ -3102,8 +3102,10 @@ NOT use this route, and is therefore untouched:
 A client below the floor cannot unlock MLS, so it holds no seed and cannot seal a salon row in the
 first place. The one population that could still send unsigned is a process UNLOCKED before the floor
 rose and still running pre-`1.0.3` code; `PlatformGateOverlay` covers it on the next focus. Such a send
-gets a 400: `deliverSalonSend` marks the bubble `error` with the generic refusal line, and nothing
-retries it (salon sends have no outbox and no retry, in `v1.0.2` as now). No client branches on the
+gets a 400, and `v1.0.2`'s salon send (`messaging.ts`) turns any 400 into the generic send-failed
+line and returns: nothing retries it on its own, and a salon send never enters the outbox
+(`outbox.ts` drops a `channel_` entry), in `v1.0.2` as now. On current code the same 400 marks the
+bubble `error` (`deliverSalonSend`); its manual retry re-seals, so it signs. No client branches on the
 code: no current client can reach it, which is why no client change ships with it. `ChannelApiError`
 already carries the code, so a later consumer reads it at the throw.
 
@@ -3118,8 +3120,9 @@ one directly, and the v1 reader would open it: that is the v1 reader's own limit
 reader ([legacy-compatibility](../legacy-compatibility.md)). It also makes the reader's removal
 measurement monotonic: from this deploy on, `count(*) WHERE "signature" IS NULL` can only fall.
 
-**Owed before the PR is marked ready**: the same count per day on production since 2026-10-11, which
-must read 0 unsigned rows written by an admitted client:
+**Measured 2026-10-13 on both estates: 0 unsigned rows since 2026-10-10**, the last one written on
+2026-10-09 - before the floor rose on 2026-10-11, so not one admitted client has written v1. The
+count per day, to re-run after the deploy:
 
 ```sql
 SELECT date_trunc('day', "createdAt") AS day, count(*) FILTER (WHERE "signature" IS NULL) AS unsigned
