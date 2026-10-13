@@ -57,6 +57,7 @@
 - [From a notification tap to a sent reply, measured](frontend/notification-to-conversation-latency.md) - tap to usable conversation, killed and backgrounded, ranked costs and the fix plan
 - [Performance audit under a heavy MLS state, 2026-10-12](frontend/performance-audit-2026-10-12.md) - ranked by cost x frequency: the restore decrypting every message, one whole-state checkpoint per frame (and its WASM seal, measured), the open thread redrawn by every other conversation
 - [Web console log audit, 2026-10-12](frontend/web-console-log-audit-2026-10-12.md) - three idle minutes on `/communities`, ranked: a pdf.js worker per refetch, seed bundles that re-read salons for every member, a checkpoint per message
+- [Community opening on the Mi 9T, 2026-10-13](frontend/community-open-slowness-mi9t-2026-10-13.md) - a real console and a CPU profile: a sync MLS command freezes the WebView for the rest of a checkpoint (21.8 s of 38.9 s), every bubble resolving its readers' names, and an admin's salon tap landing on a message
 - [Startup load and send delay, 2026-10-12](frontend/startup-load-audit-2026-10-12.md) - a return after 3 h: 775 already-held seed bundles in the queue, 26 salon re-reads, communities in series, and a salon send with no bubble for 6.1 s
 - [Mobile architecture](frontend/mobile.md) — Tauri 2, iOS NSE, Android push, native FFI
 - [App icons](frontend/app-icons.md) — one drawing, the bird at half of what is seen, four generators
