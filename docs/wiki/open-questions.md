@@ -16,6 +16,26 @@ measurement or a device nobody here has. None of them is waiting on an implement
 
 ---
 
+### DECISION OWED - should the KeyPackage pile leave the blob every checkpoint rewrites?
+
+**Measured 2026-10-13** ([store-phone-reading](frontend/store-phone-reading-2026-10-13.md#4-the-mls-state-rewritten-in-full)):
+a store Pixel 6a holds 15.5 MB of MLS state, ~6 MB of it 2535 KeyPackage bundles, and every native
+checkpoint re-encodes, re-seals and rewrites all of it. A bundle never changes once minted - it is
+written once and only ever deleted - so that share is rewritten for nothing. On a desktop, the same
+80-group state checkpoints in 16-20 ms and in 27 ms once 2535 bundles are added (4.8 MB, +60 % of
+the bytes, +40-70 % of the time); a phone's number is not measured.
+
+**Why it is a decision and not a pull request.** Splitting the pile out is a FORMAT change on a
+blob every platform reads: a second file or a v3 frame whose reader must ship before any writer
+(unknown versions are refused, `state_blob.rs`), a backup envelope that must carry both halves, and
+the reload guards that read KeyPackage identity across the whole store (`key_package_keys`,
+`recharger_mls_au_resume`) must agree on where a bundle lives. The cheaper alternative is to SHRINK
+the pile - the unclaimed-but-handed-out bundles that only the 84-day expiry reclaims
+([key-package-pool](protocols/key-package-pool.md)) - which needs the server's claimed-at column
+that page already owes. **Options**: (a) shrink first, measure again; (b) a v3 frame with a
+KeyPackage segment sealed separately and cached; (c) per-group storage, the structural lever the
+[performance audit](frontend/performance-audit-2026-10-12.md) names third. Nothing is built.
+
 ### DECISION OWED - the ceiling's `postgres` arm names a test this estate's own upgrade path can never satisfy
 
 **Found by performing the thing the gate asks for, on 2026-09-15, and discovering the gate cannot
