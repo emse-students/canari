@@ -141,6 +141,26 @@ describe('ChannelService - the community distribution group', () => {
       expect(workspaceRepo.save).toHaveBeenCalledTimes(2);
     });
 
+    it("answers the creator's whole standing, moderation included", async () => {
+      const { service } = makeService();
+
+      const created = await service.createWorkspace({
+        name: 'Test',
+        slug: 'test',
+        createdBy: USER,
+      });
+
+      // `viewerCanModerate` was missing from this answer, so the client read the creator as a
+      // plain member until the next listing: no pin and no poll close until a reload.
+      expect(created).toEqual(
+        expect.objectContaining({
+          viewerCanManage: true,
+          viewerCanModerate: true,
+          viewerCanManageChannels: true,
+        })
+      );
+    });
+
     it('unwinds the community when the group cannot be created', async () => {
       const { service, workspaceRepo, channelRepo } = makeService();
       global.fetch = jest.fn(() => Promise.reject(new Error('ECONNREFUSED'))) as unknown as never;
