@@ -1451,7 +1451,9 @@ export function useMessaging() {
         // The LOG is dev-facing and stays English, and it names the file the banner cannot: the
         // banner tells the user one file was too big, this says WHICH, so a report of "it refused my
         // picture" is answerable without asking them to reproduce it.
-        ctx.log(`[MEDIA] refused "${file.name}" - ${size} Mo over the ${mediaMaxSizeMb} Mo limit`);
+        ctx.log(
+          `[MEDIA] refused a ${file.type || 'typeless'} file - ${size} Mo over the ${mediaMaxSizeMb} Mo limit`
+        );
         continue;
       }
       let entry: import('$lib/media').PendingMediaFile = { file };
@@ -1485,7 +1487,7 @@ export function useMessaging() {
         const { readImageDimensions } = await import('$lib/media');
         const dims = await readImageDimensions(file);
         if (dims) entry = { file, width: dims.width, height: dims.height };
-        else ctx.log(`[MEDIA] GIF "${file.name}" has no readable size - sent without one`);
+        else ctx.log(`[MEDIA] a GIF of ${file.size} bytes has no readable size - sent without one`);
       }
       if (entry.file.type.startsWith('image/')) {
         // The receiver's box shows this while the blob downloads (`MediaMsg.placeholder`).
@@ -1533,10 +1535,10 @@ export function useMessaging() {
       if (!isVideoPrepareError(e)) throw e;
       const message = videoPrepareFailureMessage(e);
       if (message === null) {
-        ctx.log(`[MEDIA] video "${file.name}" not staged: cancelled`);
+        ctx.log(`[MEDIA] video of ${file.size} bytes not staged: cancelled`);
         return null;
       }
-      ctx.log(`[MEDIA] video "${file.name}" refused: ${e.fault} - ${e.message}`);
+      ctx.log(`[MEDIA] video of ${file.size} bytes refused: ${e.fault} - ${e.message}`);
       ctx.setSendError(message);
       return null;
     } finally {

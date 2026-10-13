@@ -138,7 +138,7 @@ export async function createNewGroup(
       c.name.toLowerCase() === groupDisplayName.toLowerCase()
   );
   if (duplicateGroup) {
-    log(`Group "${groupDisplayName}" already exists.`);
+    log(`Group not created: one with this name already exists.`);
     return { ok: false, reason: 'duplicate-group-name' };
   }
 
@@ -249,7 +249,7 @@ export async function createNewGroup(
     );
     selectConversation(conversationKey);
     await saveConversation(conversationKey);
-    log(`[OK] Group "${groupDisplayName}" created.`);
+    log(`[OK] Group ${groupId} created.`);
     console.log(`[GROUP] Group created successfully (id=${groupId})`);
     // MLS commits from group setup can leave the catch-up overlay stuck on mobile if begin/end desync.
     queueMicrotask(() => {

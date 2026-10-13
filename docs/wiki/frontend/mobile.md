@@ -384,7 +384,7 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Write | Batched in memory, written as **one new record per batch**: at 32 KiB or 200 lines, when the app leaves the screen (`onAppScreenChange`, which is the only honest signal on Android, plus `pagehide`), and before an export. **Never on a timer.** Nothing already written is rewritten. |
 | Bound | After each write, the oldest records are deleted until the total is under **2 MiB** (UTF-16 code units; a redacted line is ASCII). Rotation is by SIZE. The newest record is never evicted. |
 | Failure | No IndexedDB, or a failed write: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. Not a second storage path. |
-| Wipe | `wipeDeviceToFactory` calls `discardAppLog()` (empties, closes, stops writing for the process) before the `CanariDB*` prefix delete removes the database; `onversionchange` closes the connection too, so the delete cannot block. A sign-out does NOT clear it: "I was logged out" is exactly the report it must survive. |
+| Wipe | `wipeDeviceToFactory` calls `discardAppLog()` (empties, closes, stops writing for the process) before the `CanariDB*` prefix delete removes the database; `onversionchange` closes the connection too, so the delete cannot block. A sign-out does NOT clear it: "I was logged out" is exactly the report it must survive. The cost, accepted rather than missed: the next account to sign in on that device can export the previous one's REDACTED lines (8-character id prefixes, times, error kinds). |
 | Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, iOS's Files picker, the desktop save panel). A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
 
 **Why IndexedDB and not a file through the log or fs plugin.** A plugin-log `Webview`/`LogDir`
@@ -402,23 +402,56 @@ on Chromium, SQLite on WebKit) is NOT measured: no phone was used.
 **Redaction - an allowlist where it carries weight, a scrubber around it.** In order: the input is
 cut at 1000 characters back to the last space (several patterns rescan from every position of an
 unbroken run, so an uncut 32 KB line took MINUTES - measured), control characters become ` | `,
-then JWTs, `Bearer`/`Basic` values, URL query strings and fragments (`?[query]`), e-mail addresses,
-the value of any field named like a secret or a content (`pin`, `password`, `token`, `code`,
-`cookie`, `seed`, `cek`, `body`, `text`, `content`, `email`, `phone`, ... -> `pin=[redacted]`),
-phone numbers, the existing 8-character id truncation, base64 runs of 20+ characters mixing digits
-and letters (`[key:N]`; a path is judged segment by segment), then **every double-quoted value
-that does not have an identifier / enum / number shape** (`"[21 chars]"`), an unbalanced quote's
-tail, pictographs, and **every word holding a non-ASCII letter** (`[text]` - French prose; log
-lines are English ASCII by rule). The result is capped at 400 characters. Cost: **3.1 us per line**
-on desktop over 256 real captured lines (bun, 2026-10-13); a phone is slower by an unmeasured factor.
+then JWTs, `Bearer`/`Basic` values, URL query strings and fragments (`?[query]`), invitation
+tokens (`/join/[token]`), e-mail addresses (`%40` included), the value of any field whose name
+ENDS in a secret or prose word once split on camelCase, `_` and `-` (`pin`, `password`, `token`,
+`cookie`, `seed`, `cek`, `email`, `phone`, `name`, `title`, `body`, `text`, `content`, ...; `code`
+and `key` only after `invite`/`auth`/`private`/`api`/..., so `statusCode` and `conversationKey`
+survive) -> `newPin: [redacted]`; a quoted value the payload renderer cut takes the rest of the
+line with it, and an unquoted prose value runs to the next FIELD, across a comma. `refresh`
+(the cookie and `X-Canari-Refresh`), `sub`, `tel`, `ip`, `lat`/`lng` are secret words; `search`,
+`query`, `q`, `alias`, `label`, `filename`, `preview`, `note` are prose words. Two values a
+sensitive name may keep: an exception's class (`{"name":"NotAllowedError"}`) and a bare `code` of
+1-4 digits (a WebSocket close code). Then a secret word followed by a digit-bearing value with no
+`:`/`=` (`pin 482913`, `Invalid PIN 482913`), phone numbers, IPv4 and full IPv6 addresses, a list
+of 16+ small integers (a key as `JSON.stringify` writes a byte array; `renderLogPayload` itself now
+writes any `ArrayBuffer` view as `[bytes:N]`), the existing 8-character id truncation, base64 runs
+of 20+ characters mixing digits and letters (`[key:N]`; a path is judged segment by segment, an
+upper-case `CONSTANT_NAME` is not base64), then **every quoted value - `"`, `'` (not an
+apostrophe), backtick, curly quotes, guillemets - that does not have an identifier / enum / number
+shape, or holds a Capitalised word** (`"[21 chars]"`), the stem of any token ending in a
+member-upload extension (`.pdf`, `.jpg`, `.docx`, ... -> `[file].pdf`; the app's own `mls.bin`,
+`*.wasm` keep their names), an unbalanced quote's tail, zero-width characters, pictographs and
+flags, and **every word holding a non-ASCII letter, combining mark or digit** (`[text]` - French
+prose; log lines are English ASCII by rule; the four status marks are kept). The result is capped
+at 400 characters.
 
-**What it cannot catch, for the reviewer:** an UNQUOTED single ASCII word that is a name
-(`Joined channel #bureau`) - no pattern separates `bureau` from `ready` - and a quoted single-word
-name (`"Bureau"`), which has an identifier's shape. The call sites that interpolated names were
-changed to log an id or a size (channel join/leave/create, member invite, group rename and
-creation, vault and reviewer documents); the `[MEDIA]` file-name lines keep their quoted name on
-the console by an earlier decision, and only multi-word names are withheld from the log. A new
-call site logging a name is a review finding.
+**Cost** (bun, desktop, 2026-10-13, five representative real lines): 5.2 us per line as first
+written, 10.3 us after both reviews of #1819; a phone is slower by an unmeasured factor. The worst
+case under the 1000-character cut is about 3-5 ms (an unbroken run of `00` or `x.`). The second
+review measured the comma-crossing prose rule at 33 us per line when written as a lookahead inside
+`FIELD_RE`'s repetition, so it runs as a separate pass on lines that HAVE a prose field, and the
+file-name pass only on lines that contain an upload extension.
+
+**How it was attacked** (second review of #1819): every `console.log/info/warn/error` and
+`appendLog` call site of `frontend/src` (1022) and every local `log(...)` wrapper (504) was parsed
+with the TypeScript compiler, each interpolation named like a name, a file, a body, an e-mail, a
+PIN, a token or a URL was replaced by a hostile value, and the rendered line was redacted; plus 79
+hand-written attacks. What still leaked after the fixes is the list below, plus Error messages
+whose text a server or a library wrote.
+
+**What it cannot catch, for the reviewer:** an UNQUOTED ASCII word that is a name
+(`Joined channel #bureau`, `Jolan Boudin left`, a path segment `/users/jolan`) - no pattern
+separates `bureau` from `ready` - a quoted name written in lower case (`"bureau"`), a byte list
+shorter than sixteen, `jean at emse.fr`, and a phone number written with parentheses. The
+cotisation roster line logged the admin's search text and now logs its length (second review). The
+Settings text says the log removes what Canari RECOGNISES and asks the member to read it before
+sending - it no longer promises "no name". The call sites that interpolated names were
+changed to log an id, a type or a size: channel join/leave/create, member invite, group rename and
+creation, vault and reviewer documents, then (review of #1819, 2026-10-13) the system-message
+lines that named the member who renamed, left, excluded or deleted, the discovery and placeholder
+lines that quoted a group's name, the 1:1 merge line, and the four `[MEDIA]` lines that quoted the
+file's name. A new call site logging a name is a review finding.
 
 ## The app owns which URLs its own WebView may load
 

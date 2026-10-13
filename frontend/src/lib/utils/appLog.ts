@@ -197,6 +197,10 @@ export function flushAppLog(): Promise<void> {
       const db = await openDb();
       await writeChunk(db, { chars, text: lines.join('\n') });
     } catch (error) {
+      // The wipe closed the connection under this write: the lines were asked to go, so they go,
+      // and the state stays `discarded` rather than reading as a storage failure.
+      // (The cast: the narrowing above does not see `discardAppLog` running during the await.)
+      if ((persistence as PersistenceState) === 'discarded') return;
       // Stop FIRST, so re-queuing below cannot ask for another flush.
       persistence = typeof indexedDB === 'undefined' ? 'unavailable' : 'failed';
       persistenceError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);

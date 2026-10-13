@@ -5,7 +5,11 @@
  * state, so this writer must cost what it adds and nothing more. It counts every character handed
  * to IndexedDB and compares it with the characters logged.
  */
-import { IDBFactory, IDBObjectStore as FakeObjectStore } from 'fake-indexeddb';
+import {
+  IDBDatabase as FakeDatabase,
+  IDBFactory,
+  IDBObjectStore as FakeObjectStore,
+} from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type AppLog = typeof import('./appLog');
@@ -195,5 +199,23 @@ describe('the device wipe', () => {
     const dbs = await indexedDB.databases();
     expect(dbs.map((d) => d.name)).not.toContain('CanariDBLog');
     expect((await appLog.readAppLog()).persistence).toBe('discarded');
+  });
+
+  it('a write the wipe cut short stays discarded, never reported as a storage failure', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    appLog.captureConsoleLine('log', ['[A] before']);
+    await appLog.flushAppLog(); // the connection is open from here on
+    // The wipe lands while the next write is in flight: its connection is closed under it.
+    vi.spyOn(FakeDatabase.prototype, 'transaction').mockImplementation(() => {
+      appLog.discardAppLog();
+      throw new DOMException('The database connection is closing.', 'InvalidStateError');
+    });
+    appLog.captureConsoleLine('log', ['[A] during']);
+    await appLog.flushAppLog();
+
+    const snapshot = await appLog.readAppLog();
+    expect(snapshot.persistence).toBe('discarded');
+    expect(snapshot.text).not.toContain('[A] during');
+    expect(error).not.toHaveBeenCalled();
   });
 });

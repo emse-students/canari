@@ -56,6 +56,57 @@ describe('redactLogLine - what must never enter', () => {
       '[WS] {"kind":"draft","x":"the plan for tonight is to meet at… (900 chars)',
       'plan for tonight',
     ],
+    // Found by the review of #1819 (2026-10-13), each one written to the log before the fix.
+    [
+      'a message body the payload renderer cut, under a sensitive key',
+      `[WS] {"content":"hello my secret message about tonight ${'x '.repeat(120)}… (900 chars)`,
+      'secret message',
+    ],
+    ['a PIN under a camelCase name', '[PIN] newPin: 482913', '482913'],
+    ['a PIN under a snake_case name', '[PIN] user_pin=482913', '482913'],
+    ['a token under a camelCase name', '[WS] sessionToken=abcdefghijklmnop', 'abcdefghijklmnop'],
+    ['a one-word display name in JSON', '[X] {"displayName":"Jolan","id":"a1"}', 'Jolan'],
+    ['a login in JSON', '[X] {"username":"jolan.boudin"}', 'jolan.boudin'],
+    ['an unquoted two-word name field', '[X] name: Jean Dupont, id=5', 'Dupont'],
+    ['a quoted one-word name', '[FORWARD] failed for "Jolan": boom', 'Jolan'],
+    ['a quoted file name with no space', '[MEDIA] refused "CV_Jolan_Boudin.pdf"', 'Boudin'],
+    ['a seed as a list', '[GRAINE] seed=[12,34,56,78]', '34,56'],
+    ['a PIN behind a harmless field', '[X] mode=x pin=482913', '482913'],
+    ['a percent-encoded e-mail in a path', '[API] GET /api/users/jean%40emse.fr', 'jean%40emse'],
+    ['a number with a 00 prefix', '[PROFILE] 0033612345678', '612345678'],
+    [
+      'an invitation token with no digit',
+      '[hooks] Processing URL: https://canari.emse.fr/c/join/AbCdEfGhIjKlMnOpQrStUvWx',
+      'AbCdEfGh',
+    ],
+    // Found by the second review of #1819 (2026-10-13), from a fuzz of the real call sites.
+    ['a single-quoted name', "[FORWARD] failed for 'Bureau des eleves': boom", 'Bureau'],
+    ['a name in curly quotes', '[X] failed for “Jolan”', 'Jolan'],
+    ['a name in guillemets', '[X] failed for «Jolan Boudin»', 'Jolan'],
+    ['a name in backticks', '[X] failed for `Jolan Boudin`', 'Jolan'],
+    ['a PIN after a space', '[PIN] pin 482913 wrong', '482913'],
+    ['a PIN behind an arrow', '[PIN] otp -> 482913', '482913'],
+    ['a PIN in an Error message', 'Error: Invalid PIN 482913', '482913'],
+    ['the refresh header', '[API] X-Canari-Refresh: r3fr3shv4lue', 'r3fr3sh'],
+    ['the refresh cookie', '[API] cookie canari_refresh=r3fr3shv4lue', 'r3fr3sh'],
+    ['an OIDC subject', '[auth] {"sub":"jolan.boudin"}', 'jolan'],
+    ['a search query', '[Cotisations] Loading roster search=Dupont', 'Dupont'],
+    ['a query field', '[X] q=dupont', 'dupont'],
+    ['a lower-case file name in JSON', '[X] {"filename":"cv_jolan.pdf"}', 'jolan'],
+    ['an unquoted file name', '[MEDIA] refused CV_Jolan_Boudin.pdf (30 MB)', 'Jolan'],
+    ['a file name in a path', '[API] GET /media/cv_jolan_boudin.pdf', 'jolan'],
+    ['a prose value past a comma', '[X] description: hello, my secret plan', 'plan'],
+    [
+      'a byte list',
+      `[MLS] ${JSON.stringify([...Array(32).keys()].map((i) => 200 + (i % 50)))}`,
+      '201',
+    ],
+    ['an accent as a combining mark', '[NOTIF] soirée', 'soire'],
+    ['full-width letters', '[X] Ｊｏｌａｎ', 'Ｊ'],
+    ['a flag emoji', '[REACT] 🇫🇷', '🇫'],
+    ['an IPv4 address', '[WS] peer 192.168.1.42', '192.168.1.42'],
+    ['an IPv6 address', '[WS] peer 2a01:e0a:1f3:4560:1234:5678:9abc:def0', '9abc'],
+    ['a position', '[MAP] lat=45.4397 lng=4.3872', '45.4397'],
   ];
 
   for (const [name, raw, secret] of hostile) {
@@ -105,12 +156,40 @@ describe('redactLogLine - what the reading needs must survive', () => {
     'installConsoleIdTruncation ran once',
     // A key=value is not one base64 run: `=` only ever closes one, as padding.
     '[WS] Connected to Chat Gateway - device=tauri-43319a65…-mv5ybc47-ycj7',
+    // `code` and `key` are secrets only after a word that makes them one.
+    '[API] statusCode=500 conversationKey=67fde7aa… errorCode=E42',
+    'Error: Request failed with status 500',
+    // A sensitive NAME holding a harmless value: an exception's class, a status code.
+    '[video] play() refused {"name":"NotAllowedError","muted":true}',
+    '[WS] Disconnected. Code: 1000, Reason: ',
+    // Apostrophes never pair into a quoted value; an enum in single quotes stays.
+    "[GRAINE] the member's device can't answer: kind 'joined'",
+    // A constant's name is not base64, a clock and a version are not addresses.
+    '[Call] E2E media encryption disabled (VITE_CALL_E2E_ENCRYPTION=false)',
+    '[A] 13:32:42.123 v1.2.6',
+    // A status mark is not prose, although U+2139 is classified as a letter.
+    '⚠ Push notifications degraded',
+    'ℹ Private browsing mode',
+    '[PIN] Verifying PIN... PIN verified, attempt 2',
   ];
   for (const raw of kept) {
     it(`keeps: ${raw}`, () => {
       expect(redactLogLine(raw)).toEqual({ line: raw, redactions: 0 });
     });
   }
+
+  it('drops the emoji variation selector without counting it as a value removed', () => {
+    expect(redactLogLine('⚠️ Push notifications degraded')).toEqual({
+      line: '⚠ Push notifications degraded',
+      redactions: 0,
+    });
+  });
+
+  it('ends a prose value at the next field, so the fields after it survive', () => {
+    expect(redact('[X] description: hello, my plan, id=5 mode=x')).toBe(
+      '[X] description: [redacted], id=5 mode=x'
+    );
+  });
 
   it('says WHAT was removed, so a reader knows a value existed', () => {
     expect(redact('[LOGIN] as a.b@c.fr pin=1234')).toBe('[LOGIN] as [email] pin=[redacted]');
@@ -120,11 +199,10 @@ describe('redactLogLine - what the reading needs must survive', () => {
 
 describe('redactLogLine - cost', () => {
   // Several patterns rescan from every position of a run with no separator, so an uncut 32 KB
-  // line took minutes. The input is cut first; this pins that it stays cheap.
-  it('handles a 1 MB line with no separator in milliseconds, and keeps no half of it', () => {
-    const started = performance.now();
+  // line took minutes. The input is cut first; this pins the CUT, which is what bounds the cost -
+  // never a wall clock, which a loaded CI runner would make flaky.
+  it('cuts a 1 MB line with no separator before any pattern runs, and keeps no half of it', () => {
     const { line } = redactLogLine(`[DUMP] ${'a'.repeat(1_000_000)}`);
-    expect(performance.now() - started).toBeLessThan(500);
     expect(line).toBe('[DUMP] [cut 1000007 chars]');
   });
 

@@ -46,6 +46,10 @@ export function renderLogPayload(payload: unknown): string {
     const seen = new WeakSet<object>();
     const text = JSON.stringify(payload, (_key, value: unknown) => {
       if (typeof value === 'bigint') return `${value}n`;
+      // Bytes are a SIZE in a log line, never their content: `JSON.stringify` writes a Uint8Array
+      // as `{"0":12,"1":34,...}`, which is a key or a seed spelled out (review of #1819, 2026-10-13).
+      if (ArrayBuffer.isView(value)) return `[bytes:${value.byteLength}]`;
+      if (value instanceof ArrayBuffer) return `[bytes:${value.byteLength}]`;
       if (typeof value === 'object' && value !== null) {
         if (seen.has(value)) return '[circular]';
         seen.add(value);

@@ -2892,7 +2892,7 @@
   "settings_about_up_to_date": "Vous utilisez la dernière version.",
   "settings_about_update_available": "Une version plus récente ({version}) est disponible.",
   "settings_about_log_label": "Journal de diagnostic",
-  "settings_about_log_desc": "Canari garde sur cet appareil un journal technique de son activité récente (2 Mo au plus environ) pour nous aider à comprendre un problème. Il ne contient aucun message, aucun nom, aucune adresse e-mail, aucun mot de passe, code PIN ou clé, et les identifiants y sont raccourcis. Il ne quitte jamais votre appareil de lui-même : enregistrez-le ici, puis envoyez-le-nous si vous le souhaitez.",
+  "settings_about_log_desc": "Canari garde sur cet appareil un journal technique de son activité récente (2 Mo au plus environ) pour nous aider à comprendre un problème. Avant d'écrire une ligne, Canari en retire tout ce qu'il reconnaît comme un message, un nom, une adresse e-mail, un mot de passe, un code PIN ou une clé, et raccourcit les identifiants. Relisez-le avant de l'envoyer. Il ne quitte jamais votre appareil de lui-même : enregistrez-le ici, puis envoyez-le-nous si vous le souhaitez.",
   "settings_about_log_button": "Enregistrer le journal",
   "settings_about_log_busy": "Préparation du journal…",
   "settings_about_log_failed": "Le journal n'a pas pu être lu.",
