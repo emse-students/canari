@@ -598,6 +598,34 @@ to find.
   timestamp places it among the stream entries, and that entry's `send-*` trace names the delivery
   path the browser took.
 
+### A device that holds nothing opens with its digest, not its state key (2026-10-14)
+
+`sendHistoryProbe` (`utils/chat/groupActions.ts`) is the first leg, and it picks one of two frames.
+If this device's store holds **zero** rows for the group (`countMessages`), it sends its digest
+straight away. Otherwise it sends the state key, as before.
+
+**Why.** An empty store's state key can only get two answers. An equally empty peer stays silent.
+Every other peer answers `history_digest_request`, and this device then sends the digest it could
+have sent at once. The responder already answers a digest probe directly (`handleHistoryRequest`,
+since `v0.14.0`), so the exchange becomes one round trip instead of two. An empty digest is as small
+as a key.
+
+That empty shape is the after-sign-in case: the device rejoins every group with nothing stored. On
+the Mi 9T on 2026-10-13, each extra leg arrived as its own drain, and each drain triggered its own
+full checkpoint: about 4 checkpoints per rejoined group, 247 in 432 s
+([community-open finding 2](../frontend/community-open-slowness-mi9t-2026-10-13.md#finding-2---after-a-sign-in-the-checkpoint-runs-93--of-the-time-and-each-one-costs-more)).
+Removing that leg removes one inbound frame and one outbound frame per rejoin. Of the two drains it
+would have cost, one is gone.
+
+**What a member does when it overhears an empty digest.** It returns at once without reading its
+store (`[HISTORY_DIGEST] ... digest lists nothing - nothing to pull`). An empty list names nothing
+the member could lack. Every member overhears that frame once per rejoined group.
+
+**What stays.** A store holding anything keeps the state key. There, agreement is the likely
+outcome, and a key costs one frame where a digest costs a walk on both sides. A count that cannot be
+read is treated as unknown, never as empty, so it also falls back to the state key, and the failure
+is logged. Pinned by `groupActions.historyProbe.test.ts` and `historyDiffAnswer.overheard.test.ts`.
+
 ### The fourth trigger: an answer that does not reach far enough back
 
 **SHIPPED 2026-08-16.** The other three triggers are things a device notices about ITSELF - a

@@ -111,6 +111,17 @@ audit's checkpoint levers (faster seal, no checkpoint for a receive-only drain, 
 for the duty cycle; batching the history exchange of a rejoin into one drain would remove two of the
 four checkpoints per group.
 
+> **2026-10-14: one leg of each rejoin is gone.** A device whose store is empty for a group now opens
+> with its digest rather than its state key. The responder answers that probe directly, so the
+> `history_digest_request` round trip disappears (send state key, receive request, send digest,
+> receive bundle) and one of the drains per rejoin goes with it
+> ([history-reconciliation](../protocols/history-reconciliation.md#a-device-that-holds-nothing-opens-with-its-digest-not-its-state-key-2026-10-14)).
+>
+> The bundle and the coverage still arrive as separate frames. Skipping the checkpoint for a
+> receive-only drain is the open decision
+> ([open-questions](../open-questions.md)), and it was left untouched. **Owed:** one sign-in on the
+> Mi 9T that counts the checkpoints per rejoined group.
+
 ## Finding 3 - every message bubble resolves its readers' names, visible or not, and re-runs itself
 
 `components/messages/MessageInfoTooltip.svelte:39-55` is mounted by EVERY bubble

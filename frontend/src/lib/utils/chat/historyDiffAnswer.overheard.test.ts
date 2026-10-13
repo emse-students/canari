@@ -66,6 +66,26 @@ describe('pullFromOverheardDigest', () => {
     expect(d.log).toHaveBeenCalledWith(expect.stringContaining('naming 1 id(s) we lack'));
   });
 
+  it('does not read the store for a digest that lists NOTHING - the probe of an empty device', async () => {
+    // After a sign-in a device rejoins every group with nothing stored and opens each exchange with
+    // its (empty) digest; every other member overhears it, once per group.
+    const digest = await buildHistoryDigest([]);
+    const d = deps();
+
+    await pullFromOverheardDigest({
+      groupId: GROUP,
+      holderIdentity: AUTHOR,
+      selfIdentity: SELF,
+      ticket: owedPullTicket(GROUP),
+      digest,
+      deps: d,
+    });
+
+    expect(readHistoryEntries).not.toHaveBeenCalled();
+    expect(sendHistoryPull).not.toHaveBeenCalled();
+    expect(d.log).toHaveBeenCalledWith(expect.stringContaining('lists nothing'));
+  });
+
   it('never ANSWERS the author - what it lacks is the elected responder job', async () => {
     readHistoryEntries.mockResolvedValue([entry('a'), entry('ours-only')]);
     const digest = await buildHistoryDigest([entry('a')]);
