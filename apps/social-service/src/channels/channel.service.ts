@@ -88,6 +88,15 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const SIGNATURE_BASE64_CHARS = 88;
 
 /**
+ * 400 code: a salon row carrying no Graine v2 signature (channel-encryption section 21.8).
+ *
+ * Every client `minClientVersion` admits (`1.0.3`, the G2-5 writer) signs every row it posts, so an
+ * unsigned one is a modified client minting v1 or a process unlocked before the floor rose. Exported
+ * so the tests name the refusal by its code, never by its sentence.
+ */
+export const CHANNEL_SIGNATURE_REQUIRED = 'CHANNEL_SIGNATURE_REQUIRED';
+
+/**
  * THE one rule for who may READ a channel, with no database in it.
  *
  *  - a public channel is readable by every community member;
@@ -3102,7 +3111,7 @@ export class ChannelService {
     }
 
     await this.assertSeedFrame(channel, input);
-    this.assertSignatureShape(channel.id, input);
+    this.assertSigned(channel.id, input);
 
     // A poll is just an encrypted message carrying a label-free descriptor: we
     // store its option IDs/deadline server-side (for tallying + auto-pin) while
@@ -3185,21 +3194,34 @@ export class ChannelService {
   }
 
   /**
-   * Checks the seed frame a message carries (channel-encryption section 19), which the server
-   * passes to the recipients' pushes and NEVER stores.
+   * Accepts a salon row ONLY when it carries a well-formed Graine v2 signature (channel-encryption
+   * section 21.8). An ALLOWLIST of one shape: a signature of 88 base64 characters. Everything else -
+   * absent, null, the wrong length, not base64, not a string - is refused before anything is stored.
    *
-   * The frame is an MLS private message on a key group, opaque here; what the server CAN check is
-   * the one claim it knows the answer to: that `seedGroupId` is this salon's key group - the
-   * private salon's own, the community's otherwise, the same rule as the client's
-   * `scopeForChannel`. A mismatch is a sender whose idea of the salon is stale (a salon made
-   * private since), and its seed went to an audience that is no longer the salon's: refusing is
-   * what makes that visible instead of forwarding it.
+   * The server still cannot VERIFY it (it holds no key); that stays the reader's job. What changed
+   * is that it may now REQUIRE it: since `minClientVersion` reached `1.0.3` (2026-10-11) every
+   * admitted client signs every row it posts - text, poll, reaction, edit, system notice, all through
+   * the one `sealChannelMessage`, which throws before the POST when it holds no signing secret. And
+   * this route has no other caller: DMs, commits, Welcomes and seed frames are MLS on
+   * chat-delivery, and no native path (notification reply, push handler) posts a salon row. So an
+   * unsigned row here is never honest, and it is refused at ERROR, a line that accuses.
    *
-   * Absent on a silent message and on a sender older than section 19; both halves or neither.
+   * It closes the forgery v1 left open on the write side: a modified client minting an unsigned
+   * row under a v1 session another member still holds (21.7, "what it does NOT close").
    */
-  private assertSignatureShape(channelId: string, input: SendChannelMessageDto): void {
+  private assertSigned(channelId: string, input: SendChannelMessageDto): void {
     const { signature } = input;
-    if (signature === undefined) return;
+    if (signature === undefined || signature === null) {
+      this.logger.error(
+        `[CHANNEL_SIGNATURE] REFUSED unsigned row channel=${channelId} sender=${input.senderId.slice(0, 8)} ` +
+          `session=${input.senderSessionId.slice(0, 8)} index=${input.messageIndex} silent=${input.silent === true} ` +
+          `- every client admitted since minClientVersion 1.0.3 signs: a modified client, or a process unlocked before the floor rose`
+      );
+      throw new BadRequestException({
+        code: CHANNEL_SIGNATURE_REQUIRED,
+        message: 'signature is required: every salon row is a Graine v2 row',
+      });
+    }
     if (
       typeof signature !== 'string' ||
       signature.length !== SIGNATURE_BASE64_CHARS ||
@@ -3243,6 +3265,19 @@ export class ChannelService {
     }
   }
 
+  /**
+   * Checks the seed frame a message carries (channel-encryption section 19), which the server
+   * passes to the recipients' pushes and NEVER stores.
+   *
+   * The frame is an MLS private message on a key group, opaque here; what the server CAN check is
+   * the one claim it knows the answer to: that `seedGroupId` is this salon's key group - the
+   * private salon's own, the community's otherwise, the same rule as the client's
+   * `scopeForChannel`. A mismatch is a sender whose idea of the salon is stale (a salon made
+   * private since), and its seed went to an audience that is no longer the salon's: refusing is
+   * what makes that visible instead of forwarding it.
+   *
+   * Absent on a silent message and on a sender older than section 19; both halves or neither.
+   */
   private async assertSeedFrame(channel: Channel, input: SendChannelMessageDto): Promise<void> {
     const { seedFrame, seedGroupId } = input;
     if (seedFrame === undefined && seedGroupId === undefined) return;
@@ -3635,10 +3670,12 @@ export class ChannelService {
          FROM channel_members cm
          JOIN channels ch ON ch."workspaceId" = cm."workspaceId" AND ch.id = ANY($2::uuid[])
         -- The instant after which a message counts, per salon: the later of the member's mark, the
-        -- member's arrival and the tracking floor.
+        -- member's private "cleared" mark (migration 082, "Marquer tout comme lu"), the member's
+        -- arrival and the tracking floor.
         CROSS JOIN LATERAL (
           SELECT GREATEST(
                    COALESCE((cm."readMarks" ->> ch.id::text)::bigint, 0),
+                   COALESCE((cm."clearedMarks" ->> ch.id::text)::bigint, 0),
                    floor(extract(epoch from cm."createdAt") * 1000)::bigint,
                    $3::bigint
                  ) AS since
@@ -3663,6 +3700,117 @@ export class ChannelService {
     const counts: Record<string, number> = {};
     for (const r of rows) counts[r.channelId] = Number(r.n);
     return { asOf, counts };
+  }
+
+  /**
+   * "Marquer tout comme lu" on a community: empties the unread count of every salon of
+   * `workspaceId` the caller may read, up to `upTo`, in ONE statement - and tells nobody but the
+   * caller's own devices.
+   *
+   * NOT THE READ MARK. `readMarks` is also the "Lu par" receipt the salon's other members see, and a
+   * member who clears a badge from a menu has not read anything; the same reasoning refused seeding
+   * marks for {@link listUnreadCounts}. So this raises `clearedMarks` (migration 082), a private
+   * floor `listUnreadCounts` adds to what it skips, and `channel.read` is never published.
+   *
+   * `upTo` is the newest instant the caller's screen had counted (the server clock: a row's
+   * `createdAt`, or the `asOf` of the last count it was given). Each salon's mark is BOUNDED by the
+   * salon's newest row, so a mark can never cover a message that did not exist yet, and by `upTo`, so
+   * a message that landed after the badge the user cleared stays unread. Only ever raised: the merge
+   * takes the greater of the stored value and the new one inside the `SET`, against the row as it is
+   * when the update applies, so two devices clearing at once cannot lower it.
+   *
+   * @returns `at` per salon whose mark moved (absent when nothing moved), for the caller's log.
+   */
+  async clearWorkspaceUnread(
+    workspaceId: string,
+    userId: string,
+    upTo: number
+  ): Promise<{ cleared: Record<string, number> }> {
+    if (!Number.isSafeInteger(upTo) || upTo <= 0) {
+      throw new BadRequestException('upTo must be a positive integer (epoch ms)');
+    }
+    const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
+    if (!member) throw new ForbiddenException('Not a member of this community');
+    const channels = await this.channelRepo.find({ where: { workspaceId } });
+    const readable = channels.filter((c) => this.canAccessChannel(c, member, userId));
+    if (readable.length === 0) {
+      this.logger.debug(
+        `[CHANNEL_CLEAR] nothing to clear workspace=${workspaceId} user=${userId.slice(0, 8)} salons=0`
+      );
+      return { cleared: {} };
+    }
+
+    // `prev` is read in the same statement, before the update, for the answer only: which salons
+    // moved decides who is told, never what is stored. The stored value is the GREATEST computed
+    // against `cm` - the row being updated - so it cannot fall whatever ran concurrently.
+    // TypeORM answers an UPDATE as `[rows, rowCount]`, not as the rows.
+    const [rows]: [{ prev: Record<string, number> | null; next: Record<string, number> | null }[]] =
+      await this.messageRepo.query(
+        `WITH newest AS (
+           SELECT c.id::text AS cid,
+                  (SELECT floor(extract(epoch from max(m."createdAt")) * 1000)::bigint
+                     FROM channel_messages m
+                    WHERE m."channelId" = c.id) AS at
+             FROM unnest($2::uuid[]) AS c(id)
+         ), bound AS (
+           -- LEAST ignores a NULL, so an EMPTY salon must be dropped here, not left to LEAST:
+           -- otherwise its mark became upTo itself, the client's word, and an upTo in the future hid
+           -- every message the salon would receive until then (measured on Postgres, 2026-10-13).
+           SELECT cid, LEAST($3::bigint, at) AS at FROM newest WHERE at IS NOT NULL
+         ), old AS (
+           SELECT "clearedMarks" AS prev FROM channel_members WHERE id = $1
+         )
+         UPDATE channel_members cm
+            SET "clearedMarks" = cm."clearedMarks" || COALESCE((
+                  SELECT jsonb_object_agg(
+                           b.cid,
+                           GREATEST(b.at, COALESCE((cm."clearedMarks" ->> b.cid)::bigint, 0))
+                         )
+                    FROM bound b
+                ), '{}'::jsonb)
+           FROM old
+          WHERE cm.id = $1
+      RETURNING old.prev AS prev, cm."clearedMarks" AS next`,
+        [member.id, readable.map((c) => c.id), upTo]
+      );
+    const prev = rows[0]?.prev ?? {};
+    const next = rows[0]?.next ?? {};
+    const cleared: Record<string, number> = {};
+    for (const c of readable) {
+      const at = Number(next[c.id]);
+      if (Number.isFinite(at) && at > Number(prev[c.id] ?? 0)) cleared[c.id] = at;
+    }
+    const moved = Object.keys(cleared);
+    this.logger.debug(
+      `[CHANNEL_CLEAR] workspace=${workspaceId} user=${userId.slice(0, 8)} upTo=${upTo} salons=${readable.length} moved=${moved.length}`
+    );
+    if (moved.length === 0) return { cleared };
+
+    // THE CALLER'S OWN DEVICES ONLY: the other members learn nothing, which is the point of the
+    // separate mark. One event for the whole community; each device re-reads its counts.
+    await this.redis.publishChannelEvent(
+      'channel.unread.cleared',
+      { workspaceId, userId, cleared },
+      [userId]
+    );
+    // The banners those salons left on the caller's phones go with the badge, exactly as opening
+    // the salon dismisses them (`markChannelRead`). One silent push per salon that moved, sent by
+    // this service rather than asked for by the client salon by salon.
+    // `sendInternalPush` never throws: a refusal or a transport failure is its own warning.
+    if (this.internalSecret) {
+      const byId = new Map(readable.map((c) => [c.id, c]));
+      await Promise.all(
+        moved.map((channelId) =>
+          this.sendInternalPush(userId, byId.get(channelId)?.name ?? '', {
+            type: 'channel_read',
+            channelId,
+            workspaceId,
+            senderId: userId,
+          })
+        )
+      );
+    }
+    return { cleared };
   }
 
   /**

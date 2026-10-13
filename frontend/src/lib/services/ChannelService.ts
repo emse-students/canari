@@ -852,6 +852,29 @@ export class ChannelService {
   }
 
   /**
+   * "Marquer tout comme lu" on a community: ONE request that empties the caller's unread count of
+   * every salon of `workspaceDbId` they may read, up to `upTo` (server clock, epoch ms). The server
+   * moves a private mark, never the read receipt other members see. Throws on a refusal - the caller
+   * owns the toast and the line.
+   *
+   * @returns the salons whose mark moved, `{ [channelId]: at }`.
+   */
+  async clearWorkspaceUnread(workspaceDbId: string, upTo: number): Promise<Record<string, number>> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceDbId)}/unread/clear`,
+      { method: 'POST', body: JSON.stringify({ upTo }) }
+    );
+    await this.handleError(res);
+    const body = (await res.json()) as { cleared?: Record<string, number> };
+    const cleared = body.cleared ?? {};
+    Log.d(
+      'CHANNEL_CLEAR',
+      `community ${workspaceDbId.slice(0, 8)} upTo=${upTo} moved=${Object.keys(cleared).length}`
+    );
+    return cleared;
+  }
+
+  /**
    * How many unread messages each of the caller's salons holds, counted by the server against the
    * caller's read marks - the durable answer a reload or an offline stretch cannot erase. Raw off the
    * wire; `parseSalonUnreadAnswer` decides whether it is a shape worth applying.

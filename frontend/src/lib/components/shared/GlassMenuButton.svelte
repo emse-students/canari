@@ -115,7 +115,6 @@
       anchor: () => anchor,
       alignEnd,
       offset: 8,
-      stayAnchored: true,
     });
   });
 
