@@ -1,3 +1,3 @@
 version: 1.2.6
 
-Un salon sur lequel on clique s'ouvre de nouveau à coup sûr, même juste après le démarrage : plus besoin de redémarrer l'application. Un appui long sur un salon l'ouvre au lieu de rester sans effet. La bulle « écrit… » ne colle plus au champ de saisie, et les barres de messages épinglés et de sondages s'alignent sur l'en-tête. Les notifications retrouvent leur avatar. Les communautés très actives échangent beaucoup moins de données.
+Les messages envoyés dans un salon s'affichent aussitôt. Ouvrir une conversation depuis une notification est bien plus rapide, et le code PIN se vérifie plus vite. Un double appui pour aimer un message n'ouvre plus aussi sa fiche. Les raccourcis des sondages et des épingles mènent au bon message, et un sondage peut être clos. Un salon s'ouvre à coup sûr, même juste après le démarrage. Les petites têtes du « lu » ne clignotent plus.
