@@ -3091,8 +3091,14 @@ Two fixes, each proven by reverting it:
 - **The cause, in the library**: `frontend/patches/svelte-dnd-action@0.9.80.patch` (bun
   `patchedDependencies`) dispatches that click only when the library prevented the `touchstart`. The
   community rail (no delay) keeps it. `Sidebar.tapClickCount.svelte.test.ts` pins one tap = one
-  activation against the REAL library (2 calls without the patch), so a version bump that drops the
-  patch fails there by name. Upstream still has it in 0.9.80, the latest on 2026-10-13.
+  activation against the REAL library (2 calls without the patch; 0 on the rail's avatar if a patch
+  dropped the library's click everywhere). Upstream still has it in 0.9.80, the latest on 2026-10-13.
+- **A version bump drops the patch WITHOUT A WORD**: bun keys the patch to `0.9.80`, applies nothing
+  to any other version, removes the entry from `bun.lock` and `--frozen-lockfile` passes (measured
+  with 0.9.79). `frontend/src/lib/patchedDependencies.test.ts` therefore asserts that every
+  `patchedDependencies` key is the version installed, and its message says to re-create the patch
+  or delete it. `ci.yml`'s frontend filter names `frontend/bun.lock` and `frontend/patches/`, so a
+  lockfile-only bump runs it.
 - **The guard**: only a pointer's click (`isPointerClick`: a `MouseEvent` with `detail >= 1`) is
   judged and consumes the press; a script click passes and leaves it. `pressedClickGuard.test.ts`
   replays the measured sequence.
@@ -3106,7 +3112,7 @@ library's dragged clone, and past the browser's long press (600 ms) no click at 
 | Surface | Acts on | Verdict |
 | --- | --- | --- |
 | Salon list (`Sidebar`, reorderable) | library click on `touchend` | **the defect** - fixed by the patch |
-| Community rail (`Sidebar`) | `onclick`; the library ignores a touch that starts on a button (`value` is set) | one click |
+| Community rail (`Sidebar`) | `onclick`. A touch on the avatar (nearly all of the button) is prevented by the library, whose click is then the only one; a touch on the button itself is skipped by the library (`value` is set) and the browser clicks | one click either way |
 | Conversation list, sidebar scrim, drawer close | `onclick` | one click |
 | `MentionDropdown`, `UserAutocomplete`, `CoOwnerPicker` | `mousedown` (beats the input's blur) | click goes to the common ancestor |
 | `ReactorsPanel` | closes on a window `pointerdown` outside it | the tapped element was visible; its click is its own |

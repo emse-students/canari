@@ -136,4 +136,19 @@ describe('one tap on a community of the rail', () => {
     tap(document.querySelector('button[title="Bureau"]')!);
     expect(onSelectCommunity).toHaveBeenCalledExactlyOnceWith('w2');
   });
+
+  // A finger lands on the AVATAR, not on the button: the button is filled by it. The library skips a
+  // touch only when its target has a `value` (the button itself), so on the avatar it prevents the
+  // `touchstart`, the browser sends no click, and the library's click is the ONLY one - the path the
+  // patch must keep.
+  it('selects the community exactly once when the finger lands on its avatar', () => {
+    const { onSelectCommunity } = mountList(true);
+    const avatar = document.querySelector('button[title="Bureau"]')!.firstElementChild!;
+    expect(avatar).not.toBeNull();
+    const start = touch(avatar, 'touchstart');
+    expect(start.defaultPrevented).toBe(true);
+    touch(avatar, 'touchend');
+    flushSync();
+    expect(onSelectCommunity).toHaveBeenCalledExactlyOnceWith('w2');
+  });
 });
