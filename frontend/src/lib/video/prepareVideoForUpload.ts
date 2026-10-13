@@ -8,8 +8,8 @@
  *   segment by segment (`segmentedMediaStream.ts`) and an old client still plays it whole;
  * - **H.264 + AAC**, the one pair both WebViews decode AND both encode in hardware (measured on the
  *   Mi 9T's WebView 152 and the iPhone 12's WKWebView, 2026-10-01). The video is always re-encoded;
- *   an AAC-LC audio track is COPIED, since it already is the output's format (`chooseAudioRoute`),
- *   and only any other audio is encoded;
+ *   an AAC-LC audio track is COPIED when it costs no more than the encode would or the engine has
+ *   no AAC encoder (`chooseAudioRoute`); every other track is encoded;
  * - **720p on its short side, ~2.5 Mb/s, at most 30 fps**, rotation baked into the frames - the
  *   numbers live in `videoEncodingPlan.ts`;
  * - and a `File` whose `type` NAMES ITS CODECS (`video/mp4; codecs="avc1...,mp4a.40.2"`), which is
@@ -189,18 +189,38 @@ export async function prepareVideoForUpload(
       );
     }
 
-    const audioRoute = chooseAudioRoute(
-      audioTrack ? await audioTrack.getCodecParameterString() : null,
-      removeAudio
-    );
+    // An AAC-LC source is measured, and the engine asked whether it could encode AAC at the plan's
+    // settings: the two facts chooseAudioRoute decides a copy on.
+    const codecString =
+      audioTrack && !removeAudio ? await audioTrack.getCodecParameterString() : null;
+    const isAacLc = codecString?.toLowerCase() === AAC_LC_CODEC_STRING;
+    const sourceAudioBitrate =
+      isAacLc && audioTrack ? (await audioTrack.computePacketStats()).averageBitrate : null;
+    const canEncodeAac =
+      isAacLc && audioTrack
+        ? await mb.canEncodeAudio('aac', {
+            numberOfChannels: await audioTrack.getNumberOfChannels(),
+            sampleRate: await audioTrack.getSampleRate(),
+            quality: new mb.Quality({ bitrate: AUDIO_BITRATE }),
+          })
+        : null;
+    const audioRoute = chooseAudioRoute({
+      codecString,
+      removeAudio,
+      sourceBitrate: sourceAudioBitrate,
+      canEncodeAac,
+    });
     // A copied track costs what it carries, measured over every packet; an encoded one, the plan's.
     const audioBitrate =
-      audioRoute === 'copy' && audioTrack
-        ? (await audioTrack.computePacketStats()).averageBitrate
+      audioRoute === 'copy'
+        ? (sourceAudioBitrate ?? 0)
         : audioRoute === 'encode'
           ? AUDIO_BITRATE
           : 0;
-    console.debug(`[video-prep] audio: ${audioRoute}, ${Math.round(audioBitrate / 1000)} kb/s`);
+    console.debug(
+      `[video-prep] audio: ${audioRoute}, ${Math.round(audioBitrate / 1000)} kb/s` +
+        (canEncodeAac !== null ? `, AAC encoder ${canEncodeAac ? 'present' : 'absent'}` : '')
+    );
 
     const stats = await videoTrack.computePacketStats(120);
     const plan = planVideoEncoding(
@@ -318,24 +338,36 @@ export async function prepareVideoForUpload(
 /** The codec string of AAC-LC, the one audio format the output carries. */
 export const AAC_LC_CODEC_STRING = 'mp4a.40.2';
 
+/** The facts the audio route is chosen on, all read from the source and the engine. */
+export interface AudioRouteFacts {
+  /** The source track's codec parameter string (`mp4a.40.2`, `opus`...), `null` with no track. */
+  codecString: string | null;
+  /** The member removed the sound. */
+  removeAudio: boolean;
+  /** An AAC-LC track's measured average bitrate in bits per second; `null` for any other track. */
+  sourceBitrate: number | null;
+  /** Whether this engine can encode AAC at the plan's settings; `null` when it was not asked. */
+  canEncodeAac: boolean | null;
+}
+
 /**
- * What happens to the source's audio track:
+ * What happens to the source's audio track - a choice made on CAPABILITY and COST, never on the
+ * browser's name, and not a fallback: both routes are primary paths, each where its facts hold.
  *
  * - `none` - there is none, or the member removed the sound;
- * - `copy` - it is ALREADY AAC-LC, the output's own audio format, so its packets go into the MP4
- *   as they are. No encoder is involved, which is what lets an engine with no AAC encoder (Firefox
- *   has none in WebCodecs) prepare an MP4 from a phone or camera, and no generation is lost;
- * - `encode` - any other codec (the Android recorder's Opus, HE-AAC, PCM...) is encoded to AAC-LC.
- *
- * @param codecString The source track's codec parameter string (`mp4a.40.2`, `opus`...), or `null`
- *                    when there is no audio track.
+ * - `copy` - it is ALREADY AAC-LC, the output's own audio format, AND either it costs no more than
+ *   the {@link AUDIO_BITRATE} an encode would ask for, or this engine has no AAC encoder at all
+ *   (Firefox's WebCodecs has none). Its packets go into the MP4 as they are, no generation lost;
+ * - `encode` - any other codec (the Android recorder's Opus, HE-AAC, PCM...), or an AAC-LC track
+ *   dearer than {@link AUDIO_BITRATE} on an engine that CAN encode AAC: re-encoding it gives the
+ *   video the budget a 320 kb/s track would otherwise take from a long clip.
  */
-export function chooseAudioRoute(
-  codecString: string | null,
-  removeAudio: boolean
-): 'none' | 'copy' | 'encode' {
+export function chooseAudioRoute(facts: AudioRouteFacts): 'none' | 'copy' | 'encode' {
+  const { codecString, removeAudio, sourceBitrate, canEncodeAac } = facts;
   if (codecString === null || removeAudio) return 'none';
-  return codecString.toLowerCase() === AAC_LC_CODEC_STRING ? 'copy' : 'encode';
+  if (codecString.toLowerCase() !== AAC_LC_CODEC_STRING) return 'encode';
+  if (sourceBitrate !== null && sourceBitrate <= AUDIO_BITRATE) return 'copy';
+  return canEncodeAac === true ? 'encode' : 'copy';
 }
 
 /**

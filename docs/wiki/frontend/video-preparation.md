@@ -2,8 +2,8 @@
 
 **Every video leaves the device as ONE format, made ON the device**: a fragmented MP4, H.264 + AAC,
 720p on its short side at ~2.5 Mb/s, at most 30 fps, rotation baked into the frames, in a `File`
-whose `type` names its codecs. The video is always re-encoded; an AAC-LC audio track is COPIED,
-since it already is the output's audio ([why](#an-aac-lc-track-is-copied-and-a-firefox-avcc-is-rebuilt-2026-10-14)). The server transcodes nothing and draws no thumbnail - the user's
+whose `type` names its codecs. The video is always re-encoded; an AAC-LC audio track is COPIED
+when it costs no more than an encode would, or when the engine has no AAC encoder ([why](#an-aac-lc-track-is-copied-and-a-firefox-avcc-is-rebuilt-2026-10-14)). The server transcodes nothing and draws no thumbnail - the user's
 decision C3, 2026-09-29 (*"il faut que la charge serveur soit minimale"*), recorded on
 [backlog](../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken).
 
@@ -46,7 +46,7 @@ and the exact server cost C3 refused.
 | Short side | 720 px, never scaled up | C3's 720p, whichever way the phone was held |
 | Video bitrate | 2.5 Mb/s, LOWERED to fit `maxBytes` over the duration, floor 400 kb/s | C3: ~28 MB for 90 s; a longer video fits by losing bitrate, not by being cut |
 | Budget share | 90 % of `maxBytes` asked of the encoder | the fragments' boxes and a variable-rate encoder's overshoot |
-| Audio | AAC-LC (`mp4a.40.2`) source: copied, budgeted at its measured bitrate; any other: AAC, 128 kb/s | an encode would need an AAC encoder Firefox does not have |
+| Audio | AAC, 128 kb/s; an AAC-LC (`mp4a.40.2`) source at most 128 kb/s, or on an engine with no AAC encoder, is COPIED and budgeted at its measured bitrate | a copy loses nothing; a dearer track is re-encoded where it can be, so a long clip's video keeps its budget |
 | Frame rate | resampled to 30 when the source is over 30.5 | a 60 fps gallery clip costs twice for no reader |
 | Key frames | every 2 s | every fragment starts on one: the seek granularity |
 
@@ -143,11 +143,15 @@ on `forceTranscode`, on `quality`, on a sample rate or channel count that differ
 filters the candidates to `aac`, and Firefox's WebCodecs has no AAC encoder
 (`AudioEncoder.isConfigSupported({codec: 'mp4a.40.2'})` is `false`, Opus is `true`; Chrome 154 has
 both), so no codec was left and the track was discarded. The AAC was never the problem: MP4 carries
-it as is. **Fix**: `chooseAudioRoute` reads the source track's codec string - `mp4a.40.2` is
-COPIED (options: the codec alone), anything else is encoded to AAC as before, and the plan budgets a
-copied track at its own measured bitrate. Copying is the primary path on every engine (no generation
-lost, no encoder work), not a Firefox branch. HE-AAC (`mp4a.40.5`) is encoded, because the output
-names AAC-LC.
+it as is. **Fix**: `chooseAudioRoute` chooses the route from FACTS read off the source and the
+engine - its codec string, its measured bitrate, and mediabunny's `canEncodeAudio('aac', ...)` probe
+at the plan's settings - never from the browser's name. An `mp4a.40.2` track is COPIED (options: the
+codec alone) when it costs at most `AUDIO_BITRATE` (128 kb/s), or when the engine cannot encode AAC;
+it is re-encoded only when it is dearer AND an encoder exists, so a 320 kb/s track does not take
+budget from a long clip's video on Chrome. Anything else is encoded to AAC as before; HE-AAC
+(`mp4a.40.5`) too, because the output names AAC-LC. A copied track is budgeted at its own measured
+bitrate. **This is not a fallback**: each route is a primary path chosen before any work, on facts
+that decide it, and neither is reached by another one failing.
 
 **Cause two, Firefox's, found once cause one was gone**: Firefox's H.264 encoder (Media Foundation;
 its SEI says `Microsoft`) hands back an `avcC` whose SPS and PPS each carry their first byte twice
@@ -170,11 +174,11 @@ itself; the member's own file and a synthetic AV1 + AAC-LC 53.8 MB, 1080p, 49 s 
 | --- | --- | --- | --- |
 | member's file -> Firefox | `unsupported`, `no_encodable_target_codec` | 17.0 s, 15.9 MB, 1280x720, `avc1.64001f, mp4a.40.2` | Chrome: yes / yes / 0-49.13 s |
 | stand-in -> Firefox | same refusal | 17.1 s, 14.1 MB, audio bytes identical to the source's | Chrome and Firefox: yes / yes / yes |
-| stand-in -> Chrome | 3.1 s, 17.0 MB (AAC re-encoded) | 2.9 s, 17.4 MB (AAC copied) | Chrome and Firefox: yes / yes / yes |
+| stand-in -> Chrome | 3.1 s, 17.0 MB (AAC re-encoded) | 2.8 s, 17.0 MB: 189 kb/s is dearer than 128 and Chrome has the encoder, so it is re-encoded, as before | Chrome and Firefox: yes / yes / yes |
 
 AV1 decodes in both engines through WebCodecs (`VideoDecoder.isConfigSupported` `true`, and the
 conversions above). The phones were NOT re-read: they encode AAC, so their only change is that an
-AAC-LC source is copied rather than re-encoded.
+AAC-LC source of at most 128 kb/s is copied rather than re-encoded.
 
 **What stays refused on Firefox**: a source whose audio is NOT AAC-LC (an Opus WebM, say) - it still
 needs an AAC encoder Firefox lacks. Writing Opus into the MP4 would be a second output format the
