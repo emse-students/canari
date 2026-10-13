@@ -353,7 +353,7 @@ it.** Gains are not additive: 1 and 2 overlap.
 | **F5** (REFUTED: the verdict is not late; see the warm bullet above) | **Warm: reconnect on the native resume, not on the late JS foreground verdict.** | **~0.5 s** off a warm reply's acceptance (socket at ~0.3 s instead of ~0.8 s) | **low-medium**: the pause/resume symmetry and the breaker rules ([auth](modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it)) |
 | **F6** | **Pane -> history**: instrument the selection (local page read vs catch-up), then draw the cached page in the same frame as the pane. | **~0.3-0.6 s**, if the rows wait on the network | **low**; measure first - the rows sometimes PRECEDE the catch-up line |
 | **F7** | **Prewarm on push receipt**: when the FCM service is woken for a message, initialise the WebView provider so a tap does not pay it. | ~**0.2-0.3 s** of block 2 | **medium**: memory and battery on every push, and Android may reclaim it anyway |
-| **F8** | **Reply acceptance**: start the flush while the durable outbox write completes, and keep the post-send KeyPackage publish off the send's lane. | ~**0.2-0.4 s** | **high**: durable-before-send is a rule of the outbox ([offline-and-weak-network](offline-and-weak-network.md)); lowest priority |
+| **F8** (KeyPackage half REFUTED 2026-10-13: the publication is not on the send's lane, [measured](#the-21-s-reply-ack-waits-on-the-conversations-own-catch-up-not-on-the-keypackage-2026-10-13)) | **Reply acceptance**: start the flush while the durable outbox write completes, and keep the post-send KeyPackage publish off the send's lane. | ~**0.2-0.4 s** | **high**: durable-before-send is a rule of the outbox ([offline-and-weak-network](offline-and-weak-network.md)); lowest priority |
 
 **Not in the plan, deliberately**: the bundle's parse time (block 2's ~450 ms) - [cold-start](cold-start.md)
 already refuted chunking as the lever twice, and the JavaScript itself is the cost; and the MLS load,
@@ -567,8 +567,10 @@ that window.
 
 **~0.47 s off the killed open, and the message now follows the composer by ~0.4 s instead of ~1.0 s**;
 no run of the fix overlaps the baseline's range. The warm path never had the defect (its rows exist).
-One killed run's reply ack took 2.1 s: the flush waited behind the post-login KeyPackage publication,
-the F8 item, unrelated to this change.
+One killed run's reply ack took 2.1 s. It was read at the time as the flush waiting behind the
+post-login KeyPackage publication. That reading is REFUTED: the send waited on the conversation's own
+catch-up, not on the KeyPackage
+([below](#the-21-s-reply-ack-waits-on-the-conversations-own-catch-up-not-on-the-keypackage-2026-10-13)).
 
 ### F13 - drawing only the newest screenful on entry: measured, no gain, not shipped
 
@@ -582,6 +584,52 @@ check before trying again: the bench DM's bubbles are one line, so 24 groups may
 and the fill loop widens back towards the old size, paying an extra layout pass on the way. The
 patch is not kept; the two lines it changes are `INITIAL_RENDER_GROUPS` and the fill step in
 `ChatArea.svelte`.
+
+### The 2.1 s reply ack waits on the conversation's own catch-up, not on the KeyPackage (2026-10-13)
+
+**The suspect is cleared.** A throwaway `[LATENCY]` build (Mi 9T, local release APK against dev) timed
+every step of the send.
+
+Five killed opens were run, with the reply sent 4.4-8.6 s after the tap. In four of them the send
+landed before or inside the post-login KeyPackage round (`kpRound` 323-550 ms), and in the fifth it
+landed during the 50 serial `key_package_a_clef_privee` checks that follow it.
+
+| ms, one send | queue idle | `isGroupActive` | catch-up gate | epoch barrier | encrypt | POST | click -> `sent` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| n=5 | 0 | 5-41 | 20-30 | 1 | 8-29 | 193-289 | **543-836** |
+
+No step waits on the KeyPackage work: the publication's mutex holds are each short, and the send
+interleaves with them. What remains is the ~200-500 ms between the click and the flush (outbox write,
+then the drain's barriers) and one POST.
+
+**Where the slow acks went instead.** All six past acks between 1 and 2.1 s (`f1` 1101 ms,
+`screen` 1032, 1128, 1227, 1453, 2061 ms) were re-read line by line. A seventh took 27 s on a link
+the client flagged slow, which is a different question. In every one, the flush starts and then
+catch-up work on the same conversation happens before `sent`:
+
+- `[CATCHUP] batch history ... primed`
+- `Bulk ingest done`
+- in the 2.1 s run, a `conversations restored: re-fetching ... absent-conversation` re-fetch and a
+  pending drain
+- in that same run, a link the client itself flagged slow (`latency floor 300 ms`)
+
+The KeyPackage line lands in the same second only because it is in that same second of the login.
+
+**That wait is owed, and the code says why.** `sendMessage` waits on `waitForCatchUpIdle` before it
+encrypts. A catch-up applies the conversation's commits, so a message encrypted before it ends would
+carry an epoch the server and every member have moved past. On native the sequential decrypt session
+holds the MLS mutex for its whole life, so the encrypt would wait on that mutex anyway. On web a send
+inside the window was measured lost to the state swap (`beginCatchUp`'s doc, MSG-1b).
+
+The gate is global, so it also holds sends to OTHER conversations while one catches up. Scoping it
+per group would help only that case, which no slow run showed. It is not built.
+
+**Not measured.** The slow case itself was not reproduced on the instrumented build. Those runs need
+gamma's message to reach the phone, and after the bench app was reinstalled (a new device) gamma's
+tab and the phone no longer read each other in the bench DM. The attribution above therefore rests on
+the order of log lines from the uninstrumented runs, not on the `[LATENCY] send catchUpGate` line,
+which logs the conversations open at entry. Re-run `cycle.mjs` with inbound traffic before reading
+that line as settled.
 
 ### What is left after F9 to F13, ranked by evidence (2026-10-12)
 
