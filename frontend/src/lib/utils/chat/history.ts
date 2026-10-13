@@ -310,7 +310,10 @@ export function hasHistoryFrameBeenConsumed(
  * A replay's marks deliberately do NOT drain on their own: they may only become durable once the
  * ratchet advance that justifies them has been checkpointed, so they wait for a checkpoint to say so.
  */
-const pendingReplayMarks = new Map<string, { userId: string; groupId: string }>();
+const pendingReplayMarks = new Map<string, { userId: string; groupId: string; seq: number }>();
+
+/** Bumped on every replay mark, so a checkpoint can tell whether a group was marked again since. */
+let replayMarkSeq = 0;
 
 /**
  * Declares that the replay has marked something for this group that is not durable yet.
@@ -321,7 +324,50 @@ const pendingReplayMarks = new Map<string, { userId: string; groupId: string }>(
  */
 function noteReplayMarksPending(userId: string, groupId: string): void {
   if (!userId || !groupId) return;
-  pendingReplayMarks.set(seenHistoryKey(userId, groupId), { userId, groupId });
+  pendingReplayMarks.set(seenHistoryKey(userId, groupId), {
+    userId,
+    groupId,
+    seq: ++replayMarkSeq,
+  });
+}
+
+/**
+ * The replay marks a checkpoint may declare durable: each pending group's marks AS THEY STOOD when
+ * the checkpoint started, never as they stand when it lands. Opaque - only
+ * {@link commitPendingHistoryMarks} reads it.
+ */
+export interface PendingHistoryMarksSnapshot {
+  readonly userId: string;
+  readonly groups: ReadonlyArray<{
+    key: string;
+    groupId: string;
+    seq: number;
+    marks: Set<string>;
+  }>;
+}
+
+/**
+ * Captures what {@link commitPendingHistoryMarks} may declare durable, and MUST be taken BEFORE the
+ * checkpoint's write starts - the same pairing as `snapshotEmitted` for the send ledger.
+ *
+ * Every mark in it follows a decrypt that completed before the checkpoint was asked for, so the
+ * state the checkpoint exports holds its ratchet advance. A mark made AFTER this call does not have
+ * that guarantee: the native checkpoint releases the manager once it has exported (2026-10-13), and
+ * the web one has always sealed in a worker, so a replay page can decrypt and mark while the seal
+ * and the write are still running - an advance the file being written does not hold.
+ *
+ * @param userId this device's account - marks for other accounts are never captured
+ */
+export function snapshotPendingHistoryMarks(userId: string): PendingHistoryMarksSnapshot {
+  const groups: Array<PendingHistoryMarksSnapshot['groups'][number]> = [];
+  if (!userId) return { userId, groups };
+  for (const [key, entry] of pendingReplayMarks) {
+    if (entry.userId !== userId) continue;
+    const set = seenCache.get(key);
+    if (!set) continue;
+    groups.push({ key, groupId: entry.groupId, seq: entry.seq, marks: new Set(set) });
+  }
+  return { userId, groups };
 }
 
 /**
@@ -360,16 +406,28 @@ function noteReplayMarksPending(userId: string, groupId: string): void {
  * pointless reconcile ask. Only the second is survivable, so the commit must follow the write and
  * cannot precede it. Shrinking the window is the fix; inverting it would not be.
  *
- * @param userId this device's account - marks for other accounts are never touched
+ * ## Only the marks that stood when the checkpoint STARTED
+ *
+ * It writes what {@link snapshotPendingHistoryMarks} captured before the write, not the live set: a
+ * page decrypted while the seal ran is marked in a set whose ratchet advance the file does not hold,
+ * and declaring it here would be the unsurvivable direction above. A group marked again since the
+ * snapshot is written as the snapshot had it and STAYS pending, so the next checkpoint, or the
+ * walk's own thunk, carries the rest.
+ *
+ * @param snapshot taken by {@link snapshotPendingHistoryMarks} before the checkpoint's write
  */
-export function commitPendingHistoryMarks(userId: string): void {
-  if (!userId || pendingReplayMarks.size === 0) return;
-  const due = [...pendingReplayMarks.values()].filter((e) => e.userId === userId);
-  for (const entry of due) {
-    const key = seenHistoryKey(entry.userId, entry.groupId);
-    const set = seenCache.get(key);
-    if (set) saveSeenCipherHashes(entry.userId, entry.groupId, set);
-    pendingReplayMarks.delete(key);
+export function commitPendingHistoryMarks(snapshot: PendingHistoryMarksSnapshot): void {
+  for (const group of snapshot.groups) {
+    const entry = pendingReplayMarks.get(group.key);
+    // Gone: a later checkpoint or the thunk has written a newer set already, so this one is stale.
+    if (!entry) continue;
+    if (entry.seq === group.seq) {
+      const set = seenCache.get(group.key);
+      saveSeenCipherHashes(snapshot.userId, group.groupId, set ?? group.marks);
+      pendingReplayMarks.delete(group.key);
+      continue;
+    }
+    saveSeenCipherHashes(snapshot.userId, group.groupId, group.marks);
   }
 }
 

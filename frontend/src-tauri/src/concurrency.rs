@@ -18,6 +18,74 @@ pub(crate) fn mls_bin_write_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// Process-global lock ORDERING the foreground engine's own checkpoints: held from before the export
+/// until `mls.bin` is written, by every foreground path that writes the file from the live manager
+/// or reads it into the live manager.
+///
+/// **IT EXISTS BECAUSE THE MANAGER LOCK NO LONGER SPANS THE WRITE** (see [`checkpoint_live_manager`]).
+/// While it did, the manager mutex gave two guarantees for free, and both must survive its release:
+///
+/// - **An older checkpoint never lands over a newer one.** Two checkpoints export in the order they
+///   take this lock and write before releasing it, so the file only ever moves forward.
+/// - **A resume reload never reads a file a checkpoint is about to replace.** The export clears
+///   `has_unsaved_ratchet_advance`, so between the export and the write the live manager says it is
+///   NOT ahead of a file that is still behind it. `recharger_mls_au_resume` takes this lock first,
+///   so it waits for the write and then reads it.
+///
+/// Lock order: THIS, then the manager mutex, then [`mls_bin_write_lock`]. Background JNI engines
+/// never take it: they are fenced by [`ForegroundCritical`] and the deadline, exactly as before.
+pub(crate) fn foreground_checkpoint_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Checkpoints the live manager, holding the manager lock ONLY for the export, and returns the
+/// sealed length.
+///
+/// **THE MANAGER LOCK USED TO SPAN EXPORT + SEAL + WRITE, AND ON ANDROID THAT FROZE THE SCREEN.** A
+/// synchronous command (`envoyer_message_bytes`, `confirmer_commit`) runs inside the WebView's
+/// JavaScript bridge call, so waiting for this lock blocked the JS thread itself: 1.6-3.2 s per call,
+/// 21.8 s of a 38.9 s profile on the Mi 9T (debug build, 2026-10-13 - see
+/// `docs/wiki/frontend/community-open-slowness-mi9t-2026-10-13.md`). Only the export reads the
+/// state; the seal and the write work on the exported copy, so the lock is released between them.
+///
+/// What the release does NOT change: the caller still resolves only once the file is written (the
+/// durability contract of `persistState`), the write is still the atomic tmp + rename under
+/// [`mls_bin_write_lock`], and a mutation landing after the export is simply not in this snapshot -
+/// its own dirty bit (`invalidate` / `invalidate_ratchet`) is set AFTER the export cleared it, so
+/// the next checkpoint and the resume guard both see it. Ordering is [`foreground_checkpoint_lock`]'s.
+pub(crate) fn checkpoint_live_manager(
+    manager_state: &Mutex<Option<mls_core::MlsManager>>,
+    key: &[u8; 32],
+    write: impl FnOnce(&[u8]) -> Result<(), String>,
+) -> Result<usize, String> {
+    let _ordered = foreground_checkpoint_lock()
+        .lock()
+        .map_err(|_| "foreground checkpoint lock poisoned".to_string())?;
+    let started = std::time::Instant::now();
+    let plain = {
+        let lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_ref()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        manager.save_state().map_err(|e| e.to_string())?
+    };
+    let exported = started.elapsed();
+    let sealed = mls_core::MlsManager::encrypt_state_blob_with_key(&plain, key)
+        .map_err(|e| e.to_string())?;
+    drop(plain);
+    write(&sealed)?;
+    log::debug!(
+        "[MLS] checkpoint: manager lock held {} ms (export), seal + write {} ms off it, {} bytes",
+        exported.as_millis(),
+        started.elapsed().saturating_sub(exported).as_millis(),
+        sealed.len()
+    );
+    Ok(sealed.len())
+}
+
 /// Deadline (ms since epoch) until which the foreground is considered active. While
 /// `now < deadline`, background JNI writes GIVE UP rather than overwrite the state the foreground
 /// holds in memory and has not reloaded yet. Refreshed by heartbeat while the WebView is visible;
@@ -233,6 +301,151 @@ mod tests {
         background_write_mls_bin(&path, b"background state")
             .expect("allowed once the checkpoint ends");
         assert_eq!(std::fs::read(&path).unwrap(), b"background state");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    const CKPT_KEY: [u8; 32] = [7u8; 32];
+
+    /// A live manager holding one group, as the commands see it.
+    fn live_manager(user: &str) -> std::sync::Arc<Mutex<Option<mls_core::MlsManager>>> {
+        let mut manager = mls_core::MlsManager::load_or_create(user, "d1", None).unwrap();
+        manager.create_group(format!("g-{user}")).unwrap();
+        std::sync::Arc::new(Mutex::new(Some(manager)))
+    }
+
+    /// Runs a checkpoint on its own thread whose write STALLS until released, and returns once it is
+    /// inside the write: the export is done, the seal is done, the file is not written yet.
+    fn checkpoint_stalled_in_write(
+        manager: std::sync::Arc<Mutex<Option<mls_core::MlsManager>>>,
+        path: std::path::PathBuf,
+        written: std::sync::mpsc::Sender<&'static str>,
+    ) -> (
+        std::sync::mpsc::Sender<()>,
+        std::thread::JoinHandle<Result<usize, String>>,
+    ) {
+        let (in_write_tx, in_write_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || {
+            checkpoint_live_manager(&manager, &CKPT_KEY, |sealed| {
+                in_write_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                std::fs::write(&path, sealed).map_err(|e| e.to_string())?;
+                written.send("older").unwrap();
+                Ok(())
+            })
+        });
+        in_write_rx
+            .recv()
+            .expect("the checkpoint reached its write");
+        (release_tx, handle)
+    }
+
+    /// THE FREEZE OF 2026-10-13, AS THE PROPERTY THAT REMOVES IT: while a checkpoint seals and
+    /// writes, the manager is free, so a synchronous command (a send, a commit, `groupe_actif`) runs
+    /// at once instead of holding the WebView's JavaScript thread for the rest of the checkpoint.
+    #[test]
+    fn the_manager_lock_is_free_while_a_checkpoint_seals_and_writes() {
+        let _s = serialise();
+        let path =
+            std::env::temp_dir().join(format!("canari-ckpt-free-{}.bin", std::process::id()));
+        let manager = live_manager("u-ckpt-free");
+        let (written_tx, _written_rx) = std::sync::mpsc::channel();
+        let (release, handle) =
+            checkpoint_stalled_in_write(manager.clone(), path.clone(), written_tx);
+
+        {
+            let mut guard = manager.try_lock().expect(
+                "the manager lock must be free once the export is done - holding it across the seal \
+                 and the write is what froze the Mi 9T for 1.6-3.2 s per synchronous command",
+            );
+            let live = guard.as_mut().unwrap();
+            assert!(live.is_group_active("g-u-ckpt-free").unwrap());
+            live.create_group("g-created-mid-checkpoint".into())
+                .unwrap();
+        }
+
+        release.send(()).unwrap();
+        handle.join().unwrap().expect("the checkpoint completes");
+        let on_disk = mls_core::MlsManager::load_with_key(
+            "u-ckpt-free",
+            "d1",
+            Some(std::fs::read(&path).unwrap()),
+            &CKPT_KEY,
+        )
+        .unwrap();
+        assert!(
+            on_disk
+                .get_known_groups()
+                .contains(&"g-u-ckpt-free".to_string()),
+            "the file holds the exported state"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// WRITER ORDER: a checkpoint started while an older one is still writing must not export until
+    /// the older one has written, so the file only moves forward. Without the ordering lock the
+    /// newer checkpoint writes first and the older, slower one lands over it - erasing, here, a group
+    /// created in between (in production: a mint's fifty private bundles, or a ratchet advance).
+    ///
+    /// The bounded wait only ever makes the BROKEN version pass by accident on a starved machine;
+    /// with the ordering in place the newer checkpoint cannot write at all until released, so no
+    /// timing can fail the correct code.
+    #[test]
+    fn an_older_checkpoint_never_lands_over_a_newer_one() {
+        let _s = serialise();
+        let path =
+            std::env::temp_dir().join(format!("canari-ckpt-order-{}.bin", std::process::id()));
+        let manager = live_manager("u-ckpt-order");
+        let (written_tx, written_rx) = std::sync::mpsc::channel();
+        let (release_older, older) =
+            checkpoint_stalled_in_write(manager.clone(), path.clone(), written_tx.clone());
+
+        // A mutation the older checkpoint did not export.
+        manager
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .create_group("g-after-the-older-export".into())
+            .unwrap();
+
+        let newer = {
+            let manager = manager.clone();
+            let path = path.clone();
+            std::thread::spawn(move || {
+                checkpoint_live_manager(&manager, &CKPT_KEY, |sealed| {
+                    std::fs::write(&path, sealed).map_err(|e| e.to_string())?;
+                    written_tx.send("newer").unwrap();
+                    Ok(())
+                })
+            })
+        };
+        assert!(
+            written_rx
+                .recv_timeout(std::time::Duration::from_millis(500))
+                .is_err(),
+            "the newer checkpoint wrote while the older one was still in flight"
+        );
+
+        release_older.send(()).unwrap();
+        older.join().unwrap().unwrap();
+        newer.join().unwrap().unwrap();
+        let order: Vec<_> = written_rx.try_iter().collect();
+        assert_eq!(order, vec!["older", "newer"]);
+
+        let on_disk = mls_core::MlsManager::load_with_key(
+            "u-ckpt-order",
+            "d1",
+            Some(std::fs::read(&path).unwrap()),
+            &CKPT_KEY,
+        )
+        .unwrap();
+        assert!(
+            on_disk
+                .get_known_groups()
+                .contains(&"g-after-the-older-export".to_string()),
+            "the file must hold the NEWER export, mutation included"
+        );
         let _ = std::fs::remove_file(&path);
     }
 }

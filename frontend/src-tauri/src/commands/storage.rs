@@ -1,6 +1,8 @@
 //! Storage Tauri commands: persistence, reload, heartbeat, flags.
 
-use crate::concurrency::{mark_foreground_active, mls_bin_write_lock, write_mls_state_blob};
+use crate::concurrency::{
+    foreground_checkpoint_lock, mark_foreground_active, mls_bin_write_lock, write_mls_state_blob,
+};
 use crate::state::AppState;
 use mls_core::MlsManager;
 use tauri::Manager;
@@ -90,6 +92,15 @@ pub(crate) async fn recharger_mls_au_resume(
         // ~600 ms a 10 MB `mls.bin` takes to load, where before it was unavailable only for the
         // install. That is not a regression to be minimised: an MLS mutation running against a
         // manager that is about to be replaced is the defect, so excluding it is the fix.
+        //
+        // AND THE CHECKPOINT ORDER BEFORE BOTH (2026-10-13). A checkpoint now releases the manager
+        // once it has exported, and the export clears `has_unsaved_ratchet_advance`: between that
+        // export and its write, the live manager says it is not ahead of a file that is still
+        // behind it. Waiting for the checkpoint's own lock is what keeps this read after its write
+        // (`foreground_checkpoint_lock`, which also fixes the order of the three locks).
+        let _ordered = foreground_checkpoint_lock()
+            .lock()
+            .map_err(|_| "foreground checkpoint lock poisoned".to_string())?;
         let mut live = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;

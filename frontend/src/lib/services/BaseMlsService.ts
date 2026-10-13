@@ -103,7 +103,11 @@ import type {
 } from '$lib/mls-client/IMlsService';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { commitPendingHistoryMarks, noteFrameConsumed } from '$lib/utils/chat/history';
+import {
+  commitPendingHistoryMarks,
+  noteFrameConsumed,
+  snapshotPendingHistoryMarks,
+} from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits } from '$lib/mls-client/commitAdmits';
@@ -2998,6 +3002,9 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async persistCheckpoint(): Promise<void> {
     const emitted = snapshotEmitted(this.userId);
+    // The replay marks are captured BEFORE the write for the same reason as `emitted`: a page
+    // decrypted while the seal runs is marked in memory, and this write does not hold its advance.
+    const replayMarks = snapshotPendingHistoryMarks(this.userId);
     await this.writeCheckpoint(this.currentDeviceKeyB64);
     commitPersisted(this.userId, emitted);
     // TWO LEDGERS, ONE WRITE, AND THE SECOND ONE WAS BOUND TO THE WRONG EVENT UNTIL 2026-09-08.
@@ -3012,7 +3019,7 @@ export abstract class BaseMlsService implements IMlsService {
     //
     // AFTER the write, never before, for the reason spelt out on `commitPendingHistoryMarks`: the two
     // orderings are not symmetric, and only "ratchet ahead of ledger" is survivable.
-    commitPendingHistoryMarks(this.userId);
+    commitPendingHistoryMarks(replayMarks);
   }
 
   /**
