@@ -105,6 +105,51 @@ that page already owes. **Options**: (a) shrink first, measure again; (b) a v3 f
 KeyPackage segment sealed separately and cached; (c) per-group storage, the structural lever the
 [performance audit](frontend/performance-audit-2026-10-12.md) names third. Nothing is built.
 
+**IS IT SAFE? ANSWERED YES, 2026-10-14, BY TWO ASSERTIONS** (`mls-core/tests/key_packages_are_separable.rs`).
+
+1. **A joined group needs no `KeyPackage` row.** openmls 0.9 `StagedWelcome::into_group` copies the
+   bundle's leaf key into the group's own `EpochKeyPairs`. Every bundle can be deleted and the state
+   reloaded, and the joined group still applies a commit whose path is encrypted to that leaf, then
+   sends and receives. This holds even for a last-resort package, whose row `into_group` keeps. Every
+   bundle lives in one row under the `KeyPackage` label, so a split by label is exact.
+2. **A bundle missing when its Welcome arrives costs that join and nothing else.** The Welcome
+   cannot be opened, and the device's other groups are untouched. The device recovers by the
+   existing rejoin path.
+
+**What this fixes in a two-file design.** These two facts set the write order:
+
+- Mint: the bundle segment must be durable BEFORE the package is published.
+- Consume or prune: the core blob is written first and the segment after.
+
+A crash between the two steps costs one of these, never a group:
+
+- **Before the segment is written:** a bundle reappears. That loses forward secrecy on one init key
+  until the 84-day prune; the server never hands the bundle out again.
+- **A mint lost before publication:** nothing.
+
+**Measured 2026-10-14** (`heavy_state_checkpoint.rs` `key_package_share_of_a_checkpoint`, OXYGEN,
+release): 80 groups are 7.70 MB and 11.1-11.6 ms; adding 2535 bundles makes 12.53 MB and
+15.6-16.1 ms. **The pile is 39 % of the bytes and ~28 % of the encode-and-seal time.** That is the
+ceiling of a split, and it is CPU on a desktop. What a phone checkpoint spends on writing to disk and
+on IPC, against encoding, is still not measured. The Mi 9T's 1.4-2.0 s checkpoints after a sign-in
+are far above anything encoding 15 MB costs here.
+
+**Recommendation (for the user's go).** Do not build the split yet. Settle the phone first with the
+trace the [performance audit](frontend/performance-audit-2026-10-12.md) already owes, which splits
+the export from the write:
+
+- **If the write dominates:** build option (b) as ONE file holding a cached, separately sealed
+  bundle segment. It saves the encode and the seal and keeps today's single atomic write, so none
+  of the crash orderings above are needed. Two files only if the bytes on disk themselves are the
+  cost.
+- **If the export dominates:** the same single-file variant is the whole fix.
+- **Either way, the reader ships first and the floor must reach it before any writer.** This is the
+  [state blob framing](protocols/mls-protocol.md#the-state-blobs-framing---read-first-write-later) rule.
+
+The after-sign-in storm is about the NUMBER of checkpoints (finding 2 of the
+[community-open page](frontend/community-open-slowness-mi9t-2026-10-13.md)), and a split does not
+change that number.
+
 ### DECISION OWED - the ceiling's `postgres` arm names a test this estate's own upgrade path can never satisfy
 
 **Found by performing the thing the gate asks for, on 2026-09-15, and discovering the gate cannot
