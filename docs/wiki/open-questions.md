@@ -84,7 +84,7 @@ three app-level consequences are not measured:
 - kill the app (`am force-stop`) with deferred receives pending;
 - push frames while it is dead;
 - resume, and read the log for `live-ahead`, duplicates and `unreadable for good`.
-/^>>>>>>> origin/main$/d
+
 ### DECISION OWED - should the KeyPackage pile leave the blob every checkpoint rewrites?
 
 **Measured 2026-10-13** ([store-phone-reading](frontend/store-phone-reading-2026-10-13.md#4-the-mls-state-rewritten-in-full)):
@@ -104,7 +104,6 @@ the pile - the unclaimed-but-handed-out bundles that only the 84-day expiry recl
 that page already owes. **Options**: (a) shrink first, measure again; (b) a v3 frame with a
 KeyPackage segment sealed separately and cached; (c) per-group storage, the structural lever the
 [performance audit](frontend/performance-audit-2026-10-12.md) names third. Nothing is built.
->>>>>>> origin/main
 
 ### DECISION OWED - the ceiling's `postgres` arm names a test this estate's own upgrade path can never satisfy
 
