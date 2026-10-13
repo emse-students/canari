@@ -22,6 +22,11 @@ export type LocalizedAnnouncement = {
 let pending = $state<PlatformAnnouncement | null>(null);
 /** One fetch per app opening, and only ever one in flight. */
 let checked = false;
+/**
+ * Which account's ask an answer belongs to: {@link resetAnnouncementState} moves it on, so an ask
+ * still in flight when its account signs out cannot land its announcement for the next one.
+ */
+let generation = 0;
 
 /** Parses the endpoint's JSON, rejecting anything that would render as a blank modal. */
 export function parseAnnouncement(raw: unknown): PlatformAnnouncement | null {
@@ -78,9 +83,14 @@ export function getPendingAnnouncement(): LocalizedAnnouncement | null {
 export async function refreshAnnouncement(): Promise<void> {
   if (checked) return;
   checked = true;
+  const asked = generation;
   try {
     const url = `${coreUrl()}/api/users/me/announcement?clientVersion=${encodeURIComponent(getClientAppVersion())}`;
     const res = await apiFetch(url);
+    if (asked !== generation) {
+      console.debug('[announcement] dropped an answer that belongs to the account that signed out');
+      return;
+    }
     if (!res.ok) {
       console.error(
         `[announcement] the announcement endpoint refused: HTTP ${res.status} on ${url}`
@@ -89,6 +99,10 @@ export async function refreshAnnouncement(): Promise<void> {
     }
     // The envelope is what makes "no announcement" parseable at all - see the controller.
     const body = (await res.json()) as { announcement?: unknown } | null;
+    if (asked !== generation) {
+      console.debug('[announcement] dropped an answer that belongs to the account that signed out');
+      return;
+    }
     pending = parseAnnouncement(body?.announcement ?? null);
     if (pending) console.debug(`[announcement] showing ${pending.id}`);
   } catch (e) {
@@ -122,8 +136,16 @@ export async function dismissAnnouncement(): Promise<void> {
   }
 }
 
-/** Forgets everything, so the next account to sign in is asked on its own behalf. */
+/**
+ * Forgets everything, so the next account to sign in is asked on its own behalf. Called by
+ * `logoutImpl` (`sessionAuth.ts`): the latch and the pending announcement belong to the account
+ * leaving the tab.
+ */
 export function resetAnnouncementState(): void {
+  console.debug(
+    `[announcement] state reset at sign-out (was ${pending ? `holding ${pending.id}` : 'empty'})`
+  );
   pending = null;
   checked = false;
+  generation += 1;
 }
