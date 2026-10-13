@@ -263,6 +263,13 @@ const cases = [
   // A PHONE ROW OF THE SAME PHASE MUST STILL GET ITS CABLE AND NOT THE PROFILE, which is the whole
   // reason the two narrowings are read independently.
   { file: "multi.mjs", args: ["--only", "3"], phase: "MULTI", a1: true, w3: false },
+  // THE SCRATCH READER MOVED WITH THE ARM. Since channel-encryption 21.8 the server refuses the
+  // unsigned row, so `--only 6` injects it in the database and reads it on W3, and `--only 7` POSTs it
+  // from W1 and is refused at the door. A map still naming `--only 5` sent the history arm to a
+  // preflight with no scratch device.
+  { file: "graineauth.mjs", args: ["--only", "6"], phase: "GRAINE", a1: false, w3: true },
+  { file: "graineauth.mjs", args: ["--only", "7"], phase: "GRAINE", a1: false, w3: false },
+  { file: "graineauth.mjs", args: ["--only", "1"], phase: "GRAINE", a1: false, w3: false },
 ];
 for (const c of cases) {
   const got = devicesFor(c.file, c.args);

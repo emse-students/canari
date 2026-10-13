@@ -1992,6 +1992,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * is the salon's own title: naming either above its line would print the title twice.
              */
             namesEachSender: Boolean = false,
+            /**
+             * Whether [body] IS the message, rather than a generic "nouveau message" line standing
+             * in for one this device could not open. A salon offers "Marquer comme lu" only when it
+             * is: that action moves the "Lu par" receipt other members see ([ChannelReadMark.offered]).
+             * TRUE everywhere a real text is handed in; the salon push says FALSE for a blind banner.
+             */
+            showsMessage: Boolean = true,
         ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
@@ -2181,10 +2188,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
                 notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt))
                 notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
-            } else if (quickActions && ChannelReadMark.offered(groupId, sentAt)) {
+            } else if (quickActions && ChannelReadMark.offered(groupId, sentAt, showsMessage)) {
                 // A SALON offers "Mark as read" ONLY: its read state is a server row the receiver
                 // reaches with one PushSecret call. Reply stays off - the send is end-to-end
-                // encrypted under a Graine session the broadcast receiver cannot seal.
+                // encrypted under a Graine session the broadcast receiver cannot seal. And only on a
+                // banner that shows the message: the mark is the receipt the sender sees.
                 notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
             }
 
@@ -4661,6 +4669,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // Read once: the only id this device can name in a mention token is its own.
         val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+        // Set only where the banner's body IS the decrypted text: every other branch below posts the
+        // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
+        var showsMessage = false
         val body: String = if (seedB64 != null && ciphertext != null && nonce != null && messageIndex != null) {
             try {
                 val json = JSONObject(
@@ -4674,9 +4685,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // RENDERED, NOT PRINTED. The decrypted text carries `@[<64 hex>]` tokens; taking
                     // it raw put a hex blob in the banner - see `renderMentions`. The truncation is
                     // applied AFTER, so a token near the 200-character edge cannot be cut in half.
-                    json.optString("text").takeIf { it.isNotEmpty() }
-                        ?.let { renderMentions(it, myUserId, res).take(200) }
-                        ?: buildChannelFallbackText(res, channelName)
+                    val text = json.optString("text").takeIf { it.isNotEmpty() }
+                    if (text != null) {
+                        showsMessage = true
+                        renderMentions(text, myUserId, res).take(200)
+                    } else {
+                        buildChannelFallbackText(res, channelName)
+                    }
                 } else {
                     // A v2 refusal ACCUSES the server or a member (channel-encryption 21.5), so it
                     // is said at ERROR; the rest are a missing or unreadable seed. The Rust line
@@ -4730,6 +4745,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
             sentAt     = createdAt,
             supersedes = supersedes,
+            showsMessage = showsMessage,
         )
     }
 
