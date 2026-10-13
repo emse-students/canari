@@ -1252,7 +1252,15 @@ by the heads sampler (it is installed before the tap on the phone, after the ope
 - **The poll close confirmation is the system dialog with English buttons** ("CANCEL" / "OK") over a
   French sentence (`poll-close-1.png`).
 - **The sticky "AUJOURD'HUI" pill sits partly under the pinned pill** after the pinned jump
-  (`pinned-jump.png`).
+  (`pinned-jump.png`). **RE-READ 2026-10-13: the pill in that frame is NOT the sticky one** - its
+  letters are spaced (`tracking-widest`) and its padding is wider, which is the IN-THREAD date
+  separator (`ChatMessageGroups`), a content row scrolling under the floating glass chrome as every
+  row does; the sticky pill is `letter-spacing: normal`. The sticky pill's own placement was
+  measured in desktop Chrome at 390 px with the glass chrome forced on: `--chat-header-height`
+  follows the pinned list closing (159 -> 113 -> 111 px within 100 ms) and the pill lands 13.6 px
+  below the pinned bar. Nothing to fix on the sticky pill. Still unexplained: the jumped-to message
+  in that frame was not centred, and the frame does not say which message was pinned - the next
+  reading should name it.
 - **The phone's long-press menu has no "Epingler" for a plain member**, which matches
   `mayPinMessage`.
 
