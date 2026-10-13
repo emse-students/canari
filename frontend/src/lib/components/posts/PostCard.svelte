@@ -8,7 +8,6 @@
     likeComment as likeCommentApi,
     editComment as editCommentApi,
     deleteComment as deleteCommentApi,
-    deletePost as deletePostApi,
     getPost,
     pinPost as pinPostApi,
     unpinPost as unpinPostApi,
@@ -19,6 +18,7 @@
     type Poll,
   } from '$lib/posts/api';
   import { Log } from '$lib/utils/Log';
+  import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
   import { createReport, ModerationApiError } from '$lib/moderation/api';
   import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
@@ -345,10 +345,13 @@
     editingPost = false;
   }
 
-  /** Deletes the post via the API and calls onDelete so the parent can remove the card from the list. */
+  /**
+   * Deletes the post once its author confirms ({@link deletePostAfterConfirm}), then calls onDelete
+   * so the parent can remove the card from the list. A declined confirmation changes nothing.
+   */
   async function handleDeletePost() {
     try {
-      await deletePostApi(localPost.id);
+      if ((await deletePostAfterConfirm(localPost.id)) === 'declined') return;
       onDelete?.();
     } catch (err) {
       Log.d('handleDeletePost failed', err);

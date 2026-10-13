@@ -9,6 +9,7 @@ import { toBase64 } from '$lib/utils/hex';
 import {
   announceGraineRepair,
   cacheGraineSession,
+  cachedGraineSession,
   historyVisibilityFor,
   requireGraineRuntime,
 } from './runtime';
@@ -73,7 +74,16 @@ export async function storeIncomingSeed(
     return 'declined';
   }
 
-  const existing = await storage.getGraineSession(seed.sessionId, deviceKey());
+  // THE SEED CACHE FIRST, because the same held session arrives again and again: its durable
+  // distribution frame on every fresh start, each bundle relaying it, each answer to a request. Every
+  // arrival read and decrypted the row (`SELECT * FROM graine WHERE session_id`, 358 in a store
+  // phone's first 30 s, 2026-10-13). The cache holds only ANSWERS and every write of a received
+  // session goes through it (below), so a hit is the row; a miss still reads the store.
+  let existing = cachedGraineSession(seed.sessionId);
+  if (!existing) {
+    existing = await storage.getGraineSession(seed.sessionId, deviceKey());
+    if (existing) cacheGraineSession(existing);
+  }
   if (existing) {
     // A SESSION ID NAMES ONE SEED, IN ONE SALON, FOR EVER. A frame naming a held session with other
     // bytes, or another salon, is not a repair - a repair re-sends the SAME seed at a lower floor.
