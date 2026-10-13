@@ -1249,7 +1249,8 @@ by the heads sampler (it is installed before the tap on the phone, after the ope
   Epingler, although the database gives gamma the Administrateur role (`channel.moderate`). After a
   reload the same menu has Epingler. One observation; whether "Cloturer le sondage" was also missing
   before the reload was not read.
-- **The poll close confirmation is the system dialog with English buttons** ("CANCEL" / "OK") over a
+- **The poll close confirmation is the system dialog with English buttons** (FIXED 2026-10-13:
+  `ChannelPoll` asks through the app's `showConfirm`; no `window.confirm` is left in the frontend) ("CANCEL" / "OK") over a
   French sentence (`poll-close-1.png`).
 - **The sticky "AUJOURD'HUI" pill sits partly under the pinned pill** after the pinned jump
   (`pinned-jump.png`).
