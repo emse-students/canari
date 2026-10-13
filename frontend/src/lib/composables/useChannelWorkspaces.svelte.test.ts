@@ -7,6 +7,7 @@ import { GraineNotReadyError } from '$lib/utils/graine/runtime';
 import { GraineUnknownChannelError } from '$lib/utils/graine/channelSeal';
 import { showToast } from '$lib/stores/toast.svelte';
 import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
+import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { getChannelReactions } from '$lib/stores/reactionStore.svelte';
 import { activeReactions } from '$lib/utils/chat/messageReactions';
@@ -506,6 +507,125 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
     expect(store.workspacesLoadError).toBeNull();
     expect(store.channelWorkspaces[0].id).toBe('community');
   });
+
+  /**
+   * THE MI 9T READING OF `v1.2.7-alpha.1` (2026-10-14). After an offline start, the `online` event's
+   * listing was rejected by Tauri `plugin-http` with the bare string `error sending request for url
+   * (...)`, which was neither a TypeError nor a DeliveryUnreachableError, and gave up as
+   * `non-retryable`: 2.5 min online with an empty community rail and every salon send refused.
+   * The failure is built by the real wrapper the app installs, so the test reads the shape the
+   * phone produced.
+   */
+  async function tauriNetworkFailure(): Promise<unknown> {
+    const plugin = vi
+      .fn()
+      .mockRejectedValue(
+        'error sending request for url (https://canari.emse.fr/api/channels/workspaces/user/me)'
+      );
+    return conformPluginFetch(plugin)(
+      'https://canari.emse.fr/api/channels/workspaces/user/me'
+    ).catch((e: unknown) => e);
+  }
+
+  it("retries the Tauri plugin's network failure instead of giving up as non-retryable", async () => {
+    listUserWorkspaces
+      .mockRejectedValueOnce(await tauriNetworkFailure())
+      .mockResolvedValueOnce([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const promise = store.loadChannelWorkspacesFromBackend(ctx);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await tick();
+    await promise;
+
+    expect(ctx.log).not.toHaveBeenCalledWith(expect.stringContaining('non-retryable'));
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+    expect(store.workspacesLoadError).toBeNull();
+  });
+
+  it('a listing that reached nobody HOLDS salon sends, and the reconnect lists again and releases them', async () => {
+    resetSalonSendGate();
+    const failure = await tauriNetworkFailure();
+    listUserWorkspaces
+      .mockRejectedValueOnce(failure)
+      .mockRejectedValueOnce(failure)
+      .mockRejectedValueOnce(failure)
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
+    const held = whenSalonSendable('channel_ch1');
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const first = store.loadChannelWorkspacesFromBackend(ctx);
+    await vi.advanceTimersByTimeAsync(1_000 + 3_000 + 7_000);
+    await tick();
+    await first;
+
+    // Gave up - but on the link, not on an answer: the send is still held, not refused.
+    expect(store.workspacesLoadError).not.toBeNull();
+    expect(readSalonSendGate('channel_ch1')).toEqual({ kind: 'wait' });
+    expect(salonSendWaiterCount('channel_ch1')).toBe(1);
+
+    // The reconnect (`connectivity.onReconnect` in ChatBackgroundService) lists again.
+    store.retryFailedListing(ctx, 'connectivity regained');
+    await vi.waitFor(() => expect(store.workspacesLoadError).toBeNull());
+    expect(await held).toEqual({ kind: 'ready' });
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(5);
+  });
+
+  it('a reconnect DURING a listing that then gives up is owed one more listing', async () => {
+    resetSalonSendGate();
+    const failure = await tauriNetworkFailure();
+    listUserWorkspaces
+      .mockRejectedValueOnce(failure)
+      .mockRejectedValueOnce(failure)
+      .mockRejectedValueOnce(failure)
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const first = store.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    // Not doubled: the listing in flight is still the only one.
+    store.retryFailedListing(ctx, 'connectivity regained');
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1_000 + 3_000 + 7_000);
+    await first;
+    await vi.waitFor(() => expect(store.workspacesLoadError).toBeNull());
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(5);
+    expect(store.channelWorkspaces[0].id).toBe('community');
+  });
+
+  it('a listing the server FAILED still refuses the held sends - an answer is a decision', async () => {
+    resetSalonSendGate();
+    listUserWorkspaces.mockRejectedValue(new ChannelApiError(403, null, 'Forbidden'));
+    const held = whenSalonSendable('channel_ch1');
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    await store.loadChannelWorkspacesFromBackend(ctx);
+
+    expect(await held).toEqual({ kind: 'refused', reason: 'listing-failed' });
+  });
+
+  it('the reconnect does nothing when the last listing answered', async () => {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    await store.loadChannelWorkspacesFromBackend(ctx);
+    store.retryFailedListing(ctx, 'connectivity regained');
+
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+  });
+
   // A ROLE CHANGE PUSHED TO THE PERSON IT IS ABOUT, applied without a round trip.
   //
   // Measured on prod 2026-08-20 (COMM-5) before the push existed: the answer arrived on the next

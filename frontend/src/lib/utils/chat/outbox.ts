@@ -31,9 +31,10 @@ import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import { recordEviction } from '$lib/utils/chat/eviction';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
-import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
-import { DeliveryUnreachableError, SendEdgeRefusedError } from '$lib/mls-client/mlsDeliveryApi';
+import { SendEdgeRefusedError } from '$lib/mls-client/mlsDeliveryApi';
 import {
   UPLOAD_NO_ANSWER_ATTEMPTS,
   UPLOAD_PROGRESS_MARGIN_BYTES,
@@ -1276,10 +1277,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
             : `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`,
         // Classified by TYPE: the delivery API raises `DeliveryUnreachableError` for a POST that got
-        // no answer (a deadline expiry included), never a sentence to match.
+        // no answer (a deadline expiry included) - a `TransportFailureError`, which the one predicate
+        // reads - never a sentence to match.
         {
-          transport:
-            kind === 'unknown' && (e instanceof DeliveryUnreachableError || isTransportFailure(e)),
+          transport: kind === 'unknown' && isTransportFailure(e),
           repair: kind === 'sender-not-active',
         }
       );

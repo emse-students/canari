@@ -17,7 +17,15 @@
  *   it, the community is forgotten, or the session ends. Each of those is a proof, so the wait is
  *   bounded with no timer.
  * - refused: a listing settled and did not enter it (`not-listed` when it answered, `listing-failed`
- *   when it gave up), it was forgotten (`left`), or the session ended (`session-ended`).
+ *   when the server answered with a failure), it was forgotten (`left`), or the session ended
+ *   (`session-ended`).
+ *
+ * A LISTING THAT REACHED NOBODY REFUSES NOTHING (2026-10-14). Offline, or on a link that answers
+ * nothing, the listing gives up `unreachable`: no server decided anything, so the salon is not
+ * "not loadable", it is not loaded YET. The sends keep waiting, exactly what the offline banner
+ * promises ("partiront dès le retour du réseau"), and the next listing - started by the reconnect
+ * (`retryFailedListing`) - settles them. Refusing them is what the Mi 9T showed on `v1.2.7-alpha.1`:
+ * every salon send and Retry refused `listing-failed` while the phone was offline, then online.
  *
  * The SEAL KEEPS ITS OWN REFUSAL: this gate decides when to try, never whether the row may go
  * unsigned. A held message is held as cleartext in memory and sealed and signed only when it is
@@ -47,8 +55,19 @@ export class SalonNotLoadableError extends Error {
 /** The gate's answer at the instant it is asked. */
 export type SalonGateReading = SalonGateOutcome | { kind: 'wait' };
 
-/** How the last community listing of this session ended; `none` until one has. */
-type ListingOutcome = 'none' | 'loaded' | 'failed';
+/**
+ * How the last community listing of this session ended; `none` until one has. `unreachable` is a
+ * listing that got no answer at all, which waits like `none`: nothing was decided.
+ */
+type ListingOutcome = 'none' | 'loaded' | 'failed' | 'unreachable';
+
+/** How a listing can end, as its caller reports it to {@link settleSalonListing}. */
+export type SettledListing = Exclude<ListingOutcome, 'none'>;
+
+/** Whether no settled listing has decided anything yet, so a salon not entered still waits. */
+function undecided(): boolean {
+  return lastListing === 'none' || lastListing === 'unreachable';
+}
 
 /** Salons entered in this session, raw uuid. */
 const opened = new Set<string>();
@@ -90,7 +109,7 @@ function listingRefusal(): SalonGateOutcome {
 export function readSalonSendGate(channelId: string): SalonGateReading {
   const channel = raw(channelId);
   if (opened.has(channel)) return READY;
-  if (listingsInFlight > 0 || lastListing === 'none') return { kind: 'wait' };
+  if (listingsInFlight > 0 || undecided()) return { kind: 'wait' };
   return listingRefusal();
 }
 
@@ -152,9 +171,11 @@ export function currentSalonSession(): number {
 
 /**
  * A community listing ended. When none is left in flight, every salon still waiting is refused:
- * the listing that could have entered it answered without it (`loaded`) or gave up (`failed`).
+ * the listing that could have entered it answered without it (`loaded`) or the server failed it
+ * (`failed`). A listing that reached nobody (`unreachable`) refuses nothing: the waiters wait for
+ * the next listing, which the reconnect starts.
  */
-export function settleSalonListing(token: number, outcome: 'loaded' | 'failed'): void {
+export function settleSalonListing(token: number, outcome: SettledListing): void {
   endInFlight(token, outcome);
 }
 
@@ -180,11 +201,11 @@ export function settleSalonEntry(token: number): void {
 }
 
 /** One in-flight listing or entry ended; refuses the waiters once nothing left could open them. */
-function endInFlight(token: number, outcome: 'loaded' | 'failed' | null): void {
+function endInFlight(token: number, outcome: SettledListing | null): void {
   if (token !== generation) return;
   listingsInFlight = Math.max(0, listingsInFlight - 1);
   if (outcome !== null) lastListing = outcome;
-  if (listingsInFlight > 0 || lastListing === 'none') return;
+  if (listingsInFlight > 0 || undecided()) return;
   const refusal = listingRefusal();
   for (const channel of waiters.keys()) settle(channel, refusal);
 }

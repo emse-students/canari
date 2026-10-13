@@ -38,7 +38,8 @@
 import type { IStorage, PendingGroupExit } from '$lib/db/types';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { GroupExitRefusedError } from '$lib/mls-client/mlsDeliveryApi';
-import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 
 /** Logger shape shared with the rest of `utils/chat` - the caller owns where the line goes. */
 type Log = (message: string) => void;
