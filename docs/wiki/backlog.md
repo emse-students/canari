@@ -296,12 +296,6 @@ built and uploaded their IPA. So no pre-release reaches the iPhone bench and eve
 newer fix waits. Owed: read in App Store Connect whether those builds exist, finished processing and
 were added to the tester group.
 
-### P3 - Android at 200 % text: two overruns in the agenda
-
-`calendar/+page.svelte:670`: "S'abonner au calendrier" is wider than its card and spills 33 px out
-of the card's left edge (`flex-wrap justify-end`). `CalendarScheduleList.svelte:226`: today's day
-number is 40 px in a fixed 36 px circle (`h-9 w-9`), the class `.text-zoom-exempt` was made for.
-
 ### P3 - a keyboard under 160 px escapes the double-report guard
 
 `computeSnapshot` only discards a double-reported visual viewport when the layout viewport has
