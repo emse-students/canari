@@ -122,8 +122,15 @@ export async function dismissAnnouncement(): Promise<void> {
   }
 }
 
-/** Forgets everything, so the next account to sign in is asked on its own behalf. */
+/**
+ * Forgets everything, so the next account to sign in is asked on its own behalf. Called by
+ * `logoutImpl` (`sessionAuth.ts`): the latch and the pending announcement belong to the account
+ * leaving the tab.
+ */
 export function resetAnnouncementState(): void {
+  console.debug(
+    `[announcement] state reset at sign-out (was ${pending ? `holding ${pending.id}` : 'empty'})`
+  );
   pending = null;
   checked = false;
 }

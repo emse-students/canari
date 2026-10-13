@@ -39,8 +39,8 @@ Paths are under `frontend/src/lib/` unless they say otherwise. "Shipped" = a dra
 
 - `stores/announcement.svelte.ts:126` `resetAnnouncementState` is documented as "so the next account
   to sign in is asked on its own behalf" and nothing calls it: a second account signing in in the same
-  tab is probably never shown its announcements. Kept in #1775 and recorded in the
-  [backlog](../backlog.md).
+  tab is probably never shown its announcements. Kept in #1775; **wired 2026-10-13**: `logoutImpl`
+  now calls it (pinned by `session/logoutResetsAccountState.test.ts`).
 - The web checkpoint comments still say "Argon2" (`services/WebMlsService.ts:68,878,900,904`,
   `mls-client/mlsEncryptWorkerSession.ts:74`); the seal has been a direct ChaCha20-Poly1305 under the
   device key since v0.11.0 (`mls-wasm/src/lib.rs:93`). Finding 3 is what the Argon2 story hid.

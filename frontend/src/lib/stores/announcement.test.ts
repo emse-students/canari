@@ -145,4 +145,31 @@ describe('refreshAnnouncement', () => {
 
     expect(mod.getPendingAnnouncement()).toEqual({ id: 'a1', title: 'Titre', body: 'Corps' });
   });
+
+  it('asks again on behalf of the next account once the state is reset', async () => {
+    const announcement = {
+      id: 'a1',
+      titleFr: 'Titre',
+      titleEn: 'Title',
+      bodyFr: 'Corps',
+      bodyEn: 'Body',
+    };
+    const apiFetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ announcement }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ announcement: null }) });
+    vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
+
+    const mod = await load();
+    await mod.refreshAnnouncement();
+    // Same account, same opening: the latch holds.
+    await mod.refreshAnnouncement();
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+
+    mod.resetAnnouncementState();
+    // The first account's announcement is not left for the next one to see.
+    expect(mod.getPendingAnnouncement()).toBeNull();
+    await mod.refreshAnnouncement();
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+  });
 });
