@@ -6,7 +6,7 @@
  * community listing teaches this session (`registerChannelWorkspace`) - and the salon itself is
  * drawn from the local store long before that listing answers: a cold start, a resume, a
  * notification landing (F1). A message sent in that window used to be refused with
- * `GraineUnknownChannelError` ("ce salon n'est pas encore chargé", reported 2026-10-13 on both
+ * `GraineUnknownChannelError` ("ce salon n'est pas encore charge", reported 2026-10-13 on both
  * phones), although nothing was wrong except the ORDER: the salon was about to load.
  *
  * WHAT IT ANSWERS, FROM STATE AND NEVER FROM A CLOCK:
@@ -140,10 +140,36 @@ export function beginSalonListing(): number {
  * the listing that could have entered it answered without it (`loaded`) or gave up (`failed`).
  */
 export function settleSalonListing(token: number, outcome: 'loaded' | 'failed'): void {
+  endInFlight(token, outcome);
+}
+
+/**
+ * ONE salon is being entered outside a listing (`registerJoinedChannel`): its scope is registered
+ * but its groups are still being joined, so a send typed into it now must WAIT for the entry rather
+ * than be refused because the last listing already settled without it.
+ *
+ * @returns the token {@link settleSalonEntry} takes.
+ */
+export function beginSalonEntry(): number {
+  return beginSalonListing();
+}
+
+/**
+ * The entry begun by {@link beginSalonEntry} ended - opened ({@link openSalonSendGate}) or not.
+ * Unlike a listing it says nothing about the communities, so it leaves the last listing's outcome
+ * as it was; when nothing else is in flight, a waiter it did not open is refused as that listing
+ * would have refused it, and before any listing has settled the waiters keep waiting for one.
+ */
+export function settleSalonEntry(token: number): void {
+  endInFlight(token, null);
+}
+
+/** One in-flight listing or entry ended; refuses the waiters once nothing left could open them. */
+function endInFlight(token: number, outcome: 'loaded' | 'failed' | null): void {
   if (token !== generation) return;
   listingsInFlight = Math.max(0, listingsInFlight - 1);
-  lastListing = outcome;
-  if (listingsInFlight > 0) return;
+  if (outcome !== null) lastListing = outcome;
+  if (listingsInFlight > 0 || lastListing === 'none') return;
   const refusal = listingRefusal();
   for (const channel of waiters.keys()) settle(channel, refusal);
 }

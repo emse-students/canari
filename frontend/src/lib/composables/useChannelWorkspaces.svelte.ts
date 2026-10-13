@@ -48,8 +48,10 @@ import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
 import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import {
+  beginSalonEntry,
   beginSalonListing,
   openSalonSendGate,
+  settleSalonEntry,
   settleSalonListing,
 } from '$lib/utils/graine/salonSendGate';
 import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
@@ -755,7 +757,26 @@ export function useChannelWorkspaces() {
   ): Promise<void> {
     if (!channelId || !workspaceId) return;
     registerChannelWorkspace(channelId, workspaceId, isPrivate);
+    // THE ENTRY IS IN FLIGHT FROM HERE: the event drew the salon's conversation before this call,
+    // so a send typed during the joins below waits for them instead of being refused by a listing
+    // that settled before the salon existed (`salonSendGate`). Ended in the `finally`, opened or not.
+    const entryToken = beginSalonEntry();
+    try {
+      await enterJoinedChannel(channelId, workspaceId, isPrivate, ensureMls, log);
+      openSalonSendGate(channelId);
+    } finally {
+      settleSalonEntry(entryToken);
+    }
+  }
 
+  /** The joins {@link registerJoinedChannel} owes a salon entered in-session. */
+  async function enterJoinedChannel(
+    channelId: string,
+    workspaceId: string,
+    isPrivate: boolean,
+    ensureMls: (() => IMlsService | Promise<IMlsService>) | undefined,
+    log: (message: string) => void
+  ): Promise<void> {
     // A PUBLIC SALON'S SEEDS TRAVEL ON THE COMMUNITY'S GROUP, AND THIS IS WHERE THIS DEVICE ENTERS
     // IT IN-SESSION. The startup walk does three things per community and this path did two: it
     // mapped the channel and it entered a PRIVATE salon's own group. Nothing entered the
@@ -794,7 +815,6 @@ export function useChannelWorkspaces() {
       ensureMls,
       log,
     });
-    openSalonSendGate(channelId);
   }
 
   // ---------- API operations ----------
@@ -888,6 +908,9 @@ export function useChannelWorkspaces() {
       return true;
     } finally {
       isLoadingWorkspaces = false;
+      // READ BEFORE THE OWED RELOAD BEGINS: its first statement clears `workspacesLoadError`, and a
+      // listing that gave up would otherwise be recorded as one that answered.
+      const listingOutcome = workspacesLoadError === null ? 'loaded' : 'failed';
       // A join that arrived while THIS listing was in flight is not in its answer, so it is owed one
       // more. Run here, after the flag drops, because that is the one moment a second load is legal.
       const owed = joinedCommunityReloadOwed;
@@ -895,7 +918,7 @@ export function useChannelWorkspaces() {
       if (owed) void loadChannelWorkspacesFromBackend(ctx);
       // AFTER the owed reload has begun (synchronously, above): a send waiting for a salon that
       // reload may enter keeps waiting for it instead of being refused by this one's end.
-      settleSalonListing(listingToken, workspacesLoadError === null ? 'loaded' : 'failed');
+      settleSalonListing(listingToken, listingOutcome);
     }
   }
 

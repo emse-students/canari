@@ -1167,6 +1167,8 @@ export function useMessaging() {
     const fileEntries = filesToSend;
     const mediaCaption = text || undefined;
     let sentMediaMessageCount = 0;
+    /** A held salon upload was refused because the account signed out - see the media catch. */
+    let sessionEndedDuringSend = false;
 
     ctx.log(
       `[SEND] handleSendChat: contact="${ctx.selectedContact}" text="${text.slice(0, 40)}" files=${filesToSend.length}`
@@ -1211,15 +1213,15 @@ export function useMessaging() {
         // `null`: a click on the send button, never a stack inside a decrypt session.
         .waitForMessageQueueIdle('media send', null)
         .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
-      const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
+      const stillMember = await ctx.verifyCurrentUserMembership(sentFrom);
       if (!stillMember || convo.lifecycle !== 'active') {
         ctx.setSendError(m.chat_send_session_establishing());
         return;
       }
     }
 
-    const currentReplyingTo = replyByConversation.get(ctx.selectedContact) ?? null;
-    replyByConversation.delete(ctx.selectedContact);
+    const currentReplyingTo = replyByConversation.get(sentFrom) ?? null;
+    replyByConversation.delete(sentFrom);
     ctx.setSendError('');
     const channelSvc = isChannel ? new ChannelService() : null;
 
@@ -1323,7 +1325,7 @@ export function useMessaging() {
             const endInflight = beginOutboxEnqueue(messageId);
             try {
               const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
-              await addMessageToChat(ctx.userId, placeholder, ctx.selectedContact!, ctx, {
+              await addMessageToChat(ctx.userId, placeholder, sentFrom, ctx, {
                 messageId,
                 status: 'pending',
                 timestamp: new SvelteDate(sentAt),
@@ -1357,9 +1359,9 @@ export function useMessaging() {
                 ctx.log(
                   `[MEDIA] ${messageId.slice(0, 8)}… not queued, withdrawing its placeholder: ${String(enqueueError)}`
                 );
-                const current = ctx.conversations.get(ctx.selectedContact!);
+                const current = ctx.conversations.get(sentFrom);
                 if (current) {
-                  ctx.conversations.set(ctx.selectedContact!, {
+                  ctx.conversations.set(sentFrom, {
                     ...current,
                     messages: current.messages.filter((m) => m.id !== messageId),
                   });
@@ -1377,8 +1379,21 @@ export function useMessaging() {
           ctx.playSendTone?.();
         }
       } catch (error) {
+        // THE ACCOUNT THAT MADE THIS SEND HAS LEFT: a held upload refused as `session-ended`.
+        // Nothing of it may reach the next account - this composable outlives a sign-out, so a
+        // re-staged file would sit in the NEXT account's composer, and the caption below would
+        // be held for the next session's gate and sealed by whoever signs in.
+        if (error instanceof SalonNotLoadableError && error.reason === 'session-ended') {
+          sessionEndedDuringSend = true;
+        }
         if (sentMediaMessageCount < fileEntries.length) {
-          pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
+          if (sessionEndedDuringSend) {
+            ctx.log(
+              `[MEDIA] ${fileEntries.length - sentMediaMessageCount} file(s) dropped, not re-staged: the session ended while the salon was loading`
+            );
+          } else {
+            pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
+          }
         }
         // BOTH BRANCHES OF THE LOOP ABOVE LAND HERE AND ONLY ONE OF THEM ASKS A SERVER ANYTHING.
         // The MLS branch writes bytes to IndexedDB and returns; the channel branch uploads and
@@ -1388,14 +1403,16 @@ export function useMessaging() {
         // route answers for an oversized file is the one a member can act on, and it is the
         // reason this catch gained a status instead of a second sentence.
         const status = refusalStatus(error);
-        ctx.setSendError(
+        const mediaRefusal =
           error instanceof SalonNotLoadableError
             ? salonGateRefusalMessage(error.reason)
             : (describeApiRefusal(status, m.chat_media_action_send()) ??
-                (isEnqueueQuotaFailure(error)
-                  ? m.chat_media_send_error_storage_full()
-                  : m.chat_media_send_error_generic()))
-        );
+              (isEnqueueQuotaFailure(error)
+                ? m.chat_media_send_error_storage_full()
+                : m.chat_media_send_error_generic()));
+        // A held upload may be refused long after the click: the banner belongs to its conversation.
+        if (ctx.selectedContact === sentFrom) ctx.setSendError(mediaRefusal);
+        else ctx.log(`[MEDIA] banner not shown: the conversation changed since the send`);
         ctx.log(
           `[MEDIA] send failed (status=${status ?? 'none'}), ${fileEntries.length - sentMediaMessageCount} file(s) re-staged: ${String(error)}`
         );
@@ -1404,11 +1421,18 @@ export function useMessaging() {
       }
     }
 
+    if (sessionEndedDuringSend) {
+      ctx.log('[SEND] caption not sent: the session ended while its upload was held');
+      return;
+    }
     if (sentMediaMessageCount > 0 || !text) return;
 
+    // THE CONVERSATION THE SEND WAS MADE IN, never the one on screen now: a salon upload may have
+    // been held for its salon above, and a caption falling through to here after a refused upload
+    // went to whichever conversation the member had moved to meanwhile.
     const result = await sendChatMessage(
       text,
-      ctx.selectedContact!,
+      sentFrom,
       currentReplyingTo,
       makeSendDeps(ctx, convo)
     );
@@ -1429,7 +1453,7 @@ export function useMessaging() {
       // Nothing was drawn: the reply target goes back too, so the caller can restore the draft and
       // lose nothing (WP-OFF-1).
       if (isChannel && currentReplyingTo) {
-        replyByConversation.set(ctx.selectedContact, currentReplyingTo);
+        replyByConversation.set(sentFrom, currentReplyingTo);
       }
       return false;
     }

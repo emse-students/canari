@@ -1926,7 +1926,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 }
 
 /* THE SEND'S OWN LINE, IN THE COMPOSER STACK (ChatArea's sendNotice). It used to float over the
-   thread at ottom: 10rem on a 95%-opaque pink in raw hex, and the messages under it showed through
+   thread at `bottom: 10rem` on a 95%-opaque pink in raw hex, and the messages under it showed through
    and collided with its text (user's screenshot, 2026-10-13). It is now in the flow of the footer -
    counted in --chat-composer-height, so the thread makes room - on opaque tokens and the type scale. */
 .chat-send-notice {

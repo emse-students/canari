@@ -35,6 +35,19 @@ vi.mock('$lib/media', async (importOriginal) => {
   return { ...actual, MediaService: FakeMediaService };
 });
 
+// The text half of a send, observed for WHICH conversation it is sent to; the real one otherwise.
+const sendChatMessageSpy = vi.fn();
+vi.mock('$lib/utils/chat/messaging', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/utils/chat/messaging')>();
+  return {
+    ...actual,
+    sendChatMessage: (...args: Parameters<typeof actual.sendChatMessage>) => {
+      sendChatMessageSpy(...args);
+      return actual.sendChatMessage(...args);
+    },
+  };
+});
+
 await import('./useMessaging.svelte');
 
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
@@ -140,5 +153,54 @@ describe('a salon upload before its salon is loaded', () => {
 
     expect(uploadMock).not.toHaveBeenCalled();
     expect(ctx.setSendError).toHaveBeenLastCalledWith(m.chat_send_error_salon_listing_failed());
+  });
+
+  it('sends the caption of a refused upload to the salon it was written in, not the one on screen', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    const file = { size: 10, name: 'a.pdf', type: 'application/pdf' } as unknown as File;
+    const token = beginSalonListing();
+
+    const done = messaging.handleSendChat(ctx, 'the caption', {
+      files: [{ file, width: 0, height: 0 } as never],
+    });
+    await vi.waitFor(() => expect(salonSendWaiterCount(CHANNEL)).toBe(1));
+    // The member moves on while the upload is held, and the listing then settles without the salon.
+    (ctx as { selectedContact: string | null }).selectedContact = 'channel_somewhere-else';
+    settleSalonListing(token, 'loaded');
+    await done;
+
+    expect(sendChatMessageSpy).toHaveBeenCalledTimes(1);
+    expect(sendChatMessageSpy.mock.calls[0][1]).toBe(CHANNEL);
+    // And the banner stays off the conversation now on screen.
+    expect(ctx.setSendError).not.toHaveBeenCalledWith(m.chat_send_error_salon_not_listed());
+  });
+
+  /**
+   * THE COMPOSABLE OUTLIVES A SIGN-OUT. A held upload refused as `session-ended` used to re-stage
+   * its file into the composer the NEXT account sees, and send its caption into the next session's
+   * gate, where the next account's listing would release it and seal it as that account.
+   */
+  it('leaves nothing to the next account when the session ends while the upload is held', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    const file = { size: 10, name: 'a.pdf', type: 'application/pdf' } as unknown as File;
+    beginSalonListing();
+
+    const done = messaging.handleSendChat(ctx, 'the caption', {
+      files: [{ file, width: 0, height: 0 } as never],
+    });
+    await vi.waitFor(() => expect(salonSendWaiterCount(CHANNEL)).toBe(1));
+    // Sign-out: `setGraineRuntime(null)` resets the gate and the selection is cleared.
+    (ctx as { selectedContact: string | null }).selectedContact = null;
+    resetSalonSendGate();
+    await done;
+
+    expect(uploadMock).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFiles).toHaveLength(0);
+    expect(sendChatMessageSpy).not.toHaveBeenCalled();
+    expect(salonSendWaiterCount(CHANNEL)).toBe(0);
   });
 });

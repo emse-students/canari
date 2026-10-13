@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  beginSalonEntry,
   beginSalonListing,
+  settleSalonEntry,
   forgetSalonSendGates,
   openSalonSendGate,
   readSalonSendGate,
@@ -86,6 +88,31 @@ describe('salonSendGate', () => {
     // Still waiting for THIS session's own first listing, not refused by the last one's.
     expect(salonSendWaiterCount('a')).toBe(1);
     expect(readSalonSendGate('a')).toEqual({ kind: 'wait' });
+  });
+
+  it('holds a send for a salon being entered in-session, after the listing settled without it', async () => {
+    settleSalonListing(beginSalonListing(), 'loaded');
+    const entry = beginSalonEntry();
+    const a = whenSalonSendable('a');
+    expect(salonSendWaiterCount('a')).toBe(1);
+    openSalonSendGate('a');
+    settleSalonEntry(entry);
+    expect(await a).toEqual({ kind: 'ready' });
+  });
+
+  it('refuses as the last listing did when an entry ends without opening its salon', async () => {
+    settleSalonListing(beginSalonListing(), 'failed');
+    const entry = beginSalonEntry();
+    const a = whenSalonSendable('a');
+    settleSalonEntry(entry);
+    expect(await a).toEqual({ kind: 'refused', reason: 'listing-failed' });
+  });
+
+  it('keeps waiting for the first listing when an entry ends before any listing settled', () => {
+    const entry = beginSalonEntry();
+    void whenSalonSendable('a');
+    settleSalonEntry(entry);
+    expect(salonSendWaiterCount('a')).toBe(1);
   });
 
   it('releases a waiter once even if two events follow', async () => {

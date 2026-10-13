@@ -95,7 +95,13 @@ import { useChannelWorkspaces, type ChannelWorkspaceContext } from './useChannel
 // NOT MOCKED, DELIBERATELY: the channel-to-community map is the fact the send path reads, so the
 // test asserting it survives a failed join has to read the real one.
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
-import { resetSalonSendGate, whenSalonSendable } from '$lib/utils/graine/salonSendGate';
+import {
+  beginSalonListing,
+  resetSalonSendGate,
+  salonSendWaiterCount,
+  settleSalonListing,
+  whenSalonSendable,
+} from '$lib/utils/graine/salonSendGate';
 
 function makeContext(overrides: Partial<ChannelWorkspaceContext> = {}): ChannelWorkspaceContext {
   return {
@@ -862,6 +868,35 @@ describe('useChannelWorkspaces - a salon joined in-session enters the group its 
 
     expect(workspaceForChannel('ch-public')).toBe('ws1');
   });
+
+  /**
+   * THE EVENT DRAWS THE SALON BEFORE THE JOINS END. A send typed in that window, after the last
+   * listing settled without the salon, used to be refused as `not-listed`: it waits for the entry.
+   */
+  it('holds a send typed while the salon is being entered, then releases it', async () => {
+    resetSalonSendGate();
+    settleSalonListing(beginSalonListing(), 'loaded');
+    let releaseJoin: (value: boolean) => void = () => {};
+    ensureCommunityDistributionGroup.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (releaseJoin = resolve))
+    );
+    const api = useChannelWorkspaces();
+
+    const entering = api.registerJoinedChannel(
+      'ch-public',
+      'ws1',
+      false,
+      vi.fn().mockResolvedValue({}),
+      vi.fn()
+    );
+    const held = whenSalonSendable('channel_ch-public');
+    await tick();
+    expect(salonSendWaiterCount('ch-public')).toBe(1);
+
+    releaseJoin(true);
+    await entering;
+    expect(await held).toEqual({ kind: 'ready' });
+  });
 });
 
 /**
@@ -923,14 +958,18 @@ describe('useChannelWorkspaces - hydrateJoinedCommunity', () => {
     const api = useChannelWorkspaces();
     const ctx = makeContext();
 
+    resetSalonSendGate();
     const startup = api.loadChannelWorkspacesFromBackend(ctx);
     await tick();
     await api.hydrateJoinedCommunity(ctx);
     expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    // A send typed into a salon only the OWED listing knows waits through the first one's end.
+    const held = whenSalonSendable('channel_c2');
 
     // The startup answer predates the join: it knows no community, and the owed listing does.
     releaseFirst([]);
     await startup;
+    expect(await held).toEqual({ kind: 'ready' });
     await vi.waitFor(() =>
       expect(api.channelWorkspaces.find((w) => w.id === 'unr-11')?.channels).toHaveLength(3)
     );
