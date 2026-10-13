@@ -302,6 +302,52 @@ describe('computeFixedPopoverPosition', () => {
     expect(high.top).toBe(120 + 22 + 6);
   });
 
+  /**
+   * THE SWEEP BEHIND "NEVER CENTRED UNLESS ASKED": every width the app is read at, an anchor in each
+   * corner and one half off each side, the panel widths of every caller that does not opt in
+   * (`ReactorsPanel` 160-224, `PostActionsMenu` 224, `EcosystemLauncher` 256, `FloatingSurface` 352),
+   * both alignments, and a keyboard-open height. Three things hold for every one: the panel is inside
+   * the viewport, it shares at least one column with the visible part of its anchor, and it leaves the
+   * anchor uncovered whenever one side has the room.
+   */
+  it('keeps every non-centred panel on screen, over its anchor, and off it when there is room', () => {
+    const margin = 8;
+    const offset = 6;
+    const failures: string[] = [];
+    for (const vw of [320, 360, 390, 430, 768, 1280]) {
+      for (const vh of [844, 400]) {
+        vi.stubGlobal('innerWidth', vw);
+        vi.stubGlobal('innerHeight', vh);
+        const xs = [-20, margin, vw / 2 - 20, vw - 41 - margin, vw - 21];
+        const ys = [margin, vh / 2, vh - 22 - margin];
+        for (const pw of [160, 224, 256, 352]) {
+          for (const alignEnd of [false, true]) {
+            for (const x of xs) {
+              for (const y of ys) {
+                const panel = { offsetWidth: pw, offsetHeight: 94 } as HTMLElement;
+                const p = computeFixedPopoverPosition(chipAt(x, y), panel, {
+                  alignEnd,
+                  offset,
+                  estimatedHeight: vh,
+                });
+                const where = `${vw}x${vh} panel ${pw} alignEnd ${alignEnd} chip ${x},${y}`;
+                const visL = Math.max(0, x);
+                const visR = Math.min(vw, x + 41);
+                if (p.left < margin || p.left + p.width > vw - margin) failures.push(`x ${where}`);
+                if (p.top < margin || p.top + 94 > vh - margin) failures.push(`y ${where}`);
+                if (p.left >= visR || p.left + p.width <= visL) failures.push(`off ${where}`);
+                const roomy = vh - (y + 22) - margin >= 94 + offset || y - margin >= 94 + offset;
+                const covers = p.top < y + 22 && p.top + 94 > y;
+                if (roomy && covers) failures.push(`covers ${where}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
   it('clamps an anchor wider than the viewport', () => {
     const anchor = {
       getBoundingClientRect: () => ({
