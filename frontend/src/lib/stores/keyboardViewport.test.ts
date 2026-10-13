@@ -1,6 +1,7 @@
 import {
   computeSnapshot,
   hasVirtualKeyboard,
+  isDoubleReport,
   keyboardSafeAreaBottomOverride,
   pinSafeAreaBottom,
   type ViewportMeasurement,
@@ -126,7 +127,7 @@ describe('computeSnapshot - keyboardHeight', () => {
   });
 });
 
-describe('computeSnapshot - the Android double report (Mi 9T, 2026-10-02)', () => {
+describe('computeSnapshot - the Android double report (Mi 9T, 2026-10-02 and 2026-10-13)', () => {
   const ANDROID_THRESHOLD = 160;
   const androidBaseline = 945;
 
@@ -168,6 +169,96 @@ describe('computeSnapshot - the Android double report (Mi 9T, 2026-10-02)', () =
     );
     expect(snap.viewportHeight).toBe(588);
     expect(snap.insetBottom).toBe(357);
+  });
+
+  /**
+   * Replays one rise, event by event, and returns the distinct shell heights it would pin, to the
+   * whole CSS px (the settled visual viewport reads 587.9 against a layout of 588).
+   */
+  function shellHeights(rise: Array<[winH: number, vvHeight: number]>): number[] {
+    const heights = rise.map(
+      ([winH, vvHeight]) =>
+        computeSnapshot(
+          { winH, vvHeight, offsetTop: 0, scale: 1 },
+          androidBaseline,
+          ANDROID_THRESHOLD
+        ).viewportHeight
+    );
+    return [...new Set(heights.map((h) => Math.round(h)))];
+  }
+
+  it('absorbs the double report of the system keyboard as read on the bench (LatinIME, 2026-10-13)', () => {
+    // checkW-mi9t.json, rises 1-4: rest 945 / 945.5, one frame 588 / 230.3, settled 588 / 587.9.
+    expect(
+      shellHeights([
+        [945, 945.5],
+        [588, 230.3],
+        [588, 587.9],
+      ])
+    ).toEqual([946, 588]);
+  });
+
+  it('absorbs the double report of a 90 px keyboard, which the old 160 px gate let through', () => {
+    // The bench's ADB keyboard: the layout gives up 90, the visual viewport reads 90 below it.
+    // Trusted, the shell went to 765 for one frame and the composer drew at 702 before 792.
+    const doubled = computeSnapshot(
+      { winH: 855, vvHeight: 765, offsetTop: 0, scale: 1 },
+      androidBaseline,
+      ANDROID_THRESHOLD
+    );
+    const settled = computeSnapshot(
+      { winH: 855, vvHeight: 855, offsetTop: 0, scale: 1 },
+      androidBaseline,
+      ANDROID_THRESHOLD
+    );
+    expect(doubled).toEqual(settled);
+    expect(
+      shellHeights([
+        [945, 945],
+        [855, 765],
+        [855, 855],
+      ])
+    ).toEqual([945, 855]);
+  });
+
+  it('recognises the double report at every keyboard height, with no size in the decision', () => {
+    for (const keyboard of [40, 90, 159, 160, 161, 250, 357, 450]) {
+      const winH = androidBaseline - keyboard;
+      expect(
+        isDoubleReport({ winH, vvHeight: winH - keyboard, offsetTop: 0, scale: 1 }, androidBaseline)
+      ).toBe(true);
+      // The same frame with its device-pixel rounding (0.4 CSS px on the Mi 9T) still is one.
+      expect(
+        isDoubleReport(
+          { winH, vvHeight: winH - keyboard - 0.7, offsetTop: 0, scale: 1 },
+          androidBaseline
+        )
+      ).toBe(true);
+      // And the settled frame never is.
+      expect(
+        isDoubleReport({ winH, vvHeight: winH, offsetTop: 0, scale: 1 }, androidBaseline)
+      ).toBe(false);
+    }
+  });
+
+  it('trusts a visual viewport that moves first, before the layout gives anything up', () => {
+    // The other order seen on the bench: `innerHeight` still 945 while the visual viewport already
+    // reads 855. Nothing was given up, so nothing can have been counted twice.
+    expect(
+      isDoubleReport({ winH: 945, vvHeight: 855, offsetTop: 0, scale: 1 }, androidBaseline)
+    ).toBe(false);
+  });
+
+  it('trusts a keyboard over a layout that is short for another reason (a URL bar)', () => {
+    // A phone browser: the bar slid in (layout 56 short) and a 300 px keyboard covers the visual
+    // viewport only. Below the layout is the keyboard, above it the bar: not the same height.
+    const snap = computeSnapshot(
+      { winH: 889, vvHeight: 589, offsetTop: 0, scale: 1 },
+      androidBaseline,
+      ANDROID_THRESHOLD
+    );
+    expect(snap.viewportHeight).toBe(589);
+    expect(snap.isOpen).toBe(true);
   });
 });
 
