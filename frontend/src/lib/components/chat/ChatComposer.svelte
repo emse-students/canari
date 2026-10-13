@@ -24,7 +24,7 @@
     type GlassMenuItem,
   } from '$lib/components/shared/GlassMenuButton.svelte';
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
-  import { untrack, tick, onMount, onDestroy } from 'svelte';
+  import { untrack, tick, onMount, onDestroy, type Snippet } from 'svelte';
   import { slide, fade, scale } from 'svelte/transition';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import VoiceRecorder from './VoiceRecorder.svelte';
@@ -137,6 +137,13 @@
     isUploading?: boolean;
     /** When set, only users whose IDs are in this list appear in @mention suggestions. */
     allowedUserIds?: string[];
+    /**
+     * A line ABOUT the send (its refusal, or what it waits for), drawn at the top of the composer
+     * stack. Inside the footer on purpose: the footer's measured height is the thread's
+     * padding-bottom (--chat-composer-height), so the notice pushes the last messages up
+     * instead of floating over them, which is what it did (user's screenshot, 2026-10-13).
+     */
+    notice?: Snippet;
   }
 
   let {
@@ -159,6 +166,7 @@
     videoPreparation,
     isUploading = false,
     allowedUserIds,
+    notice,
   }: Props = $props();
 
   /**
@@ -865,6 +873,8 @@
   class:has-keyboard-panel={surfaceReservesPanel(surface)}
   bind:this={composerFooter}
 >
+  {@render notice?.()}
+
   <!-- Edit banner: the message being edited, which the field below holds the new text of. -->
   {#if isEditing}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">

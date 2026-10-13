@@ -51,6 +51,15 @@ import {
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
 import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
+import {
+  beginSalonEntry,
+  beginSalonListing,
+  currentSalonSession,
+  isCurrentSalonSession,
+  openSalonSendGate,
+  settleSalonEntry,
+  settleSalonListing,
+} from '$lib/utils/graine/salonSendGate';
 import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
@@ -209,6 +218,36 @@ export function useChannelWorkspaces() {
   let isLoadingWorkspaces = $state(false);
   /** A join landed while a listing was in flight; that listing's answer predates it. */
   let joinedCommunityReloadOwed = false;
+  /**
+   * Which listing owns `isLoadingWorkspaces`. A listing that outlived a sign-out is SUPERSEDED by the
+   * next session's (`globalChannels` is a singleton, and the flag would otherwise refuse the new
+   * account's post-login listing for as long as the old one's retry ladder ran), and only the
+   * listing that still owns the flag may drop it.
+   */
+  let activeListing = 0;
+  /** The session (`beginSalonListing`'s token) the in-flight listing belongs to. */
+  let activeListingSession = -1;
+
+  /**
+   * Thrown inside a listing that outlived its session, at the first point it would have written:
+   * the walk stops, nothing of the leaving account reaches the next one, and the retry loop ends
+   * without recording a failure for a session that is not its own.
+   */
+  class ListingOutlivedSessionError extends Error {
+    constructor(where: string) {
+      super(`[WORKSPACE-LOAD] listing of a previous session stopped before ${where}`);
+      this.name = 'ListingOutlivedSessionError';
+    }
+  }
+
+  /**
+   * Stops a listing whose session ended (sign-out) before it writes `where`. Called after every
+   * await of the walk: a sign-out can only land across one.
+   */
+  function assertListingSession(session: number, where: string): void {
+    if (isCurrentSalonSession(session)) return;
+    throw new ListingOutlivedSessionError(where);
+  }
   let workspacesLoadError = $state<string | null>(null);
 
   const service = new ChannelService();
@@ -246,12 +285,17 @@ export function useChannelWorkspaces() {
    * Performs a single attempt to fetch and merge the workspace/channel list.
    * Mutates `channelWorkspaces` on success; on failure the existing list is left untouched.
    */
-  async function executeWorkspaceLoadAttempt(ctx: ChannelWorkspaceContext): Promise<void> {
+  async function executeWorkspaceLoadAttempt(
+    ctx: ChannelWorkspaceContext,
+    session: number
+  ): Promise<void> {
+    assertListingSession(session, 'asking for the communities');
     // READ BEFORE THE REQUEST GOES OUT, not after it comes back. The server answers about the
     // moment it was asked, so anything this device creates from here on is newer than the answer
     // whatever order the two happen to complete in.
     const epochAtRequest = creationEpoch;
     const backendWorkspaces = await service.listUserWorkspaces();
+    assertListingSession(session, 'the community rows');
     const validChannelConversationIds: string[] = [];
     const validWorkspaceSlugs = new SvelteSet<string>();
 
@@ -282,7 +326,13 @@ export function useChannelWorkspaces() {
 
     const outcomes = await Promise.allSettled(
       prepared.map(({ sidebarWorkspace, workspaceId }) =>
-        loadCommunitySalons(ctx, sidebarWorkspace, workspaceId, validChannelConversationIds)
+        loadCommunitySalons(
+          ctx,
+          sidebarWorkspace,
+          workspaceId,
+          validChannelConversationIds,
+          session
+        )
       )
     );
     const firstFailure = outcomes.find(
@@ -293,13 +343,21 @@ export function useChannelWorkspaces() {
       ctx.log(`[WORKSPACE-LOAD] ${failed}/${outcomes.length} community(ies) failed to load`);
       throw firstFailure.reason;
     }
+    assertListingSession(session, 'the selected salon history');
 
     const selectedChannel = ctx.getSelectedConversationId?.();
     if (selectedChannel && isChannelConversationId(selectedChannel) && ctx.reloadChannelHistory) {
       await ctx.reloadChannelHistory(selectedChannel);
     }
 
-    await pruneAfterLoad(ctx, epochAtRequest, validChannelConversationIds, validWorkspaceSlugs);
+    assertListingSession(session, 'the prune');
+    await pruneAfterLoad(
+      ctx,
+      epochAtRequest,
+      validChannelConversationIds,
+      validWorkspaceSlugs,
+      session
+    );
   }
 
   /**
@@ -312,7 +370,8 @@ export function useChannelWorkspaces() {
     ctx: ChannelWorkspaceContext,
     sidebarWorkspace: ChannelSidebarWorkspace,
     workspaceId: string,
-    validChannelConversationIds: string[]
+    validChannelConversationIds: string[],
+    session: number
   ): Promise<void> {
     // Joining the community's Graine key-distribution group is done HERE, and AWAITED, for a
     // reason beyond tidiness: it is what registers the group id locally, and until it is
@@ -326,10 +385,13 @@ export function useChannelWorkspaces() {
     // `ensureCommunityDistributionGroup`, which is all a best-effort path leaves behind.
     if (ctx.ensureMls) {
       const mls = await ctx.ensureMls();
+      assertListingSession(session, `the key group of ${workspaceId}`);
       await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
+      assertListingSession(session, `the salon listing of ${workspaceId}`);
     }
 
     const channels = await service.listChannels(workspaceId);
+    assertListingSession(session, `the salons of ${workspaceId}`);
     for (const channel of channels as ChannelDto[]) {
       const actualId = channel.id || channel._id;
       if (!actualId) continue;
@@ -351,6 +413,9 @@ export function useChannelWorkspaces() {
         ensureMls: ctx.ensureMls,
         log: ctx.log,
       });
+      assertListingSession(session, `the salon ${actualId}`);
+      // ENTERED: a send typed into this salon before the walk reached it goes now (`salonSendGate`).
+      openSalonSendGate(actualId);
 
       const channelConversationId = `channel_${actualId}`;
       if (!validChannelConversationIds.includes(channelConversationId)) {
@@ -389,7 +454,8 @@ export function useChannelWorkspaces() {
     ctx: ChannelWorkspaceContext,
     epochAtRequest: number,
     validChannelConversationIds: string[],
-    validWorkspaceSlugs: Set<string>
+    validWorkspaceSlugs: Set<string>,
+    session: number
   ): Promise<void> {
     // NEWER THAN THE QUESTION IS NOT ABSENT FROM THE ANSWER. A salon created while this listing
     // was in flight is missing from it by construction, and deleting it here destroys a salon the
@@ -414,14 +480,20 @@ export function useChannelWorkspaces() {
       );
     }
     for (const staleId of staleLocalChannelIds) {
+      assertListingSession(session, `pruning ${staleId}`);
       ctx.invalidateChannelHistoryCache?.(staleId);
       ctx.conversations.delete(staleId);
       removeChannelFromWorkspaces(staleId);
       if (selectedChannelConversationId === staleId) {
         selectedChannelConversationId = '';
       }
-      await ctx.deleteConversation?.(staleId).catch(() => {});
+      await ctx
+        .deleteConversation?.(staleId)
+        .catch((error: unknown) =>
+          ctx.log(`[WORKSPACE-LOAD] pruned salon ${staleId} not deleted locally: ${String(error)}`)
+        );
     }
+    assertListingSession(session, 'pruning the communities');
 
     // Prune workspaces that no longer exist on the server - EXCEPT the ones that did not exist
     // when this listing was requested, which are missing from it for a reason that is not deletion.
@@ -752,7 +824,26 @@ export function useChannelWorkspaces() {
   ): Promise<void> {
     if (!channelId || !workspaceId) return;
     registerChannelWorkspace(channelId, workspaceId, isPrivate);
+    // THE ENTRY IS IN FLIGHT FROM HERE: the event drew the salon's conversation before this call,
+    // so a send typed during the joins below waits for them instead of being refused by a listing
+    // that settled before the salon existed (`salonSendGate`). Ended in the `finally`, opened or not.
+    const entryToken = beginSalonEntry();
+    try {
+      await enterJoinedChannel(channelId, workspaceId, isPrivate, ensureMls, log);
+      openSalonSendGate(channelId);
+    } finally {
+      settleSalonEntry(entryToken);
+    }
+  }
 
+  /** The joins {@link registerJoinedChannel} owes a salon entered in-session. */
+  async function enterJoinedChannel(
+    channelId: string,
+    workspaceId: string,
+    isPrivate: boolean,
+    ensureMls: (() => IMlsService | Promise<IMlsService>) | undefined,
+    log: (message: string) => void
+  ): Promise<void> {
     // A PUBLIC SALON'S SEEDS TRAVEL ON THE COMMUNITY'S GROUP, AND THIS IS WHERE THIS DEVICE ENTERS
     // IT IN-SESSION. The startup walk does three things per community and this path did two: it
     // mapped the channel and it entered a PRIVATE salon's own group. Nothing entered the
@@ -878,11 +969,27 @@ export function useChannelWorkspaces() {
    * "a refresh ran" and "the list is current" are two different facts, and a caller that treats the
    * first as the second empties the sidebar on one dropped request. The list itself is never
    * cleared by a failure - it is replaced only by a response that actually arrived.
+   *
+   * A LISTING BELONGS TO ITS SESSION. One still running when its account signs out stops at its
+   * next write (`assertListingSession`) and does NOT hold the flag against the next account: the
+   * next session's call supersedes it, and resolves to false only against a listing of its own.
+   * The stale one resolves to false and records no error - neither is the next session's to read.
    */
   async function loadChannelWorkspacesFromBackend(ctx: ChannelWorkspaceContext): Promise<boolean> {
-    if (isLoadingWorkspaces) return false;
+    if (isLoadingWorkspaces) {
+      if (isCurrentSalonSession(activeListingSession)) return false;
+      ctx.log(
+        '[WORKSPACE-LOAD] the listing in flight belongs to a session that signed out - superseded'
+      );
+    }
     isLoadingWorkspaces = true;
     workspacesLoadError = null;
+    // A salon send waiting for its salon to load waits for THIS listing; its end is what refuses
+    // the ones it did not enter (`salonSendGate`). Synchronous with the flag, so no await separates
+    // the guard from the count. The token is also this listing's SESSION.
+    const listingToken = beginSalonListing();
+    const listingId = ++activeListing;
+    activeListingSession = listingToken;
 
     // N DELAYS IS N+1 ATTEMPTS, and the count is named once here rather than being spelt as
     // `<= length` at the loop and `length + 1` in the log. `<=` against a length reads as an
@@ -893,7 +1000,7 @@ export function useChannelWorkspaces() {
     try {
       for (let attempt = 0; attempt < attemptCount; attempt++) {
         try {
-          await executeWorkspaceLoadAttempt(ctx);
+          await executeWorkspaceLoadAttempt(ctx, listingToken);
           workspacesLoadError = null;
           ctx.log(`[WORKSPACE-LOAD] communities/channels loaded (attempt ${attempt + 1})`);
           // THE SALONS EXIST NOW, and what is unread in them is the server's to say: the live tally
@@ -903,6 +1010,18 @@ export function useChannelWorkspaces() {
           void refreshSalonUnread(ctx, 'communities loaded');
           return true;
         } catch (error) {
+          // NOT A FAILURE OF THIS SESSION'S LIST: the account signed out under it. Nothing to retry
+          // and nothing to record - `workspacesLoadError` is the next session's to read.
+          // A real failure after the sign-out (a 401 once the token is gone) is the same case.
+          if (
+            error instanceof ListingOutlivedSessionError ||
+            !isCurrentSalonSession(listingToken)
+          ) {
+            ctx.log(
+              `[WORKSPACE-LOAD] listing of a previous session ended (${String(error)}): nothing written, no failure recorded`
+            );
+            return false;
+          }
           ctx.log(
             `[WORKSPACE-LOAD] attempt ${attempt + 1}/${attemptCount} failed: ${String(error)}`
           );
@@ -939,13 +1058,42 @@ export function useChannelWorkspaces() {
       // Unreachable: the final attempt always returns from the catch above.
       return true;
     } finally {
-      isLoadingWorkspaces = false;
-      // A join that arrived while THIS listing was in flight is not in its answer, so it is owed one
-      // more. Run here, after the flag drops, because that is the one moment a second load is legal.
-      const owed = joinedCommunityReloadOwed;
-      joinedCommunityReloadOwed = false;
-      if (owed) void loadChannelWorkspacesFromBackend(ctx);
+      endListing(ctx, listingId, listingToken);
     }
+  }
+
+  /**
+   * The end of the listing `listingId` of session `listingToken`: drops the in-flight flag, starts
+   * the reload a join owed it, and settles the send gate - each only if it is still this listing's
+   * to do. A listing superseded by the next session's touches nothing; one whose session merely
+   * ended drops the flag and the leaving account's owed reload.
+   */
+  function endListing(ctx: ChannelWorkspaceContext, listingId: number, listingToken: number): void {
+    if (listingId !== activeListing) {
+      ctx.log(
+        '[WORKSPACE-LOAD] a superseded listing of a previous session ended - the flag is not its own'
+      );
+      return;
+    }
+    isLoadingWorkspaces = false;
+    if (!isCurrentSalonSession(listingToken)) {
+      if (joinedCommunityReloadOwed) {
+        ctx.log("[WORKSPACE-LOAD] reload owed to a join dropped: that join's session signed out");
+      }
+      joinedCommunityReloadOwed = false;
+      return;
+    }
+    // READ BEFORE THE OWED RELOAD BEGINS: its first statement clears `workspacesLoadError`, and a
+    // listing that gave up would otherwise be recorded as one that answered.
+    const listingOutcome = workspacesLoadError === null ? 'loaded' : 'failed';
+    // A join that arrived while THIS listing was in flight is not in its answer, so it is owed one
+    // more. Run here, after the flag drops, because that is the one moment a second load is legal.
+    const owed = joinedCommunityReloadOwed;
+    joinedCommunityReloadOwed = false;
+    if (owed) void loadChannelWorkspacesFromBackend(ctx);
+    // AFTER the owed reload has begun (synchronously, above): a send waiting for a salon that
+    // reload may enter keeps waiting for it instead of being refused by this one's end.
+    settleSalonListing(listingToken, listingOutcome);
   }
 
   /**
@@ -974,8 +1122,15 @@ export function useChannelWorkspaces() {
    */
   async function hydrateJoinedCommunity(ctx: ChannelWorkspaceContext): Promise<void> {
     ctx.log('[WORKSPACE-LOAD] community joined in-session - loading its salons');
+    const session = currentSalonSession();
     const ran = await loadChannelWorkspacesFromBackend(ctx);
-    if (!ran) joinedCommunityReloadOwed = true;
+    if (ran) return;
+    // A listing that outlived its session also answers false; the join it carried left with it.
+    if (!isCurrentSalonSession(session)) {
+      ctx.log("[WORKSPACE-LOAD] joined community's reload not owed: its session signed out");
+      return;
+    }
+    joinedCommunityReloadOwed = true;
   }
 
   /** Creates a new workspace with the given name, loads its default channels, then auto-selects the first channel. */
@@ -1024,6 +1179,8 @@ export function useChannelWorkspaces() {
           if (!actualId) continue;
 
           registerChannelWorkspace(actualId, workspaceId, channel.visibility === 'private');
+          // The community's group was ensured above; a salon of a community just created is entered.
+          openSalonSendGate(actualId);
 
           const channelConversationId = `channel_${actualId}`;
           addChannelToWorkspace(sidebarWorkspace.id, {
@@ -1115,6 +1272,7 @@ export function useChannelWorkspaces() {
         ensureMls: ctx.ensureMls,
         log: ctx.log,
       });
+      openSalonSendGate(actualId);
 
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
       if (sidebarWorkspace) {
