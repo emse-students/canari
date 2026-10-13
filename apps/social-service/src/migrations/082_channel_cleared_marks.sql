@@ -13,11 +13,12 @@
 -- message, and only ever raised (see `clearWorkspaceUnread`). On the membership row, so it goes when
 -- the membership goes, with nothing else to purge.
 --
--- NOT DECLARED ON THE TYPEORM ENTITY, on purpose: the deploy starts the containers BEFORE it applies
--- migrations (docs/wiki/services/social-service.md, "A query at boot runs BEFORE the migration that
--- adds its column"), and an entity column is in every `SELECT` and `INSERT` of `channel_members`. Read
--- and written by raw SQL only, so the window before this file runs costs the two queries that name it,
--- not every membership read.
+-- DECLARED ON THE TYPEORM ENTITY WITH `select`/`insert`/`update: false`: the deploy starts the
+-- containers BEFORE it applies migrations (docs/wiki/services/social-service.md, "A query at boot runs
+-- BEFORE the migration that adds its column"), so a plain entity column would put it in every `SELECT`
+-- of `channel_members` during that window - but leaving it OFF the entity let `synchronize` (on outside
+-- production) DROP it at every local boot. Read and written by raw SQL only; the window costs the two
+-- queries that name it and the RETURNING of a new membership's INSERT, never a membership read.
 --
 -- Idempotent via IF NOT EXISTS.
 

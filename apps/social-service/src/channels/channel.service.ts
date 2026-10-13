@@ -3711,15 +3711,17 @@ export class ChannelService {
     // TypeORM answers an UPDATE as `[rows, rowCount]`, not as the rows.
     const [rows]: [{ prev: Record<string, number> | null; next: Record<string, number> | null }[]] =
       await this.messageRepo.query(
-        `WITH bound AS (
+        `WITH newest AS (
            SELECT c.id::text AS cid,
-                  LEAST(
-                    $3::bigint,
-                    (SELECT floor(extract(epoch from max(m."createdAt")) * 1000)::bigint
-                       FROM channel_messages m
-                      WHERE m."channelId" = c.id)
-                  ) AS at
+                  (SELECT floor(extract(epoch from max(m."createdAt")) * 1000)::bigint
+                     FROM channel_messages m
+                    WHERE m."channelId" = c.id) AS at
              FROM unnest($2::uuid[]) AS c(id)
+         ), bound AS (
+           -- LEAST ignores a NULL, so an EMPTY salon must be dropped here, not left to LEAST:
+           -- otherwise its mark became upTo itself, the client's word, and an upTo in the future hid
+           -- every message the salon would receive until then (measured on Postgres, 2026-10-13).
+           SELECT cid, LEAST($3::bigint, at) AS at FROM newest WHERE at IS NOT NULL
          ), old AS (
            SELECT "clearedMarks" AS prev FROM channel_members WHERE id = $1
          )
@@ -3730,7 +3732,6 @@ export class ChannelService {
                            GREATEST(b.at, COALESCE((cm."clearedMarks" ->> b.cid)::bigint, 0))
                          )
                     FROM bound b
-                   WHERE b.at IS NOT NULL
                 ), '{}'::jsonb)
            FROM old
           WHERE cm.id = $1

@@ -302,8 +302,18 @@ greyed; a mouse right click opens it; a mouse left hold of 700 ms still just sel
 
 **Not verified:** a real phone (Android's native long-press `contextmenu`, iOS WebKit's callout - both
 handled in code, neither seen); the menu's position on screen (the probe page rendered without the
-app's CSS); the SQL against a database (the local Docker daemon stopped answering during the session:
-the statement is asserted by `channel-unread-clear.spec.ts`, not run). **Owed:** one reading on dev -
+app's CSS); two devices clearing at ONCE (one connection only: argued, not measured - the `UPDATE`
+re-reads the locked row, so the stored mark is right and only the answer's `prev` can be stale, which
+at worst repeats an event and a silent push). **The SQL IS run**, by
+`channel-unread-clear.integration.spec.ts` (gated on `SOCIAL_IT_DATABASE_URL`; at review on PGlite,
+Postgres 17 in WASM, Docker did not answer): microsecond rows clear exactly, a lower or repeated `upTo`
+moves nothing, and it found two defects, both fixed. `LEAST` ignores a NULL, so an EMPTY salon took
+`upTo` itself as its mark and a future `upTo` hid that salon's next messages; an empty salon now gets
+no mark. And the column was off the entity, so `synchronize` (every boot outside production) dropped
+it and the count failed locally; it is declared `select`/`insert`/`update: false`. **Measured cost of
+the deploy window** (column absent, before 082 runs): a membership read and save work; the unread
+count and a NEW membership's insert (its `RETURNING` names the defaulted column) fail until the
+migration lands - seconds, nothing at boot. **Owed:** one reading on dev -
 clear a community with unread salons on the web, watch the phone's badges and banners go, and check
 that no "Lu par" head appears for the clearing member on the sender's side.
 

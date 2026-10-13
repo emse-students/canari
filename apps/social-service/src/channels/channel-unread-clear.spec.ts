@@ -13,9 +13,9 @@ import { RedisService } from '../common/redis';
  * "Marquer tout comme lu" on a community (2026-10-13). What is worth protecting here is WHO is told
  * and WHICH salons are touched: the caller's own devices only, never the salon's readers (the read
  * mark is the "Lu par" receipt and must not move), and never a private salon the caller cannot
- * read. The bound (newest row, `upTo`) and the never-lower merge are SQL, checked against a real
- * database (docs/wiki/frontend/modules/chat.md, "Mark a whole community as read"); here the SQL is
- * asserted to carry them and to be ONE statement.
+ * read. The bound (newest row, `upTo`) and the never-lower merge are SQL, RUN against PostgreSQL by
+ * `channel-unread-clear.integration.spec.ts`; here the SQL is asserted to carry them and to be ONE
+ * statement.
  */
 describe('ChannelService - clearing a community unread', () => {
   const WS = 'ws-1';
@@ -80,6 +80,8 @@ describe('ChannelService - clearing a community unread', () => {
     // The private salon the caller is not in is never named, so its traffic is never touched.
     expect(params).toEqual(['m-me', ['open', 'mine'], UP_TO]);
     expect(sql).toContain('LEAST(');
+    // LEAST ignores a NULL: an empty salon is dropped BEFORE it, or its mark would be upTo itself.
+    expect(sql).toMatch(/LEAST\(\$3::bigint, at\) AS at FROM newest WHERE at IS NOT NULL/);
     expect(sql).toContain('max(m."createdAt")');
     // Never lowered: the merge takes the greater of the row as it is now and the new value.
     expect(sql).toContain('GREATEST(b.at, COALESCE((cm."clearedMarks" ->> b.cid)::bigint, 0))');

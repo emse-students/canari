@@ -169,12 +169,15 @@ describe('community rail menu', () => {
     expect(menu()).toBeNull();
   });
 
-  it('Escape closes it', () => {
+  it('Escape closes it, from the focused entry, and hands focus back to the icon', () => {
     mountRail(unread());
     rightClick(railButton('Alpha'));
-    menu()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    // The keyboard lands in the menu, so Escape comes from the entry and bubbles to the menu.
+    expect(document.activeElement).toBe(markItem());
+    markItem()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     flushSync();
     expect(menu()).toBeNull();
+    expect(document.activeElement).toBe(railButton('Alpha'));
   });
 
   it('is not offered where no handler is wired', () => {

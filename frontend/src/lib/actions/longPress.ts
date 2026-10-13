@@ -69,9 +69,12 @@ export function longPress(node: HTMLElement, initial: LongPressParams) {
   }
 
   const onDown = (e: PointerEvent) => {
+    // Recorded BEFORE the right-click return: a touch whose release never reached this node (a drag
+    // that carried it away) would otherwise leave `touchDown` set, and the next right click would be
+    // taken for that touch's own `contextmenu` and open nothing.
+    touchDown = e.pointerType !== 'mouse';
     // A mouse holds with its main button only; a right click is the context menu's.
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    touchDown = e.pointerType !== 'mouse';
     held = false;
     cancel();
     if (params.pointerTypes && !params.pointerTypes.includes(e.pointerType)) return;

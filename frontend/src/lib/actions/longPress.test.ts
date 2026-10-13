@@ -121,6 +121,16 @@ describe('longPress', () => {
     expect(onContextMenu).not.toHaveBeenCalled();
   });
 
+  it('a right click after a touch whose release never came still opens the menu', () => {
+    const onContextMenu = vi.fn();
+    wire({ onHold: vi.fn(), onContextMenu });
+    // A touch press, carried away by a drag: no pointerup reaches the node.
+    node.dispatchEvent(pointer('pointerdown'));
+    node.dispatchEvent(pointer('pointerdown', { pointerType: 'mouse', button: 2 }));
+    node.dispatchEvent(new Event('contextmenu', { bubbles: true, cancelable: true }));
+    expect(onContextMenu).toHaveBeenCalledExactlyOnceWith(node);
+  });
+
   it('a mouse right button never starts a hold', () => {
     const onHold = vi.fn();
     wire({ onHold });
