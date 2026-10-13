@@ -220,7 +220,14 @@
   $effect(() => {
     const id = notifNav.pending;
     const landing = notifNav.landing;
-    if (!id || !globalSession.isLoggedIn) return;
+    if (!id) return;
+    // THE LANDING NO LONGER WAITS FOR THE SESSION TO ROUTE (F1, 2026-10-12). Routing draws no
+    // plaintext - `/chat` without a session is the opaque "connecting" panel, and behind the PIN
+    // the gate covers it - so the target's page is reached as soon as the link is parsed, on the
+    // strength of a signed-in user on this device, instead of ~0.9 s (vault) to ~2.8 s (PIN) later
+    // behind `MLS ready`. What is SELECTED before the session is only what the local preview drew.
+    const sessionUp = globalSession.isLoggedIn;
+    if (!sessionUp && !currentUserId()) return;
     // Route to the view that can show this target once per pending id. hooks.client.ts also routes,
     // but on a cold start that goto can fire before the SvelteKit router is ready and silently
     // no-op, leaving the user on the home feed. This effect runs post-mount (router ready) and
@@ -243,12 +250,31 @@
     if (step !== 'select') return;
     // The route is reached: whatever waited for the landing to LEAVE (the feed's first draw) may go.
     notifNav.markArrived();
+    const displayedKey = resolveConversationKey(globalConvs.conversations, id);
+    // BEFORE THE SESSION, ONLY THE PREVIEW IS SHOWN, AND IT IS SHOWN WITHOUT ACTING: no history
+    // request, no read mark, no member load - see `previewSelect`. The real selection runs below
+    // the moment the session is up, over the same row.
+    const previewed = globalConvs.landingPreviewKey;
+    if (!sessionUp) {
+      if (displayedKey !== null && displayedKey === previewed) {
+        globalConvs.previewSelect(displayedKey);
+      }
+      return;
+    }
+    // The session owns the map now: the previewed row stops being a preview, and is selected for
+    // real once - which is the only case where "already on screen" must not end the landing.
+    if (previewed !== null) globalConvs.endLandingPreview();
     // Already on screen: the landing is done and must stay idle until the target is lost. The
     // selection is a map key and the target is a group id, so they are only ever equal for a
     // channel - matched raw, a landed DM never looked landed, and every mutation of the map
     // re-selected it and re-requested its history.
-    const displayedKey = resolveConversationKey(globalConvs.conversations, id);
-    if (displayedKey !== null && globalConvs.selectedContact === displayedKey) return;
+    if (
+      displayedKey !== null &&
+      globalConvs.selectedContact === displayedKey &&
+      previewed !== displayedKey
+    ) {
+      return;
+    }
 
     if (
       openNotificationTarget(
@@ -296,6 +322,33 @@
       appendLog(`[notifNav] channel ${id} still unknown after refresh - abandoning`);
       notifNav.clear();
     });
+  });
+
+  /**
+   * A preview exists only to show the landing's target. If the reader leaves the landing before
+   * the session is up (Back out of the thread, another tab), the row comes off the screen: left in
+   * place it would be a conversation list of one, open to taps that would act with no session.
+   *
+   * A SECOND notification tapped before the session is up is the same case: the landing now names
+   * another conversation, and the preview drawn for the first one would stay selected under it -
+   * the reader would see, and type into, a thread they did not open. The preview is keyed by the
+   * landing target it was drawn for (`previewLandingTarget` stores `notifNav.pending`), so any other
+   * pending target, or none, ends it.
+   */
+  $effect(() => {
+    const previewed = globalConvs.landingPreviewKey;
+    if (previewed === null || globalSession.isLoggedIn) return;
+    const pending = notifNav.pending;
+    if (pending === previewed) return;
+    untrack(() =>
+      globalConvs.discardLandingPreview(
+        pending === null
+          ? 'the landing was left before the session came up'
+          : `another landing (${pending.slice(0, 8)}) replaced it before the session came up`,
+        globalMessaging.messageReactions,
+        appendLog
+      )
+    );
   });
 
   /** Load MLS group members while a group call is active so all avatars can be shown. */
@@ -777,6 +830,27 @@
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
       beginConversationSource: () => globalConvs.beginConversationSource(),
       endConversationSource: () => globalConvs.endConversationSource(),
+      previewLandingTarget: (input: {
+        storage: IStorage;
+        deviceKeyB64: string;
+        userId: string;
+        storeOpenMs: number;
+        owner: number;
+        isCurrent: () => boolean;
+      }) =>
+        globalConvs.previewLandingTarget({
+          ...input,
+          messageReactions: globalMessaging.messageReactions,
+          isSessionUp: () => globalSession.isLoggedIn,
+          log: appendLog,
+        }),
+      discardLandingPreview: (reason: string, owner: number) =>
+        globalConvs.discardLandingPreview(
+          reason,
+          globalMessaging.messageReactions,
+          appendLog,
+          owner
+        ),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       drainOrphanMessages: (convoKey: string) =>
