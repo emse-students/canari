@@ -1711,8 +1711,8 @@ unchanged** - it still asks on every miss, and stays so until it can be read on 
 build. Pinned by `messageNotificationShape.test.ts`.
 
 **A face the app has drawn is in the notification's cache before any push needs it (Android,
-2026-10-01).** `userAvatarCache.ts` hands the bytes of every avatar it LOADS (once per load, not per
-mount) to `store_avatar_mirror` (`commands/notifications.rs`), which writes
+2026-10-01).** `userAvatarCache.ts` hands the bytes of every avatar it LOADS (the same bytes once per
+process, below) to `store_avatar_mirror` (`commands/notifications.rs`), which writes
 `files/avatar_<id>.jpg` - the very file `cachedRemoteIcon` reads first - and deletes the
 `.absent` marker beside it. One cache, one reader: a contact seen in the app no longer depends on the
 network for the notification's face. The id comes from `Avatar.svelte`, which holds it, never from
@@ -1721,10 +1721,22 @@ together. **The clock**: the mirror's mtime is the moment of the write, so the n
 measures "since the app last drew this face" - a contact seen daily never ages out, and a changed
 photo can be up to two days stale in the shade (the browser's 24 h `max-age` until 2026-10-08, now only the native one).
 No ETag is carried: a cross-origin `fetch` cannot read it without an `Access-Control-Expose-Headers`
-nobody sends, and the reader would need the network to compare it. **The bytes go as a plain array
-(`{ userId, data }`, the shape `save_mls_state` takes), never a raw invoke body**: the first version
-read `tauri::ipc::Request` and the Mi 9T refused every call with "the body is not raw bytes" - the
-Android IPC turns a typed array into JSON. A body that does not open like a JPEG/PNG/GIF/WebP is
+nobody sends, and the reader would need the network to compare it. **The bytes go as ONE base64
+string (`{ userId, dataB64 }`), never a raw invoke body**: the first version read
+`tauri::ipc::Request` and the Mi 9T refused every call with "the body is not raw bytes" - the
+Android IPC turns a typed array into JSON. Until 2026-10-13 they went as a number array (`data`, the
+shape `save_mls_state` takes), ~3.6 JSON characters and one JS number per byte, built and
+serialised on the main thread: 50 faces of 7.5 KB (the production median, read from the edge log:
+p10 5.0 KB, p90 12.4 KB, max 16 KB) held it 360-440 ms on the Mi 9T, against 130-150 ms as base64.
+
+**A face is written once per process, not once per load (2026-10-13).** "Once per load" was every
+salon open: the avatar answers `no-cache` + ETag, each mount revalidates (a `304` the WebView's HTTP
+cache turns back into the same bytes), and the blob pool forgets a face with its last mount - so a
+store Pixel 6a re-mirrored 7/50/11/24 faces for four salons, identically on every repeat.
+`avatarMirror.ts` keeps the SHA-256 of what it last wrote per user, for the life of the process,
+and writes only bytes it has not written; a failed write is forgotten so the next draw retries. What
+that gives up: the first write per process refreshes the mtime, so a process alive over 24 h lets
+the shade fall back to the network for a face it keeps drawing - the cost before any mirror. A body that does not open like a JPEG/PNG/GIF/WebP is
 refused, so a proxy's `200` HTML page never becomes a face. iOS is not mirrored: the extension reads
 an app-group container this command does not write.
 
