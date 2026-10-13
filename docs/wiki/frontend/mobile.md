@@ -637,7 +637,8 @@ lifecycle, where `application:openURL:options:` carried the link. tao's `dev` br
 the options.
 
 `canari_ios.mm` wraps `TaoSceneDelegate`'s `willConnect` (`CanariInstallSceneLaunchUrlHook`): tao's
-own method runs first, since it starts the app and the plugin listening for `Opened`, then the
+own method runs first (it gives the scene its window; the event loop is already up, because with no
+scene manifest tao runs `on_app_ready()` from `didFinishLaunching`), then the
 options go to the two methods tao implements for a RUNNING app, `scene:openURLContexts:` and
 `scene:continueUserActivity:`. It is installed on `UIApplicationDidFinishLaunchingNotification` with
 `queue:nil`: tao registers the class inside `ffi::start_app()`, and the first scene connects right

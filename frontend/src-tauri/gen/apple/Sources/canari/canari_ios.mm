@@ -547,7 +547,9 @@ static void CanariOnWillResignActive(__unused NSNotification *note) {
 // which kept the app on the classic lifecycle where `application:openURL:options:` carried it.
 //
 // The fix hands the options to the two methods tao already implements for a RUNNING app, after its
-// own `willConnect` has run (that call starts the app, so the plugin listening for `Opened` exists).
+// own `willConnect` has run. The event loop is already up by then - with no scene manifest tao runs
+// `on_app_ready()` from `didFinishLaunching`, and its `connect_scene` skips it - so `willConnect`
+// only gives the scene its window, and `Opened` lands exactly as it does for a running app.
 // Protocol: docs/wiki/frontend/mobile.md#a-cold-start-on-the-scene-lifecycle-lost-its-link.
 
 typedef void (*CanariSceneWillConnectIMP)(id, SEL, UIScene *, UISceneSession *, UISceneConnectionOptions *);

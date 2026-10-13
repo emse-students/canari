@@ -42,7 +42,7 @@ describe('iOS cold-start launch url', () => {
     );
   });
 
-  it('lets tao start the app first, then hands it the launch urls and Universal Links', () => {
+  it('lets tao connect the scene first, then hands it the launch urls and Universal Links', () => {
     const wrapper = functionBody('CanariSceneWillConnect');
     const original = wrapper.indexOf(
       'CanariOrigSceneWillConnect(self, _cmd, scene, session, options)'
