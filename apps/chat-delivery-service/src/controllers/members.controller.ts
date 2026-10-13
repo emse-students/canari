@@ -556,11 +556,16 @@ export class MembersController {
    * the same rows; only the round trips were the cost.
    *
    * **THE SAME AUTHORIZATION AS THE SINGLE READ, PER GROUP.** A caller is answered for a group only
-   * when it holds a row in that group's roster (or is a global admin, or the deployment injects no
-   * `x-user-id`, as `assertCallerIsGroupMember` allows). Every other group - one the caller is not
-   * in, or one that does not exist - is listed in `refused` rather than failing the whole request:
+   * when it holds a row in that group's roster, or is a global admin. Every other group - one the
+   * caller is not in, or one that does not exist - is listed in `refused` rather than failing the
+   * whole request:
    * the single read's 403 per group, carried as a FACT the client reads by group, so it never has
    * to learn it by asking again.
+   *
+   * **NO CALLER IS NOT A WILDCARD HERE.** `assertCallerIsGroupMember` lets an absent `x-user-id`
+   * through for deployments that predate the internal token; `HeaderAuthGuard` now refuses those
+   * before any handler runs, so that branch is unreachable - and a branch that would hand EVERY
+   * roster to a caller nobody identified is not copied into a route that reads many at once.
    *
    * **OLD CLIENTS ARE UNTOUCHED**: `GET mls/groups/:groupId/user-members` stays, and is still what
    * every other caller (membership guards, peer resolution) reads.
@@ -597,12 +602,12 @@ export class MembersController {
     }
 
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
-    const unrestricted = headerGlobalAdmin === 'true' || !caller;
+    const unrestricted = headerGlobalAdmin === 'true';
     const rosters: Record<string, string[]> = {};
     const refused: string[] = [];
     for (const groupId of groupIds) {
       const members = byGroup.get(groupId) ?? new Set<string>();
-      if (!unrestricted && !members.has(caller)) {
+      if (!unrestricted && (!caller || !members.has(caller))) {
         refused.push(groupId);
         continue;
       }

@@ -1475,11 +1475,10 @@ export class MlsDeliveryApi {
   /**
    * The user-level rosters of many groups, `GROUP_ROSTERS_MAX_GROUPS` per `POST /api/mls/group-rosters`.
    *
-   * Never throws, like {@link fetchHistoryBatch}, and for the same reason: a group this read did not
-   * answer is simply absent from both sets, and the caller reads it on its own with
-   * {@link getGroupUserMembers} - the ordinary path every group took before this route existed. That
-   * is also what keeps a client working against a delivery service that predates the route (its
-   * 404 is logged once per chunk, with the server's words, and nothing else changes).
+   * Never throws, like {@link fetchHistoryBatch}: a group this read did not answer is simply absent
+   * from both sets, and the caller decides nothing for it - it is NOT read another way (see
+   * `strayLeaves.ts`). A delivery service that predates the route answers 404, which is warned once
+   * per chunk with the server's words; the stray sweep then removes nobody until the server deploys.
    *
    * `refused` is the server ANSWERING that the caller is not in that group - the single read's 403,
    * per group - so the caller knows it without asking again.
@@ -1497,7 +1496,7 @@ export class MlsDeliveryApi {
         if (!res.ok) {
           console.warn(
             `[ROSTER] batch of ${chunk.length} group(s) not answered: ${res.status} ` +
-              `body=${(await res.text()).slice(0, 200)} - each roster is read on its own`
+              `body=${(await res.text()).slice(0, 200)} - nothing is decided for these groups`
           );
           continue;
         }
@@ -1506,12 +1505,14 @@ export class MlsDeliveryApi {
           refused?: string[];
         };
         for (const [groupId, userIds] of Object.entries(data.rosters ?? {})) {
-          out.rosters.set(groupId, userIds ?? []);
+          // A roster that is not a list is not an empty roster: an empty one names every leaf as a
+          // stray, so a malformed entry is left unanswered rather than read as one.
+          if (Array.isArray(userIds)) out.rosters.set(groupId, userIds);
         }
         for (const groupId of data.refused ?? []) out.refused.add(groupId);
       } catch (e) {
         console.warn(
-          `[ROSTER] batch of ${chunk.length} group(s) could not be sent - each roster is read on its own:`,
+          `[ROSTER] batch of ${chunk.length} group(s) could not be sent - nothing is decided for these groups:`,
           e
         );
       }

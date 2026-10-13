@@ -3,7 +3,7 @@ import { GROUP_ROSTERS_MAX_GROUPS, MlsDeliveryApi, type MlsDeliveryFetch } from 
 /**
  * `fetchGroupRosters` replaces one `GET user-members` per held group (81 per connection on the
  * 2026-10-12 production console) by `ceil(n / GROUP_ROSTERS_MAX_GROUPS)` POSTs - and, like the
- * history batch, never throws: what it did not answer the caller reads on its own.
+ * history batch, never throws: what it did not answer is absent, and the caller decides nothing for it.
  */
 function api(answer: (body: { groupIds: string[] }) => Response) {
   const bodies: Array<{ groupIds: string[] }> = [];
@@ -67,5 +67,15 @@ describe('fetchGroupRosters', () => {
     expect(got.refused.size).toBe(0);
     expect(warn.mock.calls[0][0]).toContain('404');
     warn.mockRestore();
+  });
+
+  it('leaves unanswered a roster that is not a list, rather than reading it as empty', async () => {
+    // An empty roster names every leaf but this device's as a stray.
+    const { api: a } = api(() => json({ rosters: { g1: null, g2: ['alice'] }, refused: [] }));
+
+    const got = await a.fetchGroupRosters(['g1', 'g2']);
+
+    expect(got.rosters.has('g1')).toBe(false);
+    expect(got.rosters.get('g2')).toEqual(['alice']);
   });
 });

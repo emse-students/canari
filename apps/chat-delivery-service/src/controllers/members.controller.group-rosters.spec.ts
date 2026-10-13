@@ -87,6 +87,15 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
     expect(got.refused).toEqual([]);
   });
 
+  it('answers no roster to a caller nobody identified, admin aside', async () => {
+    // Unreachable behind HeaderAuthGuard, which refuses an empty x-user-id - and if that ever
+    // changed, the batch must not become a read of every roster.
+    const got = await controller.getGroupRosters({ groupIds: ['g-a'] }, undefined, undefined);
+
+    expect(got.rosters).toEqual({});
+    expect(got.refused).toEqual(['g-a']);
+  });
+
   it('asks once per distinct group however often it is named', async () => {
     await controller.getGroupRosters({ groupIds: ['g-a', 'g-a'] }, 'alice', undefined);
 

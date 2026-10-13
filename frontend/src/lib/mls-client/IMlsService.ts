@@ -1004,8 +1004,7 @@ export interface IMlsService {
   getGroupUserMembers(groupId: string): Promise<{ userId: string }[]>;
   /**
    * The user-level rosters of many groups in one read (`POST /api/mls/group-rosters`). Never throws:
-   * a group it did not answer is absent from both sets and is read on its own with
-   * {@link getGroupUserMembers}.
+   * a group it did not answer is absent from both sets, and nothing is decided for it.
    */
   getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch>;
   /** Returns all groups the given user belongs to according to the delivery service. */

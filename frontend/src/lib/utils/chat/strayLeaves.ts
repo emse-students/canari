@@ -1,5 +1,4 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
-import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { diffRosterAgainstTree } from '$lib/utils/graine/rosterReconcile';
 import { holdsGroupState } from './groupUsability';
 
@@ -24,20 +23,22 @@ import { holdsGroupState } from './groupUsability';
  * **ONE ROSTER READ FOR EVERY GROUP, NOT ONE PER GROUP.** The rosters used to be read one group at a
  * time: 81 sequential `GET user-members` per connection, 5.0 s on the 2026-10-12 production console,
  * every one a `304`. They are now read in ONE `POST /api/mls/group-rosters` (a member is answered
- * only for the groups it is in, exactly as the single read authorizes). A group that read did not
- * answer - a server that predates the route, a failed chunk - is read on its own, which is the path
- * every group took before.
+ * only for the groups it is in, exactly as the single read authorizes).
  *
- * **EVERY TREE IS READ BEFORE THE ROSTERS, AND THAT ORDER IS WHAT MAKES THE BATCH SOUND.** A roster
- * read before a leaf joined would name that leaf's user as absent, and removing them would evict a
- * member who just arrived. With every tree read first, a leaf that joins afterwards is in no tree
- * this pass compares, so it can never be a candidate - the worst case stays a stray surviving until
- * the next connection, the direction this mechanism already fails in. The batch WIDENS the window
- * between the roster read and the commit (from one round trip to the length of the pass); the only
- * new exposure is a member who leaves AND rejoins inside it, whose fresh leaf would go with the old
- * one - the per-group read had the same race over one round trip, and their own device heals it
- * through the ordinary re-add. Right before a commit the tree is read again and only users still
- * holding a leaf are named, so a stray another member already removed is not removed twice.
+ * **THE BATCH ONLY SAYS WHICH GROUPS NEED NO WORK; A REMOVAL IS DECIDED ON A FRESH READ OF BOTH.**
+ * Every tree is read before the rosters, so a leaf that joins afterwards is in no tree this pass
+ * compares and is never a candidate. But the batch roster is as old as the start of the pass, and
+ * removing by user id takes EVERY leaf of that user: a member who left before the batch read and
+ * rejoined after it would lose the fresh leaf with the stale one. So a group the batch names a
+ * stray in is decided again, as the per-group read always decided it - its tree, THEN its roster
+ * (`GET user-members`), then the diff - right before the commit. That puts the roster-to-commit
+ * window back at one round trip, and the extra read is paid only by a group that has a stray.
+ *
+ * **A GROUP THE BATCH DID NOT ANSWER IS NOT READ ANOTHER WAY** - a server that predates the route
+ * (404), a failed chunk. Nobody is removed in it, which is the direction this mechanism already
+ * fails in, and the next connection asks again. Falling back to one read per group would be a
+ * second path that is silent the day the first one breaks - and on a failing network, the very
+ * storm of requests the batch exists to remove. `fetchGroupRosters` warns with the server's answer.
  *
  * **NOTHING IS BROADCAST.** The leaver already sent `memberLeft` and every remaining member rendered
  * it; a `memberRemoved` notice here would tell them a second time, in the words of an eviction, that
@@ -77,10 +78,10 @@ export async function removeStrayLeaves(
   );
   log(
     `[STRAY] compared ${trees.size} tree(s): ${batch.rosters.size} roster(s) in one read, ` +
-      `${batch.refused.size} refused, ${unanswered.length} read on their own`
+      `${batch.refused.size} refused, ${unanswered.length} not answered (nobody removed in them)`
   );
 
-  // 3. The diff, and a removal where one is owed.
+  // 3. The batch diff, which only says where a removal MAY be owed.
   const changed: string[] = [];
   for (const [groupId, leafIdentities] of trees) {
     if (batch.refused.has(groupId)) {
@@ -89,67 +90,66 @@ export async function removeStrayLeaves(
       log(`[STRAY] ${groupId.slice(0, 8)}... roster refused (not a member) - nobody removed`);
       continue;
     }
-    let rosterUserIds = batch.rosters.get(groupId);
-    if (!rosterUserIds) {
-      try {
-        rosterUserIds = (await mlsService.getGroupUserMembers(groupId)).map((m) => m.userId);
-      } catch (e) {
-        log(
-          `[STRAY] ${groupId.slice(0, 8)}... could not compare the tree with its roster: ` +
-            `${String(e)} - nobody removed`
-        );
-        continue;
-      }
-    }
+    const rosterUserIds = batch.rosters.get(groupId);
+    if (!rosterUserIds) continue; // not answered: counted in the line above
     const diff = diffRosterAgainstTree({ leafIdentities, rosterUserIds, selfUserId: userId });
     if (diff.strayUserIds.length === 0) continue;
-    if (await removeStrays(mlsService, groupId, diff.strayUserIds, diff.keptLeafCount, log)) {
-      changed.push(groupId);
-    }
+    if (await removeStrays(mlsService, groupId, userId, log)) changed.push(groupId);
   }
   return changed;
 }
 
-/** Commits ONE Remove for `strays` still holding a leaf in `groupId`; true when it landed. */
+/**
+ * Decides `groupId` again on a fresh tree and a fresh roster - in that order, for the reason
+ * {@link removeStrayLeaves} gives - and commits ONE Remove for every user the roster no longer
+ * names; true when it landed.
+ */
 async function removeStrays(
   mlsService: IMlsService,
   groupId: string,
-  strays: string[],
-  keptLeafCount: number,
+  userId: string,
   log: (msg: string) => void
 ): Promise<boolean> {
-  // Re-read here: the tree compared above may have moved since (another member's commit removing
-  // the same leaver). Only users still holding a leaf are named.
-  let stillThere: string[];
+  let strayUserIds: string[];
+  let keptLeafCount: number;
   try {
-    const now = new Set((await mlsService.getGroupMemberIdentities(groupId)).map(userIdOfLeaf));
-    stillThere = strays.filter((u) => now.has(u.toLowerCase()));
+    const leafIdentities = await mlsService.getGroupMemberIdentities(groupId);
+    const rosterUserIds = (await mlsService.getGroupUserMembers(groupId)).map((m) => m.userId);
+    ({ strayUserIds, keptLeafCount } = diffRosterAgainstTree({
+      leafIdentities,
+      rosterUserIds,
+      selfUserId: userId,
+    }));
   } catch (e) {
+    // A fetch that threw is not an empty roster: absence is a reason to ask again, never to destroy.
     log(
-      `[STRAY] ${groupId.slice(0, 8)}... could not re-read its tree: ${String(e)} - nobody removed`
+      `[STRAY] ${groupId.slice(0, 8)}... could not confirm the tree against its roster: ` +
+        `${String(e)} - nobody removed`
     );
     return false;
   }
-  if (stillThere.length === 0) {
+  if (strayUserIds.length === 0) {
+    // Another member's commit removed the leaver, or the leaver came back, since the batch read.
     log(
-      `[STRAY] ${groupId.slice(0, 8)}... the departed leaves are already gone - nothing to commit`
+      `[STRAY] ${groupId.slice(0, 8)}... no stray left on a fresh read (removed by another ` +
+        `member, or back in the roster) - nothing to commit`
     );
     return false;
   }
 
   log(
-    `[STRAY] ${groupId.slice(0, 8)}... ${stillThere.length} member(s) left but still hold a ` +
+    `[STRAY] ${groupId.slice(0, 8)}... ${strayUserIds.length} member(s) left but still hold a ` +
       `leaf - removing (${keptLeafCount} leaves stay)`
   );
   try {
-    await mlsService.removeMember(groupId, stillThere);
+    await mlsService.removeMember(groupId, strayUserIds);
   } catch (e) {
     // Loud, and not swallowed into a boolean: until this commit lands, everyone named here still
     // holds key material for the conversation. A rejected commit (another member won the epoch) is
     // the benign case and the next connection carries it - anything else is a real failure, and
     // this line is the only place it is visible.
     log(
-      `[STRAY] ${groupId.slice(0, 8)}... could not remove ${stillThere.length} departed ` +
+      `[STRAY] ${groupId.slice(0, 8)}... could not remove ${strayUserIds.length} departed ` +
         `member(s): ${String(e)} - their leaves stay`
     );
     return false;

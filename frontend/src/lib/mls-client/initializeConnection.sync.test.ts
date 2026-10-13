@@ -71,9 +71,10 @@ describe('syncConnectionAfterWsOpen - a departed leaf is collected by a holder',
     });
 
     expect(removeMember).toHaveBeenCalledExactlyOnceWith('g-live', ['gone']);
-    // The roster came from the ONE batch read, not from a read per group.
+    // Every roster came from the ONE batch read; the single read is paid only by the group the
+    // batch named a stray in, decided again right before its commit.
     expect(mls.getGroupRosters).toHaveBeenCalledExactlyOnceWith(['g-live']);
-    expect(mls.getGroupUserMembers).not.toHaveBeenCalled();
+    expect(mls.getGroupUserMembers).toHaveBeenCalledExactlyOnceWith('g-live');
     // An epoch that only ever existed in memory is an epoch the next load walks back into, and the
     // removed leaf would come back with it.
     expect(mls.persistCheckpoint).toHaveBeenCalled();

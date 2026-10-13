@@ -8,7 +8,8 @@ import { removeStrayLeaves } from './strayLeaves';
  * `leaveGroupAndBroadcast` stages no Remove for its own leaf and cannot - a departing member is
  * exactly the party that may not commit its own eviction. These pin the diff that finally does it
  * for a CONVERSATION, every case in which it must NOT remove anybody, and the read it costs: ONE
- * roster read for every held group, taken after every tree.
+ * roster read for every held group, taken after every tree - and, only where that read names a
+ * stray, the group decided again on a fresh tree and a fresh roster before the commit.
  */
 
 let trees: Record<string, string[]>;
@@ -63,10 +64,17 @@ describe('removeStrayLeaves', () => {
   it('removes the leaf of a member the roster no longer names', async () => {
     trees.g1 = ['alice:web-1', 'bob:web-1', 'bob:android-9'];
     batch = answered({ g1: ['alice'] });
+    getGroupUserMembers.mockImplementation(async (g: string) => {
+      calls.push(`roster:${g}`);
+      return [{ userId: 'alice' }];
+    });
 
     const changed = await removeStrayLeaves(mls(), ['g1'], 'alice', log);
 
     expect(changed).toEqual(['g1']);
+    // Decided again before the commit: the tree, THEN the roster, as the per-group read did.
+    expect(calls).toEqual(['tree:g1', 'rosters:g1', 'tree:g1', 'roster:g1']);
+    expect(getGroupUserMembers).toHaveBeenCalledExactlyOnceWith('g1');
     // ONE commit covers every device of every stray, so a departure costs one epoch whatever the
     // fleet behind it - both of bob's leaves go in the same breath.
     expect(removeMember).toHaveBeenCalledExactlyOnceWith('g1', ['bob']);
@@ -88,14 +96,27 @@ describe('removeStrayLeaves', () => {
     expect(removeMember).not.toHaveBeenCalled();
   });
 
-  it('reads on its own a group the batch did not answer - an older server, a failed chunk', async () => {
+  it('decides nothing for a group the batch did not answer - an older server, a failed chunk', async () => {
+    // No second path: one read per group is the storm the batch removed, and it would be silent
+    // the day the batch broke. A stray survives until the next connection, the safe direction.
+    trees.g1 = ['alice:web-1', 'bob:web-1'];
     batch = answered({});
 
-    await removeStrayLeaves(mls(), ['g1'], 'alice', log);
-
-    expect(getGroupUserMembers).toHaveBeenCalledExactlyOnceWith('g1');
-    expect(calls).toEqual(['tree:g1', 'rosters:g1', 'roster:g1']);
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    expect(getGroupUserMembers).not.toHaveBeenCalled();
     expect(removeMember).not.toHaveBeenCalled();
+    expect(lines.join(' | ')).toContain('1 not answered (nobody removed in them)');
+  });
+
+  it('spares a member who left before the batch read and came back after it', async () => {
+    // The batch roster is as old as the start of the pass, and a removal by user id takes EVERY
+    // leaf of that user - the fresh one too. The fresh roster read before the commit names him.
+    batch = answered({ g1: ['alice'] });
+    getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    expect(removeMember).not.toHaveBeenCalled();
+    expect(lines.join(' | ')).toContain('back in the roster');
   });
 
   it('removes nobody from a group whose roster was refused, and does not ask again', async () => {
@@ -127,18 +148,19 @@ describe('removeStrayLeaves', () => {
   it('removes nobody when the roster could not be read', async () => {
     // A fetch that threw is not an empty conversation, and treating it as one would empty the tree
     // of everybody but this device. Absence is a reason to ask again later, never to destroy.
-    batch = answered({});
+    batch = answered({ g1: ['alice'] });
     getGroupUserMembers.mockRejectedValue(new Error('502'));
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
     expect(removeMember).not.toHaveBeenCalled();
-    expect(lines.join(' | ')).toContain('could not compare the tree with its roster');
+    expect(lines.join(' | ')).toContain('could not confirm the tree against its roster');
   });
 
   it('never removes this device, whatever the roster says', async () => {
     // A device that removed its own leaf would leave the conversation it is holding open, with no
     // way back in but a fresh external join.
     batch = answered({ g1: [] });
+    getGroupUserMembers.mockResolvedValue([]);
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual(['g1']);
     expect(removeMember).toHaveBeenCalledExactlyOnceWith('g1', ['bob']);
@@ -148,18 +170,20 @@ describe('removeStrayLeaves', () => {
     // Another member's commit removed bob after this pass read the tree: committing his removal
     // again would be refused, and reported as a failure that never happened.
     batch = answered({ g1: ['alice'] });
+    getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }]);
     getGroupMemberIdentities
       .mockResolvedValueOnce(['alice:web-1', 'bob:web-1'])
       .mockResolvedValueOnce(['alice:web-1']);
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
     expect(removeMember).not.toHaveBeenCalled();
-    expect(lines.join(' | ')).toContain('already gone');
+    expect(lines.join(' | ')).toContain('removed by another member');
   });
 
   it('reports a refused commit rather than claiming the leaves are gone', async () => {
     // Until the commit lands, everyone named still holds key material for the conversation.
     batch = answered({ g1: ['alice'] });
+    getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }]);
     removeMember.mockRejectedValue(new Error('epoch_mismatch'));
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
