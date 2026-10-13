@@ -14,6 +14,11 @@ import {
   sendHistoryCoverage,
   sendHistoryPull,
 } from '$lib/utils/chat/groupActions';
+import {
+  type OwedPull,
+  type OwedPullTicket,
+  supersedeOwedPull,
+} from '$lib/utils/chat/historyOverheardPull';
 
 /**
  * What answering a solicitation needs, and it is the same set on both roads that reach it.
@@ -207,30 +212,80 @@ export async function pullFromOverheardDigest(params: {
   holderIdentity: string;
   selfIdentity: string;
   digest: HistoryDigest;
+  /** Taken when the digest ARRIVED - see `owedPullTicket`. */
+  ticket: OwedPullTicket;
   deps: HistoryAnswerDeps;
 }): Promise<void> {
-  const { groupId, holderIdentity, selfIdentity, digest, deps } = params;
-  const short = groupId.slice(0, 8);
+  const { groupId, holderIdentity, digest, ticket, deps } = params;
+  const outcome = await diffAndPullOverheard({ ...params, leg: 'overheard' });
+  // The newer digest is the author's newer statement, so it supersedes whatever an older one left
+  // owed - recorded when this pull went out, or when we could not tell (the retry reads again), and
+  // dropped when there is nothing to ask for.
+  supersedeOwedPull(
+    groupId,
+    holderIdentity,
+    outcome === 'pulled' || outcome === 'unreadable' ? digest : null,
+    ticket,
+    deps.log
+  );
+}
+
+/**
+ * THE retry of an overheard-digest pull, run once the author was seen live again (see
+ * `historyOverheardPull`). It diffs the SAME digest against the store as it is NOW, so whatever the
+ * first pull or any other bundle brought in the meantime is not asked for twice, and it records
+ * nothing: there is no third ask.
+ */
+export async function retryOverheardPull(params: {
+  owed: OwedPull;
+  selfIdentity: string;
+  deps: HistoryAnswerDeps;
+}): Promise<void> {
+  const { owed, selfIdentity, deps } = params;
+  await diffAndPullOverheard({
+    groupId: owed.groupId,
+    holderIdentity: owed.author,
+    selfIdentity,
+    digest: owed.digest,
+    deps,
+    leg: 'retry',
+  });
+}
+
+/** What one reading of an overheard digest did - decides what {@link pullFromOverheardDigest} owes. */
+type OverheardOutcome = 'declined' | 'unreadable' | 'complete' | 'pulled';
+
+/** The shared body of the first ask and its one retry, so the two cannot drift apart. */
+async function diffAndPullOverheard(params: {
+  groupId: string;
+  holderIdentity: string;
+  selfIdentity: string;
+  digest: HistoryDigest;
+  deps: HistoryAnswerDeps;
+  leg: 'overheard' | 'retry';
+}): Promise<OverheardOutcome> {
+  const { groupId, holderIdentity, selfIdentity, digest, deps, leg } = params;
+  const what = `${groupId.slice(0, 8)}... ${leg === 'retry' ? 'retrying' : 'overheard'} ${holderIdentity}'s`;
 
   if (digest.mode === 'range') {
     deps.log(
-      `[HISTORY_DIGEST] ${short}... overheard ${holderIdentity}'s range digest (${digest.ranges.length} slice(s)) - not pulled: a slice cannot say who is short and every member would draw it whole; the elected responder settles it`
+      `[HISTORY_DIGEST] ${what} range digest (${digest.ranges.length} slice(s)) - not pulled: a slice cannot say who is short and every member would draw it whole; the elected responder settles it`
     );
-    return;
+    return 'declined';
   }
   if (digest.ids.length > DIGEST_ID_MODE_MAX) {
     deps.log(
-      `[HISTORY_DIGEST] ${short}... overheard ${holderIdentity}'s digest listing ${digest.ids.length} ids, above the ${DIGEST_ID_MODE_MAX} no client sends - not pulled`
+      `[HISTORY_DIGEST] ${what} digest listing ${digest.ids.length} ids, above the ${DIGEST_ID_MODE_MAX} no client sends - not pulled`
     );
-    return;
+    return 'declined';
   }
 
   const entries = await readHistoryEntries(groupId, deps);
   if (entries === null) {
     deps.log(
-      `[HISTORY_DIGEST] ${short}... overheard ${holderIdentity}'s digest but our store is unreadable - cannot tell what we lack`
+      `[HISTORY_DIGEST] ${what} digest but our store is unreadable - cannot tell what we lack`
     );
-    return;
+    return 'unreadable';
   }
 
   const diff = await diffHistoryDigest(entries, digest);
@@ -244,7 +299,8 @@ export async function pullFromOverheardDigest(params: {
   });
   deps.log(
     pulled > 0
-      ? `[HISTORY_DIGEST] ${short}... overheard ${holderIdentity}'s digest naming ${pulled} id(s) we lack - asked it for them`
-      : `[HISTORY_DIGEST] ${short}... overheard ${holderIdentity}'s digest - we hold everything it lists`
+      ? `[HISTORY_DIGEST] ${what} digest naming ${pulled} id(s) we lack - asked it for them`
+      : `[HISTORY_DIGEST] ${what} digest - we hold everything it lists`
   );
+  return pulled > 0 ? 'pulled' : 'complete';
 }

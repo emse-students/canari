@@ -1,5 +1,6 @@
 import { DIGEST_ID_MODE_MAX, buildHistoryDigest } from './historyManifest';
 import { pullFromOverheardDigest } from './historyDiffAnswer';
+import { owedPullTicket, resetOwedPulls } from './historyOverheardPull';
 
 /**
  * What a member that OVERHEARD a digest does with it: diff it against its own store, and ask the
@@ -34,6 +35,7 @@ function deps() {
 }
 
 beforeEach(() => {
+  resetOwedPulls();
   readHistoryEntries.mockReset();
   sendHistoryPull.mockClear();
   sendHistoryBundleForIds.mockClear();
@@ -52,6 +54,7 @@ describe('pullFromOverheardDigest', () => {
       groupId: GROUP,
       holderIdentity: AUTHOR,
       selfIdentity: SELF,
+      ticket: owedPullTicket(GROUP),
       digest,
       deps: d,
     });
@@ -71,6 +74,7 @@ describe('pullFromOverheardDigest', () => {
       groupId: GROUP,
       holderIdentity: AUTHOR,
       selfIdentity: SELF,
+      ticket: owedPullTicket(GROUP),
       digest,
       deps: deps(),
     });
@@ -88,6 +92,7 @@ describe('pullFromOverheardDigest', () => {
       groupId: GROUP,
       holderIdentity: AUTHOR,
       selfIdentity: SELF,
+      ticket: owedPullTicket(GROUP),
       digest: await buildHistoryDigest(held),
       deps: d,
     });
@@ -111,6 +116,7 @@ describe('pullFromOverheardDigest', () => {
       groupId: GROUP,
       holderIdentity: AUTHOR,
       selfIdentity: SELF,
+      ticket: owedPullTicket(GROUP),
       digest,
       deps: d,
     });
@@ -132,6 +138,7 @@ describe('pullFromOverheardDigest', () => {
       groupId: GROUP,
       holderIdentity: AUTHOR,
       selfIdentity: SELF,
+      ticket: owedPullTicket(GROUP),
       digest: { mode: 'ids', ids },
       deps: d,
     });
@@ -149,6 +156,7 @@ describe('pullFromOverheardDigest', () => {
       groupId: GROUP,
       holderIdentity: AUTHOR,
       selfIdentity: SELF,
+      ticket: owedPullTicket(GROUP),
       digest: { mode: 'ids', ids },
       deps: deps(),
     });
@@ -165,6 +173,7 @@ describe('pullFromOverheardDigest', () => {
       groupId: GROUP,
       holderIdentity: AUTHOR,
       selfIdentity: SELF,
+      ticket: owedPullTicket(GROUP),
       digest: await buildHistoryDigest([entry('a')]),
       deps: d,
     });

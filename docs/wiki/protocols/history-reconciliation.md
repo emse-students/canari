@@ -571,12 +571,21 @@ to find.
 
 **What this does NOT close, stated so nobody believes it closed.**
 
-- **A pull to an author that has already left is dropped.** It is a transport frame, so the server
-  delivers it only to online devices. A phone backgrounded between its digest and our pull still leaves
-  the gap open until the next digest we overhear or the next trigger of our own. That is the same race
-  that stopped `mv6mmuu1`'s pull here. It is narrower now (the overhearing member asks within its own
-  drain, not after a diff round trip), but it is still a race, and it is open in
-  [backlog](../backlog.md#p2---a-device-holding-a-message-only-it-has-is-the-only-repair-and-nothing-retries-it-when-it-leaves-2026-10-13).
+- **A pull to an author that has already left gets ONE more chance, not a guarantee.** A pull is a
+  transport frame, so the server drops it for an offline author and never says so (that race stopped
+  `mv6mmuu1`'s pull here). `historyOverheardPull.ts` keeps, per conversation and author, the LATEST
+  digest that made this device ask (a newer one replaces it; one that leaves nothing to ask drops it),
+  and spends it ONCE on the next frame from that author that arrives LIVE (`deliveryMeta.channel`,
+  stamped by `enqueueMessage` after the dedup) with its device checked by `verifiedSender`, in any
+  conversation. The author's own `history_digest` does not spend it: it supersedes it. The retry
+  waits for that conversation's mailbox and diffs the same digest against the store as it is NOW, so
+  whatever the first ask brought is not asked again. It records nothing, so there is no third ask:
+  ids below our window (which the author answers with silence) cost two pulls, never a loop. No clock:
+  an author that never comes back costs one map entry and no traffic. The memory is session-bound:
+  emptied by `resetHistoryReconciliation` (sign-out, account switch), forgotten per conversation by
+  `forgetGroupReconciliation`, and a ticket taken when the digest arrived stops a pull still in
+  flight from recording across either. **What still escapes it**: a reload in between, an author
+  that sends us no live frame in this session, and an author gone again before the retry lands.
 - **A conversation above 1 000 messages is not covered.** Its digests are `range`, which the
   overhearing road declines (table above), so the same gap in a large conversation stays as silent as
   before - now with a line saying the digest was seen and not pulled.

@@ -23,6 +23,7 @@ import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/h
 import { mergeHistoryFloor, parseHistorySince } from '$lib/utils/chat/historyWindow';
 import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
 import { answerAfterMailboxDrained, noteCoverageShortfall } from '$lib/utils/chat/historyReconcile';
+import { owedPullTicket } from '$lib/utils/chat/historyOverheardPull';
 import {
   historyRangeStartFor,
   readHistoryEntries,
@@ -305,12 +306,16 @@ export async function handleSystemEvent(
       // this device may ever get of a message it lacks, so we ask the author for that and nothing
       // else. It used to fall through here without a line (production, 2026-10-13: a browser saw
       // its owner's phone list seven ids, held six, and never said so). See `pullFromOverheardDigest`.
+      // The ticket is taken NOW, while this is still the session and the conversation the digest
+      // arrived in; the pull runs after the drain, and a sign-out or a leave can fall in between.
+      const ticket = owedPullTicket(convoKey);
       answerAfterMailboxDrained(mlsService, convoKey, () =>
         pullFromOverheardDigest({
           groupId: convoKey,
           holderIdentity: from,
           selfIdentity: digestIdentity(userId, mlsService.getDeviceId()),
           digest,
+          ticket,
           deps: { storage, deviceKeyB64: deviceKey(), mlsService, log },
         }).catch((e) =>
           log(

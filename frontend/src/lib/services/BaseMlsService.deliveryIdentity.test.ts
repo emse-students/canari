@@ -254,3 +254,36 @@ describe('a delivery that arrives twice', () => {
     expect(applied[applied.length - 1]).toBe('row-0');
   });
 });
+
+describe('the route a delivery took reaches the pipeline', () => {
+  // The overheard-pull retry reads `channel === 'live'` as the proof its author is online NOW; a route
+  // dropped between the admission and the callback would silently turn that retry off.
+  const routeSeen = async (channel: DeliveryChannel): Promise<string | undefined> => {
+    const svc = makeService();
+    let seen: string | undefined;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    poke(svc, {
+      userId: 'user-a',
+      messageCallback: vi.fn(async (...args: unknown[]) => {
+        seen = (args[6] as { channel?: string } | undefined)?.channel;
+        return true;
+      }),
+      delivery: {
+        ackMessages: vi.fn().mockResolvedValue(undefined),
+        pullPendingMessagesJson: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+    inner(svc).enqueueMessage(row(`r-${channel}`), channel);
+    await inner(svc).messageScheduler.waitUntilIdle();
+    log.mockRestore();
+    return seen;
+  };
+
+  it('says LIVE for a frame the socket pushed', async () => {
+    expect(await routeSeen('live')).toBe('live');
+  });
+
+  it('says PULL for a queue row', async () => {
+    expect(await routeSeen('pull')).toBe('pull');
+  });
+});
