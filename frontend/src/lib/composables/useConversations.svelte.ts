@@ -30,6 +30,7 @@ import { notifNav } from '$lib/stores/notifNav.svelte';
 import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { applyChannelEdits, type DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
+import { createLoadGenerations } from '$lib/utils/chat/loadGenerations';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
   fetchUniqueGroupMembers,
@@ -229,6 +230,8 @@ export function useConversations() {
    * {@link noteLiveStreamTransition}, a deletion, a kick, a Graine repair.
    */
   const channelHistoryLoadedAt = new SvelteMap<string, { loadedAt: number; userId: string }>();
+  /** Orders overlapping history loads of one salon: only the latest started merges its page. */
+  const salonLoadGenerations = createLoadGenerations();
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
     if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
@@ -570,6 +573,11 @@ export function useConversations() {
     const cached = channelHistoryLoadedAt.get(channelConversationId);
     if (!force && cached && cached.userId === ctx.userId) return;
 
+    // ONLY THE LATEST LOAD STARTED FOR THIS SALON MAY MERGE (found reviewing #1761). The page is
+    // authoritative for its window, so an older load finishing last would drop a row a newer one
+    // had just decoded - see `loadGenerations.ts` for the exact sequence. Not a refetch afterwards:
+    // that was the heal that hid the race.
+    const generation = salonLoadGenerations.begin(channelConversationId);
     const isSelected = selectedContact === channelConversationId;
     if (isSelected) isLoadingHistory = true;
 
@@ -652,6 +660,13 @@ export function useConversations() {
       loaded.sort(compareMessageOrder);
       const loadedEdited = applyChannelEdits(loaded, edits, ctx.log);
 
+      if (!salonLoadGenerations.isLatest(channelConversationId, generation)) {
+        ctx.log(
+          `[CHANNEL] history load of ${channelConversationId} superseded by a newer one - its page is not merged`
+        );
+        return;
+      }
+
       let current = conversations.get(channelConversationId);
       if (current) {
         // THIS DEVICE'S OWN ECHOES THE PAGE ALREADY HOLDS are re-keyed to the server's row first, so the
@@ -700,7 +715,10 @@ export function useConversations() {
     } catch (e) {
       ctx.log(`[CHANNEL] History load failed: ${String(e)}`);
     } finally {
-      if (isSelected) isLoadingHistory = false;
+      // A superseded load leaves the skeleton to the load that superseded it.
+      if (isSelected && salonLoadGenerations.isLatest(channelConversationId, generation)) {
+        isLoadingHistory = false;
+      }
     }
   }
 

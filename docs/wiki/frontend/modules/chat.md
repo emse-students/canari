@@ -2670,6 +2670,15 @@ rule needs no timer and does not care how large the conversation is:
 - an UNSENT message is kept wherever it sits, because no page can ever carry it;
 - an empty page asserts nothing and therefore removes nothing.
 
+**Authoritative means a STALE page is destructive, so a salon's loads are ordered (2026-10-13).** A
+load that started earlier and finishes later used to merge last: load A reads the page before seed S
+is held and leaves row R out, S lands and starts load B, B decodes R, then A merges and R - inside
+A's window - is removed. The redundant refetch that every held seed triggered hid it until #1761
+removed it. `loadChannelHistory` now takes a generation per salon (`utils/chat/loadGenerations.ts`):
+only the latest load STARTED merges, an older one logs `superseded` and leaves the page and the
+loading skeleton to the newer one. Pinned by `useConversations.staleLoad.svelte.test.ts`. The refetch
+is not to come back: it was a heal, not a fix.
+
 Two corrections ride on the same seam, because they are the same stale read wearing different
 clothes. `readBy` is unioned rather than taken from the page: reading is applied optimistically in
 memory before the network ACK, so taking the page's array un-reads what the user just read and the
