@@ -2835,7 +2835,8 @@ nothing verifies anything. That is G2-4.
     LOWER `firstIndex`.
   - A v2 entry missing its minter or key is refused rather than written as v1.
 - **On social-service.** Migration 065 adds `channel_messages.signature` (88 base64 characters,
-  checked for SHAPE only, since the server holds no key and cannot tell a v2 session from a v1 one).
+  checked for SHAPE only, since the server holds no key and cannot tell a v2 session from a v1 one;
+  REQUIRED on every row since §21.8, which the floor made possible).
   It is relayed with the row in `listMessages` and the `channel.message.created` event.
   - It joins the push's inline group in G2-4, WITH the three native readers:
     `channelPushFields.test.ts` refuses a key the server sends that no handler reads, and it
@@ -3041,7 +3042,9 @@ withholding it would do just as well.
 
 **What it does NOT close.** A member who already HOLDS a v1 seed can still forge an unsigned row
 under that session, naming its minter. The v1 reader opens it until it goes, at the count in
-[legacy-compatibility](../legacy-compatibility.md). The salon-edit trust level of §21.5b is unchanged.
+[legacy-compatibility](../legacy-compatibility.md). **The server now refuses to STORE such a row
+(§21.8)**, so the forgery needs a server that cooperates; the reader is what still guards against
+that one. The salon-edit trust level of §21.5b is unchanged.
 The dev estate's floor was raised to `1.0.3` as well (2026-10-12), so a pre-release there meets no
 admitted client minting v1.
 
@@ -3056,6 +3059,81 @@ when a v1 message row is dropped, absent otherwise, first after a forced reload)
 `a_v1_seed_is_refused_by_the_push_path`, which also checks `v1Refused` (the two push seed tests now carry
 an endorsed v2 seed). The Swift and Kotlin log lines are not compiled on a workstation: their
 reading is owed on a device.
+
+### 21.8 The server refuses an unsigned salon row (2026-10-13)
+
+**The precondition is §21.7's**: `minClientVersion` is `1.0.3` (the G2-5 writer) on both estates, so
+every admitted client signs every row it posts. §21.3 checked the signature for SHAPE only because the
+server cannot tell a v2 session from a v1 one. It still cannot. It no longer needs to: no honest
+client writes v1 at all.
+
+**What is accepted is an ALLOWLIST of one shape**: `POST /api/channels/:channelId/messages` with a
+`signature` of 88 base64 characters (64 bytes). Everything else is refused before anything is
+stored, published or pushed (`ChannelService.assertSigned`, social-service):
+
+| The row | Answer |
+| --- | --- |
+| `signature` absent or `null` - text, poll, silent (reaction, edit) alike | 400 `CHANNEL_SIGNATURE_REQUIRED`, `[CHANNEL_SIGNATURE] REFUSED unsigned row ...` at ERROR |
+| `signature` of another length, not base64, not a string | 400 `CHANNEL_SIGNATURE_INVALID` at WARN, as before |
+
+The order is unchanged: membership, read access and write policy are checked first (a non-member
+still gets its 403), then the session and index, then the seed frame, then the signature.
+
+**Why nothing legitimate is refused.** This route has exactly ONE caller in the repository,
+`ChannelService.sendMessage` (frontend), reached only from `sendEncryptedChannelMessage`, which seals
+through `sealChannelMessage`. That function throws before the POST when the session holds no signing
+secret, and `shouldRotateGraineSession` mints a new session for any that lacks one. Text, polls,
+mentions, reactions, edits and a community's system notice all go through it, and the `v1.0.3` tag
+already posted `signature: sealed.signature` on every one (read from the tag, 2026-10-13). What does
+NOT use this route, and is therefore untouched:
+
+- DMs and MLS groups, commits, Welcomes, seed distributions, seed requests and repair bundles: MLS
+  frames on chat-delivery, signed by MLS;
+- the Android notification reply and the iOS one: MLS only, never offered on a `channel_`
+  conversation (`CanariFirebaseMessagingService`, `canari_push.mm`), and their outbox drain posts to
+  chat-delivery;
+- the push handlers, the NSE and every Tauri background path: they READ salon rows, none posts one
+  (no `/api/channels` in `src-tauri/`);
+- the server itself: `sendMessage` is the only code that inserts a `channel_messages` row; no bot,
+  service or internal route writes one;
+- the cross-client harness: only archived probes post here, and `graineauth.mjs`'s replay arm posts a
+  SIGNED row, so it still gets its 409.
+
+A client below the floor cannot unlock MLS, so it holds no seed and cannot seal a salon row in the
+first place. The one population that could still send unsigned is a process UNLOCKED before the floor
+rose and still running pre-`1.0.3` code; `PlatformGateOverlay` covers it on the next focus. Such a send
+gets a 400, and `v1.0.2`'s salon send (`messaging.ts`) turns any 400 into the generic send-failed
+line and returns: nothing retries it on its own, and a salon send never enters the outbox
+(`outbox.ts` drops a `channel_` entry), in `v1.0.2` as now. On current code the same 400 marks the
+bubble `error` (`deliverSalonSend`); its manual retry re-seals, so it signs. No client branches on the
+code: no current client can reach it, which is why no client change ships with it. `ChannelApiError`
+already carries the code, so a later consumer reads it at the throw.
+
+**No flag, no staged rollout.** The refusal depends on a fact both estates already hold (the floor),
+not on a switch. It ships through a pre-release to `dev.canari-emse.fr` first, like everything. **The
+floor must never be LOWERED below `1.0.3`** - that was already true of §21.7 (an older client would
+mint v1 seeds every current client refuses), and this makes it true of the server too.
+
+**What it closes, and what it does not.** A modified client can no longer STORE an unsigned row under
+a v1 session another member holds - the hole §21.7 left open. A malicious server can still insert
+one directly, and the v1 reader would open it: that is the v1 reader's own limit, and it goes with the
+reader ([legacy-compatibility](../legacy-compatibility.md)). It also makes the reader's removal
+measurement monotonic: from this deploy on, `count(*) WHERE "signature" IS NULL` can only fall.
+
+**Measured 2026-10-13 on both estates: 0 unsigned rows since 2026-10-10**, the last one written on
+2026-10-09 - before the floor rose on 2026-10-11, so not one admitted client has written v1. The
+count per day, to re-run after the deploy:
+
+```sql
+SELECT date_trunc('day', "createdAt") AS day, count(*) FILTER (WHERE "signature" IS NULL) AS unsigned
+FROM channel_messages WHERE "createdAt" > '2026-10-05' GROUP BY 1 ORDER BY 1;
+```
+
+**Pinned by** `channel.service.spec.ts`: an absent, a `null`, a silent and a poll row are each refused
+with `CHANNEL_SIGNATURE_REQUIRED` at ERROR, nothing saved or published; a non-member still gets its
+403; and the floor boundary, as the two tags put a row on the wire - the five shapes `v1.0.3` posts
+(text with its seed frame, silent reaction or edit, poll, system notice, mention) are accepted signed,
+and the same five as `v1.0.2` posted them, unsigned, are refused.
 
 ## 22. A key group's backlog was refused on every load - the classification is device state - FIXED 2026-09-28
 
