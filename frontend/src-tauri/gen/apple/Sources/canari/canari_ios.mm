@@ -531,9 +531,86 @@ static void CanariOnWillResignActive(__unused NSNotification *note) {
   NSLog(@"[CanariIOS] willResignActive");
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// THE LAUNCH URL OF A COLD START - handed to tao's scene delegate, which never reads it
+// ════════════════════════════════════════════════════════════════════════════
+//
+// tao 0.37 (tauri 2.12, #1609) answers `application:configurationForConnectingSceneSession:` for
+// every app, so Canari runs on the SCENE lifecycle although its Info.plist declares no scene
+// manifest. On that lifecycle a link that LAUNCHES the app arrives once, in the connection options
+// of `scene:willConnectToSession:options:` (`URLContexts` for `fr.emse.canari://`, `userActivities`
+// for a Universal Link) - never through `application:openURL:options:` or `scene:openURLContexts:`.
+// tao's `TaoSceneDelegate` ignores those options, so no `RunEvent::Opened` was ever emitted, the
+// deep-link plugin's `getCurrent()` answered null, and every cold-start link opened the app on its
+// default page: "Ouvrir dans l'application", a Universal Link, a `post/<id>` deep link (iPhone 12,
+// 1.2.3-alpha.5, 2026-10-14). tao 0.35 only answered that configuration for a multi-scene plist,
+// which kept the app on the classic lifecycle where `application:openURL:options:` carried it.
+//
+// The fix hands the options to the two methods tao already implements for a RUNNING app, after its
+// own `willConnect` has run. The event loop is already up by then - with no scene manifest tao runs
+// `on_app_ready()` from `didFinishLaunching`, and its `connect_scene` skips it - so `willConnect`
+// only gives the scene its window, and `Opened` lands exactly as it does for a running app.
+// Protocol: docs/wiki/frontend/mobile.md#a-cold-start-on-the-scene-lifecycle-lost-its-link.
+
+typedef void (*CanariSceneWillConnectIMP)(id, SEL, UIScene *, UISceneSession *, UISceneConnectionOptions *);
+static CanariSceneWillConnectIMP CanariOrigSceneWillConnect = NULL;
+
+static void CanariSceneWillConnect(id self, SEL _cmd, UIScene *scene, UISceneSession *session,
+                                   UISceneConnectionOptions *options) {
+  CanariOrigSceneWillConnect(self, _cmd, scene, session, options);
+  NSSet<UIOpenURLContext *> *urls = options.URLContexts;
+  NSUInteger webActivities = 0;
+  for (NSUserActivity *activity in options.userActivities) {
+    if ([activity.activityType isEqualToString:NSUserActivityTypeBrowsingWeb]) webActivities++;
+  }
+  // The count, never the URL: a link may carry a join token.
+  NSLog(@"[CanariDeepLink] scene connected with %lu launch url(s) and %lu web activit(ies)",
+        (unsigned long)urls.count, (unsigned long)webActivities);
+  if (urls.count > 0) {
+    if ([self respondsToSelector:@selector(scene:openURLContexts:)]) {
+      [(id<UISceneDelegate>)self scene:scene openURLContexts:urls];
+    } else {
+      NSLog(@"[CanariDeepLink] ERROR: the scene delegate has no scene:openURLContexts: - the launch url is LOST");
+    }
+  }
+  for (NSUserActivity *activity in options.userActivities) {
+    if (![activity.activityType isEqualToString:NSUserActivityTypeBrowsingWeb]) continue;
+    if ([self respondsToSelector:@selector(scene:continueUserActivity:)]) {
+      [(id<UISceneDelegate>)self scene:scene continueUserActivity:activity];
+    } else {
+      NSLog(@"[CanariDeepLink] ERROR: the scene delegate has no scene:continueUserActivity: - the Universal Link is LOST");
+    }
+  }
+}
+
+/// Wraps `TaoSceneDelegate`'s `scene:willConnectToSession:options:`. Called on
+/// UIApplicationDidFinishLaunching, SYNCHRONOUSLY (`queue:nil`): tao registers the class inside
+/// `ffi::start_app()`, so it does not exist at bootstrap, and UIKit connects the first scene right
+/// after that notification - a block queued on the main queue would run after the link was gone.
+static void CanariInstallSceneLaunchUrlHook(void) {
+  Class cls = NSClassFromString(@"TaoSceneDelegate");
+  Method method = cls ? class_getInstanceMethod(cls, @selector(scene:willConnectToSession:options:)) : NULL;
+  if (method == NULL) {
+    NSLog(@"[CanariDeepLink] ERROR: TaoSceneDelegate scene:willConnectToSession:options: not found - a cold-start link is LOST");
+    return;
+  }
+  if (CanariOrigSceneWillConnect != NULL) return;
+  CanariOrigSceneWillConnect =
+      (CanariSceneWillConnectIMP)method_setImplementation(method, (IMP)CanariSceneWillConnect);
+  // The proof it came in time is the NEXT line: `scene connected with ...` on every launch. A launch
+  // that prints this one and not that one connected its scene first, and lost its link.
+  NSLog(@"[CanariDeepLink] launch-url hook installed on TaoSceneDelegate");
+}
+
 void canari_ios_bootstrap(void) {
   NSLog(@"[CanariIOS] bootstrap dataDir=%@", CanariTauriDataDir());
   NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+  [nc addObserverForName:UIApplicationDidFinishLaunchingNotification
+                  object:nil
+                   queue:nil
+              usingBlock:^(__unused NSNotification *note) {
+                CanariInstallSceneLaunchUrlHook();
+              }];
   [nc addObserverForName:UIApplicationDidBecomeActiveNotification
                   object:nil
                    queue:[NSOperationQueue mainQueue]
