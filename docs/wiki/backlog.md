@@ -277,16 +277,6 @@ The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu 
 
 ### P3 - the harness gamma bench PIN is refused on dev
 
-## Seen on the Mi 9T reading of `v1.2.4-alpha.2` (2026-10-11)
-
-### P3 - deleting a post asks for no confirmation
-
-The post menu's "Supprimer" deletes at once (`PostCard.handleDeletePost` calls the API with no `showConfirm` in between), whereas the reel editor and the review ask before discarding far less. Read on the Mi 9T ([device-verification](device-verification.md)).
-
-### P3 - on dev, the "Environnement de test" banner and the slow-link badge overlap (dev only)
-
-The slow-link badge (`slow-link-indicator`, `OfflineBanner.svelte`, a 28 px disc at the top right) is drawn over the `EnvironmentBanner` strip that only `dev.canari-emse.fr` shows. Production has no such banner, so no member sees it; it hides the badge from whoever reads a weak-network row on dev.
-
 ## Seen on the 2026-10-13 bench pass (Mi 9T `v1.2.6-alpha.1`, iPhone `1.2.3-alpha.5`)
 
 The readings are in [device-verification](device-verification.md#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
