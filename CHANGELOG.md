@@ -14,6 +14,148 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-10-13
+
+### Fixed - an App Store rejection no longer blocks every later stable, and the notes name no platform
+
+App Review rejected 1.2.1 for release notes saying "sur Android"; `--check-notes` now refuses platform names, and the submission marks a rejected item resolved so the next release can resend it ([app-store](tools/app-store/README.md), [store notes](store/README.md)).
+
+### Fixed - the hidden phone header no longer logs "name does not fit in 0px" on a desktop
+
+The brand takes no verdict in a room that is not laid out, so a salon tap on a desktop no longer carries a misleading layout line ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Changed - communities are loaded side by side at startup
+
+Seven communities were loaded one after another (21+ requests in a row, 2.9 s); they now load
+together and the list costs the slowest one
+([chat](docs/wiki/frontend/modules/chat.md#the-communities-are-loaded-side-by-side-not-one-after-another-2026-10-12)).
+
+### Removed - sixteen exports nothing called
+
+Ten TypeScript helpers (deprecated aliases and wrappers among them), five WASM bindings and one native command had no caller anywhere in the repository; they are deleted. Found by the 2026-10-12 performance audit ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
+### Fixed - a double tap on a message likes it without also opening its info panel
+
+The single tap now waits out the double-tap window, and a tap on a link or a poll option inside the bubble never counts towards a heart ([chat](docs/wiki/frontend/modules/chat.md#a-double-tap-likes-and-does-nothing-else-the-single-tap-waits-out-the-window-2026-10-12)).
+
+### Changed - 43 abandoned device generations revoked on production
+
+The first stage of predicate R, approved by the user: 43 devices with no session, no push token, a newer device of the same platform, and a queue older than 30 days went through the product's own device deletion route. 5 771 queued rows and 173 seats removed, backup kept on the host ([prod-queue-and-epoch-audit](docs/wiki/infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#first-reaper-pass---2026-10-12-0920-utc)).
+
+### Security - an arriving Graine v1 seed is refused, now that the floor is the v2 writer
+
+With `minClientVersion` at `1.0.3`, the web app and the native push mirror refuse every NEW v1 seed, so a modified client can no longer mint a v1 session to post under another member's name; v1 sessions already held stay readable ([channel-encryption 21.7](docs/wiki/protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)).
+
+### Changed - a conversation opened from a notification shows the history it already holds at once
+
+The stored page was drawn only after the server probe and the replay behind it, and is now drawn first, the replay merging into it: on a killed open the first row comes 356 ms after the pane instead of 773 on the Mi 9T ([latency](docs/wiki/frontend/notification-to-conversation-latency.md#f10---the-stored-page-is-drawn-before-the-server-probe-measured-first-row-773---356-ms-after-the-pane-killed)).
+
+### Fixed - an iPhone's notification extension no longer presents a push secret the server already refused
+
+The extension's copy of the secret followed the app's lifecycle while `/register` rotated it right after, so six iPhones got no avatar and no commit catch-up in their notifications; it is now written when the secret is stored, and login no longer registers twice ([mobile](docs/wiki/frontend/mobile.md#the-extensions-copy-that-followed-the-lifecycle-and-the-iphones-that-presented-a-dead-secret)).
+
+### Changed - a batch of received messages is merged into a conversation with one sort
+
+It used to re-sort the whole conversation once per message; 200 messages into 5000 went from ~20 ms to 0.1 ms on a desktop ([chat](docs/wiki/frontend/modules/chat.md#a-catch-up-batch-is-merged-with-one-sort-2026-10-12)).
+
+### Changed - a tapped notification opens its conversation from the local store before the session is up
+
+The thread is drawn from the device's own store while the session is verified, a reply typed meanwhile is held until it is, and a revoked device removes what was drawn. Behind a PIN nothing is drawn before the PIN is accepted. [Measured](docs/wiki/frontend/notification-to-conversation-latency.md#f1---the-conversation-is-drawn-from-the-local-store-before-the-session-is-up).
+
+### Changed - the message a notification opened the app for no longer waits for every conversation's history
+
+On a cold start, the frame refused before the conversation rows existed is asked for again as soon as they do, and bulk-ingest windows are closed by handle so a drained message is no longer held behind an overlapping history load: drawn ~0.47 s sooner on the Mi 9T ([latency](docs/wiki/frontend/notification-to-conversation-latency.md#f12---the-notified-message-is-asked-for-when-the-rows-exist-not-after-the-history-restore)).
+
+### Changed - a message in another conversation no longer redraws the open one
+
+The open conversation was found by iterating every conversation, so each message received anywhere regrouped and re-rendered the thread on screen; it is now read by its own key ([frontend/architecture](docs/wiki/frontend/architecture.md#a-derived-that-needs-one-key-reads-the-sveltemap-by-key-never-by-iterating-it-2026-10-12)).
+
+### Changed - every PDF on screen shares one pdf.js worker
+
+A thumbnail or the reader no longer starts and tears down a worker of its own: one is created on the first PDF and reused, so a salon with several PDFs loads the 1 MB worker once per session ([web-console-log-audit](docs/wiki/frontend/web-console-log-audit-2026-10-12.md#one-worker-for-every-pdf-shipped-after-the-audit)).
+
+### Added - a heavy-state performance audit, and a bench for what one MLS checkpoint costs
+
+Ranked findings with their cost and frequency, the checkpoint split measured in a browser and natively (the WASM seal is 82 % of a web checkpoint), and `tools/perf-bench` to repeat it ([performance-audit-2026-10-12](docs/wiki/frontend/performance-audit-2026-10-12.md)).
+
+### Changed - a PIN unlock no longer waits for the salt after the PIN is typed, nor for the device key behind the check
+
+The salt is asked while the keypad is up, and the device key is derived during the PIN check but installed only after it passed: submit to MLS ready 0.3 s sooner on the Mi 9T. `pin-check` now answers `stale-salt` for a salt a PIN reset replaced, so a correct new PIN is never refused for it ([latency](docs/wiki/frontend/notification-to-conversation-latency.md#f9---the-pin-salt-is-asked-while-the-keypad-is-up-and-the-device-key-is-derived-during-the-check-measured-submit-to-mls-ready--03-s)).
+
+### Changed - the pinned and polls bars of a conversation are glass pills in the phone apps
+
+They were opaque white full-width bars floating in the middle of the glass header; they are now centred glass pills under the title pill, and the list they open a glass panel. The website keeps its bars ([chat](docs/wiki/frontend/modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)).
+
+### Fixed - the poll and pinned shortcuts reach their message in the phone apps, and a moderator can close a poll
+
+A jump to a message is now instant: the smooth one was aborted by the anchor correction the closing dropdown triggered under the floating chrome. "Clore le sondage" is offered to moderators as the server already allowed, and closed or ended polls leave the "N sondage actif" bar ([chat](docs/wiki/frontend/modules/chat.md#the-jump-is-instant-because-a-smooth-one-was-cancelled-by-the-tap-that-asked-for-it-2026-10-12), [social-service](docs/wiki/services/social-service.md#channel-polls-and-who-decides-one-is-over)).
+
+### Security - quinn-proto 0.11.18 in the three crates that carry it
+
+Three advisories (RUSTSEC-2026-0338, -0340, -0343) turned `cargo audit` red on `main`; the lock files of `apps/call-service`, `apps/chat-gateway` and `frontend/src-tauri` move to the fixed release, nothing else changes ([cicd](docs/wiki/cicd.md)).
+
+### Changed - a cold start no longer decrypts every stored message to check a history cursor
+
+The restore asked "is this conversation's store empty" by decrypting all of its rows; it now counts them, so 5000 stored messages cost ~3 ms instead of ~170 ms per conversation on a desktop ([cold-start](docs/wiki/frontend/cold-start.md#the-restore-decrypted-every-stored-message-to-read-a-length-2026-10-12)).
+
+### Fixed - salons no longer stop opening until a restart after a conversation restore
+
+A restore that ran after the community load erased the salon rows it did not hold, so tapping those salons lit the row and opened nothing; it now keeps them, and a dropped selection is logged ([chat](docs/wiki/frontend/modules/chat.md#the-restore-keeps-the-salon-rows-the-community-load-wrote-2026-10-12)).
+
+### Added - a message sent in a community salon appears at once
+
+It shows as pending, settles on the server's answer, and a refused one stays with Retry and Delete instead of vanishing ([chat](docs/wiki/frontend/modules/chat.md#a-salon-message-is-shown-at-once-and-settled-by-the-server-wp-off-2-2026-10-09)). Not durable across a reload yet.
+
+### Fixed - a salon row pressed a little long opens the salon instead of doing nothing
+
+For whoever may reorder the salons, a press held past the reorder hold started a drag and swallowed the tap; a press released in place now opens the salon ([chat](docs/wiki/frontend/modules/chat.md#a-communitys-salons-have-an-order-everyone-shares-and-a-name-that-is-only-a-name-2026-10-05)).
+
+### Changed - a salon is re-read once per drain, not once per seed it brought
+
+Coming back online, 26 new seeds for 3 salons re-read those salons 26 times (52 requests); the
+re-read now waits for the drain to end and happens once per salon
+([channel-encryption](docs/wiki/protocols/channel-encryption.md#wp-33-and-the-answerer-nobody-elects)).
+
+### Fixed - the "seen by" heads under a salon's last message no longer appear then vanish
+
+A salon row was dated by the server on the live path and by the author's clock on the history load, so the heads flipped with every reload when the author's clock ran ahead; it is now dated by the server on every path ([social-service](docs/wiki/services/social-service.md#read-receipts-in-a-salon)).
+
+### Fixed - a salon message whose fate is unknown says so, and other tabs no longer show it twice
+
+A send lost on the network or behind a gateway error is marked "not confirmed" with Delete and "put back in the composer" instead of spinning for ever; a second tab no longer takes another tab's unsent text or draws its message twice ([chat](docs/wiki/frontend/modules/chat.md#a-salon-message-is-shown-at-once-and-settled-by-the-server-wp-off-2-2026-10-09)).
+
+### Changed - 118 more abandoned device generations revoked on production
+
+Predicate R in full, approved by the user: 118 devices went through the product's own device deletion route, removing 30 940 queued rows and 329 seats, backup kept on the host ([prod-queue-and-epoch-audit](docs/wiki/infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#second-pass---2026-10-12)).
+
+### Fixed - a seed answer reaches only the device that asked, instead of the whole community
+
+An answer to a seed request was queued for every seat of the community. It now goes to the requesting device alone and stays out of the history stream. The request names every device of the answerer that can read it, and each ask logs why it was made ([channel-encryption](docs/wiki/protocols/channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)).
+
+### Fixed - a message sent into a group deleted before it is refused, never answered as delivered
+
+The delivery service checked a group's tombstone only when it had rows to queue, and a deletion sweeps the roster, so a send into an already-deleted group answered 200 and wrote to its history; it now answers 410 there too ([latency](docs/wiki/frontend/notification-to-conversation-latency.md#f11---a-text-reply-no-longer-asks-the-server-whether-the-group-exists-before-sending-it-measured--01-to--017-s-per-reply)).
+
+### Changed - a text reply no longer waits for a server round trip before it is encrypted and sent
+
+The outbox asked whether the group still existed before every send (a reply reached the other client 0.1-0.17 s sooner without it on the Mi 9T); the send itself is refused with a typed 410 for a deleted group, so the question is now asked only before a re-add or a media upload ([latency](docs/wiki/frontend/notification-to-conversation-latency.md#f11---a-text-reply-no-longer-asks-the-server-whether-the-group-exists-before-sending-it-measured--01-to--017-s-per-reply)).
+
+### Session state of 2026-10-12, and three release rules
+
+The queue and backlog now name what `v1.2.5` does not carry, the user's decisions of the day and the open pull requests; three release rules were added ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd), [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open)).
+
+### Fixed - the typing bubble stands clear of the composer instead of sitting on its edge
+
+The thread's trailing space moved from the message groups to the typing indicator, its permanent last row, so the bubble gets the 16 px the last message had ([chat](docs/wiki/frontend/modules/chat.md#the-typing-indicator-is-a-row-of-the-thread-not-a-band-over-it-2026-09-22)).
+
+### Changed - the 1.2.6 store notes now name the visible changes
+
+The notes of the next stable also cover the salon send, the faster notification opening, the poll shortcuts and the double tap ([store listings](docs/wiki/store-listings.md)).
+
+### Changed - the 1.2.6 store notes
+
+The text the stores and the GitHub release show for 1.2.6 ([store listings](docs/wiki/store-listings.md)).
+
 ## [1.2.5] - 2026-10-12
 
 ### Fixed - a seed bundle answering somebody else no longer makes every member re-read the salon

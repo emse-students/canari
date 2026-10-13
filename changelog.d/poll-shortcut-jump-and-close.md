@@ -1,3 +1,0 @@
-### Fixed - the poll and pinned shortcuts reach their message in the phone apps, and a moderator can close a poll
-
-A jump to a message is now instant: the smooth one was aborted by the anchor correction the closing dropdown triggered under the floating chrome. "Clore le sondage" is offered to moderators as the server already allowed, and closed or ended polls leave the "N sondage actif" bar ([chat](docs/wiki/frontend/modules/chat.md#the-jump-is-instant-because-a-smooth-one-was-cancelled-by-the-tap-that-asked-for-it-2026-10-12), [social-service](docs/wiki/services/social-service.md#channel-polls-and-who-decides-one-is-over)).
