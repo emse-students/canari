@@ -572,7 +572,13 @@ own parameters. **Not yet verified inside Messenger itself** - both halves are m
 browser carrying Messenger's user agent (the production build, served locally under the legacy
 name, 2026-09-28: the banner above the login page, `Ouvrir` carrying the intent to the post behind
 `returnTo`, nothing in a plain Chrome); the iOS half also needs a store release, because the
-`open` host is handled by the app's own code.
+`open` host is handled by the app's own code. **On iOS that handler is in every store build since
+`v0.18.28`, and it works only on a RUNNING app**: from `v1.2.0` to the fix of 2026-10-14 a tap that
+had to launch the app opened it on the feed instead of the page
+([below](#a-cold-start-on-the-scene-lifecycle-lost-its-link)). Whether Messenger, Instagram and
+Facebook hand a tapped `fr.emse.canari://` to iOS at all is still unmeasured: no bench iPhone carries
+a Meta app (a user report about "Ouvrir dans l'application" on an iPhone, 2026-10-13, names neither
+the app nor the page).
 
 ### How a deep link actually reaches the app — two paths, only one of them gated
 
@@ -606,6 +612,40 @@ The diagnosis is cheap when a cold start misbehaves, because each hop logs separ
 `START ... act=android.intent.action.VIEW dat=fr.emse.canari://chat/...`, the WebView prints
 `[hooks] Deep-link listener registered`, the handoff prints `[hooks] Processing URL`, and the product
 prints `[notifNav] deep link received`. The first absent line names the broken hop.
+
+#### A cold start on the scene lifecycle lost its link
+
+**Since `v1.2.0` (tauri 2.12, tao 0.37, #1609) every link that LAUNCHED the iOS app was lost**: the
+app opened on its default page. Measured on the iPhone 12 (iOS 27.0.1, TestFlight `1.2.3-alpha.5`,
+2026-10-14), each opened with `ios.mjs url` once with the app running and once after
+`ios.mjs terminate`:
+
+| link | app running | app killed |
+| --- | --- | --- |
+| `fr.emse.canari://open?url=https://canari.emse.fr/notifications` | lands on `/notifications` | lands on the feed, behind the PIN |
+| `fr.emse.canari://post/<all-zero uuid>` (positive control, `PASS` cold on 1.0.3 on 2026-10-05) | - | lands on the feed, behind the PIN |
+
+The same JavaScript on the Mi 9T (`v1.2.7`, Android) opens `/posts/<id>` cold, read over CDP, so the
+loss is below the WebView. The cause is in tao: 0.37 answers
+`application:configurationForConnectingSceneSession:` for every app, so UIKit runs Canari on the
+SCENE lifecycle although `Info.plist` declares no scene manifest (the syslog shows the
+`UIWindowScene`). On that lifecycle a launching link is delivered ONCE, in the connection options of
+`scene:willConnectToSession:options:` (`URLContexts`, and `userActivities` for a Universal Link), and
+`TaoSceneDelegate` ignores them - so no `RunEvent::Opened`, and `getCurrent()` answers null. tao 0.35
+answered that configuration only for a multi-scene plist, which kept the app on the classic
+lifecycle, where `application:openURL:options:` carried the link. tao's `dev` branch still ignores
+the options.
+
+`canari_ios.mm` wraps `TaoSceneDelegate`'s `willConnect` (`CanariInstallSceneLaunchUrlHook`): tao's
+own method runs first, since it starts the app and the plugin listening for `Opened`, then the
+options go to the two methods tao implements for a RUNNING app, `scene:openURLContexts:` and
+`scene:continueUserActivity:`. It is installed on `UIApplicationDidFinishLaunchingNotification` with
+`queue:nil`: tao registers the class inside `ffi::start_app()`, and the first scene connects right
+after that notification - the APNs hook, which is queued, already runs only 1 ms before the scene's
+first line in the syslog. `iosSceneLaunchUrl.test.ts` pins the shape, because nothing compiles the
+file on a workstation. **It is native, so it ships only with a store build**, and its proof is
+`[CanariDeepLink] scene connected with 1 launch url(s)` in the syslog of a cold launch, then the
+target page behind the PIN.
 
 #### A reload used to replay the launch link, and the guard's LIFETIME is the fix (WP-RELOAD-DL-1)
 
