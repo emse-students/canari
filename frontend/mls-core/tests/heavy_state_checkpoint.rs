@@ -143,3 +143,55 @@ fn checkpoint_cost_scales_with_the_whole_state() {
         );
     }
 }
+
+/// THE KEYPACKAGE SHARE OF ONE CHECKPOINT (2026-10-13). A store Pixel 6a held 15.5 MB of state, 6 MB
+/// of it 2535 KeyPackage bundles, and every checkpoint rewrites all of it. A bundle never changes
+/// once minted - it is written at `build_key_package` and only ever deleted - so this measures what
+/// the unchanged pile costs each save: the same 80-group state, checkpointed before and after
+/// minting `KEY_PACKAGES` bundles on the measured device.
+///
+///   cargo test --release --test heavy_state_checkpoint -- --ignored --nocapture key_package_share
+#[test]
+#[ignore = "measurement - prints a table, asserts nothing"]
+fn key_package_share_of_a_checkpoint() {
+    const GROUPS: usize = 80;
+    const KEY_PACKAGES: usize = 2535;
+    let inert_pool: Vec<MlsManager> = (0..40)
+        .map(|i| device(&format!("inert-{i}"), "d"))
+        .collect();
+    let mut senders: Vec<MlsManager> = (0..3)
+        .map(|i| device(&format!("sender-{i}"), "d"))
+        .collect();
+    let mut me = device("me", "d");
+    for g in 0..GROUPS {
+        build_group(
+            &mut me,
+            &format!("g-{g}"),
+            &inert_pool,
+            &mut senders,
+            10,
+            20,
+        );
+    }
+
+    // One application message, then the checkpoint a drain writes - the encrypted path rebuilds.
+    let mut measure = |me: &mut MlsManager, label: &str, sender: usize| {
+        let ct = senders[sender]
+            .send_message("g-0", b"one more")
+            .expect("send");
+        me.process_incoming_message("g-0", &ct).expect("decrypt");
+        let t = Instant::now();
+        let sealed = me.save_encrypted_with_key(&KEY).expect("encrypted");
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        println!("{label:>22} {:>12} B {ms:>10.1} ms", sealed.len());
+    };
+
+    println!();
+    measure(&mut me, "80 groups", 0);
+    measure(&mut me, "80 groups (again)", 1);
+    for _ in 0..KEY_PACKAGES {
+        me.generate_key_package().expect("kp");
+    }
+    measure(&mut me, "+ 2535 KeyPackages", 2);
+    measure(&mut me, "+ 2535 KP (again)", 0);
+}
