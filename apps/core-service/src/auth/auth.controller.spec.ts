@@ -512,7 +512,7 @@ describe('AuthController sessions', () => {
       fetchSpy = jest
         .spyOn(global, 'fetch')
         .mockResolvedValueOnce(
-          new Response(
+          new globalThis.Response(
             JSON.stringify({
               access_token: 'ak-access',
               ...(idToken ? { id_token: idToken } : {}),
@@ -520,7 +520,9 @@ describe('AuthController sessions', () => {
             { status: 200 }
           )
         )
-        .mockResolvedValueOnce(new Response(JSON.stringify({ sub: 'user-1' }), { status: 200 }));
+        .mockResolvedValueOnce(
+          new globalThis.Response(JSON.stringify({ sub: 'user-1' }), { status: 200 })
+        );
     }
 
     afterEach(() => {
