@@ -38,7 +38,7 @@ await cx.ready;
 await cx.send('Runtime.enable');
 
 const apiOrigin = await evaluate(cx, `(performance.getEntriesByType('resource').map(function (e) { return e.name; }).find(function (u) { return /^https:[/][/][^/]*canari[^/]*[/]api[/]/.test(u); }) || '')`);
-if (!/^https:\/\/dev\.canari-emse\.fr\//.test(apiOrigin)) throw new Error(`refusing: this app talks to ${apiOrigin || 'nothing yet'}, not the dev estate`);
+if (!apiOrigin.startsWith('https://dev.canari-emse.fr/')) throw new Error(`refusing: this app talks to ${apiOrigin || 'nothing yet'}, not the dev estate`);
 
 const visible = (sel) => `[].find.call(document.querySelectorAll(${JSON.stringify(sel)}), function (e) { return e.getBoundingClientRect().width > 0; })`;
 const buttonWithText = (text) => `[].find.call(document.querySelectorAll('button'), function (b) { return ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).indexOf(${JSON.stringify(text)}) >= 0 && b.getBoundingClientRect().width > 0; })`;
