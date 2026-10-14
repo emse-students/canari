@@ -8,6 +8,7 @@ import {
   logMlsMetric,
   detectRuntimeDeviceOs,
   MLS_LOCAL_STATE_UNDECRYPTABLE,
+  VaultOwnerUnprovenError,
   type MlsInitOptions,
 } from '$lib/mls-client';
 import {
@@ -607,6 +608,17 @@ export class TauriMlsService extends BaseMlsService {
     const savedStateExists = !!state || opts?.stateOnDisk === true;
     this.freshStart = !savedStateExists;
 
+    // A KEY OF UNPROVEN OWNER WITH NO STATE TO OPEN PROVES NOTHING, and a fresh start would seal a
+    // new state under it - another account's key, as far as anything here knows. The login refuses
+    // this before calling init; it is restated here so the contract of `vaultOwnerUnproven` does not
+    // depend on that caller.
+    if (opts?.vaultOwnerUnproven && !savedStateExists) {
+      console.warn(
+        '[VAULT] unlabelled vault key refused - no saved state to prove the account with'
+      );
+      throw new VaultOwnerUnprovenError('no_state');
+    }
+
     // Per-user device ID (same rationale as WebMlsService). resolveDeviceId restores
     // from localStorage or the native push_context before generating a fresh id, and
     // is idempotent: a no-op when login already resolved it before the pin-check.
@@ -630,6 +642,19 @@ export class TauriMlsService extends BaseMlsService {
       // → systematic fresh-start to avoid blocking the user indefinitely.
       // If state == null and error → real crash (no state to blame) → rethrow.
       let cause = this.classifyStateLoadFailure(e);
+
+      // A KEY OF UNPROVEN OWNER IS REFUSED BEFORE ANY RECOVERY CAN RUN, because every recovery below
+      // writes: the legacy re-seal persists `mls.bin`, and a rotation replaces it. `mls.bin` is one
+      // file per install, so with the unlabelled vault of the account that signed in before, a
+      // `mismatch` here is THAT account's state - and rotating it away was the data loss this
+      // refusal exists for (see `MlsInitOptions.vaultOwnerUnproven`).
+      if (opts?.vaultOwnerUnproven) {
+        const refusal = cause === 'mismatch' ? 'mismatch' : 'unopenable';
+        console.warn(
+          `[VAULT] unlabelled vault key refused on the saved state (${cause}) - nothing rotated, nothing written; PIN gate next`
+        );
+        throw new VaultOwnerUnprovenError(refusal);
+      }
 
       // No key in the keystore (a cancelled or refused sheet, a wiped entry) says nothing about
       // the saved state and is recoverable - the user just needs to enter their PIN. Do NOT

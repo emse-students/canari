@@ -23,7 +23,7 @@ function at(haystack: string, needle: string): number {
 
 describe('loginImpl and the landing preview', () => {
   it('starts the vault preview BEFORE the token is awaited (the decision of 2026-10-12)', () => {
-    const vault = at(loginBody, 'if (isVaultLogin) {');
+    const vault = at(loginBody, 'if (isVaultLogin && !vaultOwnerUnproven) {');
     const start = at(loginBody, 'startLandingPreview(storageOpen, deviceKeyB64);');
     const token = at(loginBody, 'accessToken = await getToken();');
     expect(vault).toBeLessThan(start);

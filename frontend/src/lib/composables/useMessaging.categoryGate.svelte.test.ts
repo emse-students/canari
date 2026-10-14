@@ -8,6 +8,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 
+// The sender lookup is its own seam (displayName.spec.ts); here it answers at once so a
+// notification is raised a microtask after the arrival, not after a network round trip.
+vi.mock('$lib/utils/users/displayName', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/users/displayName')>()),
+  resolveNotificationSenderName: async () => 'Peer',
+}));
+
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: () => {},
   globalSession: {},
@@ -80,7 +87,7 @@ describe('a switched-off category raises no local notification', () => {
   it('notifies a conversation message by default', async () => {
     const { ctx, sendSystemNotification } = makeContext('conv-1');
     await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'm1' });
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('is silent for a conversation when "messages" is off', async () => {
@@ -96,7 +103,7 @@ describe('a switched-off category raises no local notification', () => {
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('channel_abc');
     await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 'm3' });
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('is silent for a salon when "channels" is off', async () => {
