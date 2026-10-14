@@ -28,6 +28,15 @@ import { truncateLogIds } from './logTruncate';
 /** The longest line the log keeps. A line is a sentence; anything longer is a dump. */
 export const MAX_LOG_LINE_CHARS = 400;
 
+/**
+ * The suffix that cap writes, recognised so a second pass does not cut a cut line again. Its number
+ * is put back VERBATIM, so only a number the cap can have written is recognised: above
+ * {@link MAX_LOG_LINE_CHARS}, no leading zero, four digits at most (a redacted line is at most ~5x
+ * the {@link MAX_INPUT_CHARS} it was cut to). A member who types `… (0612345678 chars)` wrote a
+ * phone number, not a suffix (review of #1861, 2026-10-14).
+ */
+const TRUNCATED_RE = /… \(([1-9]\d{2,3}) chars\)$/;
+
 /** The most of a raw line the patterns ever see (see the cut in {@link redactLogLine}). */
 export const MAX_INPUT_CHARS = 1000;
 
@@ -175,7 +184,8 @@ function fieldSensitivity(name: string): false | 'secret' | 'prose' {
  * 240 characters and leaves the quote open, and the rest of the line is then that value), a bracketed
  * list or object, or a bare word; the tail is the words that follow up to the next separator, which
  * is the rest of a prose value. A field that is not sensitive is put back with its value and tail
- * scanned again, so `mode=x pin=1234` still loses the PIN.
+ * scanned again, so `mode=x pin=1234` still loses the PIN; one whose bare value starts another field
+ * is resumed at that field instead ({@link redactFields}).
  */
 const FIELD_RE =
   /\b([A-Za-z][\w-]*)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*(?:"|$)|'[^']*(?:'|$)|\[[^\]]*(?:\]|$)|\{[^}]*(?:\}|$)|[^\s,;&}\])|]+)((?:[ \t]+(?!["']?[A-Za-z][\w-]*["']?\s*[:=])[^\s,;&}\])|"]+)*)/g;
@@ -226,25 +236,72 @@ function proseMarker(value: string, tail: string): string {
 }
 
 /**
+ * A field value this stage already wrote: `[redacted]`, or a length marker `[N chars]` /
+ * `"[N chars]"`. Recognised so that redacting a redacted line is a no-op ({@link redactLogLine}).
+ */
+const ALREADY_REDACTED_VALUE_RE = /^"?\[(?:redacted|\d+ chars)\]"?$/;
+
+/** A bare value that is itself the start of a field: `contact="` in `handleSendChat: contact="…"`. */
+const NESTED_FIELD_START_RE = /^[A-Za-z][\w-]*["']?\s*[:=]/;
+
+/**
  * Replaces the value of every sensitive field by `[redacted]`, calling `onRedact` once per value.
  * Recursion is on a strictly shorter span (a value or a tail), so it ends.
+ *
+ * A field that is NOT sensitive and whose bare value is the start of another field
+ * (`handleSendChat: contact="[5 chars]"`) keeps only its name and separator, and the scan resumes
+ * at that value: the inner field is judged on its whole span instead of on the word cut at its
+ * first space. Only there - a SENSITIVE name still swallows such a value whole, or
+ * `text=a="ok" my message` would hand the message to the inner, harmless field (2026-10-14).
  */
 function redactFields(text: string, onRedact: () => void): string {
-  const out = text.replace(
-    FIELD_RE,
-    (_m, name: string, sep: string, value: string, tail: string) => {
-      const sensitivity = fieldSensitivity(name);
-      if (sensitivity === false || isHarmlessFieldValue(name, value, tail)) {
-        return `${name}${sep}${redactFields(value, onRedact)}${redactFields(tail, onRedact)}`;
-      }
-      onRedact();
-      // A CONTENT field is replaced by its LENGTH whatever the value looks like: `text="ok"` is
-      // an identifier by shape and a member's whole message by meaning.
-      if (sensitivity === 'prose') return `${name}${sep}${proseMarker(value, tail)}${PROSE_END}`;
-      return `${name}${sep}[redacted]${redactFields(tail, onRedact)}`;
+  const re = new RegExp(FIELD_RE.source, 'g');
+  let out = '';
+  let from = 0;
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    out += text.slice(from, m.index);
+    from = m.index + m[0].length;
+    const [, name, sep, value, tail] = m;
+    const sensitivity = fieldSensitivity(name);
+    if (sensitivity === false && NESTED_FIELD_START_RE.test(value)) {
+      out += `${name}${sep}`;
+      from = re.lastIndex = m.index + name.length + sep.length;
+      continue;
     }
-  );
+    out += redactField(name, sep, value, tail, sensitivity, onRedact);
+  }
+  out += text.slice(from);
   return out.includes(PROSE_END) ? out.replace(PROSE_REST_RE, '') : out;
+}
+
+/** One `name<sep>value<tail>` match of {@link redactFields}, its value judged by the name. */
+function redactField(
+  name: string,
+  sep: string,
+  value: string,
+  tail: string,
+  sensitivity: false | 'secret' | 'prose',
+  onRedact: () => void
+): string {
+  if (sensitivity === false || isHarmlessFieldValue(name, value, tail)) {
+    return `${name}${sep}${redactFields(value, onRedact)}${redactFields(tail, onRedact)}`;
+  }
+  // Already a marker this stage wrote: the line is being redacted a second time (the export
+  // re-reads every stored line), and a second pass must change nothing - not even the count.
+  // A prose marker stands for the WHOLE value, which this stage never leaves a tail after: a
+  // marker followed by more words (`text=[3 chars] my message`) is a member's text imitating
+  // one, and is redacted like any other. Its end is marked, so a rest past a comma goes too.
+  if (sensitivity === 'prose' && tail === '' && ALREADY_REDACTED_VALUE_RE.test(value)) {
+    return `${name}${sep}${value}${PROSE_END}`;
+  }
+  if (sensitivity === 'secret' && ALREADY_REDACTED_VALUE_RE.test(value)) {
+    return `${name}${sep}${value}${redactFields(tail, onRedact)}`;
+  }
+  onRedact();
+  // A CONTENT field is replaced by its LENGTH whatever the value looks like: `text="ok"` is
+  // an identifier by shape and a member's whole message by meaning.
+  if (sensitivity === 'prose') return `${name}${sep}${proseMarker(value, tail)}${PROSE_END}`;
+  return `${name}${sep}[redacted]${redactFields(tail, onRedact)}`;
 }
 
 /**
@@ -380,17 +437,16 @@ export interface RedactedLine {
   redactions: number;
 }
 
-/**
- * Returns `raw` as it may be written to the exportable log. Every value removed is replaced by a
- * marker and counted, so the export can say how much it withheld.
- */
-export function redactLogLine(raw: string): RedactedLine {
+/** Every stage of {@link redactLogLine} but the final cap. */
+function redactUncapped(raw: string): RedactedLine {
   let redactions = 0;
   const count =
     (marker: string | ((...m: string[]) => string)) =>
     (...m: string[]): string => {
-      redactions++;
-      return typeof marker === 'string' ? marker : marker(...m);
+      const out = typeof marker === 'string' ? marker : marker(...m);
+      // A match that already IS its marker (`?[query]`, a second pass) withheld nothing new.
+      if (out !== m[0]) redactions++;
+      return out;
     };
 
   // THE INPUT IS CUT BEFORE ANY PATTERN RUNS. Several patterns below scan forward from every
@@ -470,8 +526,9 @@ export function redactLogLine(raw: string): RedactedLine {
   // A value cut mid-string by the payload renderer leaves ONE quote open, and the pairing above
   // leaves it to the last one: everything after it is the unchecked half of a value.
   if ((line.match(/"/g)?.length ?? 0) % 2 === 1) {
-    redactions++;
-    line = `${line.slice(0, line.lastIndexOf('"'))}"[cut]`;
+    const closed = `${line.slice(0, line.lastIndexOf('"'))}"[cut]`;
+    if (closed !== line) redactions++;
+    line = closed;
   }
   line = line.replace(PICTOGRAPH_RE, count(''));
   line = line.replace(/\S+/g, (word) => {
@@ -481,8 +538,60 @@ export function redactLogLine(raw: string): RedactedLine {
     return '[text]';
   });
 
-  if (line.length > MAX_LOG_LINE_CHARS) {
-    line = `${line.slice(0, MAX_LOG_LINE_CHARS)}… (${line.length} chars)`;
-  }
   return { line, redactions };
+}
+
+/**
+ * The longest prefix of `line`, at most {@link MAX_LOG_LINE_CHARS}, that ends at a space OUTSIDE
+ * any quote or bracket - so it ends between whole tokens. A cut inside a marker or a value
+ * (`name: [11 ch`) left a fragment the next pass read as a new value and re-marked
+ * (`[DUMP] name: Jean Dupont, ` x60, review of #1861): a cut between tokens leaves nothing new to
+ * find. One forward scan, no backtracking. Empty when no such space exists.
+ */
+function capPrefix(line: string): string {
+  let cut = 0;
+  let inQuote = false;
+  let depth = 0;
+  for (let i = 0; i <= MAX_LOG_LINE_CHARS && i < line.length; i++) {
+    const c = line[i];
+    if (c === '\\' && inQuote) {
+      i++;
+    } else if (c === '"') {
+      inQuote = !inQuote;
+    } else if (!inQuote && (c === '[' || c === '{' || c === '(')) {
+      depth++;
+    } else if (!inQuote && (c === ']' || c === '}' || c === ')')) {
+      depth = Math.max(0, depth - 1);
+    } else if (c === ' ' && !inQuote && depth === 0) {
+      cut = i;
+    }
+  }
+  return line.slice(0, cut).trimEnd();
+}
+
+/** Caps a redacted line at a token boundary, saying how long it was. */
+function capLine(line: string): string {
+  if (line.length <= MAX_LOG_LINE_CHARS) return line;
+  return `${capPrefix(line)}… (${line.length} chars)`;
+}
+
+/**
+ * Returns `raw` as it may be written to the exportable log. Every value removed is replaced by a
+ * marker and counted, so the export can say how much it withheld.
+ *
+ * IDEMPOTENT: a line it already returned comes back unchanged, with zero redactions. The log is
+ * redacted when a line is WRITTEN and again when it is READ for export ({@link ../appLog}), so a
+ * line an older build stored under weaker rules leaves the device under today's - and a line this
+ * build stored costs that second pass nothing. A line the cap already cut is redacted WITHOUT its
+ * `… (N chars)` suffix, which is put back as it was: the suffix is the cap's, never a value.
+ */
+export function redactLogLine(raw: string): RedactedLine {
+  const capped = TRUNCATED_RE.exec(raw);
+  if (capped && Number(capped[1]) > MAX_LOG_LINE_CHARS) {
+    const { line, redactions } = redactUncapped(raw.slice(0, capped.index));
+    const kept = line.length <= MAX_LOG_LINE_CHARS ? `${line}${capped[0]}` : capLine(line);
+    return { line: kept, redactions };
+  }
+  const { line, redactions } = redactUncapped(raw);
+  return { line: capLine(line), redactions };
 }

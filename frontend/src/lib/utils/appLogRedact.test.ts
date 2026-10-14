@@ -11,6 +11,15 @@ import { MAX_LOG_LINE_CHARS, redactLogLine } from './appLogRedact';
 
 const redact = (raw: string) => redactLogLine(raw).line;
 
+/**
+ * The log is redacted at WRITE and again at READ (an older build's lines leave under today's
+ * rules), so a redacted line passed through again must come back identical and count nothing.
+ */
+function expectIdempotent(raw: string): void {
+  const once = redactLogLine(raw).line;
+  expect(redactLogLine(once)).toEqual({ line: once, redactions: 0 });
+}
+
 describe('redactLogLine - what must never enter', () => {
   const hostile: Array<[string, string, string]> = [
     // [case, raw line, secret that must be gone]
@@ -114,6 +123,9 @@ describe('redactLogLine - what must never enter', () => {
       const { line, redactions } = redactLogLine(raw);
       expect(line).not.toContain(secret);
       expect(redactions).toBeGreaterThan(0);
+    });
+    it(`is a no-op on its own output: ${name}`, () => {
+      expectIdempotent(raw);
     });
   }
 
@@ -225,6 +237,106 @@ describe('redactLogLine - a content field is its length, whatever its shape', ()
     expect(redact('[X] kind=poll id=67fde7aa… count=3 text="ok" mode=ready')).toBe(
       '[X] kind=poll id=67fde7aa… count=3 text="[2 chars]" mode=ready'
     );
+  });
+});
+
+describe('redactLogLine - a second pass changes nothing (it runs at write AND at export)', () => {
+  const lines = [
+    '[SEND] handleSendChat: contact="jolan" text="bisous" files=0',
+    '[SEND] handleSendChat: contact="jolan" text="ok" files=0',
+    '[DRAFT] text=ok',
+    '[WS] {"text":"bisous","id":"a1"}',
+    '[X] description: hello, my plan, id=5 mode=x',
+    '[X] name: Jean Dupont, id=5',
+    '[WS] frame {"type":"msg","body":"rendez-vous a 18h"}',
+    '[API] Authorization: Bearer abc.def-ghi_jkl',
+    '[LOGIN] as a.b@c.fr pin=1234',
+    // A value the payload renderer cut, left with one quote open.
+    '[WS] {"kind":"draft","x":"the plan for tonight is to meet at… (900 chars)',
+    // The per-line cap's suffix, and the input cut's marker.
+    `[DUMP] ${'word '.repeat(500)}`,
+    `[DUMP] ${'a'.repeat(5000)}`,
+    // What must survive survives twice.
+    '[SELECT] 67fde7aa… is not in the conversation map - selection dropped, nothing opens',
+  ];
+  for (const raw of lines) {
+    it(`is a no-op on: ${raw.slice(0, 60)}`, () => {
+      expectIdempotent(raw);
+    });
+  }
+
+  // Review of #1861: the cap cut inside a marker (`name: [11 ch… (1140 chars)`), and the second
+  // pass read the fragment as a new value - so EVERY export re-counted this build's own lines.
+  const capped = [
+    `[DUMP] ${'name: Jean Dupont, '.repeat(60)}`,
+    `[DUMP] ${'text="hello there" '.repeat(40)}`,
+    `[DUMP] ${'"abc def" '.repeat(80)}`,
+    `[DUMP] ${'{"body":"hi"} /api/x?y=1 '.repeat(30)}`,
+  ];
+  for (const raw of capped) {
+    it(`a capped line ends between whole tokens and stays put: ${raw.slice(0, 40)}`, () => {
+      const once = redactLogLine(raw).line;
+      expect(once).toMatch(/\S… \(\d+ chars\)$/);
+      expect(once.replace(/… \(\d+ chars\)$/, '').length).toBeLessThanOrEqual(MAX_LOG_LINE_CHARS);
+      expectIdempotent(raw);
+    });
+  }
+
+  it('redacts an OLD build`s line by today`s rules, and its own output no further', () => {
+    const old = '[SEND] handleSendChat: contact="jolan" text="bisous" files=0';
+    const today = '[SEND] handleSendChat: contact="[5 chars]" text="[6 chars]" files=0';
+    expect(redactLogLine(old)).toEqual({ line: today, redactions: 2 });
+    expect(redactLogLine(today)).toEqual({ line: today, redactions: 0 });
+  });
+});
+
+describe('redactLogLine - a member`s text that IMITATES a marker is still redacted', () => {
+  // The second pass keeps a value this stage already wrote. A member types the same characters:
+  // only the WHOLE value may be recognised, never a marker followed by more (review of #1861).
+  const imitations: Array<[string, string]> = [
+    ['text=[3 chars] secret message', 'secret'],
+    ['contact=[redacted] jolan dupont', 'jolan'],
+    ['name: [redacted] Jean Dupont', 'Dupont'],
+    ['note=[0 chars] hello there friend', 'friend'],
+    ['description: [5 chars], my secret plan', 'secret'],
+    ['body=[12 chars]; my secret plan', 'secret'],
+    ['title: [redacted], jolan', 'jolan'],
+    ['[SEND] text="[3 chars]" secret message"', 'secret'],
+    // A bare value that starts another field is swallowed whole under a CONTENT name.
+    ['text=a="ok" my secret message', 'secret'],
+    ['contact=foo="x" jolan', 'jolan'],
+    // The cap's suffix is put back verbatim, so a number it could not have written is not one.
+    ['call me… (0612345678 chars)', '0612345678'],
+    ['text: … (482913 chars)', '482913'],
+    ['code=4829… (12 chars)', '4829'],
+    ['code=4829… (123 chars)', '4829'],
+    // The [SEND] lines JSON-quote the text, so a `"` the member typed stays inside the value.
+    [
+      `[SEND] handleSendChat: contact="jolan" text=${JSON.stringify('he said "meet me at the bar"')} files=0`,
+      'meet',
+    ],
+  ];
+  for (const [raw, secret] of imitations) {
+    it(`loses "${secret}" in: ${raw}`, () => {
+      const { line } = redactLogLine(raw);
+      expect(line).not.toContain(secret);
+      expect(redactLogLine(line).line).not.toContain(secret);
+    });
+  }
+
+  it('counts a marker followed by more words, and measures the whole value', () => {
+    expect(redactLogLine('text=[3 chars] secret message')).toEqual({
+      line: 'text=[24 chars]',
+      redactions: 1,
+    });
+    expect(redactLogLine('text="jolan [3 chars]"')).toEqual({
+      line: 'text="[15 chars]"',
+      redactions: 1,
+    });
+  });
+
+  it('keeps a marker that IS the whole value, and counts nothing', () => {
+    expect(redactLogLine('text=[3 chars]')).toEqual({ line: 'text=[3 chars]', redactions: 0 });
   });
 });
 
