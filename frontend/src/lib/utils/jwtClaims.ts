@@ -9,6 +9,8 @@ export interface TokenClaims {
   sub?: string;
   admin?: boolean;
   exp?: number;
+  /** The issuer of an OIDC id_token: MiConnect's provider URL, which names its end-session. */
+  iss?: string;
 }
 
 /** Returns the payload of `token`, or `null` when it is not a decodable JWT. Never throws. */

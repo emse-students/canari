@@ -37,6 +37,7 @@
     setSessionExpiredHandler,
     setSignOutHandler,
     isRefreshCredentialProvenDead,
+    leaveSignedOut,
   } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
   import {
@@ -645,8 +646,8 @@
    * has only the destructive reset, and a modal that cannot be closed and offers nothing but "erase
    * my message history" is a softlock with a button on it.
    *
-   * IT IS THE APP'S ORDINARY SIGN-OUT, deliberately - `clearAuth()` then `/login`, the same two
-   * lines the navbar's logout runs. `clearAuth` ends the session on the server, drops the access
+   * IT IS THE APP'S ORDINARY SIGN-OUT, deliberately - `clearAuth()` then `leaveSignedOut()` (which
+   * also ends the MiConnect session), the same two lines the navbar's logout runs. `clearAuth` ends the session on the server, drops the access
    * token, the refresh credential and the persisted ACKs, and touches NOTHING that a PIN protects:
    * `mls.bin`, the message database and the device key vault are all still there afterwards. The
    * user asked for exactly this ("deconnecter seulement, garder l'etat"), and it is what makes the
@@ -663,7 +664,7 @@
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
     await clearAuth().catch((e) => appendLog(`[AUTH] Sign-out: clearAuth failed - ${e}`));
-    await goto(resolve('/login'), { replaceState: true });
+    await leaveSignedOut();
     dismissAuthPrompts();
     pinError = '';
     _loginInProgress = false;

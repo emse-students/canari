@@ -39,6 +39,12 @@
           "scheme": [
             "fr.emse.canari"
           ],
+          "host": "signed-out"
+        },
+        {
+          "scheme": [
+            "fr.emse.canari"
+          ],
           "host": "stripe"
         },
         {
@@ -163,7 +169,7 @@
       "developmentTeam": "4CLNB8SR6L"
     },
     "android": {
-      "versionCode": 100200702
+      "versionCode": 100200703
     }
   }
 }

@@ -13,6 +13,8 @@ export interface PickerOption {
   description?: string;
   /** Shown but not choosable - a reason the choice exists and is unavailable, e.g. a used slot. */
   disabled?: boolean;
+  /** Choosable, but drawn in the muted text colour - a choice that exists and is out of date (archived). */
+  muted?: boolean;
   /**
    * The heading this option sits under. Consecutive options sharing it form one group, so the
    * caller's ORDER decides the grouping - the picker never re-sorts what it was given.
