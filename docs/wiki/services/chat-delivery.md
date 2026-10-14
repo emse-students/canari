@@ -2004,6 +2004,12 @@ learnt from a failed query.
 - A frame received over the socket (web, desktop, a backgrounded Android app that ACKed it):
   `conversationLevelRefusal` in `notifyInbound`, reading the store `notificationPreferences` by the
   GROUP id (`convo.id`, never a `me::peer` conversation key). Here the plaintext is always in hand.
+  **A SALON takes the same decision** (`channel_<id>` key, category `channels`) with its own level
+  from `channel_members.notifLevels`: `notificationPreferences.channelLevel`, read ONCE per salon
+  (`GET /api/channels/:id/notification-level`, one shared request) when its first frame arrives, the
+  frame waiting for the answer, then cached for the session - never a read per message. A failed
+  read is logged and the frame raised as `all` (the account default), nothing cached, so the next
+  frame reads again.
   A catch-up flush raises ONE banner (its last message) but counts as a mention if ANY of its
   inbound messages names the reader - "@me look", "ok", "lol" is a mention.
 
@@ -2014,7 +2020,7 @@ target yet: there is no Xcode on the workstation that wrote it).
 
 **When this device's copy of the levels refreshes, and why that is enough.** The store is read at
 sign-in, at every visit to the notification settings, and at every opening of a conversation's
-panel. No socket event announces a level changed on ANOTHER device, so until one of those three, a
+panel (a salon's: its settings panel, which also writes the cache on save). No socket event announces a level changed on ANOTHER device, so until one of those three, a
 session that was already open keeps the old level for the notifications it raises ITSELF from socket
 frames. That is safe: pushes are always current (the server reads the column at each send), the
 error is at most one banner too many or too few on an open session, never a lost message, and the
