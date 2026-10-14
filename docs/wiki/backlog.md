@@ -117,7 +117,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret** (environment `development`; today only the repository-level production `FIREBASE_SERVICE_ACCOUNT_JSON` exists): without it dev sends no push and T1, the push-to-banner latency, cannot be measured | 1 secret | [the notification latency P2](#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11) |
 | **decide production's log retention**: the per-message lines at `LOG` level roll the container log over in ~20 minutes, so an incident older than that is unreadable | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
 | **decide what to do about an OWN bubble's last 17.5 px sitting in Android's right back-gesture inset** (a reply swipe started there is a system Back: 11 of 11 on the Mi 9T, 2026-10-14) - exclusion rects on the activity (200 dp cap), a wider own-side gutter, or nothing as Messenger does | 1 decision | [design-reference](frontend/design-reference.md#the-reply-swipe-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-14) |
-| **decide whether the iPhone app follows Dynamic Type** (today it ignores the setting) | 1 decision | [2026-10-13 bench pass](#a-decision---the-iphone-ignores-dynamic-type) |
 | **decide the WebCrypto checkpoint seal** (design only) | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **raise `minClientVersion` to `1.2.1` once BOTH stores serve `1.2.1`** - `1.0.3`-`1.1.2` keep the native key-group epoch bug (a cold start arms an epoch gap, salon sends are refused, the device re-joins 45 s later); the floor is `1.0.3` since 2026-10-11; Apple's order is to wait for 1.2.1's review, then submit 1.2.4 | 1 gesture | [channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09), [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
@@ -365,12 +364,6 @@ now recognised at any keyboard height, [chat](frontend/modules/chat.md#every-key
 Below the 160 px keyboard threshold no keyboard is ever "open", so `computeSnapshot` pins nothing in
 those frames; the 12 px (one `0.75rem`) comes from somewhere it does not reach. Cause not read: owed
 a per-frame record of `innerHeight`, `visualViewport.height` and the footer's padding on that rise.
-
-### A decision - the iPhone ignores Dynamic Type
-
-At the largest standard text size the app draws exactly as at the default, warm and cold: the
-WebView does not follow the setting. Whether that is accepted (Android's 200 % does scale, through
-the WebView) or the root font should follow `-apple-system-body` is the user's call.
 
 ## P1 - A community key group sends every repair answer to every seat, and 42 % of seats have no device behind them (production, 2026-10-12)
 

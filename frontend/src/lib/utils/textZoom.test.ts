@@ -4,7 +4,7 @@
  * jsdom lays nothing out, so the two measurements are stubbed.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { publishTextZoom } from './textZoom';
+import { publishTextZoom, iosTypeScale, publishIosTypeScale, IOS_TYPE_SCALE_MAX } from './textZoom';
 
 function stub(remBoxPx: number, rootFontPx: number) {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
@@ -46,6 +46,41 @@ describe('publishTextZoom', () => {
     stub(16, 32);
     const before = document.body.childElementCount;
     publishTextZoom();
+    expect(document.body.childElementCount).toBe(before);
+  });
+});
+
+describe('iosTypeScale', () => {
+  it.each([
+    [17, 1],
+    [14, 1],
+    [19, 1.12],
+    [23, 1.35],
+    [34, 2],
+    [53, IOS_TYPE_SCALE_MAX],
+    [0, 1],
+    [NaN, 1],
+  ])('maps a %s px body to %s', (px, scale) => {
+    expect(iosTypeScale(px)).toBe(scale);
+  });
+});
+
+describe('publishIosTypeScale', () => {
+  afterEach(() => {
+    document.documentElement.style.removeProperty('--type-scale');
+  });
+
+  it('publishes the scale and the exemption factor from the probe, and removes the probe', () => {
+    const real = window.getComputedStyle;
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((el) =>
+      el instanceof HTMLElement && el.style.cssText.includes('apple-system-body')
+        ? ({ fontSize: '25.5px' } as CSSStyleDeclaration)
+        : real(el)
+    );
+    const before = document.body.childElementCount;
+    expect(publishIosTypeScale()).toBe(1.5);
+    expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe('1.5');
+    expect(document.documentElement.style.getPropertyValue('--text-zoom')).toBe('1.5');
     expect(document.body.childElementCount).toBe(before);
   });
 });

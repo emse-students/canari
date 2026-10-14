@@ -1143,6 +1143,29 @@ halves agreeing field by field (`systemComponentsPatch.test.ts`); the Swift comp
 **Owed on an iPhone:** the pieces over their CSS twins pixel for pixel, the "+" following the keyboard
 without a lag the eye sees, the picker opening, and VoiceOver reading the four names.
 
+### The iPhone follows Dynamic Type, by CSS alone (decided by the user 2026-10-14)
+
+WKWebView ignores the system text size for ordinary CSS (read 2026-10-13: the largest standard size
+drew exactly as the default). A font declared `-apple-system-body` does resolve to the user's current
+body size, so `publishIosTypeScale` (`lib/utils/textZoom.ts`) reads a hidden probe styled that way,
+divides by 17px (the default "Large" body), clamps to `[1, 2]` and publishes `--type-scale`, which
+the eight `--text-*` tokens of `app.css` multiply by. No Swift. It behaves like Android's WebView:
+font sizes grow, lengths (spacing, line heights, boxes) stay, and `--text-zoom` carries the same
+factor so `.text-zoom-exempt` keeps avatar initials in their circle
+([phone-comparison](../phone-comparison.md#what-is-left-scoped-by-the-user-on-2026-09-30)).
+
+- **Bound: 2.** Android's 200 % is the largest scale rows, composer, nav, bubbles and the agenda were
+  read at, so the accessibility sizes (body up to 53px) stop there. Floor 1: `--text-2xs` is the floor
+  of the scale, so "Smaller" keeps the default.
+- Read at start-up and on each return to the foreground (`visibilitychange`), since the setting is
+  changed outside the app without a reload.
+- **Owed - one reading on the iPhone 12 bench** (nothing here can render WKWebView): Settings >
+  Display & Brightness > Text Size, then Accessibility > Display & Text Size > Larger Text (also
+  Larger Accessibility Sizes), and each main screen: chats list and a conversation (bubbles,
+  composer), communities, feed, agenda, dashboard, a modal and the PIN sheet. Check the text grows,
+  nothing clips or overflows, avatar initials stay inside their circle, and changing the size with
+  the app in the background applies on return.
+
 ### iOS project
 
 `canari.xcodeproj/project.pbxproj` is **hand-maintained** (not xcodegen). Key details:

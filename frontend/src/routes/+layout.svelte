@@ -73,7 +73,7 @@
   import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { purgeRetiredAvatarCache } from '$lib/utils/userAvatarCache';
-  import { publishTextZoom } from '$lib/utils/textZoom';
+  import { publishTextZoom, publishIosTypeScale } from '$lib/utils/textZoom';
   import { m } from '$lib/paraglide/messages';
 
   let { children } = $props();
@@ -134,6 +134,13 @@
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
+    // iOS keeps the setting outside the app and changing it does not reload the page, so read it
+    // again each time the app returns to the foreground.
+    if (isIosApp) publishIosTypeScale();
+    const onForeground = () => {
+      if (isIosApp && document.visibilityState === 'visible') publishIosTypeScale();
+    };
+    document.addEventListener('visibilitychange', onForeground);
 
     // Dismiss the inline splash screen (see app.html) once the first frame is rendered.
     // tick() ensures SvelteKit has completed its initial render before we fade out.
@@ -161,6 +168,7 @@
 
     return () => {
       disposePressedClickGuard();
+      document.removeEventListener('visibilitychange', onForeground);
       teardownHistory();
       teardownKeyboard();
       window.removeEventListener('focus', onVersionCheckTrigger);
