@@ -52,6 +52,12 @@ export type LoginErrorCode =
    * about whether this account has one yet: the gate that follows must ask the server, not assume.
    */
   | 'vault_not_this_account'
+  /**
+   * The same refusal, on a phone, where it is PROVEN that the one `mls.bin` of this install holds
+   * ANOTHER account's state: the vaulted key opened it and its credential named someone else.
+   * The gate that follows must not offer the reset, which would delete that account's state.
+   */
+  | 'device_holds_other_account'
   /** Anything else (network, server, unexpected). */
   | 'other';
 
@@ -142,6 +148,20 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'local_state_unopenable' ||
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
-    code === 'vault_not_this_account'
+    isVaultRefusal(code)
   );
+}
+
+/** True for both refusals of a vaulted key whose owner was not proven (see the two codes). */
+export function isVaultRefusal(code: LoginErrorCode | undefined): boolean {
+  return code === 'vault_not_this_account' || code === 'device_holds_other_account';
+}
+
+/**
+ * True when this device's local state is PROVEN to be another account's, so nothing this account
+ * does from the gate may delete it - the "forgot PIN" reset above all (`removeMlsState` deletes the
+ * one `mls.bin` of the install). Only `device_holds_other_account` proves it.
+ */
+export function provesOtherAccountState(code: LoginErrorCode | undefined): boolean {
+  return code === 'device_holds_other_account';
 }

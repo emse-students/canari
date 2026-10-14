@@ -254,6 +254,38 @@ export function forgetUnlabelledDeviceKey(): void {
 }
 
 /**
+ * After a SUCCESSFUL login of `userId` with `deviceKeyB64`, removes the unlabelled slot of an older
+ * build when - and only when - it holds that very key. Returns whether it did.
+ *
+ * WHY THE KEY IS THE PROOF. A device key is derived from the account id, its PIN and its salt, so
+ * two accounts never share one: an unlabelled slot that decrypts to the key this account has just
+ * unlocked with IS this account's, whichever path the login took (the unlabelled slot itself, its
+ * own slot, the PIN, the keystore). One that holds any other key may be another account's that
+ * nobody has proven yet, and it is kept for that account - the slot is offered to whoever signs in,
+ * and only its owner may retire it. Without this, an account that unlocked by its PIN or its own
+ * slot left its old unlabelled copy behind for ever, offered to every other account that signed in.
+ */
+export async function retireUnlabelledDeviceKeyIfOwnedBy(
+  userId: string,
+  deviceKeyB64: string
+): Promise<boolean> {
+  if (vaultStore().getItem(UNLABELLED_VAULT_BLOB_KEY) === null) return false;
+  const held = await openBlob(UNLABELLED_VAULT_BLOB_KEY, undefined, forgetUnlabelledDeviceKey);
+  if (held === null) return false;
+  if (held !== deviceKeyB64) {
+    console.log(
+      `[VAULT] the unlabelled vault holds another key than ${userId.slice(0, 8)}'s - kept for the account it belongs to`
+    );
+    return false;
+  }
+  forgetUnlabelledDeviceKey();
+  console.log(
+    `[VAULT] the unlabelled vault held ${userId.slice(0, 8)}'s own key - retired after its successful login`
+  );
+  return true;
+}
+
+/**
  * Switches the device key persistence mode ("stay signed in"). Wipes every vault from BOTH stores
  * first (so no stale copy is left behind in the area being left), records the new preference,
  * then re-saves the signed-in account's key into the newly selected store when provided. Another

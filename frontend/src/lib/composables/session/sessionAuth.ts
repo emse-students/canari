@@ -24,7 +24,12 @@ import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
 // `Failed to fetch`, and only the THROW knows which it is.
 import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
-import { LoginFailure, isExpectedLoginOutcome, loginErrorCode } from './loginErrors';
+import {
+  LoginFailure,
+  isExpectedLoginOutcome,
+  isVaultRefusal,
+  loginErrorCode,
+} from './loginErrors';
 import {
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   isKeystoreKeyUnavailable,
@@ -104,6 +109,7 @@ import {
   clearDeviceKey,
   clearDeviceKeyAndWrapKey,
   forgetUnlabelledDeviceKey,
+  retireUnlabelledDeviceKeyIfOwnedBy,
 } from '$lib/utils/deviceKeyVault';
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
 import { unlockWithPin, type PinCheckAnswer } from './pinUnlock';
@@ -323,18 +329,19 @@ export async function processDeviceInvitationsLocally(
 /**
  * The login failure for a vault key of unproven owner that was refused (`vaultOwnerUnproven`).
  *
- * On a phone a `mismatch` is PROVEN to be another account's state - `mls.bin` is one file per
- * install and the key opened it - and the member is owed being told that those messages are there
- * and untouched, and why this account cannot keep its own beside them. Anywhere else the sentence
- * says only that the saved unlock is not this account's.
+ * TWO CODES, BECAUSE ONLY ONE OF THE REFUSALS KNOWS WHOSE STATE IS ON THE DEVICE. On a phone a
+ * `mismatch` is PROVEN to be another account's state - `mls.bin` is one file per install and the key
+ * opened it - so it is `device_holds_other_account`: the member is told so, and the gate withholds
+ * the reset that would delete that file. `no_state` and `unopenable` prove nothing of the kind - the
+ * store may be this account's own, evicted or sealed under an older key - and the web keeps one
+ * state per account, so everywhere else it is `vault_not_this_account` with a NEUTRAL sentence that
+ * accuses nobody.
  */
 function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
-  return new LoginFailure(
-    'vault_not_this_account',
-    refusal === 'mismatch' && isTauriRuntime()
-      ? m.auth_vault_other_account_device()
-      : m.auth_vault_other_account()
-  );
+  if (refusal === 'mismatch' && isTauriRuntime()) {
+    return new LoginFailure('device_holds_other_account', m.auth_vault_other_account_device());
+  }
+  return new LoginFailure('vault_not_this_account', m.auth_vault_unverified());
 }
 
 // ── Exported functions ────────────────────────────────────────────────────────
@@ -1027,18 +1034,18 @@ export async function loginImpl(
     // background FCM decryption; on web it powers auto-login.
     // Biometric mode derives nothing: the keystore holds the key, so there is nothing to vault.
     //
-    // INTO THIS ACCOUNT'S OWN SLOT, and a key that came from the unlabelled vault of an older build
-    // has just PROVEN whose it is - it opened a saved state naming this account - so that slot is
-    // retired once the labelled copy is written. Not before: a failed write must not lose the key.
-    if (deviceKeyB64) {
+    // INTO THIS ACCOUNT'S OWN SLOT. Then, and only then - this login has SUCCEEDED and the key is
+    // safe in its own slot - the unlabelled slot of an older build is retired IF it holds the key
+    // this account unlocked with, whichever path the login took: that proves it is this account's.
+    // One holding any other key may be another account's, never proven, and is kept for it
+    // (`retireUnlabelledDeviceKeyIfOwnedBy`). A failed save skips the retirement: the key survives.
+    {
       const owner = ctx.getUserId();
+      const unlockedWith = ctx.getDeviceKey();
       void (async () => {
-        await saveDeviceKey(owner, deviceKeyB64);
-        if (vaultOwnerUnproven) {
-          forgetUnlabelledDeviceKey();
-          cb.log(
-            `[VAULT] unlabelled vault proven to be ${owner.slice(0, 8)}'s - moved into its own slot`
-          );
+        if (deviceKeyB64) await saveDeviceKey(owner, deviceKeyB64);
+        if (unlockedWith && (await retireUnlabelledDeviceKeyIfOwnedBy(owner, unlockedWith))) {
+          cb.log(`[VAULT] unlabelled vault proven to be ${owner.slice(0, 8)}'s - retired`);
         }
       })().catch((e: unknown) => cb.log(`[VAULT] saving the device key failed: ${String(e)}`));
     }
@@ -1764,7 +1771,7 @@ export async function loginImpl(
     // this login's to judge - a refused unlabelled key may be the previous account's, kept for it.
     clearDeviceKey(ctx.getUserId());
     // And a refused key leaves the session too: it was never this account's to hold.
-    if (code === 'vault_not_this_account') ctx.setDeviceKey('');
+    if (isVaultRefusal(code)) ctx.setDeviceKey('');
     // A dead session (refresh cookie expired/revoked) is not retryable via the PIN modal:
     // hand it to onSessionExpired so the caller logs out and redirects to /login. When no
     // callback is wired, redirect directly so the user is never stranded in the modal.

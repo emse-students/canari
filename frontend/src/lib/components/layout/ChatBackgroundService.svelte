@@ -27,8 +27,10 @@
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
+    isVaultRefusal,
     type LoginErrorCode,
     provesLocalStateExists,
+    provesOtherAccountState,
   } from '$lib/composables/session/loginErrors';
   import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
   import {
@@ -368,6 +370,18 @@
   /** True when the user has no prior MLS device on this browser - shown as "choose your PIN". */
   let isFirstPinSetup = $state(false);
   let pinError = $state('');
+  /**
+   * The local state of this install is PROVEN to be another account's (`device_holds_other_account`:
+   * the vaulted key opened `mls.bin` and its credential named someone else). While it holds, the gate
+   * offers NO reset - `handlePinReset` -> `resetDeviceAsFresh` -> `removeMlsState` deletes the one
+   * `mls.bin` of the install, the other account's state with it - and says why instead. This
+   * account stays locked out on this phone, which is the safe outcome: nothing of the other
+   * account is ever deleted from this one's session. Cleared by a sign-out and by a session.
+   */
+  let deviceHoldsOtherAccount = $state(false);
+  $effect(() => {
+    if (globalSession.isLoggedIn) deviceHoldsOtherAccount = false;
+  });
   let pinLoading = $state(false);
   let pinStep = $state('');
   let biometricConfigured = $state(false);
@@ -644,6 +658,7 @@
    * lasts. `PlatformGateOverlay` holds its own gate the same way, on the same argument.
    */
   async function handlePinSignOut() {
+    deviceHoldsOtherAccount = false;
     appendLog('[AUTH] Sign-out from the PIN gate - ending the session, keeping the local state.');
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
@@ -675,7 +690,13 @@
     // was another account's, or an older build's that could not prove itself. So the gate is drawn
     // from the SERVER, never assumed "returning" - and not from the device id either, which the
     // refused attempt itself may have just minted (`openPinModal`).
-    if (code === 'vault_not_this_account') {
+    if (isVaultRefusal(code)) {
+      if (provesOtherAccountState(code)) {
+        deviceHoldsOtherAccount = true;
+        appendLog(
+          "[VAULT] This install's MLS state is another account's - the reset is withheld at the gate."
+        );
+      }
       appendLog('[VAULT] Saved unlock refused for this account - drawing its own PIN gate.');
       void openPinModal(globalSession.userId || currentUserId() || '', { deviceIdUnproven: true });
       return;
@@ -1850,6 +1871,14 @@
   async function handlePinReset() {
     const uid = globalSession.userId || currentUserId();
     if (!uid) return;
+    // The modal no longer offers it in this state; this is the second lock, on the act itself.
+    if (deviceHoldsOtherAccount) {
+      appendLog(
+        "[PIN_RESET] REFUSED - this install's MLS state is another account's, and the reset deletes it."
+      );
+      pinError = m.auth_pin_reset_blocked_other_account();
+      return;
+    }
     pinError = '';
     pinLoading = true;
     pinStep = m.auth_pin_step_resetting();
@@ -1953,7 +1982,8 @@
   isLoading={pinLoading}
   loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}
-  onForgotPinReset={handlePinReset}
+  onForgotPinReset={deviceHoldsOtherAccount ? undefined : handlePinReset}
+  resetWithheldNotice={deviceHoldsOtherAccount ? m.auth_pin_reset_blocked_other_account() : ''}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
   account={globalSession.userId}
 />

@@ -184,14 +184,47 @@ describe('the login carries the vault owner from the vault to the init', () => {
     expect(login).not.toMatch(/clearDeviceKey\(\);/);
   });
 
-  it('retires the unlabelled vault only AFTER the proven key is in its own slot', () => {
+  it('retires the unlabelled vault only AFTER a success, once the key is in its own slot, and only if it is the key', () => {
+    // After `setIsLoggedIn(true)`: a login that has not succeeded proves nothing.
+    expect(
+      login.indexOf('retireUnlabelledDeviceKeyIfOwnedBy(owner, unlockedWith)')
+    ).toBeGreaterThan(login.indexOf('ctx.setIsLoggedIn(true);'));
     expect(login).toMatch(
-      /await saveDeviceKey\(owner, deviceKeyB64\);\s+if \(vaultOwnerUnproven\) \{\s+forgetUnlabelledDeviceKey\(\);/
+      /if \(deviceKeyB64\) await saveDeviceKey\(owner, deviceKeyB64\);\s+if \(unlockedWith && \(await retireUnlabelledDeviceKeyIfOwnedBy\(owner, unlockedWith\)\)\)/
     );
+    // Never a blind delete of the unlabelled slot on the login path.
+    expect(
+      login.slice(0, login.indexOf('export async function nativeStorageLoginImpl('))
+    ).not.toContain('forgetUnlabelledDeviceKey()');
   });
 
   it('drops a refused key from the session, so nothing later seals with it', () => {
-    expect(login).toContain("if (code === 'vault_not_this_account') ctx.setDeviceKey('');");
+    expect(login).toContain("if (isVaultRefusal(code)) ctx.setDeviceKey('');");
+  });
+
+  it('accuses another account ONLY for a proven mismatch on a phone, and stays neutral otherwise', () => {
+    const at = auth.indexOf('function vaultRefusedFailure(');
+    const body = auth.slice(at, auth.indexOf('\n}\n', at));
+    expect(body).toMatch(
+      /if \(refusal === 'mismatch' && isTauriRuntime\(\)\) \{\s+return new LoginFailure\('device_holds_other_account', m\.auth_vault_other_account_device\(\)\);/
+    );
+    expect(body).toContain(
+      "return new LoginFailure('vault_not_this_account', m.auth_vault_unverified());"
+    );
+  });
+
+  it('withholds the reset from a gate whose mls.bin is proven foreign, and locks the act itself too', () => {
+    const failed = shell.slice(shell.indexOf('function onSavedPinFailed('));
+    expect(failed.slice(0, 1200)).toMatch(
+      /if \(provesOtherAccountState\(code\)\) \{\s+deviceHoldsOtherAccount = true;/
+    );
+    const reset = shell.slice(shell.indexOf('async function handlePinReset('));
+    const lock = reset.indexOf('if (deviceHoldsOtherAccount) {');
+    expect(lock).toBeGreaterThan(-1);
+    // Before the server reset and before the local wipe that deletes mls.bin.
+    expect(lock).toBeLessThan(reset.indexOf('/api/mls/security/pin-reset'));
+    expect(lock).toBeLessThan(reset.indexOf('resetDeviceAsFresh('));
+    expect(reset.slice(lock, reset.indexOf('}', lock) + 1)).toContain('return;');
   });
 
   it('asks the server whether the refused account has a PIN - its device id was minted by the refusal', () => {
@@ -201,7 +234,7 @@ describe('the login carries the vault owner from the vault to the init', () => {
 
   it('draws the refused account its own gate rather than a "returning" one', () => {
     const failed = shell.slice(shell.indexOf('function onSavedPinFailed('));
-    const branch = failed.indexOf("if (code === 'vault_not_this_account') {");
+    const branch = failed.indexOf('if (isVaultRefusal(code)) {');
     expect(branch).toBeGreaterThan(-1);
     expect(branch).toBeLessThan(failed.indexOf('isFirstPinSetup = false;'));
   });

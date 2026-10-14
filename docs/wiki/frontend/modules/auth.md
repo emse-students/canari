@@ -375,33 +375,62 @@ the login carries it to `init` as `MlsInitOptions.vaultOwnerUnproven`. Such a ke
 it OPENS a saved state whose credential names the account signing in. Anything else is refused BEFORE
 any recovery can run - `no_state` (checked in `loginImpl` before `resolveDeviceId` mints an id, and
 again in both `_initImpl`s), `mismatch`, `unopenable` - as a typed `VaultOwnerUnprovenError`: no
-rotation, no fresh start, no legacy re-seal, no write. `loginImpl` turns it into
-`LoginFailure('vault_not_this_account')`, drops the key from the session, and keeps the unlabelled
-slot, which may be the previous account's. The shell then draws the account's OWN PIN gate
+rotation, no fresh start, no legacy re-seal, no write. `loginImpl` turns it into a `LoginFailure`
+(`device_holds_other_account` for a `mismatch` on a phone, `vault_not_this_account` otherwise - see
+below), drops the key from the session, and keeps the unlabelled slot, which may be the previous
+account's. The shell then draws the account's OWN PIN gate
 (`openPinModal(uid, { deviceIdUnproven: true })`: first setup or returning is asked of the SERVER,
 because a refused vault says nothing about this account's PIN - and the device id cannot answer it
-here, since the vault path resolved, and so minted, this account's id before the state refused it). Accepted, the key is written to the account's own slot and
-only THEN is the unlabelled slot removed. A same-account stale state (`mismatch` naming another
+here, since the vault path resolved, and so minted, this account's id before the state refused it).
+A same-account stale state (`mismatch` naming another
 device of the same account) is refused on this path too, and reaches its rotation through the PIN
 path, which proves the account first.
 
-**What the member is told** (Paraglide): `auth_vault_other_account` on any refusal and, on a phone
-when the refusal is a `mismatch` - PROVEN to be another account's state, since the key opened the one
-file - `auth_vault_other_account_device`, which says those messages are kept untouched and that the
-app keeps one account's messages at a time.
+**When the unlabelled slot is retired: after a SUCCESS, and only by its owner.** The slot is offered
+to whoever signs in. Once a login has SUCCEEDED and its key is safe in the account's own slot,
+`retireUnlabelledDeviceKeyIfOwnedBy(userId, key)` removes the unlabelled slot IF it holds the very key
+that account unlocked with - whichever path it took (the slot itself, its own slot, the PIN, the
+keystore). A device key derives from the account id, the PIN and the salt, so two accounts never
+share one: an equal key IS the proof. Any other key may belong to an account that has not signed in
+since, and the slot is kept for it. Before this, an account that unlocked by its PIN or its own slot
+left its old copy on offer to every other account for ever.
+
+**What the member is told - two codes, because only one refusal knows whose state is there.**
+- **`device_holds_other_account`** - a `mismatch` on a PHONE, PROVEN another account's state (the key
+  opened the one `mls.bin`). The error is `auth_vault_other_account_device`, and the gate WITHHOLDS
+  THE RESET (decided 2026-10-14): "PIN oublie -> Reinitialiser" runs `handlePinReset` ->
+  `resetDeviceAsFresh` -> `removeMlsState`, which deletes that one file - the other account's state,
+  from this account's session. `PinModal` gets no `onForgotPinReset` and shows
+  `auth_pin_reset_blocked_other_account` instead, on every gate, first setup included; `handlePinReset`
+  refuses on its own too, before the server reset and the wipe. The sentence says what is true: this
+  phone holds another account's messages, the app keeps one account's at a time, the member can sign
+  out and let the other account back in, and the only way to use this account here is to clear the
+  app's data or reinstall - which loses the other account's messages. (A PIN reset BY the other
+  account would not free the phone: it leaves that account's fresh `mls.bin` in the same file.) This
+  account stays locked out on this phone, which is safer than a silent destruction. Cleared by a
+  sign-out and by a session.
+- **`vault_not_this_account`** - every other refusal (`no_state`, `unopenable`, and any refusal on the
+  web, where states are per account). Neither proves anything about another account - the store may
+  be this account's own, evicted or sealed under an older key - so the sentence is NEUTRAL
+  (`auth_vault_unverified`: the saved unlock could not be verified for this account) and the gate is
+  the ordinary one.
 
 **What this does NOT fix, and is open** ([backlog](../../backlog.md)): on a phone `mls.bin` is still
-one file per install. B on the PIN path cannot open A's `mls.bin` (`local_state_unopenable`), which
-destroys nothing by itself - but the reset that gate offers (`resetDeviceAsFreshImpl` ->
-`removeMlsState`) deletes the one file, A's state with it, on B's explicit request.
+one file per install. The reset is withheld only when the refusal PROVED the file foreign. Once every
+vault is labelled, B has no slot, takes the PIN path, cannot open A's `mls.bin`
+(`local_state_unopenable`) - and that gate still offers the reset, which deletes A's state on B's
+explicit request. Withholding it there needs an owner recorded beside `mls.bin`.
 
 Tests: `utils/deviceKeyVault.test.ts` (slots, binding, the unlabelled offer),
 `services/TauriMlsService.vaultOwner.test.ts` and `services/WebMlsService.vaultOwner.test.ts` (a
 refusal writes nothing; a control proves the rotation is still reachable without the flag), and
 `composables/session/accountSwitchVault.test.ts`, which runs the real vault into the real native
 init over a `mls.bin` holding A's state: A leaves a vault, B signs in (PIN gate, nothing rotated,
-nothing written), A signs back in (the vault unlocks). Mutation-checked: removing the native guard
-fails three cases, collapsing the slots into one fails seven.
+nothing written), A signs back in (the vault unlocks); it also pins the neutral/proven split, the
+retirement order and the withheld reset in the shell. `components/auth/PinModal.resetWithheld.svelte.test.ts`
+renders the gate without a reachable reset. Mutation-checked: removing the native guard fails three
+cases, collapsing the slots into one fails seven, re-offering the reset fails two, retiring the
+unlabelled slot without the key comparison fails one.
 
 ### How often the sheet comes back - the biometric cadence (2026-09-28)
 

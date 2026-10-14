@@ -24,6 +24,7 @@ import {
   clearDeviceKeyAndWrapKey,
   forgetUnlabelledDeviceKey,
   loadDeviceKey,
+  retireUnlabelledDeviceKeyIfOwnedBy,
   saveDeviceKey,
   setDeviceKeyPersistence,
 } from './deviceKeyVault';
@@ -209,5 +210,42 @@ describe('setDeviceKeyPersistence', () => {
 
     expect(localStorage.getItem(SLOT_A)).toBeNull();
     expect(await loadDeviceKey(B)).toEqual({ deviceKeyB64: 'a2V5LW9mLWJvYg==', ownerProven: true });
+  });
+});
+
+describe('retireUnlabelledDeviceKeyIfOwnedBy - after a successful login', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('retires the unlabelled slot when it holds the very key this account unlocked with', async () => {
+    // A unlocked by its PIN or its own slot: the old copy is A's, and must not stay on offer.
+    await writeUnlabelled('a2V5LW9mLWFsaWNl');
+    await saveDeviceKey(A, 'a2V5LW9mLWFsaWNl');
+
+    expect(await retireUnlabelledDeviceKeyIfOwnedBy(A, 'a2V5LW9mLWFsaWNl')).toBe(true);
+    expect(store().getItem(UNLABELLED)).toBeNull();
+    // Its own slot is untouched.
+    expect((await loadDeviceKey(A))?.deviceKeyB64).toBe('a2V5LW9mLWFsaWNl');
+  });
+
+  it("KEEPS it when it holds another key - it may be another account's, never proven", async () => {
+    await writeUnlabelled('a2V5LW9mLWFsaWNl');
+
+    expect(await retireUnlabelledDeviceKeyIfOwnedBy(B, 'a2V5LW9mLWJvYg==')).toBe(false);
+    expect(store().getItem(UNLABELLED)).not.toBeNull();
+    // And A, signing in later, is still offered it.
+    expect(await loadDeviceKey(A)).toEqual({
+      deviceKeyB64: 'a2V5LW9mLWFsaWNl',
+      ownerProven: false,
+    });
+  });
+
+  it('does nothing when there is no unlabelled slot', async () => {
+    expect(await retireUnlabelledDeviceKeyIfOwnedBy(A, 'a2V5LW9mLWFsaWNl')).toBe(false);
   });
 });
