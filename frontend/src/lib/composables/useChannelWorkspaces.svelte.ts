@@ -59,8 +59,9 @@ import {
   openSalonSendGate,
   settleSalonEntry,
   settleSalonListing,
+  type SettledListing,
 } from '$lib/utils/graine/salonSendGate';
-import { DeliveryUnreachableError } from '$lib/mls-client/mlsDeliveryApi';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
 
@@ -177,6 +178,12 @@ export type WorkspacePurgeContext = Pick<
   'conversations' | 'deleteConversation' | 'invalidateChannelHistoryCache' | 'log'
 >;
 
+/** What may list the communities again after a listing gave up (`retryFailedListing`). */
+export type ListingRetryTrigger = 'reconnect' | 'foreground';
+
+/** What started a listing: a direct call (post-login, a join), or a retry trigger. */
+type ListingOrigin = 'direct' | ListingRetryTrigger;
+
 /** Back-off delays in ms for workspace list retries after transient failures. */
 const WORKSPACE_LOAD_RETRY_DELAYS = [1_000, 3_000, 7_000];
 
@@ -218,6 +225,34 @@ export function useChannelWorkspaces() {
   let isLoadingWorkspaces = $state(false);
   /** A join landed while a listing was in flight; that listing's answer predates it. */
   let joinedCommunityReloadOwed = false;
+  /**
+   * A reconnect or a foreground landed while a listing was in flight, and was not that listing's own
+   * traffic (see {@link retryFailedListing}). If that listing then gives up, it gave up on the link
+   * it STARTED on, so the trigger is owed one more listing - an event, not a clock.
+   */
+  let owedRetry: ListingRetryTrigger | null = null;
+  /**
+   * The ONE reconnect retry the last give-up earned. THE BOUND ON THE RECONNECT: a reconnect is any
+   * answer after a transport failure, so an endpoint that fails while every other call answers would
+   * otherwise cycle for ever (give up -> unreachable -> a probe answers -> reconnect -> list again,
+   * ~every 11 s). A listing earns this only when it gives up, and only if a reconnect did not start
+   * it: a reconnect's listing that gives up earns nothing. The foreground starts the count again.
+   */
+  let reconnectRetryEarned = false;
+  /** What started the listing in flight - a reconnect's listing earns no reconnect retry. */
+  let activeListingOrigin: ListingOrigin = 'direct';
+  /**
+   * True while the listing's OWN request is on the wire. A reconnect landing then may be that very
+   * request's answer (`trackedFetch` -> `notifyServerReachable`), so it proves nothing new about the
+   * link and is owed nothing; one landing in the listing's back-off cannot be its traffic.
+   */
+  let listingAttemptInFlight = false;
+  /**
+   * Whether the last listing that gave up reached NOBODY (a transport failure) rather than being
+   * failed by an answer. Decides what the salon send gate is told: `unreachable` keeps held sends
+   * waiting for the reconnect's listing, `failed` refuses them.
+   */
+  let lastGiveUpUnreachable = false;
   /**
    * Which listing owns `isLoadingWorkspaces`. A listing that outlived a sign-out is SUPERSEDED by the
    * next session's (`globalChannels` is a singleton, and the flag would otherwise refuse the new
@@ -273,11 +308,11 @@ export function useChannelWorkspaces() {
     // The refresh endpoint answered something that is not a verdict on the session - transient by
     // construction, since 401 and 403 leave as `SessionExpiredError` instead.
     if (error instanceof RefreshFailedError) return true;
-    // A `fetch` that reached nobody throws a TypeError; a request cancelled under it throws an
-    // AbortError. Neither carries a status, because neither got an answer.
-    if (error instanceof TypeError) return true;
-    // The same fact from a send: `fetch` rejected inside the delivery client, classified at the throw.
-    if (error instanceof DeliveryUnreachableError) return true;
+    // NOBODY ANSWERED: the one predicate, by type (`transportFailure.ts`). It is what reads Tauri's
+    // `error sending request for url ...` as the network failure it is - that bare string used to
+    // fall through every test here and give up as `non-retryable` (Mi 9T, `v1.2.7-alpha.1`).
+    if (isTransportFailure(error)) return true;
+    // A request cancelled under the listing carries no status either: nothing was decided.
     return error instanceof DOMException && error.name === 'AbortError';
   }
 
@@ -975,7 +1010,10 @@ export function useChannelWorkspaces() {
    * next session's call supersedes it, and resolves to false only against a listing of its own.
    * The stale one resolves to false and records no error - neither is the next session's to read.
    */
-  async function loadChannelWorkspacesFromBackend(ctx: ChannelWorkspaceContext): Promise<boolean> {
+  async function loadChannelWorkspacesFromBackend(
+    ctx: ChannelWorkspaceContext,
+    origin: ListingOrigin = 'direct'
+  ): Promise<boolean> {
     if (isLoadingWorkspaces) {
       if (isCurrentSalonSession(activeListingSession)) return false;
       ctx.log(
@@ -984,6 +1022,9 @@ export function useChannelWorkspaces() {
     }
     isLoadingWorkspaces = true;
     workspacesLoadError = null;
+    lastGiveUpUnreachable = false;
+    activeListingOrigin = origin;
+    reconnectRetryEarned = false;
     // A salon send waiting for its salon to load waits for THIS listing; its end is what refuses
     // the ones it did not enter (`salonSendGate`). Synchronous with the flag, so no await separates
     // the guard from the count. The token is also this listing's SESSION.
@@ -1000,7 +1041,12 @@ export function useChannelWorkspaces() {
     try {
       for (let attempt = 0; attempt < attemptCount; attempt++) {
         try {
-          await executeWorkspaceLoadAttempt(ctx, listingToken);
+          listingAttemptInFlight = true;
+          try {
+            await executeWorkspaceLoadAttempt(ctx, listingToken);
+          } finally {
+            listingAttemptInFlight = false;
+          }
           workspacesLoadError = null;
           ctx.log(`[WORKSPACE-LOAD] communities/channels loaded (attempt ${attempt + 1})`);
           // THE SALONS EXIST NOW, and what is unread in them is the server's to say: the live tally
@@ -1045,8 +1091,9 @@ export function useChannelWorkspaces() {
 
           if (isFatal || delay === undefined) {
             workspacesLoadError = toUiActionError(m.channel_action_community_load(), error, false);
+            lastGiveUpUnreachable = isTransportFailure(error);
             ctx.log(
-              `[WORKSPACE-LOAD] giving up (${isFatal ? 'non-retryable' : 'retries exhausted'}) - existing community list preserved: ${workspacesLoadError}`
+              `[WORKSPACE-LOAD] giving up (${isFatal ? 'non-retryable' : 'retries exhausted'}, ${lastGiveUpUnreachable ? 'no answer - the next reconnect lists again, held salon sends keep waiting' : 'answered'}) - existing community list preserved: ${workspacesLoadError}`
             );
             return true;
           }
@@ -1081,19 +1128,83 @@ export function useChannelWorkspaces() {
         ctx.log("[WORKSPACE-LOAD] reload owed to a join dropped: that join's session signed out");
       }
       joinedCommunityReloadOwed = false;
+      owedRetry = null;
+      reconnectRetryEarned = false;
       return;
     }
     // READ BEFORE THE OWED RELOAD BEGINS: its first statement clears `workspacesLoadError`, and a
     // listing that gave up would otherwise be recorded as one that answered.
-    const listingOutcome = workspacesLoadError === null ? 'loaded' : 'failed';
+    const listingOutcome: SettledListing =
+      workspacesLoadError === null ? 'loaded' : lastGiveUpUnreachable ? 'unreachable' : 'failed';
     // A join that arrived while THIS listing was in flight is not in its answer, so it is owed one
     // more. Run here, after the flag drops, because that is the one moment a second load is legal.
-    const owed = joinedCommunityReloadOwed;
+    // A trigger that arrived while it ran is owed one more only if it gave up: a listing that
+    // answered has nothing left to retry. That owed listing IS this give-up's one reconnect retry.
+    const gaveUp = listingOutcome !== 'loaded';
+    const retryTrigger = gaveUp ? owedRetry : null;
+    reconnectRetryEarned = gaveUp && activeListingOrigin !== 'reconnect' && retryTrigger === null;
+    const owedJoin = joinedCommunityReloadOwed;
     joinedCommunityReloadOwed = false;
-    if (owed) void loadChannelWorkspacesFromBackend(ctx);
+    owedRetry = null;
+    if (retryTrigger !== null) {
+      ctx.log(
+        `[WORKSPACE-LOAD] ${retryTrigger} came during a listing that gave up - listing again`
+      );
+      void loadChannelWorkspacesFromBackend(ctx, retryTrigger);
+    } else if (owedJoin) {
+      void loadChannelWorkspacesFromBackend(ctx);
+    }
     // AFTER the owed reload has begun (synchronously, above): a send waiting for a salon that
     // reload may enter keeps waiting for it instead of being refused by this one's end.
     settleSalonListing(listingToken, listingOutcome);
+  }
+
+  /**
+   * Connectivity came back (`connectivity.onReconnect`: the browser's `online` event, or the server
+   * answering again after a transport failure) or the app returned to the foreground: a listing that
+   * GAVE UP is listed again, and the salon sends it held are released or refused by that one.
+   *
+   * WHY THE RECONNECT AND NOT ONLY `online`. The Mi 9T (`v1.2.7-alpha.1`, 2026-10-14) started
+   * offline; the `online` event's listing failed in transport and gave up, and no second `online`
+   * ever came - the phone stayed online. The reconnect is the PROOF the link works again.
+   *
+   * BOUNDED, because a reconnect is any answer after a transport failure: ONE reconnect retry per
+   * give-up ({@link reconnectRetryEarned}), none for the give-up of a reconnect's own listing, and
+   * none owed for a reconnect that may be the listing's own request answering
+   * ({@link listingAttemptInFlight}). An endpoint that keeps failing therefore stops after one
+   * retry and waits for the foreground - the member's own return, which always lists again.
+   *
+   * A listing in flight is not doubled: the trigger is OWED to it, and taken up by
+   * {@link endListing} if that listing gives up.
+   */
+  function retryFailedListing(ctx: ChannelWorkspaceContext, trigger: ListingRetryTrigger): void {
+    if (isLoadingWorkspaces) {
+      if (trigger === 'reconnect' && activeListingOrigin === 'reconnect') {
+        ctx.log("[WORKSPACE-LOAD] reconnect during a reconnect's own listing - nothing owed");
+        return;
+      }
+      if (trigger === 'reconnect' && listingAttemptInFlight) {
+        ctx.log(
+          "[WORKSPACE-LOAD] reconnect while the listing's own request was on the wire - may be its own answer, nothing owed"
+        );
+        return;
+      }
+      owedRetry = trigger;
+      ctx.log(`[WORKSPACE-LOAD] ${trigger} during a listing - one more is owed if it gives up`);
+      return;
+    }
+    if (workspacesLoadError === null) return;
+    if (trigger === 'reconnect') {
+      if (!reconnectRetryEarned) {
+        ctx.log(
+          '[WORKSPACE-LOAD] reconnect - NOT listing again: this give-up already had its one reconnect retry; the foreground lists again'
+        );
+        return;
+      }
+      reconnectRetryEarned = false;
+    }
+    ctx.log(`[WORKSPACE-LOAD] ${trigger} - listing the communities again (the last one gave up)`);
+    void loadChannelWorkspacesFromBackend(ctx, trigger);
   }
 
   /**
@@ -1662,7 +1773,7 @@ export function useChannelWorkspaces() {
    * once and this device's own row, when it comes back, merges to exactly the same state.
    *
    * **ROLLED BACK ONLY WHEN NOTHING WAS SENT** (2026-10-06): a transport failure
-   * ({@link DeliveryUnreachableError}) or a seal this device cannot make
+   * (`isTransportFailure`: no answer came back) or a seal this device cannot make
    * ({@link GraineSealUnavailableError}) means no frame left, so the pill that stayed drawn after
    * the toast was a claim about a reaction nobody else will ever see. The undo is the inverse frame
    * at a LATER `at`, applied locally and never sent. Any other failure may have reached peers
@@ -1716,10 +1827,7 @@ export function useChannelWorkspaces() {
         }).catch(() => {});
       }
     } catch (error) {
-      if (
-        error instanceof DeliveryUnreachableError ||
-        error instanceof GraineSealUnavailableError
-      ) {
+      if (isTransportFailure(error) || error instanceof GraineSealUnavailableError) {
         const undone = applyChannelReactionFrame(
           messageId,
           userId,
@@ -2034,6 +2142,7 @@ export function useChannelWorkspaces() {
     joinPrivateChannelAsAdmin,
     /** Fetches all workspaces and channels from the backend and prunes stale local entries. */
     loadChannelWorkspacesFromBackend,
+    retryFailedListing,
     /** Re-reads every salon's unread count from the server (one request). */
     refreshSalonUnread,
     /** "Marquer tout comme lu" on a community: every salon's badge, one request, no receipt. */

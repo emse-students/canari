@@ -7,6 +7,7 @@ import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin } from '$lib/utils/apiRefusal';
 
 export type MlsDeliveryFetch = typeof fetch;
@@ -115,10 +116,13 @@ export class NotAGroupMemberError extends Error {
  * CLASSIFIED AT THE THROW so a caller reads `instanceof` and never the sentence - the sentence is
  * what reached the log as "unclassified" on the Mi 9T (2026-10-06). The raw rejection is kept in
  * `cause` for the log. A cancelled request (`AbortError`) is NOT this: somebody chose it.
+ *
+ * A {@link TransportFailureError}, so the one predicate (`isTransportFailure`) reads it without a
+ * second `instanceof` beside it at every consumer.
  */
-export class DeliveryUnreachableError extends Error {
-  constructor(readonly cause: unknown) {
-    super(`[DELIVERY] the delivery service could not be reached: ${String(cause)}`);
+export class DeliveryUnreachableError extends TransportFailureError {
+  constructor(cause: unknown) {
+    super(cause, `[DELIVERY] the delivery service could not be reached: ${String(cause)}`);
     this.name = 'DeliveryUnreachableError';
   }
 }

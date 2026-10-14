@@ -19,6 +19,7 @@
  */
 
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 
 /** Callback invoked when connectivity is regained (offline -> online). */
 export type ReconnectListener = () => void;
@@ -361,20 +362,3 @@ class ConnectivityStore {
 
 /** Singleton connectivity state. Read `connectivity.isOffline` in components. */
 export const connectivity = new ConnectivityStore();
-
-/**
- * True when the given error is a transport-level failure rather than a server answer.
- *
- * `fetch` reports every transport failure as a bare `TypeError: fetch failed` (or
- * `NetworkError`/`Load failed` depending on the engine) with the real cause nested in `cause`, so
- * there is no status code to branch on. Anything that carries a status has, by definition, been
- * answered by the server and is not a connectivity problem.
- */
-export function isTransportFailure(error: unknown): boolean {
-  // A deadline expiry is the absence of an answer, never one - recognised by TYPE, raised where the
-  // deadline was armed.
-  if (error instanceof RequestDeadlineError) return true;
-  if (error instanceof TypeError) return true;
-  if (!(error instanceof Error)) return false;
-  return /network|failed to fetch|fetch failed|load failed|connection/i.test(error.message);
-}
