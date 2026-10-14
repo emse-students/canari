@@ -241,9 +241,19 @@ names what it is not - 30-odd rows down for a global admin, who is offered the w
 The same split fed every association picker (calendar filter, event form, parents, Cercle admin,
 role history, `CoOwnerPicker`).
 
-`lib/associations/selectGroups.ts` now has THREE kinds and one display order,
-`associationSelectGroups`: **Institutions** (`asso_select_group_institutions`) first, then
-Associations, then Listes, an empty group dropped. `associationPickerOptions` and `CoOwnerPicker`
-both read it, so a fourth kind is one row there. Tests: `selectGroups.test.ts` (fails against the
-old two-way split). Not changed, and not the cause: a global admin is still offered every
-association, archived ones included (`listPostAsAssociations`, "every one for a global admin").
+`lib/associations/selectGroups.ts` now has FOUR groups and one display order,
+`associationSelectGroups`: **Institutions** (`asso_select_group_institutions`), Associations,
+Listes, then **Archivées** (`asso_select_group_archived`, user, 2026-10-14) - every archived row
+whatever its kind, out of its kind's group, still choosable and drawn `text-text-muted` (the
+`muted` flag of `PickerOption`, and `group.muted` in `CoOwnerPicker`). An empty group is dropped.
+`associationPickerOptions` and `CoOwnerPicker` both read it, so a new kind is one row there. Tests:
+`selectGroups.test.ts` (mutation-checked against the old two-way split and against an archived row
+left in its kind).
+
+**Archived stays SELECTABLE because the server accepts it.** `POST /api/posts` checks
+`canPostAs` (`apps/social-service/src/posts/posts.controller.ts`, then
+`AssociationsService.canPostAs`): `POST_AS_ASSO` via `mayAct`, then only that the row EXISTS -
+`archived` is never read. Only a global admin meets an archived row here, since
+`/associations/me/list` filters them out. If archived associations are ever to be refused as
+authors, the refusal goes in `canPostAs` first and the group turns `disabled` with a reason in the
+same change - the picker must never offer what the server refuses, nor hide what it accepts.

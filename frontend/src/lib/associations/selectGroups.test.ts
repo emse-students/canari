@@ -8,8 +8,14 @@ import {
 import { m } from '$lib/paraglide/messages';
 
 /** The fields the grouping reads; the rest of the row is irrelevant here. */
-function row(id: string, name: string, type: Association['type'], promo?: number): Association {
-  return { id, name, type, promo } as Association;
+function row(
+  id: string,
+  name: string,
+  type: Association['type'],
+  promo?: number,
+  archived = false
+): Association {
+  return { id, name, type, promo, archived } as Association;
 }
 
 /**
@@ -56,5 +62,59 @@ describe('associationSelectGroups', () => {
   it('drops an empty group, so no heading is drawn over nothing', () => {
     const labels = associationSelectGroups([row('c1', 'Gala', 'association')]).map((g) => g.label);
     expect(labels).toEqual([m.asso_select_group_assos()]);
+  });
+});
+
+/** The same catalogue with one archived row of EACH kind, named to sort before the live ones. */
+const WITH_ARCHIVED = [
+  ...CATALOGUE,
+  row('xc', 'Ancien club', 'association', undefined, true),
+  row('xi', 'Ancienne institution', 'institution', undefined, true),
+  row('xl', 'Ancienne liste', 'list', 2019, true),
+];
+
+describe('archived rows', () => {
+  it('leave their kind for one archived group, whatever the kind', () => {
+    const g = groupAssociationsForSelect(WITH_ARCHIVED);
+    expect(g.institutions.map((a) => a.id)).toEqual(['i1']);
+    expect(g.assos.map((a) => a.id)).toEqual(['c1', 'c2', 'c3']);
+    expect(g.lists.map((a) => a.id)).toEqual(['l2', 'l1']);
+    expect(g.archived.map((a) => a.id)).toEqual(['xc', 'xi', 'xl']);
+  });
+
+  it('come in the fourth group, after institutions, associations and lists, and only it is muted', () => {
+    const groups = associationSelectGroups(WITH_ARCHIVED);
+    expect(groups.map((g) => [g.label, g.muted])).toEqual([
+      [m.asso_select_group_institutions(), false],
+      [m.asso_select_group_assos(), false],
+      [m.asso_select_group_lists(), false],
+      [m.asso_select_group_archived(), true],
+    ]);
+  });
+
+  it('are the last options of the picker, still choosable and muted', () => {
+    const options = associationPickerOptions(WITH_ARCHIVED);
+    expect(options.slice(-3)).toEqual([
+      { value: 'xc', label: 'Ancien club', group: m.asso_select_group_archived(), muted: true },
+      {
+        value: 'xi',
+        label: 'Ancienne institution',
+        group: m.asso_select_group_archived(),
+        muted: true,
+      },
+      {
+        value: 'xl',
+        label: 'Ancienne liste (2019)',
+        group: m.asso_select_group_archived(),
+        muted: true,
+      },
+    ]);
+    expect(options.some((o) => o.disabled)).toBe(false);
+    expect(options.filter((o) => o.muted).length).toBe(3);
+  });
+
+  it('draw no archived heading when none is archived', () => {
+    const labels = associationSelectGroups(CATALOGUE).map((g) => g.label);
+    expect(labels).not.toContain(m.asso_select_group_archived());
   });
 });
