@@ -11,6 +11,8 @@ import { appendLog } from '$lib/utils/sessionLog';
 import {
   answerAfterMailboxDrained,
   reconcileGroup,
+  raiseReconcile,
+  isReconcileRaised,
   escalateReconciliation,
   reconcileAllGroups,
   retryDeferredReconciliations,
@@ -1030,5 +1032,33 @@ describe('noteCoverageShortfall', () => {
     const said = log.mock.calls.map((c) => String(c[0])).join(' | ');
     expect(said).toContain('every reachable member (2) has stated its coverage');
     expect(said).not.toContain('putting it back');
+  });
+});
+
+describe('raiseReconcile - a burst of unreadable frames is ONE evaluation', () => {
+  it('evaluates a group once for N triggers and says the absorbed count once, never "not asking again"', async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const mls = service({}, vi.fn().mockReturnValue(gate));
+
+    const runs = Array.from({ length: 45 }, () => raiseReconcile(mls, GROUP, log));
+    expect(isReconcileRaised(GROUP)).toBe(true);
+    open();
+    await Promise.all(runs);
+
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+    const said = log.mock.calls.flat().join('\n');
+    expect(said).not.toContain('not asking again');
+    expect(said.match(/further unreadable frame/g)).toHaveLength(1);
+    expect(said).toContain('44 further');
+    expect(isReconcileRaised(GROUP)).toBe(false);
+  });
+
+  it('is per group, and a lone trigger says nothing extra', async () => {
+    const mls = service();
+    await raiseReconcile(mls, GROUP, log);
+    await raiseReconcile(mls, OTHER, log);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+    expect(log.mock.calls.flat().join('\n')).not.toContain('further unreadable');
   });
 });
