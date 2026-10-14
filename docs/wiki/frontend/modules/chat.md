@@ -2619,6 +2619,18 @@ render, and every consumer - the slice, the hidden-above count, `loadOlderGroups
 `fillViewportThenPin`, `navigateToMessage` - reads the clamped value while pagination keeps writing
 the raw state. The invariant it guarantees is the one worth remembering: **a non-empty list always
 yields a non-empty window.** `renderWindow.test.ts` pins it across every combination of stored index
+
+**The entry window is 20 groups, then 60 (2026-10-14).** Mounting a page of rows is one task that
+scales with the rows (339-635 ms for 56-200 rows on a Mi 9T) and nothing paints until it ends. So an
+ENTRY mounts the last `ENTRY_FIRST_FRAME_GROUPS` (20) groups, `fillViewportThenPin` widens straight to
+`INITIAL_RENDER_GROUPS` (60) only if that does not fill the pane (never a 140 page, which mounted 160
+one-line rows), and `widenEntryWindow` completes the 60 after the first frame, compensating `scrollTop`
+by the height added above. The 20-group floor of `resolveRenderWindow` applies only while `entering`;
+otherwise a replaced, shorter list settles on the full 60 floor. A re-pin of the entry only ever LOWERS
+the start. Known duplication: that scroll compensation repeats what `observeThreadGrowth` does for
+growth above the viewport; folding the two is a note, not done. The salon skeleton raised by a history
+request issued at the tap is keyed by its salon (`skeletonSalon`). `ChatArea.entryWindow.svelte.test.ts`
+pins the row counts under a modelled geometry.
 and list length, which is the assertion that fails against the old arithmetic.
 
 The replacement itself - the reason the window and the list could disagree at all - is gone as of

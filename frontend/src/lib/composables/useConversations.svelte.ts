@@ -240,6 +240,12 @@ export function useConversations() {
    * would otherwise leave `isLoadingHistory` up for good.
    */
   let salonSkeletonOwner = 0;
+  /**
+   * The salon whose load raised the skeleton, or `null` for a load with no salon identity (the DM
+   * path). A load issued at the tap raises it BEFORE its salon is selected, and a second press within
+   * the frame can select another salon: the skeleton is shown only on the salon it was raised for.
+   */
+  let skeletonSalon: string | null = null;
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
     if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
@@ -480,7 +486,10 @@ export function useConversations() {
     }
 
     const isSelected = selectedContact === contactName;
-    if (isSelected) isLoadingHistory = true;
+    if (isSelected) {
+      isLoadingHistory = true;
+      skeletonSalon = null;
+    }
     // The rows the fast path drew before the probe, which the reload after a replay supersedes.
     let drawnFirst: ChatMessage[] = [];
     try {
@@ -594,6 +603,7 @@ export function useConversations() {
     if (isSelected) {
       isLoadingHistory = true;
       salonSkeletonOwner = generation;
+      skeletonSalon = channelConversationId;
     }
 
     try {
@@ -743,6 +753,7 @@ export function useConversations() {
       if (salonSkeletonOwner === generation) {
         isLoadingHistory = false;
         salonSkeletonOwner = 0;
+        skeletonSalon = null;
       }
     }
   }
@@ -1930,7 +1941,7 @@ export function useConversations() {
     },
     /** True while history is being fetched and decrypted for the selected conversation. */
     get isLoadingHistory() {
-      return isLoadingHistory;
+      return isLoadingHistory && (skeletonSalon === null || skeletonSalon === selectedContact);
     },
     /** Last send or membership error message to display to the user. */
     get sendError() {

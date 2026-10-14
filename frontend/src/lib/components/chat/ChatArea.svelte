@@ -412,7 +412,14 @@
   async function fillViewportThenPin() {
     for (let i = 0; i < 4 && chatContainer && renderWindow.start > 0; i++) {
       if (chatContainer.scrollHeight > chatContainer.clientHeight + 40) break;
-      windowStart = Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
+      // THE FIRST FILL STEP REACHES THE FULL ENTRY SIZE, NOT A PAGE (140) ABOVE THE FIRST FRAME: a
+      // thread of one-line rows would otherwise mount 160 rows before its first paint where it
+      // used to mount 60. Only a still-short viewport after that steps by a page.
+      const fullEntryStart = entryWindowStart(messageGroups.length, INITIAL_RENDER_GROUPS);
+      windowStart =
+        renderWindow.start > fullEntryStart
+          ? fullEntryStart
+          : Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
       await tick();
     }
     scrollToBottomSettled(() => {
@@ -649,7 +656,14 @@
    * current length; `windowStart` stays the state pagination writes.
    */
   let renderWindow = $derived(
-    resolveRenderWindow(windowStart, messageGroups.length, ENTRY_FIRST_FRAME_GROUPS)
+    resolveRenderWindow(
+      windowStart,
+      messageGroups.length,
+      // The 20-group floor belongs to the entry frame alone: any other time a list replaced by a
+      // shorter one (WP-EMPTYVIEW-1) must settle on a full window, not on a first frame that nothing
+      // widens.
+      entering ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
+    )
   );
   let windowEnd = $derived(renderWindow.end);
   let visibleMessageGroups = $derived(messageGroups.slice(renderWindow.start, renderWindow.end));
@@ -958,10 +972,14 @@
           ownMessageAdded: c.messages.at(-1)?.isOwn === true,
         });
         if (response !== 'stay') {
-          windowStart = entryWindowStart(
+          // A re-pin of the entry never RAISES the start: a window already widened to 60 stays
+          // mounted while a late history merge lands, instead of being cut to 20 and widened again.
+          const entryStart = entryWindowStart(
             messageGroups.length,
             response === 'repin-entry' ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
           );
+          windowStart =
+            response === 'repin-entry' ? Math.min(renderWindow.start, entryStart) : entryStart;
           if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
           else tick().then(() => scrollToBottom(true));
         }
