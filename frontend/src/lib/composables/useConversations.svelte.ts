@@ -8,7 +8,7 @@
  */
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
-import type { IStorage } from '$lib/db';
+import type { IStorage, StoredMessage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type {
   AddMessageToChatOptions,
@@ -589,7 +589,92 @@ export function useConversations() {
     }
   }
 
-  /** Loads channel history from the server (source of truth) into memory only - never IndexedDB. */
+  /**
+   * Draws a salon's last page from this device's store, before its server page (F4 of
+   * community-open-budget). Only on the first draw of the salon in this process - a salon already in
+   * memory has newer rows than any copy - and only for the load still the latest. Returns the rows it
+   * drew, which the server page later confirms or withdraws.
+   *
+   * Never fatal: a store that cannot be read costs the early draw, said in the log, and the server
+   * page draws the salon as it always did.
+   */
+  async function drawStoredSalonPage(
+    channelConversationId: string,
+    ctx: ConversationContext,
+    generation: number
+  ): Promise<ChatMessage[]> {
+    if (!ctx.storage) return [];
+    if (conversations.get(channelConversationId)?.messages.some((m) => !m.status)) return [];
+    let stored: Awaited<ReturnType<NonNullable<ConversationContext['storage']>['getMessagesPage']>>;
+    try {
+      stored = await ctx.storage.getMessagesPage(
+        channelConversationId,
+        ctx.deviceKeyB64,
+        INITIAL_MESSAGES_PAGE
+      );
+    } catch (e) {
+      ctx.log(
+        `[CHANNEL] stored page of ${channelConversationId.slice(0, 16)} not read - the server page draws it: ${String(e)}`
+      );
+      return [];
+    }
+    if (stored.length === 0) return [];
+    if (!salonLoadGenerations.isLatest(channelConversationId, generation)) return [];
+    const current = conversations.get(channelConversationId);
+    if (!current) return [];
+    const drawn = mapStoredMessagesToChatMessages(stored, ctx.userId);
+    conversations.set(channelConversationId, {
+      ...current,
+      messages: mergeMessagePage(current.messages, drawn),
+    });
+    ctx.log(
+      `[CHANNEL] ${channelConversationId.slice(0, 16)} stored page drawn (${drawn.length} row(s)) before the server page`
+    );
+    return drawn;
+  }
+
+  /**
+   * Replaces a salon's stored page with the page the server just gave (F4). The store is a COPY of
+   * the last page drawn, never a source: what it held is deleted only now, once a newer page is in
+   * hand, so an open that fails keeps the last one for the next open (and offline). The notice row
+   * is not a message and is not kept; unsent echoes never reach this page.
+   */
+  async function storeSalonPage(
+    channelConversationId: string,
+    page: readonly ChatMessage[],
+    noticeId: string,
+    ctx: ConversationContext
+  ): Promise<void> {
+    if (!ctx.storage) return;
+    const rows: StoredMessage[] = page
+      .filter((m) => m.id !== noticeId && !m.status)
+      .map((m) => ({
+        id: m.id,
+        conversationId: channelConversationId,
+        senderId: m.senderId,
+        content: m.content,
+        timestamp: m.timestamp.getTime(),
+        ...(m.serverTimestamp !== undefined ? { serverTimestamp: m.serverTimestamp } : {}),
+        ...(m.isEdited ? { isEdited: true } : {}),
+        ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
+        ...(m.isDeleted ? { isDeleted: true } : {}),
+      }));
+    try {
+      await ctx.storage.deleteMessagesForConversation(channelConversationId);
+      if (rows.length > 0) await ctx.storage.saveMessages(rows, ctx.deviceKeyB64);
+    } catch (e) {
+      ctx.log(
+        `[CHANNEL] page of ${channelConversationId.slice(0, 16)} not stored - the next open waits for the server: ${String(e)}`
+      );
+    }
+  }
+
+  /**
+   * Loads a salon's history from the server, the source of truth, after drawing the last page this
+   * device stored for it (F4). The stored page is a copy the server page replaces: rows it omits
+   * inside its window are dropped (`mergeMessagePage`), and early-drawn rows older than it that it
+   * does not name are withdrawn.
+   */
   async function loadChannelHistory(
     channelConversationId: string,
     ctx: ConversationContext,
@@ -599,7 +684,7 @@ export function useConversations() {
     const { channelService } = await import('$lib/services/ChannelService');
     const { decodeChannelMessageRow, UnreadableRowTally, V1_SESSION_NOT_HELD } =
       await import('$lib/utils/chat/channelCrypto');
-    const { olderMessagesNotice, keepNoticeOnTop } =
+    const { olderMessagesNotice, olderMessagesNoticeId, keepNoticeOnTop } =
       await import('$lib/utils/chat/olderMessagesNotice');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
@@ -654,13 +739,6 @@ export function useConversations() {
     }
 
     try {
-      if (ctx.storage) {
-        await ctx.storage.deleteMessagesForConversation(channelConversationId).catch((e) => {
-          ctx.log(
-            `[CHANNEL] stale local rows of ${channelConversationId} not cleared before the load: ${String(e)}`
-          );
-        });
-      }
       // Nothing to hydrate: a Graine seed is already in the local store or it is not, and the
       // server holds none to fetch. A row this device has no seed for is REPORTED unreadable by
       // `decodeChannelMessageRow` rather than silently skipped, and repaired by WP-33.
@@ -670,7 +748,9 @@ export function useConversations() {
       // the whole picture can be taken. Their failure costs the "Lu par" row and nothing else - the
       // page still loads, and the next load asks again.
       inFlight.sentAt = salonStaleDeclarations;
-      const [rows, rawMarks] = await Promise.all([
+      // SETTLED INTO A VALUE, so the request may fail while the stored page is still being read
+      // without an unhandled rejection; its failure is rethrown below, where it always was.
+      const pageRequest = Promise.all([
         channelService.listMessages(rawId, 200),
         channelService.listReadMarks(rawId).catch((e) => {
           console.warn(
@@ -679,7 +759,15 @@ export function useConversations() {
           );
           return undefined;
         }),
-      ]);
+      ]).then(
+        (answer) => ({ ok: true as const, answer }),
+        (error: unknown) => ({ ok: false as const, error })
+      );
+      // THE STORED PAGE IS DRAWN WHILE THE SERVER PAGE IS ON THE WIRE (F4): the request has left.
+      const drawnFirst = await drawStoredSalonPage(channelConversationId, ctx, generation);
+      const settledPage = await pageRequest;
+      if (!settledPage.ok) throw settledPage.error;
+      const [rows, rawMarks] = settledPage.answer;
       // DECODED ONLY ONCE NO LISTING CAN STILL ENTER THIS SALON: a row missing its seed asks for it
       // on the community's key group, which a listing still in flight may not have registered yet
       // (`whenSalonEntryDecided`). The page was fetched meanwhile, so an entered salon waits nothing.
@@ -785,19 +873,45 @@ export function useConversations() {
           owedSalonReadMarks(ctx.userId)[channelConversationId]?.at,
           channelConversationId
         );
+        // A STORED ROW OLDER THAN THIS PAGE THAT THE PAGE DOES NOT NAME IS WITHDRAWN (F4): memory is
+        // authoritative outside a page's window (`mergeMessagePage`), so a copy's row the server no
+        // longer holds would otherwise outlive the page that proves it gone. Only the rows this load
+        // drew from the store - an older page the reader scrolled in is not a copy.
+        let base = current.messages;
+        const serverRows = loadedEdited.filter(
+          (m) => m.id !== olderMessagesNoticeId(channelConversationId)
+        );
+        if (drawnFirst.length > 0 && serverRows.length > 0) {
+          const oldest = [...serverRows].sort(compareMessageOrder)[0];
+          const inPage = new SvelteSet(serverRows.map((m) => m.id));
+          const withdrawn = new SvelteSet(
+            drawnFirst
+              .filter((m) => !inPage.has(m.id) && compareMessageOrder(m, oldest) < 0)
+              .map((m) => m.id)
+          );
+          if (withdrawn.size > 0) {
+            ctx.log(
+              `[CHANNEL] ${channelConversationId.slice(0, 16)} ${withdrawn.size} stored row(s) below the fresh page withdrawn`
+            );
+            base = base.filter((m) => !withdrawn.has(m.id));
+          }
+        }
         conversations.set(channelConversationId, {
           ...current,
           // FIRST after the merge too: a reload can hold rows older than this page (section 21.7).
-          messages: keepNoticeOnTop(
-            mergeMessagePage(current.messages, loadedEdited),
-            channelConversationId
-          ),
+          messages: keepNoticeOnTop(mergeMessagePage(base, loadedEdited), channelConversationId),
           ...(readWatermarks !== undefined ? { readWatermarks } : {}),
         });
         channelHistoryLoadedAt.set(channelConversationId, {
           loadedAt: Date.now(),
           userId: ctx.userId,
         });
+        await storeSalonPage(
+          channelConversationId,
+          serverRows,
+          olderMessagesNoticeId(channelConversationId),
+          ctx
+        );
       }
     } catch (e) {
       ctx.log(`[CHANNEL] History load failed: ${String(e)}`);
