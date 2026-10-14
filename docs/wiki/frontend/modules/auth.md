@@ -437,12 +437,14 @@ left its old copy on offer to every other account for ever.
   from this account's session. `PinModal` gets no `onForgotPinReset` and shows
   `auth_pin_reset_blocked_other_account` instead, on every gate, first setup included; `handlePinReset`
   refuses on its own too, before the server reset and the wipe. The sentence says what is true: this
-  phone holds another account's messages, the app keeps one account's at a time, the member can sign
+  device holds another account's messages (it says "device", not "phone": `isTauriRuntime()` is a
+  desktop build too, with the same one `mls.bin`), the app keeps one account's at a time, the member can sign
   out and let the other account back in, and the only way to use this account here is to clear the
   app's data or reinstall - which loses the other account's messages. (A PIN reset BY the other
   account would not free the phone: it leaves that account's fresh `mls.bin` in the same file.) This
   account stays locked out on this phone, which is safer than a silent destruction. Cleared by a
-  sign-out and by a session.
+  sign-out, a session expiry and a session - the shell is the root layout and outlives `/login`, so
+  a flag left set would withhold the reset from the next account's gate, the owner's included.
 - **`vault_not_this_account`** - every other refusal (`no_state`, `unopenable`, and any refusal on the
   web, where states are per account). Neither proves anything about another account - the store may
   be this account's own, evicted or sealed under an older key - so the sentence is NEUTRAL

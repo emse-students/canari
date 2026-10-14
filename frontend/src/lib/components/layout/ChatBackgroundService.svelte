@@ -378,7 +378,8 @@
    * offers NO reset - `handlePinReset` -> `resetDeviceAsFresh` -> `removeMlsState` deletes the one
    * `mls.bin` of the install, the other account's state with it - and says why instead. This
    * account stays locked out on this phone, which is the safe outcome: nothing of the other
-   * account is ever deleted from this one's session. Cleared by a sign-out and by a session.
+   * account is ever deleted from this one's session. Cleared by a sign-out, by a session expiry and
+   * by a session.
    */
   let deviceHoldsOtherAccount = $state(false);
   $effect(() => {
@@ -613,6 +614,9 @@
     // So the release is unconditional and runs first. Every line of it is idempotent.
     dismissAuthPrompts();
     pinError = '';
+    // The refused account leaves with its session: kept, the flag withheld the reset from the NEXT
+    // account's gate on this shell (the root layout outlives `/login`), which may be the owner's.
+    deviceHoldsOtherAccount = false;
     _loginInProgress = false;
     globalSession.isLoginInProgress = false;
 

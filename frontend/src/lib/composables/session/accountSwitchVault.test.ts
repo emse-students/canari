@@ -227,6 +227,26 @@ describe('the login carries the vault owner from the vault to the init', () => {
     expect(reset.slice(lock, reset.indexOf('}', lock) + 1)).toContain('return;');
   });
 
+  it('never leaves the reset withheld from the next account: a session, a sign-out and an expiry clear it', () => {
+    // The shell is the root layout and outlives `/login`, so a flag left set would withhold the
+    // reset from whoever signs in next on this install - the owner of `mls.bin` included.
+    expect(shell).toMatch(
+      /\$effect\(\(\) => \{\s+if \(globalSession\.isLoggedIn\) deviceHoldsOtherAccount = false;\s+\}\);/
+    );
+    for (const head of [
+      'async function handlePinSignOut(',
+      'async function handleSessionExpired(',
+    ]) {
+      const fn = shell.slice(shell.indexOf(head));
+      const cleared = fn.indexOf('deviceHoldsOtherAccount = false;');
+      expect(cleared).toBeGreaterThan(-1);
+      // Inside the function, and before its first early return (the expiry's dedup guard).
+      const end = fn.indexOf('\n  }\n');
+      const ret = fn.indexOf('return;');
+      expect(cleared).toBeLessThan(ret > -1 && ret < end ? ret : end);
+    }
+  });
+
   it('asks the server whether the refused account has a PIN - its device id was minted by the refusal', () => {
     expect(shell).toContain('{ deviceIdUnproven: true }');
     expect(shell).toContain('opts?.deviceIdUnproven ? null : firstPinSetupFromDevice(');
