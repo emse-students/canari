@@ -136,18 +136,21 @@
   // (the same rule `ChannelSettingsPanel` learnt). A failed read leaves the choice offered unchecked,
   // and a click writes an authoritative value.
   let levelLoading = $state(false);
+  let levelError = $state('');
   let levelSaving = $state(false);
   const level = $derived<ConversationNotificationLevel | null>(
     notificationPreferences.loaded && groupId ? notificationPreferences.groupLevel(groupId) : null
   );
 
-  // ONE read per mount when sign-in's has not answered: a failed read must not become a loop, and
-  // the next sign-in or settings visit reads again.
+  // ONE READ PER OPENING OF THIS PANEL, whether or not sign-in's answered: a level changed on
+  // another device reaches this one here (and at sign-in, and at a settings visit) - see
+  // docs/wiki/services/chat-delivery.md for why that refresh is enough. Once per mount, so a failed
+  // read never becomes a loop. Only a store that never answered shows "loading".
   let levelReadAsked = false;
   $effect(() => {
-    if (!groupId || notificationPreferences.loaded || levelReadAsked) return;
+    if (!groupId || levelReadAsked) return;
     levelReadAsked = true;
-    levelLoading = true;
+    levelLoading = !notificationPreferences.loaded;
     void notificationPreferences.load().then((ok) => {
       levelLoading = false;
       if (!ok) console.error('[CHAT] notification levels unreadable - the control shows no level');
@@ -158,9 +161,15 @@
   async function setLevel(next: ConversationNotificationLevel) {
     if (!groupId || next === level || levelSaving) return;
     levelSaving = true;
+    levelError = '';
     try {
       const ok = await notificationPreferences.setGroupLevel(groupId, next);
-      Log.d(`chatGroupPanel.setLevel(${next}) ${ok ? 'saved' : 'refused - reverted'}`);
+      if (ok) {
+        Log.d(`chatGroupPanel.setLevel(${next}) saved`);
+      } else {
+        console.warn(`[CHAT] notification level ${next} refused for group=${groupId} - reverted`);
+        levelError = m.chat_notif_level_save_error();
+      }
     } finally {
       levelSaving = false;
     }
@@ -359,6 +368,7 @@
           ? m.chat_group_notifications_description()
           : m.chat_dm_notifications_description()}
         headingId="group-notif-heading"
+        error={levelError}
         onSelect={(next) => void setLevel(next)}
       />
     </div>

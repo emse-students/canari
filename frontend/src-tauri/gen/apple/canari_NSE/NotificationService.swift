@@ -450,7 +450,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// THE STATED RULE FOR WHAT CANNOT BE DECIDED (docs/wiki/services/chat-delivery.md): a message
   /// that could not be read, or an account id that could not be loaded, proves no mention - it stays
   /// passive, which is also exactly what iOS shows when this extension never runs at all.
-  private struct LevelDecision {
+  struct LevelDecision {
     /// The message names this account: break through Focus.
     let mentionsMe: Bool
     /// The conversation is at `mentions` and the message does not prove a mention: stay passive.
@@ -459,7 +459,7 @@ class NotificationService: UNNotificationServiceExtension {
     let raise: Bool
   }
 
-  private static func levelDecision(
+  static func levelDecision(
     level: String?, mentioned: Set<String>?, myUserId: String?, groupId: String
   ) -> LevelDecision {
     let me = myUserId?.lowercased() ?? ""
@@ -1525,7 +1525,7 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// The user ids a plaintext mentions: the `@[<64 hex>]` token every client writes, lower-cased.
-  private static func mentionedUserIds(in text: String) -> Set<String> {
+  static func mentionedUserIds(in text: String) -> Set<String> {
     guard let re = try? NSRegularExpression(pattern: "@\\[([0-9a-fA-F]{64})\\]") else { return [] }
     let range = NSRange(text.startIndex..., in: text)
     var ids = Set<String>()

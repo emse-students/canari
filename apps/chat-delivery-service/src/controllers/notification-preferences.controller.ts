@@ -26,11 +26,10 @@ import {
 import {
   GROUP_NOTIFICATION_LEVELS,
   isGroupNotificationLevel,
+  isGroupUuid,
   type GroupNotificationLevel,
 } from '../entities/group-member.entity';
-
-/** A group id is a uuid; anything else is refused before it reaches a uuid column. */
-const GROUP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { cutUserId } from '../utils/log-repeat';
 
 /**
  * The account's notification categories - what a client reads to draw the settings and to gate its
@@ -76,7 +75,7 @@ export class NotificationPreferencesController {
   ): Promise<{ groupId: string; level: GroupNotificationLevel }> {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
-    if (!GROUP_ID_RE.test(groupId)) throw new BadRequestException('groupId must be a uuid');
+    if (!isGroupUuid(groupId)) throw new BadRequestException('groupId must be a uuid');
     const level = body?.level;
     if (!isGroupNotificationLevel(level)) {
       throw new BadRequestException(`level must be one of ${GROUP_NOTIFICATION_LEVELS.join(', ')}`);
@@ -89,11 +88,11 @@ export class NotificationPreferencesController {
     );
     if (!written) {
       this.logger.warn(
-        `[NOTIF_PREF] group level REFUSED group=${groupId} user=${userId}: not a member`
+        `[NOTIF_PREF] group level REFUSED group=${groupId} user=${cutUserId(userId)}: not a member`
       );
       throw new ForbiddenException('Not a member of this conversation');
     }
-    this.logger.log(`[NOTIF_PREF] group=${groupId} user=${userId} level=${level}`);
+    this.logger.log(`[NOTIF_PREF] group=${groupId} user=${cutUserId(userId)} level=${level}`);
     return { groupId, level };
   }
 

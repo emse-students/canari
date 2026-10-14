@@ -319,6 +319,7 @@
   let notifLevel = $state<ChannelNotificationLevel | null>(null);
   let notifLoading = $state(false);
   let notifSaving = $state(false);
+  let notifError = $state('');
   let notifLoadedFor = $state('');
 
   /*
@@ -358,10 +359,13 @@
     const previous = notifLevel;
     notifLevel = level;
     notifSaving = true;
+    notifError = '';
     try {
       await channelService.setNotificationLevel(selectedChannelId, level);
-    } catch {
+    } catch (e) {
+      console.warn('[CHANNEL] notification level refused - reverted', e);
       notifLevel = previous;
+      notifError = m.chat_notif_level_save_error();
     } finally {
       notifSaving = false;
     }
@@ -465,6 +469,7 @@
           saving={notifSaving}
           description={m.chat_channel_notifications_description()}
           headingId="channel-notif-heading"
+          error={notifError}
           onSelect={setNotifLevel}
         />
 

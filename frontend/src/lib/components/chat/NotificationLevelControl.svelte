@@ -19,10 +19,12 @@
     description: string;
     /** Unique id of the heading the radio group is labelled by. */
     headingId: string;
+    /** Why the last choice did not stick (the caller reverted it), or '' when it did. */
+    error?: string;
     onSelect: (level: ChannelNotificationLevel) => void;
   }
 
-  let { level, loading, saving, description, headingId, onSelect }: Props = $props();
+  let { level, loading, saving, description, headingId, error = '', onSelect }: Props = $props();
 
   const options = [
     { value: 'all', icon: Bell, label: () => m.chat_channel_notif_all_label() },
@@ -79,5 +81,8 @@
         </button>
       {/each}
     </div>
+  {/if}
+  {#if error}
+    <p class="text-xs font-medium text-red-600 dark:text-red-400" role="alert">{error}</p>
   {/if}
 </div>

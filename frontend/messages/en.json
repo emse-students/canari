@@ -416,6 +416,7 @@
   "chat_channel_notif_none_label": "None",
   "chat_group_notifications_description": "Choose when this group notifies you. \"Mentions\" alerts you only when a message mentions you; your device checks it after decrypting.",
   "chat_dm_notifications_description": "Choose when this conversation notifies you. \"Mentions\" alerts you only when a message mentions you; your device checks it after decrypting.",
+  "chat_notif_level_save_error": "The notification level could not be saved. Try again.",
   "chat_channel_permissions_tab": "Permissions",
   "chat_channel_invitations_roles_tab": "Invitations & Roles",
   "chat_leave_channel_button": "Leave channel",

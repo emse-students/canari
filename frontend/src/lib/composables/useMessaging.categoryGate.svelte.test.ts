@@ -144,6 +144,64 @@ describe("a private conversation's level gates the notification this client rais
     expect(await arrive('mentions', `hey @[${'b'.repeat(64)}]`, 'l4')).not.toHaveBeenCalled();
   });
 
+  it('at mentions, a catch-up flush raises ONE banner when ANY of its messages names me', async () => {
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: { 'conv-1': 'mentions' },
+    });
+    await notificationPreferences.load();
+    const { ctx, sendSystemNotification } = makeContext('conv-1');
+    (ctx as { userId: string }).userId = ME64;
+    await useMessaging().batchAddMessages(
+      [
+        { senderId: PEER, content: `@[${ME64}] look`, messageId: 'b1' },
+        { senderId: PEER, content: 'ok', messageId: 'b2' },
+        { senderId: PEER, content: 'lol', messageId: 'b3' },
+      ],
+      'conv-1',
+      ctx,
+      'arrival'
+    );
+    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    // The banner is the last message; the mention it stands for picks the mentions channel.
+    expect(sendSystemNotification.mock.calls[0][3]).toBe(true);
+  });
+
+  it('at mentions, a catch-up flush naming nobody raises nothing', async () => {
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: { 'conv-1': 'mentions' },
+    });
+    await notificationPreferences.load();
+    const { ctx, sendSystemNotification } = makeContext('conv-1');
+    (ctx as { userId: string }).userId = ME64;
+    await useMessaging().batchAddMessages(
+      [
+        { senderId: PEER, content: 'ok', messageId: 'b4' },
+        { senderId: PEER, content: 'lol', messageId: 'b5' },
+      ],
+      'conv-1',
+      ctx,
+      'arrival'
+    );
+    expect(sendSystemNotification).not.toHaveBeenCalled();
+  });
+
+  it('looks the level up by the GROUP id, so a DM keyed me::peer obeys it', async () => {
+    const GROUP = '0b9f3d7e-1111-4222-8333-444455556666';
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: { [GROUP]: 'none' },
+    });
+    await notificationPreferences.load();
+    const key = 'me::peer';
+    const { ctx, sendSystemNotification } = makeContext(key);
+    const row = ctx.conversations.get(key)!;
+    ctx.conversations.set(key, { ...row, id: GROUP });
+    await useMessaging().addMessageToChat(PEER, 'hello', key, ctx, { messageId: 'l6' });
+    expect(sendSystemNotification).not.toHaveBeenCalled();
+  });
+
   it('leaves a salon to its own level - its key is channel_', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],

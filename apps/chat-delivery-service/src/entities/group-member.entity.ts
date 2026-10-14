@@ -10,6 +10,20 @@ export const GROUP_NOTIFICATION_LEVELS: readonly GroupNotificationLevel[] = [
   'none',
 ];
 
+/** A group id as `dm_group_members.groupId` stores it: a uuid. */
+export type GroupUuid = string & { readonly __groupUuid: unique symbol };
+
+const GROUP_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Whether `value` can name a row of `dm_group_members` at all. A salon push carries
+ * `groupId = channel_<id>`, which Postgres refuses on a uuid column (22P02): asking first is the
+ * fact, a refused query is not.
+ */
+export function isGroupUuid(value: unknown): value is GroupUuid {
+  return typeof value === 'string' && GROUP_UUID_RE.test(value);
+}
+
 /** Whether `value` is a {@link GroupNotificationLevel}. */
 export function isGroupNotificationLevel(value: unknown): value is GroupNotificationLevel {
   return (GROUP_NOTIFICATION_LEVELS as readonly unknown[]).includes(value);

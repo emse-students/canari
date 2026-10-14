@@ -1987,7 +1987,10 @@ hand the server a social graph the encryption exists to hide. So:
 | `mentions` | visible frame carrying `notifLevel=mentions`; on APNs the alert is `interruption-level: passive` with NO sound | decrypts, then draws only if the WHOLE plaintext holds `@[<own user id>]` |
 
 A DM or group REACTION (`sendPushToUser`, `reaction: 'true'`) is refused at `mentions` and `none`: a
-reaction is never a mention, and the server knows the group.
+reaction is never a mention, and the server knows the group. The level is read only for a group id
+that IS a uuid (`isGroupUuid`, a type guard): a SALON reaction carries `groupId = channel_<id>`,
+names no private conversation, and would be refused by the uuid column (22P02) - asked first, never
+learnt from a failed query.
 
 **ONE decision per platform, fed by that field, no timer, no fallback:**
 
@@ -1999,8 +2002,23 @@ reaction is never a mention, and the server knows the group.
   `passive` (filed in the notification centre, no sound, no banner, screen stays dark); a proven
   mention is raised to `timeSensitive` with the default sound.
 - A frame received over the socket (web, desktop, a backgrounded Android app that ACKed it):
-  `conversationLevelRefusal` in `notifyInbound`, reading the store `notificationPreferences`.
-  Here the plaintext is always in hand.
+  `conversationLevelRefusal` in `notifyInbound`, reading the store `notificationPreferences` by the
+  GROUP id (`convo.id`, never a `me::peer` conversation key). Here the plaintext is always in hand.
+  A catch-up flush raises ONE banner (its last message) but counts as a mention if ANY of its
+  inbound messages names the reader - "@me look", "ok", "lol" is a mention.
+
+The three decisions are asserted against ONE contract, `libs/contracts/mention-decision.cases.json`:
+`conversationLevel.contract.test.ts` (client), `NotificationLevelGateTest` (Android, JVM) and
+`canari_NSETests/MentionDecisionContractTests.swift` (iOS - written, NOT compiled and not wired to a
+target yet: there is no Xcode on the workstation that wrote it).
+
+**When this device's copy of the levels refreshes, and why that is enough.** The store is read at
+sign-in, at every visit to the notification settings, and at every opening of a conversation's
+panel. No socket event announces a level changed on ANOTHER device, so until one of those three, a
+session that was already open keeps the old level for the notifications it raises ITSELF from socket
+frames. That is safe: pushes are always current (the server reads the column at each send), the
+error is at most one banner too many or too few on an open session, never a lost message, and the
+device where the level was changed holds it at once.
 
 Mentions are read from the whole plaintext before the 200-character preview cut, on both native
 paths (`mentionedUserIds`) - a mention past the cut used to miss the mentions channel too.
@@ -2011,6 +2029,15 @@ draws nothing, iOS leaves the server's passive alert, which is also exactly what
 extension never runs. The message is not lost - it is in the conversation, unread, at the next open.
 The member chose to be interrupted only by a mention; a false alarm breaks that choice on every
 undecryptable frame, whereas a missed mention costs one unread line they will see.
+
+**What travels in clear.** `notifLevel=mentions` in the FCM data map and `interruption-level:
+passive` in the APNs payload are cleartext to Google and Apple, like `silent` and `isGroup` already
+are: they say how loud this member keeps this conversation, never what was said or who was named.
+
+**The iOS target gap.** The extension's deployment target is 18.2 while the app's is 15.6 (and the
+XcodeGen project 14.0): on an iPhone older than 18.2 the extension cannot run, so every `mentions`
+frame stays the server's passive alert and a mention never rings - the undecidable rule, applied to
+the whole device. Check on a device before relying on the iOS half of `mentions`.
 
 **Older builds.** A client predating the field ignores `notifLevel` and draws a `mentions` frame as
 `all` (on iOS, passive - the server's alert). `none` works on every build, because it is the server's.

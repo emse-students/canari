@@ -9,6 +9,7 @@
  * `levelDecision` in the iOS extension. The rule they share is in docs/wiki/services/chat-delivery.md.
  */
 import type { ChannelNotificationLevel } from '$lib/services/ChannelService';
+import { extractMentionUserIds, normalizeMentionUserId } from '$lib/utils/mentions';
 
 /** The same three levels as a salon, so one type and one control serve both. */
 export type ConversationNotificationLevel = ChannelNotificationLevel;
@@ -18,6 +19,15 @@ export function isConversationNotificationLevel(
   value: unknown
 ): value is ConversationNotificationLevel {
   return value === 'all' || value === 'mentions' || value === 'none';
+}
+
+/**
+ * Whether a message's raw text names `userId`: the inline `@[<id>]` token, case-insensitive - the same
+ * reading as the native paths (`NotificationLevelGate`, `levelDecision`), pinned for all three by
+ * `libs/contracts/mention-decision.cases.json`.
+ */
+export function mentionsUser(content: string, userId: string): boolean {
+  return extractMentionUserIds(content).includes(normalizeMentionUserId(userId));
 }
 
 /**

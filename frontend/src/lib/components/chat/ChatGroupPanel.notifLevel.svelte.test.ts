@@ -92,4 +92,30 @@ describe('ChatGroupPanel notification level', () => {
     expect(api.saveGroupNotificationLevel).toHaveBeenCalledWith(G, 'none');
     expect(radio(m.chat_channel_notif_none_label())?.getAttribute('aria-checked')).toBe('true');
   });
+
+  it('says so, and puts the level back, when the server refuses the choice', async () => {
+    api.fetchNotificationPreferences.mockResolvedValue({ disabled: [], groupLevels: {} });
+    api.saveGroupNotificationLevel.mockRejectedValueOnce(new Error('403'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await render();
+    radio(m.chat_channel_notif_mentions_label())!.click();
+    for (let i = 0; i < 3; i++) await tick();
+    flushSync();
+    expect(radio(m.chat_channel_notif_all_label())?.getAttribute('aria-checked')).toBe('true');
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      m.chat_notif_level_save_error()
+    );
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('re-reads the levels at every opening, so a change made on another device shows', async () => {
+    api.fetchNotificationPreferences.mockResolvedValue({ disabled: [], groupLevels: {} });
+    await notificationPreferences.load();
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: { [G]: 'none' },
+    });
+    await render();
+    expect(radio(m.chat_channel_notif_none_label())?.getAttribute('aria-checked')).toBe('true');
+  });
 });

@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 
+import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
@@ -15,6 +16,8 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 
 const fcmSend = jest.fn();
+/** A private conversation's id is a uuid, as `dm_group_members.groupId` stores it. */
+const G1 = '0b9f3d7e-1111-4222-8333-444455556666';
 jest.mock('firebase-admin/app', () => ({ getApps: jest.fn(() => [{}]) }));
 jest.mock('firebase-admin/messaging', () => ({
   getMessaging: jest.fn(() => ({ send: fcmSend })),
@@ -116,11 +119,25 @@ describe('MessagingService - notification categories', () => {
         const r = await service.sendPushToUser('u1', 't', 'b', {
           type: 'social',
           reaction: 'true',
-          groupId: 'g1',
+          groupId: G1,
         });
         expect(r).toEqual({ sent: 0, failed: 0 });
       }
       expect(fcmSend).not.toHaveBeenCalled();
+    });
+
+    it('reads no level, and warns nothing, for a SALON reaction - its groupId is channel_<id>', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn');
+      await service.sendPushToUser('u1', 't', 'b', {
+        type: 'social',
+        reaction: 'true',
+        groupId: 'channel_5d7c',
+      });
+      const levelReads = manager.findOne.mock.calls.filter((c) => c[0] === GroupMember);
+      expect(levelReads).toHaveLength(0);
+      expect(warn).not.toHaveBeenCalled();
+      expect(fcmSend).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
     });
 
     it('sends a reaction in a conversation left at all', async () => {
@@ -128,7 +145,7 @@ describe('MessagingService - notification categories', () => {
       await service.sendPushToUser('u1', 't', 'b', {
         type: 'social',
         reaction: 'true',
-        groupId: 'g1',
+        groupId: G1,
       });
       expect(fcmSend).toHaveBeenCalledTimes(1);
     });
@@ -157,7 +174,7 @@ describe('MessagingService - notification categories', () => {
         service as unknown as {
           sendFcmForQueued: (...a: unknown[]) => Promise<void>;
         }
-      ).sendFcmForQueued(queued, 'trace', 'g1', senderId, silent);
+      ).sendFcmForQueued(queued, 'trace', G1, senderId, silent);
     const sentData = () => (fcmSend.mock.calls[0][0] as { data: Record<string, string> }).data;
 
     it('draws a notification by default', async () => {

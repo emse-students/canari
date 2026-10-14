@@ -5,7 +5,9 @@ import {
   GroupMember,
   isGroupNotificationLevel,
   type GroupNotificationLevel,
+  type GroupUuid,
 } from '../entities/group-member.entity';
+import { cutUserId } from '../utils/log-repeat';
 import { isNotificationCategory, type NotificationCategory } from './push-category';
 
 const logger = new Logger('NotificationPreferences');
@@ -50,7 +52,7 @@ export async function readDisabledCategoriesStrict(
  */
 export async function readGroupNotificationLevel(
   manager: EntityManager,
-  groupId: string,
+  groupId: GroupUuid,
   userId: string
 ): Promise<GroupNotificationLevel> {
   try {
@@ -61,7 +63,7 @@ export async function readGroupNotificationLevel(
     return row && isGroupNotificationLevel(row.notifLevel) ? row.notifLevel : 'all';
   } catch (e) {
     logger.warn(
-      `[NOTIF_PREF] group level read failed for group=${groupId} user=${userId}: ${String(e)} - delivering as all`
+      `[NOTIF_PREF] group level read failed for group=${groupId} user=${cutUserId(userId)}: ${String(e)} - delivering as all`
     );
     return 'all';
   }
@@ -97,7 +99,7 @@ export async function readGroupNotificationLevelsStrict(
  */
 export async function writeGroupNotificationLevel(
   manager: EntityManager,
-  groupId: string,
+  groupId: GroupUuid,
   userId: string,
   level: GroupNotificationLevel
 ): Promise<boolean> {

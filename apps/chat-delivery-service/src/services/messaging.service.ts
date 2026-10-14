@@ -14,7 +14,7 @@ import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { QueuedMessage } from '../entities/queued-message.entity';
-import { GroupMember } from '../entities/group-member.entity';
+import { GroupMember, isGroupUuid } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
@@ -615,6 +615,12 @@ export class MessagingService {
         drawNothing = true;
         this.logger.log(
           `[PUSH_SEND][${traceId}] category=messages disabled by user=${cutUserId(queued.recipientId)} - sent silent`
+        );
+      } else if (!isGroupUuid(groupId)) {
+        // Every MLS conversation is a uuid row; a queued frame naming anything else is a defect
+        // upstream, and the level it cannot have is not invented here.
+        this.logger.warn(
+          `[PUSH_SEND][${traceId}] group=${groupId} is not a uuid - no conversation level applies`
         );
       } else {
         const level = await readGroupNotificationLevel(
@@ -3670,8 +3676,10 @@ export class MessagingService {
 
     // A REACTION IN A PRIVATE CONVERSATION OBEYS THAT CONVERSATION'S LEVEL. A reaction is never a
     // mention, so both `mentions` and `none` refuse it - decided here, where the level is known,
-    // rather than drawn and left for a device to withdraw.
-    if (data.reaction === 'true' && data.groupId) {
+    // rather than drawn and left for a device to withdraw. A SALON reaction carries
+    // `groupId = channel_<id>`, which names no private conversation: the uuid guard is the fact that
+    // says so, before any query (a uuid column refuses the string with 22P02).
+    if (data.reaction === 'true' && isGroupUuid(data.groupId)) {
       const level = await readGroupNotificationLevel(
         this.pushTokenRepo.manager,
         data.groupId,
@@ -3679,7 +3687,7 @@ export class MessagingService {
       );
       if (level !== 'all') {
         this.logger.log(
-          `[SOCIAL_PUSH][${traceId}] reaction in group=${data.groupId} at level=${level} for user=${userId} - not sent`
+          `[SOCIAL_PUSH][${traceId}] reaction in group=${data.groupId} at level=${level} for user=${cutUserId(userId)} - not sent`
         );
         return { sent: 0, failed: 0 };
       }
