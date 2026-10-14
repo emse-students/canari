@@ -348,7 +348,7 @@ finish.
 
 | Storage | Written by | Purpose |
 |---|---|---|
-| Device key vault (`utils/deviceKeyVault.ts`) | PIN login | AES-GCM-wrapped key in `sessionStorage`, or `localStorage` when "stay signed in" is on (`canari_device_key_persist`) |
+| Device key vault (`utils/deviceKeyVault.ts`) | PIN login | AES-GCM-wrapped key, ONE SLOT PER ACCOUNT (`canari_device_key_vault:v2:<userId>`, the account also bound as the AEAD additional data), in `sessionStorage`, or `localStorage` when "stay signed in" is on (`canari_device_key_persist`). See [the vault names its account](#the-vault-names-its-account---fixed-2026-10-14) |
 | Platform keystore, alias `mls_device_key_{userId}_{deviceId}` | `store_push_context` (Tauri) | Biometric unlock **and** background FCM/NSE decryption - the only at-rest copy on a device |
 | `push_context.json` | `store_push_context` (Tauri) | `userId`, `deviceId`, `baseUrl`, `pushToken` only. Since WP-SEC-1 it carries **no key material** |
 
@@ -357,8 +357,8 @@ persisted anywhere since v0.11.0. The user-facing copy (`auth_pin_stay_signed_in
 `profile_stay_signed_in_desc`) must say so: describing the wrong secret on a security control is a
 defect in the control.
 
-Enrolling biometrics wipes the vault (`clearDeviceKeyAndWrapKey`) and turns "stay signed in" off,
-so the next launch goes through the keystore. A PIN change must **not** delete the keystore entry:
+Enrolling biometrics wipes the vault (`clearDeviceKeyAndWrapKey`, every account's slot) and turns
+"stay signed in" off, so the next launch goes through the keystore. A PIN change must **not** delete the keystore entry:
 `IMlsService.changeDeviceKey` has already overwritten it with the new key.
 
 **The background copy is a second keystore entry, not a second file.** A push handler runs with no
@@ -375,6 +375,98 @@ WP-SEC-1 hold the key in `push_context.json`; a one-shot migration
 (`CanariApplication.migrateDeviceKeyFromJson`, `CanariMigrateDeviceKeyFromJson`) promotes it to the
 keystore at the next app start and strips the field. The background readers have **no** JSON
 fallback, so one push before that first launch shows generic text.
+
+### The vault names its account - FIXED 2026-10-14
+
+**The defect, read from the code while reviewing #1862, present in `v1.2.6` and in every build since
+the vault replaced the PinVault.** The vault was ONE slot (`canari_device_key_vault`) and nothing in
+it said whose key it was; a sign-out keeps it on purpose ("Rester connecte"). So account B signing in
+on an install where A had ticked it took the vault path (`nativeStorageLoginImpl` on a phone, the web
+branch of `startLoginFlow` in a browser) with A's key, and B's PIN was never asked:
+
+- **Web**: the stores are per account. With no state of B's, the fresh start SEALED B's first state
+  under A's key, which B's own PIN then never opened; with one, it did not open and B was offered a
+  recovery for a PIN it had never changed.
+- **Phone**: `mls.bin` is ONE file per install (`data_dir/mls.bin`). A's key opened it, the
+  credential named A, `IDENTITY_MISMATCH`, and the `mismatch` branch of `_initImpl` ROTATED the device
+  identity and wrote a fresh state over the file: **A's whole local state, lost**, by a sign-in that
+  was not A's.
+
+**The fix: the vault records the account it belongs to, and a sign-in as anyone else never sees
+it.** One slot per account, `canari_device_key_vault:v2:<userId>`, and the same string is the AES-GCM
+additional data - a blob copied under another account's name does not open, so the label cannot be
+edited without the tag noticing. `loadDeviceKey(userId)` reads only the signing-in account's slot;
+another account's slot is neither read nor cleared, so A signing back in still unlocks without a PIN.
+A failed login clears only its own account's slot. One wrap key serves every slot;
+`clearDeviceKeyAndWrapKey` (revocation, biometric enrolment, a persistence switch) drops every slot.
+A persistence switch means a REAL change of mode: the PIN modal restates the mode on every submit,
+and `setDeviceKeyPersistence(mode, null)` with the mode already set is a no-op - before that, B typing
+its PIN erased A's slot and A's "Rester connecte" with it.
+
+**The migration: the unlabelled slot an older build wrote is offered as UNPROVEN, and the login must
+prove it.** `loadDeviceKey` returns `{ deviceKeyB64, ownerProven }`, `false` only for that slot, and
+the login carries it to `init` as `MlsInitOptions.vaultOwnerUnproven`. Such a key is accepted only if
+it OPENS a saved state whose credential names the account signing in. Anything else is refused BEFORE
+any recovery can run - `no_state` (checked in `loginImpl` before `resolveDeviceId` mints an id, and
+again in both `_initImpl`s), `mismatch`, `unopenable` - as a typed `VaultOwnerUnprovenError`: no
+rotation, no fresh start, no legacy re-seal, no write. `loginImpl` turns it into a `LoginFailure`
+(`device_holds_other_account` for a `mismatch` on a phone, `vault_not_this_account` otherwise - see
+below), drops the key from the session, and keeps the unlabelled slot, which may be the previous
+account's. The shell then draws the account's OWN PIN gate
+(`openPinModal(uid, { deviceIdUnproven: true })`: first setup or returning is asked of the SERVER,
+because a refused vault says nothing about this account's PIN - and the device id cannot answer it
+here, since the vault path resolved, and so minted, this account's id before the state refused it).
+A same-account stale state (`mismatch` naming another
+device of the same account) is refused on this path too, and reaches its rotation through the PIN
+path, which proves the account first.
+
+**When the unlabelled slot is retired: after a SUCCESS, and only by its owner.** The slot is offered
+to whoever signs in. Once a login has SUCCEEDED and its key is safe in the account's own slot,
+`retireUnlabelledDeviceKeyIfOwnedBy(userId, key)` removes the unlabelled slot IF it holds the very key
+that account unlocked with - whichever path it took (the slot itself, its own slot, the PIN, the
+keystore). A device key derives from the account id, the PIN and the salt, so two accounts never
+share one: an equal key IS the proof. Any other key may belong to an account that has not signed in
+since, and the slot is kept for it. Before this, an account that unlocked by its PIN or its own slot
+left its old copy on offer to every other account for ever.
+
+**What the member is told - two codes, because only one refusal knows whose state is there.**
+- **`device_holds_other_account`** - a `mismatch` on a PHONE, PROVEN another account's state (the key
+  opened the one `mls.bin`). The error is `auth_vault_other_account_device`, and the gate WITHHOLDS
+  THE RESET (decided 2026-10-14): "PIN oublie -> Reinitialiser" runs `handlePinReset` ->
+  `resetDeviceAsFresh` -> `removeMlsState`, which deletes that one file - the other account's state,
+  from this account's session. `PinModal` gets no `onForgotPinReset` and shows
+  `auth_pin_reset_blocked_other_account` instead, on every gate, first setup included; `handlePinReset`
+  refuses on its own too, before the server reset and the wipe. The sentence says what is true: this
+  device holds another account's messages (it says "device", not "phone": `isTauriRuntime()` is a
+  desktop build too, with the same one `mls.bin`), the app keeps one account's at a time, the member can sign
+  out and let the other account back in, and the only way to use this account here is to clear the
+  app's data or reinstall - which loses the other account's messages. (A PIN reset BY the other
+  account would not free the phone: it leaves that account's fresh `mls.bin` in the same file.) This
+  account stays locked out on this phone, which is safer than a silent destruction. Cleared by a
+  sign-out, a session expiry and a session - the shell is the root layout and outlives `/login`, so
+  a flag left set would withhold the reset from the next account's gate, the owner's included.
+- **`vault_not_this_account`** - every other refusal (`no_state`, `unopenable`, and any refusal on the
+  web, where states are per account). Neither proves anything about another account - the store may
+  be this account's own, evicted or sealed under an older key - so the sentence is NEUTRAL
+  (`auth_vault_unverified`: the saved unlock could not be verified for this account) and the gate is
+  the ordinary one.
+
+**What this does NOT fix, and is open** ([backlog](../../backlog.md)): on a phone `mls.bin` is still
+one file per install. The reset is withheld only when the refusal PROVED the file foreign. Once every
+vault is labelled, B has no slot, takes the PIN path, cannot open A's `mls.bin`
+(`local_state_unopenable`) - and that gate still offers the reset, which deletes A's state on B's
+explicit request. Withholding it there needs an owner recorded beside `mls.bin`.
+
+Tests: `utils/deviceKeyVault.test.ts` (slots, binding, the unlabelled offer),
+`services/TauriMlsService.vaultOwner.test.ts` and `services/WebMlsService.vaultOwner.test.ts` (a
+refusal writes nothing; a control proves the rotation is still reachable without the flag), and
+`composables/session/accountSwitchVault.test.ts`, which runs the real vault into the real native
+init over a `mls.bin` holding A's state: A leaves a vault, B signs in (PIN gate, nothing rotated,
+nothing written), A signs back in (the vault unlocks); it also pins the neutral/proven split, the
+retirement order and the withheld reset in the shell. `components/auth/PinModal.resetWithheld.svelte.test.ts`
+renders the gate without a reachable reset. Mutation-checked: removing the native guard fails three
+cases, collapsing the slots into one fails seven, re-offering the reset fails two, retiring the
+unlabelled slot without the key comparison fails one.
 
 ### How often the sheet comes back - the biometric cadence (2026-09-28)
 
@@ -910,8 +1002,9 @@ the state, because that write is what they read. The SAME account signing back i
 one full state decrypt, as a cold start does - chosen deliberately over reusing a client whose
 account the code cannot prove. The call service is rebuilt over the new client (`initServices` is
 keyed on the client, not on "one exists"). Possibly the cause of the P3 "switching accounts on one
-iPhone install" in [backlog](../../backlog.md), not proven - and NOT the only one: the device-key
-vault outlives the sign-out and names no account, so B signs in on A's key (same backlog entry).
+iPhone install" in [backlog](../../backlog.md), not proven - and not the only one: the device-key
+vault, which B used to sign in on with A's key, now names its account
+([the vault names its account](#the-vault-names-its-account---fixed-2026-10-14)).
 Test: `signOutTimeline.test.ts`, "a sign-out retires the account with its MLS client".
 
 **The retirement always settles, and every reader of the disk waits for it.** `mlsHolder.retire`
@@ -944,7 +1037,8 @@ sign-out happened; it touches every registration the login makes, so it is its o
 
 **What a sign-out still keeps, deliberately**: `mls.bin`, the message database and the device-key
 vault ("deconnecter seulement, garder l'etat", see `handlePinSignOut`). So a device signed out with
-"Rester connecte" ticked unlocks WITHOUT its PIN after the next sign-in of the same account - the
+"Rester connecte" ticked unlocks WITHOUT its PIN after the next sign-in of the SAME account (another
+account never sees that slot - [the vault names its account](#the-vault-names-its-account---fixed-2026-10-14)) - the
 vault was never cleared by any live path, `v1.2.6` included. Whether a sign-out should end "Rester
 connecte" is a decision for the user, not a defect of this fix.
 

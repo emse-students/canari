@@ -205,6 +205,38 @@ export interface MlsInitOptions {
    * The decision belongs to `biometricCadence.ts`; this flag only carries it to the native side.
    */
   unattendedKeyRead?: boolean;
+  /**
+   * The device key came from the UNLABELLED vault an older build wrote, so nothing yet says it
+   * belongs to the account signing in (`deviceKeyVault.loadDeviceKey`). Such a key is accepted only
+   * if it OPENS a saved state whose credential names this account; any other outcome - the state
+   * will not open, it opens and names someone else (`mismatch`), or the load fails otherwise -
+   * throws {@link VaultOwnerUnprovenError} and changes NOTHING: no rotation, no fresh start, no
+   * write. On a phone `mls.bin` is one file per install, so a rotation here is another account's
+   * local state overwritten.
+   */
+  vaultOwnerUnproven?: boolean;
+}
+
+/**
+ * What refused a vaulted key of unproven owner: `no_state` (nothing on this device to prove the
+ * account with - the login checks this before init), `mismatch` (the key OPENED the state and its
+ * credential names another account or device: on a phone, the state of the account that signed in
+ * before), or `unopenable` (the state did not open under it, or the load failed otherwise).
+ */
+export type VaultRefusal = 'no_state' | 'mismatch' | 'unopenable';
+
+/**
+ * A vaulted device key whose owner was not proven was refused, and nothing local was changed
+ * ({@link MlsInitOptions.vaultOwnerUnproven}). The login turns it into the PIN gate.
+ */
+export class VaultOwnerUnprovenError extends Error {
+  readonly refusal: VaultRefusal;
+
+  constructor(refusal: VaultRefusal) {
+    super(`vaulted device key refused: its owner is not proven (${refusal})`);
+    this.name = 'VaultOwnerUnprovenError';
+    this.refusal = refusal;
+  }
 }
 
 /**

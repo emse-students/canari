@@ -95,7 +95,12 @@
   /** Toggles "stay signed in": migrates the device key vault to localStorage (on) or sessionStorage (off). */
   async function toggleStaySignedIn() {
     const next = !staySignedIn;
-    await setDeviceKeyPersistence(next, session.deviceKeyB64 || null);
+    await setDeviceKeyPersistence(
+      next,
+      session.deviceKeyB64 && session.userId
+        ? { userId: session.userId, deviceKeyB64: session.deviceKeyB64 }
+        : null
+    );
     staySignedIn = next;
   }
 

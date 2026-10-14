@@ -54,7 +54,8 @@ import { bringToReady } from './ready-repair.mjs';
 /** How long the client is given to reach a determinate state. A deadline: it returns when it does. */
 const SETTLE_BUDGET_MS = 30_000;
 
-const BLOB_KEY = 'canari_device_key_vault';
+/** Every account has its own vault slot since 2026-10-14 (`deviceKeyVault.ts`), found in the page. */
+const SLOT_PREFIX = 'canari_device_key_vault:v2:';
 const WRAP_KEY = 'canari_device_key_vault_key';
 
 /**
@@ -105,7 +106,8 @@ const inVault = (body) =>
     w1,
     `(() => {
        const STORE = localStorage.getItem('canari_device_key_persist') === 'true' ? localStorage : sessionStorage;
-       const BLOB = ${JSON.stringify(BLOB_KEY)}, WRAP = ${JSON.stringify(WRAP_KEY)};
+       const BLOB = Object.keys(STORE).find((k) => k.startsWith(${JSON.stringify(SLOT_PREFIX)})) ?? ${JSON.stringify(SLOT_PREFIX + '(none)')};
+       const WRAP = ${JSON.stringify(WRAP_KEY)};
        ${body}
      })()`
   );

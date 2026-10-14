@@ -501,7 +501,7 @@ inside each profile under test and then declared the real ones missing.
 | --- | --- | --- |
 | Web | MLS state | IndexedDB `CanariDBMls_<userId>` v1, store `state` |
 | Web | message store | IndexedDB `CanariDB_<userId>` v6: `conversations`, `messages`, `outbox` |
-| Web | device key vault | `sessionStorage.canari_device_key_vault` + `canari_device_key_vault_key` |
+| Web | device key vault | `sessionStorage.canari_device_key_vault:v2:<userId>` (one slot per account since 2026-10-14) + `canari_device_key_vault_key`; an older build's unlabelled `canari_device_key_vault` until its owner signs in |
 | Web | vault persistence flag | `localStorage.canari_device_key_persist` |
 | Web | device id, last active, saved user | `localStorage.mls_device_id_<userId>`, `canari_last_active:<userId>`, `canari_saved_user` |
 | Web | WS auth | cookie `canari_ws_token` - the only cookie readable from JS |

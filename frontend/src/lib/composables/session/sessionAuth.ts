@@ -24,8 +24,18 @@ import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
 // `Failed to fetch`, and only the THROW knows which it is.
 import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
-import { LoginFailure, isExpectedLoginOutcome, loginErrorCode } from './loginErrors';
-import { MLS_LOCAL_STATE_UNDECRYPTABLE, isKeystoreKeyUnavailable } from '$lib/mls-client';
+import {
+  LoginFailure,
+  isExpectedLoginOutcome,
+  isVaultRefusal,
+  loginErrorCode,
+} from './loginErrors';
+import {
+  MLS_LOCAL_STATE_UNDECRYPTABLE,
+  isKeystoreKeyUnavailable,
+  VaultOwnerUnprovenError,
+  type VaultRefusal,
+} from '$lib/mls-client';
 import {
   getToken,
   clearAuth,
@@ -99,7 +109,14 @@ import {
   timeBootSpan,
   finishBootBench,
 } from '$lib/mls-client/bootBenchmark';
-import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/deviceKeyVault';
+import {
+  saveDeviceKey,
+  loadDeviceKey,
+  clearDeviceKey,
+  clearDeviceKeyAndWrapKey,
+  forgetUnlabelledDeviceKey,
+  retireUnlabelledDeviceKeyIfOwnedBy,
+} from '$lib/utils/deviceKeyVault';
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
 import { unlockWithPin, type PinCheckAnswer } from './pinUnlock';
 import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
@@ -315,6 +332,24 @@ export async function processDeviceInvitationsLocally(
   }
 }
 
+/**
+ * The login failure for a vault key of unproven owner that was refused (`vaultOwnerUnproven`).
+ *
+ * TWO CODES, BECAUSE ONLY ONE OF THE REFUSALS KNOWS WHOSE STATE IS ON THE DEVICE. On a phone a
+ * `mismatch` is PROVEN to be another account's state - `mls.bin` is one file per install and the key
+ * opened it - so it is `device_holds_other_account`: the member is told so, and the gate withholds
+ * the reset that would delete that file. `no_state` and `unopenable` prove nothing of the kind - the
+ * store may be this account's own, evicted or sealed under an older key - and the web keeps one
+ * state per account, so everywhere else it is `vault_not_this_account` with a NEUTRAL sentence that
+ * accuses nobody.
+ */
+function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
+  if (refusal === 'mismatch' && isTauriRuntime()) {
+    return new LoginFailure('device_holds_other_account', m.auth_vault_other_account_device());
+  }
+  return new LoginFailure('vault_not_this_account', m.auth_vault_unverified());
+}
+
 // ── Exported functions ────────────────────────────────────────────────────────
 
 /**
@@ -438,11 +473,16 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
  *
  * `opts.unattendedKeyRead` only matters in biometric mode: the keystore is read with no sheet,
  * because the biometric cadence said the last proof is recent enough ({@link biometricLoginImpl}).
+ *
+ * `opts.vaultOwnerUnproven` only matters on the vault path: the key came from the unlabelled vault
+ * of an older build, and is accepted only if it opens a saved state of THIS account
+ * (`MlsInitOptions.vaultOwnerUnproven`). Refused, the login fails with `vault_not_this_account`
+ * having changed nothing; accepted, the key moves into this account's own slot.
  */
 export async function loginImpl(
   ctx: SessionContext,
   cb: ChatSessionCallbacks,
-  opts?: { unattendedKeyRead?: boolean }
+  opts?: { unattendedKeyRead?: boolean; vaultOwnerUnproven?: boolean }
 ): Promise<void> {
   // EVERY OFFSET IN THIS REPORT IS MEASURED FROM NAVIGATION START, not from here, so the document,
   // the module graph and hydration are all visible as the gap before `login-start` without anything
@@ -461,6 +501,8 @@ export async function loginImpl(
   // the encrypted vault, proving the user already authenticated with the correct PIN.
   const isBiometric = deviceKeyB64.length === 0 && pin.length === 0;
   const isVaultLogin = deviceKeyB64.length > 0 && pin.length === 0;
+  /** A vault key that does not yet name its account - see `opts.vaultOwnerUnproven`. */
+  const vaultOwnerUnproven = isVaultLogin && opts?.vaultOwnerUnproven === true;
 
   /**
    * Whether this login can complete with no network at all.
@@ -580,10 +622,12 @@ export async function loginImpl(
 
   try {
     const mlsService = ctx.ensureMls();
-    if (isVaultLogin) {
+    if (isVaultLogin && !vaultOwnerUnproven) {
       // The vault returned the device key before this function was called, so the store can be
       // opened and read now - nothing about either needs the token. `getStorage` shares one handle
       // per user, and the init below awaits this same promise instead of opening a second one.
+      // NOT for a key whose owner is unproven: nothing may be drawn from this account's store with
+      // a key that may be another account's.
       storageOpen = getStorage(ctx.getUserId());
       startLandingPreview(storageOpen, deviceKeyB64);
     }
@@ -691,6 +735,17 @@ export async function loginImpl(
             'MLS state present on disk (mls.bin); the native side reads it.'
           : 'MLS state loaded from IndexedDB.'
       );
+    }
+
+    // A VAULT KEY OF UNPROVEN OWNER NEEDS A SAVED STATE TO PROVE ITSELF ON, and with none there is
+    // nothing to prove it with - a fresh start would seal this account's first state under a key
+    // that may be another account's. Refused HERE, before `resolveDeviceId` mints an id for an
+    // attempt that is not going to run.
+    if (vaultOwnerUnproven && !mlsStateResult) {
+      cb.log(
+        '[VAULT] unlabelled vault key refused - no saved state of this account to prove it on'
+      );
+      throw vaultRefusedFailure('no_state');
     }
 
     // THE REVOCATION QUESTION IS ASKED HERE AND READ AFTER THE DECRYPT, and this variable is the
@@ -845,6 +900,9 @@ export async function loginImpl(
           // change needs it: init re-seals such a snapshot instead of reporting a PIN rotation.
           legacyPin: !isBiometric && !isVaultLogin ? pin : undefined,
           unattendedKeyRead: isBiometric && opts?.unattendedKeyRead === true,
+          // A key from an older build's unlabelled vault must PROVE it is this account's on the
+          // saved state, and changes nothing if it does not - see `MlsInitOptions.vaultOwnerUnproven`.
+          vaultOwnerUnproven,
         })
       ),
       timeBootSpan('storage-open', storageOpen ?? getStorage(ctx.getUserId())),
@@ -875,6 +933,8 @@ export async function loginImpl(
 
     if (mlsInitSettled.status === 'rejected') {
       const reason = mlsInitSettled.reason;
+      // The init changed nothing (`MlsInitOptions.vaultOwnerUnproven`): the PIN gate, typed.
+      if (reason instanceof VaultOwnerUnprovenError) throw vaultRefusedFailure(reason.refusal);
       const reasonStr = reason instanceof Error ? reason.message : String(reason);
       const isUndecryptable = reasonStr === MLS_LOCAL_STATE_UNDECRYPTABLE;
       if (isUndecryptable) {
@@ -993,10 +1053,21 @@ export async function loginImpl(
     // The device key is always saved — on Tauri it feeds push_context.json for
     // background FCM decryption; on web it powers auto-login.
     // Biometric mode derives nothing: the keystore holds the key, so there is nothing to vault.
-    if (deviceKeyB64) {
+    //
+    // INTO THIS ACCOUNT'S OWN SLOT. Then, and only then - this login has SUCCEEDED and the key is
+    // safe in its own slot - the unlabelled slot of an older build is retired IF it holds the key
+    // this account unlocked with, whichever path the login took: that proves it is this account's.
+    // One holding any other key may be another account's, never proven, and is kept for it
+    // (`retireUnlabelledDeviceKeyIfOwnedBy`). A failed save skips the retirement: the key survives.
+    {
+      const owner = ctx.getUserId();
+      const unlockedWith = ctx.getDeviceKey();
       void (async () => {
-        await saveDeviceKey(deviceKeyB64);
-      })();
+        if (deviceKeyB64) await saveDeviceKey(owner, deviceKeyB64);
+        if (unlockedWith && (await retireUnlabelledDeviceKeyIfOwnedBy(owner, unlockedWith))) {
+          cb.log(`[VAULT] unlabelled vault proven to be ${owner.slice(0, 8)}'s - retired`);
+        }
+      })().catch((e: unknown) => cb.log(`[VAULT] saving the device key failed: ${String(e)}`));
     }
 
     // Stamp this session with the device that just unlocked. It is the ONLY
@@ -1716,7 +1787,11 @@ export async function loginImpl(
       console.error(`[INIT] Login failed (${code}):`, _e);
     }
     ctx.resetMls();
-    clearDeviceKey();
+    // THIS ACCOUNT'S SLOT ONLY: another account's, and the unlabelled one of an older build, are not
+    // this login's to judge - a refused unlabelled key may be the previous account's, kept for it.
+    clearDeviceKey(ctx.getUserId());
+    // And a refused key leaves the session too: it was never this account's to hold.
+    if (isVaultRefusal(code)) ctx.setDeviceKey('');
     // A dead session (refresh cookie expired/revoked) is not retryable via the PIN modal:
     // hand it to onSessionExpired so the caller logs out and redirects to /login. When no
     // callback is wired, redirect directly so the user is never stranded in the modal.
@@ -1779,28 +1854,36 @@ export async function nativeStorageLoginImpl(
   }
 
   // Read deviceKeyB64 from the device key vault (AES-GCM encrypted), never from
-  // push_context.json.
+  // push_context.json - and THIS ACCOUNT'S slot of it: a key another account left is never offered
+  // (`loadDeviceKey`), and the unlabelled one of an older build must prove its owner in the login.
   try {
-    const { loadDeviceKey } = await import('$lib/utils/deviceKeyVault');
-    const deviceKeyB64 = await loadDeviceKey();
-    if (!deviceKeyB64) {
-      appendLog('[PIN] No device key in vault - auto-login impossible');
+    const userId = ctx.getUserId();
+    const vaulted = await loadDeviceKey(userId);
+    if (!vaulted) {
+      appendLog('[PIN] No device key in vault for this account - auto-login impossible');
       return false;
     }
     // Builds before the derivation existed stored the raw PIN under this key. Such a value can
     // never decrypt anything, so refuse the auto-login and let the PIN modal re-derive a real
     // key rather than failing deeper in the crypto stack with an opaque error.
-    if (!isValidDeviceKeyB64(deviceKeyB64)) {
+    if (!isValidDeviceKeyB64(vaulted.deviceKeyB64)) {
       appendLog('[PIN] Vaulted device key is not a 32-byte key - discarding, PIN required');
-      const { clearDeviceKeyAndWrapKey: dropVault } = await import('$lib/utils/deviceKeyVault');
-      dropVault();
+      if (vaulted.ownerProven) clearDeviceKey(userId);
+      else forgetUnlabelledDeviceKey();
       return false;
     }
-    appendLog('[PIN] Device key restored from PinVault - auto-login…');
-    ctx.setDeviceKey(deviceKeyB64);
-    await loginImpl(ctx, cb);
+    appendLog(
+      vaulted.ownerProven
+        ? '[PIN] Device key restored from PinVault - auto-login…'
+        : '[PIN] Device key restored from the UNLABELLED PinVault - auto-login, owner to be proven…'
+    );
+    ctx.setDeviceKey(vaulted.deviceKeyB64);
+    await loginImpl(ctx, cb, { vaultOwnerUnproven: !vaulted.ownerProven });
     return ctx.isLoggedIn();
-  } catch {
+  } catch (e) {
+    // EVERY SWALLOWED BRANCH LOGS: `false` sends the member to the PIN gate, and a throw here that
+    // said nothing would look exactly like an empty vault.
+    appendLog(`[PIN] Vault auto-login threw - PIN required: ${String(e)}`);
     return false;
   }
 }
@@ -2031,7 +2114,7 @@ export async function recoverPinImpl(
   cb.log('[PIN_RECOVER] Local messages re-encrypted with the new device key.');
 
   onProgress?.({ percent: 88, stage: 'finalize' });
-  await applyNewDeviceKeyLocally(newDeviceKeyB64, cb.log);
+  await applyNewDeviceKeyLocally(ctx.getUserId(), newDeviceKeyB64, cb.log);
   ctx.setPin(newPin);
   ctx.setDeviceKey(newDeviceKeyB64);
 

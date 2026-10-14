@@ -12,7 +12,12 @@ export type {
   BulkIngestPhase,
   BulkIngestObserver,
 } from './IMlsService';
-export { MLS_LOCAL_STATE_UNDECRYPTABLE, isKeystoreKeyUnavailable } from './IMlsService';
+export {
+  MLS_LOCAL_STATE_UNDECRYPTABLE,
+  isKeystoreKeyUnavailable,
+  VaultOwnerUnprovenError,
+  type VaultRefusal,
+} from './IMlsService';
 export {
   loadAndInitWasm,
   migrateLegacyMlsStateBlob,

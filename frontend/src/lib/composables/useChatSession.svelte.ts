@@ -427,7 +427,10 @@ export function useChatSession() {
     /** Returns the current MLS service instance, creating it lazily if needed. */
     ensureMls,
     /** Runs the full login flow (PIN verify, MLS init, DB open, WS connect). */
-    login: (cb: import('./session/sessionTypes').ChatSessionCallbacks) => loginImpl(ctx, cb),
+    login: (
+      cb: import('./session/sessionTypes').ChatSessionCallbacks,
+      opts?: { vaultOwnerUnproven?: boolean }
+    ) => loginImpl(ctx, cb, opts),
     /**
      * Starts the PIN salt round trip while the keypad is up, so the submit does not wait for it.
      * Only for a returning user: see {@link prefetchPinSaltImpl}.
