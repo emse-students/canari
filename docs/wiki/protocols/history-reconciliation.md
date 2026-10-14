@@ -900,7 +900,8 @@ sender's own. Every member's device decrypts both, the author's other devices in
    covers (`queued.at >= at`) is not queued, so a mark never moves backwards on the wire. Otherwise the
    new entry is WRITTEN FIRST, and only then are the older unsent ones withdrawn, through the same
    `withdraw` path as a cancelled message: the durable row, this flush's snapshot, the other tabs and
-   the native mirror. Only `read_watermark` entries of the same conversation are touched. Reactions,
+   the native mirror. A row already on the wire is withdrawn too (deleted, not retried), and the
+   newer row follows it. Only `read_watermark` entries of the same conversation are touched. Reactions,
    edits, deletes and pins are not latest-wins per conversation and never enter this path.
 3. **Leaving the conversation, or the app leaving the screen, DELIVERS the pending watermark**
    (`createReadMarkDebounce`, `readMarkDebounce.ts`). It used to drop it. Both are events, so the
@@ -913,8 +914,18 @@ sender's own. Every member's device decrypts both, the author's other devices in
 | The LAST watermark is eventually sent | It is either pending in the debounce (delivered on expiry, leave or off-screen) or queued in the outbox, which delivers it durably. Supersede never withdraws the newest entry |
 | A crash loses at most superseded watermarks | Write-before-withdraw. A crash between the two leaves BOTH rows, which send in order (older first), and the receiver's `max` makes that harmless |
 | A watermark never moves backwards | Covered-means-not-queued, at enqueue. The receiver merges by `max` anyway |
-| An entry already on the wire is not counted as withdrawn | `withdraw` answers `false` for `inFlight`; the old frame goes, and the new one follows it |
+| A superseded row being sent is not resent | `withdraw` DELETES the row of an entry on the wire and marks it cancelled, so it is not retried if that send fails. The newer row covers it. It answers `withdrawn: false` only so the caller knows the peers may have the frame (for a cancelled MESSAGE that is what sends `delete_message`) |
 | A failed queue read never costs a frame | `readQueue` failing reads as "no siblings", so the new entry is queued normally. More traffic, never a loss |
+
+**Fixed in review (#1887).** `inFlight` was ONE id while up to three lanes send at once, so the id
+of the last lane to start overwrote the others. A message deleted while on the wire in another lane
+was answered "never sent", and no `delete_message` went out. That is a defect of the
+`cancelPending` body, older than this change. `inFlight` is now a set. A send that ENDS during the
+withdrawal clears the cancelled mark, which `withdraw` reads as the same answer. `cancelled` is
+pruned once no lane runs: one id used to stay per withdrawal for the session, copied into every tab,
+so a follower now ignores `outbox_entry_cancelled`. A latest-wins enqueue reads the queue ONCE, for
+the supersede, every withdrawal and the mirror, where it had read it 2 + 2n times. The supersede
+line says "before THIS tab sent it": a follower cannot see a leader's wire.
 
 **Unread counters and #1820 (mark a community read).** The counter is
 `countUnreadForUser(messages, myWatermark)`, which never counts an own message, so a mark that

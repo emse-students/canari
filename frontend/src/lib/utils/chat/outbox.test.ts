@@ -2946,8 +2946,12 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
     const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
     const mlsService = makeMls();
     let oldStillQueuedAtWrite: boolean | null = null;
+    let deletesBeforeWrite: number | null = null;
     const save = storage.saveOutboxEntry.getMockImplementation();
     storage.saveOutboxEntry.mockImplementation(async (e: OutboxEntry) => {
+      // The ORDER is the claim: no delete may have been ISSUED by the time the new row is written.
+      // The map alone cannot tell, because the crash below makes that delete fail either way.
+      deletesBeforeWrite = storage.deleteOutboxEntry.mock.calls.length;
       oldStillQueuedAtWrite = storage._map.has('old');
       await save(e);
     });
@@ -2957,6 +2961,7 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
     const outbox = registerOutbox(makeDeps({ mlsService, storage }));
 
     await read(200);
+    expect(deletesBeforeWrite).toBe(0);
     expect(oldStillQueuedAtWrite).toBe(true);
     expect(queuedAts(storage).sort()).toEqual([100, 200]);
 
@@ -3007,5 +3012,81 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
     await outboxIdle();
     expect(sentAts(mlsService)).toEqual([100, 200]);
     expect(storage._map.size).toBe(0);
+  });
+
+  it('reads the queue ONCE per enqueue, however many rows it supersedes, and logs per tab', async () => {
+    // Two leftovers of a crash between write and withdraw: both are superseded by one read.
+    const storage = makeStorage([watermarkEntry('a', 'g1', 100), watermarkEntry('b', 'g1', 150)]);
+    const log = vi.fn();
+    connectivity.notifyServerUnreachable();
+    registerOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+    await outboxIdle();
+    storage.getOutboxQueue.mockClear();
+
+    await read(200);
+    expect(storage.getOutboxQueue).toHaveBeenCalledTimes(1);
+    expect(queuedAts(storage)).toEqual([200]);
+    // A follower cannot see a leader's wire, so the line says what THIS tab knows.
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('before this tab sent it'));
+  });
+
+  it('forgets a superseded id once its row is gone and no lane holds it', async () => {
+    const storage = makeStorage();
+    const log = vi.fn();
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+    await read(100);
+    await read(200);
+
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('forgot 1 withdrawn id(s)'));
+  });
+});
+
+describe('outbox - every lane on the wire is known to a cancellation (review of #1887)', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(() => () => {});
+  });
+
+  it('answers "already sent" for a message on the wire in ANY lane, not only the last to start', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g2', 100)]);
+    const mlsService = makeMls({ send: () => onTheWire });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(2);
+
+    // Both frames are leaving. Answering `true` for either would skip its `delete_message` event
+    // and the peers would keep a message the user deleted - which one lane's id overwriting the
+    // other's did.
+    expect(await outbox.cancelPending('m1')).toBe(false);
+    expect(await outbox.cancelPending('m2')).toBe(false);
+
+    release();
+    await outboxIdle();
+  });
+
+  it('a follower tab keeps no cancellation it will never consume', async () => {
+    let onTabEvent!: (e: TabOutboxEvent) => void;
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(((h: (e: TabOutboxEvent) => void) => {
+      onTabEvent = h;
+      return () => {};
+    }) as any);
+    isTabLeaderMock.mockReturnValue(false);
+    const log = vi.fn();
+    createOutbox(makeDeps({ mlsService: makeMls(), storage: makeStorage(), log }));
+
+    onTabEvent({ type: 'outbox_entry_cancelled', messageId: 'm1' });
+
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('cancelled by another tab'));
   });
 });
