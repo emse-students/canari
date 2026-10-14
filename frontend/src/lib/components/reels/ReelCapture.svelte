@@ -25,6 +25,7 @@
   import ReelReview from './ReelReview.svelte';
   import ReelPublishSheet from './ReelPublishSheet.svelte';
   import { CameraSession } from '$lib/reels/cameraSession.svelte';
+  import { openPhotoCamera } from '$lib/reels/cameraAccess';
   import {
     captureFileFrom,
     captureReducer,
@@ -71,9 +72,10 @@
   }
 
   let {
-    session = new CameraSession(),
-    publishDeps,
     destination = 'feed',
+    // A photo-only camera (a chat) never asks for the microphone (D-camera, 2026-10-11).
+    session = new CameraSession(destinationRules(destination).audio ? undefined : openPhotoCamera),
+    publishDeps,
     oncapture,
     onclose,
   }: Props = $props();
@@ -468,7 +470,7 @@
         ondiscard={() => void discardFromReview()}
         onedit={() => (editorOpen = true)}
         soundRemoval={rules.soundRemoval}
-        nextLabel={destination === 'chat' ? m.reels_review_send() : m.reels_review_add()}
+        nextLabel={m.reels_review_add()}
         onnext={() => handBack(clip.blob)}
       />
     {:else if publishOpen && limits}

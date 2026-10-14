@@ -376,6 +376,26 @@ describe('ReelCapture', () => {
   });
 });
 
+describe('the default camera opener follows the destination (no microphone for a chat)', () => {
+  it.each([
+    ['chat', false],
+    ['post', true],
+    ['feed', true],
+  ] as const)('%s asks for audio: %s', async (destination, audio) => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi.fn().mockResolvedValue(stream());
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    // No injected session: the component builds its own, which is what ships.
+    mounted.push(mount(ReelCapture, { target, props: { destination, oncapture: vi.fn() } }));
+    await settle();
+
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(getUserMedia.mock.calls[0][0].audio === false).toBe(!audio);
+  });
+});
+
 describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
   it('a chat photo is handed back as an ordinary image FILE and the camera closes', async () => {
     const oncapture = vi.fn();
@@ -384,7 +404,7 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
 
     await tap();
     const next = target.querySelector<HTMLButtonElement>('[data-reel-next]')!;
-    expect(next.textContent?.trim()).toBe(m.reels_review_send());
+    expect(next.textContent?.trim()).toBe(m.reels_review_add());
     next.click();
     await settle();
 

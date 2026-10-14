@@ -1386,7 +1386,7 @@ Built without hardware; the chain compiles and the vitest rows pass, which prove
 camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 
 - **Chat, "+" then "Ouvrir la camera"**: the overlay covers the conversation, a tap takes a photo, a
-  HOLD does NOT film, "Envoyer" posts an ordinary image bubble, and the conversation (draft, scroll)
+  HOLD does NOT film, no microphone prompt appears (refuse the microphone: the photo still works), "Ajouter" STAGES the photo in the composer and the member then presses send (an ordinary image bubble), and the conversation (draft, scroll)
   is exactly where it was. Back (Android) and the edge swipe (iOS) end the review, then close the camera.
 - **New post, "Ouvrir la camera"**: a tap gives a photo, a hold a video; "Ajouter" attaches it to the
   composer, the published post is a post (post retention), not a reel. No sound button in the review.

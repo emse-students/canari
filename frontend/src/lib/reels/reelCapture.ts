@@ -194,6 +194,8 @@ export interface DestinationRules {
   handsBackFile: boolean;
   /** The gallery shortcut (reel clips only) is drawn. */
   gallery: boolean;
+  /** The camera opens WITH the microphone; a photo-only destination never asks for it. */
+  audio: boolean;
   /** The review offers to remove the sound (only the reel publish applies it). */
   soundRemoval: boolean;
 }
@@ -202,6 +204,7 @@ export interface DestinationRules {
 export function destinationRules(destination: CaptureDestination): DestinationRules {
   return {
     photoOnly: destination === 'chat',
+    audio: destination !== 'chat',
     handsBackFile: destination !== 'feed',
     gallery: destination === 'feed',
     soundRemoval: destination === 'feed',

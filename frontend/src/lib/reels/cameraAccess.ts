@@ -78,10 +78,13 @@ export function classifyCameraError(err: unknown): CameraFault {
  * Audio is asked in the same request because a reel has sound and the recorder needs both tracks
  * from the start; on iOS that is two system questions, microphone first (measured).
  *
+ * `withAudio: false` is the PHOTO-ONLY camera (a chat, D-camera 2026-10-11): it never asks for the
+ * microphone, so a refused or absent one cannot block a photo. See {@link openPhotoCamera}.
+ *
  * @throws {CameraAccessError} for every refusal, with its {@link CameraFault}.
  */
-export async function openReelCamera(facing: CameraFacing): Promise<MediaStream> {
-  console.debug(`[camera] opening ${facing}`);
+export async function openReelCamera(facing: CameraFacing, withAudio = true): Promise<MediaStream> {
+  console.debug(`[camera] opening ${facing}${withAudio ? '' : ' (no microphone)'}`);
   const devices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
   if (!devices?.getUserMedia) {
     // A fact before a request: an insecure origin or an engine with no capture at all.
@@ -108,7 +111,7 @@ export async function openReelCamera(facing: CameraFacing): Promise<MediaStream>
         height: { ideal: wanted.height },
         frameRate: { ideal: wanted.frameRate },
       },
-      audio: REEL_AUDIO_CONSTRAINTS,
+      audio: withAudio ? REEL_AUDIO_CONSTRAINTS : false,
     });
     const video = stream.getVideoTracks()[0];
     const reported = video?.getSettings?.().facingMode;
@@ -124,6 +127,10 @@ export async function openReelCamera(facing: CameraFacing): Promise<MediaStream>
     throw new CameraAccessError(fault, `camera: ${fault}`, { cause: err });
   }
 }
+
+/** The opener of a PHOTO-ONLY camera: the lens alone, no microphone request. */
+export const openPhotoCamera: (facing: CameraFacing) => Promise<MediaStream> = (facing) =>
+  openReelCamera(facing, false);
 
 /** Hands the camera and the microphone back. Safe on a stream already stopped. */
 export function releaseCamera(stream: MediaStream | null): void {

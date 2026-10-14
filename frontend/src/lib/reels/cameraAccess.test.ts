@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CameraAccessError,
   classifyCameraError,
+  openPhotoCamera,
   openReelCamera,
   releaseCamera,
   torchSupported,
@@ -41,6 +42,19 @@ describe('classifyCameraError', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(classifyCameraError(new Error('odd'))).toBe('unavailable');
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe('openPhotoCamera (a chat photo never asks for the microphone)', () => {
+  it('requests the lens with audio: false', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi.fn().mockResolvedValue({ getVideoTracks: () => [{ label: 'front' }] });
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+
+    await openPhotoCamera('user');
+
+    expect(getUserMedia.mock.calls[0][0].audio).toBe(false);
+    expect(getUserMedia.mock.calls[0][0].video.facingMode).toEqual({ exact: 'user' });
   });
 });
 
