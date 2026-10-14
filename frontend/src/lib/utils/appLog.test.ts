@@ -12,6 +12,10 @@ import {
 } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// The read pass yields by line count; counted here, resolved at once so no test waits on a frame.
+const yieldSpy = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+vi.mock('./scheduling/yieldToMainThread', () => ({ yieldToMainThread: yieldSpy }));
+
 type AppLog = typeof import('./appLog');
 
 let appLog: AppLog;
@@ -161,7 +165,7 @@ describe('lines an OLDER build stored are redacted on the way out', () => {
     await storeOldChunk(OLD);
     const { text, redactedValues } = await appLog.readAppLog();
     expect(info).toHaveBeenCalledWith(
-      '[APPLOG] 5 values redacted at read, in lines an older build stored'
+      '[APPLOG] 5 values redacted at read, in 3 lines an older build stored'
     );
     expect(text).not.toContain('bisous');
     expect(text).not.toContain('jolan');
@@ -186,6 +190,30 @@ describe('lines an OLDER build stored are redacted on the way out', () => {
     const { text, redactedValues } = await appLog.readAppLog();
     expect(text).toBe(record.text);
     expect(redactedValues).toBe(2);
+  });
+
+  it('never claims an older build for lines THIS build stored, capped ones included', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    appLog.captureConsoleLine('log', [`[DUMP] ${'name: Jean Dupont, '.repeat(60)}`]);
+    appLog.captureConsoleLine('log', ['[SEND] handleSendChat: contact="jolan" text="ok" files=0']);
+    await appLog.flushAppLog();
+    const [record] = await records();
+    const { text } = await appLog.readAppLog();
+    expect(text).toBe(record.text);
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it('yields to the main thread every READ_BATCH_LINES lines, by count', async () => {
+    const count = appLog.READ_BATCH_LINES * 3 + 1;
+    await storeOldChunk(
+      Array.from({ length: count }, (_, i) => `2026-10-13 22:41:07.512 L [DRAFT] ${i} text=hello`)
+    );
+    yieldSpy.mockClear();
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { text, lines } = await appLog.readAppLog();
+    expect(yieldSpy).toHaveBeenCalledTimes(3);
+    expect(lines).toBe(count);
+    expect(text).not.toContain('hello');
   });
 });
 

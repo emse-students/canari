@@ -431,16 +431,8 @@ export interface RedactedLine {
   redactions: number;
 }
 
-/**
- * Returns `raw` as it may be written to the exportable log. Every value removed is replaced by a
- * marker and counted, so the export can say how much it withheld.
- *
- * IDEMPOTENT: a line it already returned comes back unchanged, with zero redactions. The log is
- * redacted when a line is WRITTEN and again when it is READ for export ({@link ../appLog}), so a
- * line an older build stored under weaker rules leaves the device under today's - and a line this
- * build stored costs that second pass nothing.
- */
-export function redactLogLine(raw: string): RedactedLine {
+/** Every stage of {@link redactLogLine} but the final cap. */
+function redactUncapped(raw: string): RedactedLine {
   let redactions = 0;
   const count =
     (marker: string | ((...m: string[]) => string)) =>
@@ -540,11 +532,60 @@ export function redactLogLine(raw: string): RedactedLine {
     return '[text]';
   });
 
-  // A line this cap already cut keeps its own suffix, or a second pass would re-cut it.
-  const alreadyCut =
-    TRUNCATED_RE.test(line) && line.replace(TRUNCATED_RE, '').length <= MAX_LOG_LINE_CHARS;
-  if (line.length > MAX_LOG_LINE_CHARS && !alreadyCut) {
-    line = `${line.slice(0, MAX_LOG_LINE_CHARS)}… (${line.length} chars)`;
-  }
   return { line, redactions };
+}
+
+/**
+ * The longest prefix of `line`, at most {@link MAX_LOG_LINE_CHARS}, that ends at a space OUTSIDE
+ * any quote or bracket - so it ends between whole tokens. A cut inside a marker or a value
+ * (`name: [11 ch`) left a fragment the next pass read as a new value and re-marked
+ * (`[DUMP] name: Jean Dupont, ` x60, review of #1861): a cut between tokens leaves nothing new to
+ * find. One forward scan, no backtracking. Empty when no such space exists.
+ */
+function capPrefix(line: string): string {
+  let cut = 0;
+  let inQuote = false;
+  let depth = 0;
+  for (let i = 0; i <= MAX_LOG_LINE_CHARS && i < line.length; i++) {
+    const c = line[i];
+    if (c === '\\' && inQuote) {
+      i++;
+    } else if (c === '"') {
+      inQuote = !inQuote;
+    } else if (!inQuote && (c === '[' || c === '{' || c === '(')) {
+      depth++;
+    } else if (!inQuote && (c === ']' || c === '}' || c === ')')) {
+      depth = Math.max(0, depth - 1);
+    } else if (c === ' ' && !inQuote && depth === 0) {
+      cut = i;
+    }
+  }
+  return line.slice(0, cut).trimEnd();
+}
+
+/** Caps a redacted line at a token boundary, saying how long it was. */
+function capLine(line: string): string {
+  if (line.length <= MAX_LOG_LINE_CHARS) return line;
+  return `${capPrefix(line)}… (${line.length} chars)`;
+}
+
+/**
+ * Returns `raw` as it may be written to the exportable log. Every value removed is replaced by a
+ * marker and counted, so the export can say how much it withheld.
+ *
+ * IDEMPOTENT: a line it already returned comes back unchanged, with zero redactions. The log is
+ * redacted when a line is WRITTEN and again when it is READ for export ({@link ../appLog}), so a
+ * line an older build stored under weaker rules leaves the device under today's - and a line this
+ * build stored costs that second pass nothing. A line the cap already cut is redacted WITHOUT its
+ * `… (N chars)` suffix, which is put back as it was: the suffix is the cap's, never a value.
+ */
+export function redactLogLine(raw: string): RedactedLine {
+  const capped = TRUNCATED_RE.exec(raw);
+  if (capped) {
+    const { line, redactions } = redactUncapped(raw.slice(0, capped.index));
+    const kept = line.length <= MAX_LOG_LINE_CHARS ? `${line}${capped[0]}` : capLine(line);
+    return { line: kept, redactions };
+  }
+  const { line, redactions } = redactUncapped(raw);
+  return { line: capLine(line), redactions };
 }

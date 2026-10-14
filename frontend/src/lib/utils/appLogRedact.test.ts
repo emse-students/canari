@@ -265,6 +265,23 @@ describe('redactLogLine - a second pass changes nothing (it runs at write AND at
     });
   }
 
+  // Review of #1861: the cap cut inside a marker (`name: [11 ch… (1140 chars)`), and the second
+  // pass read the fragment as a new value - so EVERY export re-counted this build's own lines.
+  const capped = [
+    `[DUMP] ${'name: Jean Dupont, '.repeat(60)}`,
+    `[DUMP] ${'text="hello there" '.repeat(40)}`,
+    `[DUMP] ${'"abc def" '.repeat(80)}`,
+    `[DUMP] ${'{"body":"hi"} /api/x?y=1 '.repeat(30)}`,
+  ];
+  for (const raw of capped) {
+    it(`a capped line ends between whole tokens and stays put: ${raw.slice(0, 40)}`, () => {
+      const once = redactLogLine(raw).line;
+      expect(once).toMatch(/\S… \(\d+ chars\)$/);
+      expect(once.replace(/… \(\d+ chars\)$/, '').length).toBeLessThanOrEqual(MAX_LOG_LINE_CHARS);
+      expectIdempotent(raw);
+    });
+  }
+
   it('redacts an OLD build`s line by today`s rules, and its own output no further', () => {
     const old = '[SEND] handleSendChat: contact="jolan" text="bisous" files=0';
     const today = '[SEND] handleSendChat: contact="[5 chars]" text="[6 chars]" files=0';

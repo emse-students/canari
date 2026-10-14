@@ -474,7 +474,10 @@ had stored before #1839. So `readAppLog` - the ONLY reader of `CanariDBLog`; the
 the stored log - passes every line through the SAME `redactLogLine` again on the way out, the
 `YYYY-MM-DD HH:MM:SS.mmm L ` stamp and level left as they are. One function, two call sites; no
 second implementation. What it redacted at read is added to the header's count and said once
-(`[APPLOG] N values redacted at read, in lines an older build stored`).
+(`[APPLOG] N values redacted at read, in M lines an older build stored`) - which, the pass being
+idempotent, only a line an older build stored can trigger. **The pass yields** to the main thread
+(`yieldToMainThread`) every 250 lines, by COUNT, never by a clock: a full 2 MiB ring is ~5000
+lines, ~125 ms on desktop and 1-3 s estimated on a phone in one synchronous pass (review of #1861).
 
 **That requires `redactLogLine` to be IDEMPOTENT**: a line it returned comes back identical with
 zero redactions, so a line this build stored costs the read nothing and is never re-marked
@@ -483,7 +486,10 @@ value is already `[redacted]` / `[N chars]` / `"[N chars]"` is kept uncounted - 
 only when that marker is its WHOLE value, with no word after it, since a member can type
 `[3 chars] my message` and the first pass must not keep it; a replacement that
 equals its match (`?[query]`, an already closed `"[cut]`) is not counted; the 400-character cap
-does not cut a line that already carries its own `… (N chars)` suffix; and a NON-sensitive field
+cuts at a space OUTSIDE any quote or bracket, so it ends between whole tokens, and a line already
+carrying its `… (N chars)` suffix is redacted without it and gets it back unchanged - a cut inside
+a marker (`name: [11 ch… (1140 chars)`) used to be read by the next pass as a new value, so EVERY
+export re-counted this build's own capped lines and logged a false `[APPLOG]` claim; and a NON-sensitive field
 whose bare value starts another field (`handleSendChat: contact="[5 chars]"`) is resumed at that
 field instead of giving `handleSendChat` the value `contact="[5` - a SENSITIVE name still swallows
 such a value whole, or `text=a="ok" my message` would hand the message to the harmless inner
@@ -493,7 +499,8 @@ member typed close the quote, and the words after it stayed as plain log words -
 read, since a stored line of that shape no longer says where the value ended. Pinned by
 `appLogRedact.test.ts` (every hostile case and the content cases, passed twice) and
 `appLog.test.ts` (an old-format record written straight into IndexedDB comes out redacted;
-removing the read-side call fails it).
+removing the read-side call fails it; a line this build stored, capped or not, never fires the
+`[APPLOG]` line; a 751-line ring yields exactly three times). Each was mutation-checked.
 
 **The stored records are NOT rewritten in place.** A rewrite would be a `put` over records the
 writer's amplification test pins at zero, and it would buy nothing: the read-side pass already
