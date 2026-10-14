@@ -35,6 +35,16 @@ describe('Android window layout (anti-regression)', () => {
     expect(store).toContain('canariTheme?.set?.(theme)');
   });
 
+  it('declares the right-edge gesture exclusion through the canariGestures bridge', () => {
+    // Both ends pinned: a regenerated activity dropping the interface would silently bring back the
+    // reply swipe that closes the conversation (Mi 9T, 2026-10-14), and no other gate sees it.
+    expect(mainActivity).toContain('addJavascriptInterface(GestureBridge(), "canariGestures")');
+    expect(mainActivity).toContain('ViewCompat.setSystemGestureExclusionRects');
+    const page = readFileSync(resolve(here, './edgeGestureExclusion.ts'), 'utf8');
+    expect(page).toContain('setRightBand');
+    expect(page).toContain('clearRightBand');
+  });
+
   it('asks for edge-to-edge rather than inheriting it', () => {
     // The web layer reads system-bar insets through env(safe-area-inset-*) on 46 declarations, and
     // app.html asks for them with viewport-fit=cover. Both are worthless if the window does not go

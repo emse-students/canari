@@ -1385,6 +1385,34 @@ entry becomes the ghost `onPopState` already skips. Tests: `Modal.dismissal.svel
 `historyOverlayStack.test.ts`. The mechanism is proven in jsdom; **the reading owed** is the original
 one on a phone ([device-verification](../device-verification.md#v-the-camera-swipe-on-a-fresh-feed-after-publishing---owed-on-android)).
 
+### The right-edge back gesture is excluded over the message list, and only there (2026-10-14)
+
+An OWN bubble ends 12 CSS px from the right edge, so its last 17.5 px sit in Android's right
+back-gesture inset (`EdgeBackGestureHandler mEdgeWidthRight=74` physical px on the Mi 9T): a reply
+swipe started there was taken by the system, which cancelled the touch (conversation closed, or only
+the keyboard when open) - 11 of 11 ([design-reference](design-reference.md#the-reply-swipe-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-14)).
+User decision 2026-10-14: declare exclusion rects.
+
+- **Scope, by a bridge:** `ChatArea` calls `excludeRightEdgeOver(list)` (`lib/mobile/edgeGestureExclusion.ts`)
+  while the message list is mounted; it reports the list's vertical span in physical px to the
+  `canariGestures` JavaScript interface of `MainActivity` (`setRightBand` / `clearRightBand`, the
+  twin of `canariTheme`), re-reported by a `ResizeObserver`, cleared on unmount. Everywhere else the
+  system right-edge back swipe is untouched.
+- **Native:** `MainActivity.applyRightEdgeExclusion` sets ONE rect on the WebView
+  (`ViewCompat.setSystemGestureExclusionRects`, API 29+, no-op below) on each report and on each
+  WebView layout change, skipping an unchanged result. The arithmetic is `rightEdgeExclusion`
+  (`gesture/EdgeGestureExclusion.kt`, pure, tested by `EdgeGestureExclusionTest` in `android-tests`):
+  width = the REAL `systemGestures` inset (74 px here) + 8 dp margin, not a constant; a 0 inset
+  (3-button navigation) means no rect.
+- **The cost:** Android honours 200 dp of exclusion per edge in total, so a taller list is cut to its
+  BOTTOM 200 dp (where a conversation pinned to the newest messages is read). The system Back swipe
+  from the right edge is unavailable on those 200 dp while a conversation is open; higher up it still
+  closes the conversation, and a reply swipe on an own bubble there is still lost.
+- **Unaffected:** the system Back button / 3-button Back, and the LEFT edge gesture (no rect there);
+  the history stepping of "The hardware Back press had no owner" is unchanged.
+- **Owed:** a reading on the Mi 9T through the next pre-release (own bubble, x >= 406.5 CSS px,
+  keyboard closed and open; then the right-edge back swipe on the list screen must still work).
+
 ### The bar icons follow the page's theme, handed over by the page (2026-10-01)
 
 Light theme, status bar icons WHITE on a white page (only the green battery showed). `enableEdgeToEdge()`

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { usesGlassChrome } from '$lib/mobile/glassChrome';
+  import { excludeRightEdgeOver } from '$lib/mobile/edgeGestureExclusion';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { foldForSearch } from '$lib/utils/textFold';
   import { ShieldCheck, TriangleAlert, LoaderCircle, CloudOff } from '@lucide/svelte';
@@ -1095,6 +1096,12 @@
       if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
       scrollFrame = null;
     };
+  });
+
+  /** The system Back gesture must not take a reply swipe started on an own bubble (see the module). */
+  $effect(() => {
+    if (!chatContainer) return;
+    return excludeRightEdgeOver(chatContainer);
   });
 
   /**

@@ -31,6 +31,8 @@ repositories {
 sourceSets {
     main {
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/push")
+        // The right-edge back-gesture exclusion arithmetic, same rule: no Android import allowed.
+        kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/gesture")
     }
 }
 
