@@ -3398,6 +3398,7 @@
   "asso_calendar_co_owner_refused_line": "Declined: {names}",
   "asso_calendar_co_owner_counter": "{count} / {max}",
   "asso_calendar_co_owner_cap_reached": "An event has at most {max} associations in total. Remove one to add another.",
+  "asso_calendar_co_owner_no_match": "No other club matches \"{query}\".",
   "calendar_event_coorganisers_pending": "{count} pending",
   "asso_calendar_co_owner_loading": "Loading co-hosts...",
   "asso_calendar_co_owner_failed": "Co-hosts could not be loaded: they stay unchanged.",

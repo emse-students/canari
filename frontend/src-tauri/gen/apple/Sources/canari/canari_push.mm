@@ -38,6 +38,34 @@ static const useconds_t kWelcomeRaceRetryDelayUs = 1800000;
 static const CGFloat kCanariInitialsSize = 192;
 static const CGFloat kCanariInitialsLetterRatio = 0.4;
 static NSString *const kOutboxPendingFileName = @"outbox_pending.ndjson";
+
+/// A log-safe summary of a deep link: scheme + host, the first path segment on an http(s) link
+/// only (on a custom scheme the host IS the route and the first segment is already an id), and
+/// whether a query or fragment was present. Never an id, a token or a parameter value. Twin of
+/// `describeDeepLink` in frontend/src/lib/utils/logSanitize.ts.
+static NSString *CanariDescribeDeepLink(NSString *deepLink) {
+  NSURLComponents *c = [NSURLComponents componentsWithString:deepLink];
+  if (c == nil || c.scheme.length == 0) {
+    return @"[unparseable deep link]";
+  }
+  BOOL web = [c.scheme isEqualToString:@"https"] || [c.scheme isEqualToString:@"http"];
+  NSMutableString *out = [NSMutableString stringWithFormat:@"%@://%@", c.scheme, c.host ?: @""];
+  NSMutableArray<NSString *> *segments = [NSMutableArray array];
+  for (NSString *seg in [c.path componentsSeparatedByString:@"/"]) {
+    if (seg.length > 0) [segments addObject:seg];
+  }
+  if (segments.count > 0) {
+    if (web) {
+      [out appendFormat:@"/%@%@", segments[0], segments.count > 1 ? @"/..." : @""];
+    } else {
+      [out appendFormat:@"/[%lu seg]", (unsigned long)segments.count];
+    }
+  }
+  if (c.query.length > 0) [out appendString:@" +query"];
+  if (c.fragment.length > 0) [out appendString:@" +fragment"];
+  return out;
+}
+
 static NSString *const kOutboxSentFileName = @"outbox_sent.ndjson";
 // How many queued messages one drain takes on. The cap is on the ENCRYPT, deliberately: encrypting
 // consumes a ratchet generation whether or not the frame is ever POSTed, so encrypting a backlog
@@ -3574,8 +3602,11 @@ static void CanariInstallApnsTokenHook(void) {
   // THE TAP OPENS WHAT THE PAYLOAD NAMES AND NOTHING ELSE, so an absent link is a payload that lost
   // its field and says so: a post, form or agenda push used to arrive with none (the server sent
   // only postId / formId) and the tap launched the app and stayed put, with nothing in the log.
+  // A deep link carries ids, tokens and query parameters: the log names its SHAPE only (scheme +
+  // host, and whether a query was present), never the path or the values.
   NSLog(@"[CanariPush] notification tap type=%@ deepLink=%@", userInfo[@"type"] ?: @"?",
-        deepLink.length > 0 ? deepLink : @"ABSENT - the payload names no target");
+        deepLink.length > 0 ? CanariDescribeDeepLink(deepLink)
+                            : @"ABSENT - the payload names no target");
   if (deepLink.length > 0) {
     NSURL *url = [NSURL URLWithString:deepLink];
     if (url != nil) {
