@@ -215,6 +215,17 @@ from the states endpoint (a reader without the right gets none: the endpoint ref
 logs it). The picker counts `n / 4` (the owner included), stops offering associations at three picks
 and says why; `coOrganiserCap.ts` mirrors the server's constant.
 
+**Typing opens the picker's list, not only focusing (user, 2026-10-13).** Reported as "two
+associations added, 'BD' typed, no suggestion - not always". An option is picked on a `mousedown`
+whose default is prevented, so the field KEEPS focus through the pick, and a field that keeps focus
+never fires `focus` again. The list opened on `focus` alone and every pick closed it, so after the
+first pick no keystroke brought it back until the user left the field and came back. The test suite
+missed it because its helper re-dispatched a synthetic `focus` before every pick, which no browser
+does. The list now also opens on `input`; it closes when focus leaves the picker (a `focusout` on the
+wrapper, checking `relatedTarget`) instead of a 150 ms `setTimeout` after `blur`; and a search
+matching nothing says "no other association matches" rather than drawing nothing
+(`EventFormModal.coOwners.svelte.test.ts` gives focus once, as a pointer does).
+
 **UP TO FOUR ORGANISERS, AND WHAT A ROW SHOWS OF THEM (user, 2026-10-10).** The cap is four
 associations in total ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
 Nothing in the interface capped at two; what LOOKED like a limit was that a pending proposal is

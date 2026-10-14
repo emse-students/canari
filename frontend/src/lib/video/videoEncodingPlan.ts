@@ -19,7 +19,10 @@ export const VIDEO_TARGET_BITRATE = 2_500_000;
  */
 export const VIDEO_MIN_BITRATE = 400_000;
 
-/** The AAC bitrate, in bits per second. */
+/**
+ * The AAC bitrate an ENCODED audio track is asked for, in bits per second. An AAC-LC source is
+ * copied instead (`chooseAudioRoute`) and costs its own measured bitrate.
+ */
 export const AUDIO_BITRATE = 128_000;
 
 /** Frame rates above this are resampled down to it: a 60 fps gallery clip costs twice for no reader. */
@@ -68,8 +71,11 @@ export interface VideoSourceFacts {
   durationSeconds: number;
   /** Average frames per second, measured from the packets; `0` when unknown. */
   frameRate: number;
-  /** Whether the output carries an audio track (its bitrate comes out of the budget). */
-  hasAudio: boolean;
+  /**
+   * What the output's audio track costs, in bits per second, taken out of the budget: `0` with no
+   * audio, {@link AUDIO_BITRATE} when it is encoded, the source's measured bitrate when it is copied.
+   */
+  audioBitrate: number;
 }
 
 /** Rounds down to an even number, never below 2. */
@@ -94,18 +100,19 @@ export function outputDimensions(
  * The video bitrate that fits `maxBytes` over `durationSeconds`, capped at the C3 target - or
  * `null` when even the floor would not fit.
  *
+ * @param audioBitrate What the output's audio costs in bits per second (`0` with none).
  * @param maxBytes The plaintext ceiling (`MediaService.uploadLimits().maxPlaintextBytes`), or
  *                 `undefined` when the server could not be asked: the target is used and the
  *                 server's own 413 stays the refusal that matters, as for every other upload.
  */
 export function budgetedVideoBitrate(
   durationSeconds: number,
-  hasAudio: boolean,
+  audioBitrate: number,
   maxBytes: number | undefined
 ): number | null {
   if (maxBytes === undefined || durationSeconds <= 0) return VIDEO_TARGET_BITRATE;
   const totalBits = maxBytes * 8 * VIDEO_BUDGET_SHARE;
-  const videoBits = totalBits / durationSeconds - (hasAudio ? AUDIO_BITRATE : 0);
+  const videoBits = totalBits / durationSeconds - audioBitrate;
   if (videoBits < VIDEO_MIN_BITRATE) return null;
   return Math.floor(Math.min(VIDEO_TARGET_BITRATE, videoBits));
 }
@@ -120,7 +127,7 @@ export function planVideoEncoding(
   maxBytes: number | undefined
 ): VideoEncodingPlan | VideoPlanRefusal {
   if (!(facts.displayWidth > 0) || !(facts.displayHeight > 0)) return 'no-dimensions';
-  const videoBitrate = budgetedVideoBitrate(facts.durationSeconds, facts.hasAudio, maxBytes);
+  const videoBitrate = budgetedVideoBitrate(facts.durationSeconds, facts.audioBitrate, maxBytes);
   if (videoBitrate === null) return 'too-long';
   const { width, height } = outputDimensions(facts.displayWidth, facts.displayHeight);
   // Half a frame of slack: a 30 fps clip measures 30.02 from its timestamps and must not be touched.

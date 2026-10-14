@@ -145,6 +145,109 @@ describe('createMlsStatePersister', () => {
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * A checkpoint EXPORTS the state when it starts. A caller that changed the state after that and
+   * asks for durability must wait for the NEXT checkpoint - `externalJoin` awaits this, because a
+   * reload before its join is on disk joins again and forks the group. It used to be handed the
+   * running checkpoint, which resolved without the join (Mi 9T sign-in, 2026-10-13: a checkpoint was
+   * running 93 % of the time, so nearly every join of the storm was declared durable too early).
+   */
+  describe('a flush asked while a checkpoint is running', () => {
+    function controlled() {
+      let version = 1;
+      const written: number[] = [];
+      const releases: Array<() => void> = [];
+      const persistCheckpoint = vi.fn().mockImplementation(() => {
+        const exported = version;
+        return new Promise<void>((resolve) => {
+          releases.push(() => {
+            written.push(exported);
+            resolve();
+          });
+        });
+      });
+      const persister = createMlsStatePersister({ mlsService: { persistCheckpoint } as any });
+      return {
+        persister,
+        persistCheckpoint,
+        written,
+        mutate: () => (version += 1),
+        releaseNext: async () => {
+          releases.shift()?.();
+          await new Promise((r) => setTimeout(r, 0));
+        },
+      };
+    }
+
+    it('resolves only once a checkpoint that exported AFTER the change is written', async () => {
+      const c = controlled();
+      c.persister.scheduleDeferred();
+      void c.persister.flush(); // checkpoint A exports version 1
+      await new Promise((r) => setTimeout(r, 0));
+
+      c.mutate(); // the join lands: version 2
+      c.persister.scheduleDeferred();
+      let durable = false;
+      const join = c.persister.flush().then(() => (durable = true));
+
+      await c.releaseNext(); // A written - it holds version 1, not the join
+      expect(c.written).toEqual([1]);
+      expect(durable).toBe(false);
+
+      await c.releaseNext(); // B written - it holds the join
+      await join;
+      expect(c.written).toEqual([1, 2]);
+      expect(durable).toBe(true);
+    });
+
+    it('still shares ONE next checkpoint between every caller that arrived during the running one', async () => {
+      const c = controlled();
+      c.persister.scheduleDeferred();
+      void c.persister.flush();
+      await new Promise((r) => setTimeout(r, 0));
+
+      const waits = [];
+      for (let i = 0; i < 5; i++) {
+        c.mutate();
+        c.persister.scheduleDeferred();
+        waits.push(c.persister.flush());
+      }
+      await c.releaseNext();
+      await c.releaseNext();
+      await Promise.all(waits);
+
+      expect(c.persistCheckpoint).toHaveBeenCalledTimes(2);
+      expect(c.written).toEqual([1, 6]);
+    });
+
+    it('is covered by the running checkpoint when nothing changed since it exported', async () => {
+      const c = controlled();
+      c.persister.scheduleDeferred();
+      void c.persister.flush();
+      await new Promise((r) => setTimeout(r, 0));
+
+      const wait = c.persister.flush();
+      await c.releaseNext();
+      await wait;
+
+      expect(c.persistCheckpoint).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('a checkpoint that FAILED leaves the state dirty, so the next flush writes it', async () => {
+    const persistCheckpoint = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValue(undefined);
+    const persister = createMlsStatePersister({ mlsService: { persistCheckpoint } as any });
+
+    persister.scheduleDeferred();
+    await expect(persister.flush()).rejects.toThrow('disk full');
+    await persister.flush();
+
+    expect(persistCheckpoint).toHaveBeenCalledTimes(2);
+  });
+
   it('scheduleOutboundMlsPersist is a no-op without a registered persister', () => {
     expect(() => scheduleOutboundMlsPersist()).not.toThrow();
   });

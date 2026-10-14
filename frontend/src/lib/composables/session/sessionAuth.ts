@@ -54,7 +54,7 @@ import {
 } from '$lib/utils/chat/historyReconcile';
 import { resetWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { onPeersCameOnline } from '$lib/stores/presenceStore';
-import { sendHistoryStateKey } from '$lib/utils/chat/groupActions';
+import { sendHistoryProbe } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { canSendInGroup } from '$lib/utils/chat/groupUsability';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -1504,7 +1504,7 @@ export async function loginImpl(
     // before asking anything, which is what lets the usual answer be silence.
     setHistoryProbeSender(async (groupId: string) => {
       const mls = ctx.ensureMls();
-      return sendHistoryStateKey(groupId, digestIdentity(ctx.getUserId(), mls.getDeviceId()), {
+      return sendHistoryProbe(groupId, digestIdentity(ctx.getUserId(), mls.getDeviceId()), {
         storage: ctx.getStorage(),
         deviceKeyB64: ctx.getDeviceKey(),
         mlsService: mls,
