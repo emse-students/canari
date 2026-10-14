@@ -483,6 +483,11 @@
         // list frozen with no sign the press had been taken. The row's highlight is
         // `selectedChannelId`; the thread follows `selectConversation`, below.
         channels.selectedChannelConversationId = channelId;
+        // THE HISTORY REQUEST LEAVES ON THE PRESS, not after the pane is drawn: the pane's mount
+        // used to sit in front of it (323 ms at 1x, 1.1 s at 4x on a Mi 9T, 2026-10-14), and nothing
+        // the request needs is in the pane. It resolves into the conversation map, which the pane
+        // reads when it mounts a frame later.
+        void convs.loadHistoryForConversation(channelId, channelId, convCtx(), { atTap: true });
         afterNextPaint(() => {
           // A second press during the frame wins: the first salon is not mounted under it.
           if (channels.selectedChannelConversationId !== channelId) return;
@@ -494,7 +499,6 @@
             session.userId
           );
           convs.selectConversation(channelId);
-          void convs.loadHistoryForConversation(channelId, channelId, convCtx());
           if (claimChannelReadSignal(channelId, readUpTo)) {
             void channelService.markChannelRead(channelId);
           }
