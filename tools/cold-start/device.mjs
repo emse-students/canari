@@ -56,8 +56,15 @@ export async function logcatDump(serial) {
  */
 export async function forwardDevtools(serial, port = 9222, attempts = 40) {
   for (let i = 0; i < attempts; i++) {
+    // THE APP'S OWN SOCKET, BY PID. Every process with a debuggable WebView opens one, and the Mi 9T
+    // listed four on 2026-10-14 (Canari plus three other apps): taking the first one found attached
+    // to whichever app the kernel happened to list first.
+    const pid = await pidOf(serial);
+    if (!pid) continue;
     const unix = await adb(serial, ['shell', 'cat', '/proc/net/unix']).catch(() => '');
-    const socket = [...new Set(unix.match(/webview_devtools_remote_\d+/g) ?? [])][0];
+    const socket = (unix.match(/webview_devtools_remote_\d+/g) ?? []).find(
+      (name) => name === `webview_devtools_remote_${pid}`
+    );
     if (socket) {
       await adb(serial, ['forward', '--remove', `tcp:${port}`]).catch(() => {});
       await adb(serial, ['forward', `tcp:${port}`, `localabstract:${socket}`]);
@@ -76,9 +83,15 @@ export async function forwardDevtools(serial, port = 9222, attempts = 40) {
  * bracket and want opposite next steps.
  */
 export async function isRunning(serial) {
+  return (await pidOf(serial)) !== null;
+}
+
+/** The app's pid, or null while no process runs (`pidof` exits 1 on no match). */
+export async function pidOf(serial) {
   try {
-    return (await adb(serial, ['shell', 'pidof', PACKAGE])).length > 0;
+    const pid = (await adb(serial, ['shell', 'pidof', PACKAGE])).split(/\s+/)[0];
+    return pid || null;
   } catch {
-    return false;
+    return null;
   }
 }
