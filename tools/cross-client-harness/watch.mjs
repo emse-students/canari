@@ -289,6 +289,9 @@ const BENIGN = [
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.
   /^\[(SYNC|DISCOVERY)\] (WASM kept|MLS state kept for) [0-9a-f]{8}… - .*key-distribution group/,
+  // The second sweep of the same connection pass reusing the first one's `keep` (2026-10-14): the
+  // per-group line above was printed by the sweep that asked, so this one only counts.
+  /^\[SYNC\] \d+ group\(s\) kept on the answer this connection pass already had - not asked again$/,
   // THE REDUCER DECLINING TO RE-PURGE A CONVERSATION THE USER HAS ALREADY SEEN DIE. A row marked
   // `removed` is a fact about what its owner was TOLD, so it survives every later reconciliation
   // until they delete it by hand - the guard at the top of `decideAbsentGroupFate`, which no server
@@ -1120,7 +1123,8 @@ const NOTABLE = [
   // decrypted against a group the client does not hold yet, so this is the mechanism working -
   // `notable` because it can only happen while a join is open, and a check that opened none has a
   // finding here.
-  /^\[QUEUE\] Buffering message for group \S+ \(Welcome in progress\)$/,
+  // One line per window since 2026-10-14 (it was one per frame); the count is on the release line.
+  /^\[QUEUE\] Buffering messages for group \S+ behind its Welcome - the count is reported when the Welcome ends$/,
   // THE THREE WAYS THAT WINDOW CLOSES, and they are the complete set: `Welcome complete` and
   // `Welcome failed` from the handler, `stranded buffer` from the sweep that refuses to leave a
   // bucket nobody will drain. One rule, because all three mean "the buffer gave its frames back";
