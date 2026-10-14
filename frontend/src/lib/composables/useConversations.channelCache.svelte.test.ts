@@ -168,6 +168,44 @@ describe('a salon history request issued at the tap', () => {
   });
 });
 
+describe('one salon, one page in flight', () => {
+  it('a second load joins the one in flight when nothing went stale after its request left', async () => {
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    let release!: (rows: unknown[]) => void;
+    listMessages.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    const ctx = makeCtx();
+
+    const atTap = convs.loadHistoryForConversation(SALON, SALON, ctx, { atTap: true });
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    // The community listing's end asks for the selected salon's history again.
+    const fromListing = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    release([{ id: 'm1' }]);
+    await Promise.all([atTap, fromListing]);
+
+    expect(listMessages).toHaveBeenCalledTimes(1);
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it('a load whose request left BEFORE the stream came back is not joined: the reconnect asks again', async () => {
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    convs.selectConversation(SALON);
+    let release!: (rows: unknown[]) => void;
+    listMessages.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+    const ctx = makeCtx();
+
+    const first = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    await convs.noteLiveStreamTransition(true, ctx);
+    release([{ id: 'old' }]);
+    await first;
+
+    expect(listMessages).toHaveBeenCalledTimes(2);
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['m1']);
+  });
+});
+
 describe('the skeleton raised at the tap belongs to its salon', () => {
   const OTHER = 'channel_7d2f0aa0-0000-4000-8000-000000000002';
 

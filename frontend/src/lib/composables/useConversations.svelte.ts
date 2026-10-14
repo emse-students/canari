@@ -246,8 +246,23 @@ export function useConversations() {
    * the frame can select another salon: the skeleton is shown only on the salon it was raised for.
    */
   let skeletonSalon: string | null = null;
+  /**
+   * How many times a salon copy was declared stale ({@link invalidateChannelHistoryCache}, any
+   * salon). A load in flight is JOINED by a second non-forced load of the same salon only when its
+   * request has not left yet, or left after the last such declaration - then its page already
+   * answers whatever made the copy stale (a stream gap, a seed that arrived), and a second request
+   * would only download and decode the same 200 rows again and supersede the first.
+   *
+   * Measured on the Mi 9T (2026-10-14): a salon tapped as soon as its row is drawn, while the live
+   * stream comes back and the community listing ends, fetched its 116 kB page two or three times;
+   * the extra copies cost ~3 s before the first message at 1x.
+   */
+  let salonStaleDeclarations = 0;
+  /** The load of each salon still in flight: its request's declaration count (`null`: not sent). */
+  const salonLoadsInFlight = new Map<string, { sentAt: number | null; done: Promise<void> }>();
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
+    salonStaleDeclarations++;
     if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
     else channelHistoryLoadedAt.clear();
   }
@@ -591,6 +606,27 @@ export function useConversations() {
     const cached = channelHistoryLoadedAt.get(channelConversationId);
     if (!force && cached && cached.userId === ctx.userId) return;
 
+    // A LOAD OF THIS SALON STILL IN FLIGHT ANSWERS THIS ONE when nothing was declared stale after its
+    // request left (see `salonStaleDeclarations`): joined, not repeated.
+    const running = salonLoadsInFlight.get(channelConversationId);
+    if (
+      !force &&
+      running &&
+      (running.sentAt === null || running.sentAt === salonStaleDeclarations)
+    ) {
+      ctx.log(
+        `[CHANNEL] history load of ${channelConversationId.slice(0, 16)} joins the one in flight (${running.sentAt === null ? 'not sent yet' : 'sent after the last stale mark'})`
+      );
+      await running.done;
+      return;
+    }
+    let finishLoad: () => void = () => {};
+    const inFlight = {
+      sentAt: null as number | null,
+      done: new Promise<void>((resolve) => (finishLoad = resolve)),
+    };
+    salonLoadsInFlight.set(channelConversationId, inFlight);
+
     // ONLY THE LATEST LOAD STARTED FOR THIS SALON MAY MERGE (found reviewing #1761). The page is
     // authoritative for its window, so an older load finishing last would drop a row a newer one
     // had just decoded - see `loadGenerations.ts` for the exact sequence. Not a refetch afterwards:
@@ -622,6 +658,7 @@ export function useConversations() {
       // events only carry what moved while this device was connected, so a load is the one moment
       // the whole picture can be taken. Their failure costs the "Lu par" row and nothing else - the
       // page still loads, and the next load asks again.
+      inFlight.sentAt = salonStaleDeclarations;
       const [rows, rawMarks] = await Promise.all([
         channelService.listMessages(rawId, 200),
         channelService.listReadMarks(rawId).catch((e) => {
@@ -748,6 +785,10 @@ export function useConversations() {
     } catch (e) {
       ctx.log(`[CHANNEL] History load failed: ${String(e)}`);
     } finally {
+      if (salonLoadsInFlight.get(channelConversationId) === inFlight) {
+        salonLoadsInFlight.delete(channelConversationId);
+      }
+      finishLoad();
       // The load that raised the skeleton last lowers it: a superseded load leaves it to a newer one
       // that raised it again, never to one that did not (see `salonSkeletonOwner`).
       if (salonSkeletonOwner === generation) {
