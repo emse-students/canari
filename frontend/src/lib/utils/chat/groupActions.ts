@@ -896,6 +896,45 @@ export async function sendHistoryStateKey(
 }
 
 /**
+ * The first leg of a reconciliation: the state key - or, when this device holds NOTHING for the
+ * group, its digest straight away.
+ *
+ * WHY THE DIGEST FIRST FOR AN EMPTY STORE. Its state key can only be answered two ways: an equally
+ * empty peer stays silent, and every other peer answers "describe yourself"
+ * (`history_digest_request`), to which this device sends the digest it could have sent at once.
+ * The digest of an empty store is as small as a key, and a responder answers a digest probe
+ * directly (`handleHistoryRequest`, its last branch, since `v0.14.0`), so the exchange is ONE round
+ * trip instead of two. That is the common shape after a sign-in: the device rejoins every group with
+ * nothing stored, and each extra leg arrived as its own drain and its own full checkpoint (Mi 9T,
+ * 2026-10-13: ~4 checkpoints per rejoined group, 247 in 432 s).
+ *
+ * A store that holds anything keeps the state key: there, agreement is likely and costs one frame
+ * where a digest costs a walk on both sides. A count that cannot be read is not "empty", so it also
+ * keeps the state key, which reads the store itself and says so when it cannot.
+ *
+ * @returns what the leg it chose returned - `false` when nothing went out.
+ */
+export async function sendHistoryProbe(
+  groupId: string,
+  from: string,
+  deps: HistoryStoreDeps
+): Promise<boolean> {
+  const { storage, log } = deps;
+  let held: number | null = null;
+  if (storage) {
+    try {
+      held = await storage.countMessages(groupId);
+    } catch (e) {
+      log(
+        `[HISTORY_STATE] Could not count ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)} - describing it by its state key`
+      );
+    }
+  }
+  if (held === 0) return sendHistoryDigest(groupId, from, deps);
+  return sendHistoryStateKey(groupId, from, deps);
+}
+
+/**
  * The responder's answer to a state key that did NOT match: *"we differ - describe yourself
  * properly."*
  *
