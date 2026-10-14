@@ -349,7 +349,7 @@ async function oneRun(index, warmCx) {
       if (e.method === 'Network.loadingFailed') r.failed = p.errorText;
     }
   }
-  row.requests = [...reqs.values()].map(({ mono, ...r }) => r);
+  row.requests = [...reqs.values()].map(({ mono: _mono, ...r }) => r);
   // [path, start, handed back, bytes, method, headers in] of every first-party call through window.fetch.
   row.api = page.api;
   row.longTasks = page.lt;
