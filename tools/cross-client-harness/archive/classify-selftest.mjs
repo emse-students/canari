@@ -273,7 +273,8 @@ const CASES = [
   // id before the classifier ever sees it, so that is the spelling the rules are matched against.
   [
     'log',
-    '[01:40:12] [QUEUE] Buffering message for group b6a425af… (Welcome in progress)',
+    // Respelt 2026-10-14: one line per Welcome window instead of one per frame.
+    '[01:40:12] [QUEUE] Buffering messages for group b6a425af… behind its Welcome - the count is reported when the Welcome ends',
     'notable',
   ],
   // The three ways the window closes, pinned SEPARATELY though one rule matches all three: they
