@@ -920,12 +920,25 @@ sender's own. Every member's device decrypts both, the author's other devices in
 **Fixed in review (#1887).** `inFlight` was ONE id while up to three lanes send at once, so the id
 of the last lane to start overwrote the others. A message deleted while on the wire in another lane
 was answered "never sent", and no `delete_message` went out. That is a defect of the
-`cancelPending` body, older than this change. `inFlight` is now a set. A send that ENDS during the
-withdrawal clears the cancelled mark, which `withdraw` reads as the same answer. `cancelled` is
-pruned once no lane runs: one id used to stay per withdrawal for the session, copied into every tab,
-so a follower now ignores `outbox_entry_cancelled`. A latest-wins enqueue reads the queue ONCE, for
-the supersede, every withdrawal and the mirror, where it had read it 2 + 2n times. The supersede
-line says "before THIS tab sent it": a follower cannot see a leader's wire.
+`cancelPending` body, older than this change. `inFlight` is now a set, and it holds a sent id until
+its ROW is deleted: a withdrawal reading a sent row in that window was told "never sent". Three more
+races in the same body, all older than this change and fixed with it:
+
+- **The top-of-`flushOne` check is many awaits before the send** (health gate, `isGroupActive`, an
+  upload). A withdrawal in between was answered "never sent", and the frame went out. The mark is
+  re-checked with NO await before `inFlight` is claimed, so a send cannot start after a mark is set.
+- **`flushOne` consumed the mark while the withdrawal's delete was pending.** A second pass of the
+  lane re-read the still-present row, found no mark and sent it. The mark is now kept, and
+  `pruneCancelled` drops it only once the row is gone AND no lane runs, since a running lane may hold
+  the row in its snapshot. The `lanes.size` guard is pinned by a test that fails without it.
+- **Marks leaked**: one per withdrawal, copied into every tab. A follower ignores
+  `outbox_entry_cancelled` and drops its own marks, because it runs no lane and never prunes.
+
+A latest-wins enqueue reads the queue ONCE, for the supersede, every withdrawal and the mirror. It
+used to read it 2 + 2n times. **The one limit that leaves, accepted:** a row the leader sent and
+deleted between that read and the withdrawal is reported `withdrawn: true`. Only a log line reads
+that answer, and `max` makes the frame harmless. The supersede line says "before THIS tab sent it",
+because a follower cannot see a leader's wire.
 
 **Unread counters and #1820 (mark a community read).** The counter is
 `countUnreadForUser(messages, myWatermark)`, which never counts an own message, so a mark that

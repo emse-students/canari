@@ -3075,6 +3075,122 @@ describe('outbox - every lane on the wire is known to a cancellation (review of 
     await outboxIdle();
   });
 
+  it('a withdrawal landing while the flush waits on the membership read keeps the frame off the wire', async () => {
+    let answer!: (v: boolean) => void;
+    const membership = new Promise<boolean>((r) => {
+      answer = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({ active: () => membership });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.isGroupActive).toHaveBeenCalled();
+    // Past the check at the top of flushOne, not yet on the wire.
+    expect(await outbox.cancelPending('m1')).toBe(true);
+
+    answer(true);
+    await outboxIdle();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('keeps the mark while the withdrawal delete is pending, so a second lane pass cannot send it', async () => {
+    let finishDelete!: () => void;
+    const deleteHeld = new Promise<void>((r) => {
+      finishDelete = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 200)]);
+    const realDelete = storage.deleteOutboxEntry.getMockImplementation();
+    storage.deleteOutboxEntry.mockImplementation(async (id: string) => {
+      if (id === 'm2') await deleteHeld;
+      await realDelete(id);
+    });
+    let outbox: ReturnType<typeof createOutbox> | null = null;
+    const mlsService = makeMls({
+      // The user deletes m2 while m1 is being sent; the delete of its row is slow.
+      send: (async (_g: string, _p: Uint8Array, id: string) => {
+        if (id === 'm1') {
+          void outbox!.cancelPending('m2');
+          await outboxIdle();
+        }
+      }) as any,
+    });
+    outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    // m1 sent -> m2 dropped from this pass -> a second pass re-reads m2's row, still there.
+    await outbox.flush();
+    finishDelete();
+    await outboxIdle();
+    expect(mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2])).toEqual(['m1']);
+  });
+
+  it('does not forget a mark while a lane still holds the row in its snapshot', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 200)]);
+    const mlsService = makeMls({
+      send: (async (_g: string, _p: Uint8Array, id: string) => {
+        if (id === 'm1') await onTheWire;
+      }) as any,
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    // m2 is in the running lane's snapshot, behind m1 which is on the wire.
+    expect(await outbox.cancelPending('m2')).toBe(true);
+    // A second flush reads a queue without m2; pruning its mark now would let the lane send it.
+    await outbox.flush();
+    release();
+    await outboxIdle();
+    expect(mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2])).toEqual(['m1']);
+  });
+
+  it('answers "already sent" for a frame sent whose row is not deleted yet', async () => {
+    let finishDelete!: () => void;
+    const deleteHeld = new Promise<void>((r) => {
+      finishDelete = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const realDelete = storage.deleteOutboxEntry.getMockImplementation();
+    let flusherDeleteStarted = false;
+    storage.deleteOutboxEntry.mockImplementation(async (id: string) => {
+      if (!flusherDeleteStarted) {
+        flusherDeleteStarted = true;
+        await deleteHeld;
+      }
+      await realDelete(id);
+    });
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(flusherDeleteStarted).toBe(true);
+    // The peers have it; "never sent" would skip the delete_message event.
+    expect(await outbox.cancelPending('m1')).toBe(false);
+    finishDelete();
+    await outboxIdle();
+  });
+
+  it("a follower's own withdrawal leaves no mark behind it", async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 200)]);
+    const log = vi.fn();
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+
+    expect(await outbox.cancelPending('m1')).toBe(true);
+
+    // Had the follower kept it, the first leader flush would find it and forget it.
+    isTabLeaderMock.mockReturnValue(true);
+    await outbox.flush();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('forgot'));
+  });
+
   it('a follower tab keeps no cancellation it will never consume', async () => {
     let onTabEvent!: (e: TabOutboxEvent) => void;
     tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(((h: (e: TabOutboxEvent) => void) => {

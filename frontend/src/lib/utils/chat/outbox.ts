@@ -949,8 +949,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
     // Withdrawn after this flush read its snapshot of the queue. The row is already gone, so this
     // is the only thing standing between a message the user deleted and the wire.
+    // THE MARK IS NOT CONSUMED HERE. The withdrawal's delete may still be pending, and a second
+    // pass of this lane would re-read the row, find no mark and send it (review of #1887). The
+    // mark is dropped by `pruneCancelled`, once the row is gone and no lane runs.
     if (cancelled.has(entry.id)) {
-      cancelled.delete(entry.id);
       clearUpload(entry.id);
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… cancelled before it was sent - dropped, not delivered`
@@ -1129,32 +1131,41 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         proto = buildOutboxProto(entry) ?? new Uint8Array(0);
       }
 
+      // LAST LOOK, WITH NO AWAIT BEFORE THE CLAIM. The check at the top of this function is many
+      // awaits back (the health gate, `isGroupActive`, an upload): a withdrawal landing in between
+      // was answered "never sent" and the frame went out anyway (review of #1887). From here on the
+      // id is in `inFlight`, which every withdrawal reads, so the two can no longer both miss.
+      if (cancelled.has(entry.id)) {
+        clearUpload(entry.id);
+        log(`[OUTBOX] ${entry.id.slice(0, 8)}… withdrawn just before the send - not delivered`);
+        return 'gone';
+      }
+      // HELD UNTIL THE SENT ROW IS DELETED, NOT ONLY WHILE THE POST RUNS. A sent row stays queued
+      // through `persistSent` and its own delete, and a withdrawal reading it there was answered
+      // "never sent" for a frame the peers already had - so no `delete_message` went out.
       inFlight.add(entry.id);
       try {
         await mlsService.sendMessage(terminalId, proto, entry.id, deliveryForOutboxEntry(entry));
+        // The media envelope was installed immediately after upload, before the MLS send.
+        await persistSent(terminalId, entry.id);
+        patchStatus(entry.id, 'sent');
+        clearUpload(entry.id);
+        transportHeld.delete(entry.id);
+        unexpected.delete(entry.id);
+        // The tab that composed this may be a follower, whose own echo is still showing `pending`.
+        publishOutboxEntrySent(entry.id, mediaContent);
+        // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
+        // The receiver deduplicates on messageId, but the retry is worth seeing in a log.
+        await storage
+          ?.deleteOutboxEntry(entry.id)
+          .catch((e) =>
+            log(
+              `[OUTBOX] ${entry.id.slice(0, 8)}… sent but still queued (delete failed): ${String(e)}`
+            )
+          );
       } finally {
         inFlight.delete(entry.id);
-        // Withdrawn while on the wire: the row is already gone and nothing will look this id up
-        // again, so the mark is consumed here rather than kept for the session.
-        cancelled.delete(entry.id);
       }
-      // The media envelope was installed immediately after upload, before the MLS send.
-      await persistSent(terminalId, entry.id);
-      patchStatus(entry.id, 'sent');
-      clearUpload(entry.id);
-      transportHeld.delete(entry.id);
-      unexpected.delete(entry.id);
-      // The tab that composed this may be a follower, whose own echo is still showing `pending`.
-      publishOutboxEntrySent(entry.id, mediaContent);
-      // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
-      // The receiver deduplicates on messageId, but the retry is worth seeing in a log.
-      await storage
-        ?.deleteOutboxEntry(entry.id)
-        .catch((e) =>
-          log(
-            `[OUTBOX] ${entry.id.slice(0, 8)}… sent but still queued (delete failed): ${String(e)}`
-          )
-        );
       logMlsMetric({
         kind: 'outbox_flush_success',
         conversationId: terminalId,
@@ -1506,9 +1517,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * flush's snapshot, the other tabs) and the native mirror. See {@link OutboxController.cancelPending}.
    *
    * A row ON THE WIRE in this tab is still deleted and marked cancelled - it is not retried if that
-   * send fails - but `withdrawn` is `false`, because the peers may already have it. A send that
-   * reaches the wire during this call clears the mark when it ends, which is read here as the same
-   * answer.
+   * send fails - but `withdrawn` is `false`, because the peers may already have it.
+   *
+   * KNOWN LIMIT OF THE `snapshot` FORM (the latest-wins supersede): a row the leader sent AND deleted
+   * between the caller's read and this call is answered `withdrawn: true`. Only the supersede passes
+   * a snapshot, its answer feeds a log line, and the receiver's `max` makes the extra frame
+   * harmless; re-reading the queue per row to close it is the cost the single read removed.
    *
    * @param snapshot the queue as the caller already read it, so a supersede reads it once per enqueue;
    *                 and then the mirror is left to the caller, which rewrites it once for the batch.
@@ -1543,12 +1557,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         cancelled.delete(messageId);
         rowDeleted = false;
       });
+    // A FOLLOWER RUNS NO LANE, so nothing here will ever read its mark, and `pruneCancelled` only
+    // runs in the leader: kept, it would stay for the session. The leader has its own copy from
+    // `outbox_entry_cancelled`.
+    if (getTabLeadership() === 'follower') cancelled.delete(messageId);
     // The mirror is the native background sender's own copy of the queue: leaving the entry in it
     // sends the message from Android after it was withdrawn here.
     if (rowDeleted && !snapshot) await refreshMirror();
-    // Cleared by the delete failing, OR by a send of this id ending in the meantime (the flush's
-    // `finally`): either way the cancellation did not keep the frame off the wire.
-    if (!cancelled.has(messageId) || onWireAtStart || inFlight.has(messageId)) {
+    // ON THE WIRE, NOW OR AT THE START. A send cannot START after the mark was set (the flush
+    // re-checks it with no await before claiming `inFlight`), and `inFlight` holds a sent id until
+    // its row is deleted, so these two reads see every frame this tab let out.
+    if (!rowDeleted || onWireAtStart || inFlight.has(messageId)) {
       if (rowDeleted) {
         log(
           `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn while it was already being sent - the peers` +
