@@ -379,7 +379,7 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Part | Decision |
 | --- | --- |
 | Source | The ONE console wrapper, `installConsoleIdTruncation(captureConsoleLine)` in `hooks.client.ts`. `log`, `info`, `warn`, `error` enter; **`debug` does not** (it is `Log.d` at every function entry - the volume that would evict the `[SELECT]`/`[QUEUE]`/`[GRAINE]` lines a reading needs, none of which is debug). Workers have their own console and do not enter. |
-| Privacy | Every line goes through `redactLogLine` BEFORE it is stored; the raw line never is. See below. |
+| Privacy | Every line goes through `redactLogLine` BEFORE it is stored; the raw line never is. **And again when it is READ** (`readAppLog`, the one reader of the stored log): see [redacted at write AND at read](#redacted-at-write-and-at-read). See below. |
 | Storage | IndexedDB `CanariDBLog`, store `chunks`, auto-increment keys (two web tabs never collide), an index on each record's size. The same database on the web and in the Tauri WebView: one implementation, nothing native to verify. |
 | Write | Batched in memory, written as **one new record per batch**: at 32 KiB or 200 lines, when the app leaves the screen (`onAppScreenChange`, which is the only honest signal on Android, plus `pagehide`), and before an export. **Never on a timer.** Nothing already written is rewritten. |
 | Bound | After each write, the oldest records are deleted until the total is under **2 MiB** (UTF-16 code units; a redacted line is ASCII). Rotation is by SIZE. The newest record is never evicted. |
@@ -463,6 +463,34 @@ creation, vault and reviewer documents, then (review of #1819, 2026-10-13) the s
 lines that named the member who renamed, left, excluded or deleted, the discovery and placeholder
 lines that quoted a group's name, the 1:1 merge line, and the four `[MEDIA]` lines that quoted the
 file's name. A new call site logging a name is a review finding.
+
+### Redacted at write AND at read
+
+**A fix to the redactor protected only what was written after it (Mi 9T reading of
+`v1.2.7-alpha.2`, 2026-10-14).** The ring keeps up to 2 MiB of lines, and the export of the
+upgraded phone still carried `contact="jolan" text="bisous"` and `text="ok"` that `v1.2.7-alpha.1`
+had stored before #1839. So `readAppLog` - the ONLY reader of `CanariDBLog`; the export
+(`appLogExport.ts`, Settings > About) is its only caller, and nothing else shows, shares or copies
+the stored log - passes every line through the SAME `redactLogLine` again on the way out, the
+`YYYY-MM-DD HH:MM:SS.mmm L ` stamp and level left as they are. One function, two call sites; no
+second implementation. What it redacted at read is added to the header's count and said once
+(`[APPLOG] N values redacted at read, in lines an older build stored`).
+
+**That requires `redactLogLine` to be IDEMPOTENT**: a line it returned comes back identical with
+zero redactions, so a line this build stored costs the read nothing and is never re-marked
+(`"[5 chars]"` must not become `"[9 chars]"`). Four things broke that and were fixed: a field whose
+value is already `[redacted]` / `[N chars]` / `"[N chars]"` is kept uncounted; a replacement that
+equals its match (`?[query]`, an already closed `"[cut]`) is not counted; the 400-character cap
+does not cut a line that already carries its own `… (N chars)` suffix; and a bare `FIELD_RE` value
+may no longer START with `name="` - `handleSendChat: contact="[5 chars]"` used to give
+`handleSendChat` the value `contact="[5` and split the quoted marker at its space. Pinned by
+`appLogRedact.test.ts` (every hostile case and the content cases, passed twice) and
+`appLog.test.ts` (an old-format record written straight into IndexedDB comes out redacted;
+removing the read-side call fails it).
+
+**The stored records are NOT rewritten in place.** A rewrite would be a `put` over records the
+writer's amplification test pins at zero, and it would buy nothing: the read-side pass already
+covers every line, and it also covers whatever a FUTURE rule change finds in lines stored today.
 
 ## The app owns which URLs its own WebView may load
 

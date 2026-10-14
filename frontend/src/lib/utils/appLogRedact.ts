@@ -28,6 +28,9 @@ import { truncateLogIds } from './logTruncate';
 /** The longest line the log keeps. A line is a sentence; anything longer is a dump. */
 export const MAX_LOG_LINE_CHARS = 400;
 
+/** The suffix that cap writes, recognised so a second pass does not cut a cut line again. */
+const TRUNCATED_RE = /… \(\d+ chars\)$/;
+
 /** The most of a raw line the patterns ever see (see the cut in {@link redactLogLine}). */
 export const MAX_INPUT_CHARS = 1000;
 
@@ -175,10 +178,12 @@ function fieldSensitivity(name: string): false | 'secret' | 'prose' {
  * 240 characters and leaves the quote open, and the rest of the line is then that value), a bracketed
  * list or object, or a bare word; the tail is the words that follow up to the next separator, which
  * is the rest of a prose value. A field that is not sensitive is put back with its value and tail
- * scanned again, so `mode=x pin=1234` still loses the PIN.
+ * scanned again, so `mode=x pin=1234` still loses the PIN. A bare word never starts with `name="`:
+ * `handleSendChat: contact="[5 chars]"` would otherwise take `contact="[5` as ITS value and cut the
+ * quoted one at the space (found making a second pass a no-op, 2026-10-14).
  */
 const FIELD_RE =
-  /\b([A-Za-z][\w-]*)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*(?:"|$)|'[^']*(?:'|$)|\[[^\]]*(?:\]|$)|\{[^}]*(?:\}|$)|[^\s,;&}\])|]+)((?:[ \t]+(?!["']?[A-Za-z][\w-]*["']?\s*[:=])[^\s,;&}\])|"]+)*)/g;
+  /\b([A-Za-z][\w-]*)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*(?:"|$)|'[^']*(?:'|$)|\[[^\]]*(?:\]|$)|\{[^}]*(?:\}|$)|(?![A-Za-z][\w-]*=")[^\s,;&}\])|]+)((?:[ \t]+(?!["']?[A-Za-z][\w-]*["']?\s*[:=])[^\s,;&}\])|"]+)*)/g;
 
 /**
  * What follows a prose value past a comma or a semicolon, up to the next field: `description:
@@ -226,6 +231,12 @@ function proseMarker(value: string, tail: string): string {
 }
 
 /**
+ * A field value this stage already wrote: `[redacted]`, or a length marker `[N chars]` /
+ * `"[N chars]"`. Recognised so that redacting a redacted line is a no-op ({@link redactLogLine}).
+ */
+const ALREADY_REDACTED_VALUE_RE = /^"?\[(?:redacted|\d+ chars)\]"?$/;
+
+/**
  * Replaces the value of every sensitive field by `[redacted]`, calling `onRedact` once per value.
  * Recursion is on a strictly shorter span (a value or a tail), so it ends.
  */
@@ -236,6 +247,11 @@ function redactFields(text: string, onRedact: () => void): string {
       const sensitivity = fieldSensitivity(name);
       if (sensitivity === false || isHarmlessFieldValue(name, value, tail)) {
         return `${name}${sep}${redactFields(value, onRedact)}${redactFields(tail, onRedact)}`;
+      }
+      // Already a marker this stage wrote: the line is being redacted a second time (the export
+      // re-reads every stored line), and a second pass must change nothing - not even the count.
+      if (ALREADY_REDACTED_VALUE_RE.test(value)) {
+        return `${name}${sep}${value}${redactFields(tail, onRedact)}`;
       }
       onRedact();
       // A CONTENT field is replaced by its LENGTH whatever the value looks like: `text="ok"` is
@@ -383,14 +399,21 @@ export interface RedactedLine {
 /**
  * Returns `raw` as it may be written to the exportable log. Every value removed is replaced by a
  * marker and counted, so the export can say how much it withheld.
+ *
+ * IDEMPOTENT: a line it already returned comes back unchanged, with zero redactions. The log is
+ * redacted when a line is WRITTEN and again when it is READ for export ({@link ../appLog}), so a
+ * line an older build stored under weaker rules leaves the device under today's - and a line this
+ * build stored costs that second pass nothing.
  */
 export function redactLogLine(raw: string): RedactedLine {
   let redactions = 0;
   const count =
     (marker: string | ((...m: string[]) => string)) =>
     (...m: string[]): string => {
-      redactions++;
-      return typeof marker === 'string' ? marker : marker(...m);
+      const out = typeof marker === 'string' ? marker : marker(...m);
+      // A match that already IS its marker (`?[query]`, a second pass) withheld nothing new.
+      if (out !== m[0]) redactions++;
+      return out;
     };
 
   // THE INPUT IS CUT BEFORE ANY PATTERN RUNS. Several patterns below scan forward from every
@@ -470,8 +493,9 @@ export function redactLogLine(raw: string): RedactedLine {
   // A value cut mid-string by the payload renderer leaves ONE quote open, and the pairing above
   // leaves it to the last one: everything after it is the unchecked half of a value.
   if ((line.match(/"/g)?.length ?? 0) % 2 === 1) {
-    redactions++;
-    line = `${line.slice(0, line.lastIndexOf('"'))}"[cut]`;
+    const closed = `${line.slice(0, line.lastIndexOf('"'))}"[cut]`;
+    if (closed !== line) redactions++;
+    line = closed;
   }
   line = line.replace(PICTOGRAPH_RE, count(''));
   line = line.replace(/\S+/g, (word) => {
@@ -481,7 +505,10 @@ export function redactLogLine(raw: string): RedactedLine {
     return '[text]';
   });
 
-  if (line.length > MAX_LOG_LINE_CHARS) {
+  // A line this cap already cut keeps its own suffix, or a second pass would re-cut it.
+  const alreadyCut =
+    TRUNCATED_RE.test(line) && line.replace(TRUNCATED_RE, '').length <= MAX_LOG_LINE_CHARS;
+  if (line.length > MAX_LOG_LINE_CHARS && !alreadyCut) {
     line = `${line.slice(0, MAX_LOG_LINE_CHARS)}… (${line.length} chars)`;
   }
   return { line, redactions };

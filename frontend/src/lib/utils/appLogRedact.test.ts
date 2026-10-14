@@ -11,6 +11,15 @@ import { MAX_LOG_LINE_CHARS, redactLogLine } from './appLogRedact';
 
 const redact = (raw: string) => redactLogLine(raw).line;
 
+/**
+ * The log is redacted at WRITE and again at READ (an older build's lines leave under today's
+ * rules), so a redacted line passed through again must come back identical and count nothing.
+ */
+function expectIdempotent(raw: string): void {
+  const once = redactLogLine(raw).line;
+  expect(redactLogLine(once)).toEqual({ line: once, redactions: 0 });
+}
+
 describe('redactLogLine - what must never enter', () => {
   const hostile: Array<[string, string, string]> = [
     // [case, raw line, secret that must be gone]
@@ -114,6 +123,9 @@ describe('redactLogLine - what must never enter', () => {
       const { line, redactions } = redactLogLine(raw);
       expect(line).not.toContain(secret);
       expect(redactions).toBeGreaterThan(0);
+    });
+    it(`is a no-op on its own output: ${name}`, () => {
+      expectIdempotent(raw);
     });
   }
 
@@ -225,6 +237,39 @@ describe('redactLogLine - a content field is its length, whatever its shape', ()
     expect(redact('[X] kind=poll id=67fde7aa… count=3 text="ok" mode=ready')).toBe(
       '[X] kind=poll id=67fde7aa… count=3 text="[2 chars]" mode=ready'
     );
+  });
+});
+
+describe('redactLogLine - a second pass changes nothing (it runs at write AND at export)', () => {
+  const lines = [
+    '[SEND] handleSendChat: contact="jolan" text="bisous" files=0',
+    '[SEND] handleSendChat: contact="jolan" text="ok" files=0',
+    '[DRAFT] text=ok',
+    '[WS] {"text":"bisous","id":"a1"}',
+    '[X] description: hello, my plan, id=5 mode=x',
+    '[X] name: Jean Dupont, id=5',
+    '[WS] frame {"type":"msg","body":"rendez-vous a 18h"}',
+    '[API] Authorization: Bearer abc.def-ghi_jkl',
+    '[LOGIN] as a.b@c.fr pin=1234',
+    // A value the payload renderer cut, left with one quote open.
+    '[WS] {"kind":"draft","x":"the plan for tonight is to meet at… (900 chars)',
+    // The per-line cap's suffix, and the input cut's marker.
+    `[DUMP] ${'word '.repeat(500)}`,
+    `[DUMP] ${'a'.repeat(5000)}`,
+    // What must survive survives twice.
+    '[SELECT] 67fde7aa… is not in the conversation map - selection dropped, nothing opens',
+  ];
+  for (const raw of lines) {
+    it(`is a no-op on: ${raw.slice(0, 60)}`, () => {
+      expectIdempotent(raw);
+    });
+  }
+
+  it('redacts an OLD build`s line by today`s rules, and its own output no further', () => {
+    const old = '[SEND] handleSendChat: contact="jolan" text="bisous" files=0';
+    const today = '[SEND] handleSendChat: contact="[5 chars]" text="[6 chars]" files=0';
+    expect(redactLogLine(old)).toEqual({ line: today, redactions: 2 });
+    expect(redactLogLine(today)).toEqual({ line: today, redactions: 0 });
   });
 });
 

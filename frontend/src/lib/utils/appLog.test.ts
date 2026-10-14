@@ -125,6 +125,70 @@ describe('the batch', () => {
   });
 });
 
+describe('lines an OLDER build stored are redacted on the way out', () => {
+  /** Writes one record the way a build before #1839 did: its lines redacted under weaker rules. */
+  async function storeOldChunk(lines: string[]): Promise<void> {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open('CanariDBLog', 1);
+      r.onupgradeneeded = () => {
+        r.result
+          .createObjectStore('chunks', { autoIncrement: true })
+          .createIndex('byChars', 'chars');
+      };
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    const text = lines.join('\n');
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('chunks', 'readwrite');
+      tx.objectStore('chunks').add({ chars: text.length + 1, text });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }
+
+  // Read on the Mi 9T export of v1.2.7-alpha.2: lines written by v1.2.7-alpha.1, before #1839.
+  const OLD = [
+    '2026-10-13 22:41:07.512 L [SEND] handleSendChat: contact="jolan" text="bisous" files=0',
+    '2026-10-13 22:41:09.004 L [SEND] handleSendChat: contact="jolan" text="ok" files=0',
+    '2026-10-13 22:41:10.300 I [DRAFT] text=hello',
+    '2026-10-13 22:41:11.000 L [QUEUE] drained 3 kind=poll',
+  ];
+
+  it('comes out redacted by the rules of THIS build, stamp and level intact', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    await storeOldChunk(OLD);
+    const { text, redactedValues } = await appLog.readAppLog();
+    expect(info).toHaveBeenCalledWith(
+      '[APPLOG] 5 values redacted at read, in lines an older build stored'
+    );
+    expect(text).not.toContain('bisous');
+    expect(text).not.toContain('jolan');
+    expect(text).not.toContain('"ok"');
+    expect(text).not.toContain('hello');
+    expect(text.split('\n').slice(0, 4)).toEqual([
+      '2026-10-13 22:41:07.512 L [SEND] handleSendChat: contact="[5 chars]" text="[6 chars]" files=0',
+      '2026-10-13 22:41:09.004 L [SEND] handleSendChat: contact="[5 chars]" text="[2 chars]" files=0',
+      '2026-10-13 22:41:10.300 I [DRAFT] text=[5 chars]',
+      '2026-10-13 22:41:11.000 L [QUEUE] drained 3 kind=poll',
+    ]);
+    // Counted in the export header with the others.
+    expect(redactedValues).toBe(5);
+  });
+
+  it('leaves a line THIS build stored unchanged, and counts it once', async () => {
+    appLog.captureConsoleLine('log', [
+      '[SEND] handleSendChat: contact="jolan" text="bisous" files=0',
+    ]);
+    await appLog.flushAppLog();
+    const [record] = await records();
+    const { text, redactedValues } = await appLog.readAppLog();
+    expect(text).toBe(record.text);
+    expect(redactedValues).toBe(2);
+  });
+});
+
 describe('the ring is bounded by SIZE', () => {
   it('drops the oldest records once the total passes MAX_PERSISTED_CHARS, never the newest', async () => {
     const count = Math.ceil((appLog.MAX_PERSISTED_CHARS * 1.5) / STORED);

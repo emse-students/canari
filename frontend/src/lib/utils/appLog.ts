@@ -26,7 +26,7 @@
  */
 import { onAppScreenChange } from './appForeground';
 import { renderLogPayload } from './Log';
-import { redactLogLine } from './appLogRedact';
+import { redactLogLine, type RedactedLine } from './appLogRedact';
 
 /** The console methods that enter the log. `debug` is deliberately absent (see the module doc). */
 export type CapturedLevel = 'log' | 'info' | 'warn' | 'error';
@@ -228,7 +228,27 @@ export interface AppLogSnapshot {
   persistenceError: string;
 }
 
-/** Reads the whole log: flushes the batch, then reads every record in key order. */
+/** The stamp and level letter {@link captureConsoleLine} puts before every redacted line. */
+const STORED_PREFIX_RE = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} [LIWE] )(.*)$/;
+
+/**
+ * Passes one STORED line through {@link redactLogLine} again, its stamp and level left as they are.
+ * A line an older build wrote under weaker rules (`text="bisous"` before #1839) is redacted by
+ * today's; a line this build wrote comes back unchanged, the redaction being idempotent.
+ */
+function redactStoredLine(stored: string): RedactedLine {
+  const match = STORED_PREFIX_RE.exec(stored);
+  if (!match) return redactLogLine(stored);
+  const { line, redactions } = redactLogLine(match[2]);
+  return { line: `${match[1]}${line}`, redactions };
+}
+
+/**
+ * Reads the whole log: flushes the batch, then reads every record in key order - and redacts every
+ * line AGAIN on the way out. Redaction at write time protects only what is written from then on;
+ * the ring keeps up to {@link MAX_PERSISTED_CHARS} of lines older builds wrote, and this is the one
+ * reader of it, so nothing leaves the device without passing today's rules.
+ */
 export async function readAppLog(): Promise<AppLogSnapshot> {
   await flushAppLog();
   const parts: string[] = [];
@@ -242,12 +262,29 @@ export async function readAppLog(): Promise<AppLogSnapshot> {
     for (const chunk of chunks) parts.push(chunk.text);
   }
   if (pending.length > 0) parts.push(pending.join('\n'));
-  const text = parts.join('\n');
+  const stored = parts.join('\n');
+  let reRedacted = 0;
+  const text =
+    stored === ''
+      ? ''
+      : stored
+          .split('\n')
+          .map((l) => {
+            const { line, redactions } = redactStoredLine(l);
+            reRedacted += redactions;
+            return line;
+          })
+          .join('\n');
+  if (reRedacted > 0) {
+    // Lines an older build stored, redacted only now. Printed after the awaits above, so outside
+    // any capture: it enters the log like any line.
+    console.info(`[APPLOG] ${reRedacted} values redacted at read, in lines an older build stored`);
+  }
   return {
     text,
     lines: text === '' ? 0 : text.split('\n').length,
     droppedLines,
-    redactedValues,
+    redactedValues: redactedValues + reRedacted,
     persistence,
     persistenceError,
   };
