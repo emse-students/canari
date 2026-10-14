@@ -1006,7 +1006,7 @@ rejoined after the batch read is spared).
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices) |
+| POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices); answers `receivedAt`, the `Date` written into every queued copy's `createdAt` ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)) |
 | POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |

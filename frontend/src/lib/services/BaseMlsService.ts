@@ -20,6 +20,7 @@ import {
   raceDeadline,
   NotAGroupMemberError,
   type GroupExclusions,
+  type SentFrame,
   type GroupRosterBatch,
   type MlsDeliveryFetch,
 } from '$lib/mls-client/mlsDeliveryApi';
@@ -4531,7 +4532,7 @@ export abstract class BaseMlsService implements IMlsService {
     messageBytes: Uint8Array,
     _messageId?: string,
     frameDelivery: FrameDelivery = DELIVERY.visible
-  ): Promise<Uint8Array> {
+  ): Promise<SentFrame> {
     await this.waitForCatchUpIdle();
     // ...and nothing straddles a LOCAL epoch advance either: a frame encrypted at epoch N and posted
     // after this device's own commit moved the group to N+1 is a past-epoch frame for every
@@ -4552,7 +4553,7 @@ export abstract class BaseMlsService implements IMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     frameDelivery: FrameDelivery
-  ): Promise<Uint8Array> {
+  ): Promise<SentFrame> {
     const encryptedBytes = await this.encryptForSend(groupId, messageBytes);
     this.noteLiveMutation();
     // DURABLE, AND BEFORE THE POST. The ratchet has moved by now and stays moved whether or not the
@@ -4566,8 +4567,8 @@ export abstract class BaseMlsService implements IMlsService {
     // on the phone - to buy a guarantee that is already held, so the trade is refused.
     scheduleOutboundMlsPersist();
     const proto = toBase64(encryptedBytes);
-    await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
-    return encryptedBytes;
+    const receivedAt = await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
+    return { sealed: encryptedBytes, receivedAt };
   }
   abstract processIncomingMessage(
     groupId: string,

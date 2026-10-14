@@ -48,6 +48,12 @@ export interface SendMessageDeps {
   ) => Promise<void>;
   /** Moves a salon echo along (in flight, failed, settled) - see `salonEcho.ts`. */
   patchSalonEcho: (conversationKey: string, messageId: string, change: SalonEchoChange) => void;
+  /**
+   * Whether a reply in conversation `groupId` may carry the text of `quoted` - `false` when it falls
+   * inside a current member's exclusion window, or when the windows cannot be read. See
+   * `quotePreviewEntitled` in `historyEntitlement.ts`.
+   */
+  quotePreviewEntitled: (groupId: string, quoted: ChatMessage) => Promise<boolean>;
   log: (msg: string) => void;
 }
 
@@ -364,6 +370,18 @@ export async function sendChatMessage(
   // Group deleted/excluded server-side: the only hard block (deletion banner is shown).
   if (conversation.lifecycle === 'removed') {
     return { success: false, error: m.chat_conversation_deleted_message() };
+  }
+
+  // A QUOTE FROM INSIDE A MEMBER'S EXCLUSION WINDOW CARRIES ITS ID ONLY (user, 2026-10-14: a Remove
+  // holds against a later re-add). The reply reaches every current member live and its stored
+  // envelope rides every later history bundle, so the quoted TEXT would hand a re-admitted member
+  // words sent while they were out. Blanked in the echo too: the stored copy is what bundles carry.
+  if (
+    replyingTo &&
+    replyToData &&
+    !(await deps.quotePreviewEntitled(conversation.id, replyingTo))
+  ) {
+    replyToData = { ...replyToData, content: '' };
   }
 
   // THE ECHO AND ITS QUEUE ENTRY ARE ONE WRITE, and the entry is therefore built first.

@@ -182,6 +182,27 @@ describe('history_bundle ingestion - our own exclusion windows', () => {
     await handleSystemEvent('history_bundle', { messages: [before] }, ctx as any);
 
     expect(ctx.batchAddMessages).not.toHaveBeenCalled();
-    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('ingesting none of this bundle'));
+    expect(ctx.log).toHaveBeenCalledWith(
+      expect.stringContaining('ingesting none of these messages')
+    );
+  });
+
+  it('drops an UNDATED message by the rule the sender applies - near the window by its own clock', async () => {
+    const ctx = ctxWithWindows(new Map([[ME, [{ from: OUT_FROM, until: BACK_AT }]]]));
+    const undatedNear = { id: 'undated-near', senderId: 'peer', content: 'd', timestamp: 15_000 };
+    const undatedFar = {
+      id: 'undated-far',
+      senderId: 'peer',
+      content: 'e',
+      timestamp: BACK_AT + 2 * 60 * 60 * 1000,
+    };
+
+    await handleSystemEvent('history_bundle', { messages: [undatedNear, undatedFar] }, ctx as any);
+
+    const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
+      (m) => m.messageId
+    );
+    expect(added).toEqual(['undated-far']);
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('(undated-near-window)'));
   });
 });

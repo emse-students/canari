@@ -18,8 +18,10 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 
  * the partial unique index enforces, so a second enrolment of somebody already present is a no-op
  * exactly as it is on `dm_group_members`.
  *
- * Both instants are the DATABASE's clock, the same one that stamps `queued_message.createdAt` - the
- * server receive time the client compares them against. No client clock ever enters this table.
+ * Both instants are written by this service's own clock (`new Date()`), the clock `sendMessage`
+ * stamps `queued_message.createdAt` with - the server receive time the client compares them
+ * against. No client clock ever enters this table. The columns carry no time zone, so the service
+ * must run in UTC (it does, as does Postgres - read on production 2026-10-14).
  */
 @Entity('dm_group_membership_intervals')
 @Index('IDX_dm_group_membership_intervals_group_user', ['groupId', 'userId'])

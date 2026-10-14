@@ -115,6 +115,14 @@ export interface SendMessageResult {
   status: string;
   queued: number;
   sent: number;
+  /**
+   * The instant this server received the frame, in milliseconds - the SAME value written as
+   * `createdAt` on every queued copy, so the sender can date its own copy with the time every
+   * recipient's copy carries. A sender never receives its own frame back, and without this its
+   * copy had no server time at all (a Remove holds against a later re-add, user 2026-10-14: an
+   * undated message cannot be placed against an exclusion window).
+   */
+  receivedAt: number;
 }
 
 export interface ValidateCommitBody {
@@ -952,6 +960,10 @@ export class MessagingService {
     const ops: QueuedMessage[] = [];
     let sentCount = 0;
     const addressed = readAddressedDevices(body);
+    // ONE receive instant for the whole frame: every queued copy, the history stream row and the
+    // answer to the sender carry it, so every device that holds this message holds the same server
+    // time for it - the time an exclusion window is compared against (`historyEntitlement.ts`).
+    const receivedAt = new Date();
 
     this.logger.log(
       `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}` +
@@ -1148,7 +1160,7 @@ export class MessagingService {
               isWelcome: body.isWelcome,
               isCommit: body.isCommit,
               proto,
-              createdAt: new Date(),
+              createdAt: receivedAt,
             })
           );
         }
@@ -1260,7 +1272,7 @@ export class MessagingService {
             groupId,
             content: safeContent,
             type: safeType,
-            createdAt: new Date(),
+            createdAt: receivedAt,
           })
         );
       }
@@ -1392,7 +1404,7 @@ export class MessagingService {
             'content',
             body.proto,
             'timestamp',
-            new Date().toISOString()
+            receivedAt.toISOString()
           )
           // THE AGE BOUND - the one the rest of the system already claims and this stream alone did
           // not honour. `MAXLEN` bounds the stream by COUNT, which says nothing about how far back
@@ -1460,7 +1472,12 @@ export class MessagingService {
     // that do not exist.
     this.logger.log(`[SEND][${traceId}] DONE queued=${toDeliver.length} realtime=${sentCount}`);
 
-    return { status: 'processed', queued: toDeliver.length, sent: sentCount };
+    return {
+      status: 'processed',
+      queued: toDeliver.length,
+      sent: sentCount,
+      receivedAt: receivedAt.getTime(),
+    };
   }
 
   /**

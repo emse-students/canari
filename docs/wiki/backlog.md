@@ -104,6 +104,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **when to raise `minClientVersion` to the build that ships "a Remove holds against a later re-add"** - until then an answering member on an older build still sends a re-admitted member's window | decision | [the re-admitted window entry](#p2---a-re-admitted-device-calls-its-own-exclusion-window-a-loss-and-reconciles-for-it-2026-08-26-widened-2026-08-30) |
 | **add `client_max_body_size 100m;` and `proxy_request_buffering off;` to the `server` block of `/etc/nginx/sites-enabled/canari-relay-prod.conf` and `canari-relay-dev.conf` on `ssh canari`, then `sudo nginx -t && sudo systemctl reload nginx`** (the 413 over 1 MiB on `dev.canari-emse.fr` and `canari-emse.fr` is the relay's nginx default, NOT Cloudflare, whose body limit is 100 MB; the app already sends under 8 MiB per request since #1706/#1708/#1710 and chunking under 1 MiB is not an option). Done when a 1.2 MB and a 20 MB upload reach `media-service` on both legacy names | 1 ssh gesture, 2 lines | [cloudflare-edge](infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names---it-is-the-relays-nginx-not-cloudflare-measured-2026-10-07-cause-found-2026-10-09) |
 | **upload the APNs authentication key in the DEVELOPMENT slot of Firebase** (2 minutes): Firebase Console > Project settings > Cloud Messaging > the iOS app `fr.emse.canari` > APNs authentication key - the same `.p8` (Key ID + Team ID) already in the Production slot. The agent then resends the test DM | click | [the iOS push rows](#owed-a-verification-and-nothing-else) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing | blocked upstream | WP-LYDIA-1 |
@@ -836,10 +837,16 @@ is DECIDED (user, 2026-10-14): a Remove holds**, and answering peers now withhol
 window - so a withheld message is re-asked on every connection until this floor exists; the server
 side of it, membership intervals, is migration `030`
 ([history-reconciliation](protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)).
-**Also owed by that change:** the answering device's OWN messages carry no server time and are withheld
-whenever a window exists - stamping a sent message with its server delivery time would remove that cost
+A sent message is now dated by the server's receive time; only copies written before that change are
+undated, and those are placed by their client clock with a one-hour margin
 ([measurements and the discriminator](protocols/campaign-measured-defects.md#a-re-admitted-device-calls-its-own-exclusion-window-a-loss-2026-08-26),
 [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add)).
+**OWED TO THE USER - `minClientVersion`:** the withholding runs on the ANSWERING device, so an answerer
+on an older build still sends the window unfiltered; the guarantee is complete only once
+`minClientVersion` (1.0.3 today) reaches the build that ships it. Raising it is the user's call, not
+an agent's. **And a known abuse, accepted with the decision:** a member can remove and re-add someone
+to open an artificial window, making that span unrestorable to every new device while the person
+stays; nothing tells it from a real removal.
 
 ### P2 - a device revoked while OFFLINE keeps its store until someone LOGS IN on it (2026-08-30)
 

@@ -1,4 +1,5 @@
 import {
+  removeMemberAndBroadcast,
   sendFullHistoryBundle,
   sendHistoryBundleForIds,
   sendHistoryRangeBundle,
@@ -6,7 +7,12 @@ import {
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
 import type { IStorage, StoredMessage } from '$lib/db';
-import { isInsideExclusion, messageServerTime } from './historyEntitlement';
+import {
+  UNDATED_SKEW_MARGIN_MS,
+  isInsideExclusion,
+  messageServerTime,
+  withholdReason,
+} from './historyEntitlement';
 import { MalformedExclusionsError, parseGroupExclusions } from '$lib/mls-client/mlsDeliveryApi';
 
 /**
@@ -27,14 +33,18 @@ const ALICE = 'user-a:device-a';
 const T_OUT = 1_700_000_100_000;
 const T_BACK = 1_700_000_200_000;
 
-function msg(id: string, serverTimestamp: number | undefined): StoredMessage {
+function msg(
+  id: string,
+  serverTimestamp: number | undefined,
+  // The sender's clock, by default placed far OUTSIDE the window: a filter that read it instead of
+  // the server time would let `during` through.
+  timestamp = 1_600_000_000_000
+): StoredMessage {
   return {
     id,
     senderId: 'user-c',
     content: 'hello',
-    // The sender's clock, deliberately placed OUTSIDE the window for every message: a filter that
-    // read it instead of the server time would let `during` through.
-    timestamp: 1_600_000_000_000,
+    timestamp,
     ...(serverTimestamp !== undefined ? { serverTimestamp } : {}),
   } as StoredMessage;
 }
@@ -45,6 +55,10 @@ const DURING = msg('during', T_OUT + 50_000);
 const AT_READD = msg('at-readd', T_BACK);
 const AFTER = msg('after', T_BACK + 1);
 const UNDATED = msg('undated', undefined);
+/** No server time, and a client clock half an hour before the removal: inside the skew margin. */
+const UNDATED_NEAR = msg('undated-near', undefined, T_OUT - 30 * 60_000);
+/** No server time and no usable client time either. */
+const UNDATABLE = msg('undatable', undefined, 0);
 const STORE = [BEFORE, AT_REMOVAL, DURING, AT_READD, AFTER];
 
 function storageWith(messages: StoredMessage[]): IStorage {
@@ -132,22 +146,35 @@ describe('a Remove holds against a later re-add - every history sender withholds
     expect(sentIds(mlsService)).toEqual(EXPECTED_KEPT);
   });
 
-  it('a message with no server time is withheld while any window exists - it cannot be placed', async () => {
+  it('an undated message is placed by its sender clock against the window WIDENED by the margin', async () => {
     const mlsService = stubWithBobsWindow();
     const log = vi.fn();
+    const store = [BEFORE, UNDATED, UNDATED_NEAR, UNDATABLE];
 
     await sendHistoryBundleForIds(
       GROUP,
-      ['before', 'undated'],
-      { storage: storageWith([BEFORE, UNDATED]), deviceKeyB64: 'k', mlsService, log },
+      store.map((m) => m.id),
+      { storage: storageWith(store), deviceKeyB64: 'k', mlsService, log },
       { to: BOB_NEW_DEVICE, since: 0 }
     );
 
-    expect(sentIds(mlsService)).toEqual(['before']);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('1 with no server time'));
+    // Far from the window: released. Within the margin of it: held. No usable time: held.
+    expect(sentIds(mlsService)).toEqual(['before', 'undated']);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('1 undated within 60 min'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('1 undatable'));
   });
 
-  it('sends NOTHING when the windows cannot be read - silence, never an unfiltered answer', async () => {
+  it('the margin is on BOTH sides, and a server time beats a near client clock', () => {
+    const w = [{ from: T_OUT, until: T_BACK }];
+    const hour = UNDATED_SKEW_MARGIN_MS;
+    expect(withholdReason({ timestamp: T_OUT - hour + 1 }, w)).toBe('undated-near-window');
+    expect(withholdReason({ timestamp: T_OUT - hour - 1 }, w)).toBeNull();
+    expect(withholdReason({ timestamp: T_BACK + hour - 1 }, w)).toBe('undated-near-window');
+    expect(withholdReason({ timestamp: T_BACK + hour }, w)).toBeNull();
+    expect(withholdReason({ timestamp: T_OUT, serverTimestamp: T_BACK }, w)).toBeNull();
+  });
+
+  it('carries NO message when the windows cannot be read - only the state frame an invitee needs', async () => {
     const mlsService = createMlsServiceStub();
     vi.mocked(mlsService.getGroupExclusions).mockRejectedValue(new Error('503'));
     const log = vi.fn();
@@ -160,22 +187,97 @@ describe('a Remove holds against a later re-add - every history sender withholds
       to: BOB_NEW_DEVICE,
     });
 
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(sentIds(mlsService)).toEqual([]);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('sending no message'));
+  });
+
+  it('the DIFF answer sends nothing at all when the windows cannot be read', async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.getGroupExclusions).mockRejectedValue(new Error('503'));
+
+    await sendHistoryBundleForIds(
+      GROUP,
+      STORE.map((m) => m.id),
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: BOB_NEW_DEVICE, since: 0 }
+    );
+
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('sending nothing'));
+  });
+
+  it('a FULL bundle whose every message is withheld still sends the state frame', async () => {
+    const mlsService = stubWithBobsWindow();
+    const log = vi.fn();
+
+    await sendFullHistoryBundle(GROUP, {
+      storage: storageWith([DURING]),
+      deviceKeyB64: 'k',
+      mlsService,
+      log,
+      to: BOB_NEW_DEVICE,
+    });
+
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(sentIds(mlsService)).toEqual([]);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('every message withheld'));
   });
 
   it('a group where nobody was ever out answers EXACTLY as before - a new member and a new device of a continuous member included', async () => {
     const mlsService = createMlsServiceStub(); // no window for anyone
 
     await sendFullHistoryBundle(GROUP, {
-      storage: storageWith([...STORE, UNDATED]),
+      storage: storageWith([...STORE, UNDATED, UNDATABLE]),
       deviceKeyB64: 'k',
       mlsService,
       log: vi.fn(),
       to: BOB_NEW_DEVICE,
     });
 
-    expect(sentIds(mlsService)).toEqual([...STORE, UNDATED].map((m) => m.id));
+    expect(sentIds(mlsService)).toEqual([...STORE, UNDATED, UNDATABLE].map((m) => m.id));
+  });
+});
+
+describe('a removal opens its window on the server BEFORE the commit removes the leaf', () => {
+  it('records the removal first, then commits', async () => {
+    const mlsService = createMlsServiceStub();
+    const order: string[] = [];
+    vi.mocked(mlsService.removeMemberFromServer).mockImplementation(async () => {
+      order.push('server');
+    });
+    vi.mocked(mlsService.removeMember).mockImplementation(async () => {
+      order.push('commit');
+    });
+
+    await removeMemberAndBroadcast({
+      mlsService,
+      groupId: GROUP,
+      memberId: BOB,
+      userId: 'user-a',
+      deviceKeyB64: 'k',
+    });
+
+    expect(order).toEqual(['server', 'commit']);
+  });
+
+  it('commits nothing when the server did not record the removal - no window would exist', async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.removeMemberFromServer).mockRejectedValue(new Error('503'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(
+      removeMemberAndBroadcast({
+        mlsService,
+        groupId: GROUP,
+        memberId: BOB,
+        userId: 'user-a',
+        deviceKeyB64: 'k',
+      })
+    ).rejects.toThrow('503');
+
+    expect(mlsService.removeMember).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[REMOVE_MEMBER]'));
+    warn.mockRestore();
   });
 });
 

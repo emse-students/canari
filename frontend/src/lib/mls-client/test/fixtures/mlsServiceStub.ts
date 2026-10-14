@@ -19,7 +19,7 @@ export function createMlsServiceStub(
       skipped: [],
     }),
     processWelcome: vi.fn().mockResolvedValue('gid'),
-    sendMessage: vi.fn().mockResolvedValue(new Uint8Array()),
+    sendMessage: vi.fn().mockResolvedValue({ sealed: new Uint8Array(), receivedAt: null }),
     processIncomingMessage: vi.fn().mockResolvedValue(null),
     createDecryptSession: vi.fn().mockResolvedValue({
       decryptPage: vi.fn().mockResolvedValue([]),

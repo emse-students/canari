@@ -100,6 +100,14 @@ export interface ReplaySystemEventCtx {
   historyFloorUpdate: { at: number };
   /** Queues a decoded message for the page batch (assigns ingestSequence + bumps the added count). */
   pushPendingMessage: (entry: Omit<PendingHistoryMessage, 'ingestSequence'>) => void;
+  /**
+   * The receiver's hygiene filter of a bundle (a Remove holds against a later re-add, user
+   * 2026-10-14): the messages it may keep, or `null` when its windows cannot be read and it keeps
+   * none. The same filter the live `history_bundle` handler applies - see `historyEntitlement.ts`.
+   */
+  dropOwnExcluded: <M extends { id: string; serverTimestamp?: number; timestamp: number | Date }>(
+    messages: M[]
+  ) => Promise<M[] | null>;
 }
 
 /**
@@ -387,7 +395,6 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         const existingIds = new Set(
           (getConversation(contactName)?.messages ?? []).map((m) => m.id)
         );
-        const serverMs = parseServerTimestampMs(msg.timestamp);
         // Merge transport-carried reactions and edit times onto messages we ALREADY have (e.g. our
         // own sent messages): they are skipped by the "add new" loop below, so without this their
         // bundle metadata would be lost.
@@ -431,28 +438,39 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           });
           if (mergedAny) setConversation(contactName, { ...convoForMerge, messages: mergedMsgs });
         }
-        for (const m of bundleData) {
-          if (m?.id && !existingIds.has(m.id) && m.senderId && m.content) {
-            pushPendingMessage({
-              senderId: String(m.senderId).toLowerCase(),
-              content: String(m.content),
-              messageId: String(m.id),
-              timestamp: typeof m.timestamp === 'number' ? new Date(m.timestamp) : undefined,
-              // Preserve each message's original serverTimestamp (stable ordering).
-              // Fall back on serverMs (bundle timestamp) only when absent.
-              serverTimestamp: typeof m.serverTimestamp === 'number' ? m.serverTimestamp : serverMs,
-              // Metadata transferred from the source device: reactions, deletions and edits -
-              // full state at migration time. Read state is not here: it belongs to the
-              // conversation, not to any one message.
-              ...(Array.isArray(m.reactions) && m.reactions.length > 0
-                ? { reactions: m.reactions }
-                : {}),
-              ...(m.isDeleted === true ? { isDeleted: true } : {}),
-              ...(m.isEdited === true ? { isEdited: true } : {}),
-              // Carried with the flag, or the message shows "edited" with no time for ever.
-              ...(typeof m.editedAt === 'number' && m.editedAt > 0 ? { editedAt: m.editedAt } : {}),
-            });
-          }
+        // The messages we would ADD, through the same hygiene filter the live handler applies - a
+        // bundle replayed from the stream is the same answer arriving late, and a message from inside
+        // our own exclusion window is no more ours for having waited.
+        const fresh = (bundleData as Array<Record<string, any>>).filter(
+          (m) => m?.id && !existingIds.has(m.id) && m.senderId && m.content
+        ) as Array<
+          { id: string; timestamp: number; serverTimestamp?: number } & Record<string, any>
+        >;
+        const admitted = (await ctx.dropOwnExcluded(fresh)) ?? [];
+        for (const m of admitted) {
+          pushPendingMessage({
+            senderId: String(m.senderId).toLowerCase(),
+            content: String(m.content),
+            messageId: String(m.id),
+            timestamp: typeof m.timestamp === 'number' ? new Date(m.timestamp) : undefined,
+            // The message's own server time, and NOTHING ELSE. This used to fall back on the
+            // bundle frame's time, which is when the bundle was sent, not when the message was:
+            // an exclusion window placed by it would release a message from inside the window or
+            // withhold one from before it. An undated copy stays undated, as on the live path.
+            ...(typeof m.serverTimestamp === 'number'
+              ? { serverTimestamp: m.serverTimestamp }
+              : {}),
+            // Metadata transferred from the source device: reactions, deletions and edits -
+            // full state at migration time. Read state is not here: it belongs to the
+            // conversation, not to any one message.
+            ...(Array.isArray(m.reactions) && m.reactions.length > 0
+              ? { reactions: m.reactions }
+              : {}),
+            ...(m.isDeleted === true ? { isDeleted: true } : {}),
+            ...(m.isEdited === true ? { isEdited: true } : {}),
+            // Carried with the flag, or the message shows "edited" with no time for ever.
+            ...(typeof m.editedAt === 'number' && m.editedAt > 0 ? { editedAt: m.editedAt } : {}),
+          });
         }
         // Seed messageReactions from the bundle so later reaction stream events
         // apply on top of it, rather than onto an empty array.

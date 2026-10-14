@@ -22,8 +22,9 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
  */
 describe('MembersController - membership intervals and the exclusions read', () => {
   let controller: MembersController;
-  let members: Array<{ userId: string }>;
+  let members: Array<{ userId: string; joinedAt: Date }>;
   let intervals: Array<{ userId: string; joinedAt: Date; leftAt: Date | null }>;
+  let healInserts: Array<{ userId: string; joinedAt: Date; leftAt: null }>;
   let txDeletes: Array<{ entity: unknown; where: unknown }>;
   let txUpdates: Array<{ entity: unknown; where: Record<string, unknown> }>;
   let intervalFind: jest.Mock;
@@ -31,7 +32,11 @@ describe('MembersController - membership intervals and the exclusions read', () 
   const T = (iso: string) => new Date(iso);
 
   beforeEach(async () => {
-    members = [{ userId: 'alice' }, { userId: 'bob' }, { userId: 'carol' }];
+    members = [
+      { userId: 'alice', joinedAt: T('2026-10-01T00:00:00Z') },
+      { userId: 'bob', joinedAt: T('2026-10-05T00:00:00Z') },
+      { userId: 'carol', joinedAt: T('2026-10-07T00:00:00Z') },
+    ];
     intervals = [
       { userId: 'alice', joinedAt: T('2026-10-01T00:00:00Z'), leftAt: null },
       // bob: removed on the 3rd, re-added on the 5th
@@ -55,8 +60,25 @@ describe('MembersController - membership intervals and the exclusions read', () 
         },
       }),
     };
+    healInserts = [];
+    const healBuilder = {
+      insert: () => healBuilder,
+      into: () => healBuilder,
+      values: (rows: Array<{ userId: string; joinedAt: Date; leftAt: null }>) => {
+        healInserts.push(...rows);
+        return healBuilder;
+      },
+      orIgnore: () => healBuilder,
+      // The real insert lands in the table the next read comes from.
+      execute: () => {
+        intervals.push(
+          ...healInserts.map(({ userId, joinedAt, leftAt }) => ({ userId, joinedAt, leftAt }))
+        );
+        return Promise.resolve({ identifiers: [] });
+      },
+    };
     const dataSource = {
-      manager: { find: intervalFind },
+      manager: { find: intervalFind, createQueryBuilder: () => healBuilder },
       transaction: (fn: (m: unknown) => Promise<unknown>) => fn(txManager),
     };
 
@@ -111,6 +133,39 @@ describe('MembersController - membership intervals and the exclusions read', () 
       ],
     });
     expect(intervalFind).toHaveBeenCalledWith(GroupMembershipInterval, expect.anything());
+  });
+
+  it('heals a member with no open interval ONCE - the window before it is answered, and the ERROR is not repeated', async () => {
+    // dave was removed on the 2nd, then re-added on the 4th by a pre-030 container that wrote his
+    // member row and no interval.
+    members.push({ userId: 'dave', joinedAt: T('2026-10-04T00:00:00Z') });
+    intervals.push({
+      userId: 'dave',
+      joinedAt: T('2026-10-01T00:00:00Z'),
+      leftAt: T('2026-10-02T00:00:00Z'),
+    });
+    const error = jest.spyOn(controller['logger'], 'error');
+
+    const first = await controller.getGroupExclusions('g-1', 'alice');
+
+    expect(healInserts).toEqual([
+      { groupId: 'g-1', userId: 'dave', joinedAt: T('2026-10-04T00:00:00Z'), leftAt: null },
+    ]);
+    expect(first.exclusions.dave).toEqual([
+      { from: T('2026-10-02T00:00:00Z').getTime(), until: T('2026-10-04T00:00:00Z').getTime() },
+    ]);
+    expect(error).toHaveBeenCalledTimes(1);
+
+    const second = await controller.getGroupExclusions('g-1', 'alice');
+    expect(second.exclusions.dave).toEqual(first.exclusions.dave);
+    // The repaired state is what stops the line - no in-memory "already said" flag.
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs nothing at info on an ordinary read - a read on every history answer is not news', async () => {
+    const info = jest.spyOn(controller['logger'], 'log');
+    await controller.getGroupExclusions('g-1', 'alice');
+    expect(info).not.toHaveBeenCalled();
   });
 
   it('refuses a caller who is not a CURRENT member - a removed one included', async () => {

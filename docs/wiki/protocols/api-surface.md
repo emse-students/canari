@@ -151,7 +151,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls/send` | Send MLS message/commit |
+| POST | `/api/mls/send` | Send MLS message/commit; answers `receivedAt`, the instant every recipient's copy is dated by, which the sender stores as its own copy's `serverTimestamp` |
 | POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits since epoch N |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |

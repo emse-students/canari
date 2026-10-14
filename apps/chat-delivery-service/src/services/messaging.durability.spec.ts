@@ -416,6 +416,19 @@ describe('MessagingService - visibility vs durability', () => {
       expect(res).toEqual(expect.objectContaining({ queued: 1 }));
     });
 
+    it("answers the sender the SAME receive time its recipients' rows carry", async () => {
+      // The sender dates its own copy by it, and a history answer places that copy against a
+      // membership window - so it must be the instant a recipient's copy is dated by, not a near one.
+      twoPeers();
+      onlyAOnline();
+      pushSpies();
+
+      const res = await service.sendMessage(send({ silent: true, durable: false }));
+
+      const queued = queuedMessageRepo.save.mock.calls[0][0] as unknown as { createdAt: Date }[];
+      expect(res).toEqual(expect.objectContaining({ receivedAt: queued[0].createdAt.getTime() }));
+    });
+
     it('still queues a DURABLE frame for an offline device, and pushes to it', async () => {
       // The whole point of the distinction: a real message must survive the recipient being away.
       twoPeers();

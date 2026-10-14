@@ -86,6 +86,7 @@ import type {
   Conversation,
 } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
+import { quotePreviewEntitled } from '$lib/utils/chat/historyEntitlement';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/outbox';
@@ -526,6 +527,8 @@ export function useMessaging() {
         addMessageToChat(sid, content, contactName, ctx, options),
       patchSalonEcho: (key, id, change) =>
         void applySalonEchoChange(ctx.conversations, key, id, change, ctx.log),
+      quotePreviewEntitled: (groupId, quoted) =>
+        quotePreviewEntitled(groupId, quoted, { mlsService: ctx.ensureMls(), log: ctx.log }),
       log: ctx.log,
     };
   }

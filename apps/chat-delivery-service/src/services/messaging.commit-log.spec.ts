@@ -177,7 +177,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
       const fanOut = jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       const res = await service.validateCommit({
         groupId: 'group-1',
@@ -223,7 +223,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       const res = await service.validateCommit({
         groupId: 'group-1',
@@ -255,7 +255,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       const res = await service.validateCommit({
         groupId: 'group-1',
@@ -298,7 +298,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       deviceGroupRepo.findOne.mockResolvedValue(null);
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       const res = await service.validateCommit({
         groupId: 'group-1',
@@ -335,7 +335,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       await service.validateCommit({
         groupId: 'group-1',
@@ -358,7 +358,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       const res = await service.validateCommit({
         groupId: 'group-1',
@@ -381,7 +381,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       keyPackageRepo.findOne.mockResolvedValue(null);
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       await service.validateCommit({
         groupId: 'group-1',

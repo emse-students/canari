@@ -70,6 +70,7 @@ import {
 } from '$lib/db/outboxCodec';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { TabOutboxEvent } from '$lib/mls-client/tabMessageSync';
+import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
 
@@ -125,7 +126,7 @@ function makeStorage(seed: OutboxEntry[] = []) {
 function makeMls(
   opts: {
     meta?: (id: string) => unknown;
-    send?: () => Promise<void>;
+    send?: (...args: unknown[]) => Promise<void>;
     active?: (id: string) => Promise<boolean>;
   } = {}
 ) {
@@ -135,9 +136,19 @@ function makeMls(
       opts.meta ? opts.meta(id) : { groupId: id, name: '', isGroup: true, deletedAt: null }
     ),
     isGroupActive: vi.fn(opts.active ?? (async () => true)),
-    sendMessage: vi.fn(opts.send ?? (async () => {})),
+    // Whatever a test's own `send` does (throw, wait), an accepted frame answers what the real
+    // service answers: the sealed bytes and the server's receive time.
+    sendMessage: vi.fn(async (...args: unknown[]) => {
+      await (opts.send ?? (async () => {}))(...args);
+      return accepted();
+    }),
     waitForMessageQueueIdle: vi.fn(async () => {}),
   } as any;
+}
+
+/** What `sendMessage` answers for a frame the server took: the sealed bytes and its receive time. */
+function accepted(): SentFrame {
+  return { sealed: new Uint8Array(), receivedAt: 1_700_000_000_000 };
 }
 
 function convoWith(id: string, messageIds: string[]): Conversation {
@@ -397,6 +408,23 @@ describe('outbox flusher', () => {
     expect(sentIds).toEqual(['m1', 'm2']);
     expect(storage._map.size).toBe(0);
     expect(conversations.get('g1')!.messages.every((m) => m.status === 'sent')).toBe(true);
+  });
+
+  it("dates a sent message by the server's receive time, in memory and on disk", async () => {
+    // A history answer places our OWN copies against exclusion windows by this field - left
+    // undated, they could only be placed by the phone clock.
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(conversations.get('g1')!.messages[0].serverTimestamp).toBe(1_700_000_000_000);
+    expect(storage.saveMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'm1', serverTimestamp: 1_700_000_000_000 }),
+      'device-key'
+    );
   });
 
   it('sends a control entry silently (silent=true) then deletes it', async () => {
@@ -1844,6 +1872,7 @@ describe('outbox lanes - a stalled send freezes its own conversation and nothing
     const send = vi.fn(async (_g: string, _p: Uint8Array, id: string) => {
       started.push(id);
       await new Promise<void>((resolve, reject) => gates.set(id, { resolve, reject }));
+      return accepted();
     });
     return { gates, started, send };
   }
@@ -1914,6 +1943,7 @@ describe('outbox lanes - a stalled send freezes its own conversation and nothing
     const mlsService = makeMls();
     mlsService.sendMessage = vi.fn(async (_g: string, _p: Uint8Array, id: string) => {
       sent.push(id);
+      return accepted();
     });
     const outbox = createOutbox(makeDeps({ mlsService, storage }));
     await outbox.flush();
@@ -1974,7 +2004,7 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
     const mlsService = makeMls();
     mlsService.sendMessage = vi.fn(async (g: string, _p: Uint8Array, id: string) => {
       sent.push(id);
-      if (healed && g === 'gT') return;
+      if (healed && g === 'gT') return accepted();
       if (g === 'gT') throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
       throw new SenderNotActiveError(g, 'pending');
     });
@@ -2032,6 +2062,7 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
             // The POST REACHED the server; the link died with the answer.
             throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
           }
+          return accepted();
         });
         return mls;
       };

@@ -8,7 +8,7 @@ import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
-import type { GroupExclusions, GroupRosterBatch } from './mlsDeliveryApi';
+import type { GroupExclusions, GroupRosterBatch, SentFrame } from './mlsDeliveryApi';
 
 export type { FrameDelivery };
 export type { DistributionScope };
@@ -612,7 +612,7 @@ export interface IMlsService {
     messageBytes: Uint8Array,
     messageId?: string,
     delivery?: FrameDelivery
-  ): Promise<Uint8Array>;
+  ): Promise<SentFrame>;
   /**
    * Decrypts and processes an incoming MLS message for the group, returning the plaintext or null.
    *

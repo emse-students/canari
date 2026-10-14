@@ -1,5 +1,6 @@
 import { sendChatMessage } from './messaging';
 import type { Conversation } from '$lib/types';
+import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 
 const enqueueOutboxMessage = vi.fn().mockResolvedValue(undefined);
 vi.mock('./outbox', () => ({
@@ -44,6 +45,7 @@ describe('sendChatMessage: the echo and its queue entry are one write', () => {
         deviceKeyB64: 'k',
         mlsService: {} as any,
         log: () => {},
+        quotePreviewEntitled: async () => true,
         addMessageToChat: async (_s: string, _c: string, _n: string, o: Record<string, any>) => {
           calls.push('echo');
           options = o;
@@ -120,5 +122,57 @@ describe('sendChatMessage: the echo and its queue entry are one write', () => {
     expect(result.success).toBe(false);
     expect(h.calls).toEqual([]);
     expect(enqueueOutboxMessage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14): a reply quoting a message from inside a
+ * member's exclusion window carries the quoted id only - its text would reach that member live.
+ */
+describe('sendChatMessage - a reply quoting a withheld message', () => {
+  const conversation = { id: 'group-1', lifecycle: 'active' } as unknown as Conversation;
+  const quoted = {
+    id: 'q1',
+    senderId: 'carol',
+    content: serializeEnvelope(mkTextEnvelope('said while Bob was out')),
+    timestamp: new Date(1_700_000_000_000),
+    serverTimestamp: 1_700_000_000_000,
+  } as never;
+
+  function depsWith(entitled: boolean) {
+    let options: Record<string, any> = {};
+    const quotePreviewEntitled = vi.fn(async () => entitled);
+    return {
+      get options() {
+        return options;
+      },
+      quotePreviewEntitled,
+      deps: {
+        userId: 'me',
+        conversation,
+        log: () => {},
+        quotePreviewEntitled,
+        addMessageToChat: async (_s: string, _c: string, _n: string, o: Record<string, any>) => {
+          options = o;
+        },
+      } as any,
+    };
+  }
+
+  it('blanks the quoted text, in the queued frame AND in the stored echo', async () => {
+    const h = depsWith(false);
+    await sendChatMessage('replying', 'alice', quoted, h.deps);
+
+    expect(h.quotePreviewEntitled).toHaveBeenCalledWith('group-1', quoted);
+    expect(h.options.outboxEntry.replyTo).toEqual({ id: 'q1', senderId: 'carol', preview: '' });
+    expect(h.options.replyTo.content).toBe('');
+  });
+
+  it('keeps the quoted text when every member is entitled to it', async () => {
+    const h = depsWith(true);
+    await sendChatMessage('replying', 'alice', quoted, h.deps);
+
+    expect(h.options.outboxEntry.replyTo.preview).toBe('said while Bob was out');
+    expect(h.options.replyTo.content).toBe('said while Bob was out');
   });
 });

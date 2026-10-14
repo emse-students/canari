@@ -34,7 +34,7 @@ import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
-import { SendEdgeRefusedError } from '$lib/mls-client/mlsDeliveryApi';
+import { SendEdgeRefusedError, type SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 import {
   UPLOAD_NO_ANSWER_ATTEMPTS,
   UPLOAD_PROGRESS_MARGIN_BYTES,
@@ -538,6 +538,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const messages = [...found.convo.messages];
     if (messages[found.idx].status === status) return;
     messages[found.idx] = { ...messages[found.idx], status };
+    conversations.set(found.key, { ...found.convo, messages });
+  }
+
+  /** Record the server's receive time on a sent message in the reactive map; `persistSent` writes it. */
+  function patchServerTimestamp(messageId: string, serverTimestamp: number): void {
+    const found = findMessage(messageId);
+    if (!found) return;
+    const messages = [...found.convo.messages];
+    messages[found.idx] = { ...messages[found.idx], serverTimestamp };
     conversations.set(found.key, { ...found.convo, messages });
   }
 
@@ -1081,10 +1090,25 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       }
 
       inFlight = entry.id;
+      let sent: SentFrame;
       try {
-        await mlsService.sendMessage(terminalId, proto, entry.id, deliveryForOutboxEntry(entry));
+        sent = await mlsService.sendMessage(
+          terminalId,
+          proto,
+          entry.id,
+          deliveryForOutboxEntry(entry)
+        );
       } finally {
         inFlight = null;
+      }
+      // THE SENDER'S OWN COPY GETS THE SERVER TIME every recipient's copy carries. A sender never
+      // receives its frame back, so this answer is the only place it can come from - and an undated
+      // copy cannot be placed against an exclusion window (a Remove holds against a later re-add,
+      // user 2026-10-14). A control frame is not a message: its entry id names the message it
+      // mutates, whose own time must not move.
+      if (entry.kind !== 'control') {
+        if (sent.receivedAt !== null) patchServerTimestamp(entry.id, sent.receivedAt);
+        else log(`[OUTBOX] ${entry.id.slice(0, 8)}… sent, the server answered no receive time`);
       }
       // The media envelope was installed immediately after upload, before the MLS send.
       await persistSent(terminalId, entry.id);

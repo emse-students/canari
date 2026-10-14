@@ -738,39 +738,98 @@ answer path can forget it.
 - **The union of every current member's windows, not the asker's.** A bundle is a group broadcast,
   and every member ingests answers meant for others (see the `history_bundle` handler). Withholding
   from the asker alone would hand the window to the re-admitted member reading a continuous member's
-  answer. The cost is accepted: while a re-admitted member is in the group, NO member can restore a
-  message from that window through a bundle.
-- **The clock is the server's.** A message is placed by `serverTimestamp`, the
-  `queued_message.createdAt` its copy was delivered with - the same database clock that writes
-  `joinedAt`/`leftAt`. The sender-stamped `timestamp` is a client clock and is never read for this.
-  A window includes its start and excludes its end: the re-add instant belongs to a member.
-- **A message with no server time is withheld whenever any window exists**, because it cannot be
-  shown to fall outside one. That is mostly the answering device's OWN messages - a sender never
-  receives its frame back, so its copy carries no delivery time - which every other member holds
-  WITH one and can serve. When no current member has a window nothing is filtered, and every answer
-  is byte-for-byte what it was.
-- **An unreadable window set sends nothing**, logged `[HISTORY_ENTITLEMENT]`: the same silence an
-  unreadable store produces, so another member or the next connection answers. Never an unfiltered
   answer.
+- **What that costs a NEW DEVICE, re-quantified.** A new device - of a continuous member, or a
+  genuinely new member's - restores everything EXCEPT the messages sent while a member who is in the
+  group TODAY was out, plus legacy undated copies within the skew margin of such a span (below). Live
+  delivery never reached that device, the server keeps no copy for a device that did not exist, and
+  every answering peer withholds the span, so **for that device those messages are gone for as long
+  as the re-admitted member stays**; the day they leave the group, their windows leave the union and
+  the next reconciliation serves the span again. A device that already held the span keeps it - the
+  filter decides what is SENT, never what is deleted. The size is exactly "messages sent during the
+  absences of today's members", which nothing recorded before migration `030`, so it starts at zero
+  and grows only with remove-then-re-add cycles; `SELECT count(*) FROM
+  dm_group_membership_intervals WHERE "leftAt" IS NOT NULL` is the number of such spans.
+- **The clock is chat-delivery's, and ONE clock.** A message is placed by `serverTimestamp`, the
+  `queued_message.createdAt` its copy was delivered with. `createdAt`, `joinedAt` and `leftAt` are all
+  written from the same Node `new Date()` in the chat-delivery process (`messaging.service.ts`,
+  `ensureGroupMember`, `endGroupMembership`), never from Postgres's `now()` and never from a client.
+  The sender-stamped `timestamp` is a client clock, read only for the legacy undated case below. A
+  window includes its start and excludes its end: the re-add instant belongs to a member.
+- **INVARIANT: the service and the database run in UTC.** The columns are `timestamp` WITHOUT time
+  zone; TypeORM writes a JS `Date` in the process's local zone and reads it back the same way, so the
+  instants survive only while the writer and the reader share one zone. Prod Postgres and the
+  chat-delivery container are both UTC (read 2026-10-14). The one value still written by the
+  database clock is `dm_group_members."joinedAt"` (`@CreateDateColumn`), which the exclusions read
+  copies into an interval only when it heals a member enrolled by pre-030 code - the same UTC, a
+  different clock by at most the skew between the two boxes' NTP.
+- **The sender's OWN copy is dated too.** A sender never receives its frame back, so its copy used to
+  carry no server time at all. `POST /send` now answers `receivedAt` - the very `Date` written into
+  every recipient's `queued_message.createdAt` - and the outbox stores it as that message's
+  `serverTimestamp`, in memory and on disk (`outbox.ts`, `patchServerTimestamp`). A control entry
+  (reaction, edit, delete) is not stamped: it mutates a message whose own date must not move. A
+  message the native background sender delivered (`/api/mls/push/send`) is not stamped by this path
+  and falls under the legacy rule below.
+- **A LEGACY undated message** - a copy written before that answer existed - is placed by its
+  sender-stamped `timestamp` against every window **widened by `UNDATED_SKEW_MARGIN_MS`, one hour, on
+  both sides**: held back inside, released outside. The hour covers a phone clock minutes off and an
+  outbox that held a message before the network took it; it does NOT cover a clock wrong by more than
+  that, or a message composed offline more than an hour before it was sent. Wider costs little - a
+  held-back message is served by any member holding it dated - so the margin errs wide. One with no
+  usable timestamp at all is held back. When no current member has a window nothing is filtered, and
+  every answer is byte-for-byte what it was.
+- **An unreadable window set carries no message**, logged `[HISTORY_ENTITLEMENT]`: the same silence
+  an unreadable store produces, so another member or the next connection answers. Never an
+  unfiltered answer. **The FULL bundle still sends one frame carrying the conversation state** (floor,
+  read watermarks, pins) and no message - when the store is empty, when the windows are unreadable, or
+  when every message was withheld - because an invitee has no conversation row yet and that frame is
+  what gives it one.
+- **A reply quote is the other road, and it is closed the same way.** A reply carries the quoted
+  message's text, reaches every current member live and rides every later bundle. So before a reply
+  is queued, `quotePreviewEntitled` places the QUOTED message against every current member's windows;
+  if it falls inside one, or the windows cannot be read, the reply carries the quoted id and an empty
+  preview - in the frame AND in the sender's own echo, which a later bundle would otherwise carry.
+
+**The removal is recorded BEFORE the commit.** `removeMemberAndBroadcast` calls the server first
+(`removeGroupMember`: delete the row, close the interval, one transaction), then commits the MLS
+remove, then broadcasts `memberRemoved`. The reverse order left seconds in which a message was
+queued after the leaf was gone but dated before `leftAt`, and a failed server call recorded no
+window at all. In this order a server failure commits nothing (logged at warning with the group id
+shortened, and rethrown to the caller), and a commit failure after the server succeeded leaves a
+leaf with no roster row - exactly what `removeStrayLeaves` collects on the next connection of any
+holder. The `pendingGroupExits` queue was not used: it is the durable retry of a SELF-exit's server
+half, and a removal by another member has a live caller to hand the failure to.
 
 **The receiver - hygiene, not a control.** The `history_bundle` handler drops a message it would
-ADD whose server time falls inside its OWN window, one log line per drop
-(`dropOwnExcludedMessages`); messages it already holds are not checked, so a bundle restating its
-store costs no read. An unreadable window set ingests none of that frame's messages, and says so.
+ADD by the same `withholdReason` the senders apply, against its OWN windows - a dated message inside
+one, an undated one near one, an undatable one - one log line per drop (`dropOwnExcludedMessages`);
+messages it already holds are not checked, so a bundle restating its store costs no read. The
+Redis-stream replay (`historySystemEvents.ts`) applies the same filter to a bundle it replays, and no
+longer dates an undated message by the bundle frame's time, which is when the BUNDLE was sent and
+would have placed the message wrongly. An unreadable window set ingests none of that frame's
+messages, and says so.
 
 **What it does NOT cover.**
 
+- **AN ANSWERER ON AN OLDER BUILD.** The control runs on the device that ANSWERS, so the guarantee
+  holds only when that device runs a build carrying this change. A member still on an older build
+  answers a history request exactly as before - unfiltered - and the re-admitted member's device
+  ingests it if it is itself older too (a current build drops what falls in its own windows, which is
+  hygiene and not a control). **The guarantee is complete only once `minClientVersion` reaches the
+  build that ships this**; raising it is the user's call, and it stays where it is until they make it
+  ([backlog](../backlog.md)).
 - A hostile client - a member that kept its plaintext, or an answering peer running modified code -
   can hand anything to anybody. This is a rule honoured by every correct client, not cryptography.
+- **A member can open an artificial window**: removing someone and adding them back seconds later
+  makes everything in between - and the hour either side of it for legacy undated copies -
+  unrestorable to every new device for as long as that person stays. Recorded in
+  [backlog](../backlog.md); nothing distinguishes it from a real removal.
 - Removals that happened before migration `030`: nothing recorded them, so a person removed then
   and re-added later has no window.
 - A member enrolled by a container still running pre-030 code during the deploy that applied the
-  migration has no open interval; their later removal records no window and logs
-  `[REMOVE_MEMBER] ... had NO open membership interval` at ERROR.
-- The seconds between the MLS remove commit and the server call that closes the interval
-  (`removeMemberAndBroadcast` commits, broadcasts `memberRemoved`, then calls the server): a message
-  queued in between is dated before `leftAt`. A failed server call records no window at all, which is
-  why it is now logged at ERROR rather than swallowed.
+  migration has no open interval. The exclusions read opens it from the member row's `joinedAt` the
+  first time it meets one, and logs that ERROR once - the repaired row is what stops the line, so it
+  is not repeated - but a removal made by such a container before that read recorded no window.
 - Reconciliation still READS a withheld message as missing: the asker's digest lacks it and asks
   again on its next connection. That is the open P2 in [backlog](../backlog.md) (an exclusion window
   called a loss), unchanged in cost by this.

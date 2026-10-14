@@ -7,7 +7,7 @@ import { GroupMembershipInterval } from '../entities/group-membership-interval.e
 
 /**
  * The statement this helper builds is the whole of what it does, so the statement is what is
- * asserted: an INSERT that says nothing on conflict, and values that never name `joinedAt`.
+ * asserted: an INSERT that says nothing on conflict, and member values that never name `joinedAt`.
  *
  * Both halves matter for the same reason. `ON CONFLICT DO UPDATE SET "joinedAt"` is how a
  * production group ended up with no row carrying its own creation minute, and passing `joinedAt`
@@ -60,14 +60,11 @@ describe('ensureGroupMember', () => {
     expect(member?.calls[member.calls.length - 1]).toBe('execute');
   });
 
-  it('never writes joinedAt itself - the column belongs to the insert that created the row', async () => {
+  it('never writes the MEMBER row joinedAt itself - the column belongs to the insert that created the row', async () => {
     const { manager, inserts } = managerWithRecorder();
 
     await ensureGroupMember(manager, 'g-1', 'alice');
 
-    for (const insert of inserts) {
-      expect(Object.keys(insert.values ?? {})).not.toContain('joinedAt');
-    }
     expect(inserts.find((i) => i.target === GroupMember)?.values).toEqual({
       groupId: 'g-1',
       userId: 'alice',
@@ -77,11 +74,17 @@ describe('ensureGroupMember', () => {
 
   it('opens an OPEN membership interval, and a second enrolment is a no-op on it too', async () => {
     const { manager, inserts } = managerWithRecorder();
+    const before = Date.now();
 
     await ensureGroupMember(manager, 'g-1', 'alice');
 
     const interval = inserts.find((i) => i.target === GroupMembershipInterval);
-    expect(interval?.values).toEqual({ groupId: 'g-1', userId: 'alice', leftAt: null });
+    const { joinedAt, ...rest } = interval?.values ?? {};
+    expect(rest).toEqual({ groupId: 'g-1', userId: 'alice', leftAt: null });
+    // The same clock as the message's `createdAt` - this process's - so a window and the
+    // messages it is compared with are placed by ONE clock.
+    expect(joinedAt).toBeInstanceOf(Date);
+    expect((joinedAt as Date).getTime()).toBeGreaterThanOrEqual(before);
     // The partial unique index refuses a second open interval; the insert must ignore that refusal
     // exactly as the membership row ignores its own conflict.
     expect(interval?.calls).toContain('orIgnore');
@@ -90,7 +93,8 @@ describe('ensureGroupMember', () => {
 });
 
 describe('endGroupMembership', () => {
-  it('deletes the live row AND closes the open interval at the database clock', async () => {
+  it('deletes the live row AND closes the open interval at the clock that dates messages', async () => {
+    const before = Date.now();
     const deletes: Array<{ entity: unknown; where: unknown }> = [];
     const updates: Array<{ entity: unknown; where: Record<string, unknown>; set: unknown }> = [];
     const manager = {
@@ -116,9 +120,10 @@ describe('endGroupMembership', () => {
     expect(updates[0].where.userId).toBe('bob');
     // Only the OPEN interval is closed; a closed one keeps the instant it was closed at.
     expect(updates[0].where.leftAt).toBeDefined();
-    // The server's clock, never a value computed in this process.
-    const set = updates[0].set as { leftAt: () => string };
-    expect(set.leftAt()).toBe('now()');
+    // This process's clock - the one `queued_message.createdAt` is written with - never a client's.
+    const set = updates[0].set as { leftAt: Date };
+    expect(set.leftAt).toBeInstanceOf(Date);
+    expect(set.leftAt.getTime()).toBeGreaterThanOrEqual(before);
   });
 });
 

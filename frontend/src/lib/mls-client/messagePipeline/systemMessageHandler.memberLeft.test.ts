@@ -114,6 +114,7 @@ describe('memberLeft, replay', () => {
       readWatermarkUpdates: {},
       historyFloorUpdate: {},
       pushPendingMessage: (msg: any) => pushed.push(msg),
+      dropOwnExcluded: async (messages: any) => messages,
     } as any);
     return pushed;
   }

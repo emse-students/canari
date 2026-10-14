@@ -734,8 +734,17 @@ export class MembersController {
    * copied). The answer names who was removed and when, which is group metadata only a member may
    * hold - and only a member answers history anyway.
    *
-   * Times are server milliseconds from the database clock, the clock that stamps
+   * Times are server milliseconds from this service's clock, the clock that stamps
    * `queued_message.createdAt` - the `serverTimestamp` the client compares them with.
+   *
+   * **A CURRENT MEMBER WITH NO OPEN INTERVAL IS REPAIRED HERE, ONCE.** It can only be somebody
+   * enrolled by a container still running pre-030 code while the migration was applied. The repair
+   * opens the interval from the member row's own `joinedAt` - exactly what the migration's backfill
+   * does - so the ERROR line that reports it fires on the call that heals it and never again, rather
+   * than on every read for ever. It writes nothing for anybody already consistent.
+   *
+   * No line per answer: the decision this route feeds is made, and logged, by the client
+   * (`[HISTORY_ENTITLEMENT]`). Only a refusal and a repair are events here.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/exclusions')
@@ -747,7 +756,7 @@ export class MembersController {
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     const members = await this.groupMemberRepo.find({
       where: { groupId: safeGroupId },
-      select: { userId: true },
+      select: { userId: true, joinedAt: true },
     });
     const memberIds = new Set(members.map((m) => m.userId));
     if (!caller || !memberIds.has(caller)) {
@@ -768,24 +777,43 @@ export class MembersController {
       byUser.set(row.userId, list);
     }
 
-    const exclusions: Record<string, ExclusionWindow[]> = {};
-    let withoutInterval = 0;
-    for (const userId of memberIds) {
-      const rows = byUser.get(userId) ?? [];
-      if (!rows.some((r) => r.leftAt === null)) withoutInterval++;
-      const windows = exclusionWindows(rows);
-      if (windows.length > 0) exclusions[userId] = windows;
-    }
-    if (withoutInterval > 0) {
-      // A current member with no OPEN interval is outside the record this route exists to answer
-      // from, so whatever it was out for is not here. Said, never inferred.
+    // Members outside every open interval - see the docstring. Repaired before the answer is built,
+    // so the answer already carries the window between their last close and their arrival.
+    const unopened = members.filter((m) => !(byUser.get(m.userId) ?? []).some((r) => !r.leftAt));
+    if (unopened.length > 0) {
+      await this.dataSource.manager
+        .createQueryBuilder()
+        .insert()
+        .into(GroupMembershipInterval)
+        .values(
+          unopened.map((m) => ({
+            groupId: safeGroupId,
+            userId: m.userId,
+            joinedAt: m.joinedAt,
+            leftAt: null,
+          }))
+        )
+        .orIgnore()
+        .execute();
+      for (const m of unopened) {
+        const list = byUser.get(m.userId) ?? [];
+        list.push({
+          userId: m.userId,
+          joinedAt: m.joinedAt,
+          leftAt: null,
+        } as GroupMembershipInterval);
+        byUser.set(m.userId, list);
+      }
       this.logger.error(
-        `[GROUP_EXCLUSIONS] group=${safeGroupId} members=${memberIds.size} withoutOpenInterval=${withoutInterval}`
+        `[GROUP_EXCLUSIONS] group=${safeGroupId.slice(0, 8)} opened ${unopened.length} missing interval(s) - member(s) enrolled by pre-030 code; a window they were out for before that is not recorded`
       );
     }
-    this.logger.log(
-      `[GROUP_EXCLUSIONS] group=${safeGroupId} members=${memberIds.size} withWindows=${Object.keys(exclusions).length}`
-    );
+
+    const exclusions: Record<string, ExclusionWindow[]> = {};
+    for (const userId of memberIds) {
+      const windows = exclusionWindows(byUser.get(userId) ?? []);
+      if (windows.length > 0) exclusions[userId] = windows;
+    }
     return { exclusions };
   }
 }

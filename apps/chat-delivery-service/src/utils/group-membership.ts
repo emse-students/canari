@@ -29,6 +29,12 @@ import { GroupMembershipInterval } from '../entities/group-membership-interval.e
  * enrolment that finds its row but no open interval - a crash between the two statements on a
  * caller with no transaction - opens one now rather than leaving the person outside every interval.
  *
+ * **BOTH INSTANTS OF AN INTERVAL COME FROM THIS PROCESS'S CLOCK** (`new Date()`), because that is
+ * the clock `sendMessage` stamps `queued_message.createdAt` with - the server time a window is
+ * compared against. The database's `now()` is a different clock; the two agree only by accident.
+ * Every column is `timestamp WITHOUT time zone`, so the stated invariant is that this container
+ * runs in UTC (measured on production 2026-10-14, as is Postgres) - see history-reconciliation.
+ *
  * @param manager Entity manager to run on - pass the transaction's manager where one is open, so
  *                the enrolment commits with the device memberships beside it.
  * @param groupId Group being joined.
@@ -50,7 +56,7 @@ export async function ensureGroupMember(
     .createQueryBuilder()
     .insert()
     .into(GroupMembershipInterval)
-    .values({ groupId, userId, leftAt: null })
+    .values({ groupId, userId, joinedAt: new Date(), leftAt: null })
     .orIgnore()
     .execute();
 }
@@ -75,7 +81,7 @@ export async function endGroupMembership(
   const del = await manager.getRepository(GroupMember).delete({ groupId, userId });
   const upd = await manager
     .getRepository(GroupMembershipInterval)
-    .update({ groupId, userId, leftAt: IsNull() }, { leftAt: () => 'now()' });
+    .update({ groupId, userId, leftAt: IsNull() }, { leftAt: new Date() });
   return { deleted: del.affected ?? 0, closed: upd.affected ?? 0 };
 }
 

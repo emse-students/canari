@@ -53,6 +53,16 @@ export interface GroupRosterBatch {
 }
 
 /**
+ * What sending one application frame produced: the sealed ciphertext, and the server's receive time
+ * for it - the `serverTimestamp` the sender's own copy is stored with, since a sender never receives
+ * its frame back. `null` when the server's answer carried none (a server predating the field).
+ */
+export interface SentFrame {
+  sealed: Uint8Array;
+  receivedAt: number | null;
+}
+
+/**
  * One window, in SERVER milliseconds, during which a person was not a member of a group;
  * `until: null` means still out. Mirrors `ExclusionWindow` in chat-delivery-service's
  * `utils/group-membership.ts`.
@@ -1266,12 +1276,14 @@ export class MlsDeliveryApi {
    * Both halves of `delivery` travel on the wire because the server holds ciphertext only and can
    * classify nothing itself: `silent` decides whether recipients are notified, `durable` whether
    * the frame is appended to the group's shared log.
+   *
+   * @returns the server's receive time for the frame (ms), or `null` when the answer carries none.
    */
   async postApplicationMessage(
     groupId: string,
     protoBase64: string,
     delivery: FrameDelivery = DELIVERY.visible
-  ): Promise<void> {
+  ): Promise<number | null> {
     const headers = await this.auth({ 'Content-Type': 'application/json' });
     let res: Response;
     try {
@@ -1332,6 +1344,21 @@ export class MlsDeliveryApi {
       }
       throw new Error(`Message send HTTP error: ${res.status}`);
     }
+    // The server's receive time for this frame - the `createdAt` every recipient's copy carries, and
+    // the only server time the SENDER's own copy can ever get (it never receives its frame back). A
+    // server predating the field, or an unreadable body, answers `null`: the frame WAS accepted, so
+    // that is not a failure of the send, and the copy is placed by the rule for undated messages.
+    const answered = (await res.json().catch((e: unknown) => {
+      console.warn(
+        `[DELIVERY] send to ${groupId.slice(0, 8)} accepted, its answer unreadable - the copy stays undated:`,
+        e
+      );
+      return null;
+    })) as { receivedAt?: unknown } | null;
+    const receivedAt = answered?.receivedAt;
+    return typeof receivedAt === 'number' && Number.isFinite(receivedAt) && receivedAt > 0
+      ? receivedAt
+      : null;
   }
 
   /**
