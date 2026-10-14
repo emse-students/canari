@@ -170,6 +170,15 @@ export interface SessionContext {
   ensureMls(): IMlsService;
   /** Destroys the MLS instance (destroy + null) to force a clean reinitialisation. */
   resetMls(): void;
+  /**
+   * Lets go of the MLS client at a sign-out and destroys it once `finalWrite` (the teardown's final
+   * checkpoint) has landed - see `mlsHolder.ts`. The next `ensureMls` builds a fresh client.
+   */
+  retireMls(finalWrite: Promise<void>): Promise<void>;
+  /** Settles once every retired client's final checkpoint has landed; a login waits for it. */
+  whenMlsRetired(): Promise<void>;
+  /** True while a retired client's final checkpoint is still being written. */
+  isMlsRetiring(): boolean;
   getStorage(): IStorage | null;
   setStorage(v: IStorage | null): void;
   getHistoryBaseUrl(): string;

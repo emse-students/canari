@@ -70,6 +70,7 @@ import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
 import { sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
 import {
   unregisterMlsStatePersister,
+  activeMlsStatePersister,
   flushActiveMlsStateEncrypted,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePersisterLifecycle';
@@ -407,7 +408,7 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
   // what this spans - and being released in `finally`, it can never leave a real user locked out.
   ctx.setWipingRevokedDevice(true);
   try {
-    tearDownLiveSession(ctx, cb, 'revoked');
+    void tearDownLiveSession(ctx, cb, 'revoked');
     ctx.resetMls();
     await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
     await clearAuth();
@@ -504,6 +505,15 @@ export async function loginImpl(
     return;
   }
   ctx.setIsLoginInProgress(true);
+
+  // THE PREVIOUS ACCOUNT'S FINAL CHECKPOINT LANDS FIRST. A sign-out retires its MLS client once that
+  // write is on disk (`endSessionImpl`), and this login reads the disk: opening the state while the
+  // write is in flight would start from a state one write behind. Settles at once when nothing is
+  // retiring, and never rejects.
+  if (ctx.isMlsRetiring()) {
+    cb.log('[LOGIN] Waiting for the signed-out session to finish its final MLS checkpoint.');
+  }
+  await ctx.whenMlsRetired();
 
   ctx.setLoginError('');
   ctx.setUserId(userId.trim().toLowerCase());
@@ -1968,6 +1978,9 @@ export async function recoverPinImpl(
   cb.log('[PIN_RECOVER] Starting recovery...');
   onProgress?.({ percent: 3, stage: 'verify' });
 
+  // The state is read as a signed-out session LEFT it, so its final checkpoint lands first (see
+  // `loginImpl`), and the client that wrote it is retired before `ensureMls` below builds ours.
+  await ctx.whenMlsRetired();
   const { loadMlsState } = await import('$lib/utils/hex');
   const state = await loadMlsState(userId);
   if (!state) {
@@ -2053,7 +2066,7 @@ export function tearDownLiveSession(
   ctx: SessionContext,
   cb: ChatSessionCallbacks,
   reason: 'logout' | 'revoked'
-): void {
+): Promise<void> {
   unregisterOutbox();
   // Detach the reconnect listener too, or a regained network would promote a session that no
   // longer exists - reopening a WebSocket for the user who just signed out.
@@ -2072,19 +2085,28 @@ export function tearDownLiveSession(
   unregisterPeerReturn?.();
   unregisterPeerReturn = null;
 
+  // THE PERSISTER THIS SESSION REGISTERED, named now: the removal below runs after the final flush,
+  // and only what this session installed may be removed then (see `unregisterMlsStatePersister`).
+  const persister = activeMlsStatePersister();
+  const releasePersister = () => {
+    uninstallMlsStatePersisterLifecycle(persister);
+    unregisterMlsStatePersister(persister);
+    // The encrypt worker is shared and recreated on demand; it is disposed only when no session
+    // has registered a persister since - the one that has may be using it.
+    if (activeMlsStatePersister() === null) disposeMlsEncryptWorker();
+  };
+  let finalWrite: Promise<void>;
   if (reason === 'logout') {
-    void flushActiveMlsStateEncrypted().finally(() => {
-      uninstallMlsStatePersisterLifecycle();
-      unregisterMlsStatePersister();
-      // Dispose after the final flush: flushEncrypted relies on the encrypt worker.
-      disposeMlsEncryptWorker();
-    });
+    // Dispose after the final flush: flushEncrypted relies on the encrypt worker. NEVER REJECTS:
+    // the caller chains the MLS client's retirement, and the next login's wait, on it.
+    finalWrite = flushActiveMlsStateEncrypted()
+      .catch((e) => console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`))
+      .then(releasePersister);
   } else {
     // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely
     // the write that must not survive the wipe, so the persister is uninstalled without one.
-    uninstallMlsStatePersisterLifecycle();
-    unregisterMlsStatePersister();
-    disposeMlsEncryptWorker();
+    releasePersister();
+    finalWrite = Promise.resolve();
   }
 
   if (reason === 'logout') {
@@ -2129,6 +2151,7 @@ export function tearDownLiveSession(
   setGraineRuntime(null);
   ctx.getCallService()?.setChatNotifier(null);
   resetSiblingCallWarning();
+  return finalWrite;
 }
 
 /**
@@ -2164,7 +2187,14 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
   } catch (e) {
     cb.log(`[LOGOUT] Could not release the socket - frames may still arrive: ${String(e)}`);
   }
-  tearDownLiveSession(ctx, cb, 'logout');
+  const finalWrite = tearDownLiveSession(ctx, cb, 'logout');
+  // THE CLIENT LEAVES WITH ITS ACCOUNT. Kept, it served the next sign-in as it was: `init` returns at
+  // once on a client that ran, and `resolveDeviceId` hands back its cached id - so account B unlocked
+  // on account A's state and device id. Let go of NOW, destroyed once the final checkpoint above has
+  // landed; `loginImpl` waits for that before it opens any state. See `mlsHolder.ts`.
+  void ctx
+    .retireMls(finalWrite)
+    .then(() => cb.log('[LOGOUT] MLS client retired - the next sign-in opens the state afresh.'));
   notificationPreferences.reset();
   // The announcement asked for, and the one waiting, belong to the account that is leaving: without
   // this the next account signing in in the same tab was never asked on its own behalf (the store's

@@ -864,12 +864,38 @@ decrypting and ACKing the leaving account's frames into memory that nothing woul
 shell's `_sessionExpiredHandled` - set by the first expiry, reset by nothing - is reset by the shared
 `onMlsReady`, so a second expiry in the same process logs out instead of being swallowed.
 
-**What the review left OPEN, because it is not a small fix.** The session's MLS service survives the
-sign-out (nothing calls `resetMls`), and `init()` short-circuits on its cached `initPromise`: the next
-login in the same process runs on the previous session's in-memory client and cached device id.
-Harmless for the SAME account (it is the state the final flush wrote); wrong for ANOTHER account on
-the same install - the P3 "switching accounts on one iPhone install" in [backlog](../../backlog.md).
-Retiring the service needs the final flush to be awaited before the next login opens the state.
+**The MLS client leaves with its account (fixed in the same PR).** The client survived the
+sign-out - nothing called `resetMls` - and `BaseMlsService.init()` returns at once on its cached
+`initPromise` while `resolveDeviceId` hands back its cached id: account B signing in after A on the
+same install ran on A's decrypted client and A's device id. The ghost session had masked it (B never
+reached a login). Now `endSessionImpl` RETIRES the client (`composables/session/mlsHolder.ts`): the
+holder lets go of it at once, so any later `ensureMls` builds a fresh one, and destroys it once the
+teardown's final checkpoint has landed (`tearDownLiveSession` now returns that write, which never
+rejects). `loginImpl` and `recoverPinImpl` `await ctx.whenMlsRetired()` before they touch MLS or read
+the state, because that write is what they read. The SAME account signing back in therefore pays
+one full state decrypt, as a cold start does - chosen deliberately over reusing a client whose
+account the code cannot prove. The call service is rebuilt over the new client (`initServices` is
+keyed on the client, not on "one exists"). Possibly the cause of the P3 "switching accounts on one
+iPhone install" in [backlog](../../backlog.md), not proven. Test: `signOutTimeline.test.ts`, "a
+sign-out retires the account with its MLS client".
+
+**A late final flush no longer removes the NEXT session's persister.** The teardown removed the
+persister, its lifecycle hooks and the encrypt worker in the flush's `.finally`, unconditionally -
+so a next login that registered its own in the meantime lost them. Both removals now name the
+persister this session registered (`unregisterMlsStatePersister(owner)`,
+`uninstallMlsStatePersisterLifecycle(owner)`) and skip one that is not current; the shared worker is
+disposed only when no session has registered since; and installing hooks for a NEW persister replaces
+the old ones instead of being skipped by a stale "installed" flag. The login's wait above already
+orders this; the guards make it hold without relying on that order.
+
+**OPEN, P2 (pre-existing): a sign-out during a login in progress is not cancelled.** A login can run
+~12 s inside the native decrypt of `mls.bin` (Mi 9T). A sign-out in that window finds no live
+session (`isLoggedIn` is still false), so `endSessionImpl` stops nothing, and the login then
+completes and sets `isLoggedIn` true for a signed-out user (what follows was not measured). The
+clean fix is a sign-out GENERATION that `loginImpl`
+captures at its start and re-reads before `setIsLoggedIn(true)`, tearing down what it set up if a
+sign-out happened; it touches every registration the login makes, so it is its own change
+([backlog](../../backlog.md)).
 
 **What a sign-out still keeps, deliberately**: `mls.bin`, the message database and the device-key
 vault ("deconnecter seulement, garder l'etat", see `handlePinSignOut`). So a device signed out with

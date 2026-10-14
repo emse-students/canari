@@ -19,6 +19,11 @@ vi.mock('$lib/stores/user', async (importOriginal) => ({
 }));
 
 const { clearAuth, setSignOutHandler } = await import('$lib/stores/auth');
+const { createMlsHolder } = await import('./mlsHolder');
+const { registerMlsStatePersister, unregisterMlsStatePersister, activeMlsStatePersister } =
+  await import('$lib/mls-client/mlsStatePersisterRegistry');
+import type { IMlsService } from '$lib/mls-client';
+import type { MlsStatePersister } from '$lib/mls-client/mlsStatePersister';
 const { endSessionImpl } = await import('./sessionAuth');
 const { resumeConnectionImpl } = await import('./sessionConnection');
 
@@ -27,9 +32,21 @@ const fetchMock = vi.fn<() => Promise<Response>>();
 /** The fields of the context the sign-out and the resume read, over a live session. */
 function liveSession() {
   let loggedIn = true;
-  const mls = { pauseSocket: vi.fn(), isWsOpen: vi.fn(() => false) };
-  const ensureMls = vi.fn(() => mls);
+  // One fake client per account, through the REAL holder: what the sign-out does to the client
+  // the next sign-in gets is the behaviour under test.
+  const clients: { pauseSocket: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> }[] =
+    [];
+  const holder = createMlsHolder(() => {
+    const client = { pauseSocket: vi.fn(), isWsOpen: vi.fn(() => false), destroy: vi.fn() };
+    clients.push(client);
+    return client as unknown as IMlsService;
+  });
+  const mls = holder.ensure() as unknown as (typeof clients)[number];
+  const ensureMls = vi.fn(() => holder.ensure());
   const ctx = {
+    retireMls: (finalWrite: Promise<void>) => holder.retire(finalWrite),
+    whenMlsRetired: () => holder.whenRetired(),
+    isMlsRetiring: () => holder.isRetiring(),
     timers: { reconnect: null, health: null, syncWatchdog: null, connectionWatchdog: null },
     isLoggedIn: () => loggedIn,
     setIsLoggedIn: (v: boolean) => {
@@ -58,7 +75,22 @@ function liveSession() {
     conversations,
     setSelectedContact: vi.fn(),
   } as unknown as ChatSessionCallbacks;
-  return { ctx, cb, mls, ensureMls, clearConversations, log };
+  return { ctx, cb, mls, ensureMls, clearConversations, log, clients };
+}
+
+/** A persister whose final flush lands only when the test says so. */
+function heldPersister() {
+  let land: () => void = () => {};
+  const flushEncrypted = vi.fn(() => new Promise<void>((resolve) => (land = resolve)));
+  const persister = {
+    persistNow: vi.fn(),
+    scheduleDeferred: vi.fn(),
+    flush: vi.fn(async () => {}),
+    flushEncrypted,
+    onBulkIngestStart: vi.fn(),
+    onBulkIngestEnd: vi.fn(async () => {}),
+  } as unknown as MlsStatePersister;
+  return { persister, land: () => land() };
 }
 
 beforeEach(() => {
@@ -92,6 +124,69 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
       expect(s.log).toHaveBeenCalledWith(
         '[LOGOUT] Signed out with no live session on this device - nothing to stop.'
       );
+    } finally {
+      setSignOutHandler(null);
+    }
+  });
+});
+
+/**
+ * Account A signs out, account B signs in, in one process.
+ *
+ * Before 2026-10-14 the MLS client survived a sign-out: `BaseMlsService.init` returns at once on a
+ * client that already ran and `resolveDeviceId` hands back its cached id, so B unlocked on A's
+ * decrypted state and A's device id. The ghost session hid it (B never got as far as a login).
+ */
+describe('a sign-out retires the account with its MLS client', () => {
+  afterEach(() => unregisterMlsStatePersister());
+
+  it('hands the next sign-in a fresh client, and destroys the old one only after its final write', async () => {
+    const s = liveSession();
+    const a = heldPersister();
+    registerMlsStatePersister(a.persister);
+    setSignOutHandler(() => endSessionImpl(s.ctx, s.cb));
+    try {
+      // A signs out.
+      await clearAuth();
+      expect(a.persister.flushEncrypted).toHaveBeenCalledTimes(1);
+
+      // B's login asks for a client while A's final checkpoint is still being written: a NEW one.
+      expect(s.ctx.isMlsRetiring()).toBe(true);
+      const forB = s.ctx.ensureMls();
+      expect(forB).not.toBe(s.clients[0]);
+      expect(s.clients[0].destroy).not.toHaveBeenCalled();
+
+      // ...and a login waiting on the retirement is not released before that write lands.
+      let released = false;
+      void s.ctx.whenMlsRetired().then(() => (released = true));
+      await Promise.resolve();
+      expect(released).toBe(false);
+
+      a.land();
+      await s.ctx.whenMlsRetired();
+      expect(released).toBe(true);
+      expect(s.clients[0].destroy).toHaveBeenCalledTimes(1);
+      expect(s.ctx.isMlsRetiring()).toBe(false);
+      expect(s.ctx.ensureMls()).toBe(forB);
+    } finally {
+      setSignOutHandler(null);
+    }
+  });
+
+  it("leaves the NEXT session's persister registered when the old final write lands late", async () => {
+    const s = liveSession();
+    const a = heldPersister();
+    registerMlsStatePersister(a.persister);
+    setSignOutHandler(() => endSessionImpl(s.ctx, s.cb));
+    try {
+      await clearAuth();
+      // B's session registers its persister before A's final flush has landed.
+      const b = heldPersister();
+      registerMlsStatePersister(b.persister);
+
+      a.land();
+      await s.ctx.whenMlsRetired();
+      expect(activeMlsStatePersister()).toBe(b.persister);
     } finally {
       setSignOutHandler(null);
     }

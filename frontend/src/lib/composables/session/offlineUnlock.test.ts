@@ -202,7 +202,8 @@ describe('what a revoked device stops before it deletes anything', () => {
     const guard = tearDownBody.lastIndexOf("if (reason === 'logout') {", flushAt);
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(flushAt);
-    expect(tearDownBody).toContain('unregisterMlsStatePersister();');
+    // Named: only the persister THIS session registered may be removed (the next one may be live).
+    expect(tearDownBody).toContain('unregisterMlsStatePersister(persister);');
   });
 });
 

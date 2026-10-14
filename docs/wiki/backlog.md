@@ -281,6 +281,11 @@ Neither the tab nor the salon showed one. Not reproduced.
 ### P3 - switching accounts on one iPhone install makes the local store unreadable
 
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
+A candidate cause is fixed in #1862 (the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)); owed one re-reading after it ships.
+
+### P2 - a sign-out during a login in progress is not cancelled
+
+The login completes after the sign-out and sets `isLoggedIn` for a signed-out user. Fix shape (a sign-out generation re-read before `setIsLoggedIn(true)`) in [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14).
 
 ### P3 - every cold start re-registers the device and fetches `/groups` two or three times
 

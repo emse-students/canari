@@ -59,4 +59,20 @@ describe('every sign-out ends the live session on the device', () => {
     // teardown, and a second, flushing one would write back what the wipe deletes.
     expect(guard).toBeLessThan(end.indexOf("tearDownLiveSession(ctx, cb, 'logout');"));
   });
+
+  it('a login opens no state before a signed-out session has finished its final checkpoint', () => {
+    // `mlsHolder.ts` hands the next sign-in a fresh client at once; what keeps that client from
+    // reading a state still being written is this wait, ahead of every MLS and state access.
+    for (const head of [
+      'export async function loginImpl(',
+      'export async function recoverPinImpl(',
+    ]) {
+      const fn = sessionAuth.slice(sessionAuth.indexOf(head));
+      const wait = fn.indexOf('await ctx.whenMlsRetired();');
+      expect(wait).toBeGreaterThan(-1);
+      expect(wait).toBeLessThan(fn.indexOf('ctx.ensureMls()'));
+      const read = fn.indexOf('loadMlsState(');
+      if (read > -1) expect(wait).toBeLessThan(read);
+    }
+  });
 });
