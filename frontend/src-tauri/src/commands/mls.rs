@@ -232,6 +232,22 @@ pub(crate) async fn sauvegarder_mls_et_persister(
     .map_err(|e| e.to_string())?
 }
 
+/// Whether the live manager holds anything its last landed checkpoint does not
+/// (`MlsManager::owes_checkpoint`) - the question a skipped checkpoint must answer `false` to.
+///
+/// No manager answers `true`: there is nothing to prove, and the checkpoint the caller then asks for
+/// reports the missing manager itself, as it does today.
+#[tauri::command]
+pub(crate) fn mls_owes_checkpoint(state: tauri::State<AppState>) -> Result<bool, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state".to_string())?;
+    Ok(lock
+        .as_ref()
+        .is_none_or(mls_core::MlsManager::owes_checkpoint))
+}
+
 #[tauri::command]
 pub(crate) fn creer_groupe(group_id: String, state: tauri::State<AppState>) -> Result<(), String> {
     let mut lock = state

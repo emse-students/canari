@@ -160,17 +160,53 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
      * that is not strictly newer - and this checkpoint carries INBOUND state, which a reload can
      * recover by replaying from the server. The outbound half, which cannot be recovered that way,
      * is checkpointed on the send path instead (`BaseMlsService.sendMessage`).
+     *
+     * A WINDOW THAT CHANGED NOTHING DURABLE WRITES NOTHING (2026-10-14). This used to raise the dirty
+     * flag unconditionally, as a catch-all for any mutation no handler had marked - so a window that
+     * decrypted nothing (an empty history probe, frames for a conversation not restored yet) still
+     * sealed and rewrote the whole state. The catch-all is now a PROOF: when no handler marked the
+     * window, the manager and the two ledgers are asked whether a checkpoint would make anything
+     * durable ({@link MlsStatePersisterConfig.mlsService} `checkpointOwed`), and only `owed: false`
+     * skips it. A decrypted frame of ANY kind - a read watermark included - moves the receive ratchet,
+     * so it is owed and is written exactly as before; see `docs/wiki/protocols/mls-desync-prevention.md`.
      */
     async onBulkIngestEnd() {
       bulkIngestDepth = Math.max(0, bulkIngestDepth - 1);
       if (bulkIngestDepth > 0) return;
       log?.('[MLS] Bulk ingest done - flushing an encrypted checkpoint if needed.');
-      dirtyEncrypted = true;
-      void flushEncryptedInternal().catch(() => {
+      void checkpointAfterBulkIngest().catch(() => {
         // Already logged by `flushEncryptedInternal`; swallowed here because an unawaited rejection
         // would otherwise reach the window as an unhandled one and take the pipeline down with it -
         // the exact coupling this function was changed to remove.
       });
     },
   };
+
+  /**
+   * The bulk-ingest end's checkpoint: taken when a handler marked the window, or when the proof says
+   * one is owed. Unawaited by its caller, so the proof's bridge crossing does not gate delivery
+   * either.
+   */
+  async function checkpointAfterBulkIngest(): Promise<void> {
+    if (!dirtyEncrypted) {
+      let owed: Awaited<ReturnType<IMlsService['checkpointOwed']>>;
+      try {
+        owed = await mlsService.checkpointOwed();
+      } catch (e) {
+        // NO PROOF IS NOT A PROOF OF NOTHING: the checkpoint is taken, as it was before the proof.
+        log?.(
+          `[MLS] Could not ask whether the bulk ingest owes a checkpoint (${String(e)}) - taking it.`
+        );
+        owed = { owed: true, by: 'state' };
+      }
+      if (!owed.owed) {
+        log?.(
+          '[MLS] Bulk ingest changed nothing durable - checkpoint skipped (the file holds it).'
+        );
+        return;
+      }
+    }
+    dirtyEncrypted = true;
+    await flushEncryptedInternal();
+  }
 }

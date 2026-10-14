@@ -39,6 +39,11 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     classifyStateLoadFailure: WebMlsService.prototype['classifyStateLoadFailure'],
     generateDeviceId: vi.fn().mockReturnValue('web-u-fresh'),
     saveState: vi.fn().mockResolvedValue(new Uint8Array([7])),
+    // `writeCheckpoint` names the state it exports and credits it once stored (2026-10-14).
+    client: {
+      checkpoint_mark: vi.fn().mockReturnValue(new Float64Array([1, 0])),
+      note_durable_write: vi.fn().mockReturnValue(true),
+    },
     deleteDevice: vi.fn().mockResolvedValue(undefined),
     // Real implementations, not mocks: the fresh-start assertions below (new id persisted, old
     // device deleted) are assertions ABOUT the rotation, so stubbing it would test nothing.

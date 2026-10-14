@@ -37,6 +37,7 @@ import {
 } from '$lib/mls-client/sendRatchetLedger';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import type {
+  CheckpointOwed,
   DeviceMembershipRow,
   HistoryRequestOutcome,
   BaseRefreshOutcome,
@@ -107,6 +108,7 @@ import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import {
   commitPendingHistoryMarks,
+  hasPendingHistoryMarks,
   noteFrameConsumed,
   snapshotPendingHistoryMarks,
 } from '$lib/utils/chat/history';
@@ -3019,6 +3021,32 @@ export abstract class BaseMlsService implements IMlsService {
     // orderings are not symmetric, and only "ratchet ahead of ledger" is survivable.
     commitPendingHistoryMarks(replayMarks);
   }
+
+  /**
+   * Whether {@link persistCheckpoint}, called now, would make anything durable that is not already.
+   *
+   * A checkpoint does three things, so it is owed when ANY of them has work: the manager holds a
+   * state its last landed write does not ({@link stateOwesCheckpoint}, a proof kept by the manager
+   * itself and never by a caller's list of what mutates it), the send ledger has frames a write
+   * would credit, or the history replay has marks a write would commit. Answering `owed: false`
+   * means a checkpoint would seal and write the state already on disk and commit nothing.
+   *
+   * The two ledgers are read first because they are local and cheap; the platform's answer crosses
+   * the native bridge.
+   */
+  async checkpointOwed(): Promise<CheckpointOwed> {
+    if (pendingSendGenerations(this.userId).length > 0) return { owed: true, by: 'send-ledger' };
+    if (hasPendingHistoryMarks(this.userId)) return { owed: true, by: 'replay-marks' };
+    if (await this.stateOwesCheckpoint()) return { owed: true, by: 'state' };
+    return { owed: false, by: 'none' };
+  }
+
+  /**
+   * Whether this platform's live MLS state holds anything its last LANDED checkpoint does not
+   * (`MlsManager::owes_checkpoint`). Each platform credits its own writes, because only it knows
+   * when one landed: the native checkpoint inside the command, web once IndexedDB took the bytes.
+   */
+  protected abstract stateOwesCheckpoint(): Promise<boolean>;
 
   /**
    * Re-seals this device's state under a new key, and MOVES the key every later checkpoint uses.

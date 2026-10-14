@@ -78,7 +78,20 @@ pub(crate) struct StateSnapshotCache {
     /// [`MlsManager::has_unsaved_ratchet_advance`]). Implies `dirty`; NOT implied by it, because a
     /// freshly loaded manager is `dirty` (its cache is empty) while holding exactly what is on disk.
     pub(crate) ratchet_unsaved: bool,
+    /// Which manager this cache belongs to, so a [`CheckpointMark`] taken from one manager can never
+    /// be credited to another that replaced it (a resume reload, a sign-in) while its write ran.
+    pub(crate) instance: u64,
+    /// How many times this manager's state has been invalidated since it was built. Only ever goes
+    /// up, and goes up on EVERY invalidation, so two equal readings bracket an unchanged state.
+    pub(crate) mutations: u64,
+    /// The highest [`Self::mutations`] reading a caller has declared written to durable storage
+    /// (see [`MlsManager::note_durable_write`]). `None` until the first such write: this manager has
+    /// never put anything on disk itself, and a loaded state may still be in a legacy encoding.
+    pub(crate) durable_at: Option<u64>,
 }
+
+/// Source of [`StateSnapshotCache::instance`]. Process-wide and never reused.
+static NEXT_MANAGER_INSTANCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl StateSnapshotCache {
     pub(crate) fn new_dirty() -> Self {
@@ -86,17 +99,21 @@ impl StateSnapshotCache {
             dirty: true,
             cached_cbor: None,
             ratchet_unsaved: false,
+            instance: NEXT_MANAGER_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            mutations: 0,
+            durable_at: None,
         }
     }
 
     pub(crate) fn invalidate(&mut self) {
         self.dirty = true;
+        self.mutations += 1;
     }
 
     /// [`Self::invalidate`] for a mutation that MOVED A RATCHET (a send, a burn, a decrypted
     /// application frame), which a reload from an older file would put back.
     pub(crate) fn invalidate_ratchet(&mut self) {
-        self.dirty = true;
+        self.invalidate();
         self.ratchet_unsaved = true;
     }
 
@@ -120,6 +137,33 @@ impl StateSnapshotCache {
         self.dirty = false;
         self.ratchet_unsaved = false;
         Ok(bytes)
+    }
+}
+
+/// The state a checkpoint EXPORTED, named so the write that follows can declare it durable.
+///
+/// Taken by [`MlsManager::checkpoint_mark`] in the same critical section as the export, and handed
+/// back to [`MlsManager::note_durable_write`] only once the sealed bytes are on disk. Opaque on
+/// purpose: the two numbers mean something only as a pair, and only to the manager that issued it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CheckpointMark {
+    instance: u64,
+    mutations: u64,
+}
+
+impl CheckpointMark {
+    /// The two halves, for a binding that must carry the mark across a boundary (wasm -> JS).
+    pub fn parts(&self) -> (u64, u64) {
+        (self.instance, self.mutations)
+    }
+
+    /// Rebuilds a mark from [`Self::parts`]. A forged or foreign mark is harmless: it is ignored
+    /// unless its instance is the manager's own, and it can only ever claim a state the manager had.
+    pub fn from_parts(instance: u64, mutations: u64) -> Self {
+        Self {
+            instance,
+            mutations,
+        }
     }
 }
 
@@ -632,6 +676,55 @@ impl MlsManager {
     /// Exposed for benchmarks and integration tests measuring cold serialization cost.
     pub fn invalidate_persisted_snapshot(&self) {
         self.mark_state_dirty();
+    }
+
+    /// Names the state as it stands now. Take it in the SAME critical section as the export
+    /// (`save_state`) whose bytes the caller is about to write, and pass it to
+    /// [`Self::note_durable_write`] once they are on disk.
+    pub fn checkpoint_mark(&self) -> CheckpointMark {
+        let cache = self.state_snapshot.borrow();
+        CheckpointMark {
+            instance: cache.instance,
+            mutations: cache.mutations,
+        }
+    }
+
+    /// Declares that the state named by `mark` is now on durable storage. Returns whether the mark
+    /// was credited.
+    ///
+    /// CALL IT ONLY AFTER THE WRITE LANDED. A write that failed, or that the store refused, must not
+    /// call it - the manager then keeps owing a checkpoint, which is the safe direction.
+    ///
+    /// Ignored, and `false`, for a mark issued by ANOTHER manager (this one replaced it while the
+    /// write ran) or one naming a state this manager never reached. Never moves backwards: a write
+    /// landing after a later one cannot un-declare what the later one made durable.
+    pub fn note_durable_write(&self, mark: CheckpointMark) -> bool {
+        let mut cache = self.state_snapshot.borrow_mut();
+        if mark.instance != cache.instance || mark.mutations > cache.mutations {
+            return false;
+        }
+        cache.durable_at = Some(
+            cache
+                .durable_at
+                .map_or(mark.mutations, |d| d.max(mark.mutations)),
+        );
+        true
+    }
+
+    /// True unless the newest write this manager declared durable holds its CURRENT state.
+    ///
+    /// **THE PROOF A SKIPPED CHECKPOINT RESTS ON.** Every mutation increments the counter (the
+    /// invariant on [`Self::mark_state_dirty`], which `save_state`'s cache already depends on), so a
+    /// counter equal to the one a landed write exported means the write holds everything this
+    /// manager has done: a second checkpoint would seal and write the same state again.
+    ///
+    /// `true` for a manager that has not written yet, including one just loaded from a file it has
+    /// not rewritten: it owes the one rewrite that migrates a legacy encoding (see `load_or_create`).
+    /// It answers for THIS manager only - a send ledger or replay marks that a checkpoint would
+    /// commit are the caller's to ask about.
+    pub fn owes_checkpoint(&self) -> bool {
+        let cache = self.state_snapshot.borrow();
+        cache.durable_at != Some(cache.mutations)
     }
     // --- A. INITIALIZATION (Load or Create) ---
 

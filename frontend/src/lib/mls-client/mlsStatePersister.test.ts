@@ -63,6 +63,80 @@ describe('createMlsStatePersister', () => {
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * THE BULK-INGEST END ASKS A PROOF INSTEAD OF RAISING THE DIRTY FLAG BLINDLY (2026-10-14).
+   *
+   * A Pixel 6a on 1.2.7 checkpointed at the end of EVERY window, 135 times in its log at a median of
+   * 114 ms, including windows that decrypted nothing at all. Only `checkpointOwed` - the manager's
+   * own mutation count against its last LANDED write, plus the two ledgers a write would commit -
+   * may say a window owes nothing. What a batch CARRIED never may: a read watermark is an application
+   * frame, its decrypt moves the receive ratchet, and it is owed exactly like a message.
+   */
+  describe('the checkpoint at the end of a bulk ingest', () => {
+    function withProof(answer: () => Promise<unknown>) {
+      const persistCheckpoint = vi.fn().mockResolvedValue(undefined);
+      const checkpointOwed = vi.fn().mockImplementation(answer);
+      const lines: string[] = [];
+      const persister = createMlsStatePersister({
+        mlsService: { persistCheckpoint, checkpointOwed } as any,
+        log: (m) => lines.push(m),
+      });
+      return { persistCheckpoint, checkpointOwed, persister, lines };
+    }
+    const settle = () => new Promise((r) => setTimeout(r, 20));
+
+    it('is skipped when the window changed nothing durable, and says so once', async () => {
+      const c = withProof(async () => ({ owed: false, by: 'none' }));
+      c.persister.onBulkIngestStart();
+      await c.persister.onBulkIngestEnd();
+      await settle();
+      expect(c.checkpointOwed).toHaveBeenCalledTimes(1);
+      expect(c.persistCheckpoint).not.toHaveBeenCalled();
+      expect(c.lines.filter((l) => l.includes('checkpoint skipped'))).toHaveLength(1);
+    });
+
+    it('is taken when the window decrypted a frame - a read watermark moves the ratchet like a message', async () => {
+      const c = withProof(async () => ({ owed: true, by: 'state' }));
+      c.persister.onBulkIngestStart();
+      await c.persister.onBulkIngestEnd();
+      await settle();
+      expect(c.persistCheckpoint).toHaveBeenCalledTimes(1);
+    });
+
+    it('is taken without asking when a handler marked the window', async () => {
+      const c = withProof(async () => ({ owed: false, by: 'none' }));
+      c.persister.onBulkIngestStart();
+      c.persister.scheduleDeferred(); // an application frame the handler saw decrypted
+      await c.persister.onBulkIngestEnd();
+      await settle();
+      expect(c.checkpointOwed).not.toHaveBeenCalled();
+      expect(c.persistCheckpoint).toHaveBeenCalledTimes(1);
+    });
+
+    it('is taken when the proof cannot be had - no answer is not an answer of nothing', async () => {
+      const c = withProof(async () => {
+        throw new Error('bridge gone');
+      });
+      c.persister.onBulkIngestStart();
+      await c.persister.onBulkIngestEnd();
+      await settle();
+      expect(c.persistCheckpoint).toHaveBeenCalledTimes(1);
+      expect(c.lines.some((l) => l.includes('taking it'))).toBe(true);
+    });
+
+    it('is asked only by the OUTERMOST window', async () => {
+      const c = withProof(async () => ({ owed: false, by: 'none' }));
+      c.persister.onBulkIngestStart();
+      c.persister.onBulkIngestStart();
+      await c.persister.onBulkIngestEnd();
+      await settle();
+      expect(c.checkpointOwed).not.toHaveBeenCalled();
+      await c.persister.onBulkIngestEnd();
+      await settle();
+      expect(c.checkpointOwed).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('closes the ingest window WITHOUT waiting for the checkpoint - durability must not gate delivery', async () => {
     // The pipeline awaits every bulk-ingest observer, so a checkpoint awaited here is a checkpoint
     // charged to the next message's latency: measured at 8.0 s on a cold web client and 3.2 s on the

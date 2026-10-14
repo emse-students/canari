@@ -73,7 +73,7 @@ pub(crate) fn checkpoint_live_manager(
 ) -> Result<usize, String> {
     let _ordered = foreground_checkpoint_lock();
     let started = std::time::Instant::now();
-    let (plain, ratchet_was_unsaved) = {
+    let (plain, ratchet_was_unsaved, mark) = {
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
@@ -81,7 +81,13 @@ pub(crate) fn checkpoint_live_manager(
             .as_ref()
             .ok_or_else(|| "MLS Manager not initialized".to_string())?;
         let ahead = manager.has_unsaved_ratchet_advance();
-        (manager.save_state().map_err(|e| e.to_string())?, ahead)
+        // Taken beside the export, under the same lock: it names exactly the state written below.
+        let mark = manager.checkpoint_mark();
+        (
+            manager.save_state().map_err(|e| e.to_string())?,
+            ahead,
+            mark,
+        )
     };
     let exported = started.elapsed();
     let written = mls_core::MlsManager::encrypt_state_blob_with_key(&plain, key)
@@ -111,6 +117,19 @@ pub(crate) fn checkpoint_live_manager(
             return Err(e);
         }
     };
+    // The file now holds the exported state: credit it, so a later `owes_checkpoint` can prove a
+    // checkpoint would write nothing new. Still under the ordering lock, so no reload has replaced
+    // the manager meanwhile; the mark's instance refuses the credit if a sign-in did.
+    match manager_state.lock() {
+        Ok(lock) => {
+            if let Some(manager) = lock.as_ref() {
+                manager.note_durable_write(mark);
+            }
+        }
+        Err(_) => log::error!(
+            "[MLS] checkpoint written but the manager lock is poisoned - the write is not credited, so the next checkpoint is taken in full"
+        ),
+    }
     log::debug!(
         "[MLS] checkpoint: manager lock held {} ms (export), seal + write {} ms off it, {} bytes",
         exported.as_millis(),
@@ -130,13 +149,19 @@ pub(crate) fn persist_locked_manager(
     write: impl FnOnce(&[u8]) -> Result<(), String>,
 ) -> Result<usize, String> {
     let ratchet_was_unsaved = manager.has_unsaved_ratchet_advance();
+    let mark = manager.checkpoint_mark();
     let written = manager
         .save_encrypted_with_key(key)
         .map_err(|e| e.to_string())
         .and_then(|sealed| write(&sealed).map(|()| sealed.len()));
-    if let Err(e) = &written {
-        if ratchet_was_unsaved {
-            restore_ratchet_flag_after_failed_write(manager, e);
+    match &written {
+        Ok(_) => {
+            manager.note_durable_write(mark);
+        }
+        Err(e) => {
+            if ratchet_was_unsaved {
+                restore_ratchet_flag_after_failed_write(manager, e);
+            }
         }
     }
     written
@@ -573,11 +598,24 @@ mod tests {
                 .has_unsaved_ratchet_advance(),
             "the write that just landed predates the decrypt - the flag must still say the file is behind"
         );
+        assert!(
+            manager
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .owes_checkpoint(),
+            "the landed write is credited with the EXPORT's state, which predates the decrypt - a skipped checkpoint here would lose it"
+        );
 
         checkpoint_live_manager(&manager, &CKPT_KEY, |sealed| {
             std::fs::write(&path, sealed).map_err(|e| e.to_string())
         })
         .unwrap();
+        assert!(
+            !manager.lock().unwrap().as_ref().unwrap().owes_checkpoint(),
+            "a write of the current state is credited, so the next one may be proved redundant"
+        );
         let mut on_disk = mls_core::MlsManager::load_with_key(
             "ckpt-owed-bob",
             "d1",
@@ -610,6 +648,10 @@ mod tests {
             bob.has_unsaved_ratchet_advance(),
             "a mint whose write failed left the flag down over a file that is behind"
         );
+        assert!(
+            bob.owes_checkpoint(),
+            "a failed mint write is never credited"
+        );
 
         let manager = Mutex::new(Some(bob));
         let refused = checkpoint_live_manager(&manager, &CKPT_KEY, |_| Err("disk full".into()));
@@ -620,9 +662,24 @@ mod tests {
             bob.has_unsaved_ratchet_advance(),
             "a checkpoint whose write failed left the flag down over a file that is behind"
         );
+        assert!(
+            bob.owes_checkpoint(),
+            "a failed checkpoint write is never credited"
+        );
         drop(guard);
 
         checkpoint_live_manager(&manager, &CKPT_KEY, |_| Ok(())).unwrap();
+        assert!(
+            !manager.lock().unwrap().as_ref().unwrap().owes_checkpoint(),
+            "a landed checkpoint is credited"
+        );
+        {
+            let guard = manager.lock().unwrap();
+            let bob = guard.as_ref().unwrap();
+            bob.invalidate_persisted_snapshot();
+            persist_locked_manager(bob, &CKPT_KEY, |_| Ok(())).unwrap();
+            assert!(!bob.owes_checkpoint(), "a landed mint write is credited");
+        }
         assert!(
             !manager
                 .lock()

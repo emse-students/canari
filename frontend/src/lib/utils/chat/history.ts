@@ -332,6 +332,20 @@ function noteReplayMarksPending(userId: string, groupId: string): void {
 }
 
 /**
+ * Whether a checkpoint taken now would make any replay mark durable - the cheap question
+ * (`BaseMlsService.checkpointOwed`) to which {@link snapshotPendingHistoryMarks} is the copying answer.
+ *
+ * @param userId this device's account - marks for other accounts are not this checkpoint's
+ */
+export function hasPendingHistoryMarks(userId: string): boolean {
+  if (!userId) return false;
+  for (const [key, entry] of pendingReplayMarks) {
+    if (entry.userId === userId && seenCache.has(key)) return true;
+  }
+  return false;
+}
+
+/**
  * The replay marks a checkpoint may declare durable: each pending group's marks AS THEY STOOD when
  * the checkpoint started, never as they stand when it lands. Opaque - only
  * {@link commitPendingHistoryMarks} reads it.

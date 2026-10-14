@@ -135,8 +135,10 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
     const older = tagMlsSnapshot(new Uint8Array([1]));
     const newer = tagMlsSnapshot(new Uint8Array([2]));
     // The newer snapshot reaches disk first; the older (slower) flush must then be skipped.
-    await saveMlsStateEncrypted('user-1', newer);
-    await saveMlsStateEncrypted('user-1', older);
+    await expect(saveMlsStateEncrypted('user-1', newer)).resolves.toBe(true);
+    // AND SAYS SO: a caller that declared its export durable on a dropped write would later skip a
+    // checkpoint the store does not hold (`WebMlsService.writeCheckpoint`).
+    await expect(saveMlsStateEncrypted('user-1', older)).resolves.toBe(false);
     expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([2]));
     expect(store.get(MLS_STATE_VERSION_KEY)).toBe(mlsSnapshotVersion(newer));
   });
@@ -160,8 +162,9 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
 
     const said: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...a) => void said.push(a.join(' ')));
-    await saveMlsStateEncrypted('user-1', theirs);
+    const landed = await saveMlsStateEncrypted('user-1', theirs);
     spy.mockRestore();
+    expect(landed).toBe(false);
 
     // The write is dropped - that is the existing behaviour and this test does not change it.
     expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([1]));

@@ -25,6 +25,7 @@ import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
 import { toBase64 } from '$lib/utils/hex';
 import {
   commitPendingHistoryMarks,
+  hasPendingHistoryMarks,
   markHistoryFrameConsumed,
   replayConversationHistory,
   resetSeenCipherCacheForTests,
@@ -179,6 +180,18 @@ describe('marks the replay has made but not committed', () => {
 
     expect(setItem.mock.calls.filter(([k]) => k === KEY)).toHaveLength(0);
     setItem.mockRestore();
+  });
+
+  it('make a checkpoint OWED until one commits them, for their own account only', async () => {
+    // `checkpointOwed` reads this before the bulk-ingest end may skip its checkpoint: a skipped
+    // write here would leave the ratchet durable and the marks in memory - the TAB-3b direction.
+    expect(hasPendingHistoryMarks(USER)).toBe(false);
+    await replayOnePage({ ok: true, plaintext: null });
+    expect(hasPendingHistoryMarks(USER)).toBe(true);
+    expect(hasPendingHistoryMarks('a-different-user')).toBe(false);
+
+    checkpoint();
+    expect(hasPendingHistoryMarks(USER)).toBe(false);
   });
 
   it('does not write a set the replay never touched', () => {

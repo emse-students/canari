@@ -823,6 +823,16 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /**
+   * Native `invoke` wrapper - see `MlsManager::owes_checkpoint`. The native checkpoint credits its
+   * own write (`checkpoint_live_manager`), so nothing travels back across the bridge for it. Waits
+   * for queued Rust mutations first, as {@link persistState} does, so the answer covers them.
+   */
+  protected async stateOwesCheckpoint(): Promise<boolean> {
+    await this.awaitRustMutations();
+    return invoke<boolean>('mls_owes_checkpoint');
+  }
+
+  /**
    * Native `invoke` wrapper - burns `count` send generations in one crossing.
    *
    * ONE invoke for the whole burn rather than one per generation: each crossing marshals a

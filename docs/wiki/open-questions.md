@@ -18,10 +18,13 @@ measurement or a device nobody here has. None of them is waiting on an implement
 
 ### DECISION OWED - may a drain that only RECEIVED application frames skip its full checkpoint? (2026-10-13)
 
-**What happens today.** Every drain ends with a full encrypted checkpoint of the WHOLE MLS state,
-even a drain of one application frame. `mlsStatePersister.onBulkIngestEnd` sets
-`dirtyEncrypted = true` unconditionally, overriding the commit/application split
-`setupMessageHandler` makes (`persistNow` vs `scheduleDeferred`).
+**What happens today.** Every drain that decrypted anything ends with a full encrypted checkpoint of
+the WHOLE MLS state, even a drain of one application frame. Since 2026-10-14 a drain that changed
+nothing durable is skipped on a proof
+([mls-desync-prevention](protocols/mls-desync-prevention.md#a-bulk-ingest-window-that-changed-nothing-durable-writes-nothing---and-a-read-watermark-is-not-nothing-2026-10-14));
+this question is what is left, and that page measured its size: on a Pixel 6a on 1.2.7, 50 of 135
+checkpoints (5.6 s of 16.9 s) followed drains holding only `read_watermark` frames - application
+frames, so receive-only drains in the sense below.
 
 **Measured.**
 

@@ -12,6 +12,7 @@ export function createMlsServiceStub(
     // The whole checkpoint, and the only persistence this interface offers: the per-platform save
     // is not durable on web and needs no caller on native, which is why it is not declared here.
     persistCheckpoint: vi.fn().mockResolvedValue(undefined),
+    checkpointOwed: vi.fn().mockResolvedValue({ owed: true, by: 'state' }),
     generateKeyPackage: vi.fn().mockResolvedValue(new Uint8Array([9])),
     addMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
     addMembersBulk: vi.fn().mockResolvedValue({

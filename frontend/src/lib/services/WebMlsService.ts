@@ -918,9 +918,26 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
-  /** Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over. */
+  /**
+   * Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over - and
+   * once they are stored, the client is told which state they hold (`note_durable_write`), which is
+   * what lets {@link stateOwesCheckpoint} prove a later checkpoint redundant.
+   *
+   * THE MARK IS READ IN THE SAME SYNCHRONOUS SPAN AS THE EXPORT. `saveState` runs `save_state` before
+   * its first `await` (an async body is synchronous up to there), and WASM runs on this thread, so
+   * nothing can mutate the client between the two reads. The client is captured too: a swap
+   * (`installUnlessOvertaken`) during the seal must not let this write credit its successor.
+   */
   protected async writeCheckpoint(deviceKeyB64: string): Promise<void> {
-    await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
+    const client = this.client;
+    const mark = client.checkpoint_mark() as Float64Array;
+    const written = await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
+    if (written) client.note_durable_write(mark[0], mark[1]);
+  }
+
+  /** WASM client wrapper - see `MlsManager::owes_checkpoint`. No client yet: nothing proved, owed. */
+  protected async stateOwesCheckpoint(): Promise<boolean> {
+    return this.client ? (this.client.owes_checkpoint() as boolean) : true;
   }
 
   /** WASM client wrapper - burns `count` send generations, discarding every frame it produces. */

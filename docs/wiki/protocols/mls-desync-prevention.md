@@ -565,3 +565,55 @@ MLS lock nor anything a flusher holds (`awaitRustMutations` waits only for `oubl
 
 Pinned by `mlsStatePersister.test.ts` ("a flush asked while a checkpoint is running", "a checkpoint
 that FAILED leaves the state dirty"), both failing on the previous shape.
+
+### A bulk-ingest window that changed nothing durable writes nothing - and a read watermark is not nothing (2026-10-14)
+
+**Measured.** A Pixel 6a on 1.2.7 (prod, 2026-10-14) logged 135 encrypted checkpoints, median
+114 ms, 16.9 s in all. `onBulkIngestEnd` raised the dirty flag UNCONDITIONALLY, so every window
+ended in a full seal + write. Classified by what the window held: 50 were windows whose only frames
+were `read_watermark` (5.6 s), 17 application messages, 15 other system events (history protocol,
+edits), 3 commits, 6 windows that decrypted NOTHING (4 empty, 2 whose frames were all for a
+conversation not restored yet), and 37 checkpoints came from outside any window (sends, structural
+writes).
+
+**A read watermark advances the receive ratchet exactly as a message does.** It is an MLS application
+frame (`[MLS] System event 'read_watermark'`), and its decrypt consumes a generation. A predicate
+"skip windows that only carried read watermarks" is therefore the same predicate as "skip windows
+that only RECEIVED", which is the decision parked for the user in
+[open-questions](../open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13).
+Its unmeasured cost is concrete: a foreground holding an unwritten receive answers `live-ahead` to the
+resume reload (`reload_into`, `commands/storage.rs`), which then refuses `mls.bin` and persists the
+live state over whatever the FCM engine wrote while the app was away. It is NOT built.
+
+**What is built: a PROOF that a checkpoint would write nothing new.** The catch-all flag is replaced
+by `BaseMlsService.checkpointOwed()`, asked only when no handler marked the window. It answers
+`owed: false` only when all three hold:
+
+1. **The manager holds the state its last LANDED write holds** (`MlsManager::owes_checkpoint`,
+   `mls-core/src/state.rs`). Every invalidation of the snapshot cache increments a per-manager
+   counter; a checkpoint takes a `CheckpointMark` (instance, counter) in the same critical section as
+   its export and credits it with `note_durable_write` only after the bytes are on disk - natively
+   inside `checkpoint_live_manager` / `persist_locked_manager`, on web after IndexedDB took them
+   (`saveMlsStateEncrypted` now says whether it wrote; a write the write-if-newer guard dropped is
+   never credited). A mark from a manager that replaced this one mid-write is refused by its
+   instance.
+2. **The send ledger has nothing a checkpoint would credit** (`pendingSendGenerations` empty).
+3. **The history replay has no marks a checkpoint would commit** (`hasPendingHistoryMarks` false).
+
+**Why a crash after the skip loses nothing.** Equal counters mean no invalidation since the export
+the file holds, and a rebuild of the CBOR happens only after an invalidation. So the checkpoint that
+was skipped would have sealed the SAME serialisation again - this holds even if some mutation ever
+forgot to invalidate, because `save_state` would then have returned the same cached bytes too. The two
+ledgers are why points 2 and 3 exist: a checkpoint also COMMITS them, and skipping it would leave a
+ratchet durable ahead of its replay marks (the TAB-3b re-accusation). A manager that has not written
+yet owes its first write, so a legacy encoding is still migrated once per session (`load_or_create`).
+No proof is not a proof of nothing: if the question itself fails, the checkpoint is taken.
+
+**What it saves.** The six windows that decrypted nothing - 4 % of that log. That is the honest size of
+the safe change; the read-watermark half is the user's decision, and this measurement is its
+strongest argument (37 % of all checkpoints).
+
+Pinned by `mls-core/tests/checkpoint_owed.rs`, the owed assertions in `src-tauri/src/concurrency.rs`
+(a decrypt during the write stays owed; a failed write is never credited),
+`BaseMlsService.checkpointOwed.test.ts`, and `mlsStatePersister.test.ts` ("the checkpoint at the end
+of a bulk ingest" - its skip case fails on the previous shape).

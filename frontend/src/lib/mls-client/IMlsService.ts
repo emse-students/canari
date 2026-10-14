@@ -290,6 +290,14 @@ export interface BulkIngestObserver {
   onBulkIngestEnd(phase: BulkIngestPhase): void | Promise<void>;
 }
 
+/**
+ * The answer of `IMlsService.checkpointOwed`. `by` names the FIRST thing found owing a write, so a
+ * log line can say why a checkpoint was taken; `none` is the only value that permits skipping it.
+ */
+export type CheckpointOwed =
+  | { owed: true; by: 'state' | 'send-ledger' | 'replay-marks' }
+  | { owed: false; by: 'none' };
+
 /** Row from `GET /api/mls/users/:id/groups`. */
 export type UserGroupRow = {
   groupId: string;
@@ -507,6 +515,12 @@ export interface IMlsService {
    * and the ordering is what makes a restored snapshot repairable at all - see `sendRatchetLedger`.
    */
   persistCheckpoint(): Promise<void>;
+  /**
+   * Whether {@link persistCheckpoint}, called now, would make anything durable that is not already -
+   * a PROOF kept by the manager and the two ledgers, never a guess from what a batch carried. The
+   * bulk-ingest end asks it before checkpointing (`mlsStatePersister`); `by` names what owes it.
+   */
+  checkpointOwed(): Promise<CheckpointOwed>;
   /**
    * Reloads the persisted MLS state from disk into the in-memory engine (C2). Android-only:
    * while the app is backgrounded, a native JNI engine (Welcome/send/worker) may advance

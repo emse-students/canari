@@ -190,13 +190,19 @@ function openMlsDb(userId: string): Promise<IDBDatabase> {
  * Persist the MLS state blob for `userId` in IndexedDB.
  * Stores raw bytes - no base64 overhead.
  */
-/** Persists the PIN-encrypted MLS checkpoint (Argon2 + ChaCha20). Used at login and on critical flush. */
-export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): Promise<void> {
+/**
+ * Persists the PIN-encrypted MLS checkpoint (Argon2 + ChaCha20). Used at login and on critical flush.
+ *
+ * @returns whether THESE bytes are now the stored state. `false` when the write-if-newer guard below
+ *   dropped them - the store then holds another capture, so a caller must not declare its own
+ *   export durable (`WebMlsService.writeCheckpoint`).
+ */
+export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): Promise<boolean> {
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('save_mls_state', { data: Array.from(bytes) });
-      return;
+      return true;
     } catch (e) {
       console.warn('[MLS] save_mls_state failed:', e);
       throw e;
@@ -205,7 +211,8 @@ export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): 
 
   const version = mlsSnapshotVersion(bytes);
   const db = await openMlsDb(userId);
-  return new Promise<void>((resolve, reject) => {
+  let written = false;
+  return new Promise<boolean>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
     const store = tx.objectStore(IDB_STORE);
     const verReq = store.get(MLS_STATE_VERSION_KEY);
@@ -251,13 +258,16 @@ export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): 
         return;
       }
       store.put(bytes, MLS_STATE_ENCRYPTED_KEY);
+      written = true;
       if (version !== undefined) {
         store.put(version, MLS_STATE_VERSION_KEY);
         _lastAcceptedWriter = mine;
       }
     };
     verReq.onerror = () => reject(verReq.error);
-    tx.oncomplete = () => resolve();
+    // `written` is read at COMPLETION, never at the `put`: a put is durable only once its
+    // transaction commits, and an aborted one rejects through `onerror` instead.
+    tx.oncomplete = () => resolve(written);
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -276,7 +286,7 @@ export async function purgeLegacyPlainMlsState(userId: string): Promise<void> {
 }
 
 /** @deprecated Alias for {@link saveMlsStateEncrypted}. */
-export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<void> {
+export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<boolean> {
   return saveMlsStateEncrypted(userId, bytes);
 }
 

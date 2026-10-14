@@ -332,6 +332,35 @@ impl WasmMlsClient {
         }
     }
 
+    /// Names the state as it stands now, as `[instance, mutations]` (see
+    /// `MlsManager::checkpoint_mark`). Read it in the same synchronous span as the `save_state`
+    /// whose bytes are about to be written, and hand both numbers back to
+    /// [`Self::note_durable_write`] once they are in IndexedDB. Both stay far below 2^53, so a JS
+    /// number carries them exactly.
+    #[wasm_bindgen]
+    pub fn checkpoint_mark(&self) -> Vec<f64> {
+        let (instance, mutations) = self.manager.checkpoint_mark().parts();
+        vec![instance as f64, mutations as f64]
+    }
+
+    /// Declares the state named by a [`Self::checkpoint_mark`] durable. Call it only after the write
+    /// landed. Returns whether it was credited (see `MlsManager::note_durable_write`).
+    #[wasm_bindgen]
+    pub fn note_durable_write(&self, instance: f64, mutations: f64) -> bool {
+        self.manager
+            .note_durable_write(mls_core::CheckpointMark::from_parts(
+                instance as u64,
+                mutations as u64,
+            ))
+    }
+
+    /// Whether this client holds anything its last landed checkpoint does not
+    /// (`MlsManager::owes_checkpoint`).
+    #[wasm_bindgen]
+    pub fn owes_checkpoint(&self) -> bool {
+        self.manager.owes_checkpoint()
+    }
+
     /// The device's STATIC fallback. Reusable: the delivery service serves this one package to
     /// every peer that finds the one-time pool empty, and an ordinary KeyPackage would be consumed
     /// by the first Welcome built on it.
