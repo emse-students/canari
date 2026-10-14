@@ -21,7 +21,8 @@ import {
   mkReply,
   mkText,
 } from '$lib/proto/codec';
-import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkMediaEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import { quotePreviewEntitled, type PlaceableMessage } from './historyEntitlement';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { m } from '$lib/paraglide/messages';
@@ -587,6 +588,60 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     conversations.set(found.key, { ...found.convo, messages });
   }
 
+  /** This device's copy of the quoted message - in memory, else the store - or `null` if it holds none. */
+  async function quotedCopy(messageId: string): Promise<PlaceableMessage | null> {
+    const found = findMessage(messageId);
+    if (found) return found.convo.messages[found.idx];
+    if (!storage) return null;
+    return storage.getMessage(messageId, deviceKey()).catch((e: unknown) => {
+      // Unreadable is not absent: rethrown so the reply waits rather than losing its quote.
+      log(`[OUTBOX] quoted ${messageId.slice(0, 8)}… unreadable from the store: ${String(e)}`);
+      throw e;
+    });
+  }
+
+  /**
+   * The reply as it may leave: its quote text kept, or blanked when the quoted message falls inside
+   * a current member's exclusion window (a Remove holds against a later re-add, user 2026-10-14) - a
+   * reply reaches every current member live and its stored copy rides every later history bundle.
+   *
+   * Decided HERE, at the send, against the windows in force now - never when the reply is composed,
+   * which would cost a round trip per reply and blank the quote for good when composed offline.
+   * **A failed read THROWS** into the send's own catch, an ordinary transient failure: the reply
+   * waits for the next attempt and is never blanked on a failure. A blank is permanent, so it is
+   * written to the entry and to the echo - the stored copy is what a later bundle carries.
+   */
+  async function decideQuote(entry: OutboxEntry): Promise<OutboxEntry> {
+    if (entry.kind !== 'reply' || !entry.replyTo?.preview) return entry;
+    const quoted = await quotedCopy(entry.replyTo.id);
+    if (await quotePreviewEntitled(entry.conversationId, quoted, { mlsService, log })) {
+      return entry;
+    }
+    const blanked: OutboxEntry = { ...entry, replyTo: { ...entry.replyTo, preview: '' } };
+    await storage
+      ?.saveOutboxEntry(blanked, deviceKey())
+      .catch((e: unknown) =>
+        log(`[OUTBOX] ${entry.id.slice(0, 8)}… blanked quote not saved to the queue: ${String(e)}`)
+      );
+    const found = findMessage(entry.id);
+    if (found) {
+      const echo = found.convo.messages[found.idx];
+      const env = parseEnvelope(echo.content);
+      const content =
+        env.kind === 'text' && env.replyTo
+          ? serializeEnvelope(mkTextEnvelope(env.text, { ...env.replyTo, content: '' }))
+          : echo.content;
+      const messages = [...found.convo.messages];
+      messages[found.idx] = {
+        ...echo,
+        content,
+        ...(echo.replyTo ? { replyTo: { ...echo.replyTo, content: '' } } : {}),
+      };
+      conversations.set(found.key, { ...found.convo, messages });
+    }
+    return blanked;
+  }
+
   /**
    * Uploads the queued media file if needed (idempotent via `uploadedRef`), then builds both the
    * proto to send and the real media envelope to swap into the optimistic placeholder message.
@@ -1086,7 +1141,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         // the whole network race and a renderer that observed that state stays on its skeleton.
         updateMessageContent(entry.id, mediaContent);
       } else {
-        proto = buildOutboxProto(entry) ?? new Uint8Array(0);
+        proto = buildOutboxProto(await decideQuote(entry)) ?? new Uint8Array(0);
       }
 
       inFlight = entry.id;

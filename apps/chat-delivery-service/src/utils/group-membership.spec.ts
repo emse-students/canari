@@ -1,7 +1,12 @@
 /// <reference types="jest" />
 
 import type { EntityManager } from 'typeorm';
-import { endGroupMembership, ensureGroupMember, exclusionWindows } from './group-membership';
+import {
+  endGroupMembership,
+  ensureGroupMember,
+  exclusionWindows,
+  withholdExcludedHistoryRows,
+} from './group-membership';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 
@@ -169,5 +174,28 @@ describe('exclusionWindows', () => {
       from: at('2026-10-04T00:00:00Z').getTime(),
       until: at('2026-10-05T00:00:00Z').getTime(),
     });
+  });
+});
+
+describe('withholdExcludedHistoryRows', () => {
+  const W = [{ from: 1000, until: 2000 }];
+  const row = (id: string, ms: number | null) => ({
+    id,
+    content: `c-${id}`,
+    ...(ms === null ? {} : { timestamp: new Date(ms).toISOString() }),
+  });
+
+  it('keeps the id of a withheld row and nothing else, so a cursor still moves past it', () => {
+    const out = withholdExcludedHistoryRows([row('a', 999), row('b', 1000), row('c', 2000)], W);
+    expect(out.rows).toEqual([row('a', 999), { id: 'b', withheld: '1' }, row('c', 2000)]);
+    expect(out.withheld).toBe(1);
+  });
+
+  it('withholds a row whose time cannot be read while a window exists, and touches nothing without one', () => {
+    expect(withholdExcludedHistoryRows([row('x', null)], W).rows).toEqual([
+      { id: 'x', withheld: '1' },
+    ]);
+    const untouched = [row('x', null)];
+    expect(withholdExcludedHistoryRows(untouched, []).rows).toBe(untouched);
   });
 });

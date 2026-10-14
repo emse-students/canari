@@ -760,6 +760,18 @@ describe("this device's own rows in the shared archive", () => {
 
     expect(decryptPage).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14): the server withholds a row sent while
+   * this reader was out of the group, keeping only its id (second review of #1878, P1-b).
+   */
+  it('a row the SERVER withheld is passed, never decoded, and does not stop the rows around it', async () => {
+    const withheld = { id: '1-0', withheld: '1' } as unknown as ReturnType<typeof row>;
+    const decryptPage = await replayWith([withheld, row('2-0', 0x02, 'peer-device')]);
+
+    expect(decryptPage).toHaveBeenCalledTimes(1);
+    expect(decryptPage.mock.calls[0][0]).toHaveLength(1);
+  });
 });
 
 describe('hasHistoryFrameBeenConsumed', () => {

@@ -29,6 +29,7 @@ describe('a history read names who asked', () => {
   let log: jest.SpyInstance;
   let error: jest.SpyInstance;
   let redis: { xrange: jest.Mock; xrevrange: jest.Mock; del: jest.Mock };
+  let intervalFind: jest.Mock;
 
   const GROUP = 'group-1';
   const ADMIN = 'true';
@@ -57,6 +58,7 @@ describe('a history read names who asked', () => {
       xrevrange: jest.fn().mockResolvedValue([]),
       del: jest.fn(),
     };
+    intervalFind = jest.fn().mockResolvedValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -66,7 +68,12 @@ describe('a history read names who asked', () => {
         {
           provide: getRepositoryToken(Group),
           // The group must exist, or the orphan purge answers before anything reads the stream.
-          useValue: { ...emptyRepo(), find: jest.fn().mockResolvedValue([{ id: GROUP }]) },
+          useValue: {
+            ...emptyRepo(),
+            find: jest.fn().mockResolvedValue([{ id: GROUP }]),
+            // The reader's own membership intervals (a Remove holds against a later re-add).
+            manager: { find: intervalFind, query: jest.fn().mockResolvedValue([]) },
+          },
         },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
@@ -82,6 +89,63 @@ describe('a history read names who asked', () => {
   });
 
   afterEach(() => jest.restoreAllMocks());
+
+  /**
+   * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14). When the Remove commit never landed,
+   * the re-admitted person's OLD state can still open every frame sealed while they were out, and
+   * this stream is the one road back to those frames. The server withholds them itself: the row
+   * keeps its id - so the reader's cursor moves past it - and nothing else.
+   */
+  describe('withholds what was sent while the READER was out', () => {
+    const at = (iso: string) => new Date(iso);
+    const entry = (id: string, iso: string): [string, string[]] => [
+      id,
+      ['sender_id', 'peer', 'content', `cipher-${id}`, 'timestamp', iso],
+    ];
+
+    beforeEach(() => {
+      // The reader was out from the 3rd to the 5th.
+      intervalFind.mockResolvedValue([
+        {
+          groupId: GROUP,
+          joinedAt: at('2026-10-01T00:00:00Z'),
+          leftAt: at('2026-10-03T00:00:00Z'),
+        },
+        { groupId: GROUP, joinedAt: at('2026-10-05T00:00:00Z'), leftAt: null },
+      ]);
+      redis.xrange.mockResolvedValue([
+        entry('1-0', '2026-10-02T00:00:00.000Z'),
+        entry('2-0', '2026-10-04T00:00:00.000Z'),
+        entry('3-0', '2026-10-06T00:00:00.000Z'),
+      ]);
+    });
+
+    it('on the single-group read', async () => {
+      const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+
+      expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '2-0', '3-0']);
+      expect(page.rows[1]).toEqual({ id: '2-0', withheld: '1' });
+      expect(page.rows[0]['content']).toBe('cipher-1-0');
+      expect(page.rows[2]['content']).toBe('cipher-3-0');
+      expect(lines()).toContain('withheld=1 of 3');
+    });
+
+    it('on the batch read', async () => {
+      const res = await service.getHistoryBatch([{ groupId: GROUP }], USER, ADMIN);
+
+      expect(res.histories[GROUP][1]).toEqual({ id: '2-0', withheld: '1' });
+      expect(res.histories[GROUP][2]['content']).toBe('cipher-3-0');
+    });
+
+    it('reads the windows of the CALLER, never of anybody else', async () => {
+      await service.getHistory(GROUP, undefined, USER, ADMIN);
+
+      expect(intervalFind).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ where: expect.objectContaining({ userId: USER }) })
+      );
+    });
+  });
 
   it('names the user nginx authenticated and the device the client claims', async () => {
     await service.getHistory(GROUP, undefined, USER, ADMIN, undefined, undefined, DEVICE);

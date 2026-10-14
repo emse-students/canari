@@ -28,6 +28,13 @@ export type HistoryStreamRow = {
    * the stream already implied it was visible.
    */
   silent?: string;
+  /**
+   * `'1'` when the server WITHHELD this row from the reader: it was sent while the reader was out of
+   * the group (a Remove holds against a later re-add, user 2026-10-14). Such a row carries its `id`
+   * and nothing else - `sender_id`, `content` and `timestamp` are absent at runtime despite the
+   * types above - so a walk's cursor still moves past it, and nothing in it may be read.
+   */
+  withheld?: string;
 };
 
 /**

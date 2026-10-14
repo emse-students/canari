@@ -152,7 +152,12 @@ describe('AppController - cleanupSoftDeletedGroups', () => {
 
     // Reversed, a rollback would leave a live group with its history stripped.
     expect(order).toEqual(['commit', 'redis']);
-    expect(redis.del).toHaveBeenCalledWith('history:g1', 'group:members:g1', 'pending_welcome:g1');
+    expect(redis.del).toHaveBeenCalledWith(
+      'history:g1',
+      'group:members:g1',
+      'pending_welcome:g1',
+      'group:parting:g1'
+    );
   });
 
   it('opens no transaction and deletes nothing when no tombstone is old enough', async () => {

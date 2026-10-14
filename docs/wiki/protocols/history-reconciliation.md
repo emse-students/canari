@@ -768,8 +768,18 @@ answer path can forget it.
   every recipient's `queued_message.createdAt` - and the outbox stores it as that message's
   `serverTimestamp`, in memory and on disk (`outbox.ts`, `patchServerTimestamp`). A control entry
   (reaction, edit, delete) is not stamped: it mutates a message whose own date must not move. A
-  message the native background sender delivered (`/api/mls/push/send`) is not stamped by this path
-  and falls under the legacy rule below.
+  message the native background sender delivered (`/api/mls/push/send`) is not stamped: that route
+  answers `receivedAt` too, but the native senders (Android, iOS) do not store it yet, so those copies
+  stay undated and fall under the legacy rule below - the undated residue SHRINKS, it does not vanish.
+- **Rows ingested by the OLD replay path are TRUSTED as dated, deliberately.** Before this change the
+  Redis-stream replay dated an undated message by the bundle FRAME's time. Those rows are now
+  indistinguishable from a real `serverTimestamp`, and they are not re-dated or distrusted: a bundle
+  is always sent AFTER the message it carries, so the inflation only ever moves a date LATER. A
+  message sent before a removal can be pushed into the window (held back: a cost, served by any other
+  holder), and a message sent inside a window can be pushed past its end only if the bundle carrying
+  it was sent after the re-add - by an answerer that did not filter it, i.e. a pre-change build, the
+  old-client caveat below. Distrusting them would hold back every replayed row of every group with a
+  window, for no case the old-client caveat does not already name.
 - **A LEGACY undated message** - a copy written before that answer existed - is placed by its
   sender-stamped `timestamp` against every window **widened by `UNDATED_SKEW_MARGIN_MS`, one hour, on
   both sides**: held back inside, released outside. The hour covers a phone clock minutes off and an
@@ -785,20 +795,56 @@ answer path can forget it.
   when every message was withheld - because an invitee has no conversation row yet and that frame is
   what gives it one.
 - **A reply quote is the other road, and it is closed the same way.** A reply carries the quoted
-  message's text, reaches every current member live and rides every later bundle. So before a reply
-  is queued, `quotePreviewEntitled` places the QUOTED message against every current member's windows;
-  if it falls inside one, or the windows cannot be read, the reply carries the quoted id and an empty
-  preview - in the frame AND in the sender's own echo, which a later bundle would otherwise carry.
+  message's text, reaches every current member live and rides every later bundle. **The decision is
+  made by the OUTBOX at the actual send** (`decideQuote` in `outbox.ts`), never at compose: it places
+  the QUOTED message (memory, else the store) against every current member's windows through
+  `quotePreviewEntitled`; inside one, or undatable while a window exists, the preview is blanked in
+  the frame, the stored entry AND the sender's echo, which a later bundle would otherwise carry. An
+  unreadable window set THROWS, so the send fails as a transient and retries - a transport failure
+  never blanks a quote. Composing reads nothing (the earlier compose-time GET cost a round trip per
+  reply and blanked a quote for good when composed offline). The native outbox mirror sends frames
+  built at enqueue, where no decision can be made, so it mirrors a reply with the quoted id and an
+  EMPTY preview always - a background-sent reply quotes by reference only.
 
-**The removal is recorded BEFORE the commit.** `removeMemberAndBroadcast` calls the server first
-(`removeGroupMember`: delete the row, close the interval, one transaction), then commits the MLS
-remove, then broadcasts `memberRemoved`. The reverse order left seconds in which a message was
-queued after the leaf was gone but dated before `leftAt`, and a failed server call recorded no
-window at all. In this order a server failure commits nothing (logged at warning with the group id
-shortened, and rethrown to the caller), and a commit failure after the server succeeded leaves a
-leaf with no roster row - exactly what `removeStrayLeaves` collects on the next connection of any
-holder. The `pendingGroupExits` queue was not used: it is the durable retry of a SELF-exit's server
-half, and a removal by another member has a live caller to hand the failure to.
+**The removal order - the record first, and the commit still reaches the removed member.**
+`removeMemberAndBroadcast` calls the server first, then commits the MLS remove, then broadcasts
+`memberRemoved`. `removeGroupMember` (called by ANOTHER member) does two things before it deletes the
+removed person's device memberships: it writes each of their devices into the Redis hash
+`group:parting:{gid}` (`partingKey`) with the remover's user id as value, then deletes the roster row
+and closes the interval in one transaction. The commit fan-out (`sendMessage`, `isCommit`) adds, for
+a commit whose sender is that remover, the devices it has just parted - so the Remove commit is
+QUEUED to the removed devices, which process it and learn they are out instead of keeping epoch-E
+keys until a refused send. The hash entries are deleted once that commit is queued. The hash is a
+hint, never the record: losing it (Redis down, logged) costs only that delivery, which the removed
+device then learns from its next refused send or reconnect, exactly as before.
+
+What closes a failure in the middle (a server record with no commit, then a re-add) is the SERVER,
+not the tree: **`GET /history` and `/history/batch` withhold, per row, everything inside the READER's
+own windows** (`withholdExcludedHistoryRows`; the row is answered as `{ id, withheld: '1' }`, which
+the client skips without decoding and walks past). So a stale leaf left by a failed commit - its
+device decrypts every frame at the old epoch - finds nothing to decrypt in the stream for the gap,
+and live delivery never queued it a copy while it had no device membership. The exclusions read
+also counts every user with an ADMITTED device row (`dm_device_group_memberships`), not only the
+roster: an add commit admits devices before `registerMember` enrols the person, and the union must
+include their windows from that first moment.
+
+Rejected designs, and why:
+
+- **Commit first, then record.** A server failure after a successful commit leaves a person with no
+  leaf still on the roster, and the next re-add, `welcome_request` or reconciliation undoes the
+  removal silently - the half state that must never be silent.
+- **A `leaving` device status** delivered by the fan-out and dropped afterwards. It touches the
+  two-writer device state machine and every status filter in the service; the parting hash gives the
+  same delivery as a pure addition.
+- **A separate table for parting devices.** A migration and an owned-table pin for a hint whose loss
+  costs one delivery.
+- **Refuse a re-add while a stray leaf of that user exists.** The server cannot see the tree, and
+  the old state could still walk the stream - the stream filter closes that whatever the tree holds.
+
+**Answering in chunks.** `sendBundleChunks` re-reads the exclusions for EVERY chunk, so a removal
+landing mid-answer is honoured from the next chunk on. Binding the answer to an epoch was rejected:
+the Tauri `getEpoch` is a cached value that can be stale, so it would bind to the wrong state. An
+unreadable first read sends nothing; an unreadable later read stops the answer there.
 
 **The receiver - hygiene, not a control.** The `history_bundle` handler drops a message it would
 ADD by the same `withholdReason` the senders apply, against its OWN windows - a dated message inside
@@ -830,6 +876,19 @@ messages, and says so.
   migration has no open interval. The exclusions read opens it from the member row's `joinedAt` the
   first time it meets one, and logs that ERROR once - the repaired row is what stops the line, so it
   is not repeated - but a removal made by such a container before that read recorded no window.
+- **Live control frames about a gap message reach a re-added member.** A reaction, a read receipt
+  or an EDIT made after the re-add to a message sent while they were out is delivered live like any
+  frame. A reaction or a read carries only ids and an emoji; an edit carries the NEW text of a
+  message they never held. Not filtered: the frame names a target the client may not hold, and the
+  server cannot read it.
+- **The deploy transient.** A container still running pre-030 code during the rollout deletes a
+  roster row without closing the interval; a re-add then meets the open row and `ensureGroupMember`'s
+  `orIgnore` keeps it, so that removal has no window.
+- **An offline self-leave is dated late.** Its server half is retried from `pendingGroupExits`, and
+  the window starts when the server RECORDS it, not when the person left - messages between the two
+  are not withheld.
+- **A stale leaf after a failed commit** survives until `removeStrayLeaves` runs on some holder; the
+  stream filter keeps the gap from it, but live frames sent after a re-add reach it like any member.
 - Reconciliation still READS a withheld message as missing: the asker's digest lacks it and asks
   again on its next connection. That is the open P2 in [backlog](../backlog.md) (an exclusion window
   called a loss), unchanged in cost by this.

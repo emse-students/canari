@@ -465,7 +465,8 @@ describe('InternalController - the community distribution group', () => {
       expect(redis.del).toHaveBeenCalledWith(
         'history:g-1',
         'group:members:g-1',
-        'pending_welcome:g-1'
+        'pending_welcome:g-1',
+        'group:parting:g-1'
       );
     });
 

@@ -11,6 +11,7 @@ import {
   UNDATED_SKEW_MARGIN_MS,
   isInsideExclusion,
   messageServerTime,
+  quotePreviewEntitled,
   withholdReason,
 } from './historyEntitlement';
 import { MalformedExclusionsError, parseGroupExclusions } from '$lib/mls-client/mlsDeliveryApi';
@@ -235,6 +236,61 @@ describe('a Remove holds against a later re-add - every history sender withholds
     });
 
     expect(sentIds(mlsService)).toEqual([...STORE, UNDATED, UNDATABLE].map((m) => m.id));
+  });
+});
+
+describe('a long answer reads the windows again for every chunk', () => {
+  it('a member re-added mid-answer is withheld from the chunks sealed after it', async () => {
+    const mlsService = createMlsServiceStub();
+    // Nobody had a window when the answer began; Bob's re-add lands between the two chunks.
+    vi.mocked(mlsService.getGroupExclusions)
+      .mockResolvedValueOnce(new Map())
+      .mockResolvedValue(new Map([[BOB, [{ from: T_OUT, until: T_BACK }]]]));
+
+    await sendFullHistoryBundle(
+      GROUP,
+      {
+        storage: storageWith([BEFORE, AT_REMOVAL, DURING, AFTER]),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+        to: ALICE,
+      },
+      2
+    );
+
+    // Read once per chunk - a single read at the start would have sent `during` in chunk two.
+    expect(mlsService.getGroupExclusions).toHaveBeenCalledTimes(2);
+    expect(sentIds(mlsService)).toEqual(['before', 'at-removal', 'after']);
+  });
+});
+
+describe('quotePreviewEntitled - the quote decision itself', () => {
+  const deps = (exclusions: Promise<Map<string, { from: number; until: number | null }[]>>) => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.getGroupExclusions).mockReturnValue(exclusions);
+    return { mlsService, log: vi.fn() };
+  };
+  const bob = () => Promise.resolve(new Map([[BOB, [{ from: T_OUT, until: T_BACK }]]]));
+
+  it('false for a quote from inside any member window, true outside it', async () => {
+    expect(await quotePreviewEntitled(GROUP, DURING, deps(bob()))).toBe(false);
+    expect(await quotePreviewEntitled(GROUP, BEFORE, deps(bob()))).toBe(true);
+    expect(await quotePreviewEntitled(GROUP, AFTER, deps(bob()))).toBe(true);
+  });
+
+  it('true when nobody was ever out - even for a message this device does not hold', async () => {
+    expect(await quotePreviewEntitled(GROUP, null, deps(Promise.resolve(new Map())))).toBe(true);
+  });
+
+  it('false for a message this device does not hold while a window exists - it cannot be placed', async () => {
+    expect(await quotePreviewEntitled(GROUP, null, deps(bob()))).toBe(false);
+  });
+
+  it('THROWS when the windows cannot be read - a failure is never a decision to blank', async () => {
+    await expect(
+      quotePreviewEntitled(GROUP, BEFORE, deps(Promise.reject(new Error('503'))))
+    ).rejects.toThrow('503');
   });
 });
 

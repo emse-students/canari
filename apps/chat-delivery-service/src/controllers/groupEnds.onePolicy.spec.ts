@@ -243,7 +243,8 @@ describe('a group ends - one policy, three routes', () => {
       expect(redis.del).toHaveBeenCalledWith(
         `history:${GROUP_ID}`,
         `group:members:${GROUP_ID}`,
-        `pending_welcome:${GROUP_ID}`
+        `pending_welcome:${GROUP_ID}`,
+        `group:parting:${GROUP_ID}`
       );
       // The reverse order would strip a live group's history if the transaction then rolled back.
       expect(order).toEqual(['commit', 'redis']);

@@ -46,7 +46,6 @@ describe('a refused channel send is described from its status, never from its bo
       log,
       addMessageToChat: async () => {},
       patchSalonEcho: () => {},
-      quotePreviewEntitled: async () => true,
     } as never;
   }
 

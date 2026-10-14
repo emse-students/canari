@@ -28,6 +28,9 @@ describe('MembersController - membership intervals and the exclusions read', () 
   let txDeletes: Array<{ entity: unknown; where: unknown }>;
   let txUpdates: Array<{ entity: unknown; where: Record<string, unknown> }>;
   let intervalFind: jest.Mock;
+  let deviceRows: Array<{ userId: string; deviceId: string }>;
+  let order: string[];
+  let redis: { smembers: jest.Mock; srem: jest.Mock; hset: jest.Mock };
 
   const T = (iso: string) => new Date(iso);
 
@@ -47,6 +50,21 @@ describe('MembersController - membership intervals and the exclusions read', () 
     txDeletes = [];
     txUpdates = [];
     intervalFind = jest.fn(() => Promise.resolve(intervals));
+    order = [];
+    deviceRows = [
+      { userId: 'alice', deviceId: 'a1' },
+      { userId: 'bob', deviceId: 'b1' },
+      { userId: 'bob', deviceId: 'b2' },
+      { userId: 'carol', deviceId: 'c1' },
+    ];
+    redis = {
+      smembers: jest.fn().mockResolvedValue([]),
+      srem: jest.fn(),
+      hset: jest.fn(async () => {
+        order.push('parting-recorded');
+        return 2;
+      }),
+    };
 
     const txManager = {
       getRepository: (entity: unknown) => ({
@@ -99,14 +117,22 @@ describe('MembersController - membership intervals and the exclusions read', () 
         { provide: getRepositoryToken(KeyPackage), useValue: {} },
         {
           provide: getRepositoryToken(DeviceGroupMembership),
-          useValue: { delete: jest.fn().mockResolvedValue({ affected: 2 }) },
+          useValue: {
+            find: jest.fn(({ where }: { where: { userId?: string } }) =>
+              Promise.resolve(
+                deviceRows.filter((d) => where.userId === undefined || d.userId === where.userId)
+              )
+            ),
+            delete: jest.fn(async ({ userId }: { userId: string }) => {
+              order.push('devices-deleted');
+              deviceRows = deviceRows.filter((d) => d.userId !== userId);
+              return { affected: 2 };
+            }),
+          },
         },
         { provide: getRepositoryToken(QueuedMessage), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: {} },
-        {
-          provide: 'REDIS_CLIENT',
-          useValue: { smembers: jest.fn().mockResolvedValue([]), srem: jest.fn() },
-        },
+        { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: DataSource, useValue: dataSource },
       ],
     })
@@ -189,5 +215,44 @@ describe('MembersController - membership intervals and the exclusions read', () 
     expect(txUpdates).toHaveLength(1);
     expect(txUpdates[0].entity).toBe(GroupMembershipInterval);
     expect(txUpdates[0].where).toMatchObject({ groupId: 'g-1', userId: 'bob' });
+  });
+
+  it("a removal by ANOTHER member names the removed person's devices as parting, before their rows go", async () => {
+    // The commit that removes bob is fanned out from these very rows; without the parting entry it
+    // would never reach his devices (second review of #1878, P1-a).
+    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+
+    expect(redis.hset).toHaveBeenCalledWith(
+      'group:parting:g-1',
+      'bob:b1',
+      'alice',
+      'bob:b2',
+      'alice'
+    );
+    expect(order).toEqual(['parting-recorded', 'devices-deleted']);
+  });
+
+  it('a self-leave makes no commit, and names nobody as parting', async () => {
+    await controller.removeGroupMember('g-1', 'bob', 'bob', undefined);
+
+    expect(redis.hset).not.toHaveBeenCalled();
+  });
+
+  it('counts the window of a person a commit ADMITTED before their enrolment - open-ended until it lands', async () => {
+    // dave: removed on the 2nd; the add commit re-admitted his device (a pending row), and his
+    // roster row and new interval follow the Welcome. In between he opens every frame of the new
+    // epoch, so his window must already be withheld.
+    intervals.push({
+      userId: 'dave',
+      joinedAt: T('2026-10-01T00:00:00Z'),
+      leftAt: T('2026-10-02T00:00:00Z'),
+    });
+    deviceRows.push({ userId: 'dave', deviceId: 'd1' });
+
+    const got = await controller.getGroupExclusions('g-1', 'alice');
+
+    expect(got.exclusions.dave).toEqual([
+      { from: T('2026-10-02T00:00:00Z').getTime(), until: null },
+    ]);
   });
 });

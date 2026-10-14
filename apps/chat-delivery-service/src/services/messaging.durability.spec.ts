@@ -41,6 +41,8 @@ describe('MessagingService - visibility vs durability', () => {
     publish: jest.fn().mockResolvedValue(1),
     smembers: jest.fn().mockResolvedValue([]),
     pipeline: jest.fn(() => pipelineDouble()),
+    hgetall: jest.fn().mockResolvedValue({}),
+    hdel: jest.fn().mockResolvedValue(1),
   };
 
   /**
@@ -414,6 +416,50 @@ describe('MessagingService - visibility vs durability', () => {
       const res = await service.sendMessage(send({ silent: true, durable: false }));
 
       expect(res).toEqual(expect.objectContaining({ queued: 1 }));
+    });
+
+    /**
+     * A REMOVAL IS RECORDED BEFORE ITS COMMIT and deletes the removed person's device rows, which
+     * are what a commit is fanned out from - so the commit that removes them never reached them, and
+     * they kept the epoch's keys until a refused send told them (second review of #1878, P1-a).
+     */
+    describe('a commit reaches whoever its sender has just removed', () => {
+      const parting = { 'u9:dX': 'u1', 'u8:dY': 'someone-else' };
+
+      it("queues the remover's commit to the removed devices, and consumes the entries", async () => {
+        twoPeers();
+        onlyAOnline();
+        pushSpies();
+        redis.hgetall.mockResolvedValue(parting);
+
+        await service.sendMessage(send({ isCommit: true }));
+
+        const queued = queuedMessageRepo.save.mock.calls[0][0] as unknown as {
+          recipientId: string;
+          deviceId: string;
+        }[];
+        expect(queued.map((q) => `${q.recipientId}:${q.deviceId}`)).toEqual([
+          'u2:dA',
+          'u2:dB',
+          'u9:dX',
+        ]);
+        expect(redis.hdel).toHaveBeenCalledWith('group:parting:g1', 'u9:dX');
+      });
+
+      it('an application frame never reaches them', async () => {
+        twoPeers();
+        onlyAOnline();
+        pushSpies();
+        redis.hgetall.mockResolvedValue(parting);
+
+        await service.sendMessage(send({ silent: false, durable: true }));
+
+        const queued = queuedMessageRepo.save.mock.calls[0][0] as unknown as {
+          deviceId: string;
+        }[];
+        expect(queued.map((q) => q.deviceId)).toEqual(['dA', 'dB']);
+        expect(redis.hdel).not.toHaveBeenCalled();
+      });
     });
 
     it("answers the sender the SAME receive time its recipients' rows carry", async () => {

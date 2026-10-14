@@ -2,7 +2,12 @@
 
 import type { EntityManager } from 'typeorm';
 import type Redis from 'ioredis';
-import { deleteGroupOwnedRows, deleteGroupRedisKeys, totalGroupOwnedRows } from './group-purge';
+import {
+  GROUP_REDIS_KEY_PREFIXES,
+  deleteGroupOwnedRows,
+  deleteGroupRedisKeys,
+  totalGroupOwnedRows,
+} from './group-purge';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -150,7 +155,12 @@ describe('deleteGroupRedisKeys', () => {
 
     await deleteGroupRedisKeys(redis, ['g1']);
 
-    expect(calls.flat()).toEqual(['history:g1', 'group:members:g1', 'pending_welcome:g1']);
+    expect(calls.flat()).toEqual([
+      'history:g1',
+      'group:members:g1',
+      'pending_welcome:g1',
+      'group:parting:g1',
+    ]);
   });
 
   it('does not name the MLS locks, which expire on their own', async () => {
@@ -167,7 +177,7 @@ describe('deleteGroupRedisKeys', () => {
 
     await deleteGroupRedisKeys(redis, ids);
 
-    expect(calls.flat()).toHaveLength(1200);
+    expect(calls.flat()).toHaveLength(400 * GROUP_REDIS_KEY_PREFIXES.length);
     for (const chunk of calls) expect(chunk.length).toBeLessThanOrEqual(500);
   });
 

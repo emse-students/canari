@@ -71,6 +71,7 @@ import {
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { TabOutboxEvent } from '$lib/mls-client/tabMessageSync';
 import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
+import { mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
 
@@ -128,6 +129,10 @@ function makeMls(
     meta?: (id: string) => unknown;
     send?: (...args: unknown[]) => Promise<void>;
     active?: (id: string) => Promise<boolean>;
+    /** The server's exclusion windows; nobody was ever out by default. */
+    exclusions?: (
+      id: string
+    ) => Promise<Map<string, Array<{ from: number; until: number | null }>>>;
   } = {}
 ) {
   return {
@@ -136,6 +141,7 @@ function makeMls(
       opts.meta ? opts.meta(id) : { groupId: id, name: '', isGroup: true, deletedAt: null }
     ),
     isGroupActive: vi.fn(opts.active ?? (async () => true)),
+    getGroupExclusions: vi.fn(opts.exclusions ?? (async () => new Map())),
     // Whatever a test's own `send` does (throw, wait), an accepted frame answers what the real
     // service answers: the sealed bytes and the server's receive time.
     sendMessage: vi.fn(async (...args: unknown[]) => {
@@ -2090,6 +2096,121 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14). A reply carries the quoted message's text
+ * to every current member live, so a quote of something sent while one of them was out carries the
+ * id only. Decided HERE, at the send, against the windows in force then - and never on a failure,
+ * because a blank is permanent (second review of #1878).
+ */
+describe('outbox - a reply decides its quote text at the send', () => {
+  beforeEach(() => {
+    connectivity.reset();
+  });
+
+  const QUOTED_AT = 1_700_000_050_000;
+  /** Bob was out around the quoted message. */
+  const bobsWindow = async () => new Map([['bob', [{ from: QUOTED_AT - 1, until: null }]]]);
+
+  function replyEntry(): OutboxEntry {
+    return {
+      id: 'r1',
+      conversationId: 'g1',
+      sentAt: 100,
+      kind: 'reply',
+      text: 'answer',
+      replyTo: { id: 'q1', senderId: 'carol', preview: 'the quoted words' },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+  }
+
+  function convo(): Conversation {
+    return {
+      ...convoWith('g1', []),
+      messages: [
+        {
+          id: 'q1',
+          senderId: 'carol',
+          content: 'x',
+          timestamp: new Date(QUOTED_AT),
+          serverTimestamp: QUOTED_AT,
+          isOwn: false,
+        },
+        {
+          id: 'r1',
+          senderId: 'u',
+          content: serializeEnvelope(
+            mkTextEnvelope('answer', { id: 'q1', senderId: 'carol', content: 'the quoted words' })
+          ),
+          replyTo: { id: 'q1', senderId: 'carol', content: 'the quoted words' },
+          timestamp: new Date(100),
+          isOwn: true,
+          status: 'pending' as const,
+        },
+      ],
+    };
+  }
+
+  const sentPreview = (mls: any): string | null | undefined =>
+    decodeAppMessage(mls.sendMessage.mock.calls[0][1] as Uint8Array)?.reply?.replyTo?.preview;
+
+  it('quotes by id only when the quoted message falls in a member window - frame, entry and echo', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({ exclusions: bobsWindow });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(sentPreview(mlsService)).toBe('');
+    expect(storage.saveOutboxEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'r1', replyTo: expect.objectContaining({ preview: '' }) }),
+      'device-key'
+    );
+    const echo = conversations.get('g1')!.messages.find((m) => m.id === 'r1')!;
+    expect(echo.replyTo?.content).toBe('');
+    const env = parseEnvelope(echo.content);
+    expect(env.kind === 'text' && env.replyTo?.content).toBe('');
+  });
+
+  it('keeps the quote text when nobody is out around it', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(sentPreview(mlsService)).toBe('the quoted words');
+  });
+
+  it('sends nothing and blanks nothing when the windows cannot be read - the reply waits', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({
+      exclusions: async () => {
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.get('r1')!.replyTo!.preview).toBe('the quoted words');
+    expect(storage._map.get('r1')!.status).not.toBe('failed');
+    outbox.dispose();
+  });
+
+  it('the native mirror quotes by id only - it cannot read the windows', () => {
+    const mirror = toMirrorEntry(replyEntry())!;
+    const decoded = decodeAppMessage(Uint8Array.from(atob(mirror.proto), (c) => c.charCodeAt(0)));
+    expect(decoded?.reply?.replyTo?.preview).toBe('');
+    expect(decoded?.reply?.replyTo?.id).toBe('q1');
   });
 });
 

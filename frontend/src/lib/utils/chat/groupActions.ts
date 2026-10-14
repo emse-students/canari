@@ -822,29 +822,48 @@ async function sendBundleChunks(
   { mlsService, log }: HistorySendDeps,
   { chunkSize, to, state }: { chunkSize: number; to: string; state?: ConversationHistoryState }
 ): Promise<BundleOutcome> {
-  const messages = await entitledHistorySelection(groupId, selection, { mlsService, log });
-  if (messages === null) return { kind: 'unreadable' };
-  if (messages.length === 0) {
+  // THE WINDOWS ARE READ AGAIN FOR EVERY CHUNK. A long answer spans seconds of network, and a
+  // member re-added in the meantime decrypts every chunk sealed after their add commit - so the
+  // windows that filter a chunk are the ones in force when THAT chunk leaves, never the ones read
+  // when the answer began. Concurrent reads of one group share one request (`joinInFlight`).
+  const totalChunks = Math.ceil(selection.length / chunkSize);
+  let sent = 0;
+  let read = false;
+  for (let i = 0; i < selection.length; i += chunkSize) {
+    const chunkNo = Math.floor(i / chunkSize) + 1;
+    const kept = await entitledHistorySelection(groupId, selection.slice(i, i + chunkSize), {
+      mlsService,
+      log,
+    });
+    if (kept === null) {
+      if (!read) return { kind: 'unreadable' };
+      log(
+        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} not sent - exclusion windows unreadable; stopping after ${sent} message(s)`
+      );
+      return { kind: 'sent', count: sent };
+    }
+    read = true;
+    if (kept.length === 0) continue;
+    const payload = kept.map(serializeForBundle);
+    const bytes = bundleFrame(payload, to, { state });
+    try {
+      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
+      sent += payload.length;
+      log(
+        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…`
+      );
+    } catch (e) {
+      log(`[HISTORY_BUNDLE] Chunk send error ${chunkNo}: ${String(e)}`);
+      return { kind: 'sent', count: sent };
+    }
+  }
+  if (sent === 0) {
     log(
       `[HISTORY_BUNDLE] Every message selected for ${groupId.slice(0, 8)}… was withheld - no message sent`
     );
     return { kind: 'withheld-all' };
   }
-  const totalChunks = Math.ceil(messages.length / chunkSize);
-  for (let i = 0; i < messages.length; i += chunkSize) {
-    const payload = messages.slice(i, i + chunkSize).map(serializeForBundle);
-    const bytes = bundleFrame(payload, to, { state });
-    try {
-      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
-      log(
-        `[HISTORY_BUNDLE] Chunk ${Math.floor(i / chunkSize) + 1}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…`
-      );
-    } catch (e) {
-      log(`[HISTORY_BUNDLE] Chunk send error ${Math.floor(i / chunkSize) + 1}: ${String(e)}`);
-      return { kind: 'sent', count: i };
-    }
-  }
-  return { kind: 'sent', count: messages.length };
+  return { kind: 'sent', count: sent };
 }
 
 /**

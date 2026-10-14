@@ -35,9 +35,9 @@ import type { IMlsService } from '$lib/mlsService';
  * phone clock that is minutes off, and an outbox that held the message for a while before the
  * network took it. It does not cover a device whose clock is wrong by more than that, or a message
  * composed offline more than an hour before it was sent: such a message may land outside the
- * widened window while having been delivered inside it. Only copies written before the server
- * started answering `receivedAt` are undated, so that residue shrinks to nothing as they age out.
- * Wider costs little - a held-back message is served by any member holding it dated - so the margin
+ * widened window while having been delivered inside it. Undated copies are those written before the
+ * server answered `receivedAt`, AND every copy the native background sender delivers - it reads no
+ * answer field yet - so this residue does NOT shrink to nothing on its own. Wider costs little - a held-back message is served by any member holding it dated - so the margin
  * errs wide.
  */
 export const UNDATED_SKEW_MARGIN_MS = 60 * 60 * 1000;
@@ -173,16 +173,24 @@ export async function dropOwnExcludedMessages<M extends PlaceableMessage & { id:
  * current member live and rides every later bundle, so a quote of a message from inside any
  * member's window would hand that member its words; the reply then carries the quoted id only.
  *
- * `false` when the windows cannot be read, for the same reason a history answer sends nothing then.
+ * Asked by the outbox at the SEND, not when the reply is composed: the windows are the ones in
+ * force when the frame leaves, and composing costs no round trip.
+ *
+ * **THROWS when the windows cannot be read** - it never answers `false` for a failure. Blanking is
+ * permanent (the frame and the stored copy lose the text for good), so it is decided only on an
+ * answer; a failed read leaves the reply queued for the next attempt. `quoted` is `null` when this
+ * device holds no copy of the quoted message: with a window in force it cannot be placed, so it is
+ * quoted by id only, as an undatable message is withheld from a bundle.
  */
 export async function quotePreviewEntitled(
   groupId: string,
-  quoted: PlaceableMessage,
+  quoted: PlaceableMessage | null,
   deps: EntitlementDeps
 ): Promise<boolean> {
-  const exclusions = await readExclusions(groupId, deps, 'quoting by id only');
-  if (exclusions === null) return false;
-  const reason = withholdReason(quoted, allWindows(exclusions));
+  const exclusions = await deps.mlsService.getGroupExclusions(groupId);
+  const windows = allWindows(exclusions);
+  if (windows.length === 0) return true;
+  const reason = quoted === null ? 'undatable' : withholdReason(quoted, windows);
   if (reason !== null) {
     deps.log(
       `[HISTORY_ENTITLEMENT] Reply in ${groupId.slice(0, 8)}… quotes a message a member is not entitled to (${reason}) - quoting by id only`

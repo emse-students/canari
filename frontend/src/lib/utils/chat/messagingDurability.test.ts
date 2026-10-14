@@ -45,7 +45,6 @@ describe('sendChatMessage: the echo and its queue entry are one write', () => {
         deviceKeyB64: 'k',
         mlsService: {} as any,
         log: () => {},
-        quotePreviewEntitled: async () => true,
         addMessageToChat: async (_s: string, _c: string, _n: string, o: Record<string, any>) => {
           calls.push('echo');
           options = o;
@@ -126,10 +125,12 @@ describe('sendChatMessage: the echo and its queue entry are one write', () => {
 });
 
 /**
- * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14): a reply quoting a message from inside a
- * member's exclusion window carries the quoted id only - its text would reach that member live.
+ * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14), and whether a reply may carry its quote
+ * text is decided by the OUTBOX at the send (`decideQuote`). Composing reads nothing: a round trip
+ * per reply was a cost, and a compose made offline used to lose its quote for good (second review
+ * of #1878).
  */
-describe('sendChatMessage - a reply quoting a withheld message', () => {
+describe('sendChatMessage - composing a reply asks the server nothing', () => {
   const conversation = { id: 'group-1', lifecycle: 'active' } as unknown as Conversation;
   const quoted = {
     id: 'q1',
@@ -139,40 +140,20 @@ describe('sendChatMessage - a reply quoting a withheld message', () => {
     serverTimestamp: 1_700_000_000_000,
   } as never;
 
-  function depsWith(entitled: boolean) {
+  it('queues the quote text as composed, and reads no exclusion window', async () => {
     let options: Record<string, any> = {};
-    const quotePreviewEntitled = vi.fn(async () => entitled);
-    return {
-      get options() {
-        return options;
+    const getGroupExclusions = vi.fn();
+    await sendChatMessage('replying', 'alice', quoted, {
+      userId: 'me',
+      conversation,
+      log: () => {},
+      mlsService: { getGroupExclusions },
+      addMessageToChat: async (_s: string, _c: string, _n: string, o: Record<string, any>) => {
+        options = o;
       },
-      quotePreviewEntitled,
-      deps: {
-        userId: 'me',
-        conversation,
-        log: () => {},
-        quotePreviewEntitled,
-        addMessageToChat: async (_s: string, _c: string, _n: string, o: Record<string, any>) => {
-          options = o;
-        },
-      } as any,
-    };
-  }
+    } as any);
 
-  it('blanks the quoted text, in the queued frame AND in the stored echo', async () => {
-    const h = depsWith(false);
-    await sendChatMessage('replying', 'alice', quoted, h.deps);
-
-    expect(h.quotePreviewEntitled).toHaveBeenCalledWith('group-1', quoted);
-    expect(h.options.outboxEntry.replyTo).toEqual({ id: 'q1', senderId: 'carol', preview: '' });
-    expect(h.options.replyTo.content).toBe('');
-  });
-
-  it('keeps the quoted text when every member is entitled to it', async () => {
-    const h = depsWith(true);
-    await sendChatMessage('replying', 'alice', quoted, h.deps);
-
-    expect(h.options.outboxEntry.replyTo.preview).toBe('said while Bob was out');
-    expect(h.options.replyTo.content).toBe('said while Bob was out');
+    expect(getGroupExclusions).not.toHaveBeenCalled();
+    expect(options.outboxEntry.replyTo.preview).toBe('said while Bob was out');
   });
 });

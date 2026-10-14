@@ -37,6 +37,7 @@ import {
   ensureGroupMember,
   endGroupMembership,
   exclusionWindows,
+  partingKey,
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
@@ -684,8 +685,31 @@ export class MembersController {
       false
     );
 
-    // Remove all per-device memberships for this user in the group to keep
-    // server-side metadata aligned with the MLS remove commit semantics.
+    // A REMOVAL BY ANOTHER MEMBER IS RECORDED HERE BEFORE ITS MLS COMMIT, and the commit is fanned
+    // out from the device rows deleted just below - so the removed person's devices are named first
+    // as PARTING, and the remover's next commit is queued to them too (`partingKey`). A self-leave
+    // makes no commit, and gets no entry. Written before the delete, so a crash in between leaves
+    // the rows and a retry re-reads them.
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (caller && caller !== safeUserId) {
+      const devices = await this.deviceGroupRepo.find({
+        where: { groupId: safeGroupId, userId: safeUserId },
+        select: { userId: true, deviceId: true },
+      });
+      if (devices.length > 0) {
+        const fields = devices.flatMap((d) => [`${d.userId}:${d.deviceId}`, caller]);
+        await this.redis
+          .hset(partingKey(safeGroupId), ...fields)
+          .catch((e: unknown) =>
+            this.logger.warn(
+              `[REMOVE_MEMBER] group=${safeGroupId.slice(0, 8)} user=${safeUserId.slice(0, 8)} parting devices NOT recorded - the removal commit will not reach them: ${String(e)}`
+            )
+          );
+      }
+    }
+
+    // Remove all per-device memberships for this user in the group: from here on no application
+    // frame is queued for them, and no frame they send is accepted.
     const deviceMembershipDelete = await this.deviceGroupRepo.delete({
       groupId: safeGroupId,
       userId: safeUserId,
@@ -766,8 +790,21 @@ export class MembersController {
       throw new ForbiddenException('Caller is not a member of this group');
     }
 
+    // WHOSE WINDOWS COUNT: every roster member, AND everybody a commit has admitted a device for.
+    // A re-add puts the person's devices in the tree - and records them here, `pending`, in the
+    // transaction that accepts the commit (`ValidateCommitBody.admits`) - BEFORE their roster row
+    // exists: the enrolment follows the Welcome. In between they can open every frame sealed at the
+    // new epoch, so a roster-only answer would hand them their own window. Their intervals then end
+    // closed, so the window reads as open-ended until the enrolment closes it - wider, never
+    // narrower. Authorisation above stays roster-only.
+    const admittedRows = await this.deviceGroupRepo.find({
+      where: { groupId: safeGroupId },
+      select: { userId: true },
+    });
+    const counted = new Set([...memberIds, ...admittedRows.map((r) => r.userId)]);
+
     const intervals = await this.dataSource.manager.find(GroupMembershipInterval, {
-      where: { groupId: safeGroupId, userId: In([...memberIds]) },
+      where: { groupId: safeGroupId, userId: In([...counted]) },
       select: { userId: true, joinedAt: true, leftAt: true },
     });
     const byUser = new Map<string, GroupMembershipInterval[]>();
@@ -810,7 +847,7 @@ export class MembersController {
     }
 
     const exclusions: Record<string, ExclusionWindow[]> = {};
-    for (const userId of memberIds) {
+    for (const userId of counted) {
       const windows = exclusionWindows(byUser.get(userId) ?? []);
       if (windows.length > 0) exclusions[userId] = windows;
     }

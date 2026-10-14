@@ -705,6 +705,8 @@ export async function replayConversationHistory(params: {
      * this change removes. Reported once, and only alongside a replay that did something.
      */
     let ownFramesSkipped = 0;
+    /** Rows the server withheld because this reader was out of the group when they were sent. */
+    let withheldSkipped = 0;
     /**
      * Frames belonging to a group this device has been REMOVED from.
      *
@@ -862,6 +864,13 @@ export async function replayConversationHistory(params: {
       }> = [];
 
       for (const msg of history) {
+        // WITHHELD BY THE SERVER: sent while this reader was out of the group. It carries an id and
+        // nothing else, so it is passed, never decoded - and counted, so a walk says what it skipped.
+        if (msg.withheld === '1') {
+          withheldSkipped++;
+          advancePast(msg.id);
+          continue;
+        }
         const rowKey = msg.id || `${msg.timestamp}:${msg.content.slice(0, 64)}`;
         if (seenCipherHashes.has(rowKey)) {
           advancePast(msg.id);
@@ -1352,6 +1361,9 @@ export async function replayConversationHistory(params: {
       log(
         `[OK] ${addedMsg} message(s) caught up for ${contactName}.` +
           (ownFramesSkipped > 0 ? ` ${ownFramesSkipped} own frame(s) skipped.` : '') +
+          (withheldSkipped > 0
+            ? ` ${withheldSkipped} row(s) withheld by the server (sent while we were out).`
+            : '') +
           (evictedFramesSkipped > 0
             ? ` ${evictedFramesSkipped} frame(s) skipped: removed from this group.`
             : '')
@@ -1363,6 +1375,10 @@ export async function replayConversationHistory(params: {
     else if (evictedFramesSkipped > 0) {
       log(
         `[OK] Nothing caught up for ${contactName}: removed from this group, ${evictedFramesSkipped} frame(s) skipped.`
+      );
+    } else if (withheldSkipped > 0) {
+      log(
+        `[OK] Nothing caught up for ${contactName}: ${withheldSkipped} row(s) withheld by the server (sent while we were out).`
       );
     }
 

@@ -199,6 +199,8 @@ describe('an orphan group - one repair, three paths', () => {
           queries.push(sql);
           return orphanRowIds.map((groupId) => ({ groupId }));
         }),
+        // The reader's own membership intervals, read by a history page: nobody here ever left.
+        find: jest.fn(async () => []),
       },
     };
 

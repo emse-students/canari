@@ -249,7 +249,12 @@ export async function tombstoneGroups(
  *
  * `pending_welcome_notify:` is NOT here: it is keyed by USER, not by group.
  */
-export const GROUP_REDIS_KEY_PREFIXES = ['history:', 'group:members:', 'pending_welcome:'] as const;
+export const GROUP_REDIS_KEY_PREFIXES = [
+  'history:',
+  'group:members:',
+  'pending_welcome:',
+  'group:parting:',
+] as const;
 
 /** Every Redis key the given group owns, one per shape in {@link GROUP_REDIS_KEY_PREFIXES}. */
 export function groupRedisKeys(groupId: string): string[] {
