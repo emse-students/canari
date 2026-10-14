@@ -203,7 +203,8 @@
     /**
      * The community list is drawn from the device before the session is up (F1, the saved
      * snapshot): rows and the rail are shown, and every control that would ACT - reordering the
-     * rail, creating a community, the community settings - is withheld until the session exists.
+     * rail, the community settings - is withheld until the session exists; the add button stays
+     * (the rail must not move when the session arrives) and its press is answered with a toast.
      */
     previewOnly?: boolean;
     /**
@@ -657,20 +658,25 @@
         {/each}
       </div>
 
-      {#if !previewOnly}
-        <div class="my-1 h-[2px] w-8 rounded-full bg-white/30 dark:bg-white/10"></div>
+      <!-- Drawn before the session too, so the rail does not move when the session arrives; until
+           then the press is answered, not acted on (F1 preview). -->
+      <div class="my-1 h-[2px] w-8 rounded-full bg-white/30 dark:bg-white/10"></div>
 
-        <button
-          onclick={() => {
-            showNewCommunityModal = true;
-          }}
-          class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-lg hover:bg-white/10"
-          title={m.sidebar_add_community_title()}
-          aria-label={m.sidebar_add_community_title()}
-        >
-          <Plus size={24} />
-        </button>
-      {/if}
+      <button
+        onclick={() => {
+          if (previewOnly) {
+            console.log('[WORKSPACE-SNAPSHOT] add-community pressed before the session');
+            showToast(m.communities_wait_for_session(), 'info');
+            return;
+          }
+          showNewCommunityModal = true;
+        }}
+        class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-lg hover:bg-white/10"
+        title={m.sidebar_add_community_title()}
+        aria-label={m.sidebar_add_community_title()}
+      >
+        <Plus size={24} />
+      </button>
     </div>
   {/if}
 
