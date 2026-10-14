@@ -1380,6 +1380,27 @@ readings below were taken before it or after three quiet minutes.
   "Deverrouiller": the instrument's tap that raced the keypad animation signed the device out
   (re-signed in, same local state).
 
+## The Mi 9T readings of v1.2.8-alpha.1 (2026-10-15)
+
+Build `1.2.8` (`versionName` from `dumpsys package`), the `v1.2.8-alpha.1` release APK installed with
+`adb install -r` over the `1.2.7-alpha.3` build (accepted, no signature or downgrade refusal, account
+kept), dev estate, account `fourth` ("Canari Test Delta"), bench conversations only. The phone is on
+the vault path ("Rester connecte"), so no PIN gate was drawn. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1015-a128/` (`runs.ndjson`, summaries). Dev has no push,
+so reading 5 could not be taken.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. Start, version, unlock | **`PASS`** | Settings > A propos reads "Version de Canari 1.2.8-alpha.1" and "Vous utilisez la derniere version"; the app opened straight onto the feed on the vault path (a PIN-path unlock was not exercised) |
+| 2. Communities and a salon | **`PASS`** | `community-open.mjs --community Bench126 --runs 3 --start cold --net none --cpu 1`, medians ms: attach 552, nav 1099, **tap>rail 1134** (worst 1243), tap>salons 2244, tap>target salons 2512, **salon>pane 277**, salon>msgs 1833, switch>salons 143, switch salon>pane 202, reopen>msgs 773; long tasks 728, max gap 443 |
+| 3. Notification level, private conversation | **`PASS`** | The phone holds no group, only the DM with gamma (a bench account). Its "Infos de la discussion" panel shows Notifications with Tous / Mentions / Aucune; "Mentions" highlights, then "Tous" restores it. Persistence across a restart not read |
+| 4. Reply swipe near the right edge (#1880) | **`PASS`** | A swipe on an own bubble from x=985 of 1080 with a 70 px vertical drift arms "Repondre a Canari Test Delta" with the bubble's text in the composer. **From x=1040 the system back gesture wins** and the conversation closes: the gesture zone is the system's, not the app's |
+| 5. Group notification shows the sender | **`NOT-OBSERVED`** | No group on the phone and no push on dev |
+| 6. In-app log export | **`PASS`** | "Enregistrer le journal" saves `canari-log-1.2.8-alpha.1-20261015-0130.txt` (1.8 MB, 20471 lines) to Telechargements. All **397** `[SEND] handleSendChat` lines carry `text="[N chars]"`; no quoted value outside that shape, no `eyJ` or `Bearer`. The one-word leak of the 1.2.7 reading (`text="ok"`) is not present |
+
+**Met on the way:** a tap on the profile settings icon during the page transition hit the camera badge
+and opened the photo picker; it was cancelled without choosing. Tap again once the page is drawn.
+
 ## The bench readings of v1.2.7-alpha.2 (2026-10-14)
 
 **Mi 9T**: build `1.2.7 (100200702)`, the release's `app-universal-release.apk` (sha256
