@@ -345,7 +345,7 @@ line below is a verified file:line reading, not a guess. The "shape" column is s
 | 6 | `apiFetch` carries no `AbortSignal` and no timeout, so every await below is unbounded | - | open |
 | 7 | `listAssociations()` uncached across 14 call sites; `listPaymentMethods()` once per product tile | 3 | **fixed 2026-09-23** |
 | 8 | Display names re-resolved per row although the payload already carries them (`directory:177`, `AssociationMemberRow:106`, `NotificationRow:166`) | 3 | open |
-| 9 | Channel open deletes the local page **before** awaiting the server (`useConversations.svelte.ts:457`) | 1 | open - measured 2026-10-14: 1.9 s from the tap to the first bubble on Wi-Fi, 6.2 s on a slow link and a 4x CPU, nothing offline ([community-open-budget](community-open-budget.md), F4) |
+| 9 | Channel open deletes the local page **before** awaiting the server (`useConversations.svelte.ts:457`) | 1 | **fixed 2026-10-15** (F4): the last page is kept and drawn while the server page loads, and replaced only once that page is in hand ([community-open-budget](community-open-budget.md#f4-built-2026-10-15)) |
 | 10 | The global MLS mutex is held across `fetchHistory` HTTP calls (`history.ts:830`..`:1270`) | - | open |
 | 11 | Serial page loads: `/calendar` (5 deep), `/documents` (blank until a boolean), `/forms/[id]` (5), `/associations/[slug]` (3) | 1 | **fixed 2026-09-23** |
 | 12 | Association edit: every tab switch remounts and refetches | 1 | **partly fixed 2026-09-23** - the directory and the categories were most of what it re-asked for, and row 7's cache covers them. What each tab fetches FOR ITSELF still costs a round trip per switch. |

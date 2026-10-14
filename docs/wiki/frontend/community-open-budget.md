@@ -347,6 +347,29 @@ Same protocol and instrument as sections 1 and 5.
   `deleteMessagesForConversation` that runs before every salon load, on a SQLite store busy with the
   boot (inferred, not profiled). F4 removes that delete.
 
+### F4: built 2026-10-15
+
+**What changed.**
+- A salon's last page is kept on the device as a COPY: the page the last load drew, sealed under the
+  device key like a DM's rows.
+- `loadChannelHistory` sends the server request first. While that request is in flight, it draws the
+  stored page (`drawStoredSalonPage`), only on the salon's first draw in the process. When the
+  server page answers, it merges as before.
+  - Any stored row that is older than the fresh page and absent from it is withdrawn, so a row
+    deleted on the server does not outlive the page that proves it is gone.
+  - Only then is the copy replaced in the store (`storeSalonPage`: delete, then save).
+- Nothing is deleted BEFORE the server answers any more. That includes the boot restore, which used
+  to erase every salon's rows (`conversations.ts`).
+- An open that fails keeps the copy on screen and in the store, so the salon can be read offline.
+
+**What is unchanged.**
+- The server stays the source of truth: the copy is replaced at every load.
+- Live salon messages are still not written one by one (`skipDbSave`).
+- A pre-session landing still has no salon preview (`landingPreview.ts`).
+- A salon pruned by the listing is deleted with its rows (`deleteConversation`).
+
+**Measured.** See the table below, once the bench has run.
+
 ### Reaching under 200 ms: the tab, and a cached salon's first messages
 
 What the measurements say is already within reach, and what stands between it and 200 ms:
