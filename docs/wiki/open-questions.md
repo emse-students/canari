@@ -335,7 +335,7 @@ holder rather than merely re-asking the same agreeing peers - is the part still 
 **DECIDED by the user, 2026-10-14: YES, for private group conversations.** A re-added member keeps
 what preceded their removal and NEVER receives what was sent while they were out (user,
 2026-10-14). Built as an entitlement filter on the ANSWERING side, keyed on membership intervals the
-server records (migration `029`) - design, clock and what it does not cover in
+server records (migration `030`) - design, clock and what it does not cover in
 [history-reconciliation](protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14).
 Communities keep their own decision (a returner may read the past); 1:1 conversations have no remove
 path. What follows is the question as it was raised, kept for its reasoning.

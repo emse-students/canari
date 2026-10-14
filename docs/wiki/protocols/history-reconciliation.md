@@ -718,7 +718,7 @@ under the CURRENT epoch - the full bundle on an invitation (`sendFullHistoryBund
 `processPendingInvitations` and `handleWelcomeRequest`), the diff (`sendHistoryBundleForIds`), the
 scrollback (`sendHistoryRangeBundle`) - and none of them asked whether anybody had been out.
 
-**The record - the server, migration `029`.** `dm_group_membership_intervals` keeps one row per
+**The record - the server, migration `030`.** `dm_group_membership_intervals` keeps one row per
 stretch of membership `(groupId, userId, joinedAt, leftAt)`. `ensureGroupMember` opens one (both
 enrolment routes; at most one open row, by a partial unique index); `removeGroupMember` closes it
 in the transaction that deletes the `dm_group_members` row, whose hard-delete semantics are
@@ -762,9 +762,9 @@ store costs no read. An unreadable window set ingests none of that frame's messa
 
 - A hostile client - a member that kept its plaintext, or an answering peer running modified code -
   can hand anything to anybody. This is a rule honoured by every correct client, not cryptography.
-- Removals that happened before migration `029`: nothing recorded them, so a person removed then
+- Removals that happened before migration `030`: nothing recorded them, so a person removed then
   and re-added later has no window.
-- A member enrolled by a container still running pre-029 code during the deploy that applied the
+- A member enrolled by a container still running pre-030 code during the deploy that applied the
   migration has no open interval; their later removal records no window and logs
   `[REMOVE_MEMBER] ... had NO open membership interval` at ERROR.
 - The seconds between the MLS remove commit and the server call that closes the interval

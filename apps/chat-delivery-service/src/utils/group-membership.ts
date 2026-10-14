@@ -64,7 +64,7 @@ export async function ensureGroupMember(
  * (every membership guard reads its absence); the interval is what remembers that it existed.
  *
  * @returns how many membership rows and open intervals were affected, for the caller's log line.
- *          `closed: 0` with `deleted: 1` is a member enrolled before migration 029 by a writer that
+ *          `closed: 0` with `deleted: 1` is a member enrolled before migration 030 by a writer that
  *          was still running old code - the caller reports it.
  */
 export async function endGroupMembership(

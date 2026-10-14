@@ -698,7 +698,7 @@ export class MembersController {
       endGroupMembership(manager, safeGroupId, safeUserId)
     );
     if (ended.deleted > 0 && ended.closed === 0) {
-      // A member with no open interval: enrolled by a writer running pre-029 code during the deploy
+      // A member with no open interval: enrolled by a writer running pre-030 code during the deploy
       // that applied the migration. Their exclusion window starts nowhere, so a re-add will NOT
       // withhold what is sent from now on - which is exactly the loss this line exists to show.
       this.logger.error(

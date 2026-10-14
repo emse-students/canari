@@ -1,4 +1,4 @@
--- Migration 029: membership INTERVALS for MLS conversation groups (user, 2026-10-14).
+-- Migration 030: membership INTERVALS for MLS conversation groups (user, 2026-10-14).
 --
 -- A REMOVE HOLDS AGAINST A LATER RE-ADD: a member removed from a group conversation and added back
 -- keeps what preceded their removal and never receives what was sent while they were out.
