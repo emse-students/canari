@@ -259,7 +259,10 @@ export function useConversations() {
    */
   let salonStaleDeclarations = 0;
   /** The load of each salon still in flight: its request's declaration count (`null`: not sent). */
-  const salonLoadsInFlight = new Map<string, { sentAt: number | null; done: Promise<void> }>();
+  const salonLoadsInFlight = new SvelteMap<
+    string,
+    { sentAt: number | null; done: Promise<void> }
+  >();
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
     salonStaleDeclarations++;
