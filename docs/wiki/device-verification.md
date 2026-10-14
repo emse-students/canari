@@ -1440,6 +1440,46 @@ network came back and did not retry by itself until "Reessayer" (P3). The tab ba
 tab highlighted on `/notifications` (P3, cosmetic). The Mi 9T is LEFT on a fresh device of `fourth`
 (PIN path, "Rester connecte" unticked).
 
+## The bench readings of v1.2.7-alpha.3 (2026-10-14)
+
+**Mi 9T**: build `1.2.7 (100200703)`, the release's `app-universal-release.apk` (sha256
+`96903cde...`), installed with `adb install -r` over alpha.2: same signature, the enrolment of
+`fourth` survived, PIN gate first. **iPhone 12**: TestFlight offered `1.2.7 (100200703)` with
+"Mettre a jour" although automatic updates were ON (the build was ~30 min old); one tap updated it
+and the enrolment of `canari-test-gamma` survived (PIN gate). Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1014-a127a3/` (`export1-3.txt`, `export-*.json`,
+`ring-*.txt`, `cons-offline.ndjson`, `logcat-main.txt`, frames) and `.../ios-bench/r1014-a127a3/`
+(frames, `syslog-canari.txt`).
+
+**How the old lines were produced.** The alpha.2 reading ended on a `pm clear`, so the ring held no
+line from alpha.1 any more (411 lines from 12:18, every value already `[N chars]`). The 10 leaking
+lines of the alpha.2 export (`inapp-log.txt`: `text="bisous"`, `"ok"`, `"refuse1-a127"`, ...) plus one
+`contact="jolan" text="bisous"` line were written VERBATIM into `CanariDBLog` as one chunk, over CDP,
+while alpha.2 still ran (`inject.mjs`, `old-lines.txt`) - the bytes an older build stores, placed by
+hand. alpha.3 was installed over that.
+
+| Reading | Phone | Verdict | What was seen |
+| --- | --- | --- | --- |
+| #1861 the old lines are redacted at export | Mi 9T | **`PASS`** | The 11 lines come out `contact="[17 chars]" text="[6 chars]"` (`[5 chars]` for `jolan`); 0 hit for any known string, 0 `text=`/`contact=` value that is not `[N chars]`, in all three exports. Header `555 lines - 24 values redacted` (22 at read + 2 at write) |
+| #1861 the `[APPLOG] ... redacted at read` line appears once | Mi 9T | **`FAIL` against the expectation, P3** | `[APPLOG] 22 values redacted at read, in 11 lines an older build stored` - the count is exact - but it is logged AGAIN, identical, at the second export and the third, and each header counts the 22 again (`25`, then `38`). By design of #1861 (stored records are not rewritten; `ring-end.txt` still holds `bisous` 3 times), so every export of an upgraded device repeats the line until the ring rolls over |
+| #1861 the export does not freeze the UI | Mi 9T | **`PASS`, on a small ring** | Tap to the save dialog 482 / 444 / 383 ms; longest frame gap 34 / 28 / 30 ms; no long task; no ANR. The ring was 555-664 lines, not a full ~5000: the yield-by-count path was barely exercised |
+| #1861 fresh lines with a double quote | Mi 9T | **`PASS`** | `quote "zorglub" a3` and `trail\ back" end` sent in the DM: `text="[20 chars]"` and `text="[18 chars]"` (the JSON-quoted lengths), nothing of either text in the export or the raw ring |
+| App opens on the PIN path | Mi 9T, iPhone | **`PASS`** | PIN gate, then `/posts` (`01-unlocked.png`, iPhone `05-unlocked.png`) |
+| DM both ways | Mi 9T + iPhone | **`PASS`** | `a3-plain` and the two quoted texts arrive on the iPhone verbatim; `iosA3send` arrives on the Mi 9T |
+| Salon both ways | Mi 9T + iPhone | **`PASS`** | `iosA3salon` arrives on the Mi 9T; `a3salon-mi9t` arrives on the iPhone ("Message lu par Canari T...") |
+| Offline cold start: banner, held salon send, network back | Mi 9T | **`PASS`** | PIN path offline: "Impossible de contacter le serveur" (no unlock, by design); vault path ("Rester connecte" ticked online first): the banner on cold start; salon deep link, send: `HELD: salon a4b30b40 is not loaded on this device yet`, "En attente..."; network back: `reconnect - listing the communities again`, `server reachable again`, `released: its salon is loaded`, `settled as 55eabc2d` **4.6 s** after the online event; the iPhone shows `heldA3one` ONCE. **No** `[WORKSPACE-LOAD]` line in the 60 s after |
+| Orphan WebView after two navigation-mode switches | Mi 9T | **`PASS`** | threebutton then gestural: same pid, CDP lists ONE page, attached, after each |
+| Nothing fatal | Mi 9T, iPhone | **`PASS`** | Logcat: no ANR; the two `FATAL EXCEPTION` lines are `uiautomator` (uid 2000, `UiAutomationService already registered`), not the app. iPhone syslog: no crash line, no crash report |
+| #1836 cold-start link | iPhone | **`PASS`** | Terminated, `fr.emse.canari://chat/channel_a4b30b40-...`: `[CanariDeepLink] scene connected with 1 launch url(s)`, PIN, the salon "general" (`14-cold-salon.png`). The DM link lands in the DM (`12-cold-dm.png`). A link to a salon gamma is not in (Bench127) lands on the community list |
+| Checkpoints per rejoined group | Mi 9T | **NOT READ** | Needs a `pm clear` and a sign-in; not taken |
+| Redaction on iOS | iPhone | **NOT READ** | The exported file cannot be pulled off the TestFlight app's container |
+
+**Noise (P3, unchanged from alpha.2):** ~125 warning/error console lines for two offline cold starts
+in ~2 min: `[API] getToken failed ... proceeding without auth`, the `[A] refresh` transport failure,
+`Failed to fetch presence` and `[WS] Gateway connection failed` at ERROR, `[PENDING] page did not
+arrive`. Logcat adds 24 `AppOps: attributionTag  not declared in manifest of fr.emse.canari`. The
+Mi 9T is LEFT on the vault path ("Rester connecte" ticked) - mind the sign-out P1 candidate above.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.
