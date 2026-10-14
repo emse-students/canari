@@ -169,6 +169,14 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
 
+## P1 - Opening a community is network-gated: the salons 1.7 s after the tap on Wi-Fi, 6 s on a slow link and phone, never offline (user, 2026-10-14; measured, not built)
+
+**User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Mi 9T, `1.2.7-alpha.3`, dev, cold, medians: tap -> salons 1.7 s (Wi-Fi), 6.0 s (slow3g + 4x CPU), never in airplane mode (also on the user's Pixel on production); a salon's first messages 1.9 s / 6.2 s after its tap. Budget proposed: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. Fixes F1-F7, ranked, none built - F1 (a local workspace list), F4 (a salon's last page kept locally, local-first-ui ledger row 9) and F6 (mount the visible bubbles first) are the ones that reach the budget: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`. **Owed**: a CPU profile of the warm resume at 4x (2 s before the tap is handled), the history head/body split, iOS.
+
+## P3 - 45 identical `[HISTORY_RECONCILE] ... asked 30s ago` lines in 250 ms at a cold start (Pixel 6a, production `1.2.7`, 2026-10-14)
+
+Read in the user's exported log (`F:\Programmation\canari-harness\pixel-r1014\`): one line per group instead of one per sweep. Noise defect, no behaviour change owed ([community-open-budget](frontend/community-open-budget.md#6-the-smallest-set-of-fixes-the-evidence-proves)).
+
 ## P3 - Asked by the USER on 2026-10-14 - "Modifier les pseudos" for a group and a community, design questions answered, not built
 
 > *"Une fonctionnalite comme sur Messenger : 'Modifier les pseudos', un ecran qui liste les membres du groupe ou de la communaute, avec 'Definir un pseudo' et un crayon a cote de chaque membre."* (not urgent)
@@ -182,7 +190,26 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 - **Where it lives is OPEN and splits by kind.** DM or group is an MLS room: a nickname fits an MLS application frame the server never reads (precedent: the silent edit frame, [chat](frontend/modules/chat.md)), but "anybody may" is then enforced only by convention between equals. A community salon is sealed with Graine and a moderator rule is a SERVER-checked grant, so only a server column enforces it, at the cost that the server sees the nickname. To decide: one mechanism or two.
 - **Scope**: per conversation, visible to every member of THAT conversation, never leaking to the profile or another conversation. A late joiner misses an MLS frame sent before they joined ([channel-encryption](protocols/channel-encryption.md)); a column has no such gap.
 - **Abuse**: a nickname set by someone else can be an insult. Show who set it (setter id travels with the value), let the target reset it for themselves, make the community case reportable and moderator-reversible ([moderation-and-blocking](moderation-and-blocking.md)), and do not let a blocked user rename the blocker. Length and content limits mirror the profile's; every string through Paraglide.
-- **Open for the user**: in a community, is the setter named to the target; does a nickname outlive its setter leaving.
+- **DECIDED by the user, 2026-10-14: TWO MECHANISMS.** Private groups carry the nickname in an MLS application frame the server never sees; communities use a server column with the moderator check. **Build is queued AFTER mute / mentions-only** (next section).
+- **Still open for the user**: in a community, is the setter named to the target; does a nickname outlive its setter leaving.
+
+## Group notification levels (all / mentions only / none) - requested by the USER 2026-10-14, release 1.2.8 WAITS for it
+
+*"Pour la prochaine mise a jour"*: the user decided 1.2.8 is held until both mute and mentions-only ship. A PR is in progress by an agent. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
+
+## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, in progress)
+
+Draft PR with server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
+
+## P3 - Found reading the Pixel 6a on prod 1.2.7 (Wi-Fi, LTE, offline, 2026-10-14)
+
+Evidence: `canari-log-1.2.7-20261014-1759.txt` in the harness state dir `pixel-r1014` (outside the repo, cite by name only).
+
+- **The Communities tab shows NO community offline**: the workspace list is not local-first, and the feed says "Impossible de charger les posts".
+- **79 MLS checkpoints in 3 minutes** (94-238 ms each, 9.4 s in all): one per bulk ingest, even for `read_watermark` frames.
+- **45 identical `[HISTORY_RECONCILE] ... was asked 30s ago` lines in 250 ms at cold start**: a noise defect (CLAUDE.md: explain it or fix it).
+- **Salon open measured ~0.6 s on Wi-Fi and ~0.9 s on LTE, ~0.7 s of it a skeleton.** The user's target is **under 0.2 s** for the tab and for the first paint of cached salon messages (cold start excluded).
+- **Stale "a ajouté un membre au groupe" bubbles may remain stored** on devices from before #1870 (the cache wrote the native preview as a plain message). No migration decided.
 
 ## P3 - `isTransportFailure` still reads EVERY `TypeError` as a transport failure (review of #1843, 2026-10-14)
 
@@ -1064,7 +1091,7 @@ fails the day the site stops offending.
 
 ### P3 - docker-prune is built for the Portail-etu host but not installed there
 
-Measured 2026-10-10: the Portail-etu host is 70 % used (30 G of 45 G, 13 G free; 6.3 GB of 12 GB of images reclaimable, no build cache, 0 reclaimable volume) and it grew 4 G in a day, so 80 % is about two days away at that rate. (The old VM was 18 % on 2026-10-09.) **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"; threshold and scope set 2026-10-11, overriding the no-install-without-DSI-agreement rule for this case only):** an agent installs and runs the prune when the host passes 75 %, images and build cache only and never a volume, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
+**Pruned by hand 2026-10-14, 80 % -> 67 %** (2.6 GB unused images + 2.5 GB build cache; three empty orphan volumes `infrastructure_garage_data`, `garage_meta`, `media_meta` removed with the user's go). The cron is still not installed. Measured 2026-10-10: the Portail-etu host is 70 % used (30 G of 45 G, 13 G free; 6.3 GB of 12 GB of images reclaimable, no build cache, 0 reclaimable volume) and it grew 4 G in a day, so 80 % is about two days away at that rate. (The old VM was 18 % on 2026-10-09.) **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"; threshold and scope set 2026-10-11, overriding the no-install-without-DSI-agreement rule for this case only):** an agent installs and runs the prune when the host passes 75 %, images and build cache only and never a volume, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 

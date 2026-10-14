@@ -8,6 +8,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 
+// The sender lookup is its own seam (displayName.spec.ts); here it answers at once so a
+// notification is raised a microtask after the arrival, not after a network round trip.
+vi.mock('$lib/utils/users/displayName', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/users/displayName')>()),
+  resolveNotificationSenderName: async () => 'Peer',
+}));
+
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: () => {},
   globalSession: {},
@@ -80,7 +87,7 @@ describe('a switched-off category raises no local notification', () => {
   it('notifies a conversation message by default', async () => {
     const { ctx, sendSystemNotification } = makeContext('conv-1');
     await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'm1' });
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('is silent for a conversation when "messages" is off', async () => {
@@ -96,7 +103,7 @@ describe('a switched-off category raises no local notification', () => {
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('channel_abc');
     await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 'm3' });
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('is silent for a salon when "channels" is off', async () => {
@@ -128,6 +135,8 @@ describe("a private conversation's level gates the notification this client rais
     const { ctx, sendSystemNotification } = makeContext('conv-1');
     (ctx as { userId: string }).userId = ME64;
     await useMessaging().addMessageToChat(PEER, text, 'conv-1', ctx, { messageId: id });
+    // The sender lookup is asynchronous: let it settle before asserting on what was raised.
+    await new Promise((r) => setTimeout(r, 0));
     return sendSystemNotification;
   }
 
@@ -162,7 +171,7 @@ describe("a private conversation's level gates the notification this client rais
       ctx,
       'arrival'
     );
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
     // The banner is the last message; the mention it stands for picks the mentions channel.
     expect(sendSystemNotification.mock.calls[0][3]).toBe(true);
   });
@@ -184,6 +193,7 @@ describe("a private conversation's level gates the notification this client rais
       ctx,
       'arrival'
     );
+    await new Promise((r) => setTimeout(r, 0));
     expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 
@@ -199,6 +209,7 @@ describe("a private conversation's level gates the notification this client rais
     const row = ctx.conversations.get(key)!;
     ctx.conversations.set(key, { ...row, id: GROUP });
     await useMessaging().addMessageToChat(PEER, 'hello', key, ctx, { messageId: 'l6' });
+    await new Promise((r) => setTimeout(r, 0));
     expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 
@@ -210,6 +221,6 @@ describe("a private conversation's level gates the notification this client rais
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('channel_abc');
     await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 'l5' });
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 });

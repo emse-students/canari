@@ -14,6 +14,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 
 // Same import-cycle cut as `useMessaging.bulkIngest.svelte.test.ts` - see its comment.
+// The sender lookup is its own seam (displayName.spec.ts); here it answers at once so a
+// notification is raised a microtask after the arrival, not after a network round trip.
+vi.mock('$lib/utils/users/displayName', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/users/displayName')>()),
+  resolveNotificationSenderName: async () => 'Peer',
+}));
+
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: () => {},
   globalSession: {},
@@ -107,7 +114,7 @@ describe('a hidden tab is notified on both inbound paths', () => {
     expect(sendSystemNotification).not.toHaveBeenCalled();
 
     await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
     expect(sendSystemNotification.mock.calls[0][2]).toBe(CONVO);
   });
 
@@ -122,7 +129,7 @@ describe('a hidden tab is notified on both inbound paths', () => {
     }
     await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
 
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('the live path still raises one, which is the half that always worked', async () => {
@@ -131,7 +138,7 @@ describe('a hidden tab is notified on both inbound paths', () => {
     hideTheTab(true);
 
     await messaging.addMessageToChat(PEER, 'live message', CONVO, ctx, { messageId: 'live-1' });
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('a VISIBLE, focused tab READING THAT CONVERSATION is told nothing on either path', async () => {
