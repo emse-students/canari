@@ -86,3 +86,38 @@ export function resolveRenderWindow(
 export function stepWindowOlder(currentStart: number, step: number): number {
   return Math.max(0, currentStart - Math.max(1, step));
 }
+
+/**
+ * The window start of a conversation ENTRY: the tail of `entryGroups` groups only.
+ *
+ * Mounting a whole page of bubbles is one synchronous task whose length scales with the rows
+ * (measured on a Mi 9T, 2026-10-14: 339 ms for 56 rows, 635 ms for 200), and nothing is painted
+ * until it ends. The entry mounts what a viewport shows and `widenedEntryStart` grows the window to
+ * the full entry size after that first frame.
+ *
+ * @param groupCount Number of message groups currently in the list.
+ * @param entryGroups How many tail groups the first frame mounts.
+ */
+export function entryWindowStart(groupCount: number, entryGroups: number): number {
+  return Math.max(0, groupCount - Math.max(1, entryGroups));
+}
+
+/**
+ * The start to widen an entry window to once the first frame is out, or `null` when there is
+ * nothing to widen.
+ *
+ * It only ever LOWERS the start: a reader who has already paginated further up (or jumped to a
+ * message) owns a window that is wider than the entry one, and widening must never narrow it.
+ *
+ * @param currentStart The RESOLVED start of the window now (never the stored state).
+ * @param groupCount Number of message groups currently in the list.
+ * @param fullGroups The full entry size the window grows to.
+ */
+export function widenedEntryStart(
+  currentStart: number,
+  groupCount: number,
+  fullGroups: number
+): number | null {
+  const target = entryWindowStart(groupCount, fullGroups);
+  return target < currentStart ? target : null;
+}
