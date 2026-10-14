@@ -68,6 +68,7 @@
     },
   },
   "patchedDependencies": {
+    "mediabunny@1.61.3": "patches/mediabunny@1.61.3.patch",
     "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch",
   },
   "overrides": {
