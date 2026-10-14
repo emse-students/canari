@@ -2945,6 +2945,8 @@
   "sidebar_select_community_first": "Please select a community first",
   "sidebar_add_community_title": "Add a community",
   "sidebar_communities_fallback": "Communities",
+  "sidebar_communities_refreshing": "Updating your communities...",
+  "communities_wait_for_session": "Still connecting - try again in a moment.",
   "sidebar_community_settings_title": "Community settings",
   "sidebar_no_conversations_title": "No conversations",
   "sidebar_start_writing": "Start writing to someone!",

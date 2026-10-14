@@ -56,6 +56,8 @@
   } from '$lib/stores/globalChatSingleton.svelte';
   import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
+  import { currentUserId } from '$lib/stores/userState.svelte';
+  import { authGateShown } from '$lib/stores/authGate.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersList from './chat/ChannelMembersList.svelte';
   import ChatGroupPanel from './chat/ChatGroupPanel.svelte';
@@ -148,8 +150,43 @@
    */
   const isLocalPreview = $derived(!session.isLoggedIn && convs.landingPreviewKey !== null);
 
+  /**
+   * The Communities page drawing the account's community list before the session is up (F1, the
+   * saved snapshot or a listing started on the token): the rail and the salon rows are shown, and
+   * what would ACT waits for the session (`previewOnly`, {@link landOnSalonOnceOpenable}).
+   *
+   * Only for the signed-in account's own list, and never behind an unlock prompt - a lock screen
+   * shows nothing of what it locks ({@link authGateShown}).
+   */
+  const isWorkspacePreview = $derived(
+    !session.isLoggedIn &&
+      routeMode === 'communities' &&
+      !authGateShown() &&
+      channels.channelWorkspaces.length > 0 &&
+      channels.workspacesOwner !== null &&
+      channels.workspacesOwner === currentUserId()
+  );
+
+  /**
+   * The communities page has rows to show from the device: the sync overlay must not hide them. It
+   * blocked the screen "on a cold start (nothing cached yet)", and counted only conversations - so a
+   * rail drawn from the snapshot was covered until the first DM or salon row existed.
+   */
+  const drawsLocalCommunities = $derived(
+    routeMode === 'communities' && channels.channelWorkspaces.length > 0
+  );
+
   const isMessagingBlocked = $derived(
-    (!session.isLoggedIn && !isLocalPreview) || (isSyncing && !hasCachedConversations)
+    (!session.isLoggedIn && !isLocalPreview && !isWorkspacePreview) ||
+      (isSyncing && !hasCachedConversations && !drawsLocalCommunities)
+  );
+
+  /**
+   * The list on screen is not yet the server's (the saved snapshot), and no listing has failed: it
+   * is being refreshed, and the sidebar says so. After a give-up the error is the statement.
+   */
+  const communitiesRefreshing = $derived(
+    drawsLocalCommunities && !channels.workspacesConfirmed && channels.workspacesLoadError === null
   );
 
   const messagingOverlayMessage = $derived(
@@ -442,8 +479,10 @@
         void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx()),
       onReorderCommunities: (newOrder: typeof channels.channelWorkspaces) =>
         void channels.reorderWorkspaces(newOrder, channelsCtx()),
-      onMarkCommunityRead: (workspaceId: string) =>
-        void channels.markCommunityRead(workspaceId, channelsCtx()),
+      // Absent before the session: the rail's hold menu is not offered over a preview (F1).
+      onMarkCommunityRead: session.isLoggedIn
+        ? (workspaceId: string) => void channels.markCommunityRead(workspaceId, channelsCtx())
+        : undefined,
       onReorderChannels: (
         workspaceSlug: string,
         newOrder: (typeof channels.channelWorkspaces)[number]['channels']
@@ -469,11 +508,18 @@
       },
       onSelectConversation: handleSelectConversation,
       onJoinPrivateChannel: (channelId: string, channelName: string) => {
+        // Before the session there is nobody to join as: said, not attempted (F1 preview).
+        if (!session.isLoggedIn) {
+          log(`[WORKSPACE-SNAPSHOT] join of ${channelId.slice(0, 16)} pressed before the session`);
+          showToast(m.communities_wait_for_session(), 'info');
+          return;
+        }
         // An admin entering a private salon they could only see. Awaited nowhere: the reload it
         // triggers is what re-renders the row, and the toast is what reports either outcome.
         void channels.joinPrivateChannelAsAdmin(channelId, channelName, channelsCtx());
       },
       onSelectChannelConversation: (channelId: string) => {
+        if (landOnSalonOnceOpenable(channelId)) return;
         // THE PRESSED ROW LIGHTS UP FIRST, AND THE SALON MOUNTS AFTER THAT FRAME IS PAINTED. Both
         // used to happen in one flush, so the thread's mount - 382 ms for a 48-message salon on the
         // Mi 9T, ~1.6 s for a 50-face "general" on a Pixel 6a (store 1.2.6, 2026-10-13) - held the
@@ -523,8 +569,27 @@
       onRefresh: async () => {
         await session.attemptReconnect(sessionCb());
       },
-      canRefresh: () => !session.isWsConnected,
+      canRefresh: () => session.isLoggedIn && !session.isWsConnected,
+      previewOnly: !session.isLoggedIn,
+      listRefreshing: communitiesRefreshing,
     };
+  }
+
+  /**
+   * A salon row tapped while it cannot be opened yet - before the session, or drawn from the saved
+   * snapshot before the listing gave it a conversation - becomes a LANDING (`notifNav`), the same
+   * path a notification takes: the row lights up now, and `ChatBackgroundService` selects the salon
+   * the moment the session is up and the salon is in the map. No clock: the landing re-runs on both
+   * facts. Returns true when it took the tap.
+   */
+  function landOnSalonOnceOpenable(channelId: string): boolean {
+    if (session.isLoggedIn && convs.conversations.has(channelId)) return false;
+    log(
+      `[WORKSPACE-SNAPSHOT] salon ${channelId.slice(0, 16)} tapped before it can open (session ${session.isLoggedIn ? 'up' : 'not up'}) - landing on it once it can`
+    );
+    channels.selectedChannelConversationId = channelId;
+    notifNav.navigate(channelId);
+    return true;
   }
 
   // ─── A salon message left unanswered by a PREVIOUS page life goes back to the composer ─────────
@@ -1278,7 +1343,7 @@
   (`openChannel`, 2026-09-05). Same one-attribute cost as `data-conversation-tile`, same reason.
 -->
 <div class="app-layout" data-route-mode={routeMode} in:fade>
-  {#if session.isLoggedIn || isLocalPreview}
+  {#if session.isLoggedIn || isLocalPreview || isWorkspacePreview}
     <!-- NO BANNERS HERE ANY MORE, and the two that were are why this comment exists. Both said what
          another banner was already saying: "En attente de connexion" duplicated `OfflineBanner` at
          the window scale (offline raised BOTH, three seconds apart), and the synchronisation strip
@@ -1288,8 +1353,10 @@
          at a channel row to the button below it. One fact, one banner, at one scale. -->
     <main class="main-content">
       <!-- Desktop sidebar (always mounted, hidden on mobile when chat is open) -->
-      <!-- Not during a local preview: the list is the session's, and its rows act when tapped. -->
-      {#if session.isLoggedIn}
+      <!-- Not during a local preview: the list is the session's, and its rows act when tapped. The
+           community list before the session is the exception (F1): it is this account's own
+           snapshot, and its rows land through `notifNav` instead of acting (`previewOnly`). -->
+      {#if session.isLoggedIn || isWorkspacePreview}
         <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
       {/if}
 

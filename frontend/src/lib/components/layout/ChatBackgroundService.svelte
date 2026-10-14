@@ -42,6 +42,8 @@
     leaveSignedOut,
   } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
+  import { sessionAnsweredFor } from '$lib/stores/sessionAnswer.svelte';
+  import { setAuthGateShown } from '$lib/stores/authGate.svelte';
   import {
     globalSession,
     globalConvs,
@@ -511,6 +513,10 @@
   }
 
   let showBiometricSheet = $state(false);
+  // A page drawing local data before the session reads this to stay blank behind a lock screen.
+  $effect(() => {
+    setAuthGateShown(showPinModal || showBiometricSheet);
+  });
   /** Lets startLoginFlow() know the user chose "use the PIN code" rather than biometrics on
    *  the BiometricBottomSheet. */
   let biometricCancelled = $state(false);
@@ -656,6 +662,9 @@
    */
   function handleSignedOut() {
     globalSession.endSession(sessionCb());
+    // After the teardown, and whether or not there was a live session to tear down: the community
+    // list of the leaving account goes, and a listing started on its token stops (F1/F2).
+    globalChannels.forgetAccount(appendLog);
     _loginInProgress = false;
   }
 
@@ -1205,9 +1214,18 @@
     void openInvitedChannel(channelId);
   }
 
-  // ── Post-login: load channel workspaces ───────────────────────────────────
+  // ── Load channel workspaces on the ACCESS TOKEN, not on MLS ready (F2) ────
+  // The listing is a REST call and needs the token alone; `isLoggedIn` flips only once the unlock
+  // and MLS initialisation are through - 650 ms later on the Mi 9T at 1x, 1.9 s at 4x
+  // (community-open-budget). The one step that needs MLS, the key group, awaits it on its own
+  // (`whenMlsReady`). `isLoggedIn` stays a trigger: an offline unlock has a session and no token.
+  // A DERIVED, so the flip of `isLoggedIn` after the token does not list a second time.
+  const listingMayStart = $derived(
+    globalSession.isLoggedIn ||
+      (sessionAnsweredFor() !== null && sessionAnsweredFor() === currentUserId())
+  );
   $effect(() => {
-    if (!globalSession.isLoggedIn) return;
+    if (!listingMayStart) return;
     untrack(() => {
       void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx()).then((refreshRan) => {
         if (refreshRan && globalChannels.workspacesLoadError !== null) {
