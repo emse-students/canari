@@ -63,6 +63,33 @@ here (`PIN prompt declined - refresh credential already proven dead`).
 None of those improves by being re-measured, so the tool stops at the first one instead of spending
 23 s a run to repeat itself, and leaves the app RUNNING in the state that failed.
 
+## Opening a community - `community-open.mjs`
+
+The same socket, a different question: how long a member waits between tapping "Communautes" and
+seeing the rail, the salon list and a salon's messages, cold or warm, on a slow link or a throttled
+CPU, and which calls, long tasks and phases that wait is made of. The readings and the budget they
+led to are on [community-open-budget](../../docs/wiki/frontend/community-open-budget.md).
+
+```sh
+bun tools/cold-start/community-open.mjs --community Bench126 --runs 5 --start cold --net slow3g --cpu 4 --out <dir>
+bun tools/cold-start/community-open-report.mjs <dir>/runs.ndjson                 # medians, worsts, the chain
+bun tools/cold-start/community-open-report.mjs <dir>/runs.ndjson --chain <label> 1  # one run, every event
+bun tools/cold-start/community-bench-seed.mjs   # the ten-community bench (dev, bench account, through the UI)
+```
+
+Two facts decided its shape, and each one cost a wrong first reading:
+
+- **CDP's network emulation throttles the wrong client on Android.** `hooks.client.ts` sends every
+  first-party `/api` call through `plugin-http` (reqwest, in Rust); the WebView's own stack carries
+  only the bundled assets and `http://ipc.localhost/` - so `Network.emulateNetworkConditions` delays
+  the IPC and the local chunks and leaves the API alone. `--net slow3g` therefore wraps
+  `window.fetch` (through an accessor, so the app's later assignment is wrapped too) and ADDS
+  `400 ms + bytes / 50 kB/s` to every API response. The MLS delivery client and the WebSocket stay
+  unthrottled; a shaping proxy on the local estate ([local-first-ui](../../docs/wiki/frontend/local-first-ui.md#5-the-tools-and-where-they-live))
+  is the instrument that covers them.
+- **Four WebViews can be debuggable at once** (other apps open sockets too), so the socket is the one
+  named after the app's pid - `forwardDevtools` took the first one listed until 2026-10-14.
+
 ## What the numbers mean
 
 **The prompt is never answered.** The app is force-stopped between runs, so every run is genuinely
