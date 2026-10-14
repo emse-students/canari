@@ -178,12 +178,11 @@ function fieldSensitivity(name: string): false | 'secret' | 'prose' {
  * 240 characters and leaves the quote open, and the rest of the line is then that value), a bracketed
  * list or object, or a bare word; the tail is the words that follow up to the next separator, which
  * is the rest of a prose value. A field that is not sensitive is put back with its value and tail
- * scanned again, so `mode=x pin=1234` still loses the PIN. A bare word never starts with `name="`:
- * `handleSendChat: contact="[5 chars]"` would otherwise take `contact="[5` as ITS value and cut the
- * quoted one at the space (found making a second pass a no-op, 2026-10-14).
+ * scanned again, so `mode=x pin=1234` still loses the PIN; one whose bare value starts another field
+ * is resumed at that field instead ({@link redactFields}).
  */
 const FIELD_RE =
-  /\b([A-Za-z][\w-]*)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*(?:"|$)|'[^']*(?:'|$)|\[[^\]]*(?:\]|$)|\{[^}]*(?:\}|$)|(?![A-Za-z][\w-]*=")[^\s,;&}\])|]+)((?:[ \t]+(?!["']?[A-Za-z][\w-]*["']?\s*[:=])[^\s,;&}\])|"]+)*)/g;
+  /\b([A-Za-z][\w-]*)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*(?:"|$)|'[^']*(?:'|$)|\[[^\]]*(?:\]|$)|\{[^}]*(?:\}|$)|[^\s,;&}\])|]+)((?:[ \t]+(?!["']?[A-Za-z][\w-]*["']?\s*[:=])[^\s,;&}\])|"]+)*)/g;
 
 /**
  * What follows a prose value past a comma or a semicolon, up to the next field: `description:
@@ -236,31 +235,67 @@ function proseMarker(value: string, tail: string): string {
  */
 const ALREADY_REDACTED_VALUE_RE = /^"?\[(?:redacted|\d+ chars)\]"?$/;
 
+/** A bare value that is itself the start of a field: `contact="` in `handleSendChat: contact="…"`. */
+const NESTED_FIELD_START_RE = /^[A-Za-z][\w-]*["']?\s*[:=]/;
+
 /**
  * Replaces the value of every sensitive field by `[redacted]`, calling `onRedact` once per value.
  * Recursion is on a strictly shorter span (a value or a tail), so it ends.
+ *
+ * A field that is NOT sensitive and whose bare value is the start of another field
+ * (`handleSendChat: contact="[5 chars]"`) keeps only its name and separator, and the scan resumes
+ * at that value: the inner field is judged on its whole span instead of on the word cut at its
+ * first space. Only there - a SENSITIVE name still swallows such a value whole, or
+ * `text=a="ok" my message` would hand the message to the inner, harmless field (2026-10-14).
  */
 function redactFields(text: string, onRedact: () => void): string {
-  const out = text.replace(
-    FIELD_RE,
-    (_m, name: string, sep: string, value: string, tail: string) => {
-      const sensitivity = fieldSensitivity(name);
-      if (sensitivity === false || isHarmlessFieldValue(name, value, tail)) {
-        return `${name}${sep}${redactFields(value, onRedact)}${redactFields(tail, onRedact)}`;
-      }
-      // Already a marker this stage wrote: the line is being redacted a second time (the export
-      // re-reads every stored line), and a second pass must change nothing - not even the count.
-      if (ALREADY_REDACTED_VALUE_RE.test(value)) {
-        return `${name}${sep}${value}${redactFields(tail, onRedact)}`;
-      }
-      onRedact();
-      // A CONTENT field is replaced by its LENGTH whatever the value looks like: `text="ok"` is
-      // an identifier by shape and a member's whole message by meaning.
-      if (sensitivity === 'prose') return `${name}${sep}${proseMarker(value, tail)}${PROSE_END}`;
-      return `${name}${sep}[redacted]${redactFields(tail, onRedact)}`;
+  const re = new RegExp(FIELD_RE.source, 'g');
+  let out = '';
+  let from = 0;
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    out += text.slice(from, m.index);
+    from = m.index + m[0].length;
+    const [, name, sep, value, tail] = m;
+    const sensitivity = fieldSensitivity(name);
+    if (sensitivity === false && NESTED_FIELD_START_RE.test(value)) {
+      out += `${name}${sep}`;
+      from = re.lastIndex = m.index + name.length + sep.length;
+      continue;
     }
-  );
+    out += redactField(name, sep, value, tail, sensitivity, onRedact);
+  }
+  out += text.slice(from);
   return out.includes(PROSE_END) ? out.replace(PROSE_REST_RE, '') : out;
+}
+
+/** One `name<sep>value<tail>` match of {@link redactFields}, its value judged by the name. */
+function redactField(
+  name: string,
+  sep: string,
+  value: string,
+  tail: string,
+  sensitivity: false | 'secret' | 'prose',
+  onRedact: () => void
+): string {
+  if (sensitivity === false || isHarmlessFieldValue(name, value, tail)) {
+    return `${name}${sep}${redactFields(value, onRedact)}${redactFields(tail, onRedact)}`;
+  }
+  // Already a marker this stage wrote: the line is being redacted a second time (the export
+  // re-reads every stored line), and a second pass must change nothing - not even the count.
+  // A prose marker stands for the WHOLE value, which this stage never leaves a tail after: a
+  // marker followed by more words (`text=[3 chars] my message`) is a member's text imitating
+  // one, and is redacted like any other. Its end is marked, so a rest past a comma goes too.
+  if (sensitivity === 'prose' && tail === '' && ALREADY_REDACTED_VALUE_RE.test(value)) {
+    return `${name}${sep}${value}${PROSE_END}`;
+  }
+  if (sensitivity === 'secret' && ALREADY_REDACTED_VALUE_RE.test(value)) {
+    return `${name}${sep}${value}${redactFields(tail, onRedact)}`;
+  }
+  onRedact();
+  // A CONTENT field is replaced by its LENGTH whatever the value looks like: `text="ok"` is
+  // an identifier by shape and a member's whole message by meaning.
+  if (sensitivity === 'prose') return `${name}${sep}${proseMarker(value, tail)}${PROSE_END}`;
+  return `${name}${sep}[redacted]${redactFields(tail, onRedact)}`;
 }
 
 /**

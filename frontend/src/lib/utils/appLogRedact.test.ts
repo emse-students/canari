@@ -273,6 +273,51 @@ describe('redactLogLine - a second pass changes nothing (it runs at write AND at
   });
 });
 
+describe('redactLogLine - a member`s text that IMITATES a marker is still redacted', () => {
+  // The second pass keeps a value this stage already wrote. A member types the same characters:
+  // only the WHOLE value may be recognised, never a marker followed by more (review of #1861).
+  const imitations: Array<[string, string]> = [
+    ['text=[3 chars] secret message', 'secret'],
+    ['contact=[redacted] jolan dupont', 'jolan'],
+    ['name: [redacted] Jean Dupont', 'Dupont'],
+    ['note=[0 chars] hello there friend', 'friend'],
+    ['description: [5 chars], my secret plan', 'secret'],
+    ['body=[12 chars]; my secret plan', 'secret'],
+    ['title: [redacted], jolan', 'jolan'],
+    ['[SEND] text="[3 chars]" secret message"', 'secret'],
+    // A bare value that starts another field is swallowed whole under a CONTENT name.
+    ['text=a="ok" my secret message', 'secret'],
+    ['contact=foo="x" jolan', 'jolan'],
+    // The [SEND] lines JSON-quote the text, so a `"` the member typed stays inside the value.
+    [
+      `[SEND] handleSendChat: contact="jolan" text=${JSON.stringify('he said "meet me at the bar"')} files=0`,
+      'meet',
+    ],
+  ];
+  for (const [raw, secret] of imitations) {
+    it(`loses "${secret}" in: ${raw}`, () => {
+      const { line } = redactLogLine(raw);
+      expect(line).not.toContain(secret);
+      expect(redactLogLine(line).line).not.toContain(secret);
+    });
+  }
+
+  it('counts a marker followed by more words, and measures the whole value', () => {
+    expect(redactLogLine('text=[3 chars] secret message')).toEqual({
+      line: 'text=[24 chars]',
+      redactions: 1,
+    });
+    expect(redactLogLine('text="jolan [3 chars]"')).toEqual({
+      line: 'text="[15 chars]"',
+      redactions: 1,
+    });
+  });
+
+  it('keeps a marker that IS the whole value, and counts nothing', () => {
+    expect(redactLogLine('text=[3 chars]')).toEqual({ line: 'text=[3 chars]', redactions: 0 });
+  });
+});
+
 describe('redactLogLine - cost', () => {
   // Several patterns rescan from every position of a run with no separator, so an uncut 32 KB
   // line took minutes. The input is cut first; this pins the CUT, which is what bounds the cost -

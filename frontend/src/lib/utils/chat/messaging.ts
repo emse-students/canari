@@ -276,8 +276,10 @@ export async function sendChatMessage(
 ): Promise<{ success: boolean; error?: string; echoed?: boolean }> {
   const { userId, conversation, addMessageToChat } = deps;
 
+  // JSON-quoted: a `"` in a member's text closes a hand-written quote, and the in-app log's
+  // redaction then keeps the words after it as ordinary log words (appLogRedact, 2026-10-14).
   deps.log(
-    `[SEND] sendChatMessage: contact="${contactName}" groupId="${conversation.id}" lifecycle=${conversation.lifecycle} text="${text.slice(0, 40)}" reply=${!!replyingTo}`
+    `[SEND] sendChatMessage: contact=${JSON.stringify(contactName)} groupId="${conversation.id}" lifecycle=${conversation.lifecycle} text=${JSON.stringify(text.slice(0, 40))} reply=${!!replyingTo}`
   );
 
   if (!text.trim()) {

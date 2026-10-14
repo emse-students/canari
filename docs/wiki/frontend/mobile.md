@@ -479,11 +479,18 @@ second implementation. What it redacted at read is added to the header's count a
 **That requires `redactLogLine` to be IDEMPOTENT**: a line it returned comes back identical with
 zero redactions, so a line this build stored costs the read nothing and is never re-marked
 (`"[5 chars]"` must not become `"[9 chars]"`). Four things broke that and were fixed: a field whose
-value is already `[redacted]` / `[N chars]` / `"[N chars]"` is kept uncounted; a replacement that
+value is already `[redacted]` / `[N chars]` / `"[N chars]"` is kept uncounted - a CONTENT field
+only when that marker is its WHOLE value, with no word after it, since a member can type
+`[3 chars] my message` and the first pass must not keep it; a replacement that
 equals its match (`?[query]`, an already closed `"[cut]`) is not counted; the 400-character cap
-does not cut a line that already carries its own `… (N chars)` suffix; and a bare `FIELD_RE` value
-may no longer START with `name="` - `handleSendChat: contact="[5 chars]"` used to give
-`handleSendChat` the value `contact="[5` and split the quoted marker at its space. Pinned by
+does not cut a line that already carries its own `… (N chars)` suffix; and a NON-sensitive field
+whose bare value starts another field (`handleSendChat: contact="[5 chars]"`) is resumed at that
+field instead of giving `handleSendChat` the value `contact="[5` - a SENSITIVE name still swallows
+such a value whole, or `text=a="ok" my message` would hand the message to the harmless inner
+field. Both shapes were found by a differential fuzz against the previous redactor (review of
+#1861). The `[SEND]` lines also JSON-quote the text: hand-written `text="${text}"` let a `"` the
+member typed close the quote, and the words after it stayed as plain log words - at write AND at
+read, since a stored line of that shape no longer says where the value ended. Pinned by
 `appLogRedact.test.ts` (every hostile case and the content cases, passed twice) and
 `appLog.test.ts` (an old-format record written straight into IndexedDB comes out redacted;
 removing the read-side call fails it).
