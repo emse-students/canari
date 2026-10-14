@@ -53,7 +53,10 @@ import {
   notificationGroupName,
   type NativeMessageNotification,
 } from '$lib/utils/nativeNotification';
-import { getUserDisplayNameSync, notificationSenderName } from '$lib/utils/users/displayName';
+import {
+  getUserDisplayNameSync,
+  resolveNotificationSenderName,
+} from '$lib/utils/users/displayName';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import {
@@ -497,21 +500,23 @@ export function useMessaging() {
     // it did not exist, so which switches applied to a mention depended on which transport
     // happened to carry it (NOTIF-16).
     const mentionsMe = extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId));
-    const senderName = notificationSenderName(senderId, convo);
     const notificationBody = preview || m.notif_new_message();
-    void ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
-      // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
-      // plain notification, it asks the native builder for the SAME one a push would raise. See
-      // `nativeNotification.ts` for the pair of notifications this replaced.
-      conversationId: conversationKey,
-      senderId,
-      senderName,
-      groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
-      body: notificationBody,
-      mentionsMe,
-      sentAt,
-      covers,
-    });
+    // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
+    void resolveNotificationSenderName(senderId, convo).then((senderName) =>
+      ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
+        // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
+        // plain notification, it asks the native builder for the SAME one a push would raise. See
+        // `nativeNotification.ts` for the pair of notifications this replaced.
+        conversationId: conversationKey,
+        senderId,
+        senderName,
+        groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+        body: notificationBody,
+        mentionsMe,
+        sentAt,
+        covers,
+      })
+    );
   }
 
   /**
