@@ -111,6 +111,11 @@ audit's checkpoint levers (faster seal, no checkpoint for a receive-only drain, 
 for the duty cycle; batching the history exchange of a rejoin into one drain would remove two of the
 four checkpoints per group.
 
+**Found while reading this storm (2026-10-14)**: a `flush` made during a running checkpoint was handed
+that checkpoint, so `externalJoin` - which awaits its checkpoint so a reload cannot rejoin and fork -
+was told its join was durable when it was not, for most joins of a storm like this one. Fixed:
+[mls-desync-prevention](../protocols/mls-desync-prevention.md#the-checkpoint-a-caller-awaits-is-the-one-that-exported-after-its-change-2026-10-14).
+
 ## Finding 3 - every message bubble resolves its readers' names, visible or not, and re-runs itself
 
 `components/messages/MessageInfoTooltip.svelte:39-55` is mounted by EVERY bubble
