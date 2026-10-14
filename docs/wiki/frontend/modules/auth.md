@@ -853,7 +853,23 @@ erasures `clearAuth` already owns) and releases `_loginInProgress`. `endSessionI
 session that is live, which also keeps the revocation wipe's own `clearAuth` from running a second,
 flushing teardown. A dead session ending does not ask the server to deregister its push token: the
 refresh latch already says the answer is a refusal. Tests: `stores/auth.test.ts` ("the sign-out
-handler"), `composables/session/signOutEndsLiveSession.test.ts`.
+handler"), `composables/session/signOutEndsLiveSession.test.ts`, and
+`composables/session/signOutTimeline.test.ts`, which replays sign-out, resume, second sign-out over
+the real `clearAuth`, `endSessionImpl` and `resumeConnectionImpl`.
+
+**Two things the adversarial review added (2026-10-14).** `endSessionImpl` releases the socket
+(`pauseSocket`) BEFORE the teardown's final flush: the gateway does not close a socket when the
+server revokes the session, and the teardown unregisters the state persister, so an open socket kept
+decrypting and ACKing the leaving account's frames into memory that nothing would write. And the
+shell's `_sessionExpiredHandled` - set by the first expiry, reset by nothing - is reset by the shared
+`onMlsReady`, so a second expiry in the same process logs out instead of being swallowed.
+
+**What the review left OPEN, because it is not a small fix.** The session's MLS service survives the
+sign-out (nothing calls `resetMls`), and `init()` short-circuits on its cached `initPromise`: the next
+login in the same process runs on the previous session's in-memory client and cached device id.
+Harmless for the SAME account (it is the state the final flush wrote); wrong for ANOTHER account on
+the same install - the P3 "switching accounts on one iPhone install" in [backlog](../../backlog.md).
+Retiring the service needs the final flush to be awaited before the next login opens the state.
 
 **What a sign-out still keeps, deliberately**: `mls.bin`, the message database and the device-key
 vault ("deconnecter seulement, garder l'etat", see `handlePinSignOut`). So a device signed out with

@@ -2155,6 +2155,15 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
     return;
   }
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
+  // THE SOCKET GOES BEFORE THE FINAL FLUSH. The gateway does not close it when the server revokes the
+  // session, and the teardown below unregisters the state persister: left open, it kept decrypting
+  // and ACKing the leaving account's frames, and every MLS advance they made after the flush was in
+  // memory only - lost at the next process death, an epoch behind what the server had delivered.
+  try {
+    ctx.ensureMls().pauseSocket();
+  } catch (e) {
+    cb.log(`[LOGOUT] Could not release the socket - frames may still arrive: ${String(e)}`);
+  }
   tearDownLiveSession(ctx, cb, 'logout');
   notificationPreferences.reset();
   // The announcement asked for, and the one waiting, belong to the account that is leaving: without

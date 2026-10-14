@@ -41,6 +41,16 @@ describe('every sign-out ends the live session on the device', () => {
     expect(handler).toContain('_loginInProgress = false;');
   });
 
+  it('a session that unlocked re-arms the expiry logout, so the next expiry signs out again', () => {
+    // Set by the first expiry and reset by nothing, the guard swallowed every later expiry of the
+    // same process. The unlock is where a live credential is proven, so that is where it ends.
+    // The shared `sessionCb` one, which every login path reaches - not a caller's inline override.
+    const at = shell.indexOf('onMlsReady: () => {\n');
+    expect(at).toBeGreaterThan(-1);
+    const ready = shell.slice(at, shell.indexOf('},\n', at));
+    expect(ready).toContain('_sessionExpiredHandled = false;');
+  });
+
   it('ends a live session through the shared teardown, and nothing that is not live', () => {
     const end = sessionAuth.slice(sessionAuth.indexOf('export function endSessionImpl'));
     const guard = end.indexOf('if (!ctx.isLoggedIn()) {');

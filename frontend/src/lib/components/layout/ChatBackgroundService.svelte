@@ -1144,6 +1144,10 @@
       onLoadHistoryForConversation: (contactName: string, groupId: string) =>
         globalConvs.loadHistoryForConversation(contactName, groupId, convCtx()),
       onMlsReady: () => {
+        // A session that unlocked holds a live credential, so the expiry `handleSessionExpired`
+        // deduplicated is over: the NEXT one must log out again. Never reset, the guard swallowed
+        // every later expiry of the same process - no sign-out, no redirect, a dead session left up.
+        _sessionExpiredHandled = false;
         dismissAuthPrompts();
         checkSiblingCallWarning();
         overrides.onMlsReady?.();
