@@ -31,7 +31,7 @@
    * away: it swaps the chip row for the formatting row instead of adding a third row, because in a
    * composer pinned above the keyboard every row is taken from the text.
    *
-   * WHY THREE FILE INPUTS AND NOT ONE. A single input accepting images, video, audio, PDF, Office and
+   * WHY TWO FILE INPUTS AND NOT ONE. A single input accepting images, video, audio, PDF, Office and
    * zip together is what made Android open its generic file browser ("Recents", Audio, Documents)
    * instead of the photo picker: the accept list decides which chooser the OS can offer. So photos
    * and videos have their own input and documents theirs.

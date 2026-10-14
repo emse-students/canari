@@ -47,6 +47,7 @@
   import { refusalStatus } from '$lib/utils/apiRefusal';
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import {
+    abandonHistoryOverlay,
     closeHistoryOverlayFromUi,
     pushHistoryOverlay,
     type OverlayClose,
@@ -208,8 +209,14 @@
     }
     oncapture(file);
     editorOpen = false;
-    // Ready: releases the take's history entry; the owner then closes the overlay.
+    // The take's entry leaves the stack NOW, by abandon: `closeHistoryOverlayFromUi` would leave it
+    // on the stack until its traversal lands, the overlay's teardown below would pop it a SECOND
+    // time, and that second traversal closed what the camera was opened over (the conversation).
+    const entry = takeEntry;
+    takeEntry = null;
+    if (entry) abandonHistoryOverlay(entry);
     send({ type: 'discard' });
+    // The owner unmounts the overlay, whose own entry is then on top and abandoned the same way.
     onclose?.();
   }
 
