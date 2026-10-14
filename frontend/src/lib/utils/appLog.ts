@@ -26,7 +26,8 @@
  */
 import { onAppScreenChange } from './appForeground';
 import { renderLogPayload } from './Log';
-import { redactLogLine } from './appLogRedact';
+import { redactLogLine, type RedactedLine } from './appLogRedact';
+import { yieldToMainThread } from './scheduling/yieldToMainThread';
 
 /** The console methods that enter the log. `debug` is deliberately absent (see the module doc). */
 export type CapturedLevel = 'log' | 'info' | 'warn' | 'error';
@@ -228,7 +229,30 @@ export interface AppLogSnapshot {
   persistenceError: string;
 }
 
-/** Reads the whole log: flushes the batch, then reads every record in key order. */
+/** How many stored lines the read-side redaction handles between two yields to the main thread. */
+export const READ_BATCH_LINES = 250;
+
+/** The stamp and level letter {@link captureConsoleLine} puts before every redacted line. */
+const STORED_PREFIX_RE = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} [LIWE] )(.*)$/;
+
+/**
+ * Passes one STORED line through {@link redactLogLine} again, its stamp and level left as they are.
+ * A line an older build wrote under weaker rules (`text="bisous"` before #1839) is redacted by
+ * today's; a line this build wrote comes back unchanged, the redaction being idempotent.
+ */
+function redactStoredLine(stored: string): RedactedLine {
+  const match = STORED_PREFIX_RE.exec(stored);
+  if (!match) return redactLogLine(stored);
+  const { line, redactions } = redactLogLine(match[2]);
+  return { line: `${match[1]}${line}`, redactions };
+}
+
+/**
+ * Reads the whole log: flushes the batch, then reads every record in key order - and redacts every
+ * line AGAIN on the way out. Redaction at write time protects only what is written from then on;
+ * the ring keeps up to {@link MAX_PERSISTED_CHARS} of lines older builds wrote, and this is the one
+ * reader of it, so nothing leaves the device without passing today's rules.
+ */
 export async function readAppLog(): Promise<AppLogSnapshot> {
   await flushAppLog();
   const parts: string[] = [];
@@ -242,12 +266,33 @@ export async function readAppLog(): Promise<AppLogSnapshot> {
     for (const chunk of chunks) parts.push(chunk.text);
   }
   if (pending.length > 0) parts.push(pending.join('\n'));
-  const text = parts.join('\n');
+  const stored = parts.join('\n');
+  const storedLines = stored === '' ? [] : stored.split('\n');
+  let reRedacted = 0;
+  let linesChanged = 0;
+  const out: string[] = [];
+  // A full ring is ~5000 lines: one synchronous pass would hold the main thread for 1-3 s on a
+  // phone. It yields every READ_BATCH_LINES lines - by COUNT, never by a clock.
+  for (let i = 0; i < storedLines.length; i++) {
+    if (i > 0 && i % READ_BATCH_LINES === 0) await yieldToMainThread();
+    const { line, redactions } = redactStoredLine(storedLines[i]);
+    reRedacted += redactions;
+    if (redactions > 0) linesChanged++;
+    out.push(line);
+  }
+  const text = out.join('\n');
+  if (reRedacted > 0) {
+    // Only lines an older build stored can change here: the redaction is idempotent, so a line
+    // this build wrote counts 0. Printed after the awaits above, so outside any capture.
+    console.info(
+      `[APPLOG] ${reRedacted} values redacted at read, in ${linesChanged} lines an older build stored`
+    );
+  }
   return {
     text,
     lines: text === '' ? 0 : text.split('\n').length,
     droppedLines,
-    redactedValues,
+    redactedValues: redactedValues + reRedacted,
     persistence,
     persistenceError,
   };
