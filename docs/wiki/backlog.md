@@ -224,9 +224,31 @@ Evidence: `canari-log-1.2.7-20261014-1759.txt` in the harness state dir `pixel-r
 - **The Communities tab shows NO community offline**: the workspace list is not local-first, and the feed says "Impossible de charger les posts" (both in the speed chantier above).
 - **P2, from the agent of PR #1881: an "absent conversation" at cold start.** Kept; it also affects community open time, so it belongs with the speed chantier.
 - **79 MLS checkpoints in 3 minutes** (94-238 ms each, 9.4 s in all): one per bulk ingest, even for `read_watermark` frames.
-- **45 identical `[HISTORY_RECONCILE] ... was asked 30s ago` lines in 250 ms at cold start**: a noise defect (CLAUDE.md: explain it or fix it).
 - **Salon open measured ~0.6 s on Wi-Fi and ~0.9 s on LTE, ~0.7 s of it a skeleton.** The user's target is **under 0.2 s** for the tab and for the first paint of cached salon messages (cold start excluded).
 - **Stale "a ajouté un membre au groupe" bubbles may remain stored** on devices from before #1870 (the cache wrote the native preview as a plain message). No migration decided.
+
+## P2 - A group joined in the background has no conversation row at cold start, and 47 of its 150 queued frames are lost (Pixel 6a, prod 1.2.7, 2026-10-14)
+
+Same log as above, cold start at 17:55:53. Not built: the fix moves when frames are decrypted, which is MLS-adjacent.
+
+**What the log shows, for group `513411dc` (a group the user's own other device created):**
+
+1. The native push service joined it in the background (epoch 1) and cached 21 plaintexts; it wrote no conversation row.
+2. 17:55:55.136: the server redelivers the Welcome. The handler finds the group held, takes the "already held - redelivered Welcome ignored" path, which promotes an EXISTING row and creates none. 150 frames parked behind it are re-queued.
+3. They are refused `absent-conversation` twice: at 17:55:55.4 (before the restore seeded rows) and at 17:55:57.0 (the "conversation rows seeded" re-fetch; storage holds no row for it either). That is 306 of the 314 `Message for absent conversation` lines and the 306 matching `messageCallback -> false`; 149 frames were handled 3 times. The other 8 refusals are 3 groups whose frames arrived before the restore seeded rows, read 1.7 s later.
+4. 17:55:58.3: the FCM-cache merge creates the row in memory (`mergeFcmMessagesIntoConversations`) and does NOT call `notifyConversationAvailable`, so nothing re-fetches the waiting frames.
+5. 17:55:58.661: a live frame for the group finds the row, is at epoch 18, and the gap healer replays 17 commits from the archive (epoch 1 -> 18) without the application frames between them.
+6. 17:55:59.883: the "conversations restored" re-fetch finally delivers the 150 frames; **47 are `LOST frame ... past epoch application frame`** and history reconciliation is asked to repair them (a 2-message bundle at 17:56:03, three more asks by 17:56:40).
+
+The other high-count lines of that window are per event: 114 `read_watermark` frames each advanced a watermark (one dispatch line and one `[READ]` line each, 97 of them this group's backlog), and `[QUEUE] Processing` is one per frame, tripled for this group by the refusals above.
+
+**Cost**: the frames arrive 6.5 s after cold start instead of ~1.5 s; two refusal passes take ~600 ms of drain on the main thread during the restore and first paint; 47 messages depend on a peer's history answer.
+
+**Proposed fix, smallest first:**
+
+- The "already held" Welcome branch writes the row when none exists (the same `buildConversationRow` + `upsertConversation` the install path uses) and calls `notifyConversationAvailable`. Then the 150 frames read in order at 17:55:55.4 and nothing is lost. To check first: the restore's prune (`loadExistingConversations` drops non-salon rows absent from storage) must not erase a row written between its storage read and its prune.
+- The FCM-cache merge calls `notifyConversationAvailable` for each row it creates (the invariant `ensureConversationForServerGroup` already keeps).
+- The gap healer should not jump a group past epochs while that group has frames noted `absent-conversation`: they are in the server queue, in order, and will be delivered.
 
 ## P3 - `isTransportFailure` still reads EVERY `TypeError` as a transport failure (review of #1843, 2026-10-14)
 
@@ -396,10 +418,6 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 ### P3 - 80 roster reads per connection for the stray-leaf sweep
 
 **Built (2026-10-13, draft PR `perf/group-rosters-batch`)**: one `POST /api/mls/group-rosters` per connection ([chat-delivery](services/chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13)). Owed once shipped: the per-connection count on a production console (expected 1 request where there were 80-81).
-
-### P3 - the key-distribution groups are asked about twice per connection
-
-`forgetGroupsAbsentFromServer` runs from `initializeConnection` and from the discovery pass, and each sends `GET /api/mls/groups/<id>` for the same 8 distribution groups the registry restored before the drain already names. A fact held locally is fetched twice (sibling of the cold-start `/groups` item above).
 
 ### P3 - an avatar 404 is the only way to learn a person has no photo
 
