@@ -365,6 +365,9 @@ edited without the tag noticing. `loadDeviceKey(userId)` reads only the signing-
 another account's slot is neither read nor cleared, so A signing back in still unlocks without a PIN.
 A failed login clears only its own account's slot. One wrap key serves every slot;
 `clearDeviceKeyAndWrapKey` (revocation, biometric enrolment, a persistence switch) drops every slot.
+A persistence switch means a REAL change of mode: the PIN modal restates the mode on every submit,
+and `setDeviceKeyPersistence(mode, null)` with the mode already set is a no-op - before that, B typing
+its PIN erased A's slot and A's "Rester connecte" with it.
 
 **The migration: the unlabelled slot an older build wrote is offered as UNPROVEN, and the login must
 prove it.** `loadDeviceKey` returns `{ deviceKeyB64, ownerProven }`, `false` only for that slot, and
@@ -375,8 +378,9 @@ again in both `_initImpl`s), `mismatch`, `unopenable` - as a typed `VaultOwnerUn
 rotation, no fresh start, no legacy re-seal, no write. `loginImpl` turns it into
 `LoginFailure('vault_not_this_account')`, drops the key from the session, and keeps the unlabelled
 slot, which may be the previous account's. The shell then draws the account's OWN PIN gate
-(`openPinModal`: first setup or returning is decided as for any first gate, because a refused vault
-says nothing about this account's PIN). Accepted, the key is written to the account's own slot and
+(`openPinModal(uid, { deviceIdUnproven: true })`: first setup or returning is asked of the SERVER,
+because a refused vault says nothing about this account's PIN - and the device id cannot answer it
+here, since the vault path resolved, and so minted, this account's id before the state refused it). Accepted, the key is written to the account's own slot and
 only THEN is the unlabelled slot removed. A same-account stale state (`mismatch` naming another
 device of the same account) is refused on this path too, and reaches its rotation through the PIN
 path, which proves the account first.

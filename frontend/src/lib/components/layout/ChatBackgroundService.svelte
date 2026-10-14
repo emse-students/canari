@@ -551,10 +551,13 @@
    * trip, ~0.5 s of a cold start behind a notification - is asked only by a device that never did.
    * See {@link firstPinSetupFromDevice}.
    */
-  async function openPinModal(uid: string) {
+  async function openPinModal(uid: string, opts?: { deviceIdUnproven?: boolean }) {
     if (!mayPromptForPin()) return;
     globalSession.userId = uid;
-    const knownLocally = firstPinSetupFromDevice(localStorage, uid);
+    // A device id the attempt that just FAILED minted proves nothing about a PIN: a refused vault
+    // resolves this account's id before the state refuses it, so it would read "returning" for an
+    // account that has never chosen one, and draw the keypad without its confirmation step.
+    const knownLocally = opts?.deviceIdUnproven ? null : firstPinSetupFromDevice(localStorage, uid);
     if (knownLocally !== null) {
       appendLog('[PIN] Gate drawn from the enrolled device id - no pin-status round trip');
       isFirstPinSetup = knownLocally;
@@ -670,10 +673,11 @@
     pinError = msg;
     // A REFUSED VAULT SAYS NOTHING ABOUT THIS ACCOUNT'S PIN - not even that it has one: the vault
     // was another account's, or an older build's that could not prove itself. So the gate is drawn
-    // as any first gate is, from the device id or the server, and never assumed "returning".
+    // from the SERVER, never assumed "returning" - and not from the device id either, which the
+    // refused attempt itself may have just minted (`openPinModal`).
     if (code === 'vault_not_this_account') {
       appendLog('[VAULT] Saved unlock refused for this account - drawing its own PIN gate.');
-      void openPinModal(globalSession.userId || currentUserId() || '');
+      void openPinModal(globalSession.userId || currentUserId() || '', { deviceIdUnproven: true });
       return;
     }
     isFirstPinSetup = false;

@@ -262,11 +262,20 @@ export function forgetUnlabelledDeviceKey(): void {
  * Pass the signed-in account and its in-memory device key to migrate an active session
  * immediately (e.g. toggling from Settings); pass `null` to only set the flag before a login whose
  * own `saveDeviceKey` will populate the correct store (e.g. the PIN-modal checkbox).
+ *
+ * A `null` call that does NOT change the mode changes nothing. The PIN modal makes one on every
+ * submit, and wiping there erased every other account's slot each time somebody typed a PIN: A's
+ * "stay signed in" did not survive B's sign-in on the same install, which is what one slot per
+ * account exists to keep.
  */
 export async function setDeviceKeyPersistence(
   enabled: boolean,
   current: { userId: string; deviceKeyB64: string } | null
 ): Promise<void> {
+  if (current === null && isDeviceKeyPersistenceEnabled() === enabled) {
+    console.debug(`[VAULT] persistence already ${enabled ? 'on' : 'off'} - every slot kept`);
+    return;
+  }
   clearDeviceKeyAndWrapKey();
   try {
     localStorage.setItem(PERSIST_FLAG_KEY, enabled ? 'true' : 'false');

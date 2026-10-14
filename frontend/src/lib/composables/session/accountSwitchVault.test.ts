@@ -184,6 +184,21 @@ describe('the login carries the vault owner from the vault to the init', () => {
     expect(login).not.toMatch(/clearDeviceKey\(\);/);
   });
 
+  it('retires the unlabelled vault only AFTER the proven key is in its own slot', () => {
+    expect(login).toMatch(
+      /await saveDeviceKey\(owner, deviceKeyB64\);\s+if \(vaultOwnerUnproven\) \{\s+forgetUnlabelledDeviceKey\(\);/
+    );
+  });
+
+  it('drops a refused key from the session, so nothing later seals with it', () => {
+    expect(login).toContain("if (code === 'vault_not_this_account') ctx.setDeviceKey('');");
+  });
+
+  it('asks the server whether the refused account has a PIN - its device id was minted by the refusal', () => {
+    expect(shell).toContain('{ deviceIdUnproven: true }');
+    expect(shell).toContain('opts?.deviceIdUnproven ? null : firstPinSetupFromDevice(');
+  });
+
   it('draws the refused account its own gate rather than a "returning" one', () => {
     const failed = shell.slice(shell.indexOf('function onSavedPinFailed('));
     const branch = failed.indexOf("if (code === 'vault_not_this_account') {");

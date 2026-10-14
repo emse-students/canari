@@ -25,6 +25,7 @@ import {
   forgetUnlabelledDeviceKey,
   loadDeviceKey,
   saveDeviceKey,
+  setDeviceKeyPersistence,
 } from './deviceKeyVault';
 
 const A = 'alice-0000-account';
@@ -179,5 +180,34 @@ describe('loadDeviceKey', () => {
     expect(store().getItem(SLOT_A)).toBeNull();
     expect(store().getItem(SLOT_B)).toBeNull();
     expect(store().getItem(WRAP)).toBeNull();
+  });
+});
+
+describe('setDeviceKeyPersistence', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+  });
+
+  it("keeps every account's slot when a PIN submit restates the mode already set", async () => {
+    await setDeviceKeyPersistence(true, null);
+    await saveDeviceKey(A, 'a2V5LW9mLWFsaWNl');
+
+    // B types its PIN on the same install, the "stay signed in" box still ticked.
+    await setDeviceKeyPersistence(true, null);
+
+    expect(await loadDeviceKey(A)).toEqual({ deviceKeyB64: 'a2V5LW9mLWFsaWNl', ownerProven: true });
+  });
+
+  it('wipes every slot when the mode really changes, and re-saves the signed-in account', async () => {
+    await setDeviceKeyPersistence(true, null);
+    await saveDeviceKey(A, 'a2V5LW9mLWFsaWNl');
+
+    await setDeviceKeyPersistence(false, { userId: B, deviceKeyB64: 'a2V5LW9mLWJvYg==' });
+
+    expect(localStorage.getItem(SLOT_A)).toBeNull();
+    expect(await loadDeviceKey(B)).toEqual({ deviceKeyB64: 'a2V5LW9mLWJvYg==', ownerProven: true });
   });
 });
