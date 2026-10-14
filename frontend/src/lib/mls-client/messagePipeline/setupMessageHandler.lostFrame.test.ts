@@ -43,11 +43,12 @@ vi.mock('$lib/services/ChannelService', () => ({
 }));
 
 vi.mock('$lib/utils/chat/historyReconcile', () => ({
-  reconcileGroup: vi.fn().mockResolvedValue(true),
+  raiseReconcile: vi.fn().mockResolvedValue(true),
+  isReconcileRaised: vi.fn().mockReturnValue(false),
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
-import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
+import { raiseReconcile as reconcileGroup } from '$lib/utils/chat/historyReconcile';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { frameFingerprint } from '../inboundFrameLedger';
 import { markHistoryFrameConsumed, resetSeenCipherCacheForTests } from '$lib/utils/chat/history';

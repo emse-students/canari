@@ -26,6 +26,13 @@ import { SvelteMap } from 'svelte/reactivity';
 
 // Same import-cycle break as the other useMessaging suites: useMessaging -> chat/outbox ->
 // chat/outboxMirror -> globalChatSingleton, which calls useMessaging() at module scope.
+// The sender lookup is its own seam (displayName.spec.ts); here it answers at once so a
+// notification is raised a microtask after the arrival, not after a network round trip.
+vi.mock('$lib/utils/users/displayName', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/users/displayName')>()),
+  resolveNotificationSenderName: async () => 'Peer',
+}));
+
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: () => {},
   globalSession: {},
@@ -105,7 +112,7 @@ describe('what a batch of messages IS decides whether it notifies', () => {
 
     await messaging.batchAddMessages(messages('a'), CONVO, ctx, 'arrival');
 
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('stays silent for a restore, however new the rows look to this device', async () => {
