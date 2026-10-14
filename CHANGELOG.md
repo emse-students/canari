@@ -14,6 +14,196 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.2.7] - 2026-10-14
+
+### Fixed - Android: a navigation-mode switch no longer leaves the old page alive and holding refused texts
+
+A relaunch the manifest cannot absorb (navigation mode, WebView update) now destroys the old WebView, which kept its Web Locks and withheld unsent salon texts from the new page ([mobile](docs/wiki/frontend/mobile.md#a-relaunched-activity-left-its-webview-alive-and-the-orphan-kept-its-web-locks-2026-10-14)).
+
+### Fixed - a second account in the same tab is asked for its own announcement
+
+Sign-out now resets the announcement store, whose reset had no caller: the next account signing in in the tab was never asked and could see the previous one's ([performance-audit](docs/wiki/frontend/performance-audit-2026-10-12.md#what-the-audit-found-that-is-not-performance)).
+
+### Fixed - an exported log no longer carries messages an older build stored in clear
+
+The in-app log was redacted only when a line was written, so lines stored before #1839 (`text="bisous"`) left the device as they were; every stored line now passes the same, now idempotent, redaction again when it is read for export (in batches that yield to the main thread), and the `[SEND]` lines JSON-quote the text so a typed `"` no longer lets the rest of a message through ([mobile](docs/wiki/frontend/mobile.md#redacted-at-write-and-at-read)).
+
+### Fixed - comments no longer claim `attachConsole()` sends the JS console to logcat
+
+It copies Rust log records into the JS console, and receives none because no `Webview` target is configured. JavaScript reaches logcat only through wry's `onConsoleMessage`, which runs on debug builds only, so a release build logs no JavaScript ([+layout.svelte](frontend/src/routes/+layout.svelte), [harness README](tools/cross-client-harness/README.md)).
+
+### Fixed - a salon open no longer rewrites every face in it to the notification cache
+
+The Android avatar mirror writes the same bytes once per process instead of on every salon open, and sends them as base64 rather than a JSON number array (50 faces: 360-440 ms of main thread down to 130-150 ms on the Mi 9T, then nothing on a repeat) ([mobile](docs/wiki/frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)).
+
+### Changed - the owed rows the bench phones could settle, read on 2026-10-13
+
+Checks V and W (Mi 9T), the "Rester connecte" cold path, #1603, #1605 and #1548 pass; Android at 200 % text fails twice in the agenda, a system Back closes the message sheet and the conversation together, and TestFlight serves the iPhone no pre-release past `1.2.3-alpha.5` ([device-verification](docs/wiki/device-verification.md#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle)).
+
+### Fixed - "Marquer comme lu" on a salon banner that does not show the message no longer tells the sender it was read
+
+A blind Android salon banner ("Nouveau message") offered the action that moves the "Lu par" receipt; it is now offered only where the banner shows the text. The census of every path that can move a read mark closes the chantier ([read-receipt-privacy](docs/wiki/read-receipt-privacy.md)).
+
+### Fixed - the agenda at Android's 200 % text
+
+Today's day number no longer overruns its circle and "S'abonner au calendrier" stays inside its card: the circle grows with the text through `text-zoom-size-*` ([phone-comparison](docs/wiki/phone-comparison.md#the-correction-plan---where-it-stands-2026-09-30)).
+
+### Changed - the per-drain checkpoint is measured on the phone, and skipping it is parked as a decision
+
+On the Mi 9T, a full checkpoint costs about 100 times the one decrypt it follows: 49 ms against 0.49 ms at 7.7 MB. New tests show that a state left behind by received frames re-reads them and loses none. Skipping the checkpoint still weakens durability, so it is recorded as a decision for the user and nothing is built ([open-questions](docs/wiki/open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)).
+
+### Fixed - a native checkpoint no longer freezes the screen of an Android phone
+
+The MLS state is released as soon as a checkpoint has copied it, and checkpoints still land on disk one at a time and in order. A send, a commit, or a membership or epoch read no longer waits for the encryption and the file write. On the Mi 9T, those waits had frozen the WebView for 1.6-3.2 s per call ([performance audit](docs/wiki/frontend/performance-audit-2026-10-12.md#finding-12---the-manager-lock-released-at-the-export-2026-10-13)).
+
+### Added - "Marquer tout comme lu" on a community, by a long press or a right click on its icon
+
+One request clears every salon's badge up to what the screen counted, through a private mark (migration 082): no "Lu par" receipt is sent for messages nobody opened ([chat](docs/wiki/frontend/modules/chat.md#mark-a-whole-community-as-read-2026-10-13)).
+
+### Fixed - the co-organiser picker offers suggestions again after a pick
+
+Once one association was picked, typing in the field never reopened the list, because the field kept focus and the list opened only on focus; a search matching nothing now says so ([calendar](docs/wiki/frontend/modules/calendar.md)).
+
+### Fixed - the creator of a community may pin and close polls at once
+
+Creating a community answered the creator's standing without `viewerCanModerate`, so "Epingler" and the close of another member's poll appeared only after a reload ([social-service](docs/wiki/services/social-service.md)).
+
+### Fixed - deep-link log lines name the link's shape, not its ids or tokens
+
+The web log and the iOS tap log printed the whole link; they now print scheme, host, first route segment and whether a query was present ([durable-rules](docs/wiki/durable-rules.md)).
+
+### Fixed - a verified seed endorsement no longer prints a line of its own
+
+The key that proved a v2 seed is named in the line that already reports the stored seed or the absorbed bundle: a sign-in printed 496 such lines on the Mi 9T ([community-open-slowness](docs/wiki/frontend/community-open-slowness-mi9t-2026-10-13.md#finding-6---noise-met-on-the-way)).
+
+### Fixed - the Graine rig reads the server's refusal of an unsigned row
+
+The server's refusal of an unsigned salon row (#1802) broke the rig's v1 arm, which posted one. GRAINE-AUTH-7 now reads the 400, GRAINE-AUTH-6 writes its row in the database, and GRAINE-AUTH-5 has no arm ([cross-client-testing](docs/wiki/cross-client-testing.md#20---graine---an-author-that-is-proven)).
+
+### Added - two rig rows prove the refusal of an arriving v1 seed on a real estate
+
+GRAINE-AUTH-5 and -6 inject an unsigned salon row and read it live and from history: refused, nothing asked, the older-messages notice once ([cross-client-testing](docs/wiki/cross-client-testing.md#20---graine---an-author-that-is-proven)).
+
+### Changed - one roster read per connection, not one per conversation
+
+The stray-leaf sweep that runs on every connection read the rosters one `GET user-members` at a time (81 requests, 5.0 s in production). It now reads them all in one `POST /api/mls/group-rosters`, authorized group by group; a group it names a stray in is read again, tree then roster, right before the removal. Against a server without the route it removes nobody until the server deploys ([chat-delivery](docs/wiki/services/chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13)).
+
+### Fixed - a caught-up history batch logs a count, and a held seed is read from the store once
+
+`[HISTORY]` prints the caller's bound and the stream head apart, and the batch route counts caught-up groups instead of writing one `after=X until=X entries=0` line each; an arriving copy of a held Graine seed is answered from the seed cache ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#and-on-the-server-side-a-history-line-names-who-asked)).
+
+### Added - an in-app diagnostic log a member can save from Settings > About
+
+Store builds logged no JavaScript anywhere; the app now keeps its own redacted log lines in a 2 MiB ring on the device, saved only when the member asks. The dead `attachConsole()` call is removed ([mobile](docs/wiki/frontend/mobile.md#the-in-app-log)).
+
+### Fixed - on iPhone, a link that launches the app opens its page again
+
+Since `v1.2.0` (tauri 2.12), "Ouvrir dans l'application", a Universal Link or a deep link that had to start the app opened it on the feed: tao's scene delegate drops the launch URL. The app now hands it on itself; native, so it ships with the next store build ([mobile](docs/wiki/frontend/mobile.md#a-cold-start-on-the-scene-lifecycle-lost-its-link)).
+
+### Fixed - a short keyboard no longer moves the composer for a frame on Android
+
+The WebView's double report of a keyboard rise is now recognised by its shape, not by a 160 px threshold, so a 90 px keyboard is absorbed like a tall one ([chat](docs/wiki/frontend/modules/chat.md#every-keyboard-rise-moves-the-composer-for-a-moment-on-both-phones-measured-2026-10-02-fixed-2026-10-09-reading-owed)).
+
+### Fixed - a one-word message no longer reaches the exported log
+
+`text="ok"` survived redaction because a preceding field swallowed the `text=` name and a one-word value looks like an enum; content fields are now always replaced by their length ([mobile](docs/wiki/frontend/mobile.md#the-in-app-log)).
+
+### Added - Tab completes the open @mention suggestion
+
+On web and desktop, Tab picks the highlighted suggestion (else the first) like a click; Shift+Tab and a closed list keep normal focus ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a hidden message info panel no longer resolves its readers' names, again and again
+
+Every bubble mounted it and named every reader once per name that arrived, hidden or not (2.4 s of CPU opening a 60-reader salon on the Mi 9T); it now waits to be shown and resolves each reader once ([performance-audit](docs/wiki/frontend/performance-audit-2026-10-12.md#every-bubble-named-its-readers-hidden-or-not---fixed-2026-10-13)).
+
+### Changed - the Mi 9T reading of 1.2.6-alpha.1
+
+Eight readings pass on the bench phone, among them the killed notification open (composer 3.6 -> 3.2 s, notified message 4.6 -> 3.7 s) and the PIN unlock (0.81 -> 0.44 s) ([device-verification](docs/wiki/device-verification.md#the-mi-9t-readings-of-v126-alpha1-2026-10-13)).
+
+### Fixed - a device that overhears a peer's history digest now asks for the messages it lacks
+
+A browser saw its owner's phone list 7 message ids, held 6, and did nothing. It now pulls the missing ones from the digest's author, and asks once more on the author's next live frame if that author had already left ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-digest-overheard-is-evidence-the-member-that-lacks-something-asks-its-author-2026-10-13)).
+
+### Fixed - closing a poll asks in the app's own dialog
+
+The early close of a salon poll used the browser's `window.confirm`, which Android draws with English "CANCEL" / "OK" under a French sentence; it now uses the app's confirmation, labelled in the reader's language ([device-verification](docs/wiki/device-verification.md#the-mi-9t-readings-of-v126-alpha1-2026-10-13)).
+
+### Fixed - deleting a post asks first, and the slow-link badge clears the dev banner
+
+The post menu's "Supprimer" and the scheduled-posts panel now ask before deleting ([posts](docs/wiki/frontend/modules/posts.md#deleting-a-post-asks-first-through-one-path-2026-10-13)); the slow-link badge sits below the banner column instead of over the dev environment strip ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
+### Changed - why the production queue holds 300 000 rows, measured
+
+A read-only measurement on 2026-10-13: 255 475 of the last day's rows are in one community group, addressed mostly to live devices, so revoking devices cannot help. The hypothesis and the measurement that will settle it are recorded ([prod-queue-and-epoch-audit](docs/wiki/infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#why-the-queue-holds-300-000-rows---measured-2026-10-13)).
+
+### Fixed - the "who reacted" list opens on the chip that was pressed, not in the middle of the screen
+
+Centring a wide popover is now opt-in (the emoji pickers only), so the reactors list, the post menu and the app launcher stay on what opened them on a phone ([design-reference](docs/wiki/frontend/design-reference.md#a-panel-that-points-at-something-is-never-centred-2026-10-13)).
+
+### Changed - a device that holds nothing for a group opens its history exchange with its digest
+
+One round trip per rejoined group instead of two, so one drain and its checkpoint fewer after a sign-in ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-device-that-holds-nothing-opens-with-its-digest-not-its-state-key-2026-10-14)).
+
+### Fixed - an older salon history load can no longer remove a row a newer one decoded
+
+Only the latest history load started for a salon merges its page; an older one finishing last used to drop a row inside its window that a newer load had just made readable ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a pressed salon lights up before its thread mounts
+
+A salon row's highlight is painted one frame before the thread mounts, so a heavy salon no longer freezes the community list with no sign the press was taken ([performance-audit](docs/wiki/frontend/performance-audit-2026-10-12.md#a-salon-pressed-on-a-heavy-phone---2026-10-13)).
+
+### Fixed - Enter on a focused salon row opens it for whoever may reorder salons
+
+The reorderable salon list let its drag library take Enter and Space for a keyboard drag, which cancelled the row's activation; reordering by keyboard stays Alt + arrows ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a salon message sent before its salon is loaded waits for it instead of being refused
+
+The row stays pending and goes, sealed and signed, once the community listing enters the salon. It turns failed with Retry only if the salon cannot load. The send banner is now opaque and sits in the composer instead of over the thread ([chat](docs/wiki/frontend/modules/chat.md#a-salon-not-yet-loaded-holds-the-send-it-does-not-refuse-it-2026-10-13)).
+
+### Fixed - a tap on a salon no longer also activates the message it puts under the finger
+
+For whoever may reorder the salons, `svelte-dnd-action` added its own click to the browser's on every tap, and that first click disarmed the click guard; the library is patched and the guard judges pointer clicks only ([design-reference](docs/wiki/frontend/design-reference.md#the-mechanism-two-clicks-per-tap-on-the-salon-list-and-the-first-one-disarmed-the-guard-2026-10-13)).
+
+### Changed - the shop's two tabs are the app's fixed segmented control, and section navigation is closed
+
+The shop's products/partnerships pair keeps its tab on a reload, and its checkout return no longer erases the router's history entry. A test now fails on any menu that is neither a segmented control nor a hub ([section-navigation](docs/wiki/frontend/section-navigation.md#closed-2026-10-14---the-final-shape-do-not-reopen)).
+
+### Changed - the slow reply after login does not wait on the KeyPackage, measured
+
+An instrumented build on the Mi 9T sent five replies during or around the post-login KeyPackage round. Every ack took 543-836 ms, and no step of the send waited on that round. The slow acks seen before line up with the conversation's own catch-up, which a send must wait for ([notification-to-conversation-latency](docs/wiki/frontend/notification-to-conversation-latency.md#the-21-s-reply-ack-waits-on-the-conversations-own-catch-up-not-on-the-keypackage-2026-10-13)).
+
+### Documentation - a heavy store phone read: the KeyPackage share of every checkpoint, past-epoch drops, and the missing JS log
+
+Measured that 2535 unchanged KeyPackages add ~60 % of the bytes of every native checkpoint (a format decision, written as an open question), explained the past-epoch drops and how to tell a lost ACK from a lagging sender, and found that release builds log no JavaScript anywhere ([store-phone-reading](docs/wiki/frontend/store-phone-reading-2026-10-13.md)).
+
+### Fixed - a join is declared durable only once a checkpoint holding it is written
+
+A flush made while a checkpoint ran was handed that checkpoint, which had exported before the change, so `externalJoin` could be acknowledged before its join reached disk. A failed checkpoint now leaves the state dirty ([mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md#the-checkpoint-a-caller-awaits-is-the-one-that-exported-after-its-change-2026-10-14)).
+
+### Fixed - after an offline start, the communities came back only at the next foreground
+
+Tauri's HTTP client rejects with a bare string, which was read as a final answer. It is now typed at the throw as a transport failure. The reconnect lists the communities again, and salon sends wait instead of being refused ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#14-a-transport-failure-is-one-type-on-every-platform-2026-10-14)).
+
+### Fixed - the typing bubble no longer slides under the composer when the bottom inset changes
+
+The composer's height is re-published when its safe-area padding changes, not only its content, so the thread reserves the room it really takes ([chat](docs/wiki/frontend/modules/chat.md#the-typing-indicator-is-a-row-of-the-thread-not-a-band-over-it-2026-09-22)).
+
+### Security - the server refuses a salon message that carries no Graine v2 signature
+
+Every client the `1.0.3` floor admits signs every salon row, so social-service now answers an unsigned one with a 400 `CHANNEL_SIGNATURE_REQUIRED` and stores nothing: a modified client can no longer post an unsigned row under a v1 session it holds ([channel-encryption 21.8](docs/wiki/protocols/channel-encryption.md#218-the-server-refuses-an-unsigned-salon-row-2026-10-13)).
+
+### Fixed - Firefox refused every video with sound, and would have shipped H.264 Chrome cannot seek
+
+An AAC-LC audio track is now copied into the MP4 when it costs no more than an encode or the engine has no AAC encoder (Firefox), chosen by a capability probe; and a malformed `avcC` from Firefox's H.264 encoder is rebuilt from the bitstream (mediabunny patch) ([video-preparation](docs/wiki/frontend/video-preparation.md#an-aac-lc-track-is-copied-and-a-firefox-avcc-is-rebuilt-2026-10-14)).
+
+### Added - a WebCrypto-sealed MLS state format, read everywhere and not yet written
+
+The framed `state_blob` v2 (AES-256-GCM through WebCrypto) cuts a 7.7 MB web checkpoint from ~198 to ~47 ms and its cold-start load from ~240 to ~97 ms; this release ships the reader only, read-first ([mls-protocol](docs/wiki/protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)).
+
+### The store text for 1.2.7 is written
+
+`store/whats-new.txt` names what the next release changes for members; see [store-listings](docs/wiki/store-listings.md).
+
 ## [1.2.6] - 2026-10-13
 
 ### Fixed - an App Store rejection no longer blocks every later stable, and the notes name no platform
