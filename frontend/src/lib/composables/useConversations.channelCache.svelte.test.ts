@@ -146,3 +146,22 @@ describe('salon history cache - stale by event, never by clock', () => {
     expect(listMessages).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('a salon history request issued at the tap', () => {
+  it('raises the skeleton and asks the server although the salon is not selected yet', async () => {
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    let release!: (rows: unknown[]) => void;
+    listMessages.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    expect(convs.selectedContact).not.toBe(SALON);
+
+    const pending = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { atTap: true });
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    expect(convs.isLoadingHistory).toBe(true);
+
+    release([{ id: 'm1' }]);
+    await pending;
+    expect(convs.isLoadingHistory).toBe(false);
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['m1']);
+  });
+});

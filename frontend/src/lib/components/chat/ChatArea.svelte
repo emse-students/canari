@@ -25,7 +25,13 @@
   import EmptyState from '../shared/EmptyState.svelte';
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
-  import { resolveRenderWindow, stepWindowOlder } from '$lib/utils/chat/renderWindow';
+  import {
+    entryWindowStart,
+    resolveRenderWindow,
+    stepWindowOlder,
+    widenedEntryStart,
+  } from '$lib/utils/chat/renderWindow';
+  import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
   import { isPinnedToBottom, respondToNewMessage } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
@@ -301,6 +307,12 @@
   const INITIAL_RENDER_GROUPS = 60;
   const RENDER_GROUPS_STEP = 140;
   /**
+   * What the FIRST frame of an entry mounts: the tail a phone viewport shows (~15-20 bubbles).
+   * The rest of `INITIAL_RENDER_GROUPS` follows after that frame (`widenEntryWindow`), so the first
+   * paint is not one long task over a whole page of rows (339-635 ms for 56-200 rows on a Mi 9T).
+   */
+  const ENTRY_FIRST_FRAME_GROUPS = 20;
+  /**
    * How much history to open ABOVE a message the reader jumped to, so it lands with context rather
    * than glued to the top of the pane. It used to be a cap on rendered nodes, back when the window
    * had a fixed width and slid; the window is anchored to the newest message now and only grows, so
@@ -405,7 +417,35 @@
     }
     scrollToBottomSettled(() => {
       entering = false;
+      void widenEntryWindow();
     });
+  }
+
+  /**
+   * Grows the entry window from its first-frame size to `INITIAL_RENDER_GROUPS`, AFTER the frame
+   * that showed the tail, so a page of rows is never one long task before the first paint.
+   *
+   * The new rows go ABOVE the viewport, so the scroll offset is moved by exactly the height they
+   * add (the same compensation `loadOlderGroups` makes) and the reader sees nothing move. It only
+   * lowers the start: a reader who has paginated further up keeps their wider window.
+   */
+  async function widenEntryWindow() {
+    const key = lastConversationKey;
+    await yieldToMainThread();
+    if (key !== lastConversationKey || !chatContainer) return;
+    const widened = widenedEntryStart(
+      renderWindow.start,
+      messageGroups.length,
+      INITIAL_RENDER_GROUPS
+    );
+    if (widened === null) return;
+    const prevHeight = chatContainer.scrollHeight;
+    const prevTop = chatContainer.scrollTop;
+    Log.d('chat.entry', `widening window ${renderWindow.start} -> ${widened}`);
+    windowStart = widened;
+    await tick();
+    if (key !== lastConversationKey || !chatContainer) return;
+    chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
   }
 
   /**
@@ -609,7 +649,7 @@
    * current length; `windowStart` stays the state pagination writes.
    */
   let renderWindow = $derived(
-    resolveRenderWindow(windowStart, messageGroups.length, INITIAL_RENDER_GROUPS)
+    resolveRenderWindow(windowStart, messageGroups.length, ENTRY_FIRST_FRAME_GROUPS)
   );
   let windowEnd = $derived(renderWindow.end);
   let visibleMessageGroups = $derived(messageGroups.slice(renderWindow.start, renderWindow.end));
@@ -886,7 +926,7 @@
 
       if (hasConversationChanged) {
         switchTime = computeMessageListSwitchTime(c.messages);
-        windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
+        windowStart = entryWindowStart(messageGroups.length, ENTRY_FIRST_FRAME_GROUPS);
         hasMoreInDb = !isChannel;
         scrollbackState = 'idle';
         scrollbackAskedAt = null;
@@ -918,7 +958,10 @@
           ownMessageAdded: c.messages.at(-1)?.isOwn === true,
         });
         if (response !== 'stay') {
-          windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
+          windowStart = entryWindowStart(
+            messageGroups.length,
+            response === 'repin-entry' ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
+          );
           if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
           else tick().then(() => scrollToBottom(true));
         }
