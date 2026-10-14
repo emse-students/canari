@@ -563,7 +563,8 @@ in the `mls_not_ready_since` registry and, through `ensureMls()` (which builds a
 finds none), REBUILT the per-user MLS database. The device kept 8.2 MB of the install it had just
 erased, and `[RESET] done - nothing of this device remains` was printed over the top of it.
 
-`logoutImpl` had always done this teardown properly - four timers, the outbox, the offline-promotion
+`logoutImpl` (now `endSessionImpl`; it had no caller from 2026-04-09 to 2026-10-14, see the
+sign-out section below) had always done this teardown properly - four timers, the outbox, the offline-promotion
 and peer-return listeners, the history probe sender, the conversation map that IS the watchdog's
 candidate set. The revocation path had a comment claiming it did ("tear the session down first ... so
 nothing left running can write a key back") and in fact only called `resetMls()`, which nulls a
@@ -815,6 +816,50 @@ caller, are gone; `wipeDeviceToFactory` now has one caller, `wipeRevokedDevice`.
 taught - it asked nothing, told no server, and discarded the list of steps that failed - stays in
 [durable-rules](../../durable-rules.md). A user-requested reset, if one ever returns, owes the
 revoked path's order: declare the device gone, then `clearAuth()`, then the wipe.
+
+### A sign-out ended the session on the server and left it live on the device - FIXED 2026-10-14
+
+**Found on the Mi 9T bench of `1.2.7-alpha.2`, 2 of 2** (evidence:
+`canari-harness/a1-bench/r1014-a127a2/cons-signin*.ndjson`). Tableau de bord > Deconnexion, then a
+sign-in in the same process: the OIDC callback completed (`handleOidcCallback resolved`, `goto ->
+/posts`) and nothing followed - no PIN gate, no vault restore, "Connexion en cours..." for four
+minutes. Only a relaunch recovered.
+
+**The timeline names the trigger.** The app returns from the sign-in browser and
+`resumeConnectionImpl` reconnects the socket: `[A] refresh✗latched`, `Gateway inaccessible:
+SessionExpiredError`, `[AUTH] Session expired - redirecting to /login.` - 1 s BEFORE the callback's
+`got access_token`. It is NOT #1843's `connectivity.onReconnect` (that path is gated on
+`isLoggedIn` and never names the gateway), and nothing on this path changed between `v1.2.6` and
+`1.2.7-alpha.2`.
+
+**Two things outlived the sign-out, and only together do they lock the next sign-in out.**
+
+1. **The live session.** Every sign-out in the app - the dashboard, the navbar, the PIN gate, the
+   platform gate, the identity-split notice, a dead session - is `clearAuth()` then `/login`. None
+   reached the chat session, which the app shell owns: `logoutImpl` had had NO caller since the
+   2026-04-09 navbar refactor. So `isLoggedIn` stayed true for a signed-out user, the foreground
+   resume was still armed, and it reconnected a session whose credential the sign-out had just
+   killed. When the callback won the race, the ghost session simply carried on with the new token -
+   which is why this looked like it worked.
+2. **`_loginInProgress` in `ChatBackgroundService`.** A login that SUCCEEDS never releases it (the
+   `finally` releases it only when nobody is logged in). Once the reconnect set `isLoggedIn` false,
+   every trigger that should have started the unlock (`afterNavigate`, the user-id effect) returned on
+   that stale latch.
+
+**The fix is one seam.** `clearAuth` calls a handler registered by the app shell
+(`setSignOutHandler`) FIRST, before the access token is dropped - the teardown deregisters the push
+token with it. The shell's `handleSignedOut` runs `endSessionImpl` (what `logoutImpl` was, minus the
+erasures `clearAuth` already owns) and releases `_loginInProgress`. `endSessionImpl` acts only on a
+session that is live, which also keeps the revocation wipe's own `clearAuth` from running a second,
+flushing teardown. A dead session ending does not ask the server to deregister its push token: the
+refresh latch already says the answer is a refusal. Tests: `stores/auth.test.ts` ("the sign-out
+handler"), `composables/session/signOutEndsLiveSession.test.ts`.
+
+**What a sign-out still keeps, deliberately**: `mls.bin`, the message database and the device-key
+vault ("deconnecter seulement, garder l'etat", see `handlePinSignOut`). So a device signed out with
+"Rester connecte" ticked unlocks WITHOUT its PIN after the next sign-in of the same account - the
+vault was never cleared by any live path, `v1.2.6` included. Whether a sign-out should end "Rester
+connecte" is a decision for the user, not a defect of this fix.
 
 ## Mobile unlock flow (Tauri)
 

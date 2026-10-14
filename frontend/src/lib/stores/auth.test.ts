@@ -228,3 +228,50 @@ describe('a refresh superseded by a sign-in as another account', () => {
     expect(getIdentitySplit()).toBeNull();
   });
 });
+
+/**
+ * Every sign-out ends the live session, and ends it FIRST.
+ *
+ * Every sign-out in the app is `clearAuth()` then `/login`, and none of them reached the live chat
+ * session: it kept running for a signed-out user, and on the Mi 9T (2026-10-14, 2 of 2) its
+ * foreground resume raced the next OIDC callback and locked that sign-in out. `clearAuth` is the one
+ * call every exit shares, so the session is ended from there.
+ */
+describe('the sign-out handler', () => {
+  it('runs before the credential is dropped and before the server is asked to revoke it', async () => {
+    const { setSignOutHandler } = await import('$lib/stores/auth');
+    setToken(liveToken());
+    fetchMock.mockResolvedValue(new Response('', { status: 200 }));
+    const seen: { requests: number; socketCookie: boolean }[] = [];
+    setSignOutHandler(() =>
+      seen.push({
+        requests: fetchMock.mock.calls.length,
+        socketCookie: document.cookie.includes('canari_ws_token=h'),
+      })
+    );
+
+    await clearAuth();
+    setSignOutHandler(null);
+
+    // Once, with nothing torn down yet: the teardown deregisters the push token with that credential.
+    expect(seen).toEqual([{ requests: 0, socketCookie: true }]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not stop the sign-out when the handler throws', async () => {
+    const { setSignOutHandler } = await import('$lib/stores/auth');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue(new Response('', { status: 200 }));
+    setSignOutHandler(() => {
+      throw new Error('boom');
+    });
+
+    await clearAuth();
+    setSignOutHandler(null);
+
+    // The server-side revocation still went out, and the throw was accused rather than swallowed.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('sign-out handler failed'));
+    error.mockRestore();
+  });
+});

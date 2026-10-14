@@ -27,7 +27,7 @@ export type { ChatSessionCallbacks } from './session/sessionTypes';
 import {
   loginImpl,
   prefetchPinSaltImpl,
-  logoutImpl,
+  endSessionImpl,
   nativeStorageLoginImpl,
   biometricLoginImpl,
   resetDeviceAsFreshImpl,
@@ -443,8 +443,9 @@ export function useChatSession() {
     disableBiometric: () => disableBiometricImpl(ctx),
     /** Persists the "dismissed" flag and hides the biometric enrolment banner. */
     dismissBiometricPrompt: () => dismissBiometricPromptImpl(),
-    /** Clears session state and redirects to /login. */
-    logout: (cb: import('./session/sessionTypes').ChatSessionCallbacks) => logoutImpl(ctx, cb),
+    /** Stops the live session after a sign-out; `clearAuth` reaches it through `setSignOutHandler`. */
+    endSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
+      endSessionImpl(ctx, cb),
     /** Pauses WebSocket and clears background timers when the app is backgrounded. */
     pauseConnection: () => pauseConnectionImpl(ctx),
     /** Resumes WebSocket after app comes back to foreground. */

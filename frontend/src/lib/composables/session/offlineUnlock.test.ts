@@ -130,7 +130,7 @@ describe('the offline session never re-enters the destructive catch', () => {
 
   it('detaches the reconnect listener on logout', () => {
     // Now via the shared teardown, which is the point: the listener is detached for BOTH exits.
-    const logout = sessionAuth.slice(sessionAuth.indexOf('export function logoutImpl'));
+    const logout = sessionAuth.slice(sessionAuth.indexOf('export function endSessionImpl'));
     expect(logout).toContain("tearDownLiveSession(ctx, cb, 'logout');");
     expect(tearDownBody).toContain('unregisterOfflinePromotion();');
   });

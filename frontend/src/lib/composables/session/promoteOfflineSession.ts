@@ -159,7 +159,8 @@ async function runPromotion(
 
 /**
  * Subscribes the promotion to connectivity being regained. Called once per login; the returned
- * teardown also runs from `logoutImpl` so a stale context cannot be promoted after sign-out.
+ * teardown also runs from `endSessionImpl` (every sign-out, through `clearAuth`) so a stale context
+ * cannot be promoted after sign-out.
  */
 export function registerOfflinePromotion(
   ctx: SessionContext,

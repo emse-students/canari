@@ -26,7 +26,12 @@ import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
 import { LoginFailure, isExpectedLoginOutcome, loginErrorCode } from './loginErrors';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE, isKeystoreKeyUnavailable } from '$lib/mls-client';
-import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
+import {
+  getToken,
+  clearAuth,
+  SessionExpiredError,
+  isRefreshCredentialProvenDead,
+} from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -2085,7 +2090,11 @@ export function tearDownLiveSession(
   if (reason === 'logout') {
     const tokenForPushCleanup = ctx.getAuthToken();
     const deviceForPushCleanup = ctx.getMyDeviceId();
-    if (tokenForPushCleanup && deviceForPushCleanup) {
+    if (isRefreshCredentialProvenDead()) {
+      // A DEAD SESSION ENDING: the server already refused this session's credential, so the
+      // deregistration would only earn a refusal - known here, so it is not asked.
+      cb.log('[LOGOUT] Push token left registered - the session is already dead on the server.');
+    } else if (tokenForPushCleanup && deviceForPushCleanup) {
       void stopPushService(ctx.getHistoryBaseUrl(), tokenForPushCleanup, deviceForPushCleanup);
     }
   }
@@ -2123,10 +2132,28 @@ export function tearDownLiveSession(
 }
 
 /**
- * Clears all session state (conversations, tokens, push registration),
- * deregisters the device push token, and redirects to /login.
+ * Ends the live session on the device because the user signed out - the device half of `clearAuth`.
+ *
+ * REACHED FROM `clearAuth` ITSELF (through `setSignOutHandler`, wired by the app shell), because
+ * every sign-out in the app is `clearAuth()` then `/login` and none of them could reach the session.
+ * This used to be `logoutImpl`, which had NO caller since 2026-04-09: the navbar refactor dropped the
+ * last one, so a sign-out ended the session on the server and left it live on the device - socket
+ * resume armed, `isLoggedIn` true. Measured on the Mi 9T 2026-10-14: the foreground resume after the
+ * sign-in browser reconnected that ghost session before the OIDC callback had its token, met the dead
+ * credential, and the new sign-in was never unlocked.
+ *
+ * IDEMPOTENT ON THE SESSION'S OWN STATE: a session that is not logged in has nothing running, which
+ * is also what keeps the revocation wipe's `clearAuth` from running a second, flushing teardown.
+ *
+ * What a PIN protects is untouched - `mls.bin`, the message database and the device-key vault -
+ * because a sign-out keeps the local state (user, "deconnecter seulement, garder l'etat"); the
+ * identity and the credentials are `clearAuth`'s own work.
  */
-export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+  if (!ctx.isLoggedIn()) {
+    cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
+    return;
+  }
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
   tearDownLiveSession(ctx, cb, 'logout');
   notificationPreferences.reset();
@@ -2136,9 +2163,5 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   resetAnnouncementState();
   ctx.setStorage(null);
   ctx.setAuthToken('');
-  clearUserLocally();
-  clearDeviceKeyAndWrapKey();
-  clearAuth();
-  cb.log('[LOGOUT] Local state cleared - redirecting to /login.');
-  void goto(resolve('/login'), { replaceState: true });
+  cb.log('[LOGOUT] Live session stopped.');
 }
