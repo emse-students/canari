@@ -904,6 +904,8 @@
   "post_create_personal_profile_label": "Profil personnel",
   "asso_select_group_assos": "Associations",
   "asso_select_group_lists": "Listes",
+  "asso_select_group_institutions": "Institutions",
+  "asso_select_group_archived": "Archivées",
   "post_create_link_event_label": "Lier à un événement validé (optionnel)",
   "post_create_no_event_label": "- Aucun événement -",
   "post_create_validated_events_hint": "Seuls les événements validés de l'agenda apparaissent ici.",
