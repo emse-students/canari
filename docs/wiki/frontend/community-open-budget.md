@@ -252,8 +252,17 @@ follows and the first-ever case (new device, first sign-in), which no cache can 
     nothing that acts. A salon tap becomes a `notifNav` landing, selected once the session and its
     conversation exist. Reordering and settings are withheld, and the add and join buttons answer
     with a toast.
-  - The preview stays hidden behind the PIN gate (`authGateShown`). A spinner in the header says the
-    list is being refreshed until the first listing answers (`workspacesConfirmed`).
+  - It is drawn ONLY while this account's unlock prompts nobody (`stores/unlockPath.svelte.ts`).
+    That is set by the fact that the key is in hand without a prompt: a vault slot whose owner is
+    proven, or a keystore read with no prompt due. The PIN gate and every sign-out clear it. The
+    default is locked, so nothing is drawn before the gate, under it, or after it is left for
+    another page (its "delete my account" link). The same rule holds back the listing on the token
+    (F2).
+  - A spinner in the header says the list is being refreshed until the first listing answers
+    (`workspacesConfirmed`).
+  - Two web tabs: the save is also checked against the device's durable sign-in record
+    (`canari_saved_user`), so a tab still showing an account that another tab signed out never
+    writes that account's list back.
 - **F2.** `ChatBackgroundService` starts the listing when the server has answered for the account
   on screen (`sessionAnsweredFor() === currentUserId()`, set when a token is issued and cleared by a
   401/403 or a sign-out), or when `isLoggedIn` is true, whichever comes first.
@@ -282,6 +291,22 @@ to ask for the same 116 kB page again and supersede the first request. That happ
 open on this build, and also on `main` when the tap was fast (one main run in three).
 - The fix: a load in flight is now JOINED, unless the copy was declared stale after its request
   left (`salonStaleDeclarations` in `useConversations`). One request per open now.
+
+**What review closed (2026-10-15).**
+- **The F3 window.** A salon's rows, and a restored conversation, can be opened before the listing
+  registers the community's key group. A history page decoded then asks for its missing seeds on a
+  group that is not registered yet. The repair refuses (`key-group-unregistered`), and the request
+  is lost until the next load.
+  - Now `loadChannelHistory` fetches the page at once but DECODES it only when no listing or entry
+    still in flight can enter the salon (`whenSalonEntryDecided` in `salonSendGate.ts`).
+  - An entered salon waits for nothing, and nothing ever waits for a listing that has not started.
+- **A press that joins a background load** raises the skeleton; the joined load owns it.
+- **A saved row tapped early, for a salon closed to the member since,** becomes a landing that ends
+  at the listing's own answer: the landing was published before the request, and the answer does
+  not name the salon.
+  - Before, `landingRecovery` asked for a second full listing before giving up.
+  - A landing published after the request keeps its refresh (for example, a notification for a
+    salon the listing could not know about).
 
 **Measured.** Mi 9T, the ten-community bench, target `BancOuverture-1`, cold, 3 runs, median.
 BEFORE is `main` at `b722983f0`, which already has F5 and F6 (#1875). AFTER is this branch.

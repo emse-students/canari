@@ -45,6 +45,7 @@ import {
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { noteUnlockUnattended } from '$lib/stores/unlockPath.svelte';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { resetAnnouncementState } from '$lib/stores/announcement.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
@@ -1882,6 +1883,8 @@ export async function nativeStorageLoginImpl(
         ? '[PIN] Device key restored from PinVault - auto-login…'
         : '[PIN] Device key restored from the UNLABELLED PinVault - auto-login, owner to be proven…'
     );
+    // This account's key is in hand and nobody is prompted: pages may draw its local data (F1).
+    if (vaulted.ownerProven) noteUnlockUnattended(userId);
     ctx.setDeviceKey(vaulted.deviceKeyB64);
     await loginImpl(ctx, cb, { vaultOwnerUnproven: !vaulted.ownerProven });
     return ctx.isLoggedIn();

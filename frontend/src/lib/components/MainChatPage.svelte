@@ -57,7 +57,7 @@
   import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import { currentUserId } from '$lib/stores/userState.svelte';
-  import { authGateShown } from '$lib/stores/authGate.svelte';
+  import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersList from './chat/ChannelMembersList.svelte';
   import ChatGroupPanel from './chat/ChatGroupPanel.svelte';
@@ -155,13 +155,16 @@
    * saved snapshot or a listing started on the token): the rail and the salon rows are shown, and
    * what would ACT waits for the session (`previewOnly`, {@link landOnSalonOnceOpenable}).
    *
-   * Only for the signed-in account's own list, and never behind an unlock prompt - a lock screen
-   * shows nothing of what it locks ({@link authGateShown}).
+   * Only for the signed-in account's own list, and only while its unlock prompts NOBODY (a vault or
+   * keystore key in hand, {@link unlockUnattendedFor}): a device that owes a PIN or a fingerprint is
+   * locked, and a lock screen shows nothing of what it locks - before its prompt is drawn, while it
+   * is up, and after it is left for another page.
    */
   const isWorkspacePreview = $derived(
     !session.isLoggedIn &&
       routeMode === 'communities' &&
-      !authGateShown() &&
+      unlockUnattendedFor() !== null &&
+      unlockUnattendedFor() === currentUserId() &&
       channels.channelWorkspaces.length > 0 &&
       channels.workspacesOwner !== null &&
       channels.workspacesOwner === currentUserId()

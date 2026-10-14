@@ -32,6 +32,7 @@ import {
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
 import { currentUserId } from '$lib/stores/userState.svelte';
+import { getSavedUserId } from '$lib/stores/user';
 import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame, getChannelReactions } from '$lib/stores/reactionStore.svelte';
 import {
@@ -40,6 +41,7 @@ import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
 } from '$lib/utils/chat/messageReactions';
 import { showToast } from '$lib/stores/toast.svelte';
+import { notifNav } from '$lib/stores/notifNav.svelte';
 import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
@@ -311,12 +313,23 @@ export function useChannelWorkspaces() {
   // `channelWorkspaces` - the listing, its prune, a creation, a rename, a reorder, a leave, a
   // deletion, a pushed event - and a copy refreshed by each of them would be stale by the first one
   // that forgot. One effect reads the list and saves it whenever it changes, for its owner only.
+  //
+  // THE OWNER IS CHECKED AGAINST THE DEVICE'S SIGN-IN RECORD TOO, not only this page's memory. A
+  // sign-out in ANOTHER tab clears `canari_saved_user` and every slot, but leaves this tab's
+  // `currentUserId()` on the account that left: without the durable check, this tab's next change
+  // would write the signed-out account's list back.
   $effect.root(() => {
     $effect(() => {
       const owner = workspacesOwner;
       if (owner === null || owner !== currentUserId()) return;
       const text = serializeWorkspaceSnapshot(owner, channelWorkspaces);
       if (text === lastSnapshotText) return;
+      if (getSavedUserId() !== owner) {
+        console.warn(
+          '[WORKSPACE-SNAPSHOT] not saved: this device is no longer signed in as the list owner (signed out in another tab?)'
+        );
+        return;
+      }
       lastSnapshotText = text;
       storeWorkspaceSnapshot(owner, text);
     });
@@ -366,6 +379,7 @@ export function useChannelWorkspaces() {
     // moment it was asked, so anything this device creates from here on is newer than the answer
     // whatever order the two happen to complete in.
     const epochAtRequest = creationEpoch;
+    const landingAtRequest = notifNav.landing;
     const backendWorkspaces = await service.listUserWorkspaces();
     assertListingSession(session, 'the community rows');
     const validChannelConversationIds: string[] = [];
@@ -428,7 +442,8 @@ export function useChannelWorkspaces() {
       epochAtRequest,
       validChannelConversationIds,
       validWorkspaceSlugs,
-      session
+      session,
+      landingAtRequest
     );
   }
 
@@ -582,7 +597,8 @@ export function useChannelWorkspaces() {
     epochAtRequest: number,
     validChannelConversationIds: string[],
     validWorkspaceSlugs: Set<string>,
-    session: number
+    session: number,
+    landingAtRequest: number
   ): Promise<void> {
     // NEWER THAN THE QUESTION IS NOT ABSENT FROM THE ANSWER. A salon created while this listing
     // was in flight is missing from it by construction, and deleting it here destroys a salon the
@@ -638,6 +654,26 @@ export function useChannelWorkspaces() {
     });
     if (staleRows > 0) {
       ctx.log(`[WORKSPACE-LOAD] removed ${staleRows} salon row(s) the server no longer lists`);
+    }
+
+    // A LANDING ON A SALON THIS ANSWER DOES NOT NAME ENDS HERE, when it was published before the
+    // question was asked - a saved row tapped before the session (F1) for a salon closed to the
+    // member since. The landing would otherwise ask for a second full listing before giving up
+    // (`landingRecovery`), and that listing could only repeat this answer. A landing published
+    // after the request (a notification for a salon this listing could not know) keeps its refresh.
+    const landing = notifNav.pending;
+    if (
+      landing !== null &&
+      isChannelConversationId(landing) &&
+      notifNav.landing <= landingAtRequest &&
+      !validChannelConversationIds.includes(landing) &&
+      !bornAfterTheRequest(landing)
+    ) {
+      ctx.log(
+        `[WORKSPACE-LOAD] landing on salon ${landing.slice(0, 16)} abandoned: the listing asked after it does not name it`
+      );
+      notifNav.clear();
+      if (selectedChannelConversationId === landing) selectedChannelConversationId = '';
     }
 
     // Prune workspaces that no longer exist on the server - EXCEPT the ones that did not exist

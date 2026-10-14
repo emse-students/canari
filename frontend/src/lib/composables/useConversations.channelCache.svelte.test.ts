@@ -206,6 +206,75 @@ describe('one salon, one page in flight', () => {
   });
 });
 
+describe('a press joining a load started in the background', () => {
+  it('still shows the skeleton, and lowers it when the joined page is in', async () => {
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    let release!: (rows: unknown[]) => void;
+    listMessages.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    const ctx = makeCtx();
+
+    // The listing's end reloads it in the background: nothing is selected, no skeleton.
+    const background = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    expect(convs.isLoadingHistory).toBe(false);
+
+    const press = convs.loadHistoryForConversation(SALON, SALON, ctx, { atTap: true });
+    convs.selectConversation(SALON);
+    await vi.waitFor(() => expect(convs.isLoadingHistory).toBe(true));
+
+    release([{ id: 'm1' }]);
+    await Promise.all([background, press]);
+    expect(listMessages).toHaveBeenCalledTimes(1);
+    expect(convs.isLoadingHistory).toBe(false);
+  });
+});
+
+describe('a page is decoded only once no listing can still enter its salon', () => {
+  it('waits for the entry while a listing is in flight, then decodes the page it already fetched', async () => {
+    const gate = await import('$lib/utils/graine/salonSendGate');
+    gate.resetSalonSendGate();
+    const token = gate.beginSalonListing();
+    const { decodeChannelMessageRow } = await import('$lib/utils/chat/channelCrypto');
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+
+    const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx());
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Fetched, not decoded: a missing seed asked now would go to an unregistered key group.
+    expect(decodeChannelMessageRow).not.toHaveBeenCalled();
+
+    gate.openSalonSendGate(SALON);
+    await loading;
+    expect(decodeChannelMessageRow).toHaveBeenCalledTimes(1);
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['m1']);
+    gate.settleSalonListing(token, 'loaded');
+  });
+
+  it('decodes at once when no listing is running', async () => {
+    const gate = await import('$lib/utils/graine/salonSendGate');
+    gate.resetSalonSendGate();
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    await convs.loadHistoryForConversation(SALON, SALON, makeCtx());
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it('a listing that ends without entering it releases the page too', async () => {
+    const gate = await import('$lib/utils/graine/salonSendGate');
+    gate.resetSalonSendGate();
+    const token = gate.beginSalonListing();
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx());
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    gate.settleSalonListing(token, 'unreachable');
+    await loading;
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['m1']);
+  });
+});
+
 describe('the skeleton raised at the tap belongs to its salon', () => {
   const OTHER = 'channel_7d2f0aa0-0000-4000-8000-000000000002';
 

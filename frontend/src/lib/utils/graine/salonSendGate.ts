@@ -75,6 +75,12 @@ const opened = new Set<string>();
 const waiters = new Map<string, ((outcome: SalonGateOutcome) => void)[]>();
 let listingsInFlight = 0;
 let lastListing: ListingOutcome = 'none';
+/** Readers waiting for a salon's entry to be decided ({@link whenSalonEntryDecided}). */
+const entryWaiters = new Set<() => void>();
+/** Releases every {@link whenSalonEntryDecided} waiter; each re-reads the gate itself. */
+function wakeEntryWaiters(): void {
+  for (const wake of [...entryWaiters]) wake();
+}
 /**
  * Which session the counters belong to. A listing that began before a sign-out settles into the
  * NEXT session otherwise, and would refuse that session's first sends before its own listing ran.
@@ -142,6 +148,7 @@ export function openSalonSendGate(channelId: string): void {
   const channel = raw(channelId);
   opened.add(channel);
   settle(channel, READY);
+  wakeEntryWaiters();
 }
 
 /**
@@ -205,6 +212,7 @@ function endInFlight(token: number, outcome: SettledListing | null): void {
   if (token !== generation) return;
   listingsInFlight = Math.max(0, listingsInFlight - 1);
   if (outcome !== null) lastListing = outcome;
+  if (listingsInFlight === 0) wakeEntryWaiters();
   if (listingsInFlight > 0 || undecided()) return;
   const refusal = listingRefusal();
   for (const channel of waiters.keys()) settle(channel, refusal);
@@ -232,9 +240,38 @@ export function resetSalonSendGate(): void {
   opened.clear();
   listingsInFlight = 0;
   lastListing = 'none';
+  wakeEntryWaiters();
   for (const channel of waiters.keys()) {
     settle(channel, { kind: 'refused', reason: 'session-ended' });
   }
+}
+
+/**
+ * Resolves once nothing in flight can still ENTER `channelId`: it is entered, or no listing or entry
+ * is running. Unlike {@link whenSalonSendable} it never waits for a listing that has not started, so
+ * a reader is held only by work that will end.
+ *
+ * WHY A READER WAITS AT ALL (F3 of community-open-budget, 2026-10-14). A salon's rows are drawn, and
+ * a restored conversation may be opened, before the listing has registered its community's key
+ * group. Decoding a history page then would ask for its missing seeds on a group this device has not
+ * registered - the repair refuses (`key-group-unregistered`) and the want is lost until the next
+ * load. The history load fetches its page meanwhile and decodes it after this resolves.
+ *
+ * @param channelId Raw uuid or `channel_`-prefixed.
+ * @returns whether it had to wait, for the caller's log.
+ */
+export function whenSalonEntryDecided(channelId: string): Promise<boolean> {
+  const channel = raw(channelId);
+  const decided = () => opened.has(channel) || listingsInFlight === 0;
+  if (decided()) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const wake = () => {
+      if (!decided()) return;
+      entryWaiters.delete(wake);
+      resolve(true);
+    };
+    entryWaiters.add(wake);
+  });
 }
 
 /** How many sends wait on `channelId` - for tests and the log. */

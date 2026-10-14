@@ -98,6 +98,8 @@ beforeEach(() => {
   resetSalonSendGate();
   setMlsReady(true);
   setCurrentUserId(ALICE);
+  // The device's durable sign-in record, which every tab shares (`stores/user.ts`).
+  localStorage.setItem('canari_saved_user', ALICE);
   ensureCommunityDistributionGroup.mockResolvedValue(true);
   listUnreadCounts.mockResolvedValue([]);
 });
@@ -391,6 +393,95 @@ describe('F1 - the saved community list', () => {
     await loading;
     expect(store.channelWorkspaces.map((w) => w.id)).toEqual(['bob']);
     expect(store.workspacesOwner).toBe(BOB);
+  });
+
+  it('saves nothing for an owner this page no longer shows', async () => {
+    listUserWorkspaces.mockResolvedValue([ws('ws1', 'One', 'one')]);
+    listChannels.mockResolvedValue([salon('c1', 'general')]);
+    const store = useChannelWorkspaces();
+    await store.loadChannelWorkspacesFromBackend(makeContext());
+    flushSync();
+    localStorage.removeItem('canari_workspace_snapshot:v1:user-alice');
+
+    // The page moved to another account before its list was adopted: Alice's list changes, and
+    // nothing may be written under her name from a page that is no longer hers.
+    setCurrentUserId(BOB);
+    store.channelWorkspaces = [
+      ...store.channelWorkspaces,
+      { ...store.channelWorkspaces[0], id: 'two', workspaceDbId: 'ws2' },
+    ];
+    flushSync();
+
+    expect(localStorage.getItem('canari_workspace_snapshot:v1:user-alice')).toBeNull();
+  });
+
+  it('a sign-out in ANOTHER tab stops this tab from writing the list back', async () => {
+    listUserWorkspaces.mockResolvedValue([ws('ws1', 'One', 'one')]);
+    listChannels.mockResolvedValue([salon('c1', 'general')]);
+    const store = useChannelWorkspaces();
+    await store.loadChannelWorkspacesFromBackend(makeContext());
+    flushSync();
+    expect(readWorkspaceSnapshot(ALICE)).not.toBeNull();
+
+    // Tab 2 signs out: `clearUserLocally` there clears the shared record and every slot. This tab's
+    // memory still says Alice.
+    localStorage.removeItem('canari_saved_user');
+    localStorage.removeItem('canari_workspace_snapshot:v1:user-alice');
+    store.channelWorkspaces = [
+      ...store.channelWorkspaces,
+      { ...store.channelWorkspaces[0], id: 'two', workspaceDbId: 'ws2' },
+    ];
+    flushSync();
+
+    expect(localStorage.getItem('canari_workspace_snapshot:v1:user-alice')).toBeNull();
+  });
+
+  it('a salon landing published before the listing ends when the listing does not name the salon', async () => {
+    const { notifNav } = await import('$lib/stores/notifNav.svelte');
+    storeWorkspaceSnapshot(
+      ALICE,
+      serializeWorkspaceSnapshot(ALICE, [
+        {
+          id: 'one',
+          name: 'One',
+          workspaceDbId: 'ws1',
+          avatarUserId: 'One',
+          imageMediaId: null,
+          channels: [{ id: 'channel_closed', name: 'closed-to-me' }],
+        },
+      ])
+    );
+    const store = useChannelWorkspaces();
+    store.hydrateFromSnapshot(ALICE, vi.fn());
+    // The saved row was tapped before the session: a landing.
+    notifNav.navigate('channel_closed');
+    listUserWorkspaces.mockResolvedValue([ws('ws1', 'One', 'one')]);
+    listChannels.mockResolvedValue([salon('c1', 'general')]);
+
+    await store.loadChannelWorkspacesFromBackend(makeContext());
+
+    // Abandoned on this answer, not after a second full listing.
+    expect(notifNav.pending).toBeNull();
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+  });
+
+  it('a salon landing published AFTER the listing was asked keeps waiting for its own refresh', async () => {
+    const { notifNav } = await import('$lib/stores/notifNav.svelte');
+    notifNav.clear();
+    let answer: (rows: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces.mockImplementation(
+      () => new Promise<WorkspaceDto[]>((resolve) => (answer = resolve))
+    );
+    listChannels.mockResolvedValue([salon('c1', 'general')]);
+    const store = useChannelWorkspaces();
+    const loading = store.loadChannelWorkspacesFromBackend(makeContext());
+    // A notification for a salon this listing could not know.
+    notifNav.navigate('channel_new');
+    answer([ws('ws1', 'One', 'one')]);
+    await loading;
+
+    expect(notifNav.pending).toBe('channel_new');
+    notifNav.clear();
   });
 
   it('a sign-out forgets the list and erases every saved one', async () => {

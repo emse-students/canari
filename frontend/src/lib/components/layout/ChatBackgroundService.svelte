@@ -43,7 +43,11 @@
   } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
   import { sessionAnsweredFor } from '$lib/stores/sessionAnswer.svelte';
-  import { setAuthGateShown } from '$lib/stores/authGate.svelte';
+  import {
+    noteUnlockNeedsMember,
+    noteUnlockUnattended,
+    unlockUnattendedFor,
+  } from '$lib/stores/unlockPath.svelte';
   import {
     globalSession,
     globalConvs,
@@ -513,10 +517,6 @@
   }
 
   let showBiometricSheet = $state(false);
-  // A page drawing local data before the session reads this to stay blank behind a lock screen.
-  $effect(() => {
-    setAuthGateShown(showPinModal || showBiometricSheet);
-  });
   /** Lets startLoginFlow() know the user chose "use the PIN code" rather than biometrics on
    *  the BiometricBottomSheet. */
   let biometricCancelled = $state(false);
@@ -575,6 +575,8 @@
    * See {@link firstPinSetupFromDevice}.
    */
   async function openPinModal(uid: string, opts?: { deviceIdUnproven?: boolean }) {
+    // A PIN is owed: the device is locked from here until the unlock, whatever page is shown (F1).
+    noteUnlockNeedsMember();
     if (!mayPromptForPin()) return;
     globalSession.userId = uid;
     // A device id the attempt that just FAILED minted proves nothing about a PIN: a refused vault
@@ -661,6 +663,7 @@
    * the latch here is what lets the next sign-in start, whatever ended the previous one.
    */
   function handleSignedOut() {
+    noteUnlockNeedsMember();
     globalSession.endSession(sessionCb());
     // After the teardown, and whether or not there was a live session to tear down: the community
     // list of the leaving account goes, and a listing started on its token stops (F1/F2).
@@ -1220,9 +1223,13 @@
   // (community-open-budget). The one step that needs MLS, the key group, awaits it on its own
   // (`whenMlsReady`). `isLoggedIn` stays a trigger: an offline unlock has a session and no token.
   // A DERIVED, so the flip of `isLoggedIn` after the token does not list a second time.
+  // Before the session, ONLY for an unlock that prompts nobody: a device owing a PIN is locked, and
+  // lists nothing until it is unlocked (`unlockPath.svelte.ts`).
   const listingMayStart = $derived(
     globalSession.isLoggedIn ||
-      (sessionAnsweredFor() !== null && sessionAnsweredFor() === currentUserId())
+      (sessionAnsweredFor() !== null &&
+        sessionAnsweredFor() === currentUserId() &&
+        unlockUnattendedFor() === currentUserId())
   );
   $effect(() => {
     if (!listingMayStart) return;
@@ -1489,6 +1496,9 @@
               // on the PIN modal, whose "use biometrics" button always prompts.
               const promptDue = await isBiometricPromptDue();
               showBiometricSheet = promptDue;
+              // A keystore read with no prompt due asks nobody: the unlock is unattended (F1).
+              if (promptDue) noteUnlockNeedsMember();
+              else noteUnlockUnattended(savedUser);
 
               // THE WINDOW THIS TIMER PROTECTED WAS ONE NOBODY COULD USE. A 250 ms sleep sat here
               // so a tap on the sheet's "use my PIN" could land before the OS prompt was raised -
@@ -1557,6 +1567,9 @@
       const savedUser = currentUserId();
       const vaulted = savedUser ? await loadDeviceKey(savedUser) : null;
       if (savedUser && vaulted) {
+        // Only a slot whose owner is proven unlocks without anyone: an unlabelled one may be
+        // another account's, and its login is what proves it (F1).
+        if (vaulted.ownerProven) noteUnlockUnattended(savedUser);
         globalSession.userId = savedUser;
         globalSession.deviceKeyB64 = vaulted.deviceKeyB64;
         // loginImpl checks isLoginInProgress itself and will bail if it's true.

@@ -31,6 +31,7 @@ import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { applyChannelEdits, type DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { createLoadGenerations } from '$lib/utils/chat/loadGenerations';
+import { whenSalonEntryDecided } from '$lib/utils/graine/salonSendGate';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
@@ -261,7 +262,7 @@ export function useConversations() {
   /** The load of each salon still in flight: its request's declaration count (`null`: not sent). */
   const salonLoadsInFlight = new SvelteMap<
     string,
-    { sentAt: number | null; done: Promise<void> }
+    { sentAt: number | null; generation: number; done: Promise<void> }
   >();
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
@@ -620,21 +621,28 @@ export function useConversations() {
       ctx.log(
         `[CHANNEL] history load of ${channelConversationId.slice(0, 16)} joins the one in flight (${running.sentAt === null ? 'not sent yet' : 'sent after the last stale mark'})`
       );
+      // A press joining a load started in the background (the listing's end, a reconnect) still
+      // shows the skeleton: the joined load becomes its owner, and lowers it when its page is in.
+      if (atTap || selectedContact === channelConversationId) {
+        isLoadingHistory = true;
+        salonSkeletonOwner = running.generation;
+        skeletonSalon = channelConversationId;
+      }
       await running.done;
       return;
     }
-    let finishLoad: () => void = () => {};
-    const inFlight = {
-      sentAt: null as number | null,
-      done: new Promise<void>((resolve) => (finishLoad = resolve)),
-    };
-    salonLoadsInFlight.set(channelConversationId, inFlight);
-
     // ONLY THE LATEST LOAD STARTED FOR THIS SALON MAY MERGE (found reviewing #1761). The page is
     // authoritative for its window, so an older load finishing last would drop a row a newer one
     // had just decoded - see `loadGenerations.ts` for the exact sequence. Not a refetch afterwards:
     // that was the heal that hid the race.
     const generation = salonLoadGenerations.begin(channelConversationId);
+    let finishLoad: () => void = () => {};
+    const inFlight = {
+      sentAt: null as number | null,
+      generation,
+      done: new Promise<void>((resolve) => (finishLoad = resolve)),
+    };
+    salonLoadsInFlight.set(channelConversationId, inFlight);
     // `atTap`: the request leaves on the press, BEFORE the pane that will show this salon is mounted
     // (the selection follows the pressed row's frame). The skeleton is raised all the same, so the
     // pane mounts onto it instead of onto an empty list.
@@ -672,6 +680,12 @@ export function useConversations() {
           return undefined;
         }),
       ]);
+      // DECODED ONLY ONCE NO LISTING CAN STILL ENTER THIS SALON: a row missing its seed asks for it
+      // on the community's key group, which a listing still in flight may not have registered yet
+      // (`whenSalonEntryDecided`). The page was fetched meanwhile, so an entered salon waits nothing.
+      if (await whenSalonEntryDecided(rawId)) {
+        ctx.log(`[CHANNEL] page of ${rawId.slice(0, 8)} decoded after its salon entry was decided`);
+      }
       const loaded: ChatMessage[] = [];
       // Server row id -> the client UUID its author sealed inside it (own rows only, see below).
       const clientIdOf = new SvelteMap<string, string>();
