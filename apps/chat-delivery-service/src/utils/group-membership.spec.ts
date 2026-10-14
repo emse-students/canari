@@ -1,8 +1,9 @@
 /// <reference types="jest" />
 
 import type { EntityManager } from 'typeorm';
-import { ensureGroupMember } from './group-membership';
+import { endGroupMembership, ensureGroupMember, exclusionWindows } from './group-membership';
 import { GroupMember } from '../entities/group-member.entity';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 
 /**
  * The statement this helper builds is the whole of what it does, so the statement is what is
@@ -15,55 +16,153 @@ import { GroupMember } from '../entities/group-member.entity';
  * shape is pinned here.
  */
 describe('ensureGroupMember', () => {
-  type Recorder = {
-    calls: string[];
-    values: Record<string, unknown> | undefined;
-    target: unknown;
-  };
+  type Insert = { calls: string[]; values: Record<string, unknown> | undefined; target: unknown };
 
-  function managerWithRecorder(): { manager: EntityManager; rec: Recorder } {
-    const rec: Recorder = { calls: [], values: undefined, target: undefined };
+  /** Records every INSERT the helper builds, one entry per `insert()`. */
+  function managerWithRecorder(): { manager: EntityManager; inserts: Insert[] } {
+    const inserts: Insert[] = [];
+    const current = () => inserts[inserts.length - 1];
     const builder: Record<string, unknown> = {};
     const step = (name: string, capture?: (arg: unknown) => void) => (arg?: unknown) => {
-      rec.calls.push(name);
+      current().calls.push(name);
       capture?.(arg);
       return builder;
     };
-    builder.insert = step('insert');
+    builder.insert = () => {
+      inserts.push({ calls: ['insert'], values: undefined, target: undefined });
+      return builder;
+    };
     builder.into = step('into', (arg) => {
-      rec.target = arg;
+      current().target = arg;
     });
     builder.values = step('values', (arg) => {
-      rec.values = arg as Record<string, unknown>;
+      current().values = arg as Record<string, unknown>;
     });
     builder.orIgnore = step('orIgnore');
     builder.orUpdate = step('orUpdate');
     builder.execute = () => {
-      rec.calls.push('execute');
+      current().calls.push('execute');
       return Promise.resolve({ affected: 1 });
     };
 
     const manager = { createQueryBuilder: () => builder } as unknown as EntityManager;
-    return { manager, rec };
+    return { manager, inserts };
   }
 
   it('inserts into dm_group_members and says nothing on conflict', async () => {
-    const { manager, rec } = managerWithRecorder();
+    const { manager, inserts } = managerWithRecorder();
 
     await ensureGroupMember(manager, 'g-1', 'alice');
 
-    expect(rec.target).toBe(GroupMember);
-    expect(rec.calls).toContain('orIgnore');
-    expect(rec.calls).not.toContain('orUpdate');
-    expect(rec.calls[rec.calls.length - 1]).toBe('execute');
+    const member = inserts.find((i) => i.target === GroupMember);
+    expect(member?.calls).toContain('orIgnore');
+    expect(member?.calls).not.toContain('orUpdate');
+    expect(member?.calls[member.calls.length - 1]).toBe('execute');
   });
 
   it('never writes joinedAt itself - the column belongs to the insert that created the row', async () => {
-    const { manager, rec } = managerWithRecorder();
+    const { manager, inserts } = managerWithRecorder();
 
     await ensureGroupMember(manager, 'g-1', 'alice');
 
-    expect(rec.values).toEqual({ groupId: 'g-1', userId: 'alice', role: 'member' });
-    expect(Object.keys(rec.values ?? {})).not.toContain('joinedAt');
+    for (const insert of inserts) {
+      expect(Object.keys(insert.values ?? {})).not.toContain('joinedAt');
+    }
+    expect(inserts.find((i) => i.target === GroupMember)?.values).toEqual({
+      groupId: 'g-1',
+      userId: 'alice',
+      role: 'member',
+    });
+  });
+
+  it('opens an OPEN membership interval, and a second enrolment is a no-op on it too', async () => {
+    const { manager, inserts } = managerWithRecorder();
+
+    await ensureGroupMember(manager, 'g-1', 'alice');
+
+    const interval = inserts.find((i) => i.target === GroupMembershipInterval);
+    expect(interval?.values).toEqual({ groupId: 'g-1', userId: 'alice', leftAt: null });
+    // The partial unique index refuses a second open interval; the insert must ignore that refusal
+    // exactly as the membership row ignores its own conflict.
+    expect(interval?.calls).toContain('orIgnore');
+    expect(interval?.calls).not.toContain('orUpdate');
+  });
+});
+
+describe('endGroupMembership', () => {
+  it('deletes the live row AND closes the open interval at the database clock', async () => {
+    const deletes: Array<{ entity: unknown; where: unknown }> = [];
+    const updates: Array<{ entity: unknown; where: Record<string, unknown>; set: unknown }> = [];
+    const manager = {
+      getRepository: (entity: unknown) => ({
+        delete: (where: unknown) => {
+          deletes.push({ entity, where });
+          return Promise.resolve({ affected: 1 });
+        },
+        update: (where: Record<string, unknown>, set: unknown) => {
+          updates.push({ entity, where, set });
+          return Promise.resolve({ affected: 1 });
+        },
+      }),
+    } as unknown as EntityManager;
+
+    const ended = await endGroupMembership(manager, 'g-1', 'bob');
+
+    expect(ended).toEqual({ deleted: 1, closed: 1 });
+    expect(deletes).toEqual([{ entity: GroupMember, where: { groupId: 'g-1', userId: 'bob' } }]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].entity).toBe(GroupMembershipInterval);
+    expect(updates[0].where.groupId).toBe('g-1');
+    expect(updates[0].where.userId).toBe('bob');
+    // Only the OPEN interval is closed; a closed one keeps the instant it was closed at.
+    expect(updates[0].where.leftAt).toBeDefined();
+    // The server's clock, never a value computed in this process.
+    const set = updates[0].set as { leftAt: () => string };
+    expect(set.leftAt()).toBe('now()');
+  });
+});
+
+describe('exclusionWindows', () => {
+  const at = (iso: string) => new Date(iso);
+
+  it('a member with one open interval has NO window - a new device or a wipe opens nothing', () => {
+    expect(exclusionWindows([{ joinedAt: at('2026-10-01T10:00:00Z'), leftAt: null }])).toEqual([]);
+  });
+
+  it('removed then re-added: the window is from the removal to the re-add', () => {
+    const windows = exclusionWindows([
+      // Given out of order on purpose: the database promises no order.
+      { joinedAt: at('2026-10-05T12:00:00Z'), leftAt: null },
+      { joinedAt: at('2026-10-01T10:00:00Z'), leftAt: at('2026-10-03T09:00:00Z') },
+    ]);
+    expect(windows).toEqual([
+      { from: at('2026-10-03T09:00:00Z').getTime(), until: at('2026-10-05T12:00:00Z').getTime() },
+    ]);
+  });
+
+  it('still out: the window is open-ended', () => {
+    expect(
+      exclusionWindows([
+        { joinedAt: at('2026-10-01T10:00:00Z'), leftAt: at('2026-10-03T09:00:00Z') },
+      ])
+    ).toEqual([{ from: at('2026-10-03T09:00:00Z').getTime(), until: null }]);
+  });
+
+  it('the time before the FIRST arrival is never a window - a late joiner keeps the existing policy', () => {
+    const windows = exclusionWindows([{ joinedAt: at('2026-10-09T10:00:00Z'), leftAt: null }]);
+    expect(windows).toEqual([]);
+  });
+
+  it('two removals, two windows', () => {
+    const windows = exclusionWindows([
+      { joinedAt: at('2026-10-01T00:00:00Z'), leftAt: at('2026-10-02T00:00:00Z') },
+      { joinedAt: at('2026-10-03T00:00:00Z'), leftAt: at('2026-10-04T00:00:00Z') },
+      { joinedAt: at('2026-10-05T00:00:00Z'), leftAt: null },
+    ]);
+    expect(windows).toHaveLength(2);
+    expect(windows[1]).toEqual({
+      from: at('2026-10-04T00:00:00Z').getTime(),
+      until: at('2026-10-05T00:00:00Z').getTime(),
+    });
   });
 });

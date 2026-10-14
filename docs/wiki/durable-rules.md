@@ -174,6 +174,8 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 ## MLS membership and routing -> [mls-protocol](protocols/mls-protocol.md), [chat-delivery](services/chat-delivery.md)
 
+- **A GROUP BROADCAST HAS NO ADDRESSEE, SO AN ENTITLEMENT FILTER ON IT COVERS EVERY READER, NOT THE ONE WHO ASKED.** A `history_bundle` carries a `to`, and every member decrypts and ingests it anyway. A Remove is made to hold against a re-add (user, 2026-10-14) by withholding the UNION of every current member's exclusion windows, on the answering side, placed by the server's clock - filtering on the asker would have handed the window to the re-admitted member reading somebody else's answer. [history-reconciliation](protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)
+
 - **AN EARLY RETURN JUSTIFIED BY "SOMETHING ELSE ALREADY DID IT" MUST NAME WHO - AND THE CALLER
   REACHED FROM AN EVENT HAS NO WALK AROUND IT.** `enterPrivateSalonGroup` returned immediately for
   a public salon because *"a public salon's seeds travel on the community's group, which a

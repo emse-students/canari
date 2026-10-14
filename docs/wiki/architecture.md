@@ -190,6 +190,7 @@ All tables share the `auth_db` database host. Full schemas are in the service wi
 | `queued_message` | `recipientId`, `deviceId`, `proto`, `isWelcome`, `isCommit`, `groupId`, `type`, `ratchetTree` |
 | `dm_groups` | `id`, `isGroup`, `activeEpoch` |
 | `dm_group_members` | `groupId`, `userId`, `role`, `joinedAt` (arrival, never refreshed; removal hard-deletes the row) |
+| `dm_group_membership_intervals` | `groupId`, `userId`, `joinedAt`, `leftAt` - one row per stretch of membership; the gaps are what history answers withhold ([history-reconciliation](protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)) |
 | `dm_device_group_memberships` | `groupId`, `userId`, `deviceId`, `status` (pending/active), `kickedAt`, `pendingSince` |
 | `push_tokens` | `userId`, `deviceId`, `token`, `platform` (fcm/apns) |
 

@@ -19,6 +19,7 @@ import {
   KEY_PACKAGE_ROUND_DEADLINE_MS,
   raceDeadline,
   NotAGroupMemberError,
+  type GroupExclusions,
   type GroupRosterBatch,
   type MlsDeliveryFetch,
 } from '$lib/mls-client/mlsDeliveryApi';
@@ -2827,6 +2828,10 @@ export abstract class BaseMlsService implements IMlsService {
 
   async getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
     return this.delivery.getGroupUserMembers(groupId);
+  }
+
+  async getGroupExclusions(groupId: string): Promise<GroupExclusions> {
+    return this.delivery.getGroupExclusions(groupId);
   }
 
   async getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {

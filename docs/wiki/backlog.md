@@ -831,7 +831,13 @@ answered only from a member's own client, which reads the tree
 
 Not built: an ENTITLEMENT FLOOR per group at every entitlement START (re-admission AND a fresh device after
 a revocation wipe), keyed on the stream position or a surfaced frame epoch. Confirm with GRP-8 AND
-HEAL-REVOKE-5. Never read "no fingerprint repeats across runs" as "new messages"
+HEAL-REVOKE-5. Never read "no fingerprint repeats across runs" as "new messages". **The policy question
+is DECIDED (user, 2026-10-14): a Remove holds**, and answering peers now withhold every member's
+window - so a withheld message is re-asked on every connection until this floor exists; the server
+side of it, membership intervals, is migration `029`
+([history-reconciliation](protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)).
+**Also owed by that change:** the answering device's OWN messages carry no server time and are withheld
+whenever a window exists - stamping a sent message with its server delivery time would remove that cost
 ([measurements and the discriminator](protocols/campaign-measured-defects.md#a-re-admitted-device-calls-its-own-exclusion-window-a-loss-2026-08-26),
 [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add)).
 

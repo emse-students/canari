@@ -20,7 +20,8 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Unique } from
  *
  * Lifecycle: hard-delete. When a user leaves or is removed, the row is deleted
  * (not soft-deleted). `removeGroupMember` deletes both this row and all the user's
- * `DeviceGroupMembership` rows atomically.
+ * `DeviceGroupMembership` rows atomically. What the hard delete forgets - that the person WAS a
+ * member, and when they left - is kept in `GroupMembershipInterval`, which the same removal closes.
  */
 @Entity('dm_group_members')
 @Unique(['groupId', 'userId'])

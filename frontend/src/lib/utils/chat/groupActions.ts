@@ -12,6 +12,7 @@ import { dropGroupState } from './dropGroupState';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
+import { entitledHistorySelection } from './historyEntitlement';
 import {
   buildHistoryDigest,
   chunkIds,
@@ -276,11 +277,15 @@ export async function removeMemberAndBroadcast(params: {
   // 2. Notify remaining members.
   await notifyMembershipChange(mlsService, groupId, 'memberRemoved', { targetUser: memberId });
 
-  // 3. Clean the server registry. Best-effort: the MLS commit is authoritative.
+  // 3. Clean the server registry. The MLS commit is authoritative for LIVE delivery, but this call is
+  // what closes the member's membership interval - the record that keeps a later re-add from being
+  // served what is sent from now on (user, 2026-10-14). Its failure is therefore never silent.
   try {
     await mlsService.removeMemberFromServer(groupId, memberId);
-  } catch {
-    /* non-blocking */
+  } catch (e) {
+    console.error(
+      `[REMOVE_MEMBER] Server registry not updated for ${groupId.slice(0, 8)}… - the removal is NOT recorded as an exclusion window: ${String(e).slice(0, 120)}`
+    );
   }
 
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
@@ -756,8 +761,14 @@ export async function sendFullHistoryBundle(
     return;
   }
 
-  await sendBundleChunks(groupId, messages, { mlsService, log }, { chunkSize, to, state });
-  log(`[HISTORY_BUNDLE] Full history sent: ${messages.length} message(s)`);
+  const sent = await sendBundleChunks(
+    groupId,
+    messages,
+    { mlsService, log },
+    { chunkSize, to, state }
+  );
+  if (sent === null) return;
+  log(`[HISTORY_BUNDLE] Full history sent: ${sent} of ${messages.length} message(s)`);
 }
 
 /** Shared deps of every history control frame: the group send and somewhere to say what happened. */
@@ -774,13 +785,28 @@ export type HistoryStoreDeps = HistorySendDeps & {
  *
  * Shared by the full bundle and the id-filtered one so a change to the wire shape cannot reach one
  * path and miss the other - the two differ only in WHICH messages they were handed.
+ *
+ * **AND IT IS WHERE A REMOVE IS MADE TO HOLD** (user, 2026-10-14): every selection passes through
+ * {@link entitledHistorySelection} before a frame is built, so no answer path - full, diff or
+ * scrollback - can carry a message sent while a current member was out of the group.
+ *
+ * @returns how many messages went out, or `null` when the exclusion windows could not be read and
+ *          nothing was sent.
  */
 async function sendBundleChunks(
   groupId: string,
-  messages: StoredMessage[],
+  selection: StoredMessage[],
   { mlsService, log }: HistorySendDeps,
   { chunkSize, to, state }: { chunkSize: number; to: string; state?: ConversationHistoryState }
-): Promise<void> {
+): Promise<number | null> {
+  const messages = await entitledHistorySelection(groupId, selection, { mlsService, log });
+  if (messages === null) return null;
+  if (messages.length === 0) {
+    log(
+      `[HISTORY_BUNDLE] Every message selected for ${groupId.slice(0, 8)}… was withheld - nothing sent`
+    );
+    return 0;
+  }
   const totalChunks = Math.ceil(messages.length / chunkSize);
   for (let i = 0; i < messages.length; i += chunkSize) {
     const payload = messages.slice(i, i + chunkSize).map(serializeForBundle);
@@ -792,9 +818,10 @@ async function sendBundleChunks(
       );
     } catch (e) {
       log(`[HISTORY_BUNDLE] Chunk send error ${Math.floor(i / chunkSize) + 1}: ${String(e)}`);
-      return;
+      return i;
     }
   }
+  return messages.length;
 }
 
 /**
@@ -1198,9 +1225,15 @@ export async function sendHistoryBundleForIds(
   }
 
   const state = await storedConversationState(groupId, storage);
-  await sendBundleChunks(groupId, selected, { mlsService, log }, { chunkSize, to, state });
+  const sent = await sendBundleChunks(
+    groupId,
+    selected,
+    { mlsService, log },
+    { chunkSize, to, state }
+  );
+  if (sent === null) return;
   log(
-    `[HISTORY_BUNDLE] Diff sent for ${groupId.slice(0, 8)}…: ${selected.length} of ${wanted.size} requested message(s)`
+    `[HISTORY_BUNDLE] Diff sent for ${groupId.slice(0, 8)}…: ${sent} of ${wanted.size} requested message(s)`
   );
 }
 
@@ -1247,9 +1280,15 @@ export async function sendHistoryRangeBundle(
 
   const page = inRange.slice(-Math.max(1, limit));
   const state = await storedConversationState(groupId, storage);
-  await sendBundleChunks(groupId, page, { mlsService, log }, { chunkSize: 200, to, state });
+  const sent = await sendBundleChunks(
+    groupId,
+    page,
+    { mlsService, log },
+    { chunkSize: 200, to, state }
+  );
+  if (sent === null) return;
   log(
-    `[HISTORY_RANGE] Sent ${page.length} of ${inRange.length} message(s) older than ${new Date(before).toISOString()} for ${groupId.slice(0, 8)}…`
+    `[HISTORY_RANGE] Sent ${sent} of ${inRange.length} message(s) older than ${new Date(before).toISOString()} for ${groupId.slice(0, 8)}…`
   );
 }
 

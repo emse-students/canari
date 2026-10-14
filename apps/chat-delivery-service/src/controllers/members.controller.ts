@@ -33,7 +33,13 @@ import {
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
-import { ensureGroupMember } from '../utils/group-membership';
+import {
+  ensureGroupMember,
+  endGroupMembership,
+  exclusionWindows,
+  type ExclusionWindow,
+} from '../utils/group-membership';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 
 /**
  * The most groups `POST /api/mls/group-rosters` answers in one request.
@@ -685,10 +691,20 @@ export class MembersController {
       userId: safeUserId,
     });
 
-    await this.groupMemberRepo.delete({
-      groupId: safeGroupId,
-      userId: safeUserId,
-    });
+    // The live row goes and the membership interval closes in ONE transaction: the interval is what
+    // makes this removal hold against a later re-add (user, 2026-10-14), so a removal that deleted
+    // the row and not the interval would be a removal a re-add silently undoes.
+    const ended = await this.dataSource.transaction((manager) =>
+      endGroupMembership(manager, safeGroupId, safeUserId)
+    );
+    if (ended.deleted > 0 && ended.closed === 0) {
+      // A member with no open interval: enrolled by a writer running pre-029 code during the deploy
+      // that applied the migration. Their exclusion window starts nowhere, so a re-add will NOT
+      // withhold what is sent from now on - which is exactly the loss this line exists to show.
+      this.logger.error(
+        `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} had NO open membership interval - this removal is not recorded as an exclusion`
+      );
+    }
 
     // Remove all devices of this user from the Redis set
     const members = await this.redis.smembers(`group:members:${safeGroupId}`);
@@ -698,8 +714,78 @@ export class MembersController {
     }
 
     this.logger.log(
-      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0}`
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0} intervalClosed=${ended.closed}`
     );
     return { status: 'removed' };
+  }
+
+  /**
+   * The windows during which each CURRENT member of `groupId` was out of it - what a member
+   * answering a history request must withhold (user, 2026-10-14: a Remove holds against a later
+   * re-add).
+   *
+   * **EVERY CURRENT MEMBER, NOT ONLY THE ASKER.** A `history_bundle` is an MLS group broadcast: every
+   * member decrypts it, whoever it is addressed to. Withholding a window from the asker alone would
+   * hand it to a re-admitted member reading somebody else's answer, so the answering client
+   * withholds the union of everybody's windows. Members with no window are omitted.
+   *
+   * **CURRENT MEMBERS ONLY MAY ASK**, and no branch lets anybody else through: no global-admin
+   * bypass, and no unidentified caller (the legacy no-op of `assertCallerIsGroupMember` is not
+   * copied). The answer names who was removed and when, which is group metadata only a member may
+   * hold - and only a member answers history anyway.
+   *
+   * Times are server milliseconds from the database clock, the clock that stamps
+   * `queued_message.createdAt` - the `serverTimestamp` the client compares them with.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/groups/:groupId/exclusions')
+  async getGroupExclusions(
+    @Param('groupId') groupId: string,
+    @Headers('x-user-id') headerUserId?: string
+  ): Promise<{ exclusions: Record<string, ExclusionWindow[]> }> {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    const members = await this.groupMemberRepo.find({
+      where: { groupId: safeGroupId },
+      select: { userId: true },
+    });
+    const memberIds = new Set(members.map((m) => m.userId));
+    if (!caller || !memberIds.has(caller)) {
+      this.logger.warn(
+        `[GROUP_EXCLUSIONS] REFUSED group=${safeGroupId} caller=${caller ? caller.slice(0, 8) : 'unidentified'} - not a current member`
+      );
+      throw new ForbiddenException('Caller is not a member of this group');
+    }
+
+    const intervals = await this.dataSource.manager.find(GroupMembershipInterval, {
+      where: { groupId: safeGroupId, userId: In([...memberIds]) },
+      select: { userId: true, joinedAt: true, leftAt: true },
+    });
+    const byUser = new Map<string, GroupMembershipInterval[]>();
+    for (const row of intervals) {
+      const list = byUser.get(row.userId) ?? [];
+      list.push(row);
+      byUser.set(row.userId, list);
+    }
+
+    const exclusions: Record<string, ExclusionWindow[]> = {};
+    let withoutInterval = 0;
+    for (const userId of memberIds) {
+      const rows = byUser.get(userId) ?? [];
+      if (!rows.some((r) => r.leftAt === null)) withoutInterval++;
+      const windows = exclusionWindows(rows);
+      if (windows.length > 0) exclusions[userId] = windows;
+    }
+    if (withoutInterval > 0) {
+      // A current member with no OPEN interval is outside the record this route exists to answer
+      // from, so whatever it was out for is not here. Said, never inferred.
+      this.logger.error(
+        `[GROUP_EXCLUSIONS] group=${safeGroupId} members=${memberIds.size} withoutOpenInterval=${withoutInterval}`
+      );
+    }
+    this.logger.log(
+      `[GROUP_EXCLUSIONS] group=${safeGroupId} members=${memberIds.size} withWindows=${Object.keys(exclusions).length}`
+    );
+    return { exclusions };
   }
 }

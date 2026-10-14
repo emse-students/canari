@@ -15,6 +15,7 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
@@ -116,6 +117,7 @@ describe('InternalController - the community distribution group', () => {
         { provide: getRepositoryToken(PinVerifier), useValue: {} },
         { provide: getRepositoryToken(RevokedDevice), useValue: {} },
         { provide: getRepositoryToken(GroupInvite), useValue: {} },
+        { provide: getRepositoryToken(GroupMembershipInterval), useValue: {} },
         { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: MessagingService, useValue: messagingService },
       ],
@@ -452,6 +454,7 @@ describe('InternalController - the community distribution group', () => {
         MlsCommitLog,
         MlsGroupInfo,
         GroupInvite,
+        GroupMembershipInterval,
       ]);
       expect(purged).not.toContain(UserDismissedGroup);
       // In one unit of work with the tombstone: two statements outside a transaction leave a window

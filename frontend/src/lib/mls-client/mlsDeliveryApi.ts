@@ -53,6 +53,61 @@ export interface GroupRosterBatch {
 }
 
 /**
+ * One window, in SERVER milliseconds, during which a person was not a member of a group;
+ * `until: null` means still out. Mirrors `ExclusionWindow` in chat-delivery-service's
+ * `utils/group-membership.ts`.
+ */
+export interface ExclusionWindow {
+  from: number;
+  until: number | null;
+}
+
+/**
+ * What `GET /api/mls/groups/:groupId/exclusions` answered: the windows of every CURRENT member that
+ * has one, keyed by LOWER-CASED user id. A member absent from the map has no window.
+ */
+export type GroupExclusions = ReadonlyMap<string, readonly ExclusionWindow[]>;
+
+/** The answer did not have the shape the exclusions route promises - typed, so no caller reads a message. */
+export class MalformedExclusionsError extends Error {
+  constructor(detail: string) {
+    super(`malformed exclusions answer: ${detail}`);
+    this.name = 'MalformedExclusionsError';
+  }
+}
+
+/**
+ * Parses the body of `GET /api/mls/groups/:groupId/exclusions`.
+ *
+ * Strict on purpose: a window that cannot be read is a window that would not be withheld, so a
+ * malformed answer throws rather than being read as "nobody was ever out".
+ */
+export function parseGroupExclusions(raw: unknown): GroupExclusions {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new MalformedExclusionsError('not an object');
+  }
+  const out = new Map<string, ExclusionWindow[]>();
+  for (const [userId, windows] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(windows)) throw new MalformedExclusionsError(`windows of ${userId}`);
+    out.set(
+      userId.toLowerCase(),
+      windows.map((w) => {
+        const from = (w as { from?: unknown })?.from;
+        const until = (w as { until?: unknown })?.until;
+        if (typeof from !== 'number' || !Number.isFinite(from)) {
+          throw new MalformedExclusionsError(`window start of ${userId}`);
+        }
+        if (until !== null && (typeof until !== 'number' || !Number.isFinite(until))) {
+          throw new MalformedExclusionsError(`window end of ${userId}`);
+        }
+        return { from, until };
+      })
+    );
+  }
+  return out;
+}
+
+/**
  * The delivery service refused this device id: it was explicitly deleted, and the denylist is
  * permanent. Typed rather than message-matched, because the only cure is structural - enrol under
  * a fresh device id ({@link BaseMlsService.rotateDeviceIdentity}), never a retry of the same call.
@@ -1473,6 +1528,25 @@ export class MlsDeliveryApi {
       });
       if (!res.ok) throw new Error(`getGroupUserMembers failed: ${res.status}`);
       return await res.json();
+    });
+  }
+
+  /**
+   * The windows during which each current member of `groupId` was out of it - what a history answer
+   * must withhold (user, 2026-10-14: a Remove holds against a later re-add).
+   *
+   * Throws on any transport or HTTP failure, and on an answer it cannot parse: the caller cannot
+   * prove what may be sent without it, so it sends nothing and says so. Simultaneous askers share one
+   * request; nothing is kept past the answer.
+   */
+  getGroupExclusions(groupId: string): Promise<GroupExclusions> {
+    return this.joinInFlight(`exclusions:${groupId}`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/exclusions`, {
+        headers: await this.auth(),
+      });
+      if (!res.ok) throw new Error(`getGroupExclusions failed: ${res.status}`);
+      const body = (await res.json()) as { exclusions?: unknown };
+      return parseGroupExclusions(body?.exclusions);
     });
   }
 

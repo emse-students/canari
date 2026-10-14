@@ -8,7 +8,7 @@ import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
-import type { GroupRosterBatch } from './mlsDeliveryApi';
+import type { GroupExclusions, GroupRosterBatch } from './mlsDeliveryApi';
 
 export type { FrameDelivery };
 export type { DistributionScope };
@@ -1034,6 +1034,12 @@ export interface IMlsService {
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupUserMembers(groupId: string): Promise<{ userId: string }[]>;
+  /**
+   * The windows during which each current member of `groupId` was out of it, from
+   * `GET /api/mls/groups/:groupId/exclusions`. Throws on any failure: a history answer that cannot
+   * read them sends nothing (see `historyEntitlement.ts`).
+   */
+  getGroupExclusions(groupId: string): Promise<GroupExclusions>;
   /**
    * The user-level rosters of many groups in one read (`POST /api/mls/group-rosters`). Never throws:
    * a group it did not answer is absent from both sets, and nothing is decided for it.

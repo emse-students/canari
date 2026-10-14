@@ -704,6 +704,77 @@ not an oversight, and it rests on three facts:
   the second - and the discharge condition is precisely what could not be met the last time this
   area carried a durable registry.
 
+### A Remove holds against a later re-add - the answering peer withholds the window (decided by the user, 2026-10-14)
+
+**The decision** (user, 2026-10-14), for private GROUP conversations: a member removed and added
+back keeps what preceded their removal and NEVER receives what was sent while they were out. It
+closes [open-questions](../open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
+Out of scope: communities, which keep their own recorded decision (a returner MAY read the past -
+`getGraineHistoryFloors`), and 1:1 conversations, which have no remove path.
+
+**Why the history exchange was the hole.** Live delivery already honoured a removal: the member is
+out of the MLS tree. But every answer of this protocol re-sends a store as `history_bundle` frames
+under the CURRENT epoch - the full bundle on an invitation (`sendFullHistoryBundle`, from
+`processPendingInvitations` and `handleWelcomeRequest`), the diff (`sendHistoryBundleForIds`), the
+scrollback (`sendHistoryRangeBundle`) - and none of them asked whether anybody had been out.
+
+**The record - the server, migration `029`.** `dm_group_membership_intervals` keeps one row per
+stretch of membership `(groupId, userId, joinedAt, leftAt)`. `ensureGroupMember` opens one (both
+enrolment routes; at most one open row, by a partial unique index); `removeGroupMember` closes it
+in the transaction that deletes the `dm_group_members` row, whose hard-delete semantics are
+unchanged. The migration backfills every current member with an open interval from its
+`joinedAt`. The rows go with the group (`GROUP_OWNED_TABLES`) and with the account.
+`GET /api/mls/groups/:groupId/exclusions` answers `{ exclusions: { userId: [{ from, until }] } }`:
+the gaps between each CURRENT member's intervals, `until: null` while still out. **The time before
+a first arrival is never a gap**, so a late joiner keeps exactly the existing new-member policy, and
+intervals are per USER, so a new device or a wiped one opens nothing. Only a current member may read
+it - no admin bypass, no unidentified caller.
+
+**The control - the ANSWERING client.** A requester asking politely is not a control, so every
+bundle goes through `sendBundleChunks`, which passes its selection through
+`entitledHistorySelection` (`historyEntitlement.ts`) before building a frame - one chokepoint, so no
+answer path can forget it.
+
+- **The union of every current member's windows, not the asker's.** A bundle is a group broadcast,
+  and every member ingests answers meant for others (see the `history_bundle` handler). Withholding
+  from the asker alone would hand the window to the re-admitted member reading a continuous member's
+  answer. The cost is accepted: while a re-admitted member is in the group, NO member can restore a
+  message from that window through a bundle.
+- **The clock is the server's.** A message is placed by `serverTimestamp`, the
+  `queued_message.createdAt` its copy was delivered with - the same database clock that writes
+  `joinedAt`/`leftAt`. The sender-stamped `timestamp` is a client clock and is never read for this.
+  A window includes its start and excludes its end: the re-add instant belongs to a member.
+- **A message with no server time is withheld whenever any window exists**, because it cannot be
+  shown to fall outside one. That is mostly the answering device's OWN messages - a sender never
+  receives its frame back, so its copy carries no delivery time - which every other member holds
+  WITH one and can serve. When no current member has a window nothing is filtered, and every answer
+  is byte-for-byte what it was.
+- **An unreadable window set sends nothing**, logged `[HISTORY_ENTITLEMENT]`: the same silence an
+  unreadable store produces, so another member or the next connection answers. Never an unfiltered
+  answer.
+
+**The receiver - hygiene, not a control.** The `history_bundle` handler drops a message it would
+ADD whose server time falls inside its OWN window, one log line per drop
+(`dropOwnExcludedMessages`); messages it already holds are not checked, so a bundle restating its
+store costs no read. An unreadable window set ingests none of that frame's messages, and says so.
+
+**What it does NOT cover.**
+
+- A hostile client - a member that kept its plaintext, or an answering peer running modified code -
+  can hand anything to anybody. This is a rule honoured by every correct client, not cryptography.
+- Removals that happened before migration `029`: nothing recorded them, so a person removed then
+  and re-added later has no window.
+- A member enrolled by a container still running pre-029 code during the deploy that applied the
+  migration has no open interval; their later removal records no window and logs
+  `[REMOVE_MEMBER] ... had NO open membership interval` at ERROR.
+- The seconds between the MLS remove commit and the server call that closes the interval
+  (`removeMemberAndBroadcast` commits, broadcasts `memberRemoved`, then calls the server): a message
+  queued in between is dated before `leftAt`. A failed server call records no window at all, which is
+  why it is now logged at ERROR rather than swallowed.
+- Reconciliation still READS a withheld message as missing: the asker's digest lacks it and asks
+  again on its next connection. That is the open P2 in [backlog](../backlog.md) (an exclusion window
+  called a loss), unchanged in cost by this.
+
 ### Why it converges, and why a third device needs nothing extra
 
 Union merge is commutative, associative and idempotent, so repeated pairwise exchanges - any order,
