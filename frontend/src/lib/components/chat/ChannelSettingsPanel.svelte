@@ -1,6 +1,7 @@
 <script lang="ts">
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { Log } from '$lib/utils/Log';
+  import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
   import {
     Settings,
     Trash2,
@@ -343,6 +344,8 @@
     notifLevel = null;
     try {
       notifLevel = await channelService.getNotificationLevel(selectedChannelId);
+      // The same answer feeds the level this device applies to a salon frame it raises itself.
+      notificationPreferences.rememberChannelLevel(selectedChannelId, notifLevel);
     } catch (e) {
       // A FAILED READ IS NOT THE VALUE `all`. It used to be, silently, which made a broken request
       // and a member who really is on `all` the same screen and different facts. Nothing is checked
@@ -362,6 +365,7 @@
     notifError = '';
     try {
       await channelService.setNotificationLevel(selectedChannelId, level);
+      notificationPreferences.rememberChannelLevel(selectedChannelId, level);
     } catch (e) {
       console.warn('[CHANNEL] notification level refused - reverted', e);
       notifLevel = previous;

@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { deliveryUrl } from '$lib/utils/apiUrl';
+import { channelService } from '$lib/services/ChannelService';
 import { Log } from '$lib/utils/Log';
 import { isNotificationCategory, type NotificationCategory } from './categories';
 import {
@@ -68,4 +69,12 @@ export async function saveDisabledCategories(
     body: JSON.stringify({ disabled }),
   });
   if (!res.ok) throw new Error(`notification-preferences ${res.status}`);
+}
+
+/** This account's level for ONE salon - the social service owns it, so it is read apart from the groups'. */
+export function fetchChannelNotificationLevel(
+  channelId: string
+): Promise<ConversationNotificationLevel> {
+  Log.d(`notificationPreferences.fetchChannelLevel(${channelId})`);
+  return channelService.getNotificationLevel(channelId);
 }

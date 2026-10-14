@@ -105,7 +105,11 @@ import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
 import { categoryOfConversation } from '$lib/notifications/categories';
-import { conversationLevelRefusal, mentionsUser } from '$lib/notifications/conversationLevel';
+import {
+  conversationLevelRefusal,
+  mentionsUser,
+  type ConversationNotificationLevel,
+} from '$lib/notifications/conversationLevel';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
 
@@ -416,7 +420,9 @@ export function useMessaging() {
     /** The SENDER's instant in ms - what lets the native builder recognise one message. */
     sentAt: number,
     /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
-    covers: number
+    covers: number,
+    /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
+    salonLevelRead = false
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
@@ -450,7 +456,7 @@ export function useMessaging() {
     // THE CONVERSATION'S OWN LEVEL (all / mentions / none), the salon's three for a private
     // conversation. The server applies `none` to every push and hands `mentions` to the device; a
     // frame received here involves no push, so this is the client's half - the ONE place it decides,
-    // with the plaintext already in hand. Salons are not consulted here: their key is `channel_`.
+    // with the plaintext already in hand. A salon is read from its own cache - see below.
     //
     // `mentionsMe` (see `mentionsUser`) decides the level here and picks the notification channel,
     // which is the reader's own mute, sound and DND switch. `CanariFirebaseMessagingService` makes the
@@ -459,11 +465,44 @@ export function useMessaging() {
     //
     // LOOKED UP BY THE GROUP ID (`convo.id`), NEVER THE CONVERSATION KEY: a DM may be keyed
     // `me::peer`, and the server's levels are keyed by the MLS group.
+    //
+    // A SALON'S LEVEL IS THE SAME THREE VALUES AND THE SAME DECISION (`conversationLevelRefusal`), read
+    // from the social service rather than the sign-in list, so it is cached per channel: read ONCE
+    // when the first frame of a salon arrives (one shared request, no read per message), refreshed
+    // whenever its settings panel opens. The frame that triggers the read waits for the answer and
+    // re-enters with `salonLevelRead`; if the read FAILED it is raised as `all`, the account default,
+    // and the failure is said by the store - the same rule as the groups' store.
+    let level: ConversationNotificationLevel | undefined;
     if (category === 'messages') {
-      const refusal = conversationLevelRefusal(
-        notificationPreferences.groupLevel(convo.id),
-        mentionsMe
-      );
+      level = notificationPreferences.groupLevel(convo.id);
+    } else {
+      level = notificationPreferences.channelLevel(conversationKey);
+      if (level === undefined && !salonLevelRead) {
+        void notificationPreferences.loadChannelLevel(conversationKey).then(() => {
+          notifyInbound(
+            ctx,
+            conversationKey,
+            convo,
+            senderId,
+            content,
+            mentionsMe,
+            isSystem,
+            isOwn,
+            sentAt,
+            covers,
+            true
+          );
+        });
+        return;
+      }
+      if (level === undefined) {
+        console.warn(
+          `[NOTIF] Inbound in ${conversationKey} - the salon's level is unreadable; raised as "all".`
+        );
+      }
+    }
+    if (level !== undefined) {
+      const refusal = conversationLevelRefusal(level, mentionsMe);
       if (refusal) {
         console.log(`[NOTIF] Inbound in ${conversationKey} - ${refusal}; nothing raised.`);
         return;
