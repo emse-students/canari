@@ -75,4 +75,14 @@ describe('every sign-out ends the live session on the device', () => {
       if (read > -1) expect(wait).toBeLessThan(read);
     }
   });
+
+  it('a "forgot PIN" reset deletes the state only after a signed-out session has written its last', () => {
+    // Otherwise the sign-out's late write puts back, under the OLD key, the state this deletes.
+    const fn = sessionAuth.slice(
+      sessionAuth.indexOf('export async function resetDeviceAsFreshImpl(')
+    );
+    const wait = fn.indexOf('await ctx.whenMlsRetired();');
+    expect(wait).toBeGreaterThan(-1);
+    expect(wait).toBeLessThan(fn.indexOf('removeMlsState('));
+  });
 });

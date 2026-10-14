@@ -326,6 +326,11 @@ export async function resetDeviceAsFreshImpl(
   userIdToReset: string,
   cb: ChatSessionCallbacks
 ): Promise<void> {
+  // A SIGNED-OUT SESSION'S FINAL CHECKPOINT LANDS BEFORE THE DELETE, not after it: the "forgot PIN"
+  // reset runs from the PIN gate of the next sign-in, and a write still in flight from the sign-out
+  // (48 s measured on a Mi 9T) would put back the state under the OLD key that this deletes - so the
+  // new PIN would meet an unopenable state. Settles at once when nothing is retiring.
+  await ctx.whenMlsRetired();
   const { removeMlsState } = await import('$lib/utils/hex');
   await removeMlsState(userIdToReset);
   localStorage.removeItem(`mls_device_id_${userIdToReset}`);

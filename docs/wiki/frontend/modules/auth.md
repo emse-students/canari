@@ -876,8 +876,19 @@ the state, because that write is what they read. The SAME account signing back i
 one full state decrypt, as a cold start does - chosen deliberately over reusing a client whose
 account the code cannot prove. The call service is rebuilt over the new client (`initServices` is
 keyed on the client, not on "one exists"). Possibly the cause of the P3 "switching accounts on one
-iPhone install" in [backlog](../../backlog.md), not proven. Test: `signOutTimeline.test.ts`, "a
-sign-out retires the account with its MLS client".
+iPhone install" in [backlog](../../backlog.md), not proven - and NOT the only one: the device-key
+vault outlives the sign-out and names no account, so B signs in on A's key (same backlog entry).
+Test: `signOutTimeline.test.ts`, "a sign-out retires the account with its MLS client".
+
+**The retirement always settles, and every reader of the disk waits for it.** `mlsHolder.retire`
+catches a final write that rejects and a destroy that throws, because a login awaits that chain and
+a rejection left it - and `isLoginInProgress` - stuck. The "forgot PIN" reset
+(`resetDeviceAsFreshImpl`) waits too: it runs from the next sign-in's PIN gate, and a late write
+would put back, under the old key, the state it deletes. There is no clock on the wait: it ends when
+the local write does (a Mi 9T checkpoint has been measured at 48 s), so a slow write is a slow
+"Connexion en cours", never a stuck one. Tests: `mlsHolder.test.ts`, and
+`accountSwitchLateFlush.test.ts`, which replays A's held write, B's sign-in and the late landing
+over the real `useChatSession` (client, call service, persister, hooks, encrypt worker).
 
 **A late final flush no longer removes the NEXT session's persister.** The teardown removed the
 persister, its lifecycle hooks and the encrypt worker in the flush's `.finally`, unconditionally -

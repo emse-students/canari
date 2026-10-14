@@ -51,10 +51,16 @@ export function createMlsHolder(create: () => IMlsService): MlsHolder {
       const leaving = current;
       current = null;
       pending += 1;
-      const done = finalWrite.then(() => {
-        leaving?.destroy?.();
-        pending -= 1;
-      });
+      // NEVER REJECTS, WHATEVER THE CALLER HANDS IT: a login awaits this chain, so a rejection here
+      // (a final write that broke its contract, a destroy that threw) would leave that login - and
+      // `isLoginInProgress` - stuck, and `pending` counting a retirement that is over.
+      const done = finalWrite
+        .catch((e) => console.error(`[LOGOUT] retired MLS client's final write failed: ${e}`))
+        .then(() => leaving?.destroy?.())
+        .catch((e) => console.error(`[LOGOUT] destroying the retired MLS client failed: ${e}`))
+        .finally(() => {
+          pending -= 1;
+        });
       // CHAINED, so a second sign-out before the first write lands is waited for too.
       retirement = Promise.all([retirement, done]).then(() => undefined);
       return done;
