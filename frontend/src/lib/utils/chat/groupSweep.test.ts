@@ -136,6 +136,50 @@ describe('forgetGroupsAbsentFromServer', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('WASM kept'));
   });
 
+  it('asks about a kept key group ONCE per connection pass, not once per sweep', async () => {
+    // Pixel 6a, prod 1.2.7, 2026-10-14: the sync sweep and discovery each asked about the same 8
+    // key-distribution groups on every connection - 16 requests, 16 `WASM kept` lines.
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn().mockReturnValue(['seed-carrier']),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'other', name: 'o' }]),
+      getGroupServerStatus: vi.fn().mockResolvedValue({
+        groupId: 'seed-carrier',
+        deletedAt: null,
+        distributionWorkspaceId: 'w',
+      }),
+    });
+    const log = vi.fn();
+    const verdicts = new Map();
+
+    // The sync sweep, then discovery: two snapshots, one pass.
+    for (let sweep = 0; sweep < 2; sweep++) {
+      const snapshot = await readGroupSweepSnapshot(mlsService, 'u', log);
+      await forgetGroupsAbsentFromServer(mlsService, snapshot, log, verdicts);
+    }
+
+    expect(mlsService.getGroupServerStatus).toHaveBeenCalledTimes(1);
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.filter((l) => l.includes('WASM kept'))).toHaveLength(1);
+    expect(lines.filter((l) => l.includes('not asked again'))).toHaveLength(1);
+  });
+
+  it('asks again on a new pass - an answer is never believed past the pass that heard it', async () => {
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn().mockReturnValue(['seed-carrier']),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'other', name: 'o' }]),
+      getGroupServerStatus: vi.fn().mockResolvedValue({
+        groupId: 'seed-carrier',
+        deletedAt: null,
+        distributionWorkspaceId: 'w',
+      }),
+    });
+    for (let pass = 0; pass < 2; pass++) {
+      const snapshot = await readGroupSweepSnapshot(mlsService, 'u', vi.fn());
+      await forgetGroupsAbsentFromServer(mlsService, snapshot, vi.fn(), new Map());
+    }
+    expect(mlsService.getGroupServerStatus).toHaveBeenCalledTimes(2);
+  });
+
   it('asks nothing at all when the list may not be believed', async () => {
     // Not merely "forgets nothing": it does not even make the per-group request, because absence
     // from an unusable list is not a reason to ask either.

@@ -1,6 +1,6 @@
 import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
 import { forgetMlsGroupIfPresent } from './groupActions';
-import { reconcileAbsentLocalGroup } from './groupLifecycle';
+import { reconcileAbsentLocalGroup, type LocalGroupFate } from './groupLifecycle';
 
 /**
  * The two reads a group sweep compares, taken in the ONE order that is sound, plus the verdict on
@@ -118,6 +118,24 @@ export async function readGroupSweepSnapshot(
 }
 
 /**
+ * What the server said about each absent local group during ONE connection pass, so the two sweeps
+ * of that pass ask once between them.
+ *
+ * WHY IT EXISTS. A connection runs the sync sweep and then discovery, and each asked
+ * `GET /api/mls/groups/<id>` for every key-distribution group the conversation list leaves out -
+ * the same eight groups, the same `keep`, twice in four seconds, sixteen serial requests and sixteen
+ * `[SYNC] WASM kept` lines on every connection (Pixel 6a, prod 1.2.7, 2026-10-14: 344 such lines,
+ * 43 per group, in two hours).
+ *
+ * ONE PASS AND NEVER LONGER, which is the line {@link reconcileAbsentLocalGroup} draws: the row is
+ * read every time because a group can stop existing at any point in a session. A pass is created
+ * by the connection sync and handed to the discovery that follows it; a later pass (a reconnect,
+ * the 35 s retry) starts without one and asks again. Created per pass, so it is bounded by the
+ * groups of one sweep and dies with it - no clock decides how long an answer is believed.
+ */
+export type AbsentGroupVerdicts = Map<string, LocalGroupFate>;
+
+/**
  * Destroys the local MLS state of every group in the snapshot the server did not name, and returns
  * whether anything was destroyed - the caller checkpoints on that.
  *
@@ -130,11 +148,16 @@ export async function readGroupSweepSnapshot(
  *
  * The skip is logged rather than silent, and only when there was something to skip: a device with no
  * local groups has nothing at risk, and a line per connection saying so is noise.
+ *
+ * @param verdicts this pass's answers ({@link AbsentGroupVerdicts}). A group already answered
+ *   `keep` in it is kept without a second request; one not in it is asked and recorded. Absent for a
+ *   sweep that is a pass of its own.
  */
 export async function forgetGroupsAbsentFromServer(
   mlsService: IMlsService,
   snapshot: GroupSweepSnapshot,
-  log: (msg: string) => void
+  log: (msg: string) => void,
+  verdicts?: AbsentGroupVerdicts
 ): Promise<boolean> {
   if (!snapshot.absenceIsEvidence) {
     if (snapshot.localGroups.size > 0) {
@@ -144,9 +167,19 @@ export async function forgetGroupsAbsentFromServer(
   }
 
   let mutated = false;
+  let keptOnThisPass = 0;
   for (const groupId of snapshot.localGroups) {
     if (snapshot.serverGroupIds.has(groupId)) continue;
+    // ONLY A `keep` IS REUSED. A `forget` was acted on by the sweep that heard it, so the group is
+    // no longer local and cannot reach here again in this pass; were it still here, that would be a
+    // forget that did not happen, and the question deserves asking again rather than a remembered
+    // answer.
+    if (verdicts?.get(groupId)?.action === 'keep') {
+      keptOnThisPass++;
+      continue;
+    }
     const fate = await reconcileAbsentLocalGroup(mlsService, groupId);
+    verdicts?.set(groupId, fate);
     if (fate.action === 'keep') {
       log(`[SYNC] WASM kept ${groupId.slice(0, 8)}… - ${fate.reason}`);
       continue;
@@ -157,6 +190,12 @@ export async function forgetGroupsAbsentFromServer(
     if (!(await forgetMlsGroupIfPresent(mlsService, groupId))) continue;
     log(`[SYNC] WASM removed (${fate.reason}): ${groupId.slice(0, 8)}…`);
     mutated = true;
+  }
+  // One line for the whole reuse: each group's own line was printed by the sweep that asked.
+  if (keptOnThisPass > 0) {
+    log(
+      `[SYNC] ${keptOnThisPass} group(s) kept on the answer this connection pass already had - not asked again`
+    );
   }
   return mutated;
 }
