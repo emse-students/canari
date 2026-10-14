@@ -147,6 +147,9 @@ local and receipts are only what OTHERS see. `Sidebar.communityUnreadDot.svelte.
 
 ### Unread counts of salons: the server counts, this device only merges (2026-10-08)
 
+**The chantier these three sections belong to is CLOSED (2026-10-14)**: every path that can move a
+salon's read mark, with its evidence, is on [read-receipt-privacy](../../read-receipt-privacy.md).
+
 **Reported by the user** (*"messages marked read though I never opened the community's salon"*), and
 **measured before anything was fixed**, with `tools/cross-client-harness/unread-communities.mjs` on the
 local estate: ten communities, 2-5 salons each (public, private and not joined), a reader (W2) and an
@@ -271,7 +274,8 @@ single message, so the clear moves a PRIVATE mark instead: `channel_members."cle
 (migration 082), which `listUnreadCounts` adds to the floor of what it counts, and which is never
 published to anyone but the member's own devices. Opening a salon afterwards sends the ordinary
 receipt, because that IS reading. (The shade's "Marquer comme lu" keeps moving the receipt: there the
-reader saw the message in the banner. Not changed here.)
+reader saw the message in the banner. Not changed here - and since 2026-10-14 not offered at all on a
+BLIND banner, where the reader saw nothing: [read-receipt-privacy](../../read-receipt-privacy.md).)
 
 | Piece | Where |
 |---|---|
@@ -627,6 +631,11 @@ none, so the control's only possible effect was on the text. **Offering a contro
 anything is how a reader learns by being ignored what a fact could have told them**, and two pickers
 here already excluded the reader for the same reason - `SidebarNewChatModal` and `ChatGroupPanel`.
 This was the last one that did not.
+
+**Tab completes the open @mention list (2026-10-13).** `useMentionAutocomplete.handleKeydown` treats Tab
+like Enter on a row: the highlighted suggestion, else the first, through the same `select`. Shift+Tab,
+a modified Tab, a Tab during IME composition, and any Tab with the list closed or empty are left to
+the browser. No string is involved; touch keyboards have no Tab.
 
 **The exclusion lives in `useMentionAutocomplete`, not in its three callers.** `ChatComposer`,
 `PostComments` and `MarkdownComposerField` all reach the composable through
@@ -3468,7 +3477,9 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 
 - `ready`: the salon was ENTERED this session. `openSalonSendGate` is called where an entry ends, after the private salon's own group is joined, not at the scope registration (a private salon registered but not yet entered would refuse its seal `key-group-not-held`). There are four call sites: the listing walk, `registerJoinedChannel`, community creation and salon creation.
 - `wait`: a listing is in flight, or none has settled since the session began. The row stays `pending` ("En attente"), nothing is sealed, the text is in the unsent ledger, and there is no banner.
-- refused: a listing settled without entering it (`not-listed` if it answered, `listing-failed` if it gave up), its community was purged (`forgetWorkspaceGraineState` -> `left`), or the session ended (`setGraineRuntime(null)` -> `session-ended`). The row turns `error` with its Retry, and the banner names the cause (`salonGateRefusalMessage`, four Paraglide sentences).
+- refused: a listing settled without entering it (`not-listed` if it answered, `listing-failed` if the SERVER failed it - a 4xx, or 5xx after the retries), its community was purged (`forgetWorkspaceGraineState` -> `left`), or the session ended (`setGraineRuntime(null)` -> `session-ended`). The row turns `error` with its Retry, and the banner names the cause (`salonGateRefusalMessage`, four Paraglide sentences).
+
+**A listing that reached NOBODY refuses nothing (2026-10-14).** Offline, the listing gives up `unreachable` (`isTransportFailure` on its last error): no server decided anything, so held sends keep waiting, as the offline banner says, and `retryFailedListing` - called on `connectivity.onReconnect` and on the foreground - lists again and settles them. A reconnect that lands while a listing is still running is OWED to it and taken up only if that listing gives up. Bounded: one reconnect retry per give-up, none after a reconnect's own listing gives up, none owed while the listing's own request is on the wire; the foreground always lists again ([offline-and-weak-network](../offline-and-weak-network.md#14-a-transport-failure-is-one-type-on-every-platform-2026-10-14)). Measured on the Mi 9T (`v1.2.7-alpha.1`): before this, an offline start refused every salon send `listing-failed` for 2.5 min after the network came back ([offline-and-weak-network](../offline-and-weak-network.md#14-a-transport-failure-is-one-type-on-every-platform-2026-10-14)).
 
 **The wait has no timer.** Each way out is an event (entered, listing settled, purge, sign-out), and a listing always settles because it has a bounded retry ladder. `settleSalonListing` refuses waiters only when NO listing is left in flight, and it runs after the reload owed to a join has begun, so a held send waits for that reload too. A listing that began before a sign-out carries the previous session's token, and its settle is ignored.
 

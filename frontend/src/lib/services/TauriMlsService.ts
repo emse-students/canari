@@ -27,6 +27,7 @@ import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
+import { conformPluginFetch } from '$lib/utils/transportFailure';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -97,7 +98,9 @@ export class TauriMlsService extends BaseMlsService {
   private _deviceKeyB64 = '';
 
   constructor() {
-    super('tauri', fetch);
+    // CONFORMED, never raw: the plugin rejects with a bare string where `fetch` throws a TypeError,
+    // and the delivery client classifies its failures by type (`transportFailure.ts`).
+    super('tauri', conformPluginFetch(fetch));
   }
 
   /** Tracks a native invoke so `saveState` can wait for Rust before persisting mls.bin. */

@@ -2,6 +2,7 @@ import type { IStorage, PendingGroupExit } from '$lib/db/types';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { GroupExitRefusedError } from '$lib/mls-client/mlsDeliveryApi';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import {
   classifyExitFailure,
   clearPendingGroupExit,
@@ -70,7 +71,11 @@ describe('classifyExitFailure', () => {
 
   it('reads a transport failure as no answer at all', () => {
     expect(classifyExitFailure(NET)).toBe('unreachable');
-    expect(classifyExitFailure(new Error('network is unreachable'))).toBe('unreachable');
+    // Tauri's network failure, typed at the throw; a sentence that SAYS network is not read.
+    expect(
+      classifyExitFailure(new TransportFailureError('error sending request for url (x)'))
+    ).toBe('unreachable');
+    expect(classifyExitFailure(new Error('network is unreachable'))).toBe('refused');
   });
 
   // A bug in this path throws too, and calling that "the network" would keep a row for ever while

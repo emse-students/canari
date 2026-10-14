@@ -56,10 +56,14 @@
   import { biometricPrompt } from '$lib/stores/biometricPrompt.svelte';
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { connectivity } from '$lib/stores/connectivity.svelte';
   import { removalOutcome } from '$lib/utils/chat/memberRemoval';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
-  import type { WorkspacePurgeContext } from '$lib/composables/useChannelWorkspaces.svelte';
+  import type {
+    ListingRetryTrigger,
+    WorkspacePurgeContext,
+  } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import type { BulkIngestPhase } from '$lib/mls-client';
   import { Phone, PhoneOff, Video } from '@lucide/svelte';
@@ -1184,20 +1188,21 @@
       }
     });
 
-    function handleOnline() {
+    // THE RECONNECT, NOT THE BROWSER'S `online` ALONE: `connectivity.onReconnect` fires on `online`
+    // AND when the server answers again after a transport failure - the one proof that a listing
+    // which gave up on a dead link can now succeed. The decision (retry, or owe it to the listing in
+    // flight) is the composable's: `retryFailedListing`.
+    function handleReconnect(trigger: ListingRetryTrigger) {
       if (!globalSession.isLoggedIn) return;
-      if (globalChannels.isLoadingWorkspaces) return;
-      if (globalChannels.workspacesLoadError === null) return;
-      appendLog('[WORKSPACE-LOAD] online event - retrying community load');
-      void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx());
+      globalChannels.retryFailedListing(channelsCtx(), trigger);
     }
 
     function handleVisibility() {
       if (document.visibilityState !== 'visible') return;
-      handleOnline();
+      handleReconnect('foreground');
     }
 
-    window.addEventListener('online', handleOnline);
+    const stopReconnect = connectivity.onReconnect(() => handleReconnect('reconnect'));
     document.addEventListener('visibilitychange', handleVisibility);
 
     // The refresh endpoint is the only place that learns a session is dead, and it can learn it
@@ -1207,7 +1212,7 @@
     setSessionExpiredHandler(() => void handleSessionExpired());
 
     return () => {
-      window.removeEventListener('online', handleOnline);
+      stopReconnect();
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);
       setGraineRepairListener(null);

@@ -51,12 +51,14 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 
 | What | The measurement that closes it |
 | --- | --- |
+| an Android relaunch (navigation-mode switch, WebView update) destroys the old WebView, so its Web Locks no longer withhold refused salon texts (2026-10-14; compiled and source-gated, never run) | on the Mi 9T, next pre-release: switch the navigation mode twice, CDP lists ONE page, a salon text refused before the switch comes back to its composer; restore gestural ([mobile](frontend/mobile.md#a-relaunched-activity-left-its-webview-alive-and-the-orphan-kept-its-web-locks-2026-10-14)) |
 | a post push tapped with the session dead lands on `/login?returnTo=` the post (2026-10-09) | check H step 4 on the Mi 9T, killed app AND backgrounded ([device-verification](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)); a bare `/login` with no `[hooks] Processing URL` means the intent never reached the JS |
 | after an edge swipe the next scroll is swallowed (Mi 9T, 2026-10-05; NOT a code defect anyone has seen: the page never holds the touch) | check X, ONE real-finger scroll on the Mi 9T with the `[swipeBack]` lines now logged ([device-verification](device-verification.md#x-the-scroll-after-an-edge-swipe---owed-on-the-mi-9t)) |
 | NOTIF-10: a refused push after real banners leaves no generic line (2026-10-09, `GenericBannerLedger` unclaimed notes; JVM-tested, the service's two cancel hooks NOT compiled from here) | `bun archive/notif.mjs 10` on the Mi 9T against a build carrying it: five messages with the push channel cut, then the radios back; the shade ends with the summary and the real banners, NO `Nouveau message de ...` ([mobile](frontend/mobile.md), board row [NOTIF-10](cross-client-testing.md#14---notif---notifications)) |
 | the composer stands still while the keyboard rises (2026-10-09, Android double report and iOS stale inset, unit-proven only) | the Mi 9T half PASSED on 2026-10-13 (869.5 -> 524 in one frame, 5 of 5, [check W](device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)); owed: the iPhone, on a build newer than `1.2.3-alpha.5`. **iPhone 12, 2026-10-11: no 465 plateau any more, but a NEW defect, 3 of 3 rises**: the native "+" twin jumps to 487 pt at once while the web layer is drawn a keyboard height lower and slides up over ~250 ms, so the web composer is hidden and the "+" floats alone (an OPEN P3, cause not looked at) |
 | a salon carries read receipts (#1235, `v0.18.32`) | `READ-6` on the rig, then one look in a real community: a member who is not an admin sees the double check and "Lu par" under their own last message ([social-service](services/social-service.md#read-receipts-in-a-salon)) |
 | a salon's settings are offered only to who may change them (#1228, `v0.18.32`) | one look with a Membre account: the access tab reads only, rename and delete are absent; then grant `channel.manage` to Moderateur in the grid with a moderator's panel open - the controls must appear without a reload |
+| every menu is a fixed segmented control or a hub of route sections (chantier CLOSED 2026-10-14) | one look on each phone: a hub, one section, Back and the Android hardware back, a reload on a section ([section-navigation](frontend/section-navigation.md#closed-2026-10-14---the-final-shape-do-not-reopen)) |
 | `/forms/success` no longer asks for a form called `success` | after a completed payment on production, social-service logs no `invalid input syntax for type uuid: "success"` (once per payment, so ONE payment settles it) |
 | the `apiFetch` fallback now names its cause | the next run's logs separate "a container is restarting" from "refresh is broken"; if one cause dominates, measure its RATE against the population before the name "transient" is believed |
 | the `[PENDING]` line that called a routine race "Non-recoverable" | the next run reports it in `notable` from an ANCHORED rule; the two old spellings stay pinned until A1 runs a build emitting the new line (an APK embeds its frontend) |
@@ -66,6 +68,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | the notification quick reply's 403 | HARDWARE: check K steps 1-5 and **K2** on A1, **with the window ARMED** ([check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)); the iOS twin is corrected identically and unproven |
 | the login button that took a press and showed nothing | any cold `/login` press proves the reordering; NOT explained is the 2026-08-28 "no request" over thirty seconds (a version check running its ladder would have issued three): read the network tail of the next cold login |
 | the last server-composed sentence asks the device which language it reads | after the next release `[PUSH_REGISTER]` prints `locale=fr` or `locale=en`, not `unstated`, for a device that has restarted once; the VISIBLE half needs an iPhone AND a failed NSE |
+| a BLIND salon banner offers no "Marquer comme lu" (2026-10-14, JVM-tested, app compiled) | on the Mi 9T: a salon banner posted while its seed is missing (`[PUSH_BLIND] ... held=true` on chat-delivery) shows no action, and the same banner redrawn with its text shows it ([read-receipt-privacy](read-receipt-privacy.md)) |
 | acknowledging a conversation from the notification shade (NOTIF-6b) | HARDWARE, both platforms: on A1 send from W1, background the app, tap **Marquer comme lu**, OPEN the app - the badge must be gone; then the same with a quick REPLY. `logcat` shows `sendReadWatermark: queued+drained at=<ms>` with the SENDER's instant, never near `now` |
 | the row a push creates carries the GROUP's name | HARDWARE, both platforms, ONE case (a push placeholder), on an APK built from this tree ([check C](device-verification.md#c-the-row-a-push-creates-carries-the-groups-name---owed-on-both-platforms)) |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green, and COMM-8 reading `seedAfterTheGrant: true`, never `repaired` |
@@ -165,6 +168,10 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 ## Asked by the USER on 2026-10-09 - CanaReels in a conversation, a design study, not built
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
+
+## P3 - `isTransportFailure` still reads EVERY `TypeError` as a transport failure (review of #1843, 2026-10-14)
+
+The browser's `fetch` rejects a transport failure with a plain `TypeError`, and the predicate accepts any `TypeError` for that reason - so a programming error (`cannot read properties of undefined`) inside a `try` around a request is also read as "no answer" and retried or held. Fix proposed and NOT built: wrap the native rejection in `trackedFetch` as `TransportFailureError` (the plugin's is already, `conformPluginFetch`) and narrow the predicate to that class plus `RequestDeadlineError`. App-wide, since every `fetch` that bypasses `trackedFetch` would then stop being read as transport ([offline-and-weak-network](frontend/offline-and-weak-network.md#14-a-transport-failure-is-one-type-on-every-platform-2026-10-14)).
 
 ## P2 - How the browser lost the message an overheard digest exposed is not established (2026-10-13)
 
@@ -397,15 +404,28 @@ Both media show "Format non supporte / Telecharger" on the Mi 9T while the iPhon
 v1 proves nothing about who wrote a salon message or where; the table is
 [channel-encryption §7](protocols/channel-encryption.md#7-what-the-server-can-still-do-stated-rather-than-implied),
 the design [§21](protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)
-(all three decisions of 2026-09-28: the whole of it, a relayed endorsement, the DMs included). R1 =
-G2-0 to G2-4 and the writer G2-5 are SHIPPED (#1221; the writer in the stable `v1.0.3`, 2026-10-05).
-`minClientVersion` is `1.0.3` since 2026-10-11, so G2-5's refusal is unblocked; the floor is still raised only on the user's yes.
+(all three decisions of 2026-09-28: the whole of it, a relayed endorsement, the DMs included).
+**EVERYTHING TO BUILD IS BUILT (re-verified against `main` 2026-10-14)**: the reader R1 (G2-0 to
+G2-4b), the verified MLS sender that covers the DMs (G2-1b, web and native), the writer G2-5
+(`v1.0.3`), the refusal of an arriving v1 seed G2-5b (`v1.2.6`), and the server's refusal of an
+unsigned row ([§21.8](protocols/channel-encryption.md#218-the-server-refuses-an-unsigned-salon-row-2026-10-13),
+#1802). Settled by decision, not owed: the floor stays `1.0.3` (a store build from `1.0.3` to
+`1.2.5` still accepts a v1 seed until it updates), and GRAINE-AUTH-4 is a unit test, not a rig row
+(no mutating dev hook). **The chantier closes when the three rows below are done**; what is left
+after that is a dated shim, and it lives in [legacy-compatibility](legacy-compatibility.md) alone.
 
-| WP | What is left |
+| What is owed | Blocked on |
 | --- | --- |
-| G2-5 | **v1 ends (user, 2026-09-28)**. Step one, refusing an ARRIVING v1 seed, SHIPPED in the stable `v1.2.6` (#1749, 2026-10-13, [§21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)); both floors are `1.0.3`, so a client from `1.0.3` to `1.2.5` still accepts a v1 seed until it updates (raising the floor is the user's call). Step two, deleting the v1 reader, waits for the count in [legacy-compatibility](legacy-compatibility.md) |
-| G2-6b | a salon edit from a v1 session has an unsigned, server-supplied `senderId` (a deliberate level, no code owed, [§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05)); closes with the v1 reader. **Only if a channel ever gets an older-page load:** `listMessages` with a `before` cursor omits edit and reaction rows made after the cursor |
-| G2-6 | rig row `GRAINE-AUTH` and `NOTIF-19`/`NOTIF-20` written 2026-10-05 (GRAINE-AUTH-4 has no runner); **GRAINE-AUTH-1..3 are `PASS` since 2026-10-05 and GRAINE-AUTH-5/6 (G2-5b, live and history) since 2026-10-13, on the local estate** ([board](cross-client-testing.md#20---graine---an-author-that-is-proven)); NOTIF-19/20 on a v2 session are `PASS` since 2026-10-05 (APK `7ab8f1780`, the claim that they were owed was stale); **owed: GRAINE-AUTH-4** (no runner can exist without a decision on a mutating dev hook, see the board row) and the iPhone reading ([device-verification](device-verification.md)) |
+| §21.8 in production, then the count re-run (§21.8's SQL: 0 unsigned rows a day after the deploy) | the stable `v1.2.7` (the user's gesture); on dev since `v1.2.7-alpha.1` |
+| The rig: GRAINE-AUTH-1..3 and -6 re-run (the runner changed, `rows.mjs` flags them) and -7 first run, all on one estate carrying #1802 ([board](cross-client-testing.md#20---graine---an-author-that-is-proven)) | a running local estate (none was up on 2026-10-14, so nothing was run) |
+| One reading on a device of the native v1-seed refusal lines (Kotlin `REFUSED N v1 seed(s)`, the NSE's `openSeedFrame: REFUSED v1 seed(s)`), compiled and never run ([§21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11)) | a pre-floor v1 frame replayed to a phone, the only path that reaches them |
+
+The v1 reader, the nullable `signature` column and the edit trust level of
+[§21.5b](protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05) (G2-6b) all go
+together when production counts 0 unsigned rows (373 on 2026-10-14; revisit 2027-10-13), in
+[legacy-compatibility](legacy-compatibility.md). Not Graine work, noted where it was found: `listMessages`
+with a `before` cursor omits edit and reaction rows made after the cursor, which matters only if a
+channel ever gets an older-page load.
 
 What v2 does not close: the server can still admit a device it controls or publish a false device key
 (BasicCredential's limit, §21).
@@ -1060,12 +1080,6 @@ WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominativ
 - **User decision:** let the directory be widened for grantees? (not widened now; only posts, comments, reactions and events are).
 - **Ambiguity to answer:** what "an institution of another campus" means for a reader (the grant reaches it today).
 - The document-reviewer rows were NOT moved into the grants table (a separate capability on the same page).
-
-## Navigation, tooltips and the camera (2026-10-08)
-
-### Sections in depth: built for every menu (lots 1-6, 2026-10-10); owed ONE look on both phones
-
-Hub, one section, Back (and the Android hardware back), reload on a section, on each hub ([section-navigation](frontend/section-navigation.md)); the profile hub (lot 6) was not read in a signed-in browser.
 
 ## Tooltips: one remaining inconsistency (audit 2026-10-08)
 

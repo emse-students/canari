@@ -27,7 +27,8 @@ import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion
 import { customTabsCommand } from '$lib/services/customTabsCommands';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
-import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import {
   REFRESH_HEADER,

@@ -52,6 +52,24 @@ describe('salonSendGate', () => {
     expect(readSalonSendGate('c')).toEqual({ kind: 'refused', reason: 'listing-failed' });
   });
 
+  // Mi 9T, `v1.2.7-alpha.1` (2026-10-14): offline, every salon send was refused `listing-failed`
+  // while the banner promised the messages would leave when the network came back. A listing that
+  // reached NOBODY decided nothing, so it refuses nothing: the reconnect's listing settles them.
+  it('keeps a waiter waiting when the listing reached nobody, and lets the next listing settle it', async () => {
+    const t1 = beginSalonListing();
+    const a = whenSalonSendable('a');
+    const b = whenSalonSendable('b');
+    settleSalonListing(t1, 'unreachable');
+    expect(salonSendWaiterCount('a')).toBe(1);
+    expect(readSalonSendGate('c')).toEqual({ kind: 'wait' });
+
+    const t2 = beginSalonListing();
+    openSalonSendGate('a');
+    settleSalonListing(t2, 'loaded');
+    expect(await a).toEqual({ kind: 'ready' });
+    expect(await b).toEqual({ kind: 'refused', reason: 'not-listed' });
+  });
+
   it('keeps waiting while ANOTHER listing is still in flight (the reload owed to a join)', async () => {
     const first = beginSalonListing();
     const a = whenSalonSendable('a');

@@ -540,3 +540,28 @@ Rows 2-3 are defect A (the archive-replay barrier read `isIdle` as "the group is
 **The checkpoint window.** The outbound checkpoint in `emitFrame` deliberately does not await, sized for 1.5 s in August, and costs 17-20 s on a 19.5 MB `mls.bin`, so any death of the process in that window restores a state behind frames that left. **Do NOT "fix" it by awaiting the checkpoint** (refuted in August at 1.7 s per send, seventeen now): the invariant is that a state restored behind a frame that left is RECOGNISED and repaired, which is a counter and a burn.
 
 **The snapshot version is a per-document counter compared across documents (measured on TAB-4, 2026-09-05).** `saveMlsStateEncrypted` refuses any tagged write whose version is not strictly newer than the stored one. The version comes from `tagMlsSnapshot`, `++_snapshotSeq` - a module-level counter, so ONE COUNTER PER DOCUMENT, seeded from the persisted version by `seedMlsSnapshotSeq` on load. Within one tab that is right (a slow off-thread Argon2 flush finishing after a fresher one must not clobber it). Across two tabs both seed from stored version N and both produce N+1 with different bytes, so the guard sees `version <= stored` and drops the second: `Skipping stale MLS state write (v3294 <= stored v3294)` on an ordinary TAB-4 run. Whether anything is LOST is unanswered: a later flush from either tab carries a higher number and lands, so the state is expected to converge, untested and unmeasured. **A clock written by one writer is not evidence about another's ordering.** The wording is fixed (the collision case says so instead of claiming staleness, `hex.mlsVersion.test.ts` pins both branches); deciding it means a shared counter (a `BroadcastChannel` claim, or an IndexedDB read-modify-write in the same transaction as the put) or establishing that convergence always happens and how long it takes.
+
+### The checkpoint a caller awaits is the one that exported after its change (2026-10-14)
+
+`createMlsStatePersister` (`mls-client/mlsStatePersister.ts`) coalesces checkpoints: one runs, and
+every request made while it runs shares ONE next checkpoint. Until 2026-10-14 a `flush()` made while
+one was running returned **the running checkpoint's promise** and queued the next one unawaited. The
+running checkpoint had exported the state before the caller's change, so the caller was told its
+change was durable when it was not.
+
+The caller that pays is `externalJoin`. It awaits `persistMlsStructuralCheckpoint` because the server
+has already accepted the join, and a reload before it is on disk restores a device that is in the
+tree, cannot read it, and joins again, which forks the group (prod, 2026-08-27). After a sign-in, a
+checkpoint is running ~93 % of the time (Mi 9T, 2026-10-13: 247 checkpoints in 432 s,
+[community-open-slowness](../frontend/community-open-slowness-mi9t-2026-10-13.md#finding-2---after-a-sign-in-the-checkpoint-runs-93--of-the-time-and-each-one-costs-more)),
+so most joins of that storm were acknowledged early.
+
+**Now**: `flush()` returns the running checkpoint only when nothing has been marked dirty since it
+exported. Otherwise it returns the shared NEXT checkpoint, which starts once the running one ends.
+The count is unchanged: N requests during one checkpoint still cost one more. **A failed write
+re-raises the dirty flag**, so the next `flush` writes that state. It used to stay down, and nothing
+would write that state until something else marked it. No new lock: the checkpoint takes neither the
+MLS lock nor anything a flusher holds (`awaitRustMutations` waits only for `oublier_groupe` invokes).
+
+Pinned by `mlsStatePersister.test.ts` ("a flush asked while a checkpoint is running", "a checkpoint
+that FAILED leaves the state dirty"), both failing on the previous shape.

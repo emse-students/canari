@@ -1,8 +1,31 @@
-# Section navigation - going deeper instead of showing every tab (design, 2026-10-08)
+# Section navigation - going deeper instead of showing every tab (CLOSED 2026-10-14)
 
 Requested by the user on 2026-10-08, after reading both existing patterns on a phone: *"Le but n'est pas d'avoir des menus caches"*, and *"on navigue en profondeur"*, like a file explorer or Android's Settings, with at most a path (`Associations > BDE - Bureau des Eleves > Partenariats`).
 
-## State (2026-10-08)
+## CLOSED 2026-10-14 - the final shape, do not reopen
+
+Every menu of the app was inventoried on 2026-10-14 (every route under `frontend/src/routes`, every `$state` holding a tab, every `role="tablist"`, every `overflow-x-auto`) and each one now has ONE of two shapes. A change that adds a third shape is a regression, and `lib/styles/sectionMenus.test.ts` fails on it; the rule is in [durable-rules](../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts).
+
+| Shape | When | Where |
+| --- | --- | --- |
+| **Hub of route sections** under a breadcrumb | more than 3 entries, or entries gated per reader | association edit (`/associations/<slug>/edit/<section>`), association and list public page (`/associations/<slug>/<section>`, `/lists/<slug>/<section>`), list edit, administration (`/admin/<page>`), account settings (`/settings/<section>`), own profile (`/profile/me/<section>`) |
+| **Fixed segmented control** (`ui/SegmentedControl.svelte`) | 3 or so short labels | shop (products, partnerships), moderation (3), legacy dues (4, `text-xs` below `sm`), salon settings (2), community admin panel (2-3), conversation media panel (3), new conversation (2) |
+
+How each shape behaves:
+
+- **A hub** is `navigation/SectionHub.svelte` (rows = links: icon, title, a summary where a count is already loaded, chevron) with ONE table per area deciding both the row and the route guard (`editSections`, `publicSections`, `adminSections`, `settingsSections`, `profileSections`): a section the reader may not open, or that does not exist, is sent back to the hub. `navigation/Breadcrumb.svelte` draws the path, every crumb a link, the last one the title, the back arrow the previous crumb; a phone folds the middle behind an ellipsis. **The same hub on a wide screen** - no rail. A section is a route: Back goes up one level, a reload keeps the place, a link can be shared, a section is `noindex` (the hub stays the ONE indexable page of a public association).
+- **A segmented control** shows every entry at 320 px (equal `minmax(0, 1fr)` columns, icon above a label that may wrap, never icon-only), carries tablist semantics, and adds NO history entry: a page's segment lives in `?tab=` through `navigation/tabQuery.ts`, written with SvelteKit's `replaceState`, so a reload keeps it and Back leaves the page; a panel's segment is local `$state` and the panel stays one entry of `historyOverlayStack`.
+- **History**: a section moves through SvelteKit navigation, an overlay through `historyOverlayStack`, and nothing else writes the History API (the gate enforces it). Back therefore reads one model: router entries for places, overlay entries for what covers them (#1817).
+
+**Decided by the user (2026-10-08 to 2026-10-10)**: every menu, in lots; no persistent rail on wide screens (the same hub as on a phone); every crumb clickable; hub rows with a summary; 3 or fewer short labels stay a fixed control, more become a hub; `/profile` is a hub too, with `me` as the segment that keeps a section key from competing with a user id.
+
+**Refused, and why**: a scrolling strip (entries past the edge are unreachable and nothing says they exist); a wrapped grid of tabs (half a phone screen that never retracts); icon-only segments; a history entry per segment (Back would walk through tabs instead of leaving the page); an optional `[[section]]` for settings (it would drop `/settings` from the static routes).
+
+**Not menus, and left as they are**: the notifications all/unread pills and the posts feed pills (filters of one list, drawn the way the design reference draws them, `flex-wrap`, never clipped); the emoji picker's category row (a tool row inside a picker); the data tables and attachment carousels that scroll on purpose (listed under lot 4).
+
+**Owed, and it does not reopen the chantier**: one look on each phone (a hub, one section, Back and the Android hardware back, a reload on a section), one row in [backlog](../backlog.md#owed-a-verification-and-nothing-else).
+
+## How it was built, lot by lot
 
 **Lot 1 SHIPPED: the shared foundation and the edit page** (`routes/associations/[slug]/edit/[[section]]`). User decisions of 2026-10-08: scope is EVERY menu in the app, in lots; **no persistent rail on wide screens** (the same hub as on a phone - this supersedes point 4 below); the path A > B > C has EVERY crumb clickable, the last being the title, and the back arrow is the previous crumb; hub rows carry icon, title, a summary where a count is already loaded (members) and a chevron.
 
@@ -25,7 +48,7 @@ What exists now, to reuse in the next lots:
 - List edit: `/lists/[slug]/edit/[[section]]` with `LIST_EDIT_SECTIONS` (profile, members, danger) over the same `mayOpenEditSection`; `editSectionHref` and `editTrail` take the base (`/lists`). A segment that is not one of the three is redirected to the hub, one the reader may not open once the roster is known (same guard as lot 1). The hard-coded French "Profil" is now Paraglide.
 - Verified in headless Chrome at 390 and 1280 against a fixture API (hub, every row, browser Back, the arrow, reload on a section, the legacy link, shop with and without products, unknown segment, list public and edit): no horizontal scroll, every Back goes up one level. Still owed: both phones (real router Back, Android hardware back, the calendar event modal opened from a post link then Back), and the calendar overlay history on a section address.
 
-**Lot 3 DONE (2026-10-08, PR draft): the global administration area.** `lib/admin/adminSections.ts` is the ONE table (entry, group, tier): it feeds the hub (`/admin`, rows by group Moderation / Community / Platform / Shortcuts, only what the tier may open, the pending-agenda count as a row summary), the layout's guard (`mayOpenAdminPath`: a path whose entry the tier cannot open - or that matches no entry - is sent to the hub and never rendered, the pages' own checks stay as a second line) and the trail `Admin > Group > Page` (`adminTrail`; the group crumb links to its heading `/admin#group-<key>`, the cartography editor adds a fourth crumb). The strip and `AdminNavGroup` are deleted. `routes/admin/moderation` (3) and `legacy-cotisations` (4) stay segmented controls, now `grid` equal width (icon above label on a phone, no scrolling) and route-backed by `?tab=` through `lib/admin/tabQuery.ts` (read once, written with `replaceState`: no history entry, reload keeps the tab). Every `/admin/<page>` URL and notification target is unchanged. Tested in `adminSections.test.ts` (per tier: listed iff reachable, below-the-page and unknown paths refused). Headless Chrome with a fake global-admin session at 390 and 1280: hub, crumbs, `?tab=` reload, Back, no horizontal scroll. Review pass (headless Chrome, fixture sessions for global, BDE super-admin + validator + moderator, super-admin only, moderator only, validator only, plain association admin): each hub lists exactly what the OLD layout offered that tier, a forbidden typed URL goes to the hub before the page mounts (no data request), a reader with NO tier goes to the dashboard only (the hub redirect used to race it). A phone at 320 px clipped the 4 legacy tabs; the segment text is `text-xs` below `sm`. Owed on both phones: the hub, one page and Back as a moderator/BDE super-admin.
+**Lot 3 DONE (2026-10-08, PR draft): the global administration area.** `lib/admin/adminSections.ts` is the ONE table (entry, group, tier): it feeds the hub (`/admin`, rows by group Moderation / Community / Platform / Shortcuts, only what the tier may open, the pending-agenda count as a row summary), the layout's guard (`mayOpenAdminPath`: a path whose entry the tier cannot open - or that matches no entry - is sent to the hub and never rendered, the pages' own checks stay as a second line) and the trail `Admin > Group > Page` (`adminTrail`; the group crumb links to its heading `/admin#group-<key>`, the cartography editor adds a fourth crumb). The strip and `AdminNavGroup` are deleted. `routes/admin/moderation` (3) and `legacy-cotisations` (4) stay segmented controls, now `grid` equal width (icon above label on a phone, no scrolling) and route-backed by `?tab=` through `lib/admin/tabQuery.ts` (now `lib/navigation/tabQuery.ts`) (read once, written with `replaceState`: no history entry, reload keeps the tab). Every `/admin/<page>` URL and notification target is unchanged. Tested in `adminSections.test.ts` (per tier: listed iff reachable, below-the-page and unknown paths refused). Headless Chrome with a fake global-admin session at 390 and 1280: hub, crumbs, `?tab=` reload, Back, no horizontal scroll. Review pass (headless Chrome, fixture sessions for global, BDE super-admin + validator + moderator, super-admin only, moderator only, validator only, plain association admin): each hub lists exactly what the OLD layout offered that tier, a forbidden typed URL goes to the hub before the page mounts (no data request), a reader with NO tier goes to the dashboard only (the hub redirect used to race it). A phone at 320 px clipped the 4 legacy tabs; the segment text is `text-xs` below `sm`. Owed on both phones: the hub, one page and Back as a moderator/BDE super-admin.
 
 **Lot 4 DONE (2026-10-08, DRAFT PR): the panels' tab strips.** User decisions: no menu hides entries; 3 or fewer short labels stay SEGMENTED CONTROLS and are FIXED (equal width, no scrolling, never icon-only); a panel past 3 sections becomes stacked screens (not needed yet). `lib/components/ui/SegmentedControl.svelte` is the ONE control: `minmax(0, 1fr)` columns, icon above a label that may wrap, optional badge, tablist semantics (roving tabindex, arrows wrap, Home/End, selection follows focus), `tone` amber (panels) or yellow (brand pill), optional `idPrefix` for tab/tabpanel ids, `data-swipe-nav-ignore`. It replaces the scrolling strips of `ChannelSettingsPanel` (2) and `SidebarCommunityAdminPanel` (2-3, roles only for managers) and the hand-made rows of `ConversationMediaPanel` (3), `SidebarNewChatModal` (2) and, factored from lot 3, `routes/admin/moderation` (3) and `legacy-cotisations` (4). A panel stays ONE history entry (the tab is local `$state`, unchanged). Tested in `SegmentedControl.svelte.test.ts`; headless Chrome at 320, 390 and 1280 on a fixture page with the real fr labels: every tab `scrollWidth == clientWidth`, no container scroll (the `en` cookie did not switch the locale in that run, so only fr was measured; en labels are shorter). Verdict on the other `overflow-x-auto` in `src`: none is a tab strip. Tables (`EditAchatsTab`, `EditDelegationTab`, `FormQuestion`, `FormSubmissionsTable`, `PriceGridEditor`, admin `read-access`/`spaces`/`status`/`legacy-cotisations` list) and the code block scroll data on purpose; `PostComposerBar` and `CreatePostForm`/`EditPostForm` carry attachment/option carousels; `MarkdownComposerToolbar` and the `ReelEditor` emoji row are tool rows. The shop, notifications and posts-feed pills carry no `overflow-x-auto` (not measured at 320 in this lot). Owed: one look on both phones.
 
@@ -35,28 +58,7 @@ What exists now, to reuse in the next lots:
 
 **No other menu is left.** Audit 2026-10-10: the only remaining tab sets are the segmented controls of 3 or fewer short labels (shop 2, notifications 2, posts feed 3, moderation 3, media panel 3), which lot 4 decided stay controls.
 
-## What exists (measured 2026-10-08)
-
-No tab set in the app is a route or a history entry; state is local `$state`, Back leaves the page. There is no shared Tab component and no breadcrumb component. Two patterns the user rejects:
-
-| Pattern | Where | Defect |
-| --- | --- | --- |
-| Scrolling row | `AssociationDetailView.svelte` (up to 5 tabs), `ChannelSettingsPanel`, `SidebarCommunityAdminPanel`, `routes/admin/+layout.svelte` | Tabs past the edge are unreachable and nothing says they exist |
-| Wrapped grid | `routes/associations/[slug]/edit/+page.svelte` (12 keys, permission-gated) | Takes half of a phone screen, never retracts |
-
-Small sets that fit (shop 2, moderation 3, notifications 2, posts feed 3, media panel 3) are NOT the problem.
-
-## The target
-
-1. **A hub screen** lists sections as rows (icon, label, one-line summary, chevron), the way Android Settings does. Tapping a row goes to that section's own screen.
-2. **A section is a ROUTE segment**: `/associations/[slug]/[section]` and `/associations/[slug]/edit/[section]`. Back goes up ONE level, a reload keeps the place, a link can be shared. `?section=` (notification deep links `republications`, `payments`, the "create a form" return flow) redirects to the segment.
-3. **A path in the header**, one component, truncating the middle on a phone, the last crumb being the title. The back arrow is the previous crumb.
-4. **Wide screens** (>= `lg`) keep a persistent left rail with the SAME entries: one information architecture, two presentations. A rail has room; a phone does not.
-5. **A set of 3 or fewer short labels that fits at 320 px stays a segmented control.** Over that, it is a hub. This is the rule that ends the third pattern appearing.
-
-## Order
-
-1. The edit page (12 sections, the worst). 2. `AssociationDetailView` (5). 3. The admin layout. 4. Panels only if a reading shows a clipped strip.
+**Lot 7 DONE (2026-10-14): the shop, and the gate.** The closing inventory found ONE menu left in neither shape: the shop's products/partnerships pair, two hand-drawn buttons with no tablist semantics, lost on reload. It is a `SegmentedControl` backed by `?tab=` (`tabQuery` moved from `lib/admin` to `lib/navigation`, its third consumer). The same page consumed its checkout return marker with a raw `history.replaceState(null, '', '/shop')` - the only raw History write in the app outside the overlay stack - which erased SvelteKit's entry state and the open segment; it goes through SvelteKit's `replaceState` now (`withoutQuery`). `lib/styles/sectionMenus.test.ts` asserts the three properties over the whole tree and failed on `main` on both shop defects. Headless Chrome with a fixture session at 390 and 1280: the shop (both segments, `?tab=` on reload, Back leaves the shop, the checkout return keeps the segment and adds no entry, an unknown `?tab=` lands on products), and lot 6's profile, read signed in for the first time (hub without sponsorship when there is no tree, a section, the arrow, Back, reload on a section, an unknown section back to the hub) and the settings hub; no horizontal scroll at either width.
 
 ## Traps already found
 
@@ -65,7 +67,3 @@ Small sets that fit (shop 2, moderation 3, notifications 2, posts feed 3, media 
 - Any `pushState` goes through `historyOverlayStack` or SvelteKit navigation, never raw: ghost entries are what the stack's `skipPops` exists for.
 - `aria-label="Edit sections"` is a hard-coded English string; the new component is Paraglide from its first draft.
 - Back behaviour is a GATE, not an impression: a test per level (section -> hub -> parent -> previous page), and one reading on both phones.
-
-## Decisions still the user's
-
-Whether wide screens keep the rail (proposed: yes), and whether the hub rows carry a summary line (proposed: yes, it is what makes a hub better than a list of labels).
