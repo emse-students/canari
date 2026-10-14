@@ -187,13 +187,44 @@ describe('redactLogLine - what the reading needs must survive', () => {
 
   it('ends a prose value at the next field, so the fields after it survive', () => {
     expect(redact('[X] description: hello, my plan, id=5 mode=x')).toBe(
-      '[X] description: [redacted], id=5 mode=x'
+      '[X] description: [5 chars], id=5 mode=x'
     );
   });
 
   it('says WHAT was removed, so a reader knows a value existed', () => {
     expect(redact('[LOGIN] as a.b@c.fr pin=1234')).toBe('[LOGIN] as [email] pin=[redacted]');
     expect(redact('[MEDIA] refused "Photo de vacances.jpg"')).toBe('[MEDIA] refused "[21 chars]"');
+  });
+});
+
+describe('redactLogLine - a content field is its length, whatever its shape', () => {
+  // Found on the Mi 9T (v1.2.7-alpha.1): the value looked like an identifier, and the preceding
+  // `contact="..."` field's tail had swallowed the `text=` name so it was never judged as a field.
+  const send = (t: string) => `[SEND] handleSendChat: contact="jolan" text="${t}" files=0`;
+  const cases: Array<[string, string, number]> = [
+    ['a single word', 'ok', 2],
+    ['an identifier-like text', 'refuse1-a127', 12],
+    ['a number-like text', '12345', 5],
+    ['an emoji', '\u{1F389}', 2],
+    ['a lower-case word', 'bisous', 6],
+  ];
+  for (const [name, t, n] of cases) {
+    it(`replaces ${name} by its length`, () => {
+      const { line } = redactLogLine(send(t));
+      expect(line).toBe(`[SEND] handleSendChat: contact="[5 chars]" text="[${n} chars]" files=0`);
+    });
+  }
+
+  it('does it for the key=value and JSON forms', () => {
+    expect(redact('[DRAFT] text=ok')).toBe('[DRAFT] text=[2 chars]');
+    expect(redact('[WS] {"text":"bisous","id":"a1"}')).toBe('[WS] {"text":"[6 chars]","id":"a1"}');
+    expect(redact('[X] title: "ok" count=3')).toBe('[X] title: "[2 chars]" count=3');
+  });
+
+  it('keeps the fields around it: ids, counts, enums', () => {
+    expect(redact('[X] kind=poll id=67fde7aa… count=3 text="ok" mode=ready')).toBe(
+      '[X] kind=poll id=67fde7aa… count=3 text="[2 chars]" mode=ready'
+    );
   });
 });
 

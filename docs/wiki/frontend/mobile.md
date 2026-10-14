@@ -440,6 +440,17 @@ PIN, a token or a URL was replaced by a hostile value, and the rendered line was
 hand-written attacks. What still leaked after the fixes is the list below, plus Error messages
 whose text a server or a library wrote.
 
+**A CONTENT FIELD IS ITS LENGTH, WHATEVER ITS SHAPE (Mi 9T reading of `v1.2.7-alpha.1`, 2026-10-14).**
+`text="ok"`, `text="bisous"` and `text="refuse1-a127"` reached the export: a one-word message has
+the shape of an enum, so the quoted-value allowlist kept it. Two causes, both fixed in
+`appLogRedact.ts`. (1) The `FIELD_RE` tail of the PRECEDING field (`contact="jolan"`) swallowed the
+next field's name (` text=`), so `text` was never judged as a field; a tail word now stops where
+`word=` / `word:` begins. (2) A prose-keyed value is replaced by `[N chars]` (`"[N chars]"` when it
+was quoted) instead of the shape test; the list gained `contact`, `comment`, `draft`, `snippet`,
+`excerpt`. The shape allowlist now applies only to values under NON-content keys. The two `text=`
+call sites are `useMessaging.svelte.ts` (`handleSendChat`) and `utils/chat/messaging.ts`
+(`sendChatMessage`); a new site that interpolates content must use a key of that list.
+
 **What it cannot catch, for the reviewer:** an UNQUOTED ASCII word that is a name
 (`Joined channel #bureau`, `Jolan Boudin left`, a path segment `/users/jolan`) - no pattern
 separates `bureau` from `ready` - a quoted name written in lower case (`"bureau"`), a byte list
