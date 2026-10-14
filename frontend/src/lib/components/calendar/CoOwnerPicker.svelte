@@ -39,7 +39,7 @@
     type Association,
     type CalendarEventCoOrganiserState,
   } from '$lib/associations/api';
-  import { groupAssociationsForSelect, listOptionLabel } from '$lib/associations/selectGroups';
+  import { associationSelectGroups, listOptionLabel } from '$lib/associations/selectGroups';
   import { MAX_CO_ORGANISERS, MAX_ORGANISING_ASSOCIATIONS } from '$lib/calendar/coOrganiserCap';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
@@ -102,7 +102,7 @@
     )
   );
 
-  const grouped = $derived(groupAssociationsForSelect(candidates));
+  const groups = $derived(associationSelectGroups(candidates));
 
   /** A typed search that leaves nothing to offer is answered, never shown as an empty nothing. */
   const noMatch = $derived(!atCap && searchQuery.trim() !== '' && candidates.length === 0);
@@ -196,36 +196,34 @@
       <div
         class="border-cn-border bg-cn-surface absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border shadow-lg"
       >
-        {#each [{ label: m.asso_select_group_assos(), items: grouped.assos }, { label: m.asso_select_group_lists(), items: grouped.lists }] as group (group.label)}
-          {#if group.items.length > 0}
-            <p
-              class="text-text-muted bg-cn-bg/40 px-3 py-1 text-xs font-bold tracking-wide uppercase"
-            >
-              {group.label}
-            </p>
-            <ul>
-              {#each group.items as asso (asso.id)}
-                <li>
-                  <button
-                    type="button"
-                    onmousedown={(e) => {
-                      e.preventDefault();
-                      add(asso.id);
-                    }}
-                    class="text-text-main hover:bg-cn-yellow/10 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
-                  >
-                    {#if asso.color}
-                      <span
-                        class="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                        style="background:{asso.color}"
-                      ></span>
-                    {/if}
-                    {optionLabel(asso)}
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          {/if}
+        {#each groups as group (group.label)}
+          <p
+            class="text-text-muted bg-cn-bg/40 px-3 py-1 text-xs font-bold tracking-wide uppercase"
+          >
+            {group.label}
+          </p>
+          <ul>
+            {#each group.items as asso (asso.id)}
+              <li>
+                <button
+                  type="button"
+                  onmousedown={(e) => {
+                    e.preventDefault();
+                    add(asso.id);
+                  }}
+                  class="text-text-main hover:bg-cn-yellow/10 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
+                >
+                  {#if asso.color}
+                    <span
+                      class="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                      style="background:{asso.color}"
+                    ></span>
+                  {/if}
+                  {optionLabel(asso)}
+                </button>
+              </li>
+            {/each}
+          </ul>
         {/each}
       </div>
     {:else if dropdownOpen && noMatch}
