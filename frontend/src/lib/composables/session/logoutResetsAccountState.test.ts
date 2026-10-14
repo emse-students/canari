@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Source guard on what sign-out forgets of the account leaving the tab. `logoutImpl` runs over the
+ * Source guard on what sign-out forgets of the account leaving the tab. `endSessionImpl` runs over the
  * same dozen module-level dependencies `offlineUnlock.test.ts` describes, so the call is pinned in
  * the source rather than through a harness that would assert its own mocks.
  *
@@ -18,7 +18,7 @@ const sessionAuth = read('./sessionAuth.ts');
 
 describe('sign-out forgets the account that left', () => {
   it('resets the announcement state', () => {
-    const logout = sessionAuth.slice(sessionAuth.indexOf('export function logoutImpl'));
+    const logout = sessionAuth.slice(sessionAuth.indexOf('export function endSessionImpl'));
     expect(logout).toContain('resetAnnouncementState();');
   });
 });

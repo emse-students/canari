@@ -39,6 +39,12 @@
           "scheme": [
             "fr.emse.canari"
           ],
+          "host": "signed-out"
+        },
+        {
+          "scheme": [
+            "fr.emse.canari"
+          ],
           "host": "stripe"
         },
         {

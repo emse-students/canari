@@ -21,7 +21,10 @@ import {
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
-import { OIDC_MOBILE_REDIRECT_URI } from '$lib/mobile/appSiteAssociation';
+import {
+  OIDC_MOBILE_POST_LOGOUT_URI,
+  OIDC_MOBILE_REDIRECT_URI,
+} from '$lib/mobile/appSiteAssociation';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { customTabsCommand } from '$lib/services/customTabsCommands';
@@ -40,6 +43,8 @@ import {
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
+/** MiConnect's id_token for the session this device signed in with - see {@link leaveSignedOut}. */
+const OIDC_ID_TOKEN_KEY = 'canari_oidc_id_token';
 const OIDC_STORE_FILE = 'oidc-state.json';
 
 /**
@@ -161,6 +166,28 @@ let _refreshCredentialProvenDead = false;
  */
 export function isRefreshCredentialProvenDead(): boolean {
   return _refreshCredentialProvenDead;
+}
+
+/** The app's reaction to a sign-out, registered by the app shell; see {@link setSignOutHandler}. */
+let _signOutHandler: (() => void) | null = null;
+
+/**
+ * Registers what the app must stop when the session is ended on purpose - the live chat session.
+ *
+ * EVERY SIGN-OUT IN THE APP IS `clearAuth()` THEN `/login` (the dashboard, the navbar, the PIN gate,
+ * the platform gate, the identity-split notice, a dead session), and none of them could reach the
+ * live session, which is owned by the app shell. So since 2026-04-09 a sign-out ended the session
+ * on the SERVER and left it running on the device: `isLoggedIn` true, the socket's foreground resume
+ * still armed. On the Mi 9T, 2026-10-14, the resume after the sign-in browser ran BEFORE the OIDC
+ * callback had its token, read the dead credential, logged the half-ended session out, and the new
+ * sign-in was never unlocked ("Connexion en cours..." for 4 minutes). Announced from here because
+ * this is the one function every sign-out already calls, so no exit can forget it.
+ *
+ * Called FIRST in {@link clearAuth}, synchronously, while the access token still exists: the
+ * teardown deregisters the push token with it.
+ */
+export function setSignOutHandler(fn: (() => void) | null): void {
+  _signOutHandler = fn;
 }
 
 /** Records that a live refresh credential exists again, voiding both verdicts above. */
@@ -377,6 +404,8 @@ export async function handleOidcCallback(
   const data = (await res.json()) as {
     access_token: string;
     refresh_token?: string;
+    /** MiConnect's id_token, kept for ONE use: the `id_token_hint` of the sign-out. */
+    id_token?: string;
     user: {
       id: string;
       email: string;
@@ -413,6 +442,7 @@ export async function handleOidcCallback(
   await flushAndroidCookies('login');
 
   saveUserLocally(data.user);
+  await rememberMiconnectIdToken(data.id_token);
   console.debug('[auth] handleOidcCallback complete');
 
   return data.user;
@@ -427,6 +457,128 @@ export async function getOidcReturnTo(): Promise<string> {
   const returnTo = (await getOidcEntry(OIDC_RETURN_KEY)) || '/chat';
   await removeOidcEntry(OIDC_RETURN_KEY);
   return returnTo;
+}
+
+/**
+ * Keeps MiConnect's id_token for the sign-out that will end this session (or forgets the previous
+ * one when the server sent none).
+ *
+ * WHY THE CLIENT HOLDS IT. Authentik's end-session REFUSES a `post_logout_redirect_uri` without an
+ * `id_token_hint` (`end_session.py`, "id_token_hint required"), and without that redirect the user
+ * is stranded on an Authentik page - inside the Custom Tab, on a phone. The sign-out happens days
+ * after the sign-in, across reloads, so it is persisted in the same store as the OIDC state.
+ *
+ * WHY THAT IS NOT AN ACCESS TOKEN IN STORAGE. No Canari service accepts it (they verify their own
+ * HS256 JWT) and Authentik reads it only as a logout HINT, expiry ignored. Its claims (sub, name,
+ * promo) are what `saveUserLocally` already keeps. What it can do in other hands is sign this user
+ * out of MiConnect, which any page can already do by navigating to end-session without a hint.
+ */
+async function rememberMiconnectIdToken(idToken: string | undefined): Promise<void> {
+  if (idToken) {
+    await setOidcEntry(OIDC_ID_TOKEN_KEY, idToken);
+    return;
+  }
+  // A sign-in with no id_token is a server that predates it, and its sign-out cannot end MiConnect.
+  await removeOidcEntry(OIDC_ID_TOKEN_KEY);
+  awarn('login✓ but no id_token in the response - the sign-out will NOT end the MiConnect session');
+}
+
+/** What a sign-out the USER chose does with the MiConnect session - see {@link leaveSignedOut}. */
+export type MiconnectSignOutPlan =
+  /** Web and desktop: the document goes to end-session, which sends it back to `/login`. */
+  | { kind: 'navigate-document'; url: string }
+  /** Phone apps: end-session runs in the in-app browser the sign-in used, the app goes to `/login`. */
+  | { kind: 'in-app-browser'; url: string }
+  /** MiConnect is not asked. The Canari sign-out is complete; the MiConnect session is NOT ended. */
+  | { kind: 'local-only'; reason: 'not-configured' | 'offline' | 'no-id-token' | 'foreign-issuer' };
+
+/**
+ * Decides how a sign-out reaches MiConnect's end-session, from facts already known - never by
+ * trying and reading the failure.
+ *
+ * The endpoint is the id_token's issuer + `end-session/` (Authentik's discovery says the same:
+ * `/application/o/<slug>/end-session/`), which names the right provider on every estate without a
+ * build variable. An issuer on another origin than `VITE_AUTHENTIK_URL` is refused: the stored
+ * token is the only input here that is not the build's own.
+ *
+ * @param input.webLoginUrl The absolute `/login` of this origin - the web `post_logout_redirect_uri`.
+ */
+export function planMiconnectSignOut(input: {
+  idToken: string | null;
+  authentikBase: string;
+  mobile: boolean;
+  offline: boolean;
+  webLoginUrl: string;
+}): MiconnectSignOutPlan {
+  if (!input.authentikBase) return { kind: 'local-only', reason: 'not-configured' };
+  if (input.offline) return { kind: 'local-only', reason: 'offline' };
+  if (!input.idToken) return { kind: 'local-only', reason: 'no-id-token' };
+  // Read without verifying it: Authentik verifies the hint itself.
+  const issuer = decodeTokenClaims(input.idToken)?.iss ?? null;
+  let sameOrigin = false;
+  try {
+    sameOrigin = !!issuer && new URL(issuer).origin === new URL(input.authentikBase).origin;
+  } catch (e) {
+    awarn(`MiConnect issuer or base URL unparsable: ${String(e)}`);
+  }
+  if (!issuer || !sameOrigin) return { kind: 'local-only', reason: 'foreign-issuer' };
+  const params = new URLSearchParams({
+    id_token_hint: input.idToken,
+    post_logout_redirect_uri: input.mobile ? OIDC_MOBILE_POST_LOGOUT_URI : input.webLoginUrl,
+  });
+  const url = `${issuer.replace(/\/+$/, '')}/end-session/?${params}`;
+  return input.mobile ? { kind: 'in-app-browser', url } : { kind: 'navigate-document', url };
+}
+
+/**
+ * Where a sign-out the USER chose goes once `clearAuth()` has run: through MiConnect's end-session,
+ * so the next sign-in asks who you are (user decision, 2026-10-14). Before it, signing out of Canari
+ * left the MiConnect cookie alive and the next "Se connecter" came straight back as the account that
+ * had just left - on the Mi 9T the user could not reach their own account at all.
+ *
+ * ONLY FOR A SIGN-OUT SOMEBODY ASKED FOR. A dead session (`handleSessionExpired`) and a revoked
+ * device go to `/login` directly: nobody chose to leave MiConnect there, and its cookie is what
+ * makes the next sign-in one tap.
+ *
+ * MiConnect is best-effort and NEVER holds the Canari sign-out hostage: `clearAuth` has already
+ * revoked the session and dropped the credentials. When MiConnect is not asked (`local-only`), that
+ * is said at warn, because the next sign-in on this device may then be answered by the old account.
+ * The id_token is taken whatever happens: its lifetime is the Canari session's.
+ */
+export async function leaveSignedOut(): Promise<void> {
+  const idToken = await getOidcEntry(OIDC_ID_TOKEN_KEY);
+  await removeOidcEntry(OIDC_ID_TOKEN_KEY);
+  const [{ goto }, { resolve }] = await Promise.all([
+    import('$app/navigation'),
+    import('$app/paths'),
+  ]);
+  const loginPath = resolve('/login');
+  const plan = planMiconnectSignOut({
+    idToken,
+    authentikBase: authentikUrl(),
+    mobile: isMobileTauriRuntime(),
+    offline: connectivity.isOffline,
+    webLoginUrl: new URL(loginPath, window.location.origin).href,
+  });
+  if (plan.kind === 'local-only') {
+    awarn(
+      `signout: MiConnect session NOT ended (${plan.reason}) - the next sign-in on this device may be answered by the account that left`
+    );
+  } else if (plan.kind === 'navigate-document') {
+    alog('signout→MiConnect end-session (document)');
+    window.location.href = plan.url;
+    return;
+  } else {
+    try {
+      await invoke(customTabsCommand('openCustomTab'), { url: plan.url });
+      alog('signout→MiConnect end-session (in-app browser)');
+    } catch (e) {
+      awarn(
+        `signout: MiConnect end-session could not open (${String(e)}) - its session is NOT ended`
+      );
+    }
+  }
+  await goto(loginPath, { replaceState: true });
 }
 
 /**
@@ -637,6 +789,17 @@ export function setToken(token: string): void {
  */
 export async function clearAuth(): Promise<void> {
   alog('clear');
+  // THE LIVE SESSION ENDS BEFORE ANYTHING IT USES IS GONE - see `setSignOutHandler`. A throw here is
+  // a session left running for a signed-out user, so it is accused by name, and the sign-out goes on.
+  if (_signOutHandler) {
+    try {
+      _signOutHandler();
+    } catch (e) {
+      console.error(`[A] sign-out handler failed - the live session may still be running: ${e}`);
+    }
+  } else {
+    alog('clear with no sign-out handler registered - no live session to end');
+  }
   _accessToken = null;
   clearWsSessionCookie();
   clearIdentitySplit();

@@ -36,7 +36,12 @@ import {
   VaultOwnerUnprovenError,
   type VaultRefusal,
 } from '$lib/mls-client';
-import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
+import {
+  getToken,
+  clearAuth,
+  SessionExpiredError,
+  isRefreshCredentialProvenDead,
+} from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -75,6 +80,7 @@ import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
 import { sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
 import {
   unregisterMlsStatePersister,
+  activeMlsStatePersister,
   flushActiveMlsStateEncrypted,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePersisterLifecycle';
@@ -355,6 +361,11 @@ export async function resetDeviceAsFreshImpl(
   userIdToReset: string,
   cb: ChatSessionCallbacks
 ): Promise<void> {
+  // A SIGNED-OUT SESSION'S FINAL CHECKPOINT LANDS BEFORE THE DELETE, not after it: the "forgot PIN"
+  // reset runs from the PIN gate of the next sign-in, and a write still in flight from the sign-out
+  // (48 s measured on a Mi 9T) would put back the state under the OLD key that this deletes - so the
+  // new PIN would meet an unopenable state. Settles at once when nothing is retiring.
+  await ctx.whenMlsRetired();
   const { removeMlsState } = await import('$lib/utils/hex');
   await removeMlsState(userIdToReset);
   localStorage.removeItem(`mls_device_id_${userIdToReset}`);
@@ -437,7 +448,7 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
   // what this spans - and being released in `finally`, it can never leave a real user locked out.
   ctx.setWipingRevokedDevice(true);
   try {
-    tearDownLiveSession(ctx, cb, 'revoked');
+    void tearDownLiveSession(ctx, cb, 'revoked');
     ctx.resetMls();
     await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
     await clearAuth();
@@ -541,6 +552,15 @@ export async function loginImpl(
     return;
   }
   ctx.setIsLoginInProgress(true);
+
+  // THE PREVIOUS ACCOUNT'S FINAL CHECKPOINT LANDS FIRST. A sign-out retires its MLS client once that
+  // write is on disk (`endSessionImpl`), and this login reads the disk: opening the state while the
+  // write is in flight would start from a state one write behind. Settles at once when nothing is
+  // retiring, and never rejects.
+  if (ctx.isMlsRetiring()) {
+    cb.log('[LOGIN] Waiting for the signed-out session to finish its final MLS checkpoint.');
+  }
+  await ctx.whenMlsRetired();
 
   ctx.setLoginError('');
   ctx.setUserId(userId.trim().toLowerCase());
@@ -2046,6 +2066,9 @@ export async function recoverPinImpl(
   cb.log('[PIN_RECOVER] Starting recovery...');
   onProgress?.({ percent: 3, stage: 'verify' });
 
+  // The state is read as a signed-out session LEFT it, so its final checkpoint lands first (see
+  // `loginImpl`), and the client that wrote it is retired before `ensureMls` below builds ours.
+  await ctx.whenMlsRetired();
   const { loadMlsState } = await import('$lib/utils/hex');
   const state = await loadMlsState(userId);
   if (!state) {
@@ -2131,7 +2154,7 @@ export function tearDownLiveSession(
   ctx: SessionContext,
   cb: ChatSessionCallbacks,
   reason: 'logout' | 'revoked'
-): void {
+): Promise<void> {
   unregisterOutbox();
   // Detach the reconnect listener too, or a regained network would promote a session that no
   // longer exists - reopening a WebSocket for the user who just signed out.
@@ -2150,25 +2173,38 @@ export function tearDownLiveSession(
   unregisterPeerReturn?.();
   unregisterPeerReturn = null;
 
+  // THE PERSISTER THIS SESSION REGISTERED, named now: the removal below runs after the final flush,
+  // and only what this session installed may be removed then (see `unregisterMlsStatePersister`).
+  const persister = activeMlsStatePersister();
+  const releasePersister = () => {
+    uninstallMlsStatePersisterLifecycle(persister);
+    unregisterMlsStatePersister(persister);
+    // The encrypt worker is shared and recreated on demand; it is disposed only when no session
+    // has registered a persister since - the one that has may be using it.
+    if (activeMlsStatePersister() === null) disposeMlsEncryptWorker();
+  };
+  let finalWrite: Promise<void>;
   if (reason === 'logout') {
-    void flushActiveMlsStateEncrypted().finally(() => {
-      uninstallMlsStatePersisterLifecycle();
-      unregisterMlsStatePersister();
-      // Dispose after the final flush: flushEncrypted relies on the encrypt worker.
-      disposeMlsEncryptWorker();
-    });
+    // Dispose after the final flush: flushEncrypted relies on the encrypt worker. NEVER REJECTS:
+    // the caller chains the MLS client's retirement, and the next login's wait, on it.
+    finalWrite = flushActiveMlsStateEncrypted()
+      .catch((e) => console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`))
+      .then(releasePersister);
   } else {
     // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely
     // the write that must not survive the wipe, so the persister is uninstalled without one.
-    uninstallMlsStatePersisterLifecycle();
-    unregisterMlsStatePersister();
-    disposeMlsEncryptWorker();
+    releasePersister();
+    finalWrite = Promise.resolve();
   }
 
   if (reason === 'logout') {
     const tokenForPushCleanup = ctx.getAuthToken();
     const deviceForPushCleanup = ctx.getMyDeviceId();
-    if (tokenForPushCleanup && deviceForPushCleanup) {
+    if (isRefreshCredentialProvenDead()) {
+      // A DEAD SESSION ENDING: the server already refused this session's credential, so the
+      // deregistration would only earn a refusal - known here, so it is not asked.
+      cb.log('[LOGOUT] Push token left registered - the session is already dead on the server.');
+    } else if (tokenForPushCleanup && deviceForPushCleanup) {
       void stopPushService(ctx.getHistoryBaseUrl(), tokenForPushCleanup, deviceForPushCleanup);
     }
   }
@@ -2203,15 +2239,50 @@ export function tearDownLiveSession(
   setGraineRuntime(null);
   ctx.getCallService()?.setChatNotifier(null);
   resetSiblingCallWarning();
+  return finalWrite;
 }
 
 /**
- * Clears all session state (conversations, tokens, push registration),
- * deregisters the device push token, and redirects to /login.
+ * Ends the live session on the device because the user signed out - the device half of `clearAuth`.
+ *
+ * REACHED FROM `clearAuth` ITSELF (through `setSignOutHandler`, wired by the app shell), because
+ * every sign-out in the app is `clearAuth()` then `/login` and none of them could reach the session.
+ * This used to be `logoutImpl`, which had NO caller since 2026-04-09: the navbar refactor dropped the
+ * last one, so a sign-out ended the session on the server and left it live on the device - socket
+ * resume armed, `isLoggedIn` true. Measured on the Mi 9T 2026-10-14: the foreground resume after the
+ * sign-in browser reconnected that ghost session before the OIDC callback had its token, met the dead
+ * credential, and the new sign-in was never unlocked.
+ *
+ * IDEMPOTENT ON THE SESSION'S OWN STATE: a session that is not logged in has nothing running, which
+ * is also what keeps the revocation wipe's `clearAuth` from running a second, flushing teardown.
+ *
+ * What a PIN protects is untouched - `mls.bin`, the message database and the device-key vault -
+ * because a sign-out keeps the local state (user, "deconnecter seulement, garder l'etat"); the
+ * identity and the credentials are `clearAuth`'s own work.
  */
-export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+  if (!ctx.isLoggedIn()) {
+    cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
+    return;
+  }
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
-  tearDownLiveSession(ctx, cb, 'logout');
+  // THE SOCKET GOES BEFORE THE FINAL FLUSH. The gateway does not close it when the server revokes the
+  // session, and the teardown below unregisters the state persister: left open, it kept decrypting
+  // and ACKing the leaving account's frames, and every MLS advance they made after the flush was in
+  // memory only - lost at the next process death, an epoch behind what the server had delivered.
+  try {
+    ctx.ensureMls().pauseSocket();
+  } catch (e) {
+    cb.log(`[LOGOUT] Could not release the socket - frames may still arrive: ${String(e)}`);
+  }
+  const finalWrite = tearDownLiveSession(ctx, cb, 'logout');
+  // THE CLIENT LEAVES WITH ITS ACCOUNT. Kept, it served the next sign-in as it was: `init` returns at
+  // once on a client that ran, and `resolveDeviceId` hands back its cached id - so account B unlocked
+  // on account A's state and device id. Let go of NOW, destroyed once the final checkpoint above has
+  // landed; `loginImpl` waits for that before it opens any state. See `mlsHolder.ts`.
+  void ctx
+    .retireMls(finalWrite)
+    .then(() => cb.log('[LOGOUT] MLS client retired - the next sign-in opens the state afresh.'));
   notificationPreferences.reset();
   // The announcement asked for, and the one waiting, belong to the account that is leaving: without
   // this the next account signing in in the same tab was never asked on its own behalf (the store's
@@ -2219,9 +2290,5 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   resetAnnouncementState();
   ctx.setStorage(null);
   ctx.setAuthToken('');
-  clearUserLocally();
-  clearDeviceKeyAndWrapKey();
-  clearAuth();
-  cb.log('[LOGOUT] Local state cleared - redirecting to /login.');
-  void goto(resolve('/login'), { replaceState: true });
+  cb.log('[LOGOUT] Live session stopped.');
 }

@@ -37,7 +37,9 @@
     getToken,
     clearAuth,
     setSessionExpiredHandler,
+    setSignOutHandler,
     isRefreshCredentialProvenDead,
+    leaveSignedOut,
   } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
   import {
@@ -637,6 +639,23 @@
   }
 
   /**
+   * The device half of every sign-out, run by `clearAuth` before it drops the credential.
+   *
+   * TWO THINGS OUTLIVED A SIGN-OUT, AND TOGETHER THEY LOCKED THE NEXT SIGN-IN OUT (Mi 9T,
+   * 2026-10-14, 2 of 2). The live session kept running - so the foreground resume after the sign-in
+   * browser reconnected it before the OIDC callback had its token, met the dead credential and set
+   * `isLoggedIn` false behind the callback's back - and `_loginInProgress`, which the login that
+   * SUCCEEDED never releases, still said a login owned the flow. Every later trigger (`afterNavigate`,
+   * the user-id effect) returned on it: no PIN gate, no vault unlock, "Connexion en cours..." for
+   * four minutes, and only a relaunch recovered. Ending the session here removes the race; releasing
+   * the latch here is what lets the next sign-in start, whatever ended the previous one.
+   */
+  function handleSignedOut() {
+    globalSession.endSession(sessionCb());
+    _loginInProgress = false;
+  }
+
+  /**
    * The PIN gate's way out, and the ONE that destroys nothing.
    *
    * The gate stopped being dismissible on 2026-09-05 (see the comment on `PinModal.svelte`), which
@@ -644,8 +663,8 @@
    * has only the destructive reset, and a modal that cannot be closed and offers nothing but "erase
    * my message history" is a softlock with a button on it.
    *
-   * IT IS THE APP'S ORDINARY SIGN-OUT, deliberately - `clearAuth()` then `/login`, the same two
-   * lines the navbar's logout runs. `clearAuth` ends the session on the server, drops the access
+   * IT IS THE APP'S ORDINARY SIGN-OUT, deliberately - `clearAuth()` then `leaveSignedOut()` (which
+   * also ends the MiConnect session), the same two lines the navbar's logout runs. `clearAuth` ends the session on the server, drops the access
    * token, the refresh credential and the persisted ACKs, and touches NOTHING that a PIN protects:
    * `mls.bin`, the message database and the device key vault are all still there afterwards. The
    * user asked for exactly this ("deconnecter seulement, garder l'etat"), and it is what makes the
@@ -663,7 +682,7 @@
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
     await clearAuth().catch((e) => appendLog(`[AUTH] Sign-out: clearAuth failed - ${e}`));
-    await goto(resolve('/login'), { replaceState: true });
+    await leaveSignedOut();
     dismissAuthPrompts();
     pinError = '';
     _loginInProgress = false;
@@ -1159,6 +1178,10 @@
       onLoadHistoryForConversation: (contactName: string, groupId: string) =>
         globalConvs.loadHistoryForConversation(contactName, groupId, convCtx()),
       onMlsReady: () => {
+        // A session that unlocked holds a live credential, so the expiry `handleSessionExpired`
+        // deduplicated is over: the NEXT one must log out again. Never reset, the guard swallowed
+        // every later expiry of the same process - no sign-out, no redirect, a dead session left up.
+        _sessionExpiredHandled = false;
         dismissAuthPrompts();
         checkSiblingCallWarning();
         overrides.onMlsReady?.();
@@ -1243,11 +1266,14 @@
     // reaction once, here, is what makes the logout unmissable instead of depending on which path
     // happened to observe the 401 (WP-ANDROID-SESS-1).
     setSessionExpiredHandler(() => void handleSessionExpired());
+    // And every sign-out, whichever button ran `clearAuth`: see `handleSignedOut`.
+    setSignOutHandler(handleSignedOut);
 
     return () => {
       stopReconnect();
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);
+      setSignOutHandler(null);
       setGraineRepairListener(null);
     };
   });

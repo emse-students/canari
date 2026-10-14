@@ -22,6 +22,11 @@ and nginx verify it without touching a database. The row backs the REFRESH token
   WRITING one. It is an XSS mitigation, never an authentication mechanism.
 - "Hard to guess" is not a defence for an id that an ordinary endpoint hands to any logged-in user.
 - A logout that only clears the cookie has revoked nothing. Deleting the row is the whole point.
+- **And deleting the row ends Canari's session, not MiConnect's.** The identity provider keeps its
+  own cookie, which answers the next sign-in as the account that left. A sign-out somebody chose
+  ends that one too, through end-session, with the id_token the OIDC callback hands the client for
+  that ONE use - not a credential anywhere, see
+  [auth](frontend/modules/auth.md#signing-out-ends-the-miconnect-session-2026-10-14) (2026-10-14).
 
 ## Rotation, replay, and the race
 

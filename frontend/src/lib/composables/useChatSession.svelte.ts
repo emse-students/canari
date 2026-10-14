@@ -27,7 +27,7 @@ export type { ChatSessionCallbacks } from './session/sessionTypes';
 import {
   loginImpl,
   prefetchPinSaltImpl,
-  logoutImpl,
+  endSessionImpl,
   nativeStorageLoginImpl,
   biometricLoginImpl,
   resetDeviceAsFreshImpl,
@@ -46,6 +46,7 @@ import {
   scheduleReconnectImpl,
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
+import { createMlsHolder } from './session/mlsHolder';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
 
 /** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync and backup. */
@@ -69,7 +70,13 @@ export function useChatSession() {
   let isOfflineSession = $state(false);
 
   // ── Services ──────────────────────────────────────────────────────────────
-  let mls: IMlsService | null = $state(null);
+  /** The MLS client and its retirement at a sign-out - see `mlsHolder.ts`. */
+  const mlsHolder = createMlsHolder(() => {
+    if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
+    return createMlsService();
+  });
+  /** The client the current `callService` was built over, so a retired one is never kept. */
+  let callServiceMls: IMlsService | null = null;
   let storage: IStorage | null = $state(null);
   let callService = $state<any>(null);
   let callState = $state<any>('idle');
@@ -125,11 +132,7 @@ export function useChatSession() {
 
   /** Returns the current MLS service instance, creating it lazily if needed. */
   function ensureMls(): IMlsService {
-    if (!mls) {
-      if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
-      mls = createMlsService();
-    }
-    return mls;
+    return mlsHolder.ensure();
   }
 
   // ── SessionContext construction ───────────────────────────────────────────
@@ -159,10 +162,10 @@ export function useChatSession() {
 
     // Services
     ensureMls,
-    resetMls: () => {
-      mls?.destroy?.();
-      mls = null;
-    },
+    resetMls: () => mlsHolder.reset(),
+    retireMls: (finalWrite) => mlsHolder.retire(finalWrite),
+    whenMlsRetired: () => mlsHolder.whenRetired(),
+    isMlsRetiring: () => mlsHolder.isRetiring(),
     getStorage: () => storage,
     setStorage: (v) => {
       storage = v;
@@ -412,10 +415,13 @@ export function useChatSession() {
     // actions
     /** Initialises the MLS service and CallService; must be called from onMount. */
     initServices(log: (msg: string) => void) {
-      if (mls) return;
-      mls = createMlsService();
+      // KEYED ON THE CLIENT, NOT ON "ONE EXISTS": after a sign-out retired the previous account's
+      // client, a call service built over it would still be sending with that account's device id.
+      const svc = ensureMls();
+      if (callServiceMls === svc) return;
+      callServiceMls = svc;
       log(isTauriRuntime() ? 'Initialised in TAURI mode' : 'Initialised in WEB mode (WASM)');
-      callService = new CallService(mls);
+      callService = new CallService(svc);
       callService.callState.subscribe((s: any) => (callState = s));
     },
     /** Returns the current MLS service instance, creating it lazily if needed. */
@@ -446,8 +452,9 @@ export function useChatSession() {
     disableBiometric: () => disableBiometricImpl(ctx),
     /** Persists the "dismissed" flag and hides the biometric enrolment banner. */
     dismissBiometricPrompt: () => dismissBiometricPromptImpl(),
-    /** Clears session state and redirects to /login. */
-    logout: (cb: import('./session/sessionTypes').ChatSessionCallbacks) => logoutImpl(ctx, cb),
+    /** Stops the live session after a sign-out; `clearAuth` reaches it through `setSignOutHandler`. */
+    endSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
+      endSessionImpl(ctx, cb),
     /** Pauses WebSocket and clears background timers when the app is backgrounded. */
     pauseConnection: () => pauseConnectionImpl(ctx),
     /** Resumes WebSocket after app comes back to foreground. */

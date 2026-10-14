@@ -281,8 +281,13 @@ Neither the tab nor the salon showed one. Not reproduced.
 ### P3 - switching accounts on one iPhone install makes the local store unreadable
 
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
+A candidate cause is fixed in #1862 (the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)); owed one re-reading after it ships.
 **The vault half is fixed (2026-10-14)**: the device-key vault names its account, so B is never handed A's key and never rotates A's `mls.bin` ([auth](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
 **What is left is the design, not a defect of the vault: on a phone `mls.bin` is one file per install.** When a refused vault PROVED the file foreign, the gate now withholds the reset and says so; but once every vault is labelled, B takes the PIN path, cannot open A's file, lands on this very message, and the reset it offers deletes A's state. Fix shape: a per-account native state, or an owner recorded beside `mls.bin` that the gate reads to withhold the reset and say "another account's messages are here" instead of "damaged". Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying the fix.
+
+### P2 - a sign-out during a login in progress is not cancelled
+
+The login completes after the sign-out and sets `isLoggedIn` for a signed-out user. Fix shape (a sign-out generation re-read before `setIsLoggedIn(true)`) in [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14).
 
 ### P3 - every cold start re-registers the device and fetches `/groups` two or three times
 

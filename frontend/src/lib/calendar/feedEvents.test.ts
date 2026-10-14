@@ -21,6 +21,7 @@ import {
   MAX_ORGANISER_FACES,
   organisersFullList,
   splitOrganiserFaces,
+  organiserCentred,
 } from './feedEvents';
 
 /** Local-time ISO, so the test says the same thing wherever it runs. */
@@ -527,5 +528,27 @@ describe('eventCardsOnDay - the selector both painted surfaces now share', () =>
     const lecture = event({ startsAt: localIso(2026, 9, 4, 9) });
 
     expect(eventCardsOnDay([holiday, lecture], new Date(2026, 8, 1), 4)).toEqual([lecture]);
+  });
+});
+
+describe('organiserCentred', () => {
+  it('leaves one or two owners as they are (no middle band to give)', () => {
+    expect(organiserCentred(['O'])).toEqual(['O']);
+    expect(organiserCentred(['O', 'A'])).toEqual(['O', 'A']);
+  });
+
+  it('puts the organiser in the middle of three, the invited on the sides in order', () => {
+    expect(organiserCentred(['O', 'A', 'B'])).toEqual(['A', 'O', 'B']);
+  });
+
+  it('keeps the organiser at the middle index for four and five, invited order kept', () => {
+    expect(organiserCentred(['O', 'A', 'B', 'C'])).toEqual(['A', 'B', 'O', 'C']);
+    expect(organiserCentred(['O', 'A', 'B', 'C', 'D'])).toEqual(['A', 'B', 'O', 'C', 'D']);
+  });
+
+  it('does not mutate its input', () => {
+    const input = ['O', 'A', 'B'];
+    organiserCentred(input);
+    expect(input).toEqual(['O', 'A', 'B']);
   });
 });
