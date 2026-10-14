@@ -203,6 +203,8 @@ grid's bands, the day panel and the event dialog - and every list of them is key
 `associationId`. **A name is a label two associations may share and a slug is a URL; neither is an
 identity, and a key that can repeat is a crash rather than a cosmetic slip.**
 
+**Display order on the grid block (2026-10-14, user).** `eventOwners()` stays owner-first (modal, labels). The block's colour segments and split logo are painted in `organiserCentred()` order instead: from three associations up the ORGANISER (the event's owner, who invites the others) is the MIDDLE band and the invited ones fill the sides in their given order; with two, the owner stays first. Screen (`MonthCalendarGridRich`) and PDF export (`calendarExport.ts`) both call it, so they cannot disagree. Bands stay equal width: the centre is not enlarged, to keep the colour segments and logo slices aligned.
+
 **Since D39 a co-owner row means ACCEPTED** (migration 074): naming a co-organiser in the event form
 asks it, and it reaches nothing - this list, its rights, its readers' agenda - until its publishers
 accept. The form reads the states from `GET .../events/:eventId/co-organisers` after it opens and
