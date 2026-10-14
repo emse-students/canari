@@ -56,6 +56,8 @@ const CASES = [
   // record of a round: the census is the measurement, the second line is the decision it produced.
   ['log', '[15:53:07] [MLS] key package census - 7381 proven (7016 one-time, 365 last-resort); 0 expired, 0 undecodable; 1247 mint instant(s), largest batch 51', 'benign'],
   ['log', '[15:53:07] [MLS] key package round: pool full and last-resort valid - nothing to mint', 'benign'],
+  // The discovery sweep reusing the connection sync's `keep` for the same pass (2026-10-14).
+  ['log', '[17:56:04] [SYNC] 8 group(s) kept on the answer this connection pass already had - not asked again', 'benign'],
   // The census without the trailing batch clause, which is what a client that has minted nothing
   // prints - the rule makes that half optional, so a fixture has to hold it to that.
   ['log', '[15:53:07] [MLS] key package census - 50 proven (49 one-time, 1 last-resort); 0 expired, 0 undecodable; 0 mint instant(s)', 'benign'],

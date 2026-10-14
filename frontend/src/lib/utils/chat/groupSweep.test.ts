@@ -163,21 +163,64 @@ describe('forgetGroupsAbsentFromServer', () => {
     expect(lines.filter((l) => l.includes('not asked again'))).toHaveLength(1);
   });
 
-  it('asks again on a new pass - an answer is never believed past the pass that heard it', async () => {
-    const mlsService = makeMls({
-      getLocalGroups: vi.fn().mockReturnValue(['seed-carrier']),
-      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'other', name: 'o' }]),
-      getGroupServerStatus: vi.fn().mockResolvedValue({
+  it('asks again on a new pass, and forgets a group that stopped being a key group in between', async () => {
+    // The first pass hears `keep` (a live key group); by the next pass the community was deleted,
+    // its row tombstoned with the scope cleared. A pass whose answers outlived it would spare the
+    // orphan for ever; a fresh pass reads the row again and collects it.
+    let local = ['seed-carrier'];
+    const getGroupServerStatus = vi
+      .fn()
+      .mockResolvedValueOnce({
         groupId: 'seed-carrier',
         deletedAt: null,
         distributionWorkspaceId: 'w',
+      })
+      .mockResolvedValueOnce({ groupId: 'seed-carrier', deletedAt: '2026-10-14T00:00:00Z' });
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn(() => [...local]),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'other', name: 'o' }]),
+      getGroupServerStatus,
+      forgetGroup: vi.fn(() => {
+        local = [];
       }),
     });
-    for (let pass = 0; pass < 2; pass++) {
+
+    const passes = [new Map(), new Map()];
+    for (const verdicts of passes) {
       const snapshot = await readGroupSweepSnapshot(mlsService, 'u', vi.fn());
-      await forgetGroupsAbsentFromServer(mlsService, snapshot, vi.fn(), new Map());
+      await forgetGroupsAbsentFromServer(mlsService, snapshot, vi.fn(), verdicts);
     }
-    expect(mlsService.getGroupServerStatus).toHaveBeenCalledTimes(2);
+
+    expect(getGroupServerStatus).toHaveBeenCalledTimes(2);
+    expect(mlsService.forgetGroup).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reuse a keep that was only the doubt of an unreadable row', async () => {
+    // The first sweep of the pass cannot read the row (transport failure -> `unknown` -> keep on
+    // doubt). The second sweep of the SAME pass must ask again, and when the server answers that the
+    // row is gone the orphan is removed rather than spared on a non-answer.
+    let local = ['orphan'];
+    const getGroupServerStatus = vi
+      .fn()
+      .mockResolvedValueOnce('error')
+      .mockResolvedValueOnce('absent');
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn(() => [...local]),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'other', name: 'o' }]),
+      getGroupServerStatus,
+      forgetGroup: vi.fn(() => {
+        local = [];
+      }),
+    });
+    const verdicts = new Map();
+
+    for (let sweep = 0; sweep < 2; sweep++) {
+      const snapshot = await readGroupSweepSnapshot(mlsService, 'u', vi.fn());
+      await forgetGroupsAbsentFromServer(mlsService, snapshot, vi.fn(), verdicts);
+    }
+
+    expect(getGroupServerStatus).toHaveBeenCalledTimes(2);
+    expect(mlsService.forgetGroup).toHaveBeenCalledTimes(1);
   });
 
   it('asks nothing at all when the list may not be believed', async () => {

@@ -1,6 +1,6 @@
 import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
 import { forgetMlsGroupIfPresent } from './groupActions';
-import { reconcileAbsentLocalGroup, type LocalGroupFate } from './groupLifecycle';
+import { reconcileAbsentLocalGroup, type AbsentLocalGroupVerdict } from './groupLifecycle';
 
 /**
  * The two reads a group sweep compares, taken in the ONE order that is sound, plus the verdict on
@@ -133,7 +133,7 @@ export async function readGroupSweepSnapshot(
  * the 35 s retry) starts without one and asks again. Created per pass, so it is bounded by the
  * groups of one sweep and dies with it - no clock decides how long an answer is believed.
  */
-export type AbsentGroupVerdicts = Map<string, LocalGroupFate>;
+export type AbsentGroupVerdicts = Map<string, AbsentLocalGroupVerdict>;
 
 /**
  * Destroys the local MLS state of every group in the snapshot the server did not name, and returns
@@ -170,16 +170,18 @@ export async function forgetGroupsAbsentFromServer(
   let keptOnThisPass = 0;
   for (const groupId of snapshot.localGroups) {
     if (snapshot.serverGroupIds.has(groupId)) continue;
-    // ONLY A `keep` IS REUSED. A `forget` was acted on by the sweep that heard it, so the group is
-    // no longer local and cannot reach here again in this pass; were it still here, that would be a
-    // forget that did not happen, and the question deserves asking again rather than a remembered
-    // answer.
+    // ONLY A `keep` THE SERVER ACTUALLY GAVE IS REUSED, and only those are recorded. A `forget` was
+    // acted on by the sweep that heard it, so the group is no longer local; were it still here, that
+    // would be a forget that did not happen, and the question deserves asking again. A `keep` taken
+    // because the row could not be read is the absence of an answer, not an answer: believing it for
+    // the rest of the pass would spare, on a transport failure, an orphan the next sweep's read
+    // would have collected.
     if (verdicts?.get(groupId)?.action === 'keep') {
       keptOnThisPass++;
       continue;
     }
     const fate = await reconcileAbsentLocalGroup(mlsService, groupId);
-    verdicts?.set(groupId, fate);
+    if (fate.action === 'keep' && fate.serverAnswered) verdicts?.set(groupId, fate);
     if (fate.action === 'keep') {
       log(`[SYNC] WASM kept ${groupId.slice(0, 8)}… - ${fate.reason}`);
       continue;
