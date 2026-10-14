@@ -3556,7 +3556,7 @@ is true for a salon (its notice is dated by the server's `createdAt`, unlike a D
 the device clock and still skipped) and the salon `serverAt` includes system rows. Self-heals: the
 next open of the salon sends the mark. No data repair needed.
 
-## Reading `[ADD_MSG] ... selected=` against `[CHAT_VIEW]`
+## Reading the ADD_MSG selected flag against CHAT_VIEW
 
 Added 2026-10-14 for a web report (Firefox, window visible but unfocused) where a message reached the
 list preview and badge but not the open pane until a refresh; not reproduced in Chrome. Two lines
