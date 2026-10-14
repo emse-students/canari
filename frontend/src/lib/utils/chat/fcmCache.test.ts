@@ -119,6 +119,19 @@ describe('consumeFcmCache never downgrades a row it did not write', () => {
     // over a picture already on screen - the same defect, one layer up and without a restart.
     expect(result.messages).toHaveLength(0);
   });
+
+  it('draws a system event as a banner only - no row, so no bubble with no subject', async () => {
+    invoke.mockResolvedValue([
+      { ...pushEntry(), content: 'a ajouté un membre au groupe', type: 'system', mediaKind: null },
+    ]);
+    const { storage, saveMessage } = fakeStorage(null);
+
+    const result = await consumeFcmCache(KEY, storage, SELF);
+
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(result.messages).toHaveLength(0);
+    expect(result.placeholders.size).toBe(0);
+  });
 });
 
 /**
