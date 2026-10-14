@@ -22,7 +22,7 @@ import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
 import { captureConsoleLine, installAppLogFlushTriggers } from '$lib/utils/appLog';
 import { apiServiceOrigins } from '$lib/utils/apiUrl';
 import { createRoutedFetch } from '$lib/utils/fetchRouting';
-import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
+import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
 import { CHECKOUT_RETURN_HOSTS } from '$lib/utils/checkoutCallbacks';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
@@ -314,6 +314,19 @@ if (isTauriRuntime()) {
                   navigate('/forms');
                 }
               }
+              continue;
+            }
+
+            // MiConnect's answer to a sign-out (`leaveSignedOut`): its session is ended, and arriving
+            // here is what closed the in-app browser. The app went to `/login` when it opened that
+            // browser, so there is nothing to route - only the proof to record, since nothing else
+            // tells a sign-out that reached MiConnect from one whose browser was closed by hand.
+            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === OIDC_SIGNED_OUT_HOST) {
+              import('$lib/stores/globalChatSingleton.svelte')
+                .then(({ appendLog }) =>
+                  appendLog('[AUTH] MiConnect session ended - the sign-out browser came back')
+                )
+                .catch((err) => console.error('[hooks] Could not log the MiConnect sign-out', err));
               continue;
             }
 

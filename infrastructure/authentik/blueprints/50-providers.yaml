@@ -109,7 +109,7 @@ entries:
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
       authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
-      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
@@ -148,13 +148,34 @@ entries:
         - matching_mode: "strict"
           url: "https://canari.emse.fr/auth/callback"
           redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "https://canari.emse.fr/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "https://canari-emse.fr/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "https://tauri.localhost/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "http://tauri.localhost/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "http://localhost:1420/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "http://localhost:1421/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "fr.emse.canari://signed-out"
+          redirect_uri_type: "logout"
   - model: authentik_providers_oauth2.oauth2provider
     identifiers:
       name: "miconnect-canari-dev"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
       authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
-      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
@@ -189,13 +210,31 @@ entries:
         - matching_mode: "strict"
           url: "fr.emse.canari://callback"
           redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "https://dev.canari-emse.fr/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "https://tauri.localhost/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "http://tauri.localhost/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "http://localhost:1420/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "http://localhost:1421/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "fr.emse.canari://signed-out"
+          redirect_uri_type: "logout"
   - model: authentik_providers_oauth2.oauth2provider
     identifiers:
       name: "miconnect-canari-local"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
       authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
-      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
@@ -228,6 +267,21 @@ entries:
         - matching_mode: "strict"
           url: "fr.emse.canari://callback"
           redirect_uri_type: "authorization"
+        - matching_mode: "strict"
+          url: "http://localhost:1420/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "http://127.0.0.1:1420/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "http://localhost:1421/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "http://localhost:8081/login"
+          redirect_uri_type: "logout"
+        - matching_mode: "strict"
+          url: "fr.emse.canari://signed-out"
+          redirect_uri_type: "logout"
   - model: authentik_providers_oauth2.oauth2provider
     identifiers:
       name: "miconnect-cercle"

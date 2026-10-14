@@ -317,6 +317,12 @@ export class AuthController {
     access_token: string;
     /** Present only for a client whose engine cannot keep the cookie - see `refresh-transport.ts`. */
     refresh_token?: string;
+    /**
+     * MiConnect's id_token, handed on for ONE use: the `id_token_hint` the client's sign-out sends to
+     * MiConnect's end-session, which refuses a return address without it. It authenticates nothing
+     * here or there (docs/wiki/infrastructure/authentik.md, "Signing out of Canari ends MiConnect").
+     */
+    id_token?: string;
     user: {
       id: string;
       displayName: string;
@@ -425,9 +431,18 @@ export class AuthController {
       );
     }
 
+    if (!tokenData.id_token) {
+      // An `openid` exchange always carries one, so its absence is a provider misconfiguration - and
+      // this user's sign-out will leave their MiConnect session alive.
+      this.logger.warn(
+        'OIDC callback: Authentik returned no id_token - the sign-out cannot end MiConnect'
+      );
+    }
+
     return {
       access_token,
       ...(bodyTransport ? { refresh_token } : {}),
+      ...(tokenData.id_token ? { id_token: tokenData.id_token } : {}),
       user: {
         id: user.id,
         displayName: user.displayName || '',

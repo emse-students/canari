@@ -1,11 +1,9 @@
 <script lang="ts">
-  import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
-  import { goto } from '$app/navigation';
   import { Trash2, LoaderCircle, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
   import { deleteMyAccount } from '$lib/stores/user';
-  import { clearAuth } from '$lib/stores/auth';
+  import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
   import { m } from '$lib/paraglide/messages';
 
   // Irreversible account deletion. The user must type the localized confirmation word to arm
@@ -24,7 +22,7 @@
     try {
       await deleteMyAccount();
       await clearAuth();
-      await goto(resolve('/login'), { replaceState: true });
+      await leaveSignedOut();
     } catch (err) {
       Log.d('handleDeleteAccount failed', err);
       deletionError = m.profile_delete_error_fallback();

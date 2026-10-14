@@ -266,6 +266,40 @@ the same question - the server did not decide anything - and they were two hand-
 agreed only while someone kept them agreeing. `isRetryableLoadError` answers it once, from
 `ChannelApiError.status`, and the toast reads that answer.
 
+### Signing out ends the MiConnect session (2026-10-14)
+
+**User decision**, after the Mi 9T could not reach the user's own account: the sign-out revoked
+Canari's session and left MiConnect's cookie alive, so the next "Se connecter" came back silently as
+the account that had just left. Every sign-out somebody CHOSE is now `clearAuth()` then
+`leaveSignedOut()` (`stores/auth.ts`): the navbar, the dashboard, the PIN gate's "Se deconnecter",
+the maintenance gate, the identity-split notice and the account deletion. A DEAD session
+(`handleSessionExpired`) and a revoked device still go straight to `/login`: nobody chose to leave
+MiConnect there, and its cookie is what makes the next sign-in one tap.
+
+`leaveSignedOut` takes the id_token `handleOidcCallback` kept (OIDC store: `localStorage` on the web,
+the Tauri store in the apps; one use, removed whatever happens), and `planMiconnectSignOut` decides
+from facts already known:
+
+| Platform | What happens | Comes back on |
+| --- | --- | --- |
+| web, desktop | the document goes to `<issuer>end-session/?id_token_hint=...&post_logout_redirect_uri=...` | `<origin>/login` |
+| Android, iOS | the same URL in the in-app browser the sign-in used (Custom Tab / `ASWebAuthenticationSession`, which share the browser's cookie jar where the MiConnect cookie lives); the app goes to `/login` meanwhile | `fr.emse.canari://signed-out`, which closes the browser (iOS: the session completes on its scheme; Android: the `singleTask` activity comes back over the tab) and logs `[AUTH] MiConnect session ended` |
+| known offline, no id_token, issuer on another origin than `VITE_AUTHENTIK_URL` | MiConnect is not asked; the Canari sign-out is complete | `/login`, with a `warn`: `MiConnect session NOT ended (<reason>)` |
+
+The endpoint is the id_token's `iss` + `end-session/`, so each estate names its own provider with no
+build variable. **MiConnect never holds the Canari sign-out hostage**: `clearAuth` has already
+revoked the session when MiConnect is asked. What stays unobservable from the client: a device that
+believes it is online and is not (the web lands on the browser's error page, the phone on the tab's;
+the sign-out is already done underneath), and an iOS user who cancels the system sheet (the plugin
+reports nothing past `start()`). A sign-in that predates the id_token (any session opened before
+this release) has none, so its first sign-out is `local-only` and says so.
+
+The "Rester connecte" vault, `mls.bin` and the message database are untouched, as before. The
+provider half (flow, `logout` redirect URIs) and why authentik needs the hint are on
+[authentik](../../infrastructure/authentik.md#signing-out-of-canari-ends-the-miconnect-session-2026-10-14).
+Tests: `stores/auth.miconnectSignOut.test.ts`, `mobile/oidcSignOutRegistration.test.ts`,
+`mobile/deepLinkHostsDeclared.test.ts`.
+
 ## PIN and device key
 
 The PIN itself never encrypts anything and never leaves the device. It is the input to two
