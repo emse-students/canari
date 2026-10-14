@@ -3555,3 +3555,20 @@ correct, the notices simply were never coverable. **Fix:** `watermarkAfterReadin
 is true for a salon (its notice is dated by the server's `createdAt`, unlike a DM's, which is stamped by
 the device clock and still skipped) and the salon `serverAt` includes system rows. Self-heals: the
 next open of the salon sends the mark. No data repair needed.
+
+## Reading `[ADD_MSG] ... selected=` against `[CHAT_VIEW]`
+
+Added 2026-10-14 for a web report (Firefox, window visible but unfocused) where a message reached the
+list preview and badge but not the open pane until a refresh; not reproduced in Chrome. Two lines
+bracket the unknown stretch between the conversation map and the pane DOM:
+
+- `[ADD_MSG] Batch into "<id>": N added, M upgraded, selected=<bool>` - `selected` is
+  `ctx.selectedContact === <conversation id>` at flush time.
+- `[CHAT_VIEW] <id8> messages N (hasNewMessage=<bool>, response=<respondToNewMessage>)` - logged by
+  `ChatArea`'s `conversation` effect once per change of the DISPLAYED count (not per run, not on a
+  switch); `response` is `n/a` for a shrink.
+
+**Reading.** `selected=true` with no following `[CHAT_VIEW]` of N+1: the map-to-prop chain is broken
+(the pane never received the grown conversation). `[CHAT_VIEW]` N+1 with the row still missing:
+rendering or scroll (`windowStart`, the pin), not data flow. `selected=false` while the pane is open
+means `selectedContact` and the pane disagree.

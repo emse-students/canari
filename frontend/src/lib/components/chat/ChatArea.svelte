@@ -26,7 +26,12 @@
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
   import { resolveRenderWindow, stepWindowOlder } from '$lib/utils/chat/renderWindow';
-  import { isPinnedToBottom, respondToNewMessage } from '$lib/utils/chat/threadAnchor';
+  import {
+    chatViewCountLine,
+    isPinnedToBottom,
+    respondToNewMessage,
+    type NewMessageResponse,
+  } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
   import { countUnreadForUser, seenByAnchors, watermarkFor } from '$lib/utils/chat/readState';
@@ -883,6 +888,7 @@
 
       const hasConversationChanged = convoKey !== lastConversationKey;
       const hasNewMessage = messageCount > lastMessageCount;
+      let viewResponse: NewMessageResponse | null = null;
 
       if (hasConversationChanged) {
         switchTime = computeMessageListSwitchTime(c.messages);
@@ -917,12 +923,20 @@
           isNearBottom,
           ownMessageAdded: c.messages.at(-1)?.isOwn === true,
         });
+        viewResponse = response;
         if (response !== 'stay') {
           windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
           if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
           else tick().then(() => scrollToBottom(true));
         }
       }
+
+      // The pane's side of the `[ADD_MSG] ... selected=` pair: one line per change of the
+      // displayed count, never per effect run, and none for a switch (another list, not an arrival).
+      const viewLine = hasConversationChanged
+        ? null
+        : chatViewCountLine(c.id, lastMessageCount, messageCount, viewResponse);
+      if (viewLine) Log.d('CHAT_VIEW', viewLine);
 
       lastConversationKey = convoKey;
       lastMessageCount = messageCount;

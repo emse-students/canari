@@ -1060,7 +1060,7 @@ export function useMessaging() {
     // System messages are named individually because they are few, and because a card is one.
     const systemIds = brandNew.filter((m) => m.isSystem).map((m) => m.id);
     console.log(
-      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded` +
+      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded, selected=${ctx.selectedContact === normalized}` +
         (systemIds.length > 0 ? ` - system: ${systemIds.join(', ')}` : '')
     );
 
