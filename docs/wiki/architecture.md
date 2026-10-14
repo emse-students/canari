@@ -189,7 +189,7 @@ All tables share the `auth_db` database host. Full schemas are in the service wi
 | `one_time_key_packages` | pool of pre-keys per `(userId, deviceId)` |
 | `queued_message` | `recipientId`, `deviceId`, `proto`, `isWelcome`, `isCommit`, `groupId`, `type`, `ratchetTree` |
 | `dm_groups` | `id`, `isGroup`, `activeEpoch` |
-| `dm_group_members` | `groupId`, `userId`, `role`, `joinedAt` (arrival, never refreshed; removal hard-deletes the row) |
+| `dm_group_members` | `groupId`, `userId`, `role`, `joinedAt` (arrival, never refreshed; removal hard-deletes the row), `notifLevel` (`all` / `mentions` / `none`, migration 029 - [chat-delivery](services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions)) |
 | `dm_device_group_memberships` | `groupId`, `userId`, `deviceId`, `status` (pending/active), `kickedAt`, `pendingSince` |
 | `push_tokens` | `userId`, `deviceId`, `token`, `platform` (fcm/apns) |
 

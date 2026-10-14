@@ -21,7 +21,7 @@ vi.mock('$lib/utils/appVersion', async (orig) => ({
   isMobileTauriRuntime: () => false,
 }));
 const api = vi.hoisted(() => ({
-  fetchDisabledCategories: vi.fn(),
+  fetchNotificationPreferences: vi.fn(),
   saveDisabledCategories: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('$lib/notifications/preferencesApi', () => api);
@@ -84,7 +84,7 @@ describe('a switched-off category raises no local notification', () => {
   });
 
   it('is silent for a conversation when "messages" is off', async () => {
-    api.fetchDisabledCategories.mockResolvedValue(['messages']);
+    api.fetchNotificationPreferences.mockResolvedValue({ disabled: ['messages'], groupLevels: {} });
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('conv-1');
     await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'm2' });
@@ -92,7 +92,7 @@ describe('a switched-off category raises no local notification', () => {
   });
 
   it('keeps notifying a salon when only "messages" is off', async () => {
-    api.fetchDisabledCategories.mockResolvedValue(['messages']);
+    api.fetchNotificationPreferences.mockResolvedValue({ disabled: ['messages'], groupLevels: {} });
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('channel_abc');
     await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 'm3' });
@@ -100,10 +100,58 @@ describe('a switched-off category raises no local notification', () => {
   });
 
   it('is silent for a salon when "channels" is off', async () => {
-    api.fetchDisabledCategories.mockResolvedValue(['channels']);
+    api.fetchNotificationPreferences.mockResolvedValue({ disabled: ['channels'], groupLevels: {} });
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('channel_abc');
     await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 'm4' });
     expect(sendSystemNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe("a private conversation's level gates the notification this client raises", () => {
+  const ME64 = 'a'.repeat(64);
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    notificationPreferences.reset();
+    hideTheTab();
+  });
+
+  async function arrive(level: 'all' | 'mentions' | 'none', text: string, id: string) {
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: level === 'all' ? {} : { 'conv-1': level },
+    });
+    await notificationPreferences.load();
+    const { ctx, sendSystemNotification } = makeContext('conv-1');
+    (ctx as { userId: string }).userId = ME64;
+    await useMessaging().addMessageToChat(PEER, text, 'conv-1', ctx, { messageId: id });
+    return sendSystemNotification;
+  }
+
+  it('raises nothing at none, even for a mention', async () => {
+    expect(await arrive('none', `hey @[${ME64}]`, 'l1')).not.toHaveBeenCalled();
+  });
+
+  it('raises a mention of this account at mentions', async () => {
+    expect(await arrive('mentions', `hey @[${ME64}]`, 'l2')).toHaveBeenCalledTimes(1);
+  });
+
+  it('raises nothing at mentions for a message naming nobody, or somebody else', async () => {
+    expect(await arrive('mentions', 'hello', 'l3')).not.toHaveBeenCalled();
+    expect(await arrive('mentions', `hey @[${'b'.repeat(64)}]`, 'l4')).not.toHaveBeenCalled();
+  });
+
+  it('leaves a salon to its own level - its key is channel_', async () => {
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: { channel_abc: 'none' },
+    });
+    await notificationPreferences.load();
+    const { ctx, sendSystemNotification } = makeContext('channel_abc');
+    await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 'l5' });
+    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
   });
 });

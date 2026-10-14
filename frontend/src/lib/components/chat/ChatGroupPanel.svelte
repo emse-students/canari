@@ -27,6 +27,9 @@
   import { getToken } from '$lib/stores/auth';
   import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
   import { joiningRows, membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
+  import NotificationLevelControl from './NotificationLevelControl.svelte';
+  import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
+  import type { ConversationNotificationLevel } from '$lib/notifications/conversationLevel';
 
   /**
    * Props for the ChatGroupPanel component.
@@ -123,6 +126,43 @@
       imageUploadError = m.chat_group_image_upload_error();
     } finally {
       imageUploading = false;
+    }
+  }
+
+  // ── Notification level (all | mentions | none), the salon's three for this conversation ──────
+  //
+  // The store mirrors the server's levels, loaded at sign-in. Until it has answered, nothing is
+  // checked: `all` is the server's default for an unset conversation, not this side's answer to give
+  // (the same rule `ChannelSettingsPanel` learnt). A failed read leaves the choice offered unchecked,
+  // and a click writes an authoritative value.
+  let levelLoading = $state(false);
+  let levelSaving = $state(false);
+  const level = $derived<ConversationNotificationLevel | null>(
+    notificationPreferences.loaded && groupId ? notificationPreferences.groupLevel(groupId) : null
+  );
+
+  // ONE read per mount when sign-in's has not answered: a failed read must not become a loop, and
+  // the next sign-in or settings visit reads again.
+  let levelReadAsked = false;
+  $effect(() => {
+    if (!groupId || notificationPreferences.loaded || levelReadAsked) return;
+    levelReadAsked = true;
+    levelLoading = true;
+    void notificationPreferences.load().then((ok) => {
+      levelLoading = false;
+      if (!ok) console.error('[CHAT] notification levels unreadable - the control shows no level');
+    });
+  });
+
+  /** Persists the chosen level; the store moves it at once and reverts a refused write. */
+  async function setLevel(next: ConversationNotificationLevel) {
+    if (!groupId || next === level || levelSaving) return;
+    levelSaving = true;
+    try {
+      const ok = await notificationPreferences.setGroupLevel(groupId, next);
+      Log.d(`chatGroupPanel.setLevel(${next}) ${ok ? 'saved' : 'refused - reverted'}`);
+    } finally {
+      levelSaving = false;
     }
   }
 
@@ -303,6 +343,24 @@
           {m.common_validate_button()}
         </button>
       </div>
+    </div>
+  {/if}
+
+  <!-- Notifications: this account's level for this conversation, group or direct message. -->
+  {#if groupId}
+    <div
+      class="bg-cn-surface flex flex-col rounded-2xl border border-black/5 p-4 shadow-sm @md:p-5 dark:border-white/10"
+    >
+      <NotificationLevelControl
+        {level}
+        loading={levelLoading}
+        saving={levelSaving}
+        description={isGroupConversation
+          ? m.chat_group_notifications_description()
+          : m.chat_dm_notifications_description()}
+        headingId="group-notif-heading"
+        onSelect={(next) => void setLevel(next)}
+      />
     </div>
   {/if}
 

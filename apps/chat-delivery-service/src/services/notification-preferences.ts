@@ -1,6 +1,11 @@
 import type { EntityManager } from 'typeorm';
 import { Logger } from '@nestjs/common';
 import { NotificationPreference } from '../entities/notification-preference.entity';
+import {
+  GroupMember,
+  isGroupNotificationLevel,
+  type GroupNotificationLevel,
+} from '../entities/group-member.entity';
 import { isNotificationCategory, type NotificationCategory } from './push-category';
 
 const logger = new Logger('NotificationPreferences');
@@ -34,6 +39,70 @@ export async function readDisabledCategoriesStrict(
 ): Promise<ReadonlySet<NotificationCategory>> {
   const row = await manager.findOne(NotificationPreference, { where: { userId } });
   return new Set((row?.disabledCategories ?? []).filter(isNotificationCategory));
+}
+
+/**
+ * How loud conversation `groupId` is for `userId`, for the PUSH path: `all` for a member who never
+ * chose, and for somebody with no membership row (the push path never decides membership).
+ *
+ * Same failure rule as {@link readDisabledCategories}, for the same reason: a read that fails answers
+ * `all` - the answer of a member who never chose - and says so.
+ */
+export async function readGroupNotificationLevel(
+  manager: EntityManager,
+  groupId: string,
+  userId: string
+): Promise<GroupNotificationLevel> {
+  try {
+    const row = await manager.findOne(GroupMember, {
+      select: { id: true, notifLevel: true },
+      where: { groupId, userId },
+    });
+    return row && isGroupNotificationLevel(row.notifLevel) ? row.notifLevel : 'all';
+  } catch (e) {
+    logger.warn(
+      `[NOTIF_PREF] group level read failed for group=${groupId} user=${userId}: ${String(e)} - delivering as all`
+    );
+    return 'all';
+  }
+}
+
+/**
+ * Every conversation `userId` has made quieter than `all`, keyed by group id - what a client loads
+ * once to gate the notifications it raises ITSELF (a frame received over the socket, no push). An
+ * absent group is `all`. Strict: a settings read must never draw a level that lies.
+ */
+export async function readGroupNotificationLevelsStrict(
+  manager: EntityManager,
+  userId: string
+): Promise<Record<string, Exclude<GroupNotificationLevel, 'all'>>> {
+  const rows = await manager.find(GroupMember, {
+    select: { id: true, groupId: true, notifLevel: true },
+    where: { userId },
+  });
+  const levels: Record<string, Exclude<GroupNotificationLevel, 'all'>> = {};
+  for (const row of rows) {
+    if (row.notifLevel === 'mentions' || row.notifLevel === 'none') {
+      levels[row.groupId] = row.notifLevel;
+    }
+  }
+  return levels;
+}
+
+/**
+ * Sets `userId`'s level for `groupId` on their own membership row.
+ *
+ * @returns false when the caller has no membership row - not a member, so nothing was written and
+ *          the caller must refuse rather than report it saved.
+ */
+export async function writeGroupNotificationLevel(
+  manager: EntityManager,
+  groupId: string,
+  userId: string,
+  level: GroupNotificationLevel
+): Promise<boolean> {
+  const result = await manager.update(GroupMember, { groupId, userId }, { notifLevel: level });
+  return (result.affected ?? 0) > 0;
 }
 
 /** Replaces the account's disabled set. Unknown ids are the caller's to refuse. */

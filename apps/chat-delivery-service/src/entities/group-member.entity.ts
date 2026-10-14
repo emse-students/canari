@@ -1,5 +1,20 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Unique } from 'typeorm';
 
+/** A member's notification level for one conversation - the salon's three levels. */
+export type GroupNotificationLevel = 'all' | 'mentions' | 'none';
+
+/** Every {@link GroupNotificationLevel}, for validating what a client sends. */
+export const GROUP_NOTIFICATION_LEVELS: readonly GroupNotificationLevel[] = [
+  'all',
+  'mentions',
+  'none',
+];
+
+/** Whether `value` is a {@link GroupNotificationLevel}. */
+export function isGroupNotificationLevel(value: unknown): value is GroupNotificationLevel {
+  return (GROUP_NOTIFICATION_LEVELS as readonly unknown[]).includes(value);
+}
+
 /**
  * Records the user-level membership of a person in an MLS group, independently
  * of which devices that user currently has enrolled. A user has exactly one row
@@ -39,6 +54,19 @@ export class GroupMember {
   /** Permission level: `admin` can add/remove members; `member` can only send messages. */
   @Column({ type: 'enum', enum: ['admin', 'member'], default: 'member' })
   role: 'admin' | 'member';
+
+  /**
+   * How loud this conversation is for THIS member: `all` (default), `mentions`, `none`.
+   *
+   * The salon level (`channel_members.notifLevels`, social-service) for a private conversation, kept
+   * on the membership row for the same reasons: per account, so it follows the member to every
+   * device and survives a reinstall, and it ends with the membership. `none` is applied by the
+   * server (the frame is sent silent); `mentions` cannot be, because the server never sees who a
+   * ciphertext mentions - it travels in the push and the DEVICE decides after decrypting
+   * (`buildPushDataFields`, docs/wiki/services/chat-delivery.md). Migration 029.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'all' })
+  notifLevel: GroupNotificationLevel;
 
   /**
    * When this membership was CREATED, and never anything else.

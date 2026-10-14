@@ -103,6 +103,7 @@ import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
 import { categoryOfConversation } from '$lib/notifications/categories';
+import { conversationLevelRefusal } from '$lib/notifications/conversationLevel';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
 
@@ -435,6 +436,30 @@ export function useMessaging() {
       return;
     }
 
+    // THE CONVERSATION'S OWN LEVEL (all / mentions / none), the salon's three for a private
+    // conversation. The server applies `none` to every push and hands `mentions` to the device; a
+    // frame received here involves no push, so this is the client's half - the ONE place it decides,
+    // with the plaintext already in hand. Salons are not consulted here: their key is `channel_`.
+    //
+    // WHETHER THIS MESSAGE NAMES THE READER IS DECIDED HERE, WHERE BOTH HALVES ARE ALREADY KNOWN -
+    // the raw text and `ctx.userId` - rather than left to the layer that only sees a title and a
+    // body. It decides the level above and picks the notification channel, which is the reader's
+    // own mute, sound and DND switch. `CanariFirebaseMessagingService` makes the same decision from the same token for
+    // messages that arrive as a push; this is the WebSocket half of one rule, and until 2026-09-08
+    // it did not exist, so which switches applied to a mention depended on which transport
+    // happened to carry it (NOTIF-16).
+    const mentionsMe = extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId));
+    if (category === 'messages') {
+      const refusal = conversationLevelRefusal(
+        notificationPreferences.groupLevel(conversationKey),
+        mentionsMe
+      );
+      if (refusal) {
+        console.log(`[NOTIF] Inbound in ${conversationKey} - ${refusal}; nothing raised.`);
+        return;
+      }
+    }
+
     // NATIVE MOBILE USED TO RETURN HERE, AND THAT IS WHY A PHONE IN A POCKET NEVER NOTIFIED.
     //
     // The premise was "the background push handler posts its own, so the user would get two". It
@@ -489,14 +514,6 @@ export function useMessaging() {
         : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
-    // WHETHER THIS MESSAGE NAMES THE READER IS DECIDED HERE, WHERE BOTH HALVES ARE ALREADY KNOWN -
-    // the raw text and `ctx.userId` - rather than left to the layer that only sees a title and a
-    // body. It picks the notification channel, which is the reader's own mute, sound and DND
-    // switch. `CanariFirebaseMessagingService` makes the same decision from the same token for
-    // messages that arrive as a push; this is the WebSocket half of one rule, and until 2026-09-08
-    // it did not exist, so which switches applied to a mention depended on which transport
-    // happened to carry it (NOTIF-16).
-    const mentionsMe = extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId));
     const senderName = notificationSenderName(senderId, convo);
     const notificationBody = preview || m.notif_new_message();
     void ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {

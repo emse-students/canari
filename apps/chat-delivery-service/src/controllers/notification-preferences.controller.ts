@@ -3,8 +3,11 @@ import {
   Body,
   Controller,
   Get,
+  ForbiddenException,
   Headers,
   Logger,
+  Param,
+  Patch,
   Put,
   UseGuards,
 } from '@nestjs/common';
@@ -16,8 +19,18 @@ import { sanitizeQueryValue } from '../utils/sanitize';
 import { isNotificationCategory, NOTIFICATION_CATEGORIES } from '../services/push-category';
 import {
   readDisabledCategoriesStrict,
+  readGroupNotificationLevelsStrict,
   writeDisabledCategories,
+  writeGroupNotificationLevel,
 } from '../services/notification-preferences';
+import {
+  GROUP_NOTIFICATION_LEVELS,
+  isGroupNotificationLevel,
+  type GroupNotificationLevel,
+} from '../entities/group-member.entity';
+
+/** A group id is a uuid; anything else is refused before it reaches a uuid column. */
+const GROUP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * The account's notification categories - what a client reads to draw the settings and to gate its
@@ -33,13 +46,55 @@ export class NotificationPreferencesController {
     private readonly prefRepo: Repository<NotificationPreference>
   ) {}
 
-  /** The categories this account has switched off (empty = everything on). */
+  /**
+   * The categories this account has switched off (empty = everything on), and every conversation it
+   * made quieter than `all` (absent = `all`) - the two things a client needs to gate the
+   * notifications it raises itself, in the one read it already makes at sign-in.
+   */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/notification-preferences')
-  async get(@Headers('x-user-id') userIdRaw: string): Promise<{ disabled: string[] }> {
+  async get(
+    @Headers('x-user-id') userIdRaw: string
+  ): Promise<{ disabled: string[]; groupLevels: Record<string, GroupNotificationLevel> }> {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const disabled = await readDisabledCategoriesStrict(this.prefRepo.manager, userId);
-    return { disabled: [...disabled] };
+    const groupLevels = await readGroupNotificationLevelsStrict(this.prefRepo.manager, userId);
+    return { disabled: [...disabled], groupLevels };
+  }
+
+  /**
+   * Sets the caller's level for ONE conversation (`all` | `mentions` | `none`) - the salon's
+   * `PATCH channels/:id/notification-level` for a private conversation. Stored on the caller's own
+   * membership row, so a non-member is refused rather than told it was saved.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Patch('mls/groups/:groupId/notification-level')
+  async setGroupLevel(
+    @Headers('x-user-id') userIdRaw: string,
+    @Param('groupId') groupIdRaw: string,
+    @Body() body: { level?: unknown }
+  ): Promise<{ groupId: string; level: GroupNotificationLevel }> {
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
+    if (!GROUP_ID_RE.test(groupId)) throw new BadRequestException('groupId must be a uuid');
+    const level = body?.level;
+    if (!isGroupNotificationLevel(level)) {
+      throw new BadRequestException(`level must be one of ${GROUP_NOTIFICATION_LEVELS.join(', ')}`);
+    }
+    const written = await writeGroupNotificationLevel(
+      this.prefRepo.manager,
+      groupId,
+      userId,
+      level
+    );
+    if (!written) {
+      this.logger.warn(
+        `[NOTIF_PREF] group level REFUSED group=${groupId} user=${userId}: not a member`
+      );
+      throw new ForbiddenException('Not a member of this conversation');
+    }
+    this.logger.log(`[NOTIF_PREF] group=${groupId} user=${userId} level=${level}`);
+    return { groupId, level };
   }
 
   /** Replaces the disabled set. Unknown ids are refused: a typo must not read as "saved". */
