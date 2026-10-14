@@ -15,6 +15,7 @@ import { showConfirm } from '$lib/stores/confirm.svelte';
 import { createStaleBuildRecovery } from '$lib/utils/staleBuild';
 import { installBootBenchDevTools, markBoot } from '$lib/mls-client/bootBenchmark';
 import { prefetchMlsWasmAtBoot } from '$lib/mls-client/wasmPrefetch';
+import { describeDeepLink } from '$lib/utils/logSanitize';
 import { openClaimedAppLink } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
@@ -137,7 +138,7 @@ if (isTauriRuntime()) {
         console.log('[hooks] onOpenUrl called with', urls.length, 'URL(s)');
 
         for (const url of urls) {
-          console.log('[hooks] Processing URL:', url);
+          console.log('[hooks] Processing URL:', describeDeepLink(url));
 
           try {
             // Parse the URL
@@ -156,7 +157,10 @@ if (isTauriRuntime()) {
             if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'open') {
               const target = u.searchParams.get('url') ?? '';
               if (!openClaimedAppLink(target)) {
-                console.warn('[hooks] open link names no claimed Canari page, ignoring:', target);
+                console.warn(
+                  '[hooks] open link names no claimed Canari page, ignoring:',
+                  describeDeepLink(target)
+                );
               }
               continue;
             }
@@ -190,7 +194,9 @@ if (isTauriRuntime()) {
                     // The one line that says the native half of a notification tap worked. Without
                     // it the chain - PendingIntent, onNewIntent, the deep-link plugin, this handler -
                     // fails silently and indistinguishably at four different hops.
-                    appendLog(`[notifNav] deep link received: ${url} -> target ${groupId}`);
+                    appendLog(
+                      `[notifNav] deep link received: ${describeDeepLink(url)} -> chat target`
+                    );
                     // PUBLISHING THE TARGET IS ALL THIS DOES, AND ROUTING IS SOMEBODY ELSE'S JOB.
                     // It used to route here as well, so one landing drove TWO navigations to the
                     // same route: this one, and the landing effect in `ChatBackgroundService`,
@@ -225,7 +231,7 @@ if (isTauriRuntime()) {
               ])
                 .then(async ([{ goto }, { appendLog }, { resolveNotificationHref }, assos]) => {
                   appendLog(
-                    `[notifNav] deep link received: ${url} -> proposals ${queueAssociationId}`
+                    `[notifNav] deep link received: ${describeDeepLink(url)} -> proposals queue`
                   );
                   const route = await resolveNotificationHref(
                     { type: 'repost_proposed', postId: queueAssociationId },
@@ -245,10 +251,19 @@ if (isTauriRuntime()) {
               ])
                 .then(([{ goto }, { appendLog }]) => {
                   // The same line the chat branch prints: the first absent one names the broken hop.
-                  appendLog(`[notifNav] deep link received: ${url} -> ${pageRoute}`);
+                  appendLog(
+                    `[notifNav] deep link received: ${describeDeepLink(url)} -> ${`/${pageRoute.split('/')[1] ?? ''}`}`
+                  );
                   return goto(pageRoute);
                 })
-                .catch((err) => console.error('[hooks] Navigation to', pageRoute, 'failed', err));
+                .catch((err) =>
+                  console.error(
+                    '[hooks] Navigation to',
+                    `/${pageRoute.split('/')[1] ?? ''}`,
+                    'failed',
+                    err
+                  )
+                );
               continue;
             }
 
@@ -323,7 +338,7 @@ if (isTauriRuntime()) {
             // Handle error response from Authentik
             if (error) {
               const msg = error_description || error;
-              console.log('[hooks] Auth error:', msg);
+              console.log('[hooks] Auth error on the OIDC callback, code:', error);
               import('$app/navigation')
                 .then(({ goto }) => goto(`/auth/callback?error=${encodeURIComponent(msg)}`))
                 .catch(() => {
@@ -349,7 +364,7 @@ if (isTauriRuntime()) {
 
             console.warn('[hooks] Missing code or state in callback URL');
           } catch (err) {
-            console.error('[hooks] Error processing deep link URL:', url, err);
+            console.error('[hooks] Error processing deep link URL:', describeDeepLink(url), err);
           }
         }
       };
@@ -399,7 +414,7 @@ if (isTauriRuntime()) {
               // "the app ignored my link" from "the app already acted on it", and a WebView reload
               // makes the two look the same from outside.
               console.log(
-                `[hooks] launch URL already acted on by this start, ignoring the replay: ${first}`
+                `[hooks] launch URL already acted on by this start, ignoring the replay: ${describeDeepLink(first)}`
               );
               return;
             }

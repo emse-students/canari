@@ -103,6 +103,7 @@
     "postcss": "^8.5.10"
   },
   "patchedDependencies": {
-    "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch"
+    "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch",
+    "mediabunny@1.61.1": "patches/mediabunny@1.61.1.patch"
   }
 }

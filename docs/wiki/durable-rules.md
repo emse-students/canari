@@ -150,6 +150,8 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 - **A CAPABILITY REFUSED TO ONE KIND OF CONVERSATION IS OWED A REPLACEMENT OR A DECISION - AND A TEST THAT ASSERTS THE ABSENCE PINS THE GAP GREEN.** A salon could not send its read receipt over MLS, so the client returned early for it, correctly - and nothing replaced it: the server kept no read state, every sender in a community saw "Envoye" for ever, and `READ-6` recorded "channels send no receipts" as `PASS` for three weeks while a comment claimed a "server tally" that did not exist. **A refusal names where the capability lives instead, or says it was decided away**; a row asserting an absence must name that decision, or it is testing a hole. [social-service](services/social-service.md#read-receipts-in-a-salon)
 
+- **A RECEIPT MOVES ONLY WHERE THE READER SAW THE MESSAGE: a focused, visible salon, or a banner that shows its text.** A salon's read mark is the "Lu par" every other member sees, so clearing a badge, selecting a community, loading history, reconnecting, or tapping "Marquer comme lu" on a banner reading "Nouveau message" must move nothing public - the private count has its own mark (`clearedMarks`) for exactly that. Census and closure (2026-10-14): one server writer (`advanceChannelReadMark`), two doors (the focused receipt effect, the shade action), and the shade was offering the receipt on BLIND banners. **Before adding any path that moves a read mark, add its row to that census.** [read-receipt-privacy](read-receipt-privacy.md)
+
 **Who an event is ADDRESSED to**
 
 - **AN AUDIENCE IS DERIVED FROM ACCESS, OR IT IS NOT AN ACCESS CONTROL.** Every channel event was published to `getWorkspaceMemberIds` - a question about the CONTAINER - while `canAccessChannel` only ever ran on the ACTOR. A private salon's ciphertext, typing, pins and tallies went to members the same server refuses over REST, who already held the seed. Ask of every fan-out which question its recipient list answers. [graine](protocols/channel-encryption.md#11-a-private-salons-ciphertext-was-addressed-to-the-whole-community---fixed-2026-08-19)
@@ -1029,6 +1031,10 @@ and every fork still carry it. So this rewriting happens while the paragraph is 
 is the same instruction the people rule gives and for a sharper reason: afterwards it is mitigation,
 and mitigation is not a fix. When a redaction does become necessary, say plainly that the history
 keeps the original rather than reporting the file as clean.
+
+### A DEEP LINK IS LOGGED AS ITS SHAPE, NEVER ITS TEXT
+
+A deep link carries post and conversation ids, invitation tokens, `returnTo` and OAuth callback parameters, and the in-app log is the one a member exports (`appLogRedact.ts` strips a query string but cannot tell a path id from a path word). Every deep-link log line goes through `describeDeepLink(url)` (`utils/logSanitize.ts`; native twin `CanariDescribeDeepLink` in `canari_push.mm`): scheme + host, the first path segment on http(s) only (on `fr.emse.canari://` the host is the route and the first segment is the id), and `+query` / `+fragment` flags.
 
 ### NO PATH OF ONE WORKSTATION ENTERS THE REPOSITORY - A PATH IS RELATIVE TO IT, OR IT IS LOCAL CONFIGURATION
 
