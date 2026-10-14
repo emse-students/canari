@@ -9,6 +9,7 @@ import {
   breaksOnDay,
   dayOccupancy,
   eventCardsOnDay,
+  organiserCentred,
   type DayOccupancy,
 } from '$lib/calendar/feedEvents';
 import { localizedWeekdays, monthGridDays } from '$lib/calendar/monthGrid';
@@ -269,15 +270,14 @@ function hexToRgba(hex: string, opacityPct: number): string {
  */
 const EVENT_BG_OPACITY = 82;
 
-/** Returns all hex colors for an event: primary first, then co-owners. */
+/** Hex colors for an event in display order: the organiser in the middle band, co-owners around it. */
 function eventHexColors(ev: AssociationCalendarFeedEvent): string[] {
-  const primary = associationAccentHex({ id: ev.associationId, color: ev.associationColor });
-  return [
-    primary,
+  return organiserCentred([
+    associationAccentHex({ id: ev.associationId, color: ev.associationColor }),
     ...(ev.coOwners ?? []).map((co) =>
       associationAccentHex({ id: co.associationId, color: co.color })
     ),
-  ];
+  ]);
 }
 
 /**
@@ -692,10 +692,10 @@ function buildCalendarHtml(
           // collapsed to the single-logo branch and drew it WHOLE across the circle - which looks
           // exactly like a working split and is why "the second logo is missing" stayed unexplained
           // for so long: the symptom was disguised as a correct render.
-          const owners = [
+          const owners = organiserCentred([
             { name: ev.associationName, url: ev.associationLogoUrl },
             ...(ev.coOwners ?? []).map((co) => ({ name: co.name, url: co.logoUrl })),
-          ];
+          ]);
           const logoSrcs = owners.map((o) => resolveLogo(o.url));
           for (const [oi, o] of owners.entries()) {
             if (logoSrcs[oi] === null) {
