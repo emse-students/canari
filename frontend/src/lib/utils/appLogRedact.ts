@@ -28,8 +28,14 @@ import { truncateLogIds } from './logTruncate';
 /** The longest line the log keeps. A line is a sentence; anything longer is a dump. */
 export const MAX_LOG_LINE_CHARS = 400;
 
-/** The suffix that cap writes, recognised so a second pass does not cut a cut line again. */
-const TRUNCATED_RE = /… \(\d+ chars\)$/;
+/**
+ * The suffix that cap writes, recognised so a second pass does not cut a cut line again. Its number
+ * is put back VERBATIM, so only a number the cap can have written is recognised: above
+ * {@link MAX_LOG_LINE_CHARS}, no leading zero, four digits at most (a redacted line is at most ~5x
+ * the {@link MAX_INPUT_CHARS} it was cut to). A member who types `… (0612345678 chars)` wrote a
+ * phone number, not a suffix (review of #1861, 2026-10-14).
+ */
+const TRUNCATED_RE = /… \(([1-9]\d{2,3}) chars\)$/;
 
 /** The most of a raw line the patterns ever see (see the cut in {@link redactLogLine}). */
 export const MAX_INPUT_CHARS = 1000;
@@ -581,7 +587,7 @@ function capLine(line: string): string {
  */
 export function redactLogLine(raw: string): RedactedLine {
   const capped = TRUNCATED_RE.exec(raw);
-  if (capped) {
+  if (capped && Number(capped[1]) > MAX_LOG_LINE_CHARS) {
     const { line, redactions } = redactUncapped(raw.slice(0, capped.index));
     const kept = line.length <= MAX_LOG_LINE_CHARS ? `${line}${capped[0]}` : capLine(line);
     return { line: kept, redactions };

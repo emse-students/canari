@@ -305,6 +305,11 @@ describe('redactLogLine - a member`s text that IMITATES a marker is still redact
     // A bare value that starts another field is swallowed whole under a CONTENT name.
     ['text=a="ok" my secret message', 'secret'],
     ['contact=foo="x" jolan', 'jolan'],
+    // The cap's suffix is put back verbatim, so a number it could not have written is not one.
+    ['call me… (0612345678 chars)', '0612345678'],
+    ['text: … (482913 chars)', '482913'],
+    ['code=4829… (12 chars)', '4829'],
+    ['code=4829… (123 chars)', '4829'],
     // The [SEND] lines JSON-quote the text, so a `"` the member typed stays inside the value.
     [
       `[SEND] handleSendChat: contact="jolan" text=${JSON.stringify('he said "meet me at the bar"')} files=0`,

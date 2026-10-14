@@ -489,7 +489,11 @@ equals its match (`?[query]`, an already closed `"[cut]`) is not counted; the 40
 cuts at a space OUTSIDE any quote or bracket, so it ends between whole tokens, and a line already
 carrying its `… (N chars)` suffix is redacted without it and gets it back unchanged - a cut inside
 a marker (`name: [11 ch… (1140 chars)`) used to be read by the next pass as a new value, so EVERY
-export re-counted this build's own capped lines and logged a false `[APPLOG]` claim; and a NON-sensitive field
+export re-counted this build's own capped lines and logged a false `[APPLOG]` claim. Only a suffix
+the cap can have written counts as one (N from 401 to 9999, no leading zero), because its number is
+put back VERBATIM: a member's `… (0612345678 chars)` kept a phone number the line-wide pass would
+have redacted. A member who types a plausible one (`text: … (4829 chars)`) still keeps those four
+digits - a residual accepted, not closed; and a NON-sensitive field
 whose bare value starts another field (`handleSendChat: contact="[5 chars]"`) is resumed at that
 field instead of giving `handleSendChat` the value `contact="[5` - a SENSITIVE name still swallows
 such a value whole, or `text=a="ok" my message` would hand the message to the harmless inner
