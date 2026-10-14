@@ -128,6 +128,15 @@ const FORGET_DEVICE_KEY = `(function () {
     'canari_pin_vault'
   ];
   var removed = 0;
+  // Every account's own slot since 2026-10-14 (\`deviceKeyVault.ts\`).
+  for (var t = 0; t < 2; t++) {
+    var st = t === 0 ? localStorage : sessionStorage;
+    try {
+      Object.keys(st).forEach(function (k) {
+        if (k.indexOf('canari_device_key_vault:v2:') === 0) { st.removeItem(k); removed++; }
+      });
+    } catch (e) { /* a storage the engine refuses is one this row never wrote to */ }
+  }
   for (var i = 0; i < keys.length; i++) {
     for (var s = 0; s < 2; s++) {
       var store = s === 0 ? localStorage : sessionStorage;
@@ -286,9 +295,9 @@ const TOO_SHORT = '123';
  */
 const VAULT_PERSISTED = `JSON.stringify({
   persist: localStorage.getItem('canari_device_key_persist'),
-  vault: localStorage.getItem('canari_device_key_vault') !== null,
+  vault: Object.keys(localStorage).some((k) => k.indexOf('canari_device_key_vault:v2:') === 0),
   key: localStorage.getItem('canari_device_key_vault_key') !== null,
-  session: sessionStorage.getItem('canari_device_key_vault') !== null
+  session: Object.keys(sessionStorage).some((k) => k.indexOf('canari_device_key_vault:v2:') === 0)
 })`;
 
 /**

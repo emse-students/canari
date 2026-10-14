@@ -45,6 +45,13 @@ export type LoginErrorCode =
    * compared, so this says nothing about the PIN typed.
    */
   | 'pin_salt_rotated'
+  /**
+   * The device key in this device's vault was REFUSED for this account: it came from the unlabelled
+   * vault of an older build and did not prove itself on a saved state of this account
+   * (`VaultOwnerUnprovenError`). Nothing local was changed. Says nothing about the PIN, and nothing
+   * about whether this account has one yet: the gate that follows must ask the server, not assume.
+   */
+  | 'vault_not_this_account'
   /** Anything else (network, server, unexpected). */
   | 'other';
 
@@ -118,10 +125,11 @@ export function provesLocalStateExists(code: LoginErrorCode): boolean {
  * what the UI offers - which is what makes this a classification that was available and unused
  * rather than one that had to be invented.
  *
- * THE FOUR CODES HERE ARE THE ONES WHERE NOTHING IN THIS APPLICATION IS BROKEN and the user is
+ * THE CODES HERE ARE THE ONES WHERE NOTHING IN THIS APPLICATION IS BROKEN and the user is
  * being asked to try something: a PIN that does not match, a local state sealed under an older key
  * (the recovery flow exists for exactly this), an empty keystore on a device that has enrolled
- * nothing yet, and a server nobody could reach - a train tunnel is not a defect.
+ * nothing yet, and a server nobody could reach - a train tunnel is not a defect. A fifth joined them
+ * on 2026-10-14: a vault left by another account, refused as it should be.
  *
  * `device_revoked` is NOT one of them: local state is WIPED on that path, and an erasure deserves a
  * line that accuses whatever anybody later comes looking for. Neither is `other`, which is where the
@@ -133,6 +141,7 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'pin_mismatch' ||
     code === 'local_state_unopenable' ||
     code === 'keystore_empty' ||
-    code === 'server_unreachable'
+    code === 'server_unreachable' ||
+    code === 'vault_not_this_account'
   );
 }

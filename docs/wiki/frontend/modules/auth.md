@@ -314,7 +314,7 @@ finish.
 
 | Storage | Written by | Purpose |
 |---|---|---|
-| Device key vault (`utils/deviceKeyVault.ts`) | PIN login | AES-GCM-wrapped key in `sessionStorage`, or `localStorage` when "stay signed in" is on (`canari_device_key_persist`) |
+| Device key vault (`utils/deviceKeyVault.ts`) | PIN login | AES-GCM-wrapped key, ONE SLOT PER ACCOUNT (`canari_device_key_vault:v2:<userId>`, the account also bound as the AEAD additional data), in `sessionStorage`, or `localStorage` when "stay signed in" is on (`canari_device_key_persist`). See [the vault names its account](#the-vault-names-its-account---fixed-2026-10-14) |
 | Platform keystore, alias `mls_device_key_{userId}_{deviceId}` | `store_push_context` (Tauri) | Biometric unlock **and** background FCM/NSE decryption - the only at-rest copy on a device |
 | `push_context.json` | `store_push_context` (Tauri) | `userId`, `deviceId`, `baseUrl`, `pushToken` only. Since WP-SEC-1 it carries **no key material** |
 
@@ -323,8 +323,8 @@ persisted anywhere since v0.11.0. The user-facing copy (`auth_pin_stay_signed_in
 `profile_stay_signed_in_desc`) must say so: describing the wrong secret on a security control is a
 defect in the control.
 
-Enrolling biometrics wipes the vault (`clearDeviceKeyAndWrapKey`) and turns "stay signed in" off,
-so the next launch goes through the keystore. A PIN change must **not** delete the keystore entry:
+Enrolling biometrics wipes the vault (`clearDeviceKeyAndWrapKey`, every account's slot) and turns
+"stay signed in" off, so the next launch goes through the keystore. A PIN change must **not** delete the keystore entry:
 `IMlsService.changeDeviceKey` has already overwritten it with the new key.
 
 **The background copy is a second keystore entry, not a second file.** A push handler runs with no
@@ -341,6 +341,63 @@ WP-SEC-1 hold the key in `push_context.json`; a one-shot migration
 (`CanariApplication.migrateDeviceKeyFromJson`, `CanariMigrateDeviceKeyFromJson`) promotes it to the
 keystore at the next app start and strips the field. The background readers have **no** JSON
 fallback, so one push before that first launch shows generic text.
+
+### The vault names its account - FIXED 2026-10-14
+
+**The defect, read from the code while reviewing #1862, present in `v1.2.6` and in every build since
+the vault replaced the PinVault.** The vault was ONE slot (`canari_device_key_vault`) and nothing in
+it said whose key it was; a sign-out keeps it on purpose ("Rester connecte"). So account B signing in
+on an install where A had ticked it took the vault path (`nativeStorageLoginImpl` on a phone, the web
+branch of `startLoginFlow` in a browser) with A's key, and B's PIN was never asked:
+
+- **Web**: the stores are per account. With no state of B's, the fresh start SEALED B's first state
+  under A's key, which B's own PIN then never opened; with one, it did not open and B was offered a
+  recovery for a PIN it had never changed.
+- **Phone**: `mls.bin` is ONE file per install (`data_dir/mls.bin`). A's key opened it, the
+  credential named A, `IDENTITY_MISMATCH`, and the `mismatch` branch of `_initImpl` ROTATED the device
+  identity and wrote a fresh state over the file: **A's whole local state, lost**, by a sign-in that
+  was not A's.
+
+**The fix: the vault records the account it belongs to, and a sign-in as anyone else never sees
+it.** One slot per account, `canari_device_key_vault:v2:<userId>`, and the same string is the AES-GCM
+additional data - a blob copied under another account's name does not open, so the label cannot be
+edited without the tag noticing. `loadDeviceKey(userId)` reads only the signing-in account's slot;
+another account's slot is neither read nor cleared, so A signing back in still unlocks without a PIN.
+A failed login clears only its own account's slot. One wrap key serves every slot;
+`clearDeviceKeyAndWrapKey` (revocation, biometric enrolment, a persistence switch) drops every slot.
+
+**The migration: the unlabelled slot an older build wrote is offered as UNPROVEN, and the login must
+prove it.** `loadDeviceKey` returns `{ deviceKeyB64, ownerProven }`, `false` only for that slot, and
+the login carries it to `init` as `MlsInitOptions.vaultOwnerUnproven`. Such a key is accepted only if
+it OPENS a saved state whose credential names the account signing in. Anything else is refused BEFORE
+any recovery can run - `no_state` (checked in `loginImpl` before `resolveDeviceId` mints an id, and
+again in both `_initImpl`s), `mismatch`, `unopenable` - as a typed `VaultOwnerUnprovenError`: no
+rotation, no fresh start, no legacy re-seal, no write. `loginImpl` turns it into
+`LoginFailure('vault_not_this_account')`, drops the key from the session, and keeps the unlabelled
+slot, which may be the previous account's. The shell then draws the account's OWN PIN gate
+(`openPinModal`: first setup or returning is decided as for any first gate, because a refused vault
+says nothing about this account's PIN). Accepted, the key is written to the account's own slot and
+only THEN is the unlabelled slot removed. A same-account stale state (`mismatch` naming another
+device of the same account) is refused on this path too, and reaches its rotation through the PIN
+path, which proves the account first.
+
+**What the member is told** (Paraglide): `auth_vault_other_account` on any refusal and, on a phone
+when the refusal is a `mismatch` - PROVEN to be another account's state, since the key opened the one
+file - `auth_vault_other_account_device`, which says those messages are kept untouched and that the
+app keeps one account's messages at a time.
+
+**What this does NOT fix, and is open** ([backlog](../../backlog.md)): on a phone `mls.bin` is still
+one file per install. B on the PIN path cannot open A's `mls.bin` (`local_state_unopenable`), which
+destroys nothing by itself - but the reset that gate offers (`resetDeviceAsFreshImpl` ->
+`removeMlsState`) deletes the one file, A's state with it, on B's explicit request.
+
+Tests: `utils/deviceKeyVault.test.ts` (slots, binding, the unlabelled offer),
+`services/TauriMlsService.vaultOwner.test.ts` and `services/WebMlsService.vaultOwner.test.ts` (a
+refusal writes nothing; a control proves the rotation is still reachable without the flag), and
+`composables/session/accountSwitchVault.test.ts`, which runs the real vault into the real native
+init over a `mls.bin` holding A's state: A leaves a vault, B signs in (PIN gate, nothing rotated,
+nothing written), A signs back in (the vault unlocks). Mutation-checked: removing the native guard
+fails three cases, collapsing the slots into one fails seven.
 
 ### How often the sheet comes back - the biometric cadence (2026-09-28)
 

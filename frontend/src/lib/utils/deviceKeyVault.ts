@@ -25,13 +25,57 @@
  * keystore and call clearDeviceKeyAndWrapKey() after successful biometric enrolment.
  */
 
-const VAULT_KEY_KEY = 'canari_device_key_vault_key'; // random wrap key (b64)
-const VAULT_BLOB_KEY = 'canari_device_key_vault'; // iv:ciphertext (b64)
+const VAULT_KEY_KEY = 'canari_device_key_vault_key'; // random wrap key (b64), shared by every slot
 const PERSIST_FLAG_KEY = 'canari_device_key_persist'; // localStorage - user opted into "stay signed in"
 
-// ── Legacy storage keys (pre-Phase5) ─────────────────────────────────────────
+/**
+ * One slot per ACCOUNT: `canari_device_key_vault:v2:<userId>`, holding `iv:ciphertext` (b64).
+ *
+ * THE VAULT NAMES THE ACCOUNT IT BELONGS TO, AND A SIGN-IN AS ANYONE ELSE NEVER SEES IT. Until
+ * 2026-10-14 there was ONE slot and nothing in it said whose key it was, and a sign-out leaves the
+ * vault in place on purpose ("Rester connecte"). So account B signing in on an install where A had
+ * ticked it took the vault path with A's key and was never asked for its PIN: on the web B's store
+ * was sealed under A's key, and on a phone A's key opened the per-install `mls.bin`, whose credential
+ * names A - the `mismatch` branch then ROTATED the device identity and overwrote A's local state
+ * ([auth](../../../../docs/wiki/frontend/modules/auth.md)).
+ *
+ * The account is recorded twice, on purpose: in the slot NAME, so a read finds its own slot without
+ * decrypting anyone else's, and as the AES-GCM additional data, so a blob copied under another
+ * account's name does not open - the label cannot be edited without the tag noticing.
+ */
+const SLOT_PREFIX = 'canari_device_key_vault:v2:';
+
+/**
+ * The single slot written by every build before 2026-10-14, which names NO account. Read only for
+ * the migration ({@link loadDeviceKey}); never written again.
+ */
+const UNLABELLED_VAULT_BLOB_KEY = 'canari_device_key_vault';
+
+// ── Legacy storage keys (pre-Phase5), only ever cleared ──────────────────────
 const LEGACY_VAULT_KEY_KEY = 'canari_pin_vault_key';
 const LEGACY_VAULT_BLOB_KEY = 'canari_pin_vault';
+
+/** The storage key of `userId`'s slot. */
+function slotKey(userId: string): string {
+  return `${SLOT_PREFIX}${userId}`;
+}
+
+/** The AES-GCM additional data that binds a slot's ciphertext to the account it names. */
+function slotAad(userId: string): Uint8Array<ArrayBuffer> {
+  return new TextEncoder().encode(slotKey(userId));
+}
+
+/**
+ * What {@link loadDeviceKey} found for an account.
+ *
+ * `ownerProven` is FALSE only for a key read from the unlabelled slot an older build wrote: nothing
+ * says whose it is, so the login that uses it must prove the account by the state it opens and must
+ * not destroy anything on the way (`MlsInitOptions.vaultOwnerUnproven`).
+ */
+export interface VaultedDeviceKey {
+  deviceKeyB64: string;
+  ownerProven: boolean;
+}
 
 /**
  * Whether the user opted into persisting the device key across browser restarts
@@ -72,28 +116,41 @@ async function getOrCreateWrapKey(): Promise<CryptoKey> {
 }
 
 /**
- * Encrypts `deviceKeyB64` with AES-GCM (256-bit key) and stores the result in the
- * currently selected store (session- or local-scoped per {@link isDeviceKeyPersistenceEnabled}),
- * so it is available without ever being written to persistent storage in plaintext.
+ * Encrypts `deviceKeyB64` with AES-GCM (256-bit key) into `userId`'s slot of the currently selected
+ * store (session- or local-scoped per {@link isDeviceKeyPersistenceEnabled}), bound to that account
+ * by the additional data, so it is never written to persistent storage in plaintext and never
+ * handed to a sign-in as anybody else.
+ *
+ * Another account's slot is left exactly as it was: each account unlocks with its own key.
  */
-export async function saveDeviceKey(deviceKeyB64: string): Promise<void> {
+export async function saveDeviceKey(userId: string, deviceKeyB64: string): Promise<void> {
   const key = await getOrCreateWrapKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(deviceKeyB64);
-  const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
+  const cipher = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: slotAad(userId) },
+    key,
+    encoded
+  );
 
   const ivB64 = btoa(String.fromCharCode(...iv));
   const cipherB64 = btoa(String.fromCharCode(...new Uint8Array(cipher)));
-  vaultStore().setItem(VAULT_BLOB_KEY, `${ivB64}:${cipherB64}`);
+  vaultStore().setItem(slotKey(userId), `${ivB64}:${cipherB64}`);
 }
 
 /**
- * Decrypts and returns the device key previously saved with `saveDeviceKey`, or `null` if
- * nothing is stored or decryption fails (e.g. the wrap key was rotated or the
- * blob was tampered with). On failure the stored blob is cleared automatically.
+ * Decrypts one stored blob, or returns `null` - after clearing it and saying why when it is there
+ * and will not open.
+ *
+ * `aad` is the account binding of a labelled slot, `undefined` for the unlabelled slot an older
+ * build wrote (it was sealed with none).
  */
-export async function loadDeviceKey(): Promise<string | null> {
-  const blob = vaultStore().getItem(VAULT_BLOB_KEY);
+async function openBlob(
+  storageKey: string,
+  aad: Uint8Array<ArrayBuffer> | undefined,
+  clear: () => void
+): Promise<string | null> {
+  const blob = vaultStore().getItem(storageKey);
   if (!blob) return null;
 
   const colonIdx = blob.indexOf(':');
@@ -101,9 +158,9 @@ export async function loadDeviceKey(): Promise<string | null> {
     // NOT "absent": a blob with no separator can never decrypt, so returning null in silence left
     // it in place to fail the same way on every later load, for ever, with nothing said once.
     console.warn(
-      '[VAULT] the stored device key is malformed (no iv separator) - clearing it; this device will ask for its PIN'
+      `[VAULT] the stored device key (${storageKey}) is malformed (no iv separator) - clearing it; this device will ask for its PIN`
     );
-    clearDeviceKey();
+    clear();
     return null;
   }
 
@@ -117,10 +174,10 @@ export async function loadDeviceKey(): Promise<string | null> {
   const wrapped = vaultStore().getItem(VAULT_KEY_KEY);
   if (!wrapped) {
     console.warn(
-      '[VAULT] a device key blob is stored but its wrap key is gone - clearing it; this device will ask for its PIN. ' +
+      `[VAULT] a device key blob is stored (${storageKey}) but its wrap key is gone - clearing it; this device will ask for its PIN. ` +
         'Ordinary after a storage clear or a persistence-mode switch, and NOT evidence of tampering'
     );
-    clearDeviceKey();
+    clear();
     return null;
   }
 
@@ -132,34 +189,83 @@ export async function loadDeviceKey(): Promise<string | null> {
     const cipher = Uint8Array.from(atob(cipherB64), (c) => c.charCodeAt(0));
     const raw = Uint8Array.from(atob(wrapped), (c) => c.charCodeAt(0));
     const key = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['decrypt']);
-    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
+    const plain = await crypto.subtle.decrypt(
+      aad ? { name: 'AES-GCM', iv, additionalData: aad } : { name: 'AES-GCM', iv },
+      key,
+      cipher
+    );
     return new TextDecoder().decode(plain);
   } catch (e) {
     // THE WRAP KEY WAS THERE AND THE BLOB STILL DID NOT OPEN. Everything ordinary was excluded
     // above, so this line accuses: an AEAD tag that does not verify under a key that IS present
-    // means the ciphertext, the iv or the key was altered after it was written.
+    // means the ciphertext, the iv, the key - or, for a labelled slot, the account it is filed
+    // under - was altered after it was written.
     console.warn(
-      `[VAULT] the stored device key did not decrypt under a wrap key that IS present - clearing it; ` +
-        `this device will ask for its PIN. The blob, its iv or the key has been altered since it was written: ` +
+      `[VAULT] the stored device key (${storageKey}) did not decrypt under a wrap key that IS present - clearing it; ` +
+        `this device will ask for its PIN. The blob, its iv, its account label or the key has been altered since it was written: ` +
         `${String(e)}`
     );
-    clearDeviceKey();
+    clear();
     return null;
   }
 }
 
 /**
- * Switches the device key persistence mode ("stay signed in"). Wipes any existing vault
- * from BOTH stores first (so no stale copy is left behind), records the new
- * preference, then re-saves `deviceKeyB64` into the newly selected store when provided.
+ * Returns the device key vaulted for `userId`, or `null` when this account has none here.
  *
- * Pass the in-memory device key to migrate an active session immediately (e.g. toggling
- * from Settings); pass `null` to only set the flag before a login whose own
- * `saveDeviceKey` will populate the correct store (e.g. the PIN-modal checkbox).
+ * Exactly one source answers, chosen by what is STORED, never by a failure:
+ *
+ * - **`userId`'s own slot**, when it exists - `ownerProven: true`. A slot that does not open is
+ *   cleared and `null` is returned; nothing else is consulted.
+ * - **Otherwise the unlabelled slot of an older build** - `ownerProven: false`. It may be this
+ *   account's or that of an account that signed in before it, and only the login can tell: the key
+ *   must open a saved state whose credential names this account (`vaultOwnerUnproven`). It is not
+ *   cleared on this account's behalf - it may be someone else's, and it is theirs to lose.
+ * - **Otherwise `null`**, including when other accounts hold slots: they are theirs, left alone.
+ */
+export async function loadDeviceKey(userId: string): Promise<VaultedDeviceKey | null> {
+  if (vaultStore().getItem(slotKey(userId)) !== null) {
+    const own = await openBlob(slotKey(userId), slotAad(userId), () => clearDeviceKey(userId));
+    return own === null ? null : { deviceKeyB64: own, ownerProven: true };
+  }
+  const unlabelled = await openBlob(
+    UNLABELLED_VAULT_BLOB_KEY,
+    undefined,
+    forgetUnlabelledDeviceKey
+  );
+  if (unlabelled === null) return null;
+  console.log(
+    `[VAULT] no slot for ${userId.slice(0, 8)} - offering the UNLABELLED vault of an older build; the login must prove whose it is`
+  );
+  return { deviceKeyB64: unlabelled, ownerProven: false };
+}
+
+/**
+ * Removes the unlabelled slot an older build wrote.
+ *
+ * Called once its owner is PROVEN - a login on its key opened a saved state naming the account,
+ * whose own slot now holds the key - and when a blob that will never open is found. Never on the
+ * strength of a sign-in that merely did not match: the slot may be another account's, and refusing
+ * it is all such a sign-in is entitled to.
+ */
+export function forgetUnlabelledDeviceKey(): void {
+  sessionStorage.removeItem(UNLABELLED_VAULT_BLOB_KEY);
+  localStorage.removeItem(UNLABELLED_VAULT_BLOB_KEY);
+}
+
+/**
+ * Switches the device key persistence mode ("stay signed in"). Wipes every vault from BOTH stores
+ * first (so no stale copy is left behind in the area being left), records the new preference,
+ * then re-saves the signed-in account's key into the newly selected store when provided. Another
+ * account's slot is dropped with the rest: that account unlocks once with its PIN.
+ *
+ * Pass the signed-in account and its in-memory device key to migrate an active session
+ * immediately (e.g. toggling from Settings); pass `null` to only set the flag before a login whose
+ * own `saveDeviceKey` will populate the correct store (e.g. the PIN-modal checkbox).
  */
 export async function setDeviceKeyPersistence(
   enabled: boolean,
-  deviceKeyB64: string | null
+  current: { userId: string; deviceKeyB64: string } | null
 ): Promise<void> {
   clearDeviceKeyAndWrapKey();
   try {
@@ -167,27 +273,40 @@ export async function setDeviceKeyPersistence(
   } catch {
     // Ignore quota / private-mode errors - falls back to the session default.
   }
-  if (deviceKeyB64) await saveDeviceKey(deviceKeyB64);
+  if (current) await saveDeviceKey(current.userId, current.deviceKeyB64);
 }
 
-/** Removes the encrypted device key blob from both stores, but keeps the wrap key intact. */
-export function clearDeviceKey(): void {
-  sessionStorage.removeItem(VAULT_BLOB_KEY);
-  localStorage.removeItem(VAULT_BLOB_KEY);
-  // Also clean up legacy keys during migration.
-  sessionStorage.removeItem(LEGACY_VAULT_BLOB_KEY);
-  localStorage.removeItem(LEGACY_VAULT_BLOB_KEY);
+/**
+ * Removes `userId`'s encrypted device key from both stores and keeps the wrap key. Touches no
+ * other account's slot and not the unlabelled one, which may be somebody else's.
+ */
+export function clearDeviceKey(userId: string): void {
+  sessionStorage.removeItem(slotKey(userId));
+  localStorage.removeItem(slotKey(userId));
 }
 
-/** Drop both the blob and the wrapping key from both stores (e.g. on logout or key compromise). */
+/** Every labelled slot key held in `store`. */
+function slotKeysIn(store: Storage): string[] {
+  const keys: string[] = [];
+  for (let i = 0; i < store.length; i++) {
+    const k = store.key(i);
+    if (k?.startsWith(SLOT_PREFIX)) keys.push(k);
+  }
+  return keys;
+}
+
+/**
+ * Drops EVERY account's blob, the unlabelled one and the wrapping key from both stores: a
+ * device-wide erasure (a revoked device, a key compromise, a persistence-mode switch, biometric
+ * enrolment moving the key into the platform keystore).
+ */
 export function clearDeviceKeyAndWrapKey(): void {
-  sessionStorage.removeItem(VAULT_BLOB_KEY);
-  sessionStorage.removeItem(VAULT_KEY_KEY);
-  localStorage.removeItem(VAULT_BLOB_KEY);
-  localStorage.removeItem(VAULT_KEY_KEY);
-  // Also clean up legacy keys during migration.
-  sessionStorage.removeItem(LEGACY_VAULT_BLOB_KEY);
-  sessionStorage.removeItem(LEGACY_VAULT_KEY_KEY);
-  localStorage.removeItem(LEGACY_VAULT_BLOB_KEY);
-  localStorage.removeItem(LEGACY_VAULT_KEY_KEY);
+  for (const store of [sessionStorage, localStorage]) {
+    for (const k of slotKeysIn(store)) store.removeItem(k);
+    store.removeItem(UNLABELLED_VAULT_BLOB_KEY);
+    store.removeItem(VAULT_KEY_KEY);
+    // Also clean up legacy keys during migration.
+    store.removeItem(LEGACY_VAULT_BLOB_KEY);
+    store.removeItem(LEGACY_VAULT_KEY_KEY);
+  }
 }

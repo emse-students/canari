@@ -668,6 +668,14 @@
       return;
     }
     pinError = msg;
+    // A REFUSED VAULT SAYS NOTHING ABOUT THIS ACCOUNT'S PIN - not even that it has one: the vault
+    // was another account's, or an older build's that could not prove itself. So the gate is drawn
+    // as any first gate is, from the device id or the server, and never assumed "returning".
+    if (code === 'vault_not_this_account') {
+      appendLog('[VAULT] Saved unlock refused for this account - drawing its own PIN gate.');
+      void openPinModal(globalSession.userId || currentUserId() || '');
+      return;
+    }
     isFirstPinSetup = false;
     showPinModal = true;
     applyPinFailure(globalSession.userId || currentUserId() || '', code);
@@ -1470,15 +1478,21 @@
       }
 
       // ── WEB BRANCH ──
+      // THE VAULT IS READ FOR THE ACCOUNT SIGNING IN, never for "whoever left one": a key another
+      // account left is not offered, and the unlabelled one of an older build is offered only to be
+      // proven by the login (`loadDeviceKey`).
       const savedUser = currentUserId();
-      const savedDeviceKeyB64 = await loadDeviceKey();
-      if (savedUser && savedDeviceKeyB64) {
+      const vaulted = savedUser ? await loadDeviceKey(savedUser) : null;
+      if (savedUser && vaulted) {
         globalSession.userId = savedUser;
-        globalSession.deviceKeyB64 = savedDeviceKeyB64;
+        globalSession.deviceKeyB64 = vaulted.deviceKeyB64;
         // loginImpl checks isLoginInProgress itself and will bail if it's true.
         // Reset it here so loginImpl can set it and manage its own lifecycle.
         globalSession.isLoginInProgress = false;
-        void globalSession.login({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
+        void globalSession.login(
+          { ...sessionCb(), onLoginFailed: onSavedPinFailed },
+          { vaultOwnerUnproven: !vaulted.ownerProven }
+        );
       } else if (savedUser) {
         globalSession.userId = savedUser;
         globalSession.isLoginInProgress = false;

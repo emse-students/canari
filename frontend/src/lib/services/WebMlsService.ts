@@ -14,6 +14,7 @@ import {
   wasmGraineSignatureEngine,
   detectRuntimeDeviceOs,
   MLS_LOCAL_STATE_UNDECRYPTABLE,
+  VaultOwnerUnprovenError,
   type MlsInitOptions,
 } from '$lib/mls-client';
 import {
@@ -766,6 +767,17 @@ export class WebMlsService extends BaseMlsService {
     this.delivery.userId = userId;
     this.freshStart = !state;
 
+    // A KEY OF UNPROVEN OWNER WITH NO STATE TO OPEN PROVES NOTHING, and a fresh start would seal a
+    // new state under it - another account's key, as far as anything here knows. The login refuses
+    // this before calling init; it is restated here so the contract of `vaultOwnerUnproven` does not
+    // depend on that caller.
+    if (opts?.vaultOwnerUnproven && !state) {
+      console.warn(
+        '[VAULT] unlabelled vault key refused - no saved state to prove the account with'
+      );
+      throw new VaultOwnerUnprovenError('no_state');
+    }
+
     // Per-user device ID - prevents two users in the same browser from sharing a
     // device ID, which would cause the delivery service to route the welcome message
     // to the wrong user. Idempotent: a no-op when login already resolved it before
@@ -785,6 +797,17 @@ export class WebMlsService extends BaseMlsService {
       // → systematic fresh-start to avoid blocking the user indefinitely.
       // If state == null and error → real crash (no state to blame) → rethrow.
       let cause = this.classifyStateLoadFailure(e);
+
+      // A KEY OF UNPROVEN OWNER IS REFUSED BEFORE ANY RECOVERY CAN RUN - same reasoning as
+      // `TauriMlsService`: the legacy re-seal and the rotation below both write, and a key nobody has
+      // shown to be this account's has no business sealing this account's state.
+      if (opts?.vaultOwnerUnproven) {
+        const refusal = cause === 'mismatch' ? 'mismatch' : 'unopenable';
+        console.warn(
+          `[VAULT] unlabelled vault key refused on the saved state (${cause}) - nothing rotated, nothing written; PIN gate next`
+        );
+        throw new VaultOwnerUnprovenError(refusal);
+      }
 
       // Before treating an unopenable state as a PIN rotation, check whether it is simply older than
       // the v0.11.0 envelope change. Those snapshots were never rewritten (the MLS IndexedDB is
