@@ -872,6 +872,8 @@
   "post_create_personal_profile_label": "Personal profile",
   "asso_select_group_assos": "Clubs",
   "asso_select_group_lists": "Lists",
+  "asso_select_group_institutions": "Institutions",
+  "asso_select_group_archived": "Archived",
   "post_create_link_event_label": "Link to a validated event (optional)",
   "post_create_no_event_label": "- No event -",
   "post_create_validated_events_hint": "Only validated calendar events appear here.",
