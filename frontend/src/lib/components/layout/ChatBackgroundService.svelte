@@ -35,6 +35,7 @@
     getToken,
     clearAuth,
     setSessionExpiredHandler,
+    setSignOutHandler,
     isRefreshCredentialProvenDead,
     leaveSignedOut,
   } from '$lib/stores/auth';
@@ -621,6 +622,23 @@
   }
 
   /**
+   * The device half of every sign-out, run by `clearAuth` before it drops the credential.
+   *
+   * TWO THINGS OUTLIVED A SIGN-OUT, AND TOGETHER THEY LOCKED THE NEXT SIGN-IN OUT (Mi 9T,
+   * 2026-10-14, 2 of 2). The live session kept running - so the foreground resume after the sign-in
+   * browser reconnected it before the OIDC callback had its token, met the dead credential and set
+   * `isLoggedIn` false behind the callback's back - and `_loginInProgress`, which the login that
+   * SUCCEEDED never releases, still said a login owned the flow. Every later trigger (`afterNavigate`,
+   * the user-id effect) returned on it: no PIN gate, no vault unlock, "Connexion en cours..." for
+   * four minutes, and only a relaunch recovered. Ending the session here removes the race; releasing
+   * the latch here is what lets the next sign-in start, whatever ended the previous one.
+   */
+  function handleSignedOut() {
+    globalSession.endSession(sessionCb());
+    _loginInProgress = false;
+  }
+
+  /**
    * The PIN gate's way out, and the ONE that destroys nothing.
    *
    * The gate stopped being dismissible on 2026-09-05 (see the comment on `PinModal.svelte`), which
@@ -1127,6 +1145,10 @@
       onLoadHistoryForConversation: (contactName: string, groupId: string) =>
         globalConvs.loadHistoryForConversation(contactName, groupId, convCtx()),
       onMlsReady: () => {
+        // A session that unlocked holds a live credential, so the expiry `handleSessionExpired`
+        // deduplicated is over: the NEXT one must log out again. Never reset, the guard swallowed
+        // every later expiry of the same process - no sign-out, no redirect, a dead session left up.
+        _sessionExpiredHandled = false;
         dismissAuthPrompts();
         checkSiblingCallWarning();
         overrides.onMlsReady?.();
@@ -1211,11 +1233,14 @@
     // reaction once, here, is what makes the logout unmissable instead of depending on which path
     // happened to observe the 401 (WP-ANDROID-SESS-1).
     setSessionExpiredHandler(() => void handleSessionExpired());
+    // And every sign-out, whichever button ran `clearAuth`: see `handleSignedOut`.
+    setSignOutHandler(handleSignedOut);
 
     return () => {
       stopReconnect();
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);
+      setSignOutHandler(null);
       setGraineRepairListener(null);
     };
   });

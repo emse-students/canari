@@ -597,7 +597,8 @@ in the `mls_not_ready_since` registry and, through `ensureMls()` (which builds a
 finds none), REBUILT the per-user MLS database. The device kept 8.2 MB of the install it had just
 erased, and `[RESET] done - nothing of this device remains` was printed over the top of it.
 
-`logoutImpl` had always done this teardown properly - four timers, the outbox, the offline-promotion
+`logoutImpl` (now `endSessionImpl`; it had no caller from 2026-04-09 to 2026-10-14, see the
+sign-out section below) had always done this teardown properly - four timers, the outbox, the offline-promotion
 and peer-return listeners, the history probe sender, the conversation map that IS the watchdog's
 candidate set. The revocation path had a comment claiming it did ("tear the session down first ... so
 nothing left running can write a key back") and in fact only called `resetMls()`, which nulls a
@@ -849,6 +850,103 @@ caller, are gone; `wipeDeviceToFactory` now has one caller, `wipeRevokedDevice`.
 taught - it asked nothing, told no server, and discarded the list of steps that failed - stays in
 [durable-rules](../../durable-rules.md). A user-requested reset, if one ever returns, owes the
 revoked path's order: declare the device gone, then `clearAuth()`, then the wipe.
+
+### A sign-out ended the session on the server and left it live on the device - FIXED 2026-10-14
+
+**Found on the Mi 9T bench of `1.2.7-alpha.2`, 2 of 2** (evidence:
+`canari-harness/a1-bench/r1014-a127a2/cons-signin*.ndjson`). Tableau de bord > Deconnexion, then a
+sign-in in the same process: the OIDC callback completed (`handleOidcCallback resolved`, `goto ->
+/posts`) and nothing followed - no PIN gate, no vault restore, "Connexion en cours..." for four
+minutes. Only a relaunch recovered.
+
+**The timeline names the trigger.** The app returns from the sign-in browser and
+`resumeConnectionImpl` reconnects the socket: `[A] refresh✗latched`, `Gateway inaccessible:
+SessionExpiredError`, `[AUTH] Session expired - redirecting to /login.` - 1 s BEFORE the callback's
+`got access_token`. It is NOT #1843's `connectivity.onReconnect` (that path is gated on
+`isLoggedIn` and never names the gateway), and nothing on this path changed between `v1.2.6` and
+`1.2.7-alpha.2`.
+
+**Two things outlived the sign-out, and only together do they lock the next sign-in out.**
+
+1. **The live session.** Every sign-out in the app - the dashboard, the navbar, the PIN gate, the
+   platform gate, the identity-split notice, a dead session - is `clearAuth()` then `/login`. None
+   reached the chat session, which the app shell owns: `logoutImpl` had had NO caller since the
+   2026-04-09 navbar refactor. So `isLoggedIn` stayed true for a signed-out user, the foreground
+   resume was still armed, and it reconnected a session whose credential the sign-out had just
+   killed. When the callback won the race, the ghost session simply carried on with the new token -
+   which is why this looked like it worked.
+2. **`_loginInProgress` in `ChatBackgroundService`.** A login that SUCCEEDS never releases it (the
+   `finally` releases it only when nobody is logged in). Once the reconnect set `isLoggedIn` false,
+   every trigger that should have started the unlock (`afterNavigate`, the user-id effect) returned on
+   that stale latch.
+
+**The fix is one seam.** `clearAuth` calls a handler registered by the app shell
+(`setSignOutHandler`) FIRST, before the access token is dropped - the teardown deregisters the push
+token with it. The shell's `handleSignedOut` runs `endSessionImpl` (what `logoutImpl` was, minus the
+erasures `clearAuth` already owns) and releases `_loginInProgress`. `endSessionImpl` acts only on a
+session that is live, which also keeps the revocation wipe's own `clearAuth` from running a second,
+flushing teardown. A dead session ending does not ask the server to deregister its push token: the
+refresh latch already says the answer is a refusal. Tests: `stores/auth.test.ts` ("the sign-out
+handler"), `composables/session/signOutEndsLiveSession.test.ts`, and
+`composables/session/signOutTimeline.test.ts`, which replays sign-out, resume, second sign-out over
+the real `clearAuth`, `endSessionImpl` and `resumeConnectionImpl`.
+
+**Two things the adversarial review added (2026-10-14).** `endSessionImpl` releases the socket
+(`pauseSocket`) BEFORE the teardown's final flush: the gateway does not close a socket when the
+server revokes the session, and the teardown unregisters the state persister, so an open socket kept
+decrypting and ACKing the leaving account's frames into memory that nothing would write. And the
+shell's `_sessionExpiredHandled` - set by the first expiry, reset by nothing - is reset by the shared
+`onMlsReady`, so a second expiry in the same process logs out instead of being swallowed.
+
+**The MLS client leaves with its account (fixed in the same PR).** The client survived the
+sign-out - nothing called `resetMls` - and `BaseMlsService.init()` returns at once on its cached
+`initPromise` while `resolveDeviceId` hands back its cached id: account B signing in after A on the
+same install ran on A's decrypted client and A's device id. The ghost session had masked it (B never
+reached a login). Now `endSessionImpl` RETIRES the client (`composables/session/mlsHolder.ts`): the
+holder lets go of it at once, so any later `ensureMls` builds a fresh one, and destroys it once the
+teardown's final checkpoint has landed (`tearDownLiveSession` now returns that write, which never
+rejects). `loginImpl` and `recoverPinImpl` `await ctx.whenMlsRetired()` before they touch MLS or read
+the state, because that write is what they read. The SAME account signing back in therefore pays
+one full state decrypt, as a cold start does - chosen deliberately over reusing a client whose
+account the code cannot prove. The call service is rebuilt over the new client (`initServices` is
+keyed on the client, not on "one exists"). Possibly the cause of the P3 "switching accounts on one
+iPhone install" in [backlog](../../backlog.md), not proven - and NOT the only one: the device-key
+vault outlives the sign-out and names no account, so B signs in on A's key (same backlog entry).
+Test: `signOutTimeline.test.ts`, "a sign-out retires the account with its MLS client".
+
+**The retirement always settles, and every reader of the disk waits for it.** `mlsHolder.retire`
+catches a final write that rejects and a destroy that throws, because a login awaits that chain and
+a rejection left it - and `isLoginInProgress` - stuck. The "forgot PIN" reset
+(`resetDeviceAsFreshImpl`) waits too: it runs from the next sign-in's PIN gate, and a late write
+would put back, under the old key, the state it deletes. There is no clock on the wait: it ends when
+the local write does (a Mi 9T checkpoint has been measured at 48 s), so a slow write is a slow
+"Connexion en cours", never a stuck one. Tests: `mlsHolder.test.ts`, and
+`accountSwitchLateFlush.test.ts`, which replays A's held write, B's sign-in and the late landing
+over the real `useChatSession` (client, call service, persister, hooks, encrypt worker).
+
+**A late final flush no longer removes the NEXT session's persister.** The teardown removed the
+persister, its lifecycle hooks and the encrypt worker in the flush's `.finally`, unconditionally -
+so a next login that registered its own in the meantime lost them. Both removals now name the
+persister this session registered (`unregisterMlsStatePersister(owner)`,
+`uninstallMlsStatePersisterLifecycle(owner)`) and skip one that is not current; the shared worker is
+disposed only when no session has registered since; and installing hooks for a NEW persister replaces
+the old ones instead of being skipped by a stale "installed" flag. The login's wait above already
+orders this; the guards make it hold without relying on that order.
+
+**OPEN, P2 (pre-existing): a sign-out during a login in progress is not cancelled.** A login can run
+~12 s inside the native decrypt of `mls.bin` (Mi 9T). A sign-out in that window finds no live
+session (`isLoggedIn` is still false), so `endSessionImpl` stops nothing, and the login then
+completes and sets `isLoggedIn` true for a signed-out user (what follows was not measured). The
+clean fix is a sign-out GENERATION that `loginImpl`
+captures at its start and re-reads before `setIsLoggedIn(true)`, tearing down what it set up if a
+sign-out happened; it touches every registration the login makes, so it is its own change
+([backlog](../../backlog.md)).
+
+**What a sign-out still keeps, deliberately**: `mls.bin`, the message database and the device-key
+vault ("deconnecter seulement, garder l'etat", see `handlePinSignOut`). So a device signed out with
+"Rester connecte" ticked unlocks WITHOUT its PIN after the next sign-in of the same account - the
+vault was never cleared by any live path, `v1.2.6` included. Whether a sign-out should end "Rester
+connecte" is a decision for the user, not a defect of this fix.
 
 ## Mobile unlock flow (Tauri)
 

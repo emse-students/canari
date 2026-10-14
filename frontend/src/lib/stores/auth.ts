@@ -168,6 +168,28 @@ export function isRefreshCredentialProvenDead(): boolean {
   return _refreshCredentialProvenDead;
 }
 
+/** The app's reaction to a sign-out, registered by the app shell; see {@link setSignOutHandler}. */
+let _signOutHandler: (() => void) | null = null;
+
+/**
+ * Registers what the app must stop when the session is ended on purpose - the live chat session.
+ *
+ * EVERY SIGN-OUT IN THE APP IS `clearAuth()` THEN `/login` (the dashboard, the navbar, the PIN gate,
+ * the platform gate, the identity-split notice, a dead session), and none of them could reach the
+ * live session, which is owned by the app shell. So since 2026-04-09 a sign-out ended the session
+ * on the SERVER and left it running on the device: `isLoggedIn` true, the socket's foreground resume
+ * still armed. On the Mi 9T, 2026-10-14, the resume after the sign-in browser ran BEFORE the OIDC
+ * callback had its token, read the dead credential, logged the half-ended session out, and the new
+ * sign-in was never unlocked ("Connexion en cours..." for 4 minutes). Announced from here because
+ * this is the one function every sign-out already calls, so no exit can forget it.
+ *
+ * Called FIRST in {@link clearAuth}, synchronously, while the access token still exists: the
+ * teardown deregisters the push token with it.
+ */
+export function setSignOutHandler(fn: (() => void) | null): void {
+  _signOutHandler = fn;
+}
+
 /** Records that a live refresh credential exists again, voiding both verdicts above. */
 function noteRefreshCredentialAlive(): void {
   _refreshCredentialProvenDead = false;
@@ -767,6 +789,17 @@ export function setToken(token: string): void {
  */
 export async function clearAuth(): Promise<void> {
   alog('clear');
+  // THE LIVE SESSION ENDS BEFORE ANYTHING IT USES IS GONE - see `setSignOutHandler`. A throw here is
+  // a session left running for a signed-out user, so it is accused by name, and the sign-out goes on.
+  if (_signOutHandler) {
+    try {
+      _signOutHandler();
+    } catch (e) {
+      console.error(`[A] sign-out handler failed - the live session may still be running: ${e}`);
+    }
+  } else {
+    alog('clear with no sign-out handler registered - no live session to end');
+  }
   _accessToken = null;
   clearWsSessionCookie();
   clearIdentitySplit();

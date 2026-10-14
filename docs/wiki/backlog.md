@@ -281,6 +281,12 @@ Neither the tab nor the salon showed one. Not reproduced.
 ### P3 - switching accounts on one iPhone install makes the local store unreadable
 
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
+A candidate cause is fixed in #1862 (the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)); owed one re-reading after it ships.
+**A second cause, read from the code on 2026-10-14 and NOT fixed by #1862: the device-key vault survives a sign-out and names no account.** `clearAuth` keeps it (`deviceKeyVault.ts` stores one blob, no user id), so B's sign-in takes the vault path with A's key and skips B's PIN. Web: B's store is sealed under A's key (or B's own old state will not open). Native: `mls.bin` is one file per install, A's key opens it, the credential names A, and the `mismatch` branch ROTATES - A's state is overwritten. Fix shape: the vault records its account and a sign-in as another account refuses it; until then an A->B reading on a phone destroys A's local state.
+
+### P2 - a sign-out during a login in progress is not cancelled
+
+The login completes after the sign-out and sets `isLoggedIn` for a signed-out user. Fix shape (a sign-out generation re-read before `setIsLoggedIn(true)`) in [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14).
 
 ### P3 - every cold start re-registers the device and fetches `/groups` two or three times
 
