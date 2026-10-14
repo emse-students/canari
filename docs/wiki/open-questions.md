@@ -85,6 +85,22 @@ three app-level consequences are not measured:
 - push frames while it is dead;
 - resume, and read the log for `live-ahead`, duplicates and `unreadable for good`.
 
+### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
+
+Since the sender coalescing, a DM or group watermark is sent when the 2 s window after reading ends,
+when the reader leaves, or when the app leaves the screen. The window is the mechanism's one clock.
+If it were wrong the cost would be more traffic, never a lost receipt. Under the "termination from a
+proof, never from a clock" rule, that still makes it load-bearing. The alternatives change what a
+peer sees:
+
+- **events only** (leave, background, the next send): a DM peer sees "Vu" only once the reader leaves
+  or replies;
+- **a count K**: the frame goes after K foreign messages read, so "Vu" lags by up to K messages.
+
+Measured gain first: the frames left after the own-send half was removed
+([history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)).
+A device count of watermark frames per minute of active reading would size what is left to take.
+
 ### DECISION OWED - should the KeyPackage pile leave the blob every checkpoint rewrites?
 
 **Measured 2026-10-13** ([store-phone-reading](frontend/store-phone-reading-2026-10-13.md#4-the-mls-state-rewritten-in-full)):

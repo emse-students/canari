@@ -861,6 +861,97 @@ one. **A field persisted but never read back is worse than one never stored**: t
 nothing reports it, and every test that stays inside one session passes. When adding a field to the
 conversation, change both, and assert it across a reload rather than within one.
 
+#### The sender says only what is new, and the outbox keeps one watermark per conversation (2026-10-15)
+
+**Why the SENDER.** A `read_watermark` is an MLS application frame. Decrypting it moves the receive
+ratchet, so a receiver cannot skip it, nor the checkpoint that follows it. A Pixel 6a cold start
+logged 135 checkpoints in 16.9 s (114 ms median). 50 of them (5.6 s) followed drains that held only
+read watermarks. #1879 tried to skip the checkpoint on the receiver. It was rejected: its proof
+covered the manager and not `mls.bin`, and it gained 4 %. The only place that can send fewer frames
+is the sender. A watermark is latest-wins (merged as `max`), so a frame a newer one covers carries
+nothing.
+
+**What the code emitted, counted from `MainChatPage`'s receipt effect before this change.** For a DM
+or an MLS group (a salon's mark goes to the server and is out of scope):
+
+| Gesture | Frames |
+| --- | --- |
+| Open a conversation that has unread messages | 1, after the 2 s debounce |
+| Scroll, or load older history | 0. The target is the max over every loaded message, and older rows are below it |
+| A peer's message arrives while it is open and focused | 1 per 2 s window |
+| **Send a message** | **1, 2 s later.** `watermarkAfterReading` counted own messages, so the reader's mark moved over their own send |
+| Leave within 2 s of reading | **0, and the receipt was LOST.** The cleanup zeroed the pending value after the local mark had already moved, so nothing sent it again |
+| Read while offline, then reconnect | one frame per debounce window, all sent on reconnect |
+
+In an active DM with both people reading, each message cost two watermarks: the reader's and the
+sender's own. Every member's device decrypts both, the author's other devices included.
+
+**What changed: three rules.**
+
+1. **A mark moves over FOREIGN messages only, in a DM or an MLS group** (`readMarkTarget`,
+   `readState.ts`). Receivers learn nothing from a mark that moved over the reader's own send.
+   `seenByAnchors` already places an author at their own message, and `isUnreadForUser` never counts
+   one. A salon still counts its own and system rows: the server counts against that mark, and #1619
+   and #1820 rely on it. The own-advance frame was the sender's half of every exchange, and it is
+   gone. This is "piggyback on the next send" in its exact form: the message itself announces that
+   its author has read up to it.
+2. **The outbox keeps ONE unsent watermark per conversation** (`OutboxController.enqueue` with
+   `latestWins`, `sendReadWatermark`). A new watermark for a conversation that a queued one already
+   covers (`queued.at >= at`) is not queued, so a mark never moves backwards on the wire. Otherwise the
+   new entry is WRITTEN FIRST, and only then are the older unsent ones withdrawn, through the same
+   `withdraw` path as a cancelled message: the durable row, this flush's snapshot, the other tabs and
+   the native mirror. Only `read_watermark` entries of the same conversation are touched. Reactions,
+   edits, deletes and pins are not latest-wins per conversation and never enter this path.
+3. **Leaving the conversation, or the app leaving the screen, DELIVERS the pending watermark**
+   (`createReadMarkDebounce`, `readMarkDebounce.ts`). It used to drop it. Both are events, so the
+   coalescing between reading and leaving has no clock of its own.
+
+**The invariants, and what holds each one.**
+
+| Invariant | Held by |
+| --- | --- |
+| The LAST watermark is eventually sent | It is either pending in the debounce (delivered on expiry, leave or off-screen) or queued in the outbox, which delivers it durably. Supersede never withdraws the newest entry |
+| A crash loses at most superseded watermarks | Write-before-withdraw. A crash between the two leaves BOTH rows, which send in order (older first), and the receiver's `max` makes that harmless |
+| A watermark never moves backwards | Covered-means-not-queued, at enqueue. The receiver merges by `max` anyway |
+| An entry already on the wire is not counted as withdrawn | `withdraw` answers `false` for `inFlight`; the old frame goes, and the new one follows it |
+| A failed queue read never costs a frame | `readQueue` failing reads as "no siblings", so the new entry is queued normally. More traffic, never a loss |
+
+**Unread counters and #1820 (mark a community read).** The counter is
+`countUnreadForUser(messages, myWatermark)`, which never counts an own message, so a mark that
+excludes own messages counts exactly the same. #1820 moves a PRIVATE per-salon `clearedMarks` on the
+server and never touches the read mark, the receipt effect or the MLS outbox. A salon has no MLS
+group, so its marks cannot enter this queue (`flushOne` drops a `channel_` entry on sight).
+
+**Rejected.**
+
+- **Skip the checkpoint on the receiver (#1879).** Rejected by its review: the proof covered the
+  manager, not `mls.bin`, which has three other writers, and it gained 4 %.
+- **Hold the watermark until leave, background or the next send, with no other bound.** It is
+  deterministic, but a DM peer would see "Vu" only once the reader left. A COUNT bound with K > 1
+  delays the same receipt by K messages. Both change what a user sees, so neither was taken without
+  the user. The 2 s debounce stays as the one coalescing clock. If it were wrong, the cost would be
+  more traffic, never a lost receipt, because leave and off-screen now deliver. **Replacing it with a
+  count is a decision owed to the user, see [open-questions](../open-questions.md).**
+- **Supersede by deleting the old row first, then writing the new one.** A crash between the two
+  loses both. Write-before-withdraw costs one duplicate frame in the same crash.
+- **Rewrite the queued entry's proto in place.** The flusher may hold that entry in its snapshot, or
+  have it on the wire. A row whose content changes under a running send is exactly the race
+  `cancelled` + `inFlight` already settle for withdrawal, so withdrawal is reused rather than a
+  second mechanism.
+- **Infer a peer's read point from the messages they send, on the RECEIVER.** That changes every
+  receiver and the stored watermark of every peer. Not sending the frame at all needs no receiver to
+  change.
+
+**Residual, not closed here.** A process death INSIDE the 2 s debounce still loses that window's
+frame. The local mark was persisted, so the next open finds nothing to announce. Closing it needs
+the owed mark written durably at decision time, as `salonReadMarkQueue.ts` does for salons
+([backlog](../backlog.md)).
+
+**What a phone should count** to confirm the gain: `[READ] ... has read up to` lines received, and
+MLS checkpoints, per 3 minutes of a two-person DM exchange, on this build and on the one before it.
+Expect the own-advance half to vanish, and the cold-start drains that held only watermarks to fall
+by the same share.
+
 ### Scrollback below the window
 
 To reach past its own window a device asks a peer for a **bounded range** rather than everything,

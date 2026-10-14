@@ -53,7 +53,15 @@ import {
   SendEdgeRefusedError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
-import { MediaKind, decodeAppMessage, mediaReelFromProto } from '$lib/proto/codec';
+import {
+  MediaKind,
+  decodeAppMessage,
+  encodeAppMessage,
+  mediaReelFromProto,
+  mkReaction,
+  mkSystem,
+} from '$lib/proto/codec';
+import { queuedReadWatermarkAt, sendReadWatermark } from './messaging';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
 import {
   UploadAbortedError,
@@ -2845,5 +2853,159 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
       errorSpy.mockRestore();
     });
+  });
+});
+
+/**
+ * A READ WATERMARK IS LATEST-WINS, SO THE QUEUE KEEPS ONE PER CONVERSATION. Every frame costs every
+ * member a decrypt and a full MLS checkpoint, and only the newest says anything. See
+ * history-reconciliation, "The sender says only what is new". Each case drives the real
+ * `sendReadWatermark` into a registered controller, so the supersede is asserted the way the app
+ * reaches it.
+ */
+describe('outbox - a read watermark supersedes the unsent one of its conversation', () => {
+  function watermarkEntry(id: string, conversationId: string, at: number): OutboxEntry {
+    return {
+      id,
+      conversationId,
+      sentAt: at,
+      kind: 'control',
+      controlProto: encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at }))),
+      status: 'pending',
+      attempts: 0,
+      createdAt: at,
+    };
+  }
+  const queuedAts = (storage: ReturnType<typeof makeStorage>, conversationId = 'g1') =>
+    [...storage._map.values()]
+      .filter((e: OutboxEntry) => e.conversationId === conversationId)
+      .map((e: OutboxEntry) => queuedReadWatermarkAt(e));
+  const sentAts = (mlsService: ReturnType<typeof makeMls>) =>
+    mlsService.sendMessage.mock.calls.map(
+      (call: unknown[]) =>
+        JSON.parse(decodeAppMessage(call[1] as Uint8Array)?.system?.data ?? '{}').at as number
+    );
+  const read = (at: number, conversationId = 'g1') =>
+    sendReadWatermark(at, { conversation: { id: conversationId } } as any);
+
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(() => () => {});
+  });
+  afterEach(() => {
+    unregisterOutbox();
+  });
+
+  it('two watermarks queued while offline: one row, and only the newest is sent', async () => {
+    const storage = makeStorage();
+    const mlsService = makeMls();
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    await read(100);
+    await read(200);
+    expect(queuedAts(storage)).toEqual([200]);
+
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(sentAts(mlsService)).toEqual([200]);
+    expect(storage._map.size).toBe(0);
+  });
+
+  it('supersedes a watermark queued by an earlier session, across a restart', async () => {
+    // Written offline before the app was killed: the new controller finds it on disk.
+    const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
+    const mlsService = makeMls();
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    await read(250);
+    expect(storage._map.has('old')).toBe(false);
+    expect(queuedAts(storage)).toEqual([250]);
+
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(sentAts(mlsService)).toEqual([250]);
+  });
+
+  it('never moves a mark backwards: a watermark an unsent one covers is not queued at all', async () => {
+    const storage = makeStorage([watermarkEntry('high', 'g1', 300)]);
+    connectivity.notifyServerUnreachable();
+    registerOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    await read(200);
+    await read(300);
+    expect(queuedAts(storage)).toEqual([300]);
+    expect(storage.saveOutboxEntry).not.toHaveBeenCalled();
+  });
+
+  it('writes the new row BEFORE withdrawing the old one, so a crash between keeps both and loses none', async () => {
+    const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
+    const mlsService = makeMls();
+    let oldStillQueuedAtWrite: boolean | null = null;
+    const save = storage.saveOutboxEntry.getMockImplementation();
+    storage.saveOutboxEntry.mockImplementation(async (e: OutboxEntry) => {
+      oldStillQueuedAtWrite = storage._map.has('old');
+      await save(e);
+    });
+    // The process dies before the withdrawal lands: the delete never happens.
+    storage.deleteOutboxEntry.mockRejectedValueOnce(new Error('process killed'));
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    await read(200);
+    expect(oldStillQueuedAtWrite).toBe(true);
+    expect(queuedAts(storage).sort()).toEqual([100, 200]);
+
+    // Both go, oldest first, and `max` on every receiver makes the spare one harmless.
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(sentAts(mlsService)).toEqual([100, 200]);
+  });
+
+  it('touches nothing but read watermarks of the same conversation', async () => {
+    const reaction: OutboxEntry = {
+      ...watermarkEntry('reaction', 'g1', 90),
+      controlProto: encodeAppMessage(mkReaction('m1', 'x', 90)),
+    };
+    const storage = makeStorage([
+      textEntry('text', 'g1', 80),
+      reaction,
+      watermarkEntry('other-convo', 'g2', 100),
+    ]);
+    connectivity.notifyServerUnreachable();
+    registerOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    await read(200);
+    expect(storage._map.has('text')).toBe(true);
+    expect(storage._map.has('reaction')).toBe(true);
+    expect(queuedAts(storage, 'g2')).toEqual([100]);
+    expect(queuedAts(storage)).toEqual([null, null, 200]);
+  });
+
+  it('does not count a watermark already on the wire as withdrawn: the newer one follows it', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
+    const mlsService = makeMls({ send: () => onTheWire });
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+
+    await read(200);
+    release();
+    await outboxIdle();
+    await outbox.flush();
+    await outboxIdle();
+    expect(sentAts(mlsService)).toEqual([100, 200]);
+    expect(storage._map.size).toBe(0);
   });
 });
