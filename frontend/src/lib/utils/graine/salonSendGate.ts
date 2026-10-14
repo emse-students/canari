@@ -79,7 +79,7 @@ let lastListing: ListingOutcome = 'none';
 const entryWaiters = new Set<() => void>();
 /** Releases every {@link whenSalonEntryDecided} waiter; each re-reads the gate itself. */
 function wakeEntryWaiters(): void {
-  for (const wake of [...entryWaiters]) wake();
+  for (const wake of entryWaiters) wake();
 }
 /**
  * Which session the counters belong to. A listing that began before a sign-out settles into the
