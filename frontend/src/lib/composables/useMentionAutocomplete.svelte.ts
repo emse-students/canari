@@ -165,6 +165,14 @@ export function useMentionAutocomplete(opts: {
       if (selectedIdx >= 0) select(suggestions[selectedIdx]);
       return true;
     }
+    // Tab completes like a click: the highlighted row, else the first. Shift+Tab, a modified Tab and
+    // a Tab pressed during IME composition keep the browser's own focus movement. A closed or
+    // empty list never reaches here (guard above), so Tab keeps its normal behaviour there.
+    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
+      e.preventDefault();
+      select(suggestions[selectedIdx >= 0 ? selectedIdx : 0]);
+      return true;
+    }
     if (e.key === 'Escape') {
       open = false;
       suggestions = [];
