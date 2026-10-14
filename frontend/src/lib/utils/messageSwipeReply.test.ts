@@ -14,18 +14,33 @@ describe('messageSwipeReply', () => {
   });
 
   it('triggers reply on inbound swipe right', () => {
-    expect(shouldTriggerReplySwipe(60, 4, false, 'horizontal')).toBe(true);
+    expect(shouldTriggerReplySwipe(60, false, 'horizontal')).toBe(true);
     expect(replySwipeDragOffset(40, false)).toBe(40);
   });
 
   it('triggers reply on own message swipe left', () => {
-    expect(shouldTriggerReplySwipe(-60, 4, true, 'horizontal')).toBe(true);
+    expect(shouldTriggerReplySwipe(-60, true, 'horizontal')).toBe(true);
     expect(replySwipeDragOffset(-40, true)).toBe(-40);
   });
 
   it('ignores wrong-direction swipes', () => {
     expect(replySwipeDragOffset(40, true)).toBeNull();
-    expect(shouldTriggerReplySwipe(60, 4, true, 'horizontal')).toBe(false);
+    expect(shouldTriggerReplySwipe(60, true, 'horizontal')).toBe(false);
+  });
+
+  it('releases exactly where the bubble is drawn armed, on either side - never a second rule', () => {
+    for (const isOwn of [false, true]) {
+      const sign = isOwn ? -1 : 1;
+      for (const dx of [0, 30, 55, 56, 57, 72, 200]) {
+        const drawnArmed = replySwipeArmed(replySwipeDragOffset(sign * dx, isOwn) ?? 0);
+        expect(shouldTriggerReplySwipe(sign * dx, isOwn, 'horizontal')).toBe(drawnArmed);
+      }
+    }
+  });
+
+  it('never triggers a gesture that did not lock horizontal', () => {
+    expect(shouldTriggerReplySwipe(200, false, 'vertical')).toBe(false);
+    expect(shouldTriggerReplySwipe(200, false, 'pending')).toBe(false);
   });
 });
 

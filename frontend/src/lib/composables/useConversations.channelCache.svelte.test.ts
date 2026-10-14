@@ -146,3 +146,43 @@ describe('salon history cache - stale by event, never by clock', () => {
     expect(listMessages).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('a salon history request issued at the tap', () => {
+  it('raises the skeleton and asks the server although the salon is not selected yet', async () => {
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    let release!: (rows: unknown[]) => void;
+    listMessages.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    expect(convs.selectedContact).not.toBe(SALON);
+
+    const pending = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { atTap: true });
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    // The pane mounts a frame later: the skeleton is there for the salon it was raised for.
+    convs.selectConversation(SALON);
+    expect(convs.isLoadingHistory).toBe(true);
+
+    release([{ id: 'm1' }]);
+    await pending;
+    expect(convs.isLoadingHistory).toBe(false);
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['m1']);
+  });
+});
+
+describe('the skeleton raised at the tap belongs to its salon', () => {
+  const OTHER = 'channel_7d2f0aa0-0000-4000-8000-000000000002';
+
+  it('is not shown on another salon selected while it is still up', async () => {
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    convs.conversations.set(OTHER, { ...salon(), id: OTHER, name: OTHER } as Conversation);
+    listMessages.mockReturnValue(new Promise(() => {}));
+
+    void convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { atTap: true });
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+
+    convs.selectConversation(SALON);
+    expect(convs.isLoadingHistory).toBe(true);
+    convs.selectConversation(OTHER);
+    expect(convs.isLoadingHistory).toBe(false);
+  });
+});

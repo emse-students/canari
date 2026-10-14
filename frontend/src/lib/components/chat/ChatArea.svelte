@@ -25,7 +25,13 @@
   import EmptyState from '../shared/EmptyState.svelte';
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
-  import { resolveRenderWindow, stepWindowOlder } from '$lib/utils/chat/renderWindow';
+  import {
+    entryWindowStart,
+    resolveRenderWindow,
+    stepWindowOlder,
+    widenedEntryStart,
+  } from '$lib/utils/chat/renderWindow';
+  import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
   import {
     chatViewCountLine,
     isPinnedToBottom,
@@ -306,6 +312,12 @@
   const INITIAL_RENDER_GROUPS = 60;
   const RENDER_GROUPS_STEP = 140;
   /**
+   * What the FIRST frame of an entry mounts: the tail a phone viewport shows (~15-20 bubbles).
+   * The rest of `INITIAL_RENDER_GROUPS` follows after that frame (`widenEntryWindow`), so the first
+   * paint is not one long task over a whole page of rows (339-635 ms for 56-200 rows on a Mi 9T).
+   */
+  const ENTRY_FIRST_FRAME_GROUPS = 20;
+  /**
    * How much history to open ABOVE a message the reader jumped to, so it lands with context rather
    * than glued to the top of the pane. It used to be a cap on rendered nodes, back when the window
    * had a fixed width and slid; the window is anchored to the newest message now and only grows, so
@@ -405,12 +417,47 @@
   async function fillViewportThenPin() {
     for (let i = 0; i < 4 && chatContainer && renderWindow.start > 0; i++) {
       if (chatContainer.scrollHeight > chatContainer.clientHeight + 40) break;
-      windowStart = Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
+      // THE FIRST FILL STEP REACHES THE FULL ENTRY SIZE, NOT A PAGE (140) ABOVE THE FIRST FRAME: a
+      // thread of one-line rows would otherwise mount 160 rows before its first paint where it
+      // used to mount 60. Only a still-short viewport after that steps by a page.
+      const fullEntryStart = entryWindowStart(messageGroups.length, INITIAL_RENDER_GROUPS);
+      windowStart =
+        renderWindow.start > fullEntryStart
+          ? fullEntryStart
+          : Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
       await tick();
     }
     scrollToBottomSettled(() => {
       entering = false;
+      void widenEntryWindow();
     });
+  }
+
+  /**
+   * Grows the entry window from its first-frame size to `INITIAL_RENDER_GROUPS`, AFTER the frame
+   * that showed the tail, so a page of rows is never one long task before the first paint.
+   *
+   * The new rows go ABOVE the viewport, so the scroll offset is moved by exactly the height they
+   * add (the same compensation `loadOlderGroups` makes) and the reader sees nothing move. It only
+   * lowers the start: a reader who has paginated further up keeps their wider window.
+   */
+  async function widenEntryWindow() {
+    const key = lastConversationKey;
+    await yieldToMainThread();
+    if (key !== lastConversationKey || !chatContainer) return;
+    const widened = widenedEntryStart(
+      renderWindow.start,
+      messageGroups.length,
+      INITIAL_RENDER_GROUPS
+    );
+    if (widened === null) return;
+    const prevHeight = chatContainer.scrollHeight;
+    const prevTop = chatContainer.scrollTop;
+    Log.d('chat.entry', `widening window ${renderWindow.start} -> ${widened}`);
+    windowStart = widened;
+    await tick();
+    if (key !== lastConversationKey || !chatContainer) return;
+    chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
   }
 
   /**
@@ -614,7 +661,14 @@
    * current length; `windowStart` stays the state pagination writes.
    */
   let renderWindow = $derived(
-    resolveRenderWindow(windowStart, messageGroups.length, INITIAL_RENDER_GROUPS)
+    resolveRenderWindow(
+      windowStart,
+      messageGroups.length,
+      // The 20-group floor belongs to the entry frame alone: any other time a list replaced by a
+      // shorter one (WP-EMPTYVIEW-1) must settle on a full window, not on a first frame that nothing
+      // widens.
+      entering ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
+    )
   );
   let windowEnd = $derived(renderWindow.end);
   let visibleMessageGroups = $derived(messageGroups.slice(renderWindow.start, renderWindow.end));
@@ -892,7 +946,7 @@
 
       if (hasConversationChanged) {
         switchTime = computeMessageListSwitchTime(c.messages);
-        windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
+        windowStart = entryWindowStart(messageGroups.length, ENTRY_FIRST_FRAME_GROUPS);
         hasMoreInDb = !isChannel;
         scrollbackState = 'idle';
         scrollbackAskedAt = null;
@@ -925,7 +979,14 @@
         });
         viewResponse = response;
         if (response !== 'stay') {
-          windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
+          // A re-pin of the entry never RAISES the start: a window already widened to 60 stays
+          // mounted while a late history merge lands, instead of being cut to 20 and widened again.
+          const entryStart = entryWindowStart(
+            messageGroups.length,
+            response === 'repin-entry' ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
+          );
+          windowStart =
+            response === 'repin-entry' ? Math.min(renderWindow.start, entryStart) : entryStart;
           if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
           else tick().then(() => scrollToBottom(true));
         }

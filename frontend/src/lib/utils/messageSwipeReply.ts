@@ -57,17 +57,25 @@ export function replySwipeDragOffset(
   return Math.min(maxDrag, Math.max(0, deltaX));
 }
 
-/** True when the user released a valid reply swipe (toward the center of the thread). */
+/**
+ * True when releasing NOW sends the reply: the gesture locked horizontal and the bubble is drawn
+ * armed. It is the same `replySwipeArmed(replySwipeDragOffset(...))` the bubble paints from, so what
+ * the reader sees before letting go is, by construction, what letting go does.
+ *
+ * **IT USED TO ASK A SECOND QUESTION THE BUBBLE NEVER SHOWED** (Mi 9T, 2026-10-14): a vertical drift
+ * of `0.75 * REPLY_SWIPE_TRIGGER_PX` (42px) at release cancelled the reply. The drag ignores the
+ * vertical axis once locked, so a thumb's natural arc - 110px across, 45px down - slid the bubble
+ * fully, lit the armed icon, ticked the haptic, and then did nothing. That was the "sometimes" of
+ * the report. The vertical question is answered ONCE, at the lock (`updateReplySwipeGesture`), and a
+ * locked horizontal gesture does not scroll the thread, so nothing is left for it to protect.
+ */
 export function shouldTriggerReplySwipe(
   deltaX: number,
-  deltaY: number,
   isOwn: boolean,
-  phase: ReplySwipePhase,
-  threshold = REPLY_SWIPE_TRIGGER_PX
+  phase: ReplySwipePhase
 ): boolean {
   if (phase !== 'horizontal') return false;
-  const towardCenter = isOwn ? deltaX < -threshold : deltaX > threshold;
-  return towardCenter && Math.abs(deltaY) < threshold * 0.75;
+  return replySwipeArmed(replySwipeDragOffset(deltaX, isOwn) ?? 0);
 }
 
 /** Progress 0-1 for reply hint opacity (based on drag toward trigger). */

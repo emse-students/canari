@@ -51,6 +51,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 
 | What | The measurement that closes it |
 | --- | --- |
+| a reply swipe along a thumb's arc (45-70 px of vertical drift) replies once the bubble shows armed (2026-10-14; 0 of 14 before, unit and component tests since) | on the Mi 9T, next pre-release: the class-A cells of the matrix (`F:/Programmation/canari-harness/swipe-reply-r1014/`), 110 px across with 45 and 60 px drift, own and received; on the iPhone 12, the same arc by finger, its swipe never having been read on WebKit ([design-reference](frontend/design-reference.md#the-reply-swipe-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-14)) |
 | an Android relaunch (navigation-mode switch, WebView update) destroys the old WebView, so its Web Locks no longer withhold refused salon texts (2026-10-14; compiled and source-gated, never run) | on the Mi 9T, next pre-release: switch the navigation mode twice, CDP lists ONE page, a salon text refused before the switch comes back to its composer; restore gestural ([mobile](frontend/mobile.md#a-relaunched-activity-left-its-webview-alive-and-the-orphan-kept-its-web-locks-2026-10-14)) |
 | a post push tapped with the session dead lands on `/login?returnTo=` the post (2026-10-09) | check H step 4 on the Mi 9T, killed app AND backgrounded ([device-verification](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)); a bare `/login` with no `[hooks] Processing URL` means the intent never reached the JS |
 | after an edge swipe the next scroll is swallowed (Mi 9T, 2026-10-05; NOT a code defect anyone has seen: the page never holds the touch) | check X, ONE real-finger scroll on the Mi 9T with the `[swipeBack]` lines now logged ([device-verification](device-verification.md#x-the-scroll-after-an-edge-swipe---owed-on-the-mi-9t)) |
@@ -115,7 +116,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **decide whether `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App itself** (a lockfile-refresh superseding a Dependabot pull request, which is how the last class of dependency update that needs a person would merge unattended) | 1 decision | [the P2](#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix) |
 | **set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret** (environment `development`; today only the repository-level production `FIREBASE_SERVICE_ACCOUNT_JSON` exists): without it dev sends no push and T1, the push-to-banner latency, cannot be measured | 1 secret | [the notification latency P2](#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11) |
 | **decide production's log retention**: the per-message lines at `LOG` level roll the container log over in ~20 minutes, so an incident older than that is unreadable | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
-| **decide whether the iPhone app follows Dynamic Type** (today it ignores the setting) | 1 decision | [2026-10-13 bench pass](#a-decision---the-iphone-ignores-dynamic-type) |
 | **decide the WebCrypto checkpoint seal** (design only) | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **raise `minClientVersion` to `1.2.1` once BOTH stores serve `1.2.1`** - `1.0.3`-`1.1.2` keep the native key-group epoch bug (a cold start arms an epoch gap, salon sends are refused, the device re-joins 45 s later); the floor is `1.0.3` since 2026-10-11; Apple's order is to wait for 1.2.1's review, then submit 1.2.4 | 1 gesture | [channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09), [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
@@ -169,6 +169,14 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
 
+## P1 - Opening a community is network-gated: the salons 1.7 s after the tap on Wi-Fi, 6 s on a slow link and phone, never offline (user, 2026-10-14; measured, not built)
+
+**User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Mi 9T, `1.2.7-alpha.3`, dev, cold, medians: tap -> salons 1.7 s (Wi-Fi), 6.0 s (slow3g + 4x CPU), never in airplane mode (also on the user's Pixel on production); a salon's first messages 1.9 s / 6.2 s after its tap. Budget proposed: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. Fixes F1-F7, ranked, none built - F1 (a local workspace list), F4 (a salon's last page kept locally, local-first-ui ledger row 9) and F6 (mount the visible bubbles first) are the ones that reach the budget: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`. **Owed**: a CPU profile of the warm resume at 4x (2 s before the tap is handled), the history head/body split, iOS.
+
+## P3 - 45 identical `[HISTORY_RECONCILE] ... asked 30s ago` lines in 250 ms at a cold start (Pixel 6a, production `1.2.7`, 2026-10-14)
+
+Read in the user's exported log (`F:\Programmation\canari-harness\pixel-r1014\`): one line per group instead of one per sweep. Noise defect, no behaviour change owed ([community-open-budget](frontend/community-open-budget.md#6-the-smallest-set-of-fixes-the-evidence-proves)).
+
 ## P3 - Asked by the USER on 2026-10-14 - "Modifier les pseudos" for a group and a community, design questions answered, not built
 
 > *"Une fonctionnalite comme sur Messenger : 'Modifier les pseudos', un ecran qui liste les membres du groupe ou de la communaute, avec 'Definir un pseudo' et un crayon a cote de chaque membre."* (not urgent)
@@ -187,17 +195,34 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 ## Group notification levels (all / mentions only / none) - requested by the USER 2026-10-14, release 1.2.8 WAITS for it
 
+**RELEASE SCOPE (user, 2026-10-14).** The stable `1.2.8` waits for these levels (mute and mentions-only, PR #1874) and carries #1863 (device-key vault per account), #1870, #1871 (notification sender name), #1875 (salon first frame), #1877, #1880 (reply swipe thumb arc) and the salon-level-over-socket fix. It does NOT wait for "a remove holds against a re-add" (draft PR #1878, under review or rework): that and the in-app camera everywhere (#1859, needs conflict resolution and Mi 9T + iPhone readings) go to `1.2.9`.
+
 *"Pour la prochaine mise a jour"*: the user decided 1.2.8 is held until both mute and mentions-only ship. A PR is in progress by an agent. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
 
 ## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, in progress)
 
+**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (today `1.0.3`) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. This is a deliberate exception to the standing "`minClientVersion` stays `1.0.3`". The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
+
 Draft PR with server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
+
+## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, draft PR in progress
+
+Decided: declare system gesture exclusion rects for the right edge band while a conversation is open (a reply swipe started in an own bubble's last 17.5 px is a system Back: 11 of 11 on the Mi 9T). **Owed: a Mi 9T reading on the next pre-release.**
+
+## iPhone follows the system text size (Dynamic Type) - DECIDED by the user 2026-10-14, draft PR in progress
+
+Decided: the iPhone app FOLLOWS the system text size, like Android. **Owed: an iPhone 12 reading** (the 2026-10-13 bench pass saw the largest size draw as the default).
+
+## Next chantier after 1.2.8 - speed (user, 2026-10-14)
+
+Order: (1) opening a community or salon in **under 200 ms** for the tab and the first paint of cached content: F1 local workspace list (draft PR in progress), then F4 salon last page cached locally, the posts feed local-first (offline it says "Impossible de charger les posts"), read-marker coalescing (pending the adversarial review of #1879) - budget and ranking in [community-open-budget](frontend/community-open-budget.md); (2) CanaReels in chats (RC-3, RC-7, [reels-in-chat](frontend/modules/reels-in-chat.md)); (3) Graine v2 G2-6.
 
 ## P3 - Found reading the Pixel 6a on prod 1.2.7 (Wi-Fi, LTE, offline, 2026-10-14)
 
 Evidence: `canari-log-1.2.7-20261014-1759.txt` in the harness state dir `pixel-r1014` (outside the repo, cite by name only).
 
-- **The Communities tab shows NO community offline**: the workspace list is not local-first, and the feed says "Impossible de charger les posts".
+- **The Communities tab shows NO community offline**: the workspace list is not local-first, and the feed says "Impossible de charger les posts" (both in the speed chantier above).
+- **P2, from the agent of PR #1881: an "absent conversation" at cold start.** Kept; it also affects community open time, so it belongs with the speed chantier.
 - **79 MLS checkpoints in 3 minutes** (94-238 ms each, 9.4 s in all): one per bulk ingest, even for `read_watermark` frames.
 - **45 identical `[HISTORY_RECONCILE] ... was asked 30s ago` lines in 250 ms at cold start**: a noise defect (CLAUDE.md: explain it or fix it).
 - **Salon open measured ~0.6 s on Wi-Fi and ~0.9 s on LTE, ~0.7 s of it a skeleton.** The user's target is **under 0.2 s** for the tab and for the first paint of cached salon messages (cold start excluded).
@@ -355,12 +380,6 @@ now recognised at any keyboard height, [chat](frontend/modules/chat.md#every-key
 Below the 160 px keyboard threshold no keyboard is ever "open", so `computeSnapshot` pins nothing in
 those frames; the 12 px (one `0.75rem`) comes from somewhere it does not reach. Cause not read: owed
 a per-frame record of `innerHeight`, `visualViewport.height` and the footer's padding on that rise.
-
-### A decision - the iPhone ignores Dynamic Type
-
-At the largest standard text size the app draws exactly as at the default, warm and cold: the
-WebView does not follow the setting. Whether that is accepted (Android's 200 % does scale, through
-the WebView) or the root font should follow `-apple-system-body` is the user's call.
 
 ## P1 - A community key group sends every repair answer to every seat, and 42 % of seats have no device behind them (production, 2026-10-12)
 
