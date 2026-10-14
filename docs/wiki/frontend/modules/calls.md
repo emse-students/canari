@@ -32,6 +32,15 @@
 > would put every student's name back in front of Google on every read receipt.
 > ([push-payload](../../../../apps/chat-delivery-service/src/services/push-payload.ts),
 > [chat-delivery](../../services/chat-delivery.md#transport--single-gateway-fcm))
+>
+> **A SEVENTH (2026-10-14): A CONVERSATION AT `none` SENDS EVERY FRAME SILENT, A CALL INVITE
+> INCLUDED.** The per-conversation level (`dm_group_members.notifLevel`) is applied in
+> `sendFcmForQueued` to whatever frame would draw, and an MLS `call_invite` is one of them: at `none`
+> it arrives silent and will NOT ring; at `mentions` it still rings, because both native handlers
+> branch on `call_invite` BEFORE the level gate is reached. Reviving calls must decide whether a
+> ring obeys the conversation's level and, if not, exempt it where the level is read - the cleartext
+> `POST /api/calls/ring` path is a separate send and is not filtered by the level today.
+> ([chat-delivery](../../services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions))
 
 > The two platform declarations are the ones a store checks, and each cuts both ways: declared but
 > unused is a rejection, used but undeclared cannot work. **Revival condition: rung 15 CALL and

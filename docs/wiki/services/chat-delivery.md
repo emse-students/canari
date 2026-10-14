@@ -1951,7 +1951,8 @@ reads the server file so the two cannot drift.
   not be read loses a message the user wanted. The settings GET reads strictly and fails loudly.
 - **The per-salon level is a different question and is not replaced.** `channel_members.notifLevels`
   (`all` / `mentions` / `none`, social-service) says how loud ONE salon is and is applied there
-  before a push is handed here; the category switch sits below it, at the single send.
+  before a push is handed here; the category switch sits below it, at the single send. A PRIVATE
+  conversation's level is applied here, after the category - see the next section.
 - **The client half.** A frame received over the WebSocket raises its notification on the device
   with no push involved, so `useMessaging.notifyInbound` consults `notificationPreferences` (the
   store mirroring the server set, loaded at sign-in and by the settings section) with the same
@@ -1959,6 +1960,91 @@ reads the server file so the two cannot drift.
   alert, and is unchanged.
 - **Unverified on hardware**: native delivery with a category off is covered by unit tests on what
   reaches FCM, not by a phone.
+
+## A conversation's notification level - the server applies `none`, the device decides `mentions`
+
+Decided 2026-10-14 (user: the salon's three levels for private groups, DMs included). A member sets
+`all` / `mentions` / `none` on ONE private conversation, with the same control a salon uses
+(`NotificationLevelControl.svelte`, shared by `ChannelSettingsPanel` and `ChatGroupPanel`).
+
+**Where it is stored.** `dm_group_members.notifLevel` (migration 029, default `all`, CHECK on the
+three values) - the salon's `channel_members.notifLevels` pattern: on the member's own membership
+row, so it is per ACCOUNT (every device, survives a reinstall) and it ends with the membership
+(leaving hard-deletes the row; a member who comes back starts at `all`). Read by
+`PATCH /mls/groups/:groupId/notification-level` (403 for a non-member) and listed, non-`all` only,
+in `GET /mls/notification-preferences` as `groupLevels` - the read the client already makes at
+sign-in, so no second request.
+
+**Why the server cannot decide `mentions`, and what it does instead.** In a salon the sender attaches
+a cleartext `mentionedUserIds` list and social-service filters before pushing. A private MLS
+conversation carries no such list - who is mentioned is inside the ciphertext - and adding one would
+hand the server a social graph the encryption exists to hide. So:
+
+| Level | Server (`sendFcmForQueued`) | Device |
+|---|---|---|
+| `all` | visible frame, as before | draws it |
+| `none` | the frame is sent `silent` - delivered (it is MLS state), never drawn, exactly like the `messages` category switch | nothing to decide |
+| `mentions` | visible frame carrying `notifLevel=mentions`; on APNs the alert is `interruption-level: passive` with NO sound | decrypts, then draws only if the WHOLE plaintext holds `@[<own user id>]` |
+
+A DM or group REACTION (`sendPushToUser`, `reaction: 'true'`) is refused at `mentions` and `none`: a
+reaction is never a mention, and the server knows the group. The level is read only for a group id
+that IS a uuid (`isGroupUuid`, a type guard): a SALON reaction carries `groupId = channel_<id>`,
+names no private conversation, and would be refused by the uuid column (22P02) - asked first, never
+learnt from a failed query.
+
+**ONE decision per platform, fed by that field, no timer, no fallback:**
+
+- Android push: `push/NotificationLevelGate.decide` (pure, tested in `android-tests`), called once in
+  `handleMlsFrame` before the fallback text is computed. A withheld message is still written to
+  `fcm_message_cache` and a refused one still enqueues its worker - state is owed whatever is drawn.
+- iOS extension: `levelDecision` in `NotificationService.swift`. An extension cannot WITHHOLD an alert
+  without Apple's filtering entitlement, which the app does not hold, so iOS's "withhold" is
+  `passive` (filed in the notification centre, no sound, no banner, screen stays dark); a proven
+  mention is raised to `timeSensitive` with the default sound.
+- A frame received over the socket (web, desktop, a backgrounded Android app that ACKed it):
+  `conversationLevelRefusal` in `notifyInbound`, reading the store `notificationPreferences` by the
+  GROUP id (`convo.id`, never a `me::peer` conversation key). Here the plaintext is always in hand.
+  A catch-up flush raises ONE banner (its last message) but counts as a mention if ANY of its
+  inbound messages names the reader - "@me look", "ok", "lol" is a mention.
+
+The three decisions are asserted against ONE contract, `libs/contracts/mention-decision.cases.json`:
+`conversationLevel.contract.test.ts` (client), `NotificationLevelGateTest` (Android, JVM) and
+`canari_NSETests/MentionDecisionContractTests.swift` (iOS - written, NOT compiled and not wired to a
+target yet: there is no Xcode on the workstation that wrote it).
+
+**When this device's copy of the levels refreshes, and why that is enough.** The store is read at
+sign-in, at every visit to the notification settings, and at every opening of a conversation's
+panel. No socket event announces a level changed on ANOTHER device, so until one of those three, a
+session that was already open keeps the old level for the notifications it raises ITSELF from socket
+frames. That is safe: pushes are always current (the server reads the column at each send), the
+error is at most one banner too many or too few on an open session, never a lost message, and the
+device where the level was changed holds it at once.
+
+Mentions are read from the whole plaintext before the 200-character preview cut, on both native
+paths (`mentionedUserIds`) - a mention past the cut used to miss the mentions channel too.
+
+**THE RULE FOR WHAT CANNOT BE DECIDED.** At `mentions`, a message the device cannot read (no state,
+refused, extension timed out, push context missing) proves no mention, so it does NOT alert: Android
+draws nothing, iOS leaves the server's passive alert, which is also exactly what iOS shows when the
+extension never runs. The message is not lost - it is in the conversation, unread, at the next open.
+The member chose to be interrupted only by a mention; a false alarm breaks that choice on every
+undecryptable frame, whereas a missed mention costs one unread line they will see.
+
+**What travels in clear.** `notifLevel=mentions` in the FCM data map and `interruption-level:
+passive` in the APNs payload are cleartext to Google and Apple, like `silent` and `isGroup` already
+are: they say how loud this member keeps this conversation, never what was said or who was named.
+
+**The iOS target gap.** The extension's deployment target is 18.2 while the app's is 15.6 (and the
+XcodeGen project 14.0): on an iPhone older than 18.2 the extension cannot run, so every `mentions`
+frame stays the server's passive alert and a mention never rings - the undecidable rule, applied to
+the whole device. Check on a device before relying on the iOS half of `mentions`.
+
+**Older builds.** A client predating the field ignores `notifLevel` and draws a `mentions` frame as
+`all` (on iOS, passive - the server's alert). `none` works on every build, because it is the server's.
+
+**Unverified on hardware**: the Android and iOS halves are covered by unit tests on the decision and
+on what reaches FCM/APNs; the iOS extension was not compiled here (no Xcode on the workstation), and
+neither phone has run it.
 
 ## Two lines that report a rate, not an event
 
