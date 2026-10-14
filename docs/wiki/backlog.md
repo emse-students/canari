@@ -169,6 +169,21 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
 
+## P3 - Asked by the USER on 2026-10-14 - "Modifier les pseudos" for a group and a community, design questions answered, not built
+
+> *"Une fonctionnalite comme sur Messenger : 'Modifier les pseudos', un ecran qui liste les membres du groupe ou de la communaute, avec 'Definir un pseudo' et un crayon a cote de chaque membre."* (not urgent)
+
+**Rules decided by the user.** In a GROUP (private conversation) every member may set ANY other member's nickname, no hierarchy. In a COMMUNITY one must be at least moderator.
+
+**Answered from the code and wiki:**
+
+- **The name is resolved in ONE place**: `frontend/src/lib/utils/users/displayName.ts` (`firstName lastName`, then `displayName`; asserted against `libs/contracts/user-display-name.cases.json`, which two server copies also follow) fed by the reactive `userDisplayName` / `userDisplayNames` in `displayNames.svelte.ts`. A nickname enters there as a per-conversation override, never at call sites. Push titles (chat-delivery, social-service) would otherwise name a person differently from the screen - the 2026-09-18 report that contract was written for.
+- **Moderator checks reach the client as a DECISION, never a role name**: the server's `viewerCanModerate` (with `viewerCanManage`, `viewerCanManageChannels`) on the workspace listing and its event ([social-service](services/social-service.md)). `frontend/src/lib/utils/chat/pinPermission.ts` is the model: in a salon the grant decides, in a DM or group "there are no ranks". The server must re-check it.
+- **Where it lives is OPEN and splits by kind.** DM or group is an MLS room: a nickname fits an MLS application frame the server never reads (precedent: the silent edit frame, [chat](frontend/modules/chat.md)), but "anybody may" is then enforced only by convention between equals. A community salon is sealed with Graine and a moderator rule is a SERVER-checked grant, so only a server column enforces it, at the cost that the server sees the nickname. To decide: one mechanism or two.
+- **Scope**: per conversation, visible to every member of THAT conversation, never leaking to the profile or another conversation. A late joiner misses an MLS frame sent before they joined ([channel-encryption](protocols/channel-encryption.md)); a column has no such gap.
+- **Abuse**: a nickname set by someone else can be an insult. Show who set it (setter id travels with the value), let the target reset it for themselves, make the community case reportable and moderator-reversible ([moderation-and-blocking](moderation-and-blocking.md)), and do not let a blocked user rename the blocker. Length and content limits mirror the profile's; every string through Paraglide.
+- **Open for the user**: in a community, is the setter named to the target; does a nickname outlive its setter leaving.
+
 ## P3 - `isTransportFailure` still reads EVERY `TypeError` as a transport failure (review of #1843, 2026-10-14)
 
 The browser's `fetch` rejects a transport failure with a plain `TypeError`, and the predicate accepts any `TypeError` for that reason - so a programming error (`cannot read properties of undefined`) inside a `try` around a request is also read as "no answer" and retried or held. Fix proposed and NOT built: wrap the native rejection in `trackedFetch` as `TransportFailureError` (the plugin's is already, `conformPluginFetch`) and narrow the predicate to that class plus `RequestDeadlineError`. App-wide, since every `fetch` that bypasses `trackedFetch` would then stop being read as transport ([offline-and-weak-network](frontend/offline-and-weak-network.md#14-a-transport-failure-is-one-type-on-every-platform-2026-10-14)).
