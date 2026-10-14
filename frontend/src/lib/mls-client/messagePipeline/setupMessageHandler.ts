@@ -24,7 +24,11 @@ import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame } from './unackedFrames';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
-import { answerAfterMailboxDrained, reconcileGroup } from '$lib/utils/chat/historyReconcile';
+import {
+  answerAfterMailboxDrained,
+  isReconcileRaised,
+  raiseReconcile,
+} from '$lib/utils/chat/historyReconcile';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { retryOverheardPull } from '$lib/utils/chat/historyDiffAnswer';
 import { takeOwedPulls } from '$lib/utils/chat/historyOverheardPull';
@@ -936,8 +940,15 @@ async function handleKnownGroup({
     // this path never solicited again (measured on prod 2026-08-10: twelve `LOST frame` lines,
     // zero solicitations). `reconcileGroup` coalesces a burst instead, which is the only thing that
     // was ever needed here - a replay giving up on forty frames of one conversation asks once.
-    log(`[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - reconciling this conversation`);
-    void reconcileGroup(mlsService, groupId, log);
+    // A burst of unreadable frames of one group (a cold-start replay) is ONE trigger: only the first
+    // announces and asks, the rest are counted by `raiseReconcile` and said once when it settles.
+    // Each frame is still named by its own `LOST frame` line above.
+    if (!isReconcileRaised(groupId)) {
+      log(
+        `[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - reconciling this conversation`
+      );
+    }
+    void raiseReconcile(mlsService, groupId, log);
   };
 
   /**
