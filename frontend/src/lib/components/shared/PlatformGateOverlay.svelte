@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { resolve } from '$app/paths';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { Download, Wrench } from '@lucide/svelte';
   import {
@@ -8,14 +7,13 @@
     isMaintenanceBlockingCurrentUser,
   } from '$lib/stores/appVersionCheck.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
-  import { clearAuth } from '$lib/stores/auth';
+  import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
   import {
     openLatestAppUpdate,
     resolveUpdateTarget,
     type UpdateTarget,
   } from '$lib/utils/appVersion';
   import { updateTargetButtonLabel, updateTargetInstruction } from '$lib/utils/updateTargetCopy';
-  import { goto } from '$app/navigation';
   import { m } from '$lib/paraglide/messages';
 
   const info = $derived(getAppVersionCheck());
@@ -55,7 +53,7 @@
     loggingOut = true;
     try {
       await clearAuth();
-      await goto(resolve('/login'), { replaceState: true });
+      await leaveSignedOut();
     } finally {
       loggingOut = false;
     }

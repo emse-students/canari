@@ -20,6 +20,19 @@ export function appDeepLink(hostAndPath: string): string {
 /** Where Authentik sends a Tauri mobile login back: the deep-link plugin registers this host. */
 export const OIDC_MOBILE_REDIRECT_URI = appDeepLink('callback');
 
+/** The host MiConnect sends a phone app back to once a sign-out has ended its session. */
+export const OIDC_SIGNED_OUT_HOST = 'signed-out';
+
+/**
+ * The `post_logout_redirect_uri` of a phone app's sign-out (`leaveSignedOut` in `auth.ts`). Its
+ * only job is to close the in-app browser: arriving on the app's own scheme is what makes the
+ * ASWebAuthenticationSession complete and brings the `singleTask` activity back over the Custom Tab.
+ * A host of its own, not `callback`, so the OIDC callback handler never reads it as a failed login.
+ * Registered as a `logout` redirect URI on the three Canari providers
+ * (`infrastructure/authentik/blueprints/50-providers.yaml`).
+ */
+export const OIDC_MOBILE_POST_LOGOUT_URI = appDeepLink(OIDC_SIGNED_OUT_HOST);
+
 /**
  * Hosts that declare verified App Links / Universal Links for Canari.
  *

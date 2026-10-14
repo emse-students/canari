@@ -206,6 +206,10 @@ being different from the other two, and nothing outside Authentik's own database
 | `Canari Dev` (pk 10) | `6cNHJotT...` | `dev.canari-emse.fr` - and every PRE-RELEASE build, TestFlight and the Play tester tracks | `https://dev.canari-emse.fr/auth/callback`, `https://tauri.localhost/auth/callback`, `http://tauri.localhost/auth/callback`, `http://localhost:1420/auth/callback`, `http://localhost:1421/auth/callback`, `fr.emse.canari://callback` |
 | `Canari Local` (pk 11) | `qqzuUBQp...` | the LOCAL estate on a workstation, and the harness APK | `http://localhost:1420/auth/callback`, `http://127.0.0.1:1420/auth/callback`, `http://localhost:1421/auth/callback`, `http://localhost:8081/auth/callback`, `fr.emse.canari://callback` |
 
+Each also lists, since 2026-10-14, a `logout` redirect URI per web origin (`<origin>/login`) and
+`fr.emse.canari://signed-out`, and runs the invalidation flow `miconnect-invalidation-signout`:
+[below](#signing-out-of-canari-ends-the-miconnect-session-2026-10-14).
+
 **The three differ in exactly one dimension - the web origin(s) - and must not differ in any
 other.** `fr.emse.canari://callback` is on all three because the SAME packaged app talks to all
 three: a build selects its estate with `VITE_AUTHENTIK_CLIENT_ID` and an API URL, never with an
@@ -452,6 +456,60 @@ to the default application every time. **Rollback**: set those accounts back to 
 list of primary keys was printed by the script and kept out of this public repo - and the
 enrollment stage back to `internal`. Anything that grants admin must go through a superuser GROUP,
 since the predicate that kept the 5 internal was group membership.
+
+## Signing out of Canari ends the MiConnect session (2026-10-14)
+
+**The user's decision**, after the Mi 9T could not reach the user's own account: Canari's sign-out
+revoked Canari's session and left MiConnect's cookie alive, so the next "Se connecter" was answered
+silently by the account that had just left. A sign-out somebody CHOSE now also ends the MiConnect
+session through OIDC RP-initiated logout. The client half is `leaveSignedOut` in
+[auth](../frontend/modules/auth.md#signing-out-ends-the-miconnect-session-2026-10-14).
+
+**What authentik 2026.8 does with it** (read in `authentik/providers/oauth2/views/end_session.py`
+and `authentik/flows/stage.py` at the `version/2026.8.0` tag, not assumed):
+
+- `/application/o/<slug>/end-session/` runs the PROVIDER's `invalidation_flow`, then appends
+  `SessionEndStage`, which redirects to `post_logout_redirect_uri` when one was accepted.
+- **`default-provider-invalidation-flow` is stageless**: it forgets the provider's tokens and shows
+  "You've logged out of Canari" - the MiConnect session SURVIVES. So the three Canari providers run
+  `miconnect-invalidation-signout` (`40-authentication.yaml`), which binds authentik's own
+  `default-invalidation-logout` (a `user_logout` stage).
+- **A `post_logout_redirect_uri` is refused without an `id_token_hint`** once the provider lists any
+  `logout` redirect URI, and refused unless it matches one exactly (strict). The hint's expiry is
+  NOT checked. Hence core-service returns MiConnect's id_token from `/api/auth/oidc/callback`, and
+  the client keeps it for that one use ([sessions](../sessions.md)).
+- **An unauthenticated request is a valid no-op**: the flow still runs and still redirects, so a
+  sign-out whose MiConnect session had already expired comes back cleanly.
+- The redirect is a flow-executor `RedirectChallenge`, the same hop that already delivers
+  `fr.emse.canari://callback?code=` at sign-in, so a custom scheme is reached the same way.
+
+**The `logout` redirect URIs**, all strict, in `50-providers.yaml`: `<origin>/login` for every web
+origin the provider already accepts a callback for, and `fr.emse.canari://signed-out` on all three
+(a host of its own, so the OIDC callback handler never reads it as a failed login; declared in
+`tauri.conf.json` and the Android manifest). `oidcSignOutRegistration.test.ts` fails if a provider
+loses either, or the flow loses its logout stage.
+
+**Ending MiConnect is ending it for every application in that browser.** Sky, Le Cercle and the
+wiki ask again at their next sign-in (whether the wiki and the Archives, which carry a
+`logout_uri`, are also told by back-channel was not measured). And the school CAS keeps ITS OWN session: the next sign-in may go through CAS
+without a password, as the same CAS account. Choosing another CAS identity is CAS's sign-out, which
+Canari does not call.
+
+**Applying it is a production write to the identity provider, owed to the user.** Like every
+blueprint change it is applied by the next STABLE release; a pre-release only dry-runs it. Until it
+is applied, a client that sends a sign-out through end-session meets a provider with no `logout`
+redirect URI: authentik then ignores the return address and STOPS on its "Tu es déconnecté" page
+(inside the Custom Tab on a phone), and the MiConnect session is not ended. So a pre-release
+carrying the client half to testers needs the blueprints applied first, by hand, from the merged
+`main`:
+
+```sh
+AK_REMOTE="ssh portail-etu-direct" bash infrastructure/authentik/apply-blueprints.sh dry-run
+AK_REMOTE="ssh portail-etu-direct" bash infrastructure/authentik/apply-blueprints.sh apply
+```
+
+Applied early it changes nothing for the clients in the field: no shipped build calls Canari's
+end-session.
 
 ## One language: French, in the ecosystem's "tu" (2026-09-25)
 
