@@ -1329,6 +1329,57 @@ Check U and the iOS launch logo need a person (a face, a restart that kills WDA)
 `naturalWidth`, the liquid glass re-read and every fix newer than `1.2.3-alpha.5` need an iPhone
 build newer than the one TestFlight serves this tester.
 
+## The Mi 9T readings of v1.2.7-alpha.1 (2026-10-13/14)
+
+Build `1.2.7 (100200701)`, the `v1.2.7-alpha.1` release APK (`app-universal-release.apk` from the
+GitHub release, sha256 `156ae21e...`), on `dev.canari-emse.fr`. The phone had no Canari, so this was
+a **fresh install and a new device**, signed in through the service-account link as `fourth`
+("Canari Test Delta"), "Rester connecte" unticked. The peer is `canari-test-gamma` in the
+`chrome-w2` dev tab. Numbers come from CDP on the inspectable WebView and from logcat (the Rust
+lines reach logcat, the WebView console does not). Dev still sends no push
+(`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent), so the notification is its exact intent fired with
+`am start`. Evidence: `F:/Programmation/canari-harness/a1-bench/r1013-a127/` (frames, `cons-*.ndjson`,
+`logcat-*.txt`, `inapp-log*.txt`, `notif-runs2.ndjson`).
+
+**Another session drove this phone during the pass** (00:02-00:05: three force-stops from a shell,
+`fr.emse.canari://post/0000...` and `://open/...` deep links, and wrong PINs typed on the gate). The
+readings below were taken before it or after three quiet minutes.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| Native checkpoint (#1826) | **`PASS`** | 60 `[MLS] checkpoint: manager lock held N ms (export), seal + write M ms off it` lines: **N = 0 ms 51 times, 1 ms 8 times, 2 ms once**; M median 2 ms, p95 5, max 9; state up to 304 KB. **0** `reload REFUSED`, `reload DROPS KEY MATERIAL`, `mls.bin write FAILED` or `ordering lock was poisoned`; no FATAL, no ANR |
+| No stall on a salon open | **`PASS`** | Five real taps on a 56-row salon: one long task per open, **293-412 ms (median 335)**, the longest frame gap 425 ms, nothing over half a second. Same shape as the DM open of the 1.2.6 bench (257-349 ms) |
+| In-app log (#1819): the save | **`PASS`** | Settings > A propos > "Enregistrer le journal" opens the system picker on Telechargements with `canari-log-1.2.7-alpha.1-<date>-<time>.txt`; "Enregistrer" writes it (68 KB, 748 lines) and the app says "Fichier enregistre." |
+| In-app log: the redaction | **`FAIL`** | No name, e-mail, JWT, Bearer, full UUID, password, PIN or OIDC subject in either export. **But message text survives when it is one word or identifier-shaped**: `[SEND] handleSendChat: ... text="ok"`, `text="bisous"`, `text="refuse1-a127"`, while `text="Rendez-vous demain chez Paul a 18h"` became `"[34 chars]"`. `text` is in `PROSE_LAST_WORDS`, yet the quoted-value shape allowlist still keeps a value that looks like an identifier (`appLogRedact.ts`) |
+| "Marquer tout comme lu" on a community icon (#1820) | **`PASS`** | A long press opens the menu with nothing selected (`getSelection()` empty). The tap clears the salon's `6` and the rail dot; the badge stays clear after a kill and relaunch. Gamma's tab, reloaded: delta's "Message lu par" head stays on `in-bg-mv6hmrir` (11:53), not on the six newer rows |
+| Drag-reorder of the rail | **`PASS`** | With a second community (`Bench127`, created for this), a long press + drag moves it above `Bench126`; no menu is left open |
+| Salon send before the salon is loaded (#1821) | **`PASS`** | Cold start from the salon's deep link, link throttled to 15 KB/s, sent at composer-usable: **"En attente..." for 1.9 s**, `[SEND] channel send ... HELD`, then `released: its salon is loaded`, "Envoi...", "Message envoye" at 4.6 s; one copy on gamma's side, no banner. Unthrottled, the same send never waits (the salon is loaded in time) |
+| The refusal banner | **`PASS` (geometry)** | Provoked by cutting the Wi-Fi right after the unlock: "Rien n'a ete envoye : vos communautes n'ont pas pu etre chargees..." sits in the composer footer, opaque (alpha 1), the last row ending 24 CSS px above the footer, no overlap |
+| A salon after an offline start, once back online | **`FAIL`, P1** | Back online, `[WORKSPACE-LOAD] online event` tried once and gave up as **non-retryable**: the Tauri HTTP error `error sending request for url (...)` is neither a `TypeError` nor a `DeliveryUnreachableError`, so `isRetryableLoadError` calls a transport failure fatal (`[CHANNEL] ... unclassified failure`). For 2.5 min, online with the socket up, the rail was EMPTY ("Selectionner ou creer une communaute") and every salon send and Retry was refused `listing-failed`. Only the next foreground's online event reloaded it |
+| Reactors list on a long press | **`PASS`** | Long press on a heart chip (`aria-label` "(1 personne)"): the list ("Canari Test Delta") opens 5 CSS px under the chip, left edges aligned (chip 60-90 x 540-562, list 61-221 x 567-622); no message sheet |
+| Typing bubble, three-button navigation | **`PASS`** | Bottom inset 49 px. Gamma typing: the bubble's wrapper ends at 844.8 CSS px, the composer footer starts at 844.5, the bubble itself 16 px above it |
+| A salon row tap does not tap a message | **`PASS`** | Control: a tap on a bubble logs `[MESSAGE] bubble tap ... single, info panel`. Then six real taps on the salon row at a point that has a bubble under it once the salon is drawn: six opens, **0** `[MESSAGE] bubble tap` |
+| Notification intent, killed, behind the PIN (n=5) | **`PASS`** | `performance.now()` of the new page, medians: PIN gate 1204 ms, route `/chat` 1736, composer usable with 56 rows 3421 (PIN submitted at 2511, the instrument waits 400 ms for a still keypad). Not comparable 1:1 with the 1.2.6 numbers, which count from the tap |
+| Double tap / single tap | **`PASS`** | Double tap on gamma's bubble: `bubble tap ... double, heart`, `notify-reaction` 200, no panel in 1.5 s. Single tap: `single, info panel` |
+| Polls | **`PASS`** | Created from the phone; gamma votes; "Cloturer le sondage" now asks through the app's dialog in French ("Annuler" / "Cloturer le sondage"); both clients read "Termine", the "1 sondage actif" pill gone on both |
+
+**Met on the way:**
+
+- **A configuration relaunch leaves the old WebView alive.** Switching the navigation mode (an
+  overlay change, `Config changes=80000000`, which `configChanges` cannot absorb) relaunched the
+  activity in the same process. CDP then listed TWO pages, the old one detached and unresponsive.
+  It still held its `canari.salon-unsent.owner.*` Web Lock, so the three refused salon texts were
+  never handed back to the composer: `[SALON-UNSENT] 3 entr(y/ies) kept: a live sibling tab owns
+  them`. A System WebView update relaunches the same way.
+- **Offline, the banner and the send disagree.** "Hors connexion ... les nouveaux messages
+  partiront des le retour du reseau" is on screen while a salon send is refused at once
+  (`listing-failed`, "Echec / Reessayer"). Offline, the salon's history is not drawn either
+  (`[LANDING_PREVIEW] nothing drawn for channel_ (channel)`).
+- **"Utilisateur inconnu"** names the DM peer for 60-125 ms after the landing is usable.
+- **"Se deconnecter" on the PIN gate signs out with no confirmation**, one row under
+  "Deverrouiller": the instrument's tap that raced the keypad animation signed the device out
+  (re-signed in, same local state).
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.

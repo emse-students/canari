@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -279,5 +280,45 @@ class MainActivity : TauriActivity() {
     override fun onStop() {
         super.onStop()
         CookieManager.getInstance().flush()
+    }
+
+    /**
+     * THE WEBVIEW DIES WITH THE ACTIVITY THAT OWNS IT, BECAUSE NOTHING ELSE KILLS IT.
+     *
+     * Some configuration changes cannot be declared in `configChanges` at all. Switching the
+     * navigation mode (gestural <-> 3-button) swaps a system overlay, and a System WebView update
+     * swaps the WebView's resources: both change the app's asset paths, `Config changes=80000000`
+     * (`ActivityInfo.CONFIG_ASSETS_PATHS`, a hidden bit no manifest can name), so Android relaunches
+     * the activity in the SAME process. wry then builds a NEW WebView for the new activity
+     * (`android_setup` re-sends `CreateWebView`) and loads the app again - and nobody ever calls
+     * `destroy()` on the old one: `WryActivity.onDestroy` only tells Rust, and Rust only drops its
+     * own maps.
+     *
+     * MEASURED ON A Mi 9T, Android 16, `1.2.7-alpha.1`, 2026-10-14: every navigation-mode switch
+     * left one more `attached:false` page in CDP (four after three switches), each a LIVE JS context
+     * - it answered `Runtime.evaluate` and still HELD the Web Locks it had taken. Holding the
+     * unsent-salon-text owner lock, the orphan made three refused texts unreachable to the visible
+     * page (`[SALON-UNSENT] 3 entr(y/ies) kept: a live sibling tab owns them`), and the lock logic was
+     * right to refuse: by every fact the browser has, that page is alive. It is also a second
+     * running copy of the app over the same storage. So the fix is here, not in the lock: the page
+     * stops existing when its activity does.
+     *
+     * After `super.onDestroy()`, so wry and the plugins have seen the destruction first. Removed from
+     * its parent first, because `WebView.destroy()` must be called on a WebView outside the view
+     * system.
+     */
+    override fun onDestroy() {
+        super.onDestroy()
+        val webView = liveWebView ?: run {
+            Log.d("MainActivity", "onDestroy: no WebView was ever created, nothing to destroy")
+            return
+        }
+        liveWebView = null
+        Log.d(
+            "MainActivity",
+            "onDestroy: destroying the WebView (changingConfigurations=$isChangingConfigurations, finishing=$isFinishing)"
+        )
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.destroy()
     }
 }

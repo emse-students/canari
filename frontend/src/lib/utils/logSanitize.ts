@@ -40,3 +40,40 @@ export function sanitizeForLog(value: string): string {
     .replace(/[\t\p{Cc}]/gu, ' ')
     .slice(0, MAX_LOGGED_VALUE_LENGTH);
 }
+
+/** A path segment or host short and word-like enough to be a ROUTE NAME, never an id or a token. */
+const ROUTE_WORD_RE = /^[a-z][a-z-]{0,23}$/i;
+
+/**
+ * A log-safe summary of a deep link: `scheme://host/firstSegment`, plus whether a query and a
+ * fragment were present. NEVER an id, a token, a `returnTo` or an OAuth parameter.
+ *
+ * WHY. A deep link carries post and conversation ids, invitation tokens and OIDC callback
+ * parameters, and the in-app log is the one that LEAVES the device. The redactor strips a query
+ * string but cannot tell a path id from a path word, so the caller must not hand it the URL.
+ *
+ * On a custom scheme (`fr.emse.canari://post/<id>`) the HOST is the route and the first path
+ * segment is already the id, so only the segment COUNT is shown there; on http(s) the first
+ * segment is the route (`/posts/<id>`). A segment that is not a short word prints as `[seg]`.
+ * Unparseable input prints `[unparseable]`: the raw text is never echoed.
+ */
+export function describeDeepLink(url: string): string {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return '[unparseable deep link]';
+  }
+  const word = (s: string) => (ROUTE_WORD_RE.test(s) ? s : '[seg]');
+  const web = u.protocol === 'https:' || u.protocol === 'http:';
+  const segments = u.pathname.split('/').filter(Boolean);
+  let path = '';
+  if (web) {
+    if (segments.length > 0) path = `/${word(segments[0])}${segments.length > 1 ? '/...' : ''}`;
+  } else if (segments.length > 0) {
+    path = `/[${segments.length} seg]`;
+  }
+  const host = u.host ? (/^[a-z0-9.-]{1,80}$/i.test(u.host) ? u.host : '[host]') : '';
+  const flags = `${u.search.length > 1 ? ' +query' : ''}${u.hash.length > 1 ? ' +fragment' : ''}`;
+  return `${u.protocol}//${host}${path}${flags}`;
+}

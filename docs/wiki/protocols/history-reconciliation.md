@@ -617,8 +617,8 @@ full checkpoint: about 4 checkpoints per rejoined group, 247 in 432 s
 Removing that leg removes one inbound frame and one outbound frame per rejoin. Of the two drains it
 would have cost, one is gone.
 
-**What a member does when it overhears an empty digest.** It returns at once without reading its
-store (`[HISTORY_DIGEST] ... digest lists nothing - nothing to pull`). An empty list names nothing
+**What a member does when it overhears an empty digest.** It returns at once, silently, without
+reading its store: the `[HISTORY_DIGEST] From ... 0 id(s)` line written on arrival already says it. An empty list names nothing
 the member could lack. Every member overhears that frame once per rejoined group.
 
 **What stays.** A store holding anything keeps the state key. There, agreement is the likely

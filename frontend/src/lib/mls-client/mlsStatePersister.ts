@@ -37,8 +37,13 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
 
   let dirtyEncrypted = false;
   let immediateFlushQueued = false;
+  /** The checkpoint being written now, or null. */
   let inFlightEncrypted: Promise<void> | null = null;
-  let rerunEncryptedAfterFlight = false;
+  /**
+   * The checkpoint that will start once {@link inFlightEncrypted} ends, shared by every caller that
+   * asked for durability while it was running - or null.
+   */
+  let queuedEncrypted: Promise<void> | null = null;
   let bulkIngestDepth = 0;
 
   async function runSaveEncrypted(): Promise<void> {
@@ -58,29 +63,57 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     );
   }
 
-  async function flushEncryptedInternal(): Promise<void> {
-    if (!dirtyEncrypted) return;
-    if (inFlightEncrypted) {
-      rerunEncryptedAfterFlight = true;
-      return inFlightEncrypted;
-    }
-
+  /** Starts a checkpoint of everything marked dirty so far. Only called with none in flight. */
+  function startFlight(): Promise<void> {
+    if (!dirtyEncrypted) return Promise.resolve();
     dirtyEncrypted = false;
     inFlightEncrypted = runSaveEncrypted()
       .catch((e) => {
-        const msg = String(e);
-        log?.(`[MLS] Encrypted state checkpoint failed: ${msg}`);
+        // A FAILED WRITE LEAVES THE STATE AHEAD OF THE DISK, so it is dirty again: the next trigger
+        // must write it. Clearing the flag at the start and never raising it again left a state that
+        // no later `flush` would ever write until something else marked it.
+        dirtyEncrypted = true;
+        log?.(`[MLS] Encrypted state checkpoint failed: ${String(e)}`);
         throw e;
       })
       .finally(() => {
         inFlightEncrypted = null;
-        if (rerunEncryptedAfterFlight) {
-          rerunEncryptedAfterFlight = false;
-          if (dirtyEncrypted) void flushEncryptedInternal();
-        }
       });
-
     return inFlightEncrypted;
+  }
+
+  /**
+   * Resolves once every change marked dirty BEFORE this call is on disk.
+   *
+   * A CALLER THAT ASKS FOR DURABILITY WHILE A CHECKPOINT IS RUNNING WAITS FOR THE NEXT ONE. That
+   * checkpoint exported the state before the caller's change, so it cannot make the change durable.
+   * This function used to return the running checkpoint's promise in that case, and start the next
+   * one unawaited. `externalJoin` awaits {@link persistMlsStructuralCheckpoint} because a reload
+   * before its join is on disk joins again and forks the group, and after a sign-in a checkpoint is
+   * running ~93 % of the time (Mi 9T, 2026-10-13: 247 checkpoints in 432 s). So nearly every join of
+   * that storm was declared durable when it was not.
+   *
+   * Coalescing is unchanged: every caller arriving during one checkpoint shares ONE next checkpoint.
+   */
+  function flushEncryptedInternal(): Promise<void> {
+    // A next checkpoint is already promised; it starts after the running one and covers every
+    // change made until then, this caller's included.
+    if (queuedEncrypted) return queuedEncrypted;
+    if (inFlightEncrypted) {
+      // Nothing changed since the running checkpoint exported: it is the one that covers us.
+      if (!dirtyEncrypted) return inFlightEncrypted;
+      queuedEncrypted = inFlightEncrypted
+        .catch(() => {
+          // Already logged by `startFlight`; its failure re-raised the dirty flag, so the next
+          // checkpoint below writes that state too.
+        })
+        .then(() => {
+          queuedEncrypted = null;
+          return startFlight();
+        });
+      return queuedEncrypted;
+    }
+    return startFlight();
   }
 
   function scheduleDeferred(): void {
@@ -94,7 +127,8 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     immediateFlushQueued = true;
     queueMicrotask(() => {
       immediateFlushQueued = false;
-      void flushEncryptedInternal();
+      // Already logged by `startFlight`; nobody awaits this one, so its rejection stops here.
+      void flushEncryptedInternal().catch(() => {});
     });
   }
 

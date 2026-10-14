@@ -282,11 +282,9 @@ async function diffAndPullOverheard(params: {
 
   // A DIGEST THAT LISTS NOTHING NAMES NOTHING WE COULD LACK, so the store is not read. It is what a
   // device with an empty store sends as its first probe (`sendHistoryProbe`), which every member
-  // of the group overhears - after a sign-in, once per rejoined group.
-  if (digest.ids.length === 0) {
-    deps.log(`[HISTORY_DIGEST] ${what} digest lists nothing - nothing to pull`);
-    return 'complete';
-  }
+  // of the group overhears - after a sign-in, once per rejoined group. SILENT: the receiving
+  // `[HISTORY_DIGEST] From ... 0 id(s)` line already says everything this branch would.
+  if (digest.ids.length === 0) return 'complete';
 
   const entries = await readHistoryEntries(groupId, deps);
   if (entries === null) {

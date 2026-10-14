@@ -83,7 +83,8 @@ describe('pullFromOverheardDigest', () => {
 
     expect(readHistoryEntries).not.toHaveBeenCalled();
     expect(sendHistoryPull).not.toHaveBeenCalled();
-    expect(d.log).toHaveBeenCalledWith(expect.stringContaining('lists nothing'));
+    // Silent: the `[HISTORY_DIGEST] From ... 0 id(s)` line on arrival already said it.
+    expect(d.log).not.toHaveBeenCalled();
   });
 
   it('never ANSWERS the author - what it lacks is the elected responder job', async () => {

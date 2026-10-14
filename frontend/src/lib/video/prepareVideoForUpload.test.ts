@@ -4,11 +4,22 @@
  * (docs/wiki/frontend/video-preparation.md); what is pinned here is the CONTRACT a caller relies on:
  * the options reach the encoder as planned, a refusal is typed, and a dropped track is a refusal.
  */
-import { prepareVideoForUpload, VideoPrepareError } from './prepareVideoForUpload';
+import {
+  chooseAudioRoute,
+  prepareVideoForUpload,
+  VideoPrepareError,
+} from './prepareVideoForUpload';
+import { AUDIO_BITRATE, VIDEO_BUDGET_SHARE } from './videoEncodingPlan';
 
 interface Script {
   video: boolean;
   audio: boolean;
+  /** The audio track's codec parameter string (`opus` unless a test says otherwise). */
+  audioCodec?: string;
+  /** The audio track's measured average bitrate, bits per second. */
+  audioBitrate?: number;
+  /** What the engine's AAC encoder probe answers (`true` unless a test says otherwise). */
+  canEncodeAac?: boolean;
   duration: number;
   width: number;
   height: number;
@@ -42,7 +53,13 @@ vi.mock('mediabunny', () => {
       };
     }
     async getPrimaryAudioTrack() {
-      return state.script.audio ? {} : null;
+      if (!state.script.audio) return null;
+      return {
+        getCodecParameterString: async () => state.script.audioCodec ?? 'opus',
+        computePacketStats: async () => ({ averageBitrate: state.script.audioBitrate ?? 96_000 }),
+        getNumberOfChannels: async () => 2,
+        getSampleRate: async () => 48_000,
+      };
     }
     async computeDuration() {
       return state.script.duration;
@@ -71,6 +88,7 @@ vi.mock('mediabunny', () => {
     Output,
     UnsupportedInputFormatError,
     ConversionCanceledError,
+    canEncodeAudio: async () => state.script.canEncodeAac ?? true,
     Conversion: {
       async init(options: Record<string, unknown> & { output: Output }) {
         state.init = options;
@@ -164,9 +182,49 @@ describe('prepareVideoForUpload', () => {
     expect(await faultOf(prepareVideoForUpload(SOURCE, { removeAudio: true }))).toBe('unsupported');
   });
 
-  it('keeps the audio and its AAC options when the sound is kept', async () => {
+  it('encodes any audio that is not AAC-LC to AAC when the sound is kept', async () => {
     await prepareVideoForUpload(SOURCE, { removeAudio: false });
     expect(state.init!.audio).toMatchObject({ codec: 'aac', forceTranscode: true });
+  });
+
+  const MAX_BYTES = 50 * 1024 * 1024;
+  const videoBitrateAsked = () =>
+    (state.init!.video as { quality: { options: { bitrate: number } } }).quality.options.bitrate;
+  const budgetWith = (audio: number) =>
+    Math.floor((MAX_BYTES * 8 * VIDEO_BUDGET_SHARE) / 200 - audio);
+
+  it('COPIES an AAC-LC track on an engine with no AAC encoder, budgeting its own bitrate', async () => {
+    // The member's 49 s AV1 + AAC-LC clip on Firefox (2026-10-13): forcing an AAC encode there
+    // discarded the track as `no_encodable_target_codec` - Firefox has no AAC encoder - and the
+    // whole video was refused, although the MP4 carries that AAC as it is.
+    state.script.audioCodec = 'mp4a.40.2';
+    state.script.audioBitrate = 320_000;
+    state.script.canEncodeAac = false;
+    state.script.duration = 200;
+    await prepareVideoForUpload(SOURCE, { maxBytes: MAX_BYTES });
+    // The codec alone: a quality, a sample rate or forceTranscode would each make it re-encode.
+    expect(state.init!.audio).toEqual({ codec: 'aac' });
+    expect(videoBitrateAsked()).toBe(budgetWith(320_000));
+  });
+
+  it('RE-ENCODES a dear AAC-LC track where AAC can be encoded, so the video keeps its budget', async () => {
+    state.script.audioCodec = 'mp4a.40.2';
+    state.script.audioBitrate = 320_000;
+    state.script.canEncodeAac = true;
+    state.script.duration = 200;
+    await prepareVideoForUpload(SOURCE, { maxBytes: MAX_BYTES });
+    expect(state.init!.audio).toMatchObject({ codec: 'aac', forceTranscode: true });
+    expect(videoBitrateAsked()).toBe(budgetWith(AUDIO_BITRATE));
+  });
+
+  it('COPIES an AAC-LC track no dearer than the encode, encoder or not', async () => {
+    state.script.audioCodec = 'mp4a.40.2';
+    state.script.audioBitrate = 96_000;
+    state.script.canEncodeAac = true;
+    state.script.duration = 200;
+    await prepareVideoForUpload(SOURCE, { maxBytes: MAX_BYTES });
+    expect(state.init!.audio).toEqual({ codec: 'aac' });
+    expect(videoBitrateAsked()).toBe(budgetWith(96_000));
   });
 
   it('refuses a source over maxSeconds, past the half-second grace only', async () => {
@@ -221,5 +279,45 @@ describe('prepareVideoForUpload', () => {
     });
     expect(await faultOf(run)).toBe('aborted');
     expect(state.cancelled).toBe(true);
+  });
+});
+
+describe('chooseAudioRoute', () => {
+  const aac = (sourceBitrate: number, canEncodeAac: boolean) =>
+    chooseAudioRoute({ codecString: 'mp4a.40.2', removeAudio: false, sourceBitrate, canEncodeAac });
+
+  it('copies AAC-LC on cost or on capability, and encodes it only where both say so', () => {
+    expect(aac(AUDIO_BITRATE, true)).toBe('copy');
+    expect(aac(96_000, false)).toBe('copy');
+    expect(aac(320_000, false)).toBe('copy');
+    expect(aac(320_000, true)).toBe('encode');
+    expect(
+      chooseAudioRoute({
+        codecString: 'MP4A.40.2',
+        removeAudio: false,
+        sourceBitrate: 96_000,
+        canEncodeAac: true,
+      })
+    ).toBe('copy');
+  });
+
+  it('encodes every other codec, and has no track to route when there is none', () => {
+    const other = (codecString: string | null, removeAudio = false) =>
+      chooseAudioRoute({ codecString, removeAudio, sourceBitrate: null, canEncodeAac: null });
+    // HE-AAC is AAC too, but not the profile the output names: it is encoded to AAC-LC.
+    expect(other('mp4a.40.5')).toBe('encode');
+    expect(other('opus')).toBe('encode');
+    expect(other('mp4a.40.2', true)).toBe('none');
+    expect(other(null)).toBe('none');
+  });
+
+  it('budgets the plan AAC bitrate for an encoded track', async () => {
+    state.script.duration = 200;
+    const maxBytes = 50 * 1024 * 1024;
+    await prepareVideoForUpload(SOURCE, { maxBytes });
+    const quality = (state.init!.video as { quality: { options: { bitrate: number } } }).quality;
+    expect(quality.options.bitrate).toBe(
+      Math.floor((maxBytes * 8 * VIDEO_BUDGET_SHARE) / 200 - AUDIO_BITRATE)
+    );
   });
 });
