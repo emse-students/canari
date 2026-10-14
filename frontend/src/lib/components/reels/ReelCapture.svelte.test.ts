@@ -96,11 +96,11 @@ async function settle() {
   flushSync();
 }
 
-async function render() {
+async function render(extra: Record<string, unknown> = {}) {
   const session = new CameraSession(() => Promise.resolve(stream()));
   const target = document.createElement('div');
   document.body.appendChild(target);
-  mounted.push(mount(ReelCapture, { target, props: { session } }));
+  mounted.push(mount(ReelCapture, { target, props: { session, ...extra } }));
   await settle();
   // The shutter waits for a decoded frame, which jsdom never decodes: report one.
   const video = target.querySelector('video')!;
@@ -373,5 +373,56 @@ describe('ReelCapture', () => {
     await settle();
     expect(target.querySelector('[data-reel-publish]')).toBeNull();
     expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  });
+});
+
+describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
+  it('a chat photo is handed back as an ordinary image FILE and the camera closes', async () => {
+    const oncapture = vi.fn();
+    const onclose = vi.fn();
+    const { target, tap } = await render({ destination: 'chat', oncapture, onclose });
+
+    await tap();
+    const next = target.querySelector<HTMLButtonElement>('[data-reel-next]')!;
+    expect(next.textContent?.trim()).toBe(m.reels_review_send());
+    next.click();
+    await settle();
+
+    expect(oncapture).toHaveBeenCalledTimes(1);
+    const file = oncapture.mock.calls[0][0] as File;
+    expect(file.type).toBe('image/jpeg');
+    expect(file.name).toMatch(/^canari-photo-\d+\.jpg$/);
+    expect(onclose).toHaveBeenCalledTimes(1);
+    // No publish step, no identity picker: a chat message has neither.
+    expect(target.querySelector('[data-reel-publish]')).toBeNull();
+  });
+
+  it('a chat never films: a hold is still a photo, and it reads no reel limit', async () => {
+    const { target, hold } = await render({ destination: 'chat', oncapture: vi.fn() });
+
+    await hold();
+
+    expect(getReelLimits).not.toHaveBeenCalled();
+    expect(Recorder.instances).toHaveLength(0);
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    expect(target.querySelector('[data-reel-media]')?.tagName).toBe('IMG');
+  });
+
+  it('a post take is offered as "Add" and has no sound button or gallery shortcut', async () => {
+    const oncapture = vi.fn();
+    const { target, tap } = await render({ destination: 'post', oncapture, onclose: vi.fn() });
+    expect(target.querySelector('[aria-label="' + m.reels_capture_gallery() + '"]')).toBeNull();
+
+    await tap();
+
+    expect(target.querySelector('[data-reel-next]')?.textContent?.trim()).toBe(
+      m.reels_review_add()
+    );
+    expect(target.querySelector('[data-reel-sound]')).toBeNull();
+  });
+
+  it('the feed keeps its gallery shortcut and the publish step', async () => {
+    const { target } = await render();
+    expect(target.querySelector('[aria-label="' + m.reels_capture_gallery() + '"]')).not.toBeNull();
   });
 });

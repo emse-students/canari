@@ -1380,6 +1380,22 @@ readings below were taken before it or after three quiet minutes.
   "Deverrouiller": the instrument's tap that raced the keypad animation signed the device out
   (re-signed in, same local state).
 
+## Owed: the in-app camera in the composers (D-camera, 2026-10-11)
+
+Built without hardware; the chain compiles and the vitest rows pass, which proves nothing about a
+camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
+
+- **Chat, "+" then "Ouvrir la camera"**: the overlay covers the conversation, a tap takes a photo, a
+  HOLD does NOT film, "Envoyer" posts an ordinary image bubble, and the conversation (draft, scroll)
+  is exactly where it was. Back (Android) and the edge swipe (iOS) end the review, then close the camera.
+- **New post, "Ouvrir la camera"**: a tap gives a photo, a hold a video; "Ajouter" attaches it to the
+  composer, the published post is a post (post retention), not a reel. No sound button in the review.
+- **Android**: no system camera app is launched at any point (the `queries` and the capture
+  `FileProvider` root are gone); the library picker still opens. **iPhone**: the camera permission
+  prompt is the in-app one (`NSCameraUsageDescription` stays, `getUserMedia` needs it).
+- The overlay over the keyboard and over a conversation with a pending draft; a camera refused
+  (permission denied) shows the refusal screen with no native fallback.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.

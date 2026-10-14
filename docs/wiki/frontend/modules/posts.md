@@ -87,26 +87,25 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   `<select>` drawn AS the name - its personal option carries the member's own name, not "Profil
   personnel".
 - **`PostComposerBar`, shared by the composer and `EditPostForm`.** Row one: labelled chips
-  (Photo/vidéo, Appareil photo, Filmer, Sondage, Formulaire, Fichier, Programmer). Row two: "Aa",
+  (Photo/vidéo, Ouvrir la caméra, Sondage, Formulaire, Fichier, Programmer). Row two: "Aa",
   a status, and the action. **Markdown stays** (user) and "Aa" swaps row one for the formatting
   row: a pinned bar above the keyboard cannot afford a third row. The field is driven through
   `MarkdownComposerField.format()`, and the toolbar prevents `mousedown` so a tap keeps the caret
   and the keyboard.
-- **Four file inputs, because the accept list chooses the chooser.** One input taking images,
-  video, audio, PDF, Office and zip is what made Android open its generic file browser instead of
-  the photo picker. Photos/videos, documents, and two `capture` inputs - which the app's WebView
-  (wry, `RustWebChromeClient.onShowFileChooser`) turns into the system camera for `image/*` and the
-  recorder for `video/*`. The two camera chips are not drawn for a fine pointer, where `capture`
-  means nothing. **That needs a `<queries>` block in the Android manifest** for
-  `IMAGE_CAPTURE` / `VIDEO_CAPTURE`: wry launches the intent only if `resolveActivity()` finds a
-  camera, which API 30+ package visibility hides otherwise - and then it silently opens the photo
-  picker (measured on the Mi 9T: `Tauri/FileChooser: Media capture intent could not be launched`).
-  A photo also needs the app-specific `Pictures/` root in `res/xml/file_paths.xml`, where wry
-  writes the capture - the second cause of the same symptom. `androidCaptureManifest.test.ts`
-  guards both. **Every pick ADDS**: each input empties itself after handing its files over, so a
+- **Two file inputs, because the accept list chooses the chooser** (it was four until 2026-10-11).
+  One input taking images, video, audio, PDF, Office and zip is what made Android open its generic
+  file browser instead of the photo picker, so photos/videos and documents have one each.
+  **There is NO capture input and no system camera (user, 2026-10-11, D-camera).** The ONE camera chip
+  ("Ouvrir la camera", not drawn for a fine pointer) opens the in-app CanaReel camera as an overlay
+  (`CameraOverlay`, `ReelCapture` with `destination="post"`): a PHOTO or a VIDEO taken there comes
+  back as a file through `onFiles` and is attached - and retained - as any picked post media, with
+  the POST class, never as a reel. The sound-removal button and the gallery shortcut of the reel flow
+  are not offered there. The Android manifest lost its `<queries>` for `IMAGE_CAPTURE` /
+  `VIDEO_CAPTURE` and the FileProvider its `Pictures/` root; `androidCaptureManifest.test.ts` pins
+  their ABSENCE. **Every pick ADDS**: each input empties itself after handing its files over, so a
   PDF added after a photo no longer replaces the photo.
 - **A picked video shows its first frame** (`PickedMediaPreview`, both forms). Every previewable
-  pick used to go into an `<img>`, so a video - gallery or "Filmer" - drew a broken image, and an
+  pick used to go into an `<img>`, so a video - gallery or camera - drew a broken image, and an
   audio file did too because `needsThumbIcon` only iconised `'file'`. Only a picture or a video has
   a frame now; everything else is the icon card.
 - **The error banner is in the footer**, above the bar, so the keyboard cannot cover it.

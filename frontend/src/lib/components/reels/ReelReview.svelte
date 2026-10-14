@@ -28,9 +28,21 @@
     onsoundchange?: (removed: boolean) => void;
     /** On to the publish step. */
     onnext: () => void;
+    /** The action's label: "Next" before the reel publish step, "Send"/"Add" where the take leaves as a file. */
+    nextLabel?: string;
+    /** Offer to remove the sound. Only the reel publish applies it, so a take handed back as a file hides it. */
+    soundRemoval?: boolean;
   }
 
-  let { clip, ondiscard, onedit, onsoundchange, onnext }: Props = $props();
+  let {
+    clip,
+    ondiscard,
+    onedit,
+    onsoundchange,
+    onnext,
+    nextLabel = m.reels_review_next(),
+    soundRemoval = true,
+  }: Props = $props();
 
   const isImage = $derived(clip.blob.type.startsWith('image/'));
   const soundRemoved = $derived(clip.soundRemoved === true);
@@ -112,7 +124,7 @@
       >
         <Pencil size={22} strokeWidth={2.5} />
       </button>
-      {#if !isImage}
+      {#if !isImage && soundRemoval}
         <button
           type="button"
           class="{roundButton} {soundRemoved ? 'text-cn-yellow' : ''}"
@@ -160,7 +172,7 @@
       onclick={onnext}
       data-reel-next
     >
-      {m.reels_review_next()}
+      {nextLabel}
       <ArrowRight size={18} strokeWidth={2.5} />
     </button>
   </div>

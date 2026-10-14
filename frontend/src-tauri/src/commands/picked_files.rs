@@ -3,7 +3,8 @@
 //! WHY THIS EXISTS (user, 2026-10-02, iPhone): in the iOS app the composer's "+" opened Canari's
 //! menu, and its "Photos et videos" then opened a SECOND, native one (Phototheque / Prendre une
 //! photo / Choisir les fichiers). That second sheet is WebKit's: `WKFileUploadPanel` shows it for
-//! every `<input type="file">` that accepts images or videos and carries no `capture`, and no
+//! every `<input type="file">` that accepts images or videos (Canari has no `capture` input since
+//! 2026-10-11: its camera is the in-app overlay, never the system one), and no
 //! `accept` value a page can write skips it. So the photo library is opened natively instead,
 //! through `tauri-plugin-dialog`'s `PHPickerViewController`, which COPIES each pick into
 //! `Library/Caches` (and the document picker, `asCopy`, into `tmp/`). This command is the read

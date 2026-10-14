@@ -5,7 +5,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   SHUTTER_HOLD_THRESHOLD_MS,
+  captureFileFrom,
   captureReducer,
+  destinationRules,
   classifyLimitsFault,
   formatTakeTime,
   pickReelRecorderMime,
@@ -143,5 +145,48 @@ describe('shutterRingFraction', () => {
     for (const state of [ready, pressing, { kind: 'photo' }, { kind: 'review', clip }] as const) {
       expect(shutterRingFraction(state, 60_000, 90_000)).toBe(0);
     }
+  });
+});
+
+describe('destinationRules (D-camera, 2026-10-11)', () => {
+  it('a chat takes photos only, and hands the take back as a file', () => {
+    expect(destinationRules('chat')).toEqual({
+      photoOnly: true,
+      handsBackFile: true,
+      gallery: false,
+      soundRemoval: false,
+    });
+  });
+
+  it('a post may film, hands back a file, and has no reel-only controls', () => {
+    expect(destinationRules('post')).toEqual({
+      photoOnly: false,
+      handsBackFile: true,
+      gallery: false,
+      soundRemoval: false,
+    });
+  });
+
+  it('the feed is the reel flow, unchanged', () => {
+    expect(destinationRules('feed')).toEqual({
+      photoOnly: false,
+      handsBackFile: false,
+      gallery: true,
+      soundRemoval: true,
+    });
+  });
+});
+
+describe('captureFileFrom', () => {
+  it('names a photo and a video by their own type, codecs ignored', () => {
+    expect(captureFileFrom(new Blob(['x'], { type: 'image/jpeg' }), 7).name).toBe(
+      'canari-photo-7.jpg'
+    );
+    const webm = captureFileFrom(new Blob(['x'], { type: 'video/webm;codecs=vp9,opus' }), 7);
+    expect(webm.name).toBe('canari-video-7.webm');
+    expect(webm.type).toBe('video/webm;codecs=vp9,opus');
+    expect(captureFileFrom(new Blob(['x'], { type: 'video/mp4' }), 7).name).toBe(
+      'canari-video-7.mp4'
+    );
   });
 });

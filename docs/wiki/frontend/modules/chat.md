@@ -395,15 +395,14 @@ up for fifteen seconds, anchored to an input that was `display: none`.
 
 | runtime | Photothèque | camera | Tous les fichiers |
 | --- | --- | --- | --- |
-| iOS app | **native** `PHPickerViewController` (`tauri-plugin-dialog`, `pickerMode: 'media'`) | input with `capture` - WebKit opens the camera directly, photo or video | **native** document picker |
-| Android app, Android browser | input `image/*,video/*` | TWO entries, inputs with `capture`: `image/*` (photo), `video/*` (video) | input, every type |
+| iOS app | **native** `PHPickerViewController` (`tauri-plugin-dialog`, `pickerMode: 'media'`) | **in-app camera overlay** (photos only in a chat) | **native** document picker |
+| Android app, Android browser | input `image/*,video/*` | **in-app camera overlay** (photos only in a chat) | input, every type |
 | iOS browser | **no Canari menu**: the paperclip is a `<label>` around one input, and WebKit's sheet is the only menu | - | - |
 | desktop | no menu: the paperclip opens the file dialog | - | - |
 
-**DECIDED, NOT BUILT (user, 2026-10-11): no native camera.** The camera column above (the `capture` inputs) is replaced by ONE "Ouvrir la camera" entry opening the in-app CanaReel camera, in the chat and in the new-post composer alike; the library and files entries stay. A chat take is `chat-reel` (30 days), a post take the post class ([backlog](../../backlog.md#decided-by-the-user-on-2026-10-11)).
+**BUILT (user, 2026-10-11, D-camera): no native camera.** No `<input capture>`, no capture intent, no `queries` entry: the camera column is ONE "Ouvrir la camera" entry opening the in-app CanaReel camera as an OVERLAY (`components/reels/CameraOverlay.svelte` over `ReelCapture` with `destination="chat"`), in the chat and in the new-post composer alike; the library and files entries stay. **In a chat the camera takes PHOTOS ONLY for now**, and a photo goes out as an ORDINARY image message through `onFilesSelected`, exactly like a library pick (no new wire format); a video filmed in a chat is the reel message ([reels-in-chat](reels-in-chat.md), RC-3..RC-5, not built), whose take will be `chat-reel` (30 days). A post take is a post (post class, [posts](posts.md)). **An iOS phone BROWSER still shows the system sheet of WebKit, "Prendre une photo" included**: a web page cannot remove an entry of that sheet for a file input, and Canari draws no menu there ([backlog](../../backlog.md#decided-by-the-user-on-2026-10-11)) ([backlog](../../backlog.md#decided-by-the-user-on-2026-10-11)).
 
-- **Android has two camera entries** because its capture intents are photo OR video: with both types
-  accepted, wry's `RustWebChromeClient.onShowFileChooser` launches the video recorder only.
+- **Android has ONE camera entry now** (it had two, photo and video, because wry's capture intents were one or the other). `RustWebChromeClient.onShowFileChooser` no longer launches any camera intent.
 - **The iOS app's native picks come back through `take_picked_file`** (`commands/picked_files.rs`): the
   dialog plugin COPIES each pick (PHPicker into `Library/Caches`, the document picker into `tmp/`) and
   returns where; the command reads the copy, deletes it and returns the bytes. It reads and deletes a

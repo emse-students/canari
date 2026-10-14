@@ -18,8 +18,8 @@
     Plus,
     Check,
     Camera,
-    Video,
   } from '@lucide/svelte';
+  import CameraOverlay from '$lib/components/reels/CameraOverlay.svelte';
   import GlassMenuButton, {
     type GlassMenuItem,
   } from '$lib/components/shared/GlassMenuButton.svelte';
@@ -49,9 +49,8 @@
     acceptFor,
     ALL_FILES_ACCEPT,
     attachSourcesFor,
-    capturesFor,
     currentAttachRuntime,
-    multipleFor,
+    opensInAppCamera,
     opensNatively,
     type AttachSource,
   } from '$lib/utils/chat/attachSources';
@@ -203,6 +202,19 @@
   /** Narrow chat layout - a phone, or a narrow window (`isNarrowChatLayout`). */
   let isMobileViewport = $state(false);
   const pickerInputs: Partial<Record<AttachSource, HTMLInputElement>> = $state({});
+  /**
+   * The in-app camera is open over the conversation (D-camera, 2026-10-11: no native camera). IN A CHAT
+   * IT TAKES PHOTOS ONLY, and a photo goes out as an ORDINARY image message through the same path as a
+   * picked one - no new wire format. A video filmed in a chat is the reel message (RC-3..RC-5, not
+   * built): docs/wiki/frontend/modules/reels-in-chat.md.
+   */
+  let cameraOpen = $state(false);
+
+  /** A photo taken with the in-app camera: sent exactly like one picked from the library. */
+  function onCameraCapture(file: File) {
+    Log.d('ChatComposer', `camera photo taken (${file.size} bytes)`);
+    onFilesSelected?.([file]);
+  }
   let isDragOver = $state(false);
   /** The DESKTOP GIF dialog. A phone opens the keyboard-sized panel instead (`surface === 'gif'`). */
   let showGifPicker = $state(false);
@@ -296,6 +308,10 @@
    */
   function openSource(source: AttachSource) {
     Log.d('ChatComposer', `attach: ${source} (${attachRuntime})`);
+    if (opensInAppCamera(source)) {
+      cameraOpen = true;
+      return;
+    }
     if (opensNatively(attachRuntime, source)) {
       const kind = source === 'library' ? 'library' : 'files';
       void pickNatively(kind)
@@ -322,8 +338,6 @@
     {
       library: { label: () => m.chat_attach_menu_library(), icon: Images },
       camera: { label: () => m.chat_attach_menu_camera(), icon: Camera },
-      'camera-photo': { label: () => m.chat_attach_menu_take_photo(), icon: Camera },
-      'camera-video': { label: () => m.chat_attach_menu_record_video(), icon: Video },
       files: { label: () => m.chat_attach_menu_files(), icon: FolderOpen },
     };
 
@@ -1266,18 +1280,25 @@
       {/if}
 
       <!-- One input per picker the menu can open (`pickerInputs`); `files` always. -->
-      {#each attachSources.includes('files') ? attachSources : [...attachSources, 'files' as const] as source (source)}
+      {#each (attachSources.includes('files') ? attachSources : [...attachSources, 'files' as const]).filter((s) => !opensInAppCamera(s)) as source (source)}
         <input
           bind:this={pickerInputs[source]}
           type="file"
-          multiple={multipleFor(source)}
-          accept={acceptFor(source)}
-          capture={capturesFor(source) ? 'environment' : undefined}
+          multiple
+          accept={acceptFor(source as 'library' | 'files')}
           data-attach-source={source}
           class="hidden"
           onchange={handleFileChange}
         />
       {/each}
+
+      {#if cameraOpen}
+        <CameraOverlay
+          destination="chat"
+          oncapture={onCameraCapture}
+          onclose={() => (cameraOpen = false)}
+        />
+      {/if}
 
       <!-- Auto-expanding text field. Absent during a recording: see `isVoiceActive`. -->
       {#if !isVoiceActive}

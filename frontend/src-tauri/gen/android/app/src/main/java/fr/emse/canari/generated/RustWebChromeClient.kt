@@ -19,15 +19,9 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import android.view.View
 import android.webkit.*
 import android.widget.EditText
-import androidx.core.content.FileProvider
-import java.io.File
-import java.io.IOException
-import java.text.SimpleDateFormat
 import java.util.*
 
 class RustWebChromeClient(private val activity: WryActivity, private val webViewId: String) : WebChromeClient() {
@@ -314,91 +308,11 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     filePathCallback: ValueCallback<Array<Uri?>?>,
     fileChooserParams: FileChooserParams
   ): Boolean {
-    val acceptTypes = listOf(*fileChooserParams.acceptTypes)
-    val captureEnabled = fileChooserParams.isCaptureEnabled
-    val capturePhoto = captureEnabled && acceptTypes.contains("image/*")
-    val captureVideo = captureEnabled && acceptTypes.contains("video/*")
-    if (capturePhoto || captureVideo) {
-      if (isMediaCaptureSupported) {
-        showMediaCaptureOrFilePicker(filePathCallback, fileChooserParams, captureVideo)
-      } else {
-        val camPermission = arrayOf(Manifest.permission.CAMERA)
-        activity.requestPermissions(camPermission) { isGranted ->
-          if (isGranted == true) {
-            showMediaCaptureOrFilePicker(filePathCallback, fileChooserParams, captureVideo)
-          } else {
-            Logger.warn(Logger.tags("FileChooser"), "Camera permission not granted")
-            filePathCallback.onReceiveValue(null)
-          }
-        }
-      }
-    } else {
-      showFilePicker(filePathCallback, fileChooserParams)
-    }
-    return true
-  }
-
-  private val isMediaCaptureSupported: Boolean
-    get() {
-      val permissions = arrayOf(Manifest.permission.CAMERA)
-      return PermissionHelper.hasPermissions(activity, permissions) ||
-        !PermissionHelper.hasDefinedPermission(activity, Manifest.permission.CAMERA)
-    }
-
-  private fun showMediaCaptureOrFilePicker(
-    filePathCallback: ValueCallback<Array<Uri?>?>,
-    fileChooserParams: FileChooserParams,
-    isVideo: Boolean
-  ) {
-    val isVideoCaptureSupported = true
-    val shown = if (isVideo && isVideoCaptureSupported) {
-      showVideoCapturePicker(filePathCallback)
-    } else {
-      showImageCapturePicker(filePathCallback)
-    }
-    if (!shown) {
-      Logger.warn(
-        Logger.tags("FileChooser"),
-        "Media capture intent could not be launched. Falling back to default file picker."
-      )
-      showFilePicker(filePathCallback, fileChooserParams)
-    }
-  }
-
-  private fun showImageCapturePicker(filePathCallback: ValueCallback<Array<Uri?>?>): Boolean {
-    val takePictureIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-    if (takePictureIntent.resolveActivity(activity.packageManager) == null) {
-      return false
-    }
-    val imageFileUri: Uri = try {
-      createImageFileUri()
-    } catch (ex: Exception) {
-      Logger.error("Unable to create temporary media capture file: " + ex.message)
-      return false
-    }
-    takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, imageFileUri)
-    activity.launchActivityForResult(takePictureIntent) { result ->
-      var res: Array<Uri?>? = null
-      if (result?.resultCode == Activity.RESULT_OK) {
-        res = arrayOf(imageFileUri)
-      }
-      filePathCallback.onReceiveValue(res)
-    }
-    return true
-  }
-
-  private fun showVideoCapturePicker(filePathCallback: ValueCallback<Array<Uri?>?>): Boolean {
-    val takeVideoIntent = Intent(MediaStore.ACTION_VIDEO_CAPTURE)
-    if (takeVideoIntent.resolveActivity(activity.packageManager) == null) {
-      return false
-    }
-    activity.launchActivityForResult(takeVideoIntent) { result ->
-      var res: Array<Uri?>? = null
-      if (result?.resultCode == Activity.RESULT_OK) {
-        res = arrayOf(result.data!!.data)
-      }
-      filePathCallback.onReceiveValue(res)
-    }
+    // NO CAMERA INTENT (user, 2026-10-11, D-camera): the app's only capture path is the in-app
+    // camera (getUserMedia, CameraOverlay). An input carrying `capture` would have launched
+    // ACTION_IMAGE_CAPTURE / ACTION_VIDEO_CAPTURE here; nothing in the frontend carries it any more,
+    // and one that did would get the ordinary picker, never the system camera.
+    showFilePicker(filePathCallback, fileChooserParams)
     return true
   }
 
@@ -489,25 +403,6 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
       msg.contains("%cnative %c") ||
       msg.equals("[object Object]", ignoreCase = true) ||
       msg.equals("console.groupEnd", ignoreCase = true))
-  }
-
-  @Throws(IOException::class)
-  private fun createImageFileUri(): Uri {
-    val photoFile = createImageFile(activity)
-    return FileProvider.getUriForFile(
-      activity,
-      activity.packageName.toString() + ".fileprovider",
-      photoFile
-    )
-  }
-
-  @Throws(IOException::class)
-  private fun createImageFile(activity: Activity): File {
-    // Create an image file name
-    val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
-    val imageFileName = "JPEG_" + timeStamp + "_"
-    val storageDir = activity.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
-    return File.createTempFile(imageFileName, ".jpg", storageDir)
   }
 
   override fun onReceivedTitle(

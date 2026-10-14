@@ -4,8 +4,8 @@
  *
  * The second menu was WebKit's: an `<input type="file">` accepting images with no `capture` opens
  * iOS's own Phototheque / Prendre une photo / Choisir les fichiers sheet, whatever the page wanted.
- * So in the iOS app the library and files entries open NATIVE pickers, the camera entry an input
- * WITH `capture`; in an iOS browser Canari draws no menu and the system sheet is the one menu.
+ * So in the iOS app the library and files entries open NATIVE pickers; the camera entry opens
+ * Canari's OWN camera overlay everywhere (D-camera, 2026-10-11: no `capture` input, no native camera); in an iOS browser Canari draws no menu and the system sheet is the one menu.
  * Android keeps inputs, each accepting exactly what makes it open one picker (`attachSources.ts`).
  *
  * And the menu closes: on a pick, a tap outside, Escape, Back, and when the keyboard opens - the
@@ -71,7 +71,7 @@ function mountComposer(extra: Record<string, unknown> = {}) {
   return props;
 }
 
-/** Records which file input was opened: what it accepts, and whether it captures. */
+/** Records which file input was opened: what it accepts. A `capture` is recorded too, so a regression shows. */
 function spyOnPickers(): string[] {
   const opened: string[] = [];
   vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (
@@ -117,12 +117,7 @@ describe('the one attachment menu - Android app', () => {
     openMenu();
 
     expect(opened).toEqual([]);
-    expect(entries()).toEqual([
-      'Photothèque',
-      'Prendre une photo',
-      'Filmer une vidéo',
-      'Tous les fichiers',
-    ]);
+    expect(entries()).toEqual(['Photothèque', 'Ouvrir la caméra', 'Tous les fichiers']);
     expect(plus().getAttribute('aria-expanded')).toBe('true');
   });
 
@@ -145,8 +140,6 @@ describe('the one attachment menu - Android app', () => {
   // that happy-dom reports as an unhandled animation rejection.
   it.each([
     ['Photothèque', 'image/*,video/*'],
-    ['Prendre une photo', 'image/* +capture'],
-    ['Filmer une vidéo', 'video/* +capture'],
     ['Tous les fichiers', 'image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip'],
   ])('"%s" opens the input that reaches its picker (%s), and closes', (label, accept) => {
     stubMatchMedia(true);
@@ -186,7 +179,7 @@ describe('the one attachment menu - iOS app', () => {
     const opened = spyOnPickers();
 
     openMenu();
-    expect(entries()).toEqual(['Photothèque', 'Appareil photo', 'Tous les fichiers']);
+    expect(entries()).toEqual(['Photothèque', 'Ouvrir la caméra', 'Tous les fichiers']);
     menuItem('Photothèque').click();
     flushSync();
     await tick();
@@ -210,17 +203,27 @@ describe('the one attachment menu - iOS app', () => {
     expect(native.pick).toHaveBeenCalledWith('files');
   });
 
-  it('opens the camera through an input WITH capture - WebKit then shows the camera, not its sheet', () => {
+  it('opens the in-app camera overlay for photos - no input, no native picker', () => {
     stubMatchMedia(true);
     env.runtime = 'ios-app';
     mountComposer();
     const opened = spyOnPickers();
 
     openMenu();
-    menuItem('Appareil photo').click();
+    menuItem('Ouvrir la caméra').click();
+    flushSync();
 
-    expect(opened).toEqual(['image/*,video/* +capture']);
+    expect(opened).toEqual([]);
     expect(native.pick).not.toHaveBeenCalled();
+    const overlay = document.querySelector('[data-camera-overlay]');
+    expect(overlay?.getAttribute('data-camera-overlay')).toBe('chat');
+  });
+
+  it('mounts no file input that captures: the system camera is not reachable', () => {
+    stubMatchMedia(true);
+    mountComposer();
+    expect(document.querySelectorAll('input[capture]')).toHaveLength(0);
+    expect(document.querySelector('input[data-attach-source="camera"]')).toBeNull();
   });
 });
 

@@ -11,6 +11,12 @@
    * A TAKE IS A HISTORY ENTRY from its first frame to its review's end, so Android's Back (and iOS's
    * edge swipe) ends a recording or discards a review before it leaves the camera, and the tab swipe
    * stands down meanwhile (`isSwipeNavActive` reads the overlay depth).
+   *
+   * THE DESTINATION (user, 2026-10-11, D-camera: this camera is the ONLY capture path). On the tab
+   * (`feed`) a take goes on to the publish step. In a composer (`post`, `chat`) it is handed back as
+   * a FILE through `oncapture` and the camera closes, so the composer's ordinary attachment path - and
+   * its retention class - carries it; see `destinationRules`. A chat takes PHOTOS ONLY until the reel
+   * message exists (docs/wiki/frontend/modules/reels-in-chat.md): no hold, no 90 s cap to read.
    */
   import { onDestroy, onMount } from 'svelte';
   import { Images, RefreshCcw } from '@lucide/svelte';
@@ -20,11 +26,14 @@
   import ReelPublishSheet from './ReelPublishSheet.svelte';
   import { CameraSession } from '$lib/reels/cameraSession.svelte';
   import {
+    captureFileFrom,
     captureReducer,
     classifyLimitsFault,
+    destinationRules,
     formatTakeTime,
     shutterRingFraction,
     SHUTTER_HOLD_THRESHOLD_MS,
+    type CaptureDestination,
     type CaptureEvent,
     type CaptureState,
     type LimitsFault,
@@ -52,9 +61,25 @@
     session?: CameraSession;
     /** The publish step's services, injectable for tests. */
     publishDeps?: PublishReelDeps;
+    /** Where the take goes; `feed` is the camera tab, unchanged. */
+    destination?: CaptureDestination;
+    /** A composer destination: the take, as a file for its attachment path. */
+    oncapture?: (file: File) => void;
+    /** The overlay's close (the X, and after a hand-back); absent on the tab. */
+    onclose?: () => void;
   }
 
-  let { session = new CameraSession(), publishDeps }: Props = $props();
+  let {
+    session = new CameraSession(),
+    publishDeps,
+    destination = 'feed',
+    oncapture,
+    onclose,
+  }: Props = $props();
+
+  const rules = $derived(destinationRules(destination));
+  /** A photo needs no ceiling: only a video take reads the server's cap. */
+  const needsLimits = $derived(!rules.photoOnly);
 
   let capture = $state<CaptureState>({ kind: 'ready' });
   let limits = $state<ReelLimits | null>(null);
@@ -92,7 +117,10 @@
     }
   }
 
-  onMount(() => void loadLimits());
+  onMount(() => {
+    console.debug(`[reel-capture] opened for ${destination}`);
+    if (needsLimits) void loadLimits();
+  });
 
   /** A short buzz where the member's finger meets a decision, when they have vibrations on. */
   function buzz(ms: number) {
@@ -114,8 +142,9 @@
     console.debug(`[reel-capture] ${before.kind} -> ${after.kind} on ${event.type}`);
     capture = after;
     if (before.kind === 'pressing') clearHoldTimer();
-    if (after.kind === 'pressing') {
-      // The press becomes a video only by STAYING down; the timer only reports that it did.
+    if (after.kind === 'pressing' && !rules.photoOnly) {
+      // The press becomes a video only by STAYING down; the timer only reports that it did. A
+      // photo-only destination never arms it, so every press is a tap, however long.
       holdTimer = setTimeout(() => send({ type: 'hold' }), SHUTTER_HOLD_THRESHOLD_MS);
     }
     if (before.kind === 'pressing' && after.kind === 'recording') beginTake();
@@ -161,6 +190,27 @@
       dismissTake();
     };
     pushHistoryOverlay(takeEntry);
+  }
+
+  /**
+   * A composer destination: the take leaves as a file for the composer's attachment path, and the
+   * camera closes. `blob` is the edited media when the editor changed it.
+   */
+  function handBack(blob: Blob) {
+    const file = captureFileFrom(blob);
+    console.debug(
+      `[reel-capture] handing back ${file.name} (${file.size} bytes) to ${destination}`
+    );
+    if (!oncapture) {
+      console.error('[reel-capture] a composer destination has no oncapture: the take is lost');
+      showToast(m.reels_capture_record_error(), 'error');
+      return;
+    }
+    oncapture(file);
+    editorOpen = false;
+    // Ready: releases the take's history entry; the owner then closes the overlay.
+    send({ type: 'discard' });
+    onclose?.();
   }
 
   /** A recording is thrown away, a review discarded: the take is over. */
@@ -344,11 +394,12 @@
     lensLocked={recording}
     paused={capture.kind === 'review'}
     {onBeforeRelease}
+    {onclose}
   >
     {#snippet controls()}
       <div class="grid grid-cols-3 items-end px-6">
         <div class="flex justify-start pb-6">
-          {#if !recording}
+          {#if !recording && rules.gallery}
             <button
               type="button"
               class="flex h-11 w-11 items-center justify-center rounded-lg border-2 border-white/80 bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
@@ -374,7 +425,7 @@
             {recording}
             {fraction}
             timeLabel={formatTakeTime(elapsedMs)}
-            disabled={!limits ||
+            disabled={(needsLimits && !limits) ||
               !camera?.ready ||
               capture.kind === 'finishing' ||
               capture.kind === 'photo'}
@@ -404,7 +455,16 @@
 
   {#if capture.kind === 'review'}
     {@const clip = capture.clip}
-    {#if publishOpen && limits}
+    {#if rules.handsBackFile}
+      <ReelReview
+        {clip}
+        ondiscard={() => void discardFromReview()}
+        onedit={() => (editorOpen = true)}
+        soundRemoval={rules.soundRemoval}
+        nextLabel={destination === 'chat' ? m.reels_review_send() : m.reels_review_add()}
+        onnext={() => handBack(clip.blob)}
+      />
+    {:else if publishOpen && limits}
       <ReelPublishSheet {clip} {limits} deps={publishDeps} onclose={() => (publishOpen = false)} />
     {:else}
       <ReelReview
@@ -429,6 +489,10 @@
       onnext={(blob) => {
         if (capture.kind !== 'review') return;
         // The edited media replaces the take (null: untouched), and the publish step opens at once.
+        if (rules.handsBackFile) {
+          handBack(blob ?? capture.clip.blob);
+          return;
+        }
         if (blob) capture = { kind: 'review', clip: { ...capture.clip, blob } };
         editorOpen = false;
         publishOpen = true;

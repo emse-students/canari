@@ -3,8 +3,7 @@ import {
   acceptFor,
   attachRuntimeFrom,
   attachSourcesFor,
-  capturesFor,
-  multipleFor,
+  opensInAppCamera,
   opensNatively,
   type AttachRuntime,
   type AttachSource,
@@ -31,18 +30,14 @@ describe('the one menu', () => {
     expect(attachSourcesFor('ios-app')).toEqual(['library', 'camera', 'files']);
     expect(opensNatively('ios-app', 'library')).toBe(true);
     expect(opensNatively('ios-app', 'files')).toBe(true);
-    // The camera stays a file input: with `capture`, WebKit opens the camera with no sheet.
+    // The camera is Canari's own overlay: neither a native picker nor an input.
     expect(opensNatively('ios-app', 'camera')).toBe(false);
   });
 
-  it('offers two camera entries on Android, whose capture intents are photo OR video', () => {
-    expect(attachSourcesFor('android-app')).toEqual([
-      'library',
-      'camera-photo',
-      'camera-video',
-      'files',
-    ]);
-    expect(attachSourcesFor('android-web')).toEqual(attachSourcesFor('android-app'));
+  it('offers ONE camera entry on every phone runtime (D-camera: no native camera, no split by kind)', () => {
+    for (const r of ['ios-app', 'android-app', 'android-web'] as const) {
+      expect(attachSourcesFor(r)).toEqual(['library', 'camera', 'files']);
+    }
   });
 
   it('draws no Canari menu where the system sheet is the menu, or on a desktop', () => {
@@ -57,16 +52,13 @@ describe('the one menu', () => {
 });
 
 describe('the inputs', () => {
-  it('asks for media only on the library and camera entries - which is what picks the picker', () => {
+  it('asks for media only on the library entry - which is what picks the picker', () => {
     expect(acceptFor('library')).toBe('image/*,video/*');
-    expect(acceptFor('camera-photo')).toBe('image/*');
-    expect(acceptFor('camera-video')).toBe('video/*');
     expect(acceptFor('files')).toContain('application/pdf');
   });
 
-  it('captures, and takes one file, on the camera entries only', () => {
-    const all: AttachSource[] = ['library', 'camera', 'camera-photo', 'camera-video', 'files'];
-    expect(all.filter(capturesFor)).toEqual(['camera', 'camera-photo', 'camera-video']);
-    expect(all.filter(multipleFor)).toEqual(['library', 'files']);
+  it('opens the in-app camera, not an input, for the camera entry only', () => {
+    const all: AttachSource[] = ['library', 'camera', 'files'];
+    expect(all.filter(opensInAppCamera)).toEqual(['camera']);
   });
 });

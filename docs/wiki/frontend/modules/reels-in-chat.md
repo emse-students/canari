@@ -32,6 +32,8 @@ before building (the upload path below is the one most likely to overlap).
 
 ## 1. Entering the camera from a conversation
 
+**STATUS (2026-10-11, the D-camera package): the OVERLAY AND THE `destination` PROP ARE BUILT, the reel message is NOT.** `ReelCapture` takes `destination: 'feed' | 'post' | 'chat'` (a string form of the object sketched below; `reels/reelCapture.ts` `destinationRules` is the one table) and `CameraOverlay.svelte` mounts it as a full-screen layer over a composer, with its own history entry (Back closes the camera when idle; a take pushes its own above it). In a CHAT it takes PHOTOS ONLY and a photo goes out as an ordinary image message (RC-3..RC-5 add the video, which is the reel message); in the new-post composer it produces a POST (photo or video). The camera entry is the composer's "Ouvrir la camera"; no system camera is reachable from the app.
+
 **An OVERLAY over the conversation, never the `/camera` tab.** The tab is a swipe place left of the feed
 (`CAMERA_PLACE`, [reels](reels.md#the-tab-c5)) and its origin logic (`cameraOriginFrom`) returns to a
 PATH. A conversation is selected by state, not by a route a Back can restore (`notifNav`, the
