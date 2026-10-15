@@ -1418,6 +1418,22 @@ Dev has no push, so what #1889 changes (a notification suppressed or kept) could
 | 3. Notification level of a bench salon | **`PASS` (the control), the effect `NOT-OBSERVED`** | Salon "general" of a bench community: Parametres du canal shows Notifications with Tous / Mentions / Aucune, Tous selected; "Mentions" highlights, then "Tous" restores it. No push on dev, so a message received over the socket under Mentions/Aucune was not produced |
 | 4. In-app log export | **`PASS`** | `canari-log-1.2.8-alpha.2-20261015-0223.txt` (2.15 MB, 23773 lines): 0 `eyJ`, 0 `Bearer`; of 383 `handleSendChat` lines, the 192 carrying a text all read `text="[N chars]"`, the rest are "completed (message queued)"; no bench message text (`bisous`, `heldA*`, `iosA3*`, `Rendez`) found |
 
+## The iPhone 12 readings of v1.2.8-alpha.1 (2026-10-15)
+
+TestFlight build `1.2.8-alpha.1` (the phone had not taken alpha.2 yet: Settings > A propos itself
+offers "Une version plus recente (1.2.8-alpha.2) est disponible"), account `canari-test-gamma`, dev
+estate, driven over WDA (`tools/ios-device`). The app opened on the PIN gate (no vault); the bench
+account's PIN was typed on the keypad with the user's authorisation of 2026-10-15, and the gate
+opened onto the feed. Bench community "Bench126" only; nothing sent, no account switched.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. Start, version | **`PASS`** | PIN gate, then the feed; Settings > A propos reads "Version de Canari 1.2.8-alpha.1" |
+| 2. Communities and a salon | **`PASS`** | The Communautes tab lists Bench126 and its "general" salon; the salon opened with its history drawn within the 3 s the tap was followed by (no stopwatch run; a feel, not a measurement) |
+| 3. Notification level of a bench salon | **`PASS`** | Parametres du canal shows Notifications with Tous / Mentions / Aucune, Tous selected; Mentions selected (Tous 0, Mentions 1), then Tous restored (1, 0, 0). Effect not observed (no push on dev) |
+| 4. Reply swipe (#1880) and back gesture | **`PASS`** | A rightward drag on a peer bubble ("Canari Test Delta") stages "Repondre a Canari Test Delta" and the conversation stays open; a leftward drag from x=350 of 390 on an own bubble stages "Repondre a Canari Test Gamma"; both cancelled with "Annuler la reponse". A left-edge drag (x=2 to 260) from the salon returns to the community's salon list |
+| 5. In-app log export | **`NOT-OBSERVED`** | "Enregistrer le journal" opens the system "Enregistrer sous" picker (canari-log-1.2.8-alpha.1...) over an empty "Sur mon iPhone"; dismissed without saving. The file cannot be read off the TestFlight container from the workstation, so the absence of message text was not checked on iOS (the Android export of the same build is `PASS`) |
+
 ## The bench readings of v1.2.7-alpha.2 (2026-10-14)
 
 **Mi 9T**: build `1.2.7 (100200702)`, the release's `app-universal-release.apk` (sha256
