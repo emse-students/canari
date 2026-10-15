@@ -909,3 +909,32 @@ Measured on `main` before this: `submit` counted `pending` toward `maxSubmission
 | D3 | Notify the organiser actively on `paid_over_capacity`, plus the durable "cotisation granted" flag | the flag is built (`cotisationGrantedAt`); the notification needs a category | **The notification is a SEPARATE work package** (a new category: the closest, `form_reminder`, deep-links to the fill page and carries the opening-reminder copy). The return page's over-capacity sentence promises no notification today and should say so once that package ships |
 
 Tests: `forms.service.seat-hold.spec.ts` runs the service on an in-memory store that evaluates its own `where` clauses and refuses any transaction that is not READ COMMITTED (the boundary one second either side of the hold, two simultaneous submits on the last seat, the reuse restarting the hold on a full form, the job twice, a late payment with and without room, two simultaneous late payments on the last seat with a real per-form mutex, replays, a failed grant retried, one payment confirmed under both ids in both orders, a cancel against a paid row, a cancel naming another request, the request lifetime (1680 s), the old request settled before the new one with the row still naming it, an old request found PAID stopping the retry, a failed cancel / open state / failed state read / request being issued each refused with `PREVIOUS_PAYMENT_OPEN`, the old request's cancel callback landing DURING the retry and taken back, the submitter's cancel settling the request, a confirmation naming another request accused at ERROR, a late payment on a one-answer form whose payer already has a seat or a payment, and the bodies core-service posts entering through `InternalFormsController`: webhook confirm and verify-session in both orders and at once, a cancel or expire callback after the payment, one between the two confirmations, a payment after its own expiry - one transition, one grant, one purchase each). Controls (each makes it fail): the lock removed from `markPaid`; REPEATABLE READ put back in `submit`; the cancel comparison removed; error 2 read as cancelled without the state read; a failed settle carried past; the one-answer check removed; the foreign-id accusation removed; the take-back of a self-caused cancel removed. The core half is in `lydia-payment-provider.spec.ts` (`expire_time`, `request_id`, `request/cancel` and its error 2, `request/state` and its codes) and `payment.controller.spec.ts`. **Real Postgres is NOT in CI**: the Postgres 18 runs quoted on this page (concurrency, migration 084 twice, the hold restart surviving the id write, the real core controllers wired to the real internal route) were throwaway scripts on the pull request, not committed tests - the committed proof is the in-memory store above. `paymentStatus.test.ts` and `paymentReturn.test.ts` on the client.
+
+## What a client reads of a submission is an allowlist (2026-10-15)
+
+`GET /api/forms/submissions/:id` (the submitter or a manager, read by the payment return pages)
+answered `paymentAccountId`: the Business's Lydia `vendor_token`. Lydia's `request/cancel` asks
+for nothing else besides the `request_id`, and request ids are sequential (`12115506`,
+[payments](payments.md)), so any submitter could cancel the open payment requests of everyone
+else paying that association. No client field read it. The two submitter reads and the two
+manager lists (`:id/submissions`, `:id/submissions/pending-cash`) also answered the whole row:
+the provider ids (`stripeSessionId`, `paymentRequestId`, `paymentSettledBy`), the hold clock and
+the fulfilment flags.
+
+`apps/social-service/src/forms/submission.projection.ts` now decides, as an ALLOWLIST, so a column
+added later is private until someone adds it there:
+
+- the submitter's view: `id`, `formId`, `answers`, `totalPaid`, `paymentStatus`, `paymentMethod`,
+  `cashExpiresAt`, `createdAt`. `GET submissions/:id` answers `id`, `formId`, `totalPaid`,
+  `currency` and `paymentStatus` only.
+- the manager's view adds `userId` and `email`. Both lists use `userId` to name the submitter
+  (`submitterName`, the pending-cash list), and a manager already reads both on member pages.
+
+`submission.projection.spec.ts` fills every private column (and the vendor token) with a
+recognisable value and fails if any client read carries one, by value or by key name. Control: it
+fails 4/4 against the previous service.
+
+**Not closed by this: the association reads.** `GET /api/associations` and its siblings answer
+`lydiaAccountId`, the same vendor token, to any signed-in member (`associations.controller.ts`
+says so). Its only client reader is the manager's Lydia panel, which shows it. Closing it needs a
+manager-only read for that panel, which is a separate change.
