@@ -1,0 +1,51 @@
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
+
+/**
+ * One stretch of time during which a person was a member of an MLS conversation group - from the
+ * enrolment that created their `dm_group_members` row to the removal that deleted it.
+ *
+ * **WHY IT EXISTS (user, 2026-10-14): A REMOVE HOLDS AGAINST A LATER RE-ADD.** A member removed from
+ * a group conversation and added back keeps what preceded their removal and NEVER receives what was
+ * sent while they were out. `dm_group_members` cannot say that: a removal hard-deletes its row and a
+ * re-add creates a fresh one, so the only thing it remembers is the LATEST arrival. The gaps between
+ * these rows are the exclusion windows the answering peer must withhold from every history bundle
+ * (`GET mls/groups/:groupId/exclusions`, `historyEntitlement.ts` on the client) - the whole design
+ * is in `docs/wiki/protocols/history-reconciliation.md`.
+ *
+ * Lifecycle: opened by `ensureGroupMember` (both enrolment routes), closed by `removeGroupMember`
+ * in the same transaction that deletes the membership row, deleted with the group
+ * (`GROUP_OWNED_TABLES`) and with the account. At most ONE open row per `(groupId, userId)`, which
+ * the partial unique index enforces, so a second enrolment of somebody already present is a no-op
+ * exactly as it is on `dm_group_members`.
+ *
+ * Both instants are written by this service's own clock (`new Date()`), the clock `sendMessage`
+ * stamps `queued_message.createdAt` with - the server receive time the client compares them
+ * against. No client clock ever enters this table. The columns carry no time zone, so the service
+ * must run in UTC (it does, as does Postgres - read on production 2026-10-14).
+ */
+@Entity('dm_group_membership_intervals')
+@Index('IDX_dm_group_membership_intervals_group_user', ['groupId', 'userId'])
+@Index('UQ_dm_group_membership_intervals_open', ['groupId', 'userId'], {
+  unique: true,
+  where: '"leftAt" IS NULL',
+})
+export class GroupMembershipInterval {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  /** Group the stretch of membership belongs to. */
+  @Column({ type: 'uuid' })
+  groupId: string;
+
+  /** Person who was a member. */
+  @Column({ type: 'varchar', length: 255 })
+  userId: string;
+
+  /** When the enrolment that opened this stretch was written. */
+  @CreateDateColumn()
+  joinedAt: Date;
+
+  /** When the removal that closed it was written; `null` while the person is still a member. */
+  @Column({ type: 'timestamp', nullable: true })
+  leftAt: Date | null;
+}

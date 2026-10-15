@@ -8,7 +8,7 @@
  */
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
-import type { IStorage } from '$lib/db';
+import type { IStorage, StoredMessage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type {
   AddMessageToChatOptions,
@@ -31,6 +31,7 @@ import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { applyChannelEdits, type DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { createLoadGenerations } from '$lib/utils/chat/loadGenerations';
+import { whenSalonEntryDecided } from '$lib/utils/graine/salonSendGate';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
@@ -240,8 +241,32 @@ export function useConversations() {
    * would otherwise leave `isLoadingHistory` up for good.
    */
   let salonSkeletonOwner = 0;
+  /**
+   * The salon whose load raised the skeleton, or `null` for a load with no salon identity (the DM
+   * path). A load issued at the tap raises it BEFORE its salon is selected, and a second press within
+   * the frame can select another salon: the skeleton is shown only on the salon it was raised for.
+   */
+  let skeletonSalon: string | null = null;
+  /**
+   * How many times a salon copy was declared stale ({@link invalidateChannelHistoryCache}, any
+   * salon). A load in flight is JOINED by a second non-forced load of the same salon only when its
+   * request has not left yet, or left after the last such declaration - then its page already
+   * answers whatever made the copy stale (a stream gap, a seed that arrived), and a second request
+   * would only download and decode the same 200 rows again and supersede the first.
+   *
+   * Measured on the Mi 9T (2026-10-14): a salon tapped as soon as its row is drawn, while the live
+   * stream comes back and the community listing ends, fetched its 116 kB page two or three times;
+   * the extra copies cost ~3 s before the first message at 1x.
+   */
+  let salonStaleDeclarations = 0;
+  /** The load of each salon still in flight: its request's declaration count (`null`: not sent). */
+  const salonLoadsInFlight = new SvelteMap<
+    string,
+    { sentAt: number | null; generation: number; done: Promise<void> }
+  >();
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
+    salonStaleDeclarations++;
     if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
     else channelHistoryLoadedAt.clear();
   }
@@ -454,11 +479,11 @@ export function useConversations() {
     contactName: string,
     id: string,
     ctx: ConversationContext,
-    options?: { force?: boolean }
+    options?: { force?: boolean; atTap?: boolean }
   ) {
     // Channel conversations: load via REST API instead of MLS replay
     if (isChannelConversationId(contactName)) {
-      await loadChannelHistory(contactName, ctx, options?.force);
+      await loadChannelHistory(contactName, ctx, options?.force, options?.atTap);
       return;
     }
 
@@ -480,7 +505,10 @@ export function useConversations() {
     }
 
     const isSelected = selectedContact === contactName;
-    if (isSelected) isLoadingHistory = true;
+    if (isSelected) {
+      isLoadingHistory = true;
+      skeletonSalon = null;
+    }
     // The rows the fast path drew before the probe, which the reload after a replay supersedes.
     let drawnFirst: ChatMessage[] = [];
     try {
@@ -561,16 +589,99 @@ export function useConversations() {
     }
   }
 
-  /** Loads channel history from the server (source of truth) into memory only - never IndexedDB. */
+  /**
+   * Draws a salon's last page from this device's store, before its server page (F4 of
+   * community-open-budget). Only on the first draw of the salon in this process - a salon already in
+   * memory has newer rows than any copy - and only for the load still the latest. Returns the rows it
+   * drew, which the server page later confirms or withdraws.
+   *
+   * Never fatal: a store that cannot be read costs the early draw, said in the log, and the server
+   * page draws the salon as it always did.
+   */
+  async function drawStoredSalonPage(
+    channelConversationId: string,
+    ctx: ConversationContext,
+    generation: number
+  ): Promise<ChatMessage[]> {
+    if (!ctx.storage) return [];
+    if (conversations.get(channelConversationId)?.messages.some((m) => !m.status)) return [];
+    let stored: Awaited<ReturnType<NonNullable<ConversationContext['storage']>['getMessagesPage']>>;
+    try {
+      stored = await ctx.storage.getMessagesPage(
+        channelConversationId,
+        ctx.deviceKeyB64,
+        INITIAL_MESSAGES_PAGE
+      );
+    } catch (e) {
+      ctx.log(
+        `[CHANNEL] stored page of ${channelConversationId.slice(0, 16)} not read - the server page draws it: ${String(e)}`
+      );
+      return [];
+    }
+    if (stored.length === 0) return [];
+    if (!salonLoadGenerations.isLatest(channelConversationId, generation)) return [];
+    const current = conversations.get(channelConversationId);
+    if (!current) return [];
+    const drawn = mapStoredMessagesToChatMessages(stored, ctx.userId);
+    conversations.set(channelConversationId, {
+      ...current,
+      messages: mergeMessagePage(current.messages, drawn),
+    });
+    ctx.log(
+      `[CHANNEL] ${channelConversationId.slice(0, 16)} stored page drawn (${drawn.length} row(s)) before the server page`
+    );
+    return drawn;
+  }
+
+  /**
+   * Replaces a salon's stored page with the page the server just gave (F4). The store is a COPY of
+   * the last page drawn, never a source: what it held is deleted only now, once a newer page is in
+   * hand, so an open that fails keeps the last one for the next open (and offline). `page` is the
+   * server's rows alone: the caller has taken the older-messages notice out, and an unsent echo is
+   * never in a server page. An empty page empties the copy.
+   */
+  async function storeSalonPage(
+    channelConversationId: string,
+    page: readonly ChatMessage[],
+    ctx: ConversationContext
+  ): Promise<void> {
+    if (!ctx.storage) return;
+    const rows: StoredMessage[] = page.map((m) => ({
+      id: m.id,
+      conversationId: channelConversationId,
+      senderId: m.senderId,
+      content: m.content,
+      timestamp: m.timestamp.getTime(),
+      ...(m.serverTimestamp !== undefined ? { serverTimestamp: m.serverTimestamp } : {}),
+      ...(m.isEdited ? { isEdited: true } : {}),
+      ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
+      ...(m.isDeleted ? { isDeleted: true } : {}),
+    }));
+    try {
+      await ctx.storage.deleteMessagesForConversation(channelConversationId);
+      if (rows.length > 0) await ctx.storage.saveMessages(rows, ctx.deviceKeyB64);
+    } catch (e) {
+      ctx.log(
+        `[CHANNEL] page of ${channelConversationId.slice(0, 16)} not stored - the next open waits for the server: ${String(e)}`
+      );
+    }
+  }
+
+  /**
+   * Loads a salon's history from the server, the source of truth, after drawing the last page this
+   * device stored for it (F4). The stored page is a copy the server page replaces: every row drawn
+   * from it that the server page does not name is withdrawn, whatever its place in the window.
+   */
   async function loadChannelHistory(
     channelConversationId: string,
     ctx: ConversationContext,
-    force = false
+    force = false,
+    atTap = false
   ) {
     const { channelService } = await import('$lib/services/ChannelService');
     const { decodeChannelMessageRow, UnreadableRowTally, V1_SESSION_NOT_HELD } =
       await import('$lib/utils/chat/channelCrypto');
-    const { olderMessagesNotice, keepNoticeOnTop } =
+    const { olderMessagesNotice, olderMessagesNoticeId, keepNoticeOnTop } =
       await import('$lib/utils/chat/olderMessagesNotice');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
@@ -581,25 +692,50 @@ export function useConversations() {
     const cached = channelHistoryLoadedAt.get(channelConversationId);
     if (!force && cached && cached.userId === ctx.userId) return;
 
+    // A LOAD OF THIS SALON STILL IN FLIGHT ANSWERS THIS ONE when nothing was declared stale after its
+    // request left (see `salonStaleDeclarations`): joined, not repeated.
+    const running = salonLoadsInFlight.get(channelConversationId);
+    if (
+      !force &&
+      running &&
+      (running.sentAt === null || running.sentAt === salonStaleDeclarations)
+    ) {
+      ctx.log(
+        `[CHANNEL] history load of ${channelConversationId.slice(0, 16)} joins the one in flight (${running.sentAt === null ? 'not sent yet' : 'sent after the last stale mark'})`
+      );
+      // A press joining a load started in the background (the listing's end, a reconnect) still
+      // shows the skeleton: the joined load becomes its owner, and lowers it when its page is in.
+      if (atTap || selectedContact === channelConversationId) {
+        isLoadingHistory = true;
+        salonSkeletonOwner = running.generation;
+        skeletonSalon = channelConversationId;
+      }
+      await running.done;
+      return;
+    }
     // ONLY THE LATEST LOAD STARTED FOR THIS SALON MAY MERGE (found reviewing #1761). The page is
     // authoritative for its window, so an older load finishing last would drop a row a newer one
     // had just decoded - see `loadGenerations.ts` for the exact sequence. Not a refetch afterwards:
     // that was the heal that hid the race.
     const generation = salonLoadGenerations.begin(channelConversationId);
-    const isSelected = selectedContact === channelConversationId;
+    let finishLoad: () => void = () => {};
+    const inFlight = {
+      sentAt: null as number | null,
+      generation,
+      done: new Promise<void>((resolve) => (finishLoad = resolve)),
+    };
+    salonLoadsInFlight.set(channelConversationId, inFlight);
+    // `atTap`: the request leaves on the press, BEFORE the pane that will show this salon is mounted
+    // (the selection follows the pressed row's frame). The skeleton is raised all the same, so the
+    // pane mounts onto it instead of onto an empty list.
+    const isSelected = atTap || selectedContact === channelConversationId;
     if (isSelected) {
       isLoadingHistory = true;
       salonSkeletonOwner = generation;
+      skeletonSalon = channelConversationId;
     }
 
     try {
-      if (ctx.storage) {
-        await ctx.storage.deleteMessagesForConversation(channelConversationId).catch((e) => {
-          ctx.log(
-            `[CHANNEL] stale local rows of ${channelConversationId} not cleared before the load: ${String(e)}`
-          );
-        });
-      }
       // Nothing to hydrate: a Graine seed is already in the local store or it is not, and the
       // server holds none to fetch. A row this device has no seed for is REPORTED unreadable by
       // `decodeChannelMessageRow` rather than silently skipped, and repaired by WP-33.
@@ -608,7 +744,10 @@ export function useConversations() {
       // events only carry what moved while this device was connected, so a load is the one moment
       // the whole picture can be taken. Their failure costs the "Lu par" row and nothing else - the
       // page still loads, and the next load asks again.
-      const [rows, rawMarks] = await Promise.all([
+      inFlight.sentAt = salonStaleDeclarations;
+      // SETTLED INTO A VALUE, so the request may fail while the stored page is still being read
+      // without an unhandled rejection; its failure is rethrown below, where it always was.
+      const pageRequest = Promise.all([
         channelService.listMessages(rawId, 200),
         channelService.listReadMarks(rawId).catch((e) => {
           console.warn(
@@ -617,7 +756,21 @@ export function useConversations() {
           );
           return undefined;
         }),
-      ]);
+      ]).then(
+        (answer) => ({ ok: true as const, answer }),
+        (error: unknown) => ({ ok: false as const, error })
+      );
+      // THE STORED PAGE IS DRAWN WHILE THE SERVER PAGE IS ON THE WIRE (F4): the request has left.
+      const drawnFirst = await drawStoredSalonPage(channelConversationId, ctx, generation);
+      const settledPage = await pageRequest;
+      if (!settledPage.ok) throw settledPage.error;
+      const [rows, rawMarks] = settledPage.answer;
+      // DECODED ONLY ONCE NO LISTING CAN STILL ENTER THIS SALON: a row missing its seed asks for it
+      // on the community's key group, which a listing still in flight may not have registered yet
+      // (`whenSalonEntryDecided`). The page was fetched meanwhile, so an entered salon waits nothing.
+      if (await whenSalonEntryDecided(rawId)) {
+        ctx.log(`[CHANNEL] page of ${rawId.slice(0, 8)} decoded after its salon entry was decided`);
+      }
       const loaded: ChatMessage[] = [];
       // Server row id -> the client UUID its author sealed inside it (own rows only, see below).
       const clientIdOf = new SvelteMap<string, string>();
@@ -717,28 +870,56 @@ export function useConversations() {
           owedSalonReadMarks(ctx.userId)[channelConversationId]?.at,
           channelConversationId
         );
+        // EVERY ROW DRAWN FROM THE STORE THAT THIS PAGE DOES NOT NAME IS WITHDRAWN (F4, review
+        // 2026-10-15). The copy is a preview of the server's newest page, and the server HARD-deletes
+        // a salon message (no tombstone), so a missing row is the only sign it is gone. The merge
+        // alone cannot say it: memory is authoritative outside a page's window, so a deleted newest
+        // row reads as a live arrival and an emptied salon's page removes nothing. A drawn row older
+        // than a full page is withdrawn too: what lies between it and the page is unknown, and a row
+        // shown across a hidden gap is worse than one fetched again on scroll. Only rows this load
+        // drew from the store: a message that arrived live after the draw is not in `drawnFirst`.
+        let base = current.messages;
+        // The server's rows alone: the older-messages notice is not a message, and is never stored.
+        const serverRows = loadedEdited.filter(
+          (m) => m.id !== olderMessagesNoticeId(channelConversationId)
+        );
+        if (drawnFirst.length > 0) {
+          const inPage = new SvelteSet(serverRows.map((m) => m.id));
+          const withdrawn = new SvelteSet(
+            drawnFirst.filter((m) => !inPage.has(m.id)).map((m) => m.id)
+          );
+          if (withdrawn.size > 0) {
+            ctx.log(
+              `[CHANNEL] ${channelConversationId.slice(0, 16)} ${withdrawn.size} stored row(s) the fresh page does not name withdrawn`
+            );
+            base = base.filter((m) => !withdrawn.has(m.id));
+          }
+        }
         conversations.set(channelConversationId, {
           ...current,
           // FIRST after the merge too: a reload can hold rows older than this page (section 21.7).
-          messages: keepNoticeOnTop(
-            mergeMessagePage(current.messages, loadedEdited),
-            channelConversationId
-          ),
+          messages: keepNoticeOnTop(mergeMessagePage(base, loadedEdited), channelConversationId),
           ...(readWatermarks !== undefined ? { readWatermarks } : {}),
         });
         channelHistoryLoadedAt.set(channelConversationId, {
           loadedAt: Date.now(),
           userId: ctx.userId,
         });
+        await storeSalonPage(channelConversationId, serverRows, ctx);
       }
     } catch (e) {
       ctx.log(`[CHANNEL] History load failed: ${String(e)}`);
     } finally {
+      if (salonLoadsInFlight.get(channelConversationId) === inFlight) {
+        salonLoadsInFlight.delete(channelConversationId);
+      }
+      finishLoad();
       // The load that raised the skeleton last lowers it: a superseded load leaves it to a newer one
       // that raised it again, never to one that did not (see `salonSkeletonOwner`).
       if (salonSkeletonOwner === generation) {
         isLoadingHistory = false;
         salonSkeletonOwner = 0;
+        skeletonSalon = null;
       }
     }
   }
@@ -1926,7 +2107,7 @@ export function useConversations() {
     },
     /** True while history is being fetched and decrypted for the selected conversation. */
     get isLoadingHistory() {
-      return isLoadingHistory;
+      return isLoadingHistory && (skeletonSalon === null || skeletonSalon === selectedContact);
     },
     /** Last send or membership error message to display to the user. */
     get sendError() {

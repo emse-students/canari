@@ -21,6 +21,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 
 // Same import-cycle cut as the sibling notification tests - see `useMessaging.bulkIngest`.
+// The sender lookup is its own seam (displayName.spec.ts); here it answers at once so a
+// notification is raised a microtask after the arrival, not after a network round trip.
+vi.mock('$lib/utils/users/displayName', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/users/displayName')>()),
+  resolveNotificationSenderName: async () => 'Peer',
+}));
+
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: () => {},
   globalSession: {},
@@ -125,7 +132,7 @@ describe('native mobile notifies for the message no push will ever carry', () =>
 
     await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'm-1' });
 
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
     // The conversation key travels, because both the 800 ms throttle and the per-conversation
     // notification id are derived from it - a notification with no key stacks for ever.
     expect(sendSystemNotification.mock.calls[0][2]).toBe(CONVO);
@@ -141,7 +148,7 @@ describe('native mobile notifies for the message no push will ever carry', () =>
     expect(sendSystemNotification).not.toHaveBeenCalled();
 
     await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('THE OTHER DIRECTION: an activity showing THAT conversation is not interrupted', async () => {
@@ -167,7 +174,7 @@ describe('native mobile notifies for the message no push will ever carry', () =>
     // "Si je discute avec A et que B m'envoie un message, la notif de B devrait apparaitre." Until
     // this, a foregrounded app returned before ever asking, so the only signal was a tone and an
     // unread badge in a conversation list a narrow layout does not render.
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
     expect(sendSystemNotification.mock.calls[0][2]).toBe(CONVO);
   });
 
@@ -181,7 +188,7 @@ describe('native mobile notifies for the message no push will ever carry', () =>
 
     // A desktop tab that is visible but behind another window is a real "away", and it always
     // notified. Asserting it here is what keeps the mobile rule from being applied to both.
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('a runtime that never states the fact is treated as on screen, and stays quiet', async () => {
@@ -219,7 +226,7 @@ describe('native mobile notifies for the message no push will ever carry', () =>
       messageId: 'm-new',
       timestamp: new Date(6_000),
     });
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('a phone still says nothing about the user own message', async () => {
@@ -278,7 +285,7 @@ describe('a message that names the reader is filed on the mentions channel', () 
       { messageId: 'm-mention' }
     );
 
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
     expect(sendSystemNotification.mock.calls[0][3]).toBe(true);
   });
 
@@ -299,7 +306,7 @@ describe('a message that names the reader is filed on the mentions channel', () 
       { messageId: 'm-other-mention' }
     );
 
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
     expect(sendSystemNotification.mock.calls[0][3]).toBe(false);
   });
 
@@ -312,7 +319,7 @@ describe('a message that names the reader is filed on the mentions channel', () 
       messageId: 'm-plain',
     });
 
-    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
     expect(sendSystemNotification.mock.calls[0][3]).toBe(false);
   });
 });

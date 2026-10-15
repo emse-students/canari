@@ -7,17 +7,44 @@
  * stays the authority; this store is what the settings screen edits and what the client's own local
  * notifications (raised from a socket frame, where no push is involved) consult.
  *
+ * It also mirrors each private conversation's LEVEL (all / mentions / none), the salon's three levels
+ * for an MLS group or DM, read in the same request and applied by `useMessaging.notifyInbound` to
+ * the notifications this client raises itself.
+ *
  * Until the first load answers, everything is ON - the account default - and a failed load says so
  * and keeps that default rather than inventing a state; the next login and every visit to the
  * settings screen load again.
  */
-import { fetchDisabledCategories, saveDisabledCategories } from '$lib/notifications/preferencesApi';
+import {
+  fetchChannelNotificationLevel,
+  fetchNotificationPreferences,
+  saveDisabledCategories,
+  saveGroupNotificationLevel,
+} from '$lib/notifications/preferencesApi';
 import type { NotificationCategory } from '$lib/notifications/categories';
+import {
+  isConversationNotificationLevel,
+  type ConversationNotificationLevel,
+} from '$lib/notifications/conversationLevel';
+import { SvelteMap } from 'svelte/reactivity';
 import { Log } from '$lib/utils/Log';
 
 let disabled = $state<NotificationCategory[]>([]);
 /** Serialises writes: each PUT carries the whole set, so two in flight could land out of order. */
 let writeChain: Promise<unknown> = Promise.resolve();
+/** Private conversations quieter than `all`, by group id; an absent one is `all`. */
+let groupLevels = $state<Record<string, ConversationNotificationLevel>>({});
+/**
+ * A salon's level for this account, by channel id (no `channel_` prefix), once this session has read
+ * it. Unlike {@link groupLevels} it is not listed at sign-in - it lives in the social service - so an
+ * ABSENT key means "not read yet", never `all`.
+ */
+let channelLevels = $state<Record<string, ConversationNotificationLevel>>({});
+/** One read in flight per salon: a burst of frames asks once, not once per frame. */
+const channelReads = new SvelteMap<string, Promise<boolean>>();
+const channelKey = (id: string): string => id.replace(/^channel_/, '');
+/** Whether {@link groupLevels} has been answered by the server at least once this session. */
+let loaded = $state(false);
 
 export const notificationPreferences = {
   /** The categories currently switched off. */
@@ -33,7 +60,10 @@ export const notificationPreferences = {
   /** Reads the account's set from the server. Never throws; a failure is logged and keeps the last set. */
   async load(): Promise<boolean> {
     try {
-      disabled = await fetchDisabledCategories();
+      const snapshot = await fetchNotificationPreferences();
+      disabled = snapshot.disabled;
+      groupLevels = snapshot.groupLevels;
+      loaded = true;
       return true;
     } catch (e) {
       Log.d('notificationPreferences.load failed - keeping the current set', e);
@@ -75,8 +105,86 @@ export const notificationPreferences = {
     return write;
   },
 
+  /** Whether the server has answered the levels yet - a control must not draw a level that lies. */
+  get loaded(): boolean {
+    return loaded;
+  },
+
+  /** This account's level for one private conversation (`all` when never set). */
+  groupLevel(groupId: string): ConversationNotificationLevel {
+    return groupLevels[groupId] ?? 'all';
+  },
+
+  /**
+   * Sets one conversation's level. Optimistic like the salon control: it moves at once and returns
+   * if the server refuses. Resolves false when the write failed (and was reverted).
+   */
+  async setGroupLevel(groupId: string, level: ConversationNotificationLevel): Promise<boolean> {
+    const before = groupLevels[groupId] ?? 'all';
+    if (before === level) return true;
+    const apply = (l: ConversationNotificationLevel) => {
+      const next = { ...groupLevels };
+      if (l === 'all') delete next[groupId];
+      else next[groupId] = l;
+      groupLevels = next;
+    };
+    apply(level);
+    try {
+      await saveGroupNotificationLevel(groupId, level);
+      return true;
+    } catch (e) {
+      Log.d(`notificationPreferences.setGroupLevel(${groupId}, ${level}) failed - reverting`, e);
+      apply(before);
+      return false;
+    }
+  },
+
+  /** A salon's level once read this session, `undefined` while it has not been. */
+  channelLevel(channelId: string): ConversationNotificationLevel | undefined {
+    return channelLevels[channelKey(channelId)];
+  },
+
+  /**
+   * Records a salon's level the caller already holds - the settings panel on open and after a save -
+   * so a level changed on ANOTHER device is picked up the next time the panel opens, as for a group.
+   */
+  rememberChannelLevel(channelId: string, level: ConversationNotificationLevel): void {
+    channelLevels = { ...channelLevels, [channelKey(channelId)]: level };
+  },
+
+  /**
+   * Reads a salon's level once (shared in-flight read, cached after). Resolves false - logged, nothing
+   * cached, so the next frame asks again - when the read failed. Never throws.
+   */
+  loadChannelLevel(channelId: string): Promise<boolean> {
+    const key = channelKey(channelId);
+    const pending = channelReads.get(key);
+    if (pending) return pending;
+    const read = (async () => {
+      try {
+        const level = await fetchChannelNotificationLevel(key);
+        if (!isConversationNotificationLevel(level)) {
+          throw new Error(`unknown salon notification level "${String(level)}"`);
+        }
+        channelLevels = { ...channelLevels, [key]: level };
+        return true;
+      } catch (e) {
+        Log.d(`notificationPreferences.loadChannelLevel(${key}) failed`, e);
+        return false;
+      } finally {
+        channelReads.delete(key);
+      }
+    })();
+    channelReads.set(key, read);
+    return read;
+  },
+
   /** Back to the default (everything on) - on sign-out, so the next account never inherits a set. */
   reset(): void {
     disabled = [];
+    groupLevels = {};
+    channelLevels = {};
+    channelReads.clear();
+    loaded = false;
   },
 };

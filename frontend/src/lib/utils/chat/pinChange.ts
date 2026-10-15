@@ -198,6 +198,7 @@ export async function reencryptGraineSessions(
  * destroy the entry that was just written and turn biometric unlock off behind the user's back.
  */
 export async function applyNewDeviceKeyLocally(
+  userId: string,
   newDeviceKeyB64: string,
   log: (msg: string) => void
 ): Promise<void> {
@@ -208,8 +209,13 @@ export async function applyNewDeviceKeyLocally(
     log('[DEVICEKEY] New device key kept in the keystore - biometric unlock preserved.');
     return;
   }
-  await saveDeviceKey(newDeviceKeyB64).catch(() => {});
-  log('[DEVICEKEY] New device key saved to the local vault.');
+  try {
+    await saveDeviceKey(userId, newDeviceKeyB64);
+    log('[DEVICEKEY] New device key saved to the local vault.');
+  } catch (e) {
+    // EVERY SWALLOWED BRANCH LOGS: the next launch then asks for the PIN, and this says why.
+    log(`[DEVICEKEY] Saving the new device key to the local vault failed: ${String(e)}`);
+  }
 }
 
 export interface PinChangeOptions {
@@ -262,7 +268,7 @@ export async function performPinChange(
   setDeviceKey(newDeviceKeyB64);
 
   // Point this device's local unlock path at the new key so re-login keeps working.
-  await applyNewDeviceKeyLocally(newDeviceKeyB64, log);
+  await applyNewDeviceKeyLocally(userId, newDeviceKeyB64, log);
   reportProgress(onProgress, { percent: 100, stage: 'finalize' });
   log('[DEVICEKEY_CHANGE] Done.');
 }

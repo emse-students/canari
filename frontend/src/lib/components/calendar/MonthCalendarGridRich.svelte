@@ -19,6 +19,7 @@
     dayOccupancy,
     eventCardsOnDay,
     eventOwners,
+    organiserCentred,
   } from '$lib/calendar/feedEvents';
   import { localizedWeekdays, monthGridDays } from '$lib/calendar/monthGrid';
   import { isToday } from '$lib/utils/dates';
@@ -105,7 +106,7 @@
 
   /** Returns all hex colors for the event: primary first, then co-owners. */
   function eventColors(ev: AssociationCalendarFeedEvent): string[] {
-    return eventOwners(ev).map((owner) =>
+    return organiserCentred(eventOwners(ev)).map((owner) =>
       associationAccentHex({ id: owner.associationId, color: owner.color })
     );
   }
@@ -117,7 +118,7 @@
   function eventLogos(
     ev: AssociationCalendarFeedEvent
   ): { associationId: string; src: string | null; name: string }[] {
-    return eventOwners(ev).map((owner) => ({
+    return organiserCentred(eventOwners(ev)).map((owner) => ({
       associationId: owner.associationId,
       src: associationLogoSrc(owner.logoUrl),
       name: owner.name,

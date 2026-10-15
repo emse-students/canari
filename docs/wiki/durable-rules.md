@@ -174,6 +174,8 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 ## MLS membership and routing -> [mls-protocol](protocols/mls-protocol.md), [chat-delivery](services/chat-delivery.md)
 
+- **A GROUP BROADCAST HAS NO ADDRESSEE, SO AN ENTITLEMENT FILTER ON IT COVERS EVERY READER, NOT THE ONE WHO ASKED.** A `history_bundle` carries a `to`, and every member decrypts and ingests it anyway. A Remove is made to hold against a re-add (user, 2026-10-14) by withholding the UNION of every current member's exclusion windows, on the answering side, placed by the server's clock - filtering on the asker would have handed the window to the re-admitted member reading somebody else's answer. [history-reconciliation](protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)
+
 - **AN EARLY RETURN JUSTIFIED BY "SOMETHING ELSE ALREADY DID IT" MUST NAME WHO - AND THE CALLER
   REACHED FROM AN EVENT HAS NO WALK AROUND IT.** `enterPrivateSalonGroup` returned immediately for
   a public salon because *"a public salon's seeds travel on the community's group, which a
@@ -358,6 +360,8 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 - **A CLIENT CONSOLE IS EVIDENCE ABOUT THE CLIENT AND NEVER ABOUT ITS PEER.** A P1 was filed for a "zombie socket" from a client log; the gateway had logged `Message directly routed to` that same device, the delivery service had logged `QUEUED count=6` plus the FCM push and the phone's own ACK, and `docker inspect` refuted the rebuild the entry blamed - three logs on the same machine, under a minute each, every load-bearing claim wrong. Read the other end BEFORE filing. (`docker logs --since/--until` misparses a bare timestamp here and returns nothing: strip ANSI and grep the embedded ISO stamps.) [testing-methodology](testing-methodology.md)
 
 ## Outbound delivery -> [chat](frontend/modules/chat.md), [history-reconciliation](protocols/history-reconciliation.md), [chat-delivery](services/chat-delivery.md), [mobile](frontend/mobile.md)
+
+- **AN MLS APPLICATION FRAME IS PAID FOR BY EVERY RECEIVER, SO A FRAME THAT SAYS NOTHING NEW IS NOT SENT.** A receiver cannot skip decrypting a frame, nor the full checkpoint that follows it: 50 of 135 cold-start checkpoints on a Pixel 6a followed watermark-only drains, and every message sent emitted one that told nobody anything (the mark moved over the sender's own send). Cut on the SENDER: a latest-wins frame supersedes its unsent predecessor in the queue, WRITE-BEFORE-WITHDRAW so a crash between costs a spare frame and never both, and a value an unsent one covers is not queued. Ending a reading DELIVERS what it owes; it never zeroes it. [history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)
 
 - **A ROW WRITTEN BY MORE THAN ONE PATH NEEDS AN IDENTITY CARRIED BY THE EVENT, NEVER MINTED BY THE
   WRITER - AND THE ONLY IDENTITY THAT CONVERGES ACROSS DEVICES IS THE SENDER'S.** A visible system

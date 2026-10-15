@@ -21,7 +21,10 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
   const conversations = new Map<string, any>();
   conversations.set(GROUP, { id: GROUP, unreadCount: 0, messages: [] });
   return {
-    mlsService: { getDeviceId: () => MY_DEVICE },
+    mlsService: {
+      getDeviceId: () => MY_DEVICE,
+      getGroupExclusions: vi.fn().mockResolvedValue(new Map()),
+    },
     storage: null,
     userId: ME,
     deviceKey: () => 'device-key',
@@ -107,5 +110,99 @@ describe('history_bundle addressing', () => {
     );
 
     expect(ctx.conversations.get(GROUP).readWatermarks).toEqual({ peer: 5000 });
+  });
+});
+
+/**
+ * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14) - the receiver's half, which is hygiene:
+ * a message reaching us from inside OUR OWN exclusion window is dropped, each drop logged.
+ */
+describe('history_bundle ingestion - our own exclusion windows', () => {
+  const OUT_FROM = 10_000;
+  const BACK_AT = 20_000;
+  const before = {
+    id: 'before',
+    senderId: 'peer',
+    content: 'a',
+    timestamp: 1,
+    serverTimestamp: 5_000,
+  };
+  const during = {
+    id: 'during',
+    senderId: 'peer',
+    content: 'b',
+    timestamp: 2,
+    serverTimestamp: 15_000,
+  };
+  const after = {
+    id: 'after',
+    senderId: 'peer',
+    content: 'c',
+    timestamp: 3,
+    serverTimestamp: 25_000,
+  };
+
+  function ctxWithWindows(windows: Map<string, unknown>) {
+    return makeCtx({
+      mlsService: {
+        getDeviceId: () => MY_DEVICE,
+        getGroupExclusions: vi.fn().mockResolvedValue(windows),
+      },
+    });
+  }
+
+  it('drops what was sent while we were out, keeps what preceded and followed it', async () => {
+    const ctx = ctxWithWindows(new Map([[ME, [{ from: OUT_FROM, until: BACK_AT }]]]));
+
+    await handleSystemEvent('history_bundle', { messages: [before, during, after] }, ctx as any);
+
+    const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
+      (m) => m.messageId
+    );
+    expect(added).toEqual(['before', 'after']);
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Dropped during'));
+  });
+
+  it("another member's window is not ours to apply - the answering peer enforces that", async () => {
+    const ctx = ctxWithWindows(new Map([['someone-else', [{ from: OUT_FROM, until: BACK_AT }]]]));
+
+    await handleSystemEvent('history_bundle', { messages: [before, during, after] }, ctx as any);
+
+    expect(ctx.batchAddMessages.mock.calls[0][0]).toHaveLength(3);
+  });
+
+  it('ingests no message when our windows cannot be read, and says so', async () => {
+    const ctx = makeCtx({
+      mlsService: {
+        getDeviceId: () => MY_DEVICE,
+        getGroupExclusions: vi.fn().mockRejectedValue(new Error('503')),
+      },
+    });
+
+    await handleSystemEvent('history_bundle', { messages: [before] }, ctx as any);
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(ctx.log).toHaveBeenCalledWith(
+      expect.stringContaining('ingesting none of these messages')
+    );
+  });
+
+  it('drops an UNDATED message by the rule the sender applies - near the window by its own clock', async () => {
+    const ctx = ctxWithWindows(new Map([[ME, [{ from: OUT_FROM, until: BACK_AT }]]]));
+    const undatedNear = { id: 'undated-near', senderId: 'peer', content: 'd', timestamp: 15_000 };
+    const undatedFar = {
+      id: 'undated-far',
+      senderId: 'peer',
+      content: 'e',
+      timestamp: BACK_AT + 2 * 60 * 60 * 1000,
+    };
+
+    await handleSystemEvent('history_bundle', { messages: [undatedNear, undatedFar] }, ctx as any);
+
+    const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
+      (m) => m.messageId
+    );
+    expect(added).toEqual(['undated-far']);
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('(undated-near-window)'));
   });
 });

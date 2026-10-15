@@ -599,6 +599,20 @@ export class SqliteStorage implements IStorage {
   }
 
   /**
+   * See {@link IStorage.getMessageConversationIds}. A RANGE on `idx_messages_conv`, so SQLite
+   * searches the index instead of scanning it (`EXPLAIN QUERY PLAN`: SEARCH, not SCAN), and compares
+   * the prefix exactly - never as a `LIKE` pattern, where `_` and `%` are wildcards. The upper bound
+   * is the prefix followed by the highest code point: no id that starts with the prefix sorts above it.
+   */
+  async getMessageConversationIds(prefix: string): Promise<string[]> {
+    const rows: Array<{ conversation_id: string }> = await this.db.select(
+      'SELECT DISTINCT conversation_id FROM messages WHERE conversation_id >= $1 AND conversation_id < $1 || char(1114111)',
+      [prefix]
+    );
+    return rows.map((r) => String(r.conversation_id));
+  }
+
+  /**
    * Decrypt and return a paginated slice of messages using a server-side LIMIT clause.
    * Rows are fetched in descending timestamp order (most recent first) then re-sorted
    * ascending before return so callers always receive chronological order.

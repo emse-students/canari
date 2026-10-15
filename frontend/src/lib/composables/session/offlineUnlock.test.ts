@@ -130,7 +130,7 @@ describe('the offline session never re-enters the destructive catch', () => {
 
   it('detaches the reconnect listener on logout', () => {
     // Now via the shared teardown, which is the point: the listener is detached for BOTH exits.
-    const logout = sessionAuth.slice(sessionAuth.indexOf('export function logoutImpl'));
+    const logout = sessionAuth.slice(sessionAuth.indexOf('export function endSessionImpl'));
     expect(logout).toContain("tearDownLiveSession(ctx, cb, 'logout');");
     expect(tearDownBody).toContain('unregisterOfflinePromotion();');
   });
@@ -202,7 +202,8 @@ describe('what a revoked device stops before it deletes anything', () => {
     const guard = tearDownBody.lastIndexOf("if (reason === 'logout') {", flushAt);
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(flushAt);
-    expect(tearDownBody).toContain('unregisterMlsStatePersister();');
+    // Named: only the persister THIS session registered may be removed (the next one may be live).
+    expect(tearDownBody).toContain('unregisterMlsStatePersister(persister);');
   });
 });
 

@@ -21,6 +21,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { Group } from '../entities/group.entity';
 import { GroupMember } from '../entities/group-member.entity';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
@@ -63,6 +64,8 @@ export class InternalController {
     private readonly revokedDeviceRepo: Repository<RevokedDevice>,
     @InjectRepository(GroupInvite)
     private readonly groupInviteRepo: Repository<GroupInvite>,
+    @InjectRepository(GroupMembershipInterval)
+    private readonly membershipIntervalRepo: Repository<GroupMembershipInterval>,
     @Inject('REDIS_CLIENT')
     private readonly redis: Redis,
     private readonly messagingService: MessagingService
@@ -607,6 +610,8 @@ export class InternalController {
       this.otpRepo.delete({ userId }),
       // DM groupMember rows already deleted above; this cleans multi-group rows
       this.groupMemberRepo.delete({ userId }),
+      // The account's membership history goes with it: nothing will ever answer for this person.
+      this.membershipIntervalRepo.delete({ userId }),
       this.deviceGroupRepo.delete({ userId }),
       this.queuedMessageRepo.delete({ recipientId: userId }),
       this.pushTokenRepo.delete({ userId }),

@@ -332,9 +332,12 @@ export interface ChannelPollDraft {
   endsAt: string | null;
 }
 
+/** The prefix of every salon conversation id (`channel_<uuid>`). */
+export const CHANNEL_CONVERSATION_PREFIX = 'channel_';
+
 /** True for community channel conversations (`channel_<uuid>`). */
 export function isChannelConversationId(conversationId: string): boolean {
-  return String(conversationId).startsWith('channel_');
+  return String(conversationId).startsWith(CHANNEL_CONVERSATION_PREFIX);
 }
 
 /**

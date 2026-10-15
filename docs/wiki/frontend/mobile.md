@@ -379,7 +379,7 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Part | Decision |
 | --- | --- |
 | Source | The ONE console wrapper, `installConsoleIdTruncation(captureConsoleLine)` in `hooks.client.ts`. `log`, `info`, `warn`, `error` enter; **`debug` does not** (it is `Log.d` at every function entry - the volume that would evict the `[SELECT]`/`[QUEUE]`/`[GRAINE]` lines a reading needs, none of which is debug). Workers have their own console and do not enter. |
-| Privacy | Every line goes through `redactLogLine` BEFORE it is stored; the raw line never is. See below. |
+| Privacy | Every line goes through `redactLogLine` BEFORE it is stored; the raw line never is. **And again when it is READ** (`readAppLog`, the one reader of the stored log): see [redacted at write AND at read](#redacted-at-write-and-at-read). See below. |
 | Storage | IndexedDB `CanariDBLog`, store `chunks`, auto-increment keys (two web tabs never collide), an index on each record's size. The same database on the web and in the Tauri WebView: one implementation, nothing native to verify. |
 | Write | Batched in memory, written as **one new record per batch**: at 32 KiB or 200 lines, when the app leaves the screen (`onAppScreenChange`, which is the only honest signal on Android, plus `pagehide`), and before an export. **Never on a timer.** Nothing already written is rewritten. |
 | Bound | After each write, the oldest records are deleted until the total is under **2 MiB** (UTF-16 code units; a redacted line is ASCII). Rotation is by SIZE. The newest record is never evicted. |
@@ -463,6 +463,52 @@ creation, vault and reviewer documents, then (review of #1819, 2026-10-13) the s
 lines that named the member who renamed, left, excluded or deleted, the discovery and placeholder
 lines that quoted a group's name, the 1:1 merge line, and the four `[MEDIA]` lines that quoted the
 file's name. A new call site logging a name is a review finding.
+
+### Redacted at write AND at read
+
+**A fix to the redactor protected only what was written after it (Mi 9T reading of
+`v1.2.7-alpha.2`, 2026-10-14).** The ring keeps up to 2 MiB of lines, and the export of the
+upgraded phone still carried `contact="jolan" text="bisous"` and `text="ok"` that `v1.2.7-alpha.1`
+had stored before #1839. So `readAppLog` - the ONLY reader of `CanariDBLog`; the export
+(`appLogExport.ts`, Settings > About) is its only caller, and nothing else shows, shares or copies
+the stored log - passes every line through the SAME `redactLogLine` again on the way out, the
+`YYYY-MM-DD HH:MM:SS.mmm L ` stamp and level left as they are. One function, two call sites; no
+second implementation. What it redacted at read is added to the header's count and said once
+(`[APPLOG] N values redacted at read, in M lines an older build stored`) - which, the pass being
+idempotent, only a line an older build stored can trigger. **The pass yields** to the main thread
+(`yieldToMainThread`) every 250 lines, by COUNT, never by a clock: a full 2 MiB ring is ~5000
+lines, ~125 ms on desktop and 1-3 s estimated on a phone in one synchronous pass (review of #1861).
+
+**That requires `redactLogLine` to be IDEMPOTENT**: a line it returned comes back identical with
+zero redactions, so a line this build stored costs the read nothing and is never re-marked
+(`"[5 chars]"` must not become `"[9 chars]"`). Four things broke that and were fixed: a field whose
+value is already `[redacted]` / `[N chars]` / `"[N chars]"` is kept uncounted - a CONTENT field
+only when that marker is its WHOLE value, with no word after it, since a member can type
+`[3 chars] my message` and the first pass must not keep it; a replacement that
+equals its match (`?[query]`, an already closed `"[cut]`) is not counted; the 400-character cap
+cuts at a space OUTSIDE any quote or bracket, so it ends between whole tokens, and a line already
+carrying its `… (N chars)` suffix is redacted without it and gets it back unchanged - a cut inside
+a marker (`name: [11 ch… (1140 chars)`) used to be read by the next pass as a new value, so EVERY
+export re-counted this build's own capped lines and logged a false `[APPLOG]` claim. Only a suffix
+the cap can have written counts as one (N from 401 to 9999, no leading zero), because its number is
+put back VERBATIM: a member's `… (0612345678 chars)` kept a phone number the line-wide pass would
+have redacted. A member who types a plausible one (`text: … (4829 chars)`) still keeps those four
+digits - a residual accepted, not closed; and a NON-sensitive field
+whose bare value starts another field (`handleSendChat: contact="[5 chars]"`) is resumed at that
+field instead of giving `handleSendChat` the value `contact="[5` - a SENSITIVE name still swallows
+such a value whole, or `text=a="ok" my message` would hand the message to the harmless inner
+field. Both shapes were found by a differential fuzz against the previous redactor (review of
+#1861). The `[SEND]` lines also JSON-quote the text: hand-written `text="${text}"` let a `"` the
+member typed close the quote, and the words after it stayed as plain log words - at write AND at
+read, since a stored line of that shape no longer says where the value ended. Pinned by
+`appLogRedact.test.ts` (every hostile case and the content cases, passed twice) and
+`appLog.test.ts` (an old-format record written straight into IndexedDB comes out redacted;
+removing the read-side call fails it; a line this build stored, capped or not, never fires the
+`[APPLOG]` line; a 751-line ring yields exactly three times). Each was mutation-checked.
+
+**The stored records are NOT rewritten in place.** A rewrite would be a `put` over records the
+writer's amplification test pins at zero, and it would buy nothing: the read-side pass already
+covers every line, and it also covers whatever a FUTURE rule change finds in lines stored today.
 
 ## The app owns which URLs its own WebView may load
 

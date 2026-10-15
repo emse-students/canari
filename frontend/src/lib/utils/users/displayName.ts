@@ -245,6 +245,35 @@ export function notificationSenderName(
 }
 
 /**
+ * {@link notificationSenderName} AFTER ASKING FOR THE NAME, because a cold cache is the ordinary case.
+ *
+ * The sync form answers from the cache, and on a conversation never opened since launch the cache
+ * holds nobody: a GROUP then fell back to its own title, so the banner's sender line read the group
+ * name (`NME`) where the person's belonged and the native builder, which takes "group name equals
+ * sender name" for a DM, drew no group shape at all (Pixel 6a, prod 1.2.7, 2026-10). The name is
+ * fetched once per sender (the resolver caches it and backs off on failure), and a lookup that still
+ * leaves only the conversation's title is ACCUSED rather than silently shown.
+ */
+export async function resolveNotificationSenderName(
+  senderId: string,
+  convo: { name: string; contactName: string; conversationType?: 'direct' | 'group' | 'channel' }
+): Promise<string> {
+  if (peekUserDisplayName(senderId) === null) {
+    await resolveUserDisplayName(senderId);
+  }
+  if (convo.conversationType !== 'direct' && peekUserDisplayName(senderId) === null) {
+    // A lookup that keeps failing (backoff, a refused profile) would otherwise title EVERY message of
+    // that one member with the group's name, and the native builder reads "group name == sender
+    // name" as a DM. The unknown-user label is honest; the group title is a different person.
+    console.warn(
+      `[NOTIF] No display name for sender ${senderId} after a lookup - the banner says "${m.user_unknown_label()}" rather than naming the conversation as its sender`
+    );
+    return m.user_unknown_label();
+  }
+  return notificationSenderName(senderId, convo);
+}
+
+/**
  * The name for a ROSTER ROW THAT ALREADY CARRIES ITS OWN NAME COLUMNS.
  *
  * Four screens wrote this by hand and every one of them was wrong in the same way:

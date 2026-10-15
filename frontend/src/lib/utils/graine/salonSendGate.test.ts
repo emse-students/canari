@@ -9,6 +9,7 @@ import {
   resetSalonSendGate,
   salonSendWaiterCount,
   settleSalonListing,
+  whenSalonEntryDecided,
   whenSalonSendable,
 } from './salonSendGate';
 
@@ -144,5 +145,20 @@ describe('salonSendGate', () => {
     settleSalonListing(t, 'loaded');
     expect(await a).toEqual({ kind: 'ready' });
     expect(calls).toBe(1);
+  });
+
+  // A reader held by a listing of the session that just ended would otherwise wait for a
+  // `settleSalonListing` that is ignored as stale - for the life of the process (review 2026-10-15).
+  it('releases a history reader held by a listing when the session ends', async () => {
+    beginSalonListing();
+    let released = false;
+    const reader = whenSalonEntryDecided('channel_a').then((waited) => {
+      released = true;
+      return waited;
+    });
+    await Promise.resolve();
+    expect(released).toBe(false);
+    resetSalonSendGate();
+    expect(await reader).toBe(true);
   });
 });

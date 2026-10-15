@@ -75,6 +75,7 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
 }));
 
 import { useChannelWorkspaces, type ChannelWorkspaceContext } from './useChannelWorkspaces.svelte';
+import { setMlsReady } from './session/mlsReadiness';
 
 function makeMls() {
   const held = new Set<string>(['g-community']);
@@ -101,6 +102,8 @@ function makeMls() {
 describe('a private salon created on this device is joined ONCE by this device', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // An in-session gesture: MLS is up, so the listing's key-group step does not wait for it.
+    setMlsReady(true);
     salonRead.mockImplementation(
       () =>
         new Promise((resolve) => {

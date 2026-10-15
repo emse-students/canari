@@ -104,4 +104,21 @@ describe('mlsStatePersisterLifecycle', () => {
     window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: false } }));
     expect(persister.flushEncrypted).toHaveBeenCalledTimes(1);
   });
+
+  // A sign-out removes its hooks after its final flush; by then the next session may have
+  // installed its own, and those must survive the late removal.
+  it("a late uninstall of the previous session's persister leaves the next session's hooks", () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const previous = makePersister();
+    const next = makePersister();
+    installMlsStatePersisterLifecycle(previous);
+    installMlsStatePersisterLifecycle(next);
+
+    uninstallMlsStatePersisterLifecycle(previous);
+    window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: false } }));
+
+    expect(next.flushEncrypted).toHaveBeenCalledTimes(1);
+    // Replaced, not doubled: the previous session's hooks went when the next ones arrived.
+    expect(previous.flushEncrypted).not.toHaveBeenCalled();
+  });
 });
