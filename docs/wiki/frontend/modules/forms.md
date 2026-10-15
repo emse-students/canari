@@ -934,7 +934,18 @@ added later is private until someone adds it there:
 recognisable value and fails if any client read carries one, by value or by key name. Control: it
 fails 4/4 against the previous service.
 
-**Not closed by this: the association reads.** `GET /api/associations` and its siblings answer
-`lydiaAccountId`, the same vendor token, to any signed-in member (`associations.controller.ts`
-says so). Its only client reader is the manager's Lydia panel, which shows it. Closing it needs a
-manager-only read for that panel, which is a separate change.
+**The association reads had the same leak, closed the same way (2026-10-15).** `GET
+/api/associations` and its siblings answered `lydiaAccountId`, the same vendor token, to any
+signed-in member, through a denylist that nulled only the vault key and the notes; `me/list` did
+not even go through that and answered the vault master key to every member.
+`apps/social-service/src/associations/association.projection.ts` (`toAssociationView`) is now an
+allowlist on every route that answers a row: `GET /`, `slug/:slug`, `:id`, `me/list`, `POST /`,
+`PATCH :id` and both logo routes. The token and the dashboard URL have their own read,
+`GET /api/associations/:id/payout-account`, behind `canManagePayoutAccount` (MANAGE_PAYOUT_ACCOUNT,
+the permission the onboarding and the disconnect already ask; a BDE super-admin does not inherit
+it), and the Lydia panel (`LydiaBusinessOnboardingForm.svelte`) is its only reader.
+`associations.controller.spec.ts` fills the token, the dashboard URL, the vault key and the notes
+with recognisable values and fails if any of the eight routes answers one, by value or by key name;
+a member without the flag gets a 403 from the payout read. The token was readable by every member
+until this shipped, so whether it can be rotated is a question for Lydia
+([backlog](../../backlog.md)).
