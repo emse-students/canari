@@ -8,7 +8,8 @@
  * submissions for one file (in turn and at the same instant), a reused pending answer, a download
  * asked of the wrong form, twelve uploads racing for ten pending slots, and the purge run twice.
  *
- * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files:
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
+ * `test-social-integration` sets it. Locally:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- form-files.integration
  *
