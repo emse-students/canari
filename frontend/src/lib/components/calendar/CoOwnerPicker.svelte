@@ -24,6 +24,13 @@
   cap with a scroll box under it only hides rows. Searching narrowed the list but the cap still cut
   whatever the search left, so an association past the twelfth was unreachable by browsing AND could
   be hidden from a search that matched too many names.
+
+  TYPING OPENS THE LIST, NOT ONLY FOCUSING (user, 2026-10-13: two picked, "BD" typed, nothing). A
+  pick is a mousedown whose default is prevented, so the field KEEPS focus - and a field that keeps
+  focus never fires `focus` again. The list was opened by `focus` alone and closed by every pick, so
+  after the first pick no keystroke could bring it back until the user left the field and returned:
+  "pas toujours". The list now opens on input too, closes when focus leaves the picker (no timer:
+  the prevented mousedown is what keeps a pick from blurring), and a search matching nothing SAYS so.
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -32,9 +39,10 @@
     type Association,
     type CalendarEventCoOrganiserState,
   } from '$lib/associations/api';
-  import { groupAssociationsForSelect, listOptionLabel } from '$lib/associations/selectGroups';
+  import { associationSelectGroups, listOptionLabel } from '$lib/associations/selectGroups';
   import { MAX_CO_ORGANISERS, MAX_ORGANISING_ASSOCIATIONS } from '$lib/calendar/coOrganiserCap';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
   import { X, Users } from '@lucide/svelte';
 
   interface Props {
@@ -67,7 +75,11 @@
   onMount(async () => {
     try {
       allAssociations = await listAssociations();
-    } catch {
+    } catch (e) {
+      Log.d(
+        'CoOwnerPicker',
+        `the association directory did not load, nothing to offer: ${String(e)}`
+      );
       allAssociations = [];
     }
   });
@@ -90,7 +102,17 @@
     )
   );
 
-  const grouped = $derived(groupAssociationsForSelect(candidates));
+  const groups = $derived(associationSelectGroups(candidates));
+
+  /** A typed search that leaves nothing to offer is answered, never shown as an empty nothing. */
+  const noMatch = $derived(!atCap && searchQuery.trim() !== '' && candidates.length === 0);
+
+  /** Focus leaving the picker (input and its options) closes the list; moving inside it does not. */
+  function closeOnFocusLeave(e: FocusEvent) {
+    const wrapper = e.currentTarget as HTMLElement;
+    if (e.relatedTarget instanceof Node && wrapper.contains(e.relatedTarget)) return;
+    dropdownOpen = false;
+  }
 
   const selected = $derived(allAssociations.filter((a) => selectedIds.includes(a.id)));
 
@@ -161,51 +183,58 @@
       {m.asso_calendar_co_owner_cap_reached({ max: MAX_ORGANISING_ASSOCIATIONS })}
     </p>
   {/if}
-  <div class="relative">
+  <div class="relative" onfocusout={closeOnFocusLeave}>
     <input
       type="text"
       placeholder={m.asso_calendar_co_owner_search_placeholder()}
       bind:value={searchQuery}
       onfocus={() => (dropdownOpen = true)}
-      onblur={() => setTimeout(() => (dropdownOpen = false), 150)}
+      oninput={() => (dropdownOpen = true)}
       class="border-cn-border text-text-main placeholder:text-text-muted w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
     />
     {#if dropdownOpen && candidates.length > 0}
       <div
         class="border-cn-border bg-cn-surface absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border shadow-lg"
       >
-        {#each [{ label: m.asso_select_group_assos(), items: grouped.assos }, { label: m.asso_select_group_lists(), items: grouped.lists }] as group (group.label)}
-          {#if group.items.length > 0}
-            <p
-              class="text-text-muted bg-cn-bg/40 px-3 py-1 text-xs font-bold tracking-wide uppercase"
-            >
-              {group.label}
-            </p>
-            <ul>
-              {#each group.items as asso (asso.id)}
-                <li>
-                  <button
-                    type="button"
-                    onmousedown={(e) => {
-                      e.preventDefault();
-                      add(asso.id);
-                    }}
-                    class="text-text-main hover:bg-cn-yellow/10 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
-                  >
-                    {#if asso.color}
-                      <span
-                        class="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                        style="background:{asso.color}"
-                      ></span>
-                    {/if}
-                    {optionLabel(asso)}
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          {/if}
+        {#each groups as group (group.label)}
+          <p
+            class="text-text-muted bg-cn-bg/40 px-3 py-1 text-xs font-bold tracking-wide uppercase"
+          >
+            {group.label}
+          </p>
+          <ul>
+            {#each group.items as asso (asso.id)}
+              <li>
+                <button
+                  type="button"
+                  onmousedown={(e) => {
+                    e.preventDefault();
+                    add(asso.id);
+                  }}
+                  class="{group.muted
+                    ? 'text-text-muted'
+                    : 'text-text-main'} hover:bg-cn-yellow/10 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
+                >
+                  {#if asso.color}
+                    <span
+                      class="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                      style="background:{asso.color}"
+                    ></span>
+                  {/if}
+                  {optionLabel(asso)}
+                </button>
+              </li>
+            {/each}
+          </ul>
         {/each}
       </div>
+    {:else if dropdownOpen && noMatch}
+      <p
+        class="border-cn-border bg-cn-surface text-text-muted absolute z-20 mt-1 w-full rounded-xl border px-3 py-2 text-sm shadow-lg"
+        data-co-owner-no-match
+      >
+        {m.asso_calendar_co_owner_no_match({ query: searchQuery.trim() })}
+      </p>
     {/if}
   </div>
 </div>

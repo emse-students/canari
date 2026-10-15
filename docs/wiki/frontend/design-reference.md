@@ -3142,6 +3142,42 @@ The reaction pill carried `title=<every reactor's name>` beside `ReactorsPanel`,
 
 User report, phone app: the "who reacted" list opened in the middle of the screen above the composer, not on the chip that was pressed. `computeFixedPopoverPosition` centred EVERY panel wider than its anchor and wider than half the viewport, a rule written for the 352 px reaction picker (durable-rules, "a panel that is a screen of its own is centred"). `ReactorsPanel` is up to 224 px (`max-w-56`, more with columns), so at 390 or 412 px it qualified against a 41 px chip. Measured on the real `MessageReactions` at 390x844 with a 205 px panel: chips at 60-101 and 297-338 both opened the list at 93-298. Centring is now opt-in (`centreWhenWide`) and only the two emoji pickers ask; after the fix the same chips open it at 60-284 and 158-382 (clamped, still spanning the chip), above a chip near the bottom and below one near the top, long press and mouse alike. Same rule removed from `PostActionsMenu` (224 px) and `EcosystemLauncher` (256 px), which were centred on every phone, and from `FloatingSurface`'s popover between 640 and ~700 px. `GlassMenuButton`'s `stayAnchored` is gone, being the default now. 1280 px is unchanged (the rule never fired there). iOS WebKit not run; the placement is arithmetic on `getBoundingClientRect`, with no engine branch.
 
+## The reply swipe that "sometimes" did nothing: two classes, measured (Mi 9T, 2026-10-14)
+
+User report, phone app: *the swipe-to-reply on a message sometimes does not work*. Reproduced on the
+Mi 9T (`1.2.7-alpha.3`, dev, inspectable WebView) with `adb input touchscreen swipe` real touches
+and a CDP capture listener on every pointer/touch event, 108 swipes: own and received messages, a
+salon and a DM, keyboard open and closed, start at 10/50/95 % of the bubble, 80/250-300/700 ms,
+vertical drift 0 to 70 px either way, right after a fling. Evidence and CSV:
+`F:/Programmation/canari-harness/swipe-reply-r1014/`. Message kind did not enter: the handler sits
+on the bubble element and no failing cell depended on content. Two classes failed, every time:
+
+| Class | Cells | What the events show |
+| --- | --- | --- |
+| **A. A thumb arc** - 110 px across with 45 to 70 px of vertical drift, down or up (received and own, keyboard open or closed) | 0 of 14 replied | `pointerdown > pointermove x18 > pointerup`, no cancel, no scroll; the bubble slid its full 72 px and the ARMED icon and haptic fired - then the release did nothing |
+| **B. The start inside Android's right system-gesture inset** - an OWN bubble touched at x >= 406.5 CSS px (1006 of 1080 physical, `EdgeBackGestureHandler mEdgeWidthRight=74`) | 0 of 11 replied | `pointerdown > touchstart > pointercancel > touchcancel` at once: the SYSTEM took the touch. Keyboard closed, the conversation closed (Back); keyboard open, only the keyboard closed |
+
+Every other swipe that began on a bubble replied (83 of 83), drift up to 40 px and the
+swipe right after a fling included.
+
+**A was a second rule the bubble never showed.** `shouldTriggerReplySwipe` refused a release whose
+vertical travel reached `0.75 * REPLY_SWIPE_TRIGGER_PX` (42 px), while the drag - which ignores the
+vertical axis once the 10 px lock says horizontal - had already drawn the bubble armed. Now the
+release IS `replySwipeArmed(replySwipeDragOffset(dx))`, the expression the bubble paints from, and
+the vertical question is asked once, at the lock. A locked horizontal stroke does not scroll the
+thread (0 scroll events in every class-A cell), so the old rule protected nothing. Tests:
+`messageSwipeReply.test.ts` (release equals armed for every dx, both sides) and
+`MessageBubble.swipeReply.svelte.test.ts` (the class-A event sequence, pointer + touch interleaved
+as the WebView delivers them, red before the fix).
+
+**B is not the page's to fix and is NOT fixed.** An own bubble ends 12 CSS px from the right edge
+(`right: 424` of 436), so its last 17.5 px sit in the system inset - and the end of the bubble is
+where a right thumb lands. A received bubble starts at 54 px, clear of the 30 px left inset. The
+options are a design decision ([backlog](../backlog.md)): `setSystemGestureExclusionRects` on the
+Android activity (capped at 200 dp of height per edge by the OS), a wider own-side gutter, or
+nothing (Messenger has the same 12 px). Never an in-page workaround: the page receives only a
+`pointercancel`.
+
 ## Tooltips: one convention, audited 2026-10-08
 
 Audit of every `title` in `frontend/src` (about 440 hits, 270 of them `title={m.x()}` on an element).

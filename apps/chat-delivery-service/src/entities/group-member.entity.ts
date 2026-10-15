@@ -1,5 +1,34 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Unique } from 'typeorm';
 
+/** A member's notification level for one conversation - the salon's three levels. */
+export type GroupNotificationLevel = 'all' | 'mentions' | 'none';
+
+/** Every {@link GroupNotificationLevel}, for validating what a client sends. */
+export const GROUP_NOTIFICATION_LEVELS: readonly GroupNotificationLevel[] = [
+  'all',
+  'mentions',
+  'none',
+];
+
+/** A group id as `dm_group_members.groupId` stores it: a uuid. */
+export type GroupUuid = string & { readonly __groupUuid: unique symbol };
+
+const GROUP_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Whether `value` can name a row of `dm_group_members` at all. A salon push carries
+ * `groupId = channel_<id>`, which Postgres refuses on a uuid column (22P02): asking first is the
+ * fact, a refused query is not.
+ */
+export function isGroupUuid(value: unknown): value is GroupUuid {
+  return typeof value === 'string' && GROUP_UUID_RE.test(value);
+}
+
+/** Whether `value` is a {@link GroupNotificationLevel}. */
+export function isGroupNotificationLevel(value: unknown): value is GroupNotificationLevel {
+  return (GROUP_NOTIFICATION_LEVELS as readonly unknown[]).includes(value);
+}
+
 /**
  * Records the user-level membership of a person in an MLS group, independently
  * of which devices that user currently has enrolled. A user has exactly one row
@@ -20,7 +49,8 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Unique } from
  *
  * Lifecycle: hard-delete. When a user leaves or is removed, the row is deleted
  * (not soft-deleted). `removeGroupMember` deletes both this row and all the user's
- * `DeviceGroupMembership` rows atomically.
+ * `DeviceGroupMembership` rows atomically. What the hard delete forgets - that the person WAS a
+ * member, and when they left - is kept in `GroupMembershipInterval`, which the same removal closes.
  */
 @Entity('dm_group_members')
 @Unique(['groupId', 'userId'])
@@ -39,6 +69,19 @@ export class GroupMember {
   /** Permission level: `admin` can add/remove members; `member` can only send messages. */
   @Column({ type: 'enum', enum: ['admin', 'member'], default: 'member' })
   role: 'admin' | 'member';
+
+  /**
+   * How loud this conversation is for THIS member: `all` (default), `mentions`, `none`.
+   *
+   * The salon level (`channel_members.notifLevels`, social-service) for a private conversation, kept
+   * on the membership row for the same reasons: per account, so it follows the member to every
+   * device and survives a reinstall, and it ends with the membership. `none` is applied by the
+   * server (the frame is sent silent); `mentions` cannot be, because the server never sees who a
+   * ciphertext mentions - it travels in the push and the DEVICE decides after decrypting
+   * (`buildPushDataFields`, docs/wiki/services/chat-delivery.md). Migration 029.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'all' })
+  notifLevel: GroupNotificationLevel;
 
   /**
    * When this membership was CREATED, and never anything else.

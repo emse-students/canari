@@ -85,6 +85,22 @@ three app-level consequences are not measured:
 - push frames while it is dead;
 - resume, and read the log for `live-ahead`, duplicates and `unreadable for good`.
 
+### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
+
+Since the sender coalescing, a DM or group watermark is sent when the 2 s window after reading ends,
+when the reader leaves, or when the app leaves the screen. The window is the mechanism's one clock.
+If it were wrong the cost would be more traffic, never a lost receipt. Under the "termination from a
+proof, never from a clock" rule, that still makes it load-bearing. The alternatives change what a
+peer sees:
+
+- **events only** (leave, background, the next send): a DM peer sees "Vu" only once the reader leaves
+  or replies;
+- **a count K**: the frame goes after K foreign messages read, so "Vu" lags by up to K messages.
+
+Measured gain first: the frames left after the own-send half was removed
+([history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)).
+A device count of watermark frames per minute of active reading would size what is left to take.
+
 ### DECISION OWED - should the KeyPackage pile leave the blob every checkpoint rewrites?
 
 **Measured 2026-10-13** ([store-phone-reading](frontend/store-phone-reading-2026-10-13.md#4-the-mls-state-rewritten-in-full)):
@@ -376,6 +392,14 @@ holder rather than merely re-asking the same agreeing peers - is the part still 
 **Raised 2026-08-27** (876 rows for one account, put there by the campaign). Nothing reads it in bulk, so it is no incident, but it is an unbounded table nobody has decided about. A row may only go once no device of that user can still hold the group: the group's own purge (`cleanupSoftDeletedGroups`) is the natural moment, and whether it should take the dismissals with it is the decision.
 
 ### Is a Remove meant to be durable against a later re-add?
+
+**DECIDED by the user, 2026-10-14: YES, for private group conversations.** A re-added member keeps
+what preceded their removal and NEVER receives what was sent while they were out (user,
+2026-10-14). Built as an entitlement filter on the ANSWERING side, keyed on membership intervals the
+server records (migration `030`) - design, clock and what it does not cover in
+[history-reconciliation](protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14).
+Communities keep their own decision (a returner may read the past); 1:1 conversations have no remove
+path. What follows is the question as it was raised, kept for its reasoning.
 
 **Raised 2026-08-26 by GRP-8**, and it is a decision rather than a defect - which is why the P2 it sits
 behind ([backlog](backlog.md)) is written to change nothing until this is answered.

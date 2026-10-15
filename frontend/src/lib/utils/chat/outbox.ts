@@ -21,7 +21,8 @@ import {
   mkReply,
   mkText,
 } from '$lib/proto/codec';
-import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkMediaEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import { quotePreviewEntitled, type PlaceableMessage } from './historyEntitlement';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { m } from '$lib/paraglide/messages';
@@ -31,9 +32,14 @@ import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import { recordEviction } from '$lib/utils/chat/eviction';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
-import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
-import { DeliveryUnreachableError, SendEdgeRefusedError } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  ExclusionsRefusedError,
+  SendEdgeRefusedError,
+  type SentFrame,
+} from '$lib/mls-client/mlsDeliveryApi';
 import {
   UPLOAD_NO_ANSWER_ATTEMPTS,
   UPLOAD_PROGRESS_MARGIN_BYTES,
@@ -254,16 +260,36 @@ export interface OutboxDeps {
   canFlush?: () => boolean;
 }
 
-/** Public surface of the per-session outbox controller. */
-export interface OutboxController {
+/**
+ * An entry of which only the NEWEST per conversation needs to be sent - a read watermark, merged as
+ * `max` on every receiver. See history-reconciliation, "The sender says only what is new".
+ */
+export interface LatestWins {
+  /** What this entry carries; larger is newer. */
+  value: number;
+  /** What a queued entry carries when it is of the same kind, else null (it is left alone). */
+  valueOf: (queued: OutboxEntry) => number | null;
+}
+
+/** Options of {@link OutboxController.enqueue}. */
+export interface EnqueueOptions {
   /**
-   * Persist a queued message and schedule a flush.
-   *
-   * `alreadyDurable` says the row reached disk in the transaction that wrote the message it echoes
+   * The row reached disk in the transaction that wrote the message it echoes
    * ({@link IStorage.saveMessageWithOutboxEntry}), so only the live half - the mirror and the flush
    * - is still owed.
    */
-  enqueue: (entry: OutboxEntry, opts?: { alreadyDurable?: boolean }) => Promise<void>;
+  alreadyDurable?: boolean;
+  /**
+   * Supersede the unsent entries of the same kind in the same conversation: not queued at all when one
+   * of them already covers it, otherwise written FIRST and the older ones withdrawn after.
+   */
+  latestWins?: LatestWins;
+}
+
+/** Public surface of the per-session outbox controller. */
+export interface OutboxController {
+  /** Persist a queued message and schedule a flush. */
+  enqueue: (entry: OutboxEntry, opts?: EnqueueOptions) => Promise<void>;
   /**
    * Withdraw a queued message that has not left this device yet.
    *
@@ -414,13 +440,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   const cancelled = new Set<string>();
 
   /**
-   * The id inside `mlsService.sendMessage` right now, or null.
+   * The ids inside `mlsService.sendMessage` right now.
    *
    * A cancellation is only a cancellation if it arrives before the frame does; past this point the
    * peers are getting the message whatever the queue says, and saying so is what lets the caller
    * fall back to a `delete_message` event instead of silently losing the delete.
+   *
+   * A SET, BECAUSE UP TO {@link MAX_CONCURRENT_SENDS} LANES SEND AT ONCE. It was one id, which the
+   * last lane to start overwrote: a message deleted while it was on the wire in ANOTHER lane was
+   * answered "never sent", and no `delete_message` went out - the peers kept it (review of #1887).
    */
-  let inFlight: string | null = null;
+  const inFlight = new Set<string>();
 
   /**
    * The transfer of each queued attachment that is being uploaded right now, by message id. It is
@@ -447,6 +477,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (!storage) return;
     // syncOutboxMirror swallows and logs its own failures ([OUTBOX_MIRROR]); it never rejects.
     await syncOutboxMirror(await readQueue('mirror refresh'));
+  }
+
+  /**
+   * Forgets the `cancelled` ids whose row is gone, once NO lane is running. A lane walks a snapshot
+   * of the queue, so an id may only be dropped when no snapshot can still hold it - and with no lane
+   * running there is none. Without this the set kept one id per withdrawal for the session (every
+   * superseded read watermark), copied into every tab by `outbox_entry_cancelled`.
+   */
+  function pruneCancelled(queued: OutboxEntry[]): void {
+    if (lanes.size > 0 || cancelled.size === 0) return;
+    const present = new Set(queued.map((e) => e.id));
+    let forgotten = 0;
+    for (const id of cancelled) {
+      if (!present.has(id) && !inFlight.has(id)) {
+        cancelled.delete(id);
+        forgotten++;
+      }
+    }
+    if (forgotten > 0) {
+      log(`[OUTBOX] forgot ${forgotten} withdrawn id(s) whose row is gone and no lane holds`);
+    }
   }
 
   /**
@@ -508,6 +559,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // Not leader-gated, and deliberately ahead of the one that is: the tab that must forget a
     // withdrawn entry is whichever one is draining, which is exactly the leader.
     if (event.type === 'outbox_entry_cancelled') {
+      // A FOLLOWER NEVER FLUSHES, so it holds no snapshot to keep the id out of, and an id kept
+      // here would only grow the set for the session. An undecided tab keeps it: it may be the
+      // leader, and it reads its first snapshot only once the election is over.
+      if (getTabLeadership() === 'follower') return;
       cancelled.add(event.messageId);
       log(
         `[OUTBOX] ${event.messageId.slice(0, 8)}… cancelled by another tab - it will not be sent.`
@@ -537,6 +592,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const messages = [...found.convo.messages];
     if (messages[found.idx].status === status) return;
     messages[found.idx] = { ...messages[found.idx], status };
+    conversations.set(found.key, { ...found.convo, messages });
+  }
+
+  /** Record the server's receive time on a sent message in the reactive map; `persistSent` writes it. */
+  function patchServerTimestamp(messageId: string, serverTimestamp: number): void {
+    const found = findMessage(messageId);
+    if (!found) return;
+    const messages = [...found.convo.messages];
+    messages[found.idx] = { ...messages[found.idx], serverTimestamp };
     conversations.set(found.key, { ...found.convo, messages });
   }
 
@@ -575,6 +639,93 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const messages = [...found.convo.messages];
     messages[found.idx] = { ...messages[found.idx], content };
     conversations.set(found.key, { ...found.convo, messages });
+  }
+
+  /** This device's copy of the quoted message - in memory, else the store - or `null` if it holds none. */
+  async function quotedCopy(messageId: string): Promise<PlaceableMessage | null> {
+    const found = findMessage(messageId);
+    if (found) return found.convo.messages[found.idx];
+    if (!storage) return null;
+    return storage.getMessage(messageId, deviceKey()).catch((e: unknown) => {
+      // Unreadable is not absent: rethrown so the reply waits rather than losing its quote.
+      log(`[OUTBOX] quoted ${messageId.slice(0, 8)}… unreadable from the store: ${String(e)}`);
+      throw e;
+    });
+  }
+
+  /**
+   * The reply as it may leave: its quote text kept, or blanked when the quoted message falls inside
+   * a current member's exclusion window (a Remove holds against a later re-add, user 2026-10-14) - a
+   * reply reaches every current member live and its stored copy rides every later history bundle.
+   *
+   * Decided HERE, at the send, against the windows in force now - never when the reply is composed,
+   * which would cost a round trip per reply and blank the quote for good when composed offline.
+   * **A failed read THROWS** into the send's own catch, an ordinary transient failure: the reply
+   * waits for the next attempt and is never blanked on a failure.
+   *
+   * **THE SERVER REFUSING THE READ (`ExclusionsRefusedError`, off the roster) IS NOT A VERDICT ON
+   * THIS DEVICE.** The route refuses on the roster alone, the send on this device's row - a device
+   * `active` but roster-less sends freely. So the read's refusal repairs nothing (the roster repair
+   * forgets the tree, and a destructive repair waits for proof the state is broken): the frame
+   * quotes by id only - what a reader of no window may safely carry - and the SEND decides. Accepted,
+   * the reply went out id-only; refused `sender-not-active`, the send's own arm repairs on its own
+   * proof (fourth review of #1878).
+   *
+   * A blank is permanent, so it is written to the entry and the echo - the stored copy is what a
+   * later bundle carries - but only by `commit`, once the frame carrying it has been ACCEPTED: a
+   * send that fails keeps the quote, and the next attempt decides again.
+   */
+  async function decideQuote(
+    entry: OutboxEntry
+  ): Promise<{ entry: OutboxEntry; commit: () => Promise<void> }> {
+    const kept = { entry, commit: async () => {} };
+    if (entry.kind !== 'reply' || !entry.replyTo?.preview) return kept;
+    const quoted = await quotedCopy(entry.replyTo.id);
+    let entitled: boolean;
+    try {
+      entitled = await quotePreviewEntitled(entry.conversationId, quoted, { mlsService, log });
+    } catch (e) {
+      if (!(e instanceof ExclusionsRefusedError)) throw e;
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… the server refused the exclusion windows of ${entry.conversationId.slice(0, 8)}… (not on its roster) - the reply quotes by id only, and the send decides whether this device is a member`
+      );
+      entitled = false;
+    }
+    if (entitled) return kept;
+    const blanked: OutboxEntry = { ...entry, replyTo: { ...entry.replyTo, preview: '' } };
+    return { entry: blanked, commit: () => persistBlankedQuote(blanked) };
+  }
+
+  /** Writes an accepted reply's blanked quote to its queue entry and its echo - see `decideQuote`. */
+  async function persistBlankedQuote(blanked: OutboxEntry): Promise<void> {
+    const entry = blanked;
+    // A row withdrawn while its frame was on the wire is gone for good: saving it would put a
+    // deleted message back in the queue (#1887's withdrawal).
+    if (!cancelled.has(entry.id)) {
+      await storage
+        ?.saveOutboxEntry(blanked, deviceKey())
+        .catch((e: unknown) =>
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… blanked quote not saved to the queue: ${String(e)}`
+          )
+        );
+    }
+    const found = findMessage(entry.id);
+    if (found) {
+      const echo = found.convo.messages[found.idx];
+      const env = parseEnvelope(echo.content);
+      const content =
+        env.kind === 'text' && env.replyTo
+          ? serializeEnvelope(mkTextEnvelope(env.text, { ...env.replyTo, content: '' }))
+          : echo.content;
+      const messages = [...found.convo.messages];
+      messages[found.idx] = {
+        ...echo,
+        content,
+        ...(echo.replyTo ? { replyTo: { ...echo.replyTo, content: '' } } : {}),
+      };
+      conversations.set(found.key, { ...found.convo, messages });
+    }
   }
 
   /**
@@ -899,8 +1050,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
     // Withdrawn after this flush read its snapshot of the queue. The row is already gone, so this
     // is the only thing standing between a message the user deleted and the wire.
+    // THE MARK IS NOT CONSUMED HERE. The withdrawal's delete may still be pending, and a second
+    // pass of this lane would re-read the row, find no mark and send it (review of #1887). The
+    // mark is dropped by `pruneCancelled`, once the row is gone and no lane runs.
     if (cancelled.has(entry.id)) {
-      cancelled.delete(entry.id);
       clearUpload(entry.id);
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… cancelled before it was sent - dropped, not delivered`
@@ -1067,6 +1220,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // Media: upload (idempotent) then build proto + the real attachment envelope.
       let proto: Uint8Array;
       let mediaContent: string | undefined;
+      // What an accepted frame makes permanent (a blanked quote); nothing for any other entry.
+      let commitQuote: () => Promise<void> = async () => {};
       if (entry.kind === 'media') {
         const prepared = await prepareMedia(entry);
         proto = prepared.proto;
@@ -1076,32 +1231,66 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         // the whole network race and a renderer that observed that state stays on its skeleton.
         updateMessageContent(entry.id, mediaContent);
       } else {
-        proto = buildOutboxProto(entry) ?? new Uint8Array(0);
+        const decided = await decideQuote(entry);
+        commitQuote = decided.commit;
+        proto = buildOutboxProto(decided.entry) ?? new Uint8Array(0);
       }
 
-      inFlight = entry.id;
-      try {
-        await mlsService.sendMessage(terminalId, proto, entry.id, deliveryForOutboxEntry(entry));
-      } finally {
-        inFlight = null;
+      // LAST LOOK, WITH NO AWAIT BEFORE THE CLAIM. The check at the top of this function is many
+      // awaits back (the health gate, `isGroupActive`, an upload): a withdrawal landing in between
+      // was answered "never sent" and the frame went out anyway (review of #1887). From here on the
+      // id is in `inFlight`, which every withdrawal reads, so the two can no longer both miss.
+      if (cancelled.has(entry.id)) {
+        clearUpload(entry.id);
+        log(`[OUTBOX] ${entry.id.slice(0, 8)}… withdrawn just before the send - not delivered`);
+        return 'gone';
       }
-      // The media envelope was installed immediately after upload, before the MLS send.
-      await persistSent(terminalId, entry.id);
-      patchStatus(entry.id, 'sent');
-      clearUpload(entry.id);
-      transportHeld.delete(entry.id);
-      unexpected.delete(entry.id);
-      // The tab that composed this may be a follower, whose own echo is still showing `pending`.
-      publishOutboxEntrySent(entry.id, mediaContent);
-      // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
-      // The receiver deduplicates on messageId, but the retry is worth seeing in a log.
-      await storage
-        ?.deleteOutboxEntry(entry.id)
-        .catch((e) =>
-          log(
-            `[OUTBOX] ${entry.id.slice(0, 8)}… sent but still queued (delete failed): ${String(e)}`
-          )
+      // HELD UNTIL THE SENT ROW IS DELETED, NOT ONLY WHILE THE POST RUNS. A sent row stays queued
+      // through `persistSent` and its own delete, and a withdrawal reading it there was answered
+      // "never sent" for a frame the peers already had - so no `delete_message` went out.
+      inFlight.add(entry.id);
+      try {
+        const sent: SentFrame = await mlsService.sendMessage(
+          terminalId,
+          proto,
+          entry.id,
+          deliveryForOutboxEntry(entry)
         );
+        // A KNOWN CRASH WINDOW, AND WHY IT IS ACCEPTED: a kill between the accepted send and this
+        // write leaves the local entry and echo with the quote text the frame did not carry. The
+        // text is this device's own (it was decrypted here), so nothing reaches anyone who was out;
+        // only this device keeps showing it. The window is one storage write wide
+        // (history-reconciliation).
+        await commitQuote();
+        // THE SENDER'S OWN COPY GETS THE SERVER TIME every recipient's copy carries. A sender never
+        // receives its frame back, so this answer is the only place it can come from - and an
+        // undated copy cannot be placed against an exclusion window (a Remove holds against a later
+        // re-add, user 2026-10-14). A control frame is not a message: its entry id names the
+        // message it mutates, whose own time must not move.
+        if (entry.kind !== 'control') {
+          if (sent.receivedAt !== null) patchServerTimestamp(entry.id, sent.receivedAt);
+          else log(`[OUTBOX] ${entry.id.slice(0, 8)}… sent, the server answered no receive time`);
+        }
+        // The media envelope was installed immediately after upload, before the MLS send.
+        await persistSent(terminalId, entry.id);
+        patchStatus(entry.id, 'sent');
+        clearUpload(entry.id);
+        transportHeld.delete(entry.id);
+        unexpected.delete(entry.id);
+        // The tab that composed this may be a follower, whose own echo is still showing `pending`.
+        publishOutboxEntrySent(entry.id, mediaContent);
+        // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
+        // The receiver deduplicates on messageId, but the retry is worth seeing in a log.
+        await storage
+          ?.deleteOutboxEntry(entry.id)
+          .catch((e) =>
+            log(
+              `[OUTBOX] ${entry.id.slice(0, 8)}… sent but still queued (delete failed): ${String(e)}`
+            )
+          );
+      } finally {
+        inFlight.delete(entry.id);
+      }
       logMlsMetric({
         kind: 'outbox_flush_success',
         conversationId: terminalId,
@@ -1276,10 +1465,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
             : `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`,
         // Classified by TYPE: the delivery API raises `DeliveryUnreachableError` for a POST that got
-        // no answer (a deadline expiry included), never a sentence to match.
+        // no answer (a deadline expiry included) - a `TransportFailureError`, which the one predicate
+        // reads - never a sentence to match.
         {
-          transport:
-            kind === 'unknown' && (e instanceof DeliveryUnreachableError || isTransportFailure(e)),
+          transport: kind === 'unknown' && isTransportFailure(e),
           repair: kind === 'sender-not-active',
         }
       );
@@ -1352,6 +1541,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return;
     }
     const queued = await readQueue('flush');
+    pruneCancelled(queued);
     if (queued.length === 0) return;
     // CHECK AND CLAIM WITH NO AWAIT BETWEEN THEM: two wake-ups landing together must not both start
     // a lane for one conversation, because two lanes would send one entry twice.
@@ -1446,13 +1636,126 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
   }
 
+  /**
+   * Withdraw a queued entry that has not left this device. The body of `cancelPending`, shared with
+   * the latest-wins supersede so both settle the same three copies (the durable row, a running
+   * flush's snapshot, the other tabs) and the native mirror. See {@link OutboxController.cancelPending}.
+   *
+   * A row ON THE WIRE in this tab is still deleted and marked cancelled - it is not retried if that
+   * send fails - but `withdrawn` is `false`, because the peers may already have it.
+   *
+   * KNOWN LIMIT OF THE `snapshot` FORM (the latest-wins supersede): a row the leader sent AND deleted
+   * between the caller's read and this call is answered `withdrawn: true`. Only the supersede passes
+   * a snapshot, its answer feeds a log line, and the receiver's `max` makes the extra frame
+   * harmless; re-reading the queue per row to close it is the cost the single read removed.
+   *
+   * @param snapshot the queue as the caller already read it, so a supersede reads it once per enqueue;
+   *                 and then the mirror is left to the caller, which rewrites it once for the batch.
+   * @returns `withdrawn`: guaranteed never sent by this tab; `rowDeleted`: the durable row is gone.
+   */
+  async function withdraw(
+    messageId: string,
+    snapshot?: OutboxEntry[]
+  ): Promise<{ withdrawn: boolean; rowDeleted: boolean }> {
+    if (!storage) return { withdrawn: false, rowDeleted: false };
+    const queued = (snapshot ?? (await readQueue('cancel'))).find((e) => e.id === messageId);
+    if (!queued) return { withdrawn: false, rowDeleted: false };
+    const onWireAtStart = inFlight.has(messageId);
+
+    // Three things, and the order between them does not matter because none can undo another:
+    // the durable row (every future flush), this tab's snapshot (a flush already walking), and
+    // the other tabs' snapshots (a leader draining on our behalf).
+    cancelled.add(messageId);
+    parked.delete(messageId);
+    noAnswer.delete(messageId);
+    bestLoaded.delete(messageId);
+    unexpected.delete(messageId);
+    publishOutboxEntryCancelled(messageId);
+    let rowDeleted = true;
+    await storage
+      .deleteOutboxEntry(messageId)
+      // A row that survives is a message that will be sent after the user deleted it, which is
+      // the whole defect - so this is reported rather than swallowed, and the caller is told the
+      // cancellation did not hold so the `delete_message` event goes out instead.
+      .catch((e) => {
+        log(`[OUTBOX] ${messageId.slice(0, 8)}… cancel could not delete the row: ${String(e)}`);
+        cancelled.delete(messageId);
+        rowDeleted = false;
+      });
+    // A FOLLOWER RUNS NO LANE, so nothing here will ever read its mark, and `pruneCancelled` only
+    // runs in the leader: kept, it would stay for the session. The leader has its own copy from
+    // `outbox_entry_cancelled`.
+    if (getTabLeadership() === 'follower') cancelled.delete(messageId);
+    // The mirror is the native background sender's own copy of the queue: leaving the entry in it
+    // sends the message from Android after it was withdrawn here.
+    if (rowDeleted && !snapshot) await refreshMirror();
+    // ON THE WIRE, NOW OR AT THE START. A send cannot START after the mark was set (the flush
+    // re-checks it with no await before claiming `inFlight`), and `inFlight` holds a sent id until
+    // its row is deleted, so these two reads see every frame this tab let out.
+    if (!rowDeleted || onWireAtStart || inFlight.has(messageId)) {
+      if (rowDeleted) {
+        log(
+          `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn while it was already being sent - the peers` +
+            ' will have it, so the delete has to travel as an event'
+        );
+      }
+      return { withdrawn: false, rowDeleted };
+    }
+    // A body already on the wire is stopped too, not only forgotten. AFTER the check above: the
+    // abort wakes the flush that owns the transfer, which consumes `cancelled`.
+    uploads.get(messageId)?.abort('cancel');
+    // "By this tab": only this tab's sends are known here. A leader tab draining on a follower's
+    // behalf learns of the withdrawal from `outbox_entry_cancelled`, and may already be sending it.
+    log(`[OUTBOX] ${messageId.slice(0, 8)}… withdrawn from the queue before this tab sent it`);
+    return { withdrawn: true, rowDeleted };
+  }
+
+  /**
+   * The unsent entries a latest-wins `entry` supersedes, or `'covered'` when one already queued
+   * carries as much - the new one then says nothing and is not queued, which is also what keeps a
+   * mark from moving backwards on the wire. A queue that cannot be read reads as "nothing queued":
+   * the entry is queued normally, which costs a frame and never loses one.
+   */
+  function supersededBy(
+    entry: OutboxEntry,
+    latestWins: LatestWins,
+    snapshot: OutboxEntry[]
+  ): OutboxEntry[] | 'covered' {
+    const siblings: OutboxEntry[] = [];
+    for (const queued of snapshot) {
+      if (queued.conversationId !== entry.conversationId || queued.id === entry.id) continue;
+      if (cancelled.has(queued.id)) continue;
+      const value = latestWins.valueOf(queued);
+      if (value === null) continue;
+      if (value >= latestWins.value) return 'covered';
+      siblings.push(queued);
+    }
+    return siblings;
+  }
+
   return {
-    async enqueue(entry: OutboxEntry, opts: { alreadyDurable?: boolean } = {}): Promise<void> {
+    async enqueue(entry: OutboxEntry, opts: EnqueueOptions = {}): Promise<void> {
       // REJECTS RATHER THAN RETURNS: a no-op here told the caller its message was queued when
       // nothing would ever send it.
       if (!storage) {
         log(`[OUTBOX] Enqueue refused for ${entry.id.slice(0, 8)}…: no storage layer`);
         throw new OutboxEnqueueError('no storage layer');
+      }
+      let superseded: OutboxEntry[] = [];
+      // ONE READ OF THE QUEUE PER LATEST-WINS ENQUEUE: it decides the supersede, settles each
+      // withdrawal and rewrites the mirror. Reading it per step decrypted the whole queue 2 + 2n
+      // times for one read receipt (review of #1887).
+      let snapshot: OutboxEntry[] | null = null;
+      if (opts.latestWins) {
+        snapshot = await readQueue('supersede');
+        const found = supersededBy(entry, opts.latestWins, snapshot);
+        if (found === 'covered') {
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… (${entry.kind}) not queued: an unsent entry for ${entry.conversationId.slice(0, 8)}… already carries ${opts.latestWins.value} or more`
+          );
+          return;
+        }
+        superseded = found;
       }
       // The first trace of a message on this device: without it there is no way to tell a send that
       // never reached the queue from one the queue accepted and lost.
@@ -1475,7 +1778,29 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           throw new OutboxEnqueueError('the durable write failed', e);
         }
       }
-      await refreshMirror();
+      // WITHDRAWN ONLY NOW, AFTER THE NEW ROW IS ON DISK: a crash between the two leaves both rows,
+      // which send in order and merge as `max` - one spare frame. The other order loses both.
+      if (snapshot) {
+        const gone = new Set<string>();
+        for (const old of superseded) {
+          const { withdrawn, rowDeleted } = await withdraw(old.id, snapshot);
+          if (rowDeleted) gone.add(old.id);
+          log(
+            !rowDeleted
+              ? `[OUTBOX] ${old.id.slice(0, 8)}… NOT superseded: its row could not be deleted, so both go - the newer one after it`
+              : withdrawn
+                ? `[OUTBOX] ${old.id.slice(0, 8)}… superseded by ${entry.id.slice(0, 8)}… before this tab sent it (a leader tab may already be sending it; the newer one follows)`
+                : `[OUTBOX] ${old.id.slice(0, 8)}… superseded by ${entry.id.slice(0, 8)}… while on the wire here - not retried, the newer one follows it`
+          );
+        }
+        await syncOutboxMirror(
+          [...snapshot.filter((e) => !gone.has(e.id)), entry].sort(
+            (a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id)
+          )
+        );
+      } else {
+        await refreshMirror();
+      }
       runFlush();
     },
 
@@ -1490,45 +1815,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     },
 
     async cancelPending(messageId: string): Promise<boolean> {
-      if (!storage) return false;
-      const queued = (await readQueue('cancel')).find((e) => e.id === messageId);
-      if (!queued) return false;
-
-      // Three things, and the order between them does not matter because none can undo another:
-      // the durable row (every future flush), this tab's snapshot (a flush already walking), and
-      // the other tabs' snapshots (a leader draining on our behalf).
-      cancelled.add(messageId);
-      parked.delete(messageId);
-      noAnswer.delete(messageId);
-      bestLoaded.delete(messageId);
-      unexpected.delete(messageId);
-      publishOutboxEntryCancelled(messageId);
-      await storage
-        .deleteOutboxEntry(messageId)
-        // A row that survives is a message that will be sent after the user deleted it, which is
-        // the whole defect - so this is reported rather than swallowed, and the caller is told the
-        // cancellation did not hold so the `delete_message` event goes out instead.
-        .catch((e) => {
-          log(`[OUTBOX] ${messageId.slice(0, 8)}… cancel could not delete the row: ${String(e)}`);
-          cancelled.delete(messageId);
-        });
-      if (!cancelled.has(messageId)) return false;
-      // A body already on the wire is stopped too, not only forgotten. AFTER the check above: the
-      // abort wakes the flush that owns the transfer, which consumes `cancelled`.
-      uploads.get(messageId)?.abort('cancel');
-      // The mirror is the native background sender's own copy of the queue: leaving the entry in it
-      // sends the message from Android after it was withdrawn here.
-      await refreshMirror();
-
-      if (inFlight === messageId) {
-        log(
-          `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn while it was already being sent - the peers` +
-            ' will have it, so the delete has to travel as an event'
-        );
-        return false;
-      }
-      log(`[OUTBOX] ${messageId.slice(0, 8)}… withdrawn from the queue before it was ever sent`);
-      return true;
+      return (await withdraw(messageId)).withdrawn;
     },
 
     flush(): Promise<void> {
@@ -1656,10 +1943,7 @@ export function flushOutbox(): void {
 }
 
 /** Enqueue a message on the active controller. Rejects with {@link OutboxEnqueueError} when it cannot. */
-export function enqueueOutboxMessage(
-  entry: OutboxEntry,
-  opts?: { alreadyDurable?: boolean }
-): Promise<void> {
+export function enqueueOutboxMessage(entry: OutboxEntry, opts?: EnqueueOptions): Promise<void> {
   if (!active) {
     return Promise.reject(new OutboxEnqueueError('no active outbox controller'));
   }

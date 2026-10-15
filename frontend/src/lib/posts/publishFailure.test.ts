@@ -17,6 +17,7 @@ import { LocalizedError } from '$lib/utils/localizedError';
 import { ServerUnreachableError } from '$lib/utils/fetchOrUnreachable';
 import { m } from '$lib/paraglide/messages';
 import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 const FALLBACK = m.post_create_publish_error();
 
@@ -43,9 +44,17 @@ describe('publishFailureMessage', () => {
     expect(publishFailureMessage(new TypeError('Failed to fetch'), FALLBACK)).toBe(
       m.auth_server_unreachable()
     );
+    // Read by TYPE, never by words: Tauri's typed failure is reached, a sentence that merely SAYS
+    // network is not (`transportFailure.ts`).
+    expect(
+      publishFailureMessage(
+        new TransportFailureError('error sending request for url (x)'),
+        FALLBACK
+      )
+    ).toBe(m.auth_server_unreachable());
     expect(
       publishFailureMessage(new Error('NetworkError when attempting to fetch'), FALLBACK)
-    ).toBe(m.auth_server_unreachable());
+    ).not.toBe(m.auth_server_unreachable());
   });
 
   it('passes a ServerUnreachableError through with the sentence its caller chose', () => {

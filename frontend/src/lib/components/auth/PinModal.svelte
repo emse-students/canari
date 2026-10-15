@@ -60,6 +60,12 @@
      */
     onForgotPinReset?: () => void;
     /**
+     * Why the reset is withheld, shown in its place whenever it is non-empty: this install's local
+     * state is proven to be ANOTHER account's, and the reset would delete it. Shown whatever the gate
+     * (first setup included), because the member has to learn it before choosing anything.
+     */
+    resetWithheldNotice?: string;
+    /**
      * Called when the user chooses to recover after the PIN was changed on another device.
      * Provided by the parent only when recovery is applicable (a mismatch occurred and a
      * local MLS state exists). When set, a "PIN changed elsewhere → recover" link is shown.
@@ -83,6 +89,7 @@
     isFirstSetup = false,
     loadingStep = '',
     onForgotPinReset,
+    resetWithheldNotice = '',
     onRecoverPin,
     account = '',
   }: Props = $props();
@@ -389,6 +396,15 @@
           </button>
         {/if}
       </div>
+
+      {#if resetWithheldNotice}
+        <div class="w-full rounded-2xl border border-red-500/20 bg-red-500/5 px-4 py-3" role="note">
+          <div class="flex items-start gap-2">
+            <TriangleAlert size={16} class="mt-0.5 shrink-0 text-red-500" />
+            <p class="text-text-muted text-xs leading-relaxed">{resetWithheldNotice}</p>
+          </div>
+        </div>
+      {/if}
 
       <!-- PIN changed on another device → recover messages (shown only when applicable) -->
       {#if !isFirstSetup && onRecoverPin && displayError}

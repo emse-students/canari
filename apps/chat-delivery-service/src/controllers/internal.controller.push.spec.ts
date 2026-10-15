@@ -17,6 +17,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 
 // Firebase Admin is mocked so the message handed to FCM is observable without credentials.
 const fcmSend = jest.fn();
@@ -77,6 +78,7 @@ describe('InternalController - POST internal/push/notify', () => {
         { provide: getRepositoryToken(RevokedDevice), useValue: unusedRepo },
         { provide: getRepositoryToken(PinVerifier), useValue: unusedRepo },
         { provide: getRepositoryToken(GroupInvite), useValue: unusedRepo },
+        { provide: getRepositoryToken(GroupMembershipInterval), useValue: unusedRepo },
         { provide: 'REDIS_CLIENT', useValue: redis },
       ],
     }).compile();

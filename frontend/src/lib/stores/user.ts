@@ -3,6 +3,7 @@ import type { Campus, CursusEntry, Post } from '$lib/profile/miconnectProfile';
 import { forgetReaderCaches, SharedCache } from '$lib/utils/sharedCache';
 import { setCurrentUserId, setGlobalAdmin, setFeedAudience } from '$lib/stores/userState.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
+import { clearWorkspaceSnapshots } from '$lib/utils/chat/workspaceSnapshot';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
 // held by its owner), so the association vault's implementation is reused rather
 // than copied - one envelope, one place to get right.
@@ -75,6 +76,8 @@ export function saveUserLocally(user: { id: string; displayName?: string; admin?
   if (accountChanged) {
     setFeedAudience(null);
     forgetReaderCaches();
+    // The previous account's community list is not drawn under this one's name (F1).
+    clearWorkspaceSnapshots();
   }
   localStorage.setItem(USER_STORAGE_KEY, user.id);
   setGlobalAdmin(!!user.admin);
@@ -90,6 +93,10 @@ export function clearUserLocally(): void {
   setGlobalAdmin(false);
   setFeedAudience(null);
   forgetReaderCaches();
+  // A SIGN-OUT ENDS THE SAVED COMMUNITY LIST, "Rester connecte" or not: that option keeps the
+  // device key, which costs a PIN to rebuild, while this list costs nothing but the first listing
+  // after the next sign-in - a moment that needs the network anyway (wiki: community-open-budget).
+  clearWorkspaceSnapshots();
   setCurrentUserId(null);
 }
 

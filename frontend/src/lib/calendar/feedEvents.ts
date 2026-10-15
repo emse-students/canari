@@ -292,6 +292,30 @@ export function eventOwners(event: AssociationCalendarFeedEvent): EventOwnerIden
 }
 
 /**
+ * Index of the owner in a grid block's display order: the middle one from three associations up,
+ * the first below that (two bands have no middle).
+ */
+export function organiserDisplayIndex(count: number): number {
+  return count >= 3 ? Math.floor(count / 2) : 0;
+}
+
+/**
+ * Display order for the block painted on the agenda grid and its PDF export: the ORGANISING
+ * association (the event's owner, which invites the others) sits in the MIDDLE band from three
+ * associations up, and the invited ones fill the sides in their given order, left to right.
+ * `owners` must be owner-first, as {@link eventOwners} returns it. Pure, so colours, logo bands and
+ * the export all derive the same order from one place.
+ */
+export function organiserCentred<T>(owners: readonly T[]): T[] {
+  const centre = organiserDisplayIndex(owners.length);
+  if (centre === 0) return [...owners];
+  const [organiser, ...invited] = owners;
+  const out = [...invited];
+  out.splice(centre, 0, organiser);
+  return out;
+}
+
+/**
  * Who a row says the event belongs to: EVERY association on it, owner first, joined for display.
  *
  * An event may be run by several associations at once and a row that names one of them is telling

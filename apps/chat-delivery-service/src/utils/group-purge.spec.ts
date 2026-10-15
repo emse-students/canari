@@ -2,7 +2,12 @@
 
 import type { EntityManager } from 'typeorm';
 import type Redis from 'ioredis';
-import { deleteGroupOwnedRows, deleteGroupRedisKeys, totalGroupOwnedRows } from './group-purge';
+import {
+  GROUP_REDIS_KEY_PREFIXES,
+  deleteGroupOwnedRows,
+  deleteGroupRedisKeys,
+  totalGroupOwnedRows,
+} from './group-purge';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -10,6 +15,7 @@ import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 
 /**
  * This function is the single definition of "what a group owns", so what is pinned here is the
@@ -18,7 +24,7 @@ import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
  * It is worth pinning because the omission is invisible: prod carried 21 orphaned `mls_group_info`
  * rows out of 69 and 293 of 452 `mls_commit_log` for as long as those two tables were missing from
  * the reaper, and nothing anywhere said so. A table dropped from this list would regress exactly
- * that way, silently, so the test names all seven.
+ * that way, silently, so the test names all eight.
  */
 describe('deleteGroupOwnedRows', () => {
   /** Every entity a group owns. Deliberately spelled out rather than imported from the module. */
@@ -29,6 +35,7 @@ describe('deleteGroupOwnedRows', () => {
     MlsCommitLog,
     MlsGroupInfo,
     GroupInvite,
+    GroupMembershipInterval,
     UserDismissedGroup,
   ];
 
@@ -63,9 +70,10 @@ describe('deleteGroupOwnedRows', () => {
       commitLog: 3,
       groupInfo: 3,
       invites: 3,
+      membershipIntervals: 3,
       dismissals: 3,
     });
-    expect(totalGroupOwnedRows(counts)).toBe(21);
+    expect(totalGroupOwnedRows(counts)).toBe(24);
   });
 
   it('spares the per-user dismissal markers when the group row SURVIVES', async () => {
@@ -120,8 +128,8 @@ describe('deleteGroupOwnedRows', () => {
 
     await deleteGroupOwnedRows(manager, ['g1', 'g2']);
 
-    // An allowlist: seven deletes, each carrying the same explicit id set and nothing else.
-    expect(deletes).toHaveLength(7);
+    // An allowlist: eight deletes, each carrying the same explicit id set and nothing else.
+    expect(deletes).toHaveLength(8);
     for (const where of deletes) {
       expect(Object.keys(where as object)).toEqual(['groupId']);
       expect(JSON.stringify(where)).toContain('g1');
@@ -147,7 +155,12 @@ describe('deleteGroupRedisKeys', () => {
 
     await deleteGroupRedisKeys(redis, ['g1']);
 
-    expect(calls.flat()).toEqual(['history:g1', 'group:members:g1', 'pending_welcome:g1']);
+    expect(calls.flat()).toEqual([
+      'history:g1',
+      'group:members:g1',
+      'pending_welcome:g1',
+      'group:parting:g1',
+    ]);
   });
 
   it('does not name the MLS locks, which expire on their own', async () => {
@@ -164,7 +177,7 @@ describe('deleteGroupRedisKeys', () => {
 
     await deleteGroupRedisKeys(redis, ids);
 
-    expect(calls.flat()).toHaveLength(1200);
+    expect(calls.flat()).toHaveLength(400 * GROUP_REDIS_KEY_PREFIXES.length);
     for (const chunk of calls) expect(chunk.length).toBeLessThanOrEqual(500);
   });
 

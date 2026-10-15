@@ -130,6 +130,60 @@ describe('event form co-organisers', () => {
     expect(values.coOwnerIds).toHaveLength(3);
   });
 
+  /**
+   * THE REPORTED DEFECT (user, 2026-10-13): two associations added, "BD" typed, no suggestion.
+   * A real browser keeps the field focused through a pick (the option's mousedown is
+   * preventDefault-ed), so NO second `focus` event ever fires - the helper `pick` above re-dispatches
+   * one by hand, which is why this suite never saw it. Here focus is given once, as a pointer does.
+   */
+  it('offers suggestions again when the user types after a pick, with no new focus event', async () => {
+    const values = $state({ ...blankEventFormValues(), title: 'Gala', targetAssociationId: 'a5' });
+    await open(values);
+    const input = search();
+    const names = () =>
+      [...document.querySelectorAll('ul button')].map((b) => b.textContent?.trim());
+    const type = (text: string) => {
+      input.value = text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      flushSync();
+    };
+    const press = async (name: string) => {
+      const option = [...document.querySelectorAll('ul button')].find(
+        (b) => b.textContent?.trim() === name
+      )!;
+      option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      flushSync();
+      await tick();
+    };
+
+    input.focus();
+    flushSync();
+    type('bd');
+    await press('BDA');
+    type('bd');
+    expect(names()).toEqual(['BDE', 'BDS']);
+    await press('BDS');
+    expect(document.activeElement).toBe(input);
+    expect(values.coOwnerIds).toEqual(['a1', 'a2']);
+
+    type('BD');
+    expect(names()).toEqual(['BDE']);
+  });
+
+  it('says so when nothing is left to match instead of showing nothing', async () => {
+    const values = $state({ ...blankEventFormValues(), title: 'Gala', targetAssociationId: 'a5' });
+    await open(values);
+    const input = search();
+    input.focus();
+    input.value = 'zzz';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    expect(document.querySelectorAll('ul button')).toHaveLength(0);
+    expect(document.querySelector('[data-co-owner-no-match]')?.textContent?.trim()).toBe(
+      m.asso_calendar_co_owner_no_match({ query: 'zzz' })
+    );
+  });
+
   it('never offers the owner itself and a picked one leaves the list', async () => {
     const values = $state({ ...blankEventFormValues(), title: 'x', targetAssociationId: 'a5' });
     await open(values);

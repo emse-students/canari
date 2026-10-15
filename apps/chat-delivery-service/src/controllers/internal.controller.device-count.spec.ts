@@ -14,6 +14,7 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { MessagingService } from '../services/messaging.service';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 
@@ -58,6 +59,7 @@ describe('InternalController - the MLS device count', () => {
         { provide: getRepositoryToken(PinVerifier), useValue: {} },
         { provide: getRepositoryToken(RevokedDevice), useValue: {} },
         { provide: getRepositoryToken(GroupInvite), useValue: {} },
+        { provide: getRepositoryToken(GroupMembershipInterval), useValue: {} },
         { provide: 'REDIS_CLIENT', useValue: {} },
         { provide: MessagingService, useValue: {} },
       ],

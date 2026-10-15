@@ -8,6 +8,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { Group } from '../entities/group.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 
 /** How many Redis keys one `DEL` carries, so a large reap never spreads one huge argument list. */
 const REDIS_DEL_CHUNK = 500;
@@ -31,6 +32,7 @@ export type GroupOwnedRowCounts = {
   commitLog: number;
   groupInfo: number;
   invites: number;
+  membershipIntervals: number;
   dismissals: number;
 };
 
@@ -63,6 +65,7 @@ const GROUP_OWNED_TABLES: readonly {
   { count: 'commitLog', entity: MlsCommitLog },
   { count: 'groupInfo', entity: MlsGroupInfo },
   { count: 'invites', entity: GroupInvite },
+  { count: 'membershipIntervals', entity: GroupMembershipInterval },
 ];
 
 /** A {@link GroupOwnedRowCounts} where nothing was removed - the answer to an empty id list. */
@@ -74,6 +77,7 @@ function noRowsRemoved(): GroupOwnedRowCounts {
     commitLog: 0,
     groupInfo: 0,
     invites: 0,
+    membershipIntervals: 0,
     dismissals: 0,
   };
 }
@@ -81,7 +85,7 @@ function noRowsRemoved(): GroupOwnedRowCounts {
 /**
  * Deletes every database row the given groups own, from {@link GROUP_OWNED_TABLES}.
  *
- * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: seven tables named
+ * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: eight tables named
  * one by one, checkable against `src/entities/` (every entity carrying a `groupId` is here). It
  * exists because the two places that end a group each carried their own shorter list, and both
  * were wrong in the same direction - measured on prod 2026-08-18, 21 of 69 `mls_group_info` rows,
@@ -245,7 +249,12 @@ export async function tombstoneGroups(
  *
  * `pending_welcome_notify:` is NOT here: it is keyed by USER, not by group.
  */
-export const GROUP_REDIS_KEY_PREFIXES = ['history:', 'group:members:', 'pending_welcome:'] as const;
+export const GROUP_REDIS_KEY_PREFIXES = [
+  'history:',
+  'group:members:',
+  'pending_welcome:',
+  'group:parting:',
+] as const;
 
 /** Every Redis key the given group owns, one per shape in {@link GROUP_REDIS_KEY_PREFIXES}. */
 export function groupRedisKeys(groupId: string): string[] {

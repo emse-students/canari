@@ -3,6 +3,7 @@ import { fromBase64 } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
+import { dropOwnExcludedMessages } from './historyEntitlement';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
 import {
@@ -1039,6 +1040,8 @@ export async function replayConversationHistory(params: {
               readWatermarkUpdates,
               historyFloorUpdate,
               pushPendingMessage,
+              dropOwnExcluded: (messages) =>
+                dropOwnExcludedMessages(id, userId, messages, { mlsService, log }),
             });
             mlsUpdated = true;
             continue;

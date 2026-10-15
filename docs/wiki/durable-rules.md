@@ -44,6 +44,8 @@ Everything that touches the device key, the PIN, `mls.bin` or an unlock path is 
 
 - **A SYNCHRONOUS GETTER OVER A CACHE IS ONLY AS TRUE AS THE LAST OPERATION THAT REFRESHED IT, AND "NO ENTRY" MUST NEVER READ AS A VALUE.** The native app's `getEpoch` answered from `_epochByGroupId`, filled only after a queued message's callback and never at start-up, and it answered `0` for a missing entry. So after every cold start a key group the server had at 56 read as 56 epochs behind: the catch-up replayed from epoch 0, broke on the first commit, left its gap armed - every seal refused - and the watchdog re-joined 45 s later. 449 re-joins in six days on production, 378 from native apps, each by a device that was current. The web reads WASM live and never did this. **Refresh the cache inside every operation that moves the fact, before it returns, and rebuild it with the list it belongs to.** [channel-encryption](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09)
 
+- **A CALLER THAT ASKS FOR DURABILITY WHILE A CHECKPOINT RUNS WAITS FOR THE NEXT ONE - THE RUNNING ONE EXPORTED BEFORE ITS CHANGE.** `mlsStatePersister.flush` handed such a caller the running checkpoint's promise and started the next one unawaited, so `externalJoin` - which awaits its checkpoint because a reload before the join is on disk joins again and forks the group - was told "durable" by a write that did not hold the join. After a sign-in a checkpoint runs ~93 % of the time (Mi 9T, 2026-10-13), so that was most joins of the storm. Ask of every coalesced write: **does the promise I return cover the state as of my CALL, or as of somebody else's start?** And a failed write re-raises the dirty flag, or nothing writes that state until something else changes. [mls-desync-prevention](protocols/mls-desync-prevention.md#the-checkpoint-a-caller-awaits-is-the-one-that-exported-after-its-change-2026-10-14)
+
 **Key packages, and the two kinds that are NOT interchangeable**
 
 - **WHEN A SERVER PROMISES REUSE, THE BYTES IT REUSES MUST BE BUILT FOR IT - a convention that two layers merely agree on is not a mechanism.** The delivery service serves a device's static `key_package` row to every caller once the one-time pool is empty, and it must, or a device whose pool ran dry becomes permanently un-addable. MLS deletes an ordinary KeyPackage's private bundle at the first Welcome built on it, so the row opened one group and locked the device out of every other peer already holding it: ten groups re-added in one burst on real hardware gave one join and nineteen `NoMatchingKeyPackage`, and the device re-asked for a Welcome for ever. The distinction now lives in the crypto - `last_resort` on the fallback, plain on the pool - through ONE builder taking a flag, because four call sites each minting "the fallback" is four chances to mint the wrong kind. [mls-protocol](protocols/mls-protocol.md#the-two-kinds-of-key-package)
@@ -171,6 +173,8 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 - **"A refresh ran" and "the list is current" are two different facts** - a loader that conflates them empties the sidebar on one dropped request. Fail loudly in state, never by returning stale truth. [chat](frontend/modules/chat.md)
 
 ## MLS membership and routing -> [mls-protocol](protocols/mls-protocol.md), [chat-delivery](services/chat-delivery.md)
+
+- **A GROUP BROADCAST HAS NO ADDRESSEE, SO AN ENTITLEMENT FILTER ON IT COVERS EVERY READER, NOT THE ONE WHO ASKED.** A `history_bundle` carries a `to`, and every member decrypts and ingests it anyway. A Remove is made to hold against a re-add (user, 2026-10-14) by withholding the UNION of every current member's exclusion windows, on the answering side, placed by the server's clock - filtering on the asker would have handed the window to the re-admitted member reading somebody else's answer. [history-reconciliation](protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)
 
 - **AN EARLY RETURN JUSTIFIED BY "SOMETHING ELSE ALREADY DID IT" MUST NAME WHO - AND THE CALLER
   REACHED FROM AN EVENT HAS NO WALK AROUND IT.** `enterPrivateSalonGroup` returned immediately for
@@ -356,6 +360,8 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 - **A CLIENT CONSOLE IS EVIDENCE ABOUT THE CLIENT AND NEVER ABOUT ITS PEER.** A P1 was filed for a "zombie socket" from a client log; the gateway had logged `Message directly routed to` that same device, the delivery service had logged `QUEUED count=6` plus the FCM push and the phone's own ACK, and `docker inspect` refuted the rebuild the entry blamed - three logs on the same machine, under a minute each, every load-bearing claim wrong. Read the other end BEFORE filing. (`docker logs --since/--until` misparses a bare timestamp here and returns nothing: strip ANSI and grep the embedded ISO stamps.) [testing-methodology](testing-methodology.md)
 
 ## Outbound delivery -> [chat](frontend/modules/chat.md), [history-reconciliation](protocols/history-reconciliation.md), [chat-delivery](services/chat-delivery.md), [mobile](frontend/mobile.md)
+
+- **AN MLS APPLICATION FRAME IS PAID FOR BY EVERY RECEIVER, SO A FRAME THAT SAYS NOTHING NEW IS NOT SENT.** A receiver cannot skip decrypting a frame, nor the full checkpoint that follows it: 50 of 135 cold-start checkpoints on a Pixel 6a followed watermark-only drains, and every message sent emitted one that told nobody anything (the mark moved over the sender's own send). Cut on the SENDER: a latest-wins frame supersedes its unsent predecessor in the queue, WRITE-BEFORE-WITHDRAW so a crash between costs a spare frame and never both, and a value an unsent one covers is not queued. Ending a reading DELIVERS what it owes; it never zeroes it. [history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)
 
 - **A ROW WRITTEN BY MORE THAN ONE PATH NEEDS AN IDENTITY CARRIED BY THE EVENT, NEVER MINTED BY THE
   WRITER - AND THE ONLY IDENTITY THAT CONVERGES ACROSS DEVICES IS THE SENDER'S.** A visible system
@@ -1029,6 +1035,10 @@ and every fork still carry it. So this rewriting happens while the paragraph is 
 is the same instruction the people rule gives and for a sharper reason: afterwards it is mitigation,
 and mitigation is not a fix. When a redaction does become necessary, say plainly that the history
 keeps the original rather than reporting the file as clean.
+
+### A DEEP LINK IS LOGGED AS ITS SHAPE, NEVER ITS TEXT
+
+A deep link carries post and conversation ids, invitation tokens, `returnTo` and OAuth callback parameters, and the in-app log is the one a member exports (`appLogRedact.ts` strips a query string but cannot tell a path id from a path word). Every deep-link log line goes through `describeDeepLink(url)` (`utils/logSanitize.ts`; native twin `CanariDescribeDeepLink` in `canari_push.mm`): scheme + host, the first path segment on http(s) only (on `fr.emse.canari://` the host is the route and the first segment is the id), and `+query` / `+fragment` flags.
 
 ### NO PATH OF ONE WORKSTATION ENTERS THE REPOSITORY - A PATH IS RELATIVE TO IT, OR IT IS LOCAL CONFIGURATION
 

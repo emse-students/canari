@@ -15,8 +15,24 @@ export function registerMlsStatePersister(persister: MlsStatePersister): void {
   activePersister = persister;
 }
 
-/** Clears the active persister on logout so outbound hooks become no-ops. */
-export function unregisterMlsStatePersister(): void {
+/** The persister registered now, so a teardown can name the one it is removing. */
+export function activeMlsStatePersister(): MlsStatePersister | null {
+  return activePersister;
+}
+
+/**
+ * Clears the active persister on logout so outbound hooks become no-ops.
+ *
+ * `owner` NAMES WHAT IS BEING REMOVED. A sign-out removes its persister only after the final flush
+ * lands, and by then the NEXT session may have registered its own: an unconditional clear removed
+ * that one, and the new session's checkpoints became no-ops. With `owner`, a persister that is no
+ * longer the active one is left alone. Without it (tests), the registry is cleared.
+ */
+export function unregisterMlsStatePersister(owner?: MlsStatePersister | null): void {
+  if (owner !== undefined && activePersister !== owner) {
+    console.debug('[MLS] persister unregister skipped - a newer session registered its own');
+    return;
+  }
   activePersister = null;
 }
 

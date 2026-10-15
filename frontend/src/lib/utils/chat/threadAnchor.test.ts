@@ -1,5 +1,6 @@
 import {
   anchorShift,
+  chatViewCountLine,
   firstRowBelow,
   isPinnedToBottom,
   respondToNewMessage,
@@ -240,5 +241,17 @@ describe('firstRowBelow', () => {
     let reads = 0;
     firstRowBelow(b.length, (i) => (reads++, b[i]), 51_234);
     expect(reads).toBeLessThanOrEqual(11);
+  });
+});
+
+describe('chatViewCountLine', () => {
+  it('is silent while the count holds, one line per change otherwise', () => {
+    expect(chatViewCountLine('abcdef0123456789', 3, 3, null)).toBeNull();
+    expect(chatViewCountLine('abcdef0123456789', 3, 4, 'follow-bottom')).toBe(
+      'abcdef01 messages 4 (hasNewMessage=true, response=follow-bottom)'
+    );
+    expect(chatViewCountLine('abcdef0123456789', 4, 2, null)).toBe(
+      'abcdef01 messages 2 (hasNewMessage=false, response=n/a)'
+    );
   });
 });
