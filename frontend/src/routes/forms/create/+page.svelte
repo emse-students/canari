@@ -186,7 +186,13 @@
       error = m.form_error_association_required();
       return;
     }
-    const fileProblem = fileQuestionProblem({ items, isPublic, anonymous, fileRetentionDays });
+    const fileProblem = fileQuestionProblem({
+      items,
+      isPublic,
+      anonymous,
+      fileRetentionDays,
+      submitCondition,
+    });
     if (fileProblem) {
       error = fileProblem;
       return;

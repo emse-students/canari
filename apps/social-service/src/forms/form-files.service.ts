@@ -423,7 +423,9 @@ export class FormFilesService {
         this.http.get<ArrayBuffer>(mediaUrl(`media/internal/form-file/${fileId}`), {
           headers: { 'x-internal-secret': process.env.INTERNAL_SECRET ?? '' },
           responseType: 'arraybuffer',
-          maxContentLength: FORM_FILE_MAX_BYTES + 65_536,
+          // The media service never STORES a form file over this cap (its own FORM_FILE_MAX_BYTES,
+          // checked after the metadata strip re-encodes an image), so the bound is the cap itself.
+          maxContentLength: FORM_FILE_MAX_BYTES,
         })
       );
       return {
@@ -466,7 +468,8 @@ export class FormFilesService {
   /**
    * Stores the bytes as a `form-file` for `uploaderId`. The media service re-encodes an image
    * without its metadata (EXIF, GPS), so `sizeBytes` is what it STORED, not what was received.
-   * Its 422 - an image that does not decode - is the member's file, answered as a 400.
+   * Its 422 - an image that does not decode, declares over 40 Mpx, or cannot be re-encoded within
+   * the cap - is the member's file, answered as a 400.
    */
   private async storeInMedia(
     data: Buffer,
@@ -496,8 +499,12 @@ export class FormFilesService {
     } catch (e) {
       const status = (e as { response?: { status?: number } })?.response?.status;
       if (status === HttpStatus.UNPROCESSABLE_ENTITY) {
-        this.logger.warn(`[FORM_FILES] upload refused: the image does not decode`);
-        throw new BadRequestException('This image could not be read. Send it again as a PDF.');
+        this.logger.warn(
+          `[FORM_FILES] upload refused by the media service (422): ${describeHttpError(e)}`
+        );
+        throw new BadRequestException(
+          'This image could not be read, or is too large in pixels. Send it again as a PDF.'
+        );
       }
       this.logger.error(`[FORM_FILES] media upload failed: ${describeHttpError(e)}`);
       throw new HttpException('The file could not be stored. Try again.', HttpStatus.BAD_GATEWAY);

@@ -12,9 +12,16 @@ import sharp from 'sharp';
 import {
   BadRequestException,
   ForbiddenException,
+  PayloadTooLargeException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { MediaService, isServerReadOnly, stripImageMetadata } from './media.service';
+import {
+  FORM_FILE_MAX_BYTES,
+  IMAGE_DECODE_MAX_PIXELS,
+  MediaService,
+  isServerReadOnly,
+  stripImageMetadata,
+} from './media.service';
 import { clientRetentionClass } from './media.controller';
 
 const ALICE = 'alice';
@@ -198,6 +205,68 @@ describe('stripImageMetadata: an image is stored without EXIF, GPS or ICC', () =
   it('refuses bytes that announce a JPEG and do not decode, rather than store them', async () => {
     const broken = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe1]), Buffer.from('Exif GPS')]);
     await expect(stripImageMetadata(broken)).rejects.toThrow(UnprocessableEntityException);
+  });
+
+  // The download is bounded by the cap, so a stored file over it could never be read back. A
+  // low-quality photo GROWS when re-encoded at q90; near the cap it must step down to fit.
+  it('a photo that GROWS at q90 steps down until it fits the stored cap', async () => {
+    const input = await sharp({
+      create: {
+        width: 320,
+        height: 240,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 },
+        noise: { type: 'gaussian', mean: 128, sigma: 40 },
+      },
+    })
+      .withExif({ IFD0: { Make: 'PhoneMaker' } })
+      .jpeg({ quality: 40 })
+      .toBuffer();
+    // The precondition that makes this the growth case: a plain q90 re-encode is LARGER.
+    const atQ90 = (await sharp(input).jpeg({ quality: 90 }).toBuffer()).length;
+    expect(atQ90).toBeGreaterThan(input.length);
+    // The cap sits where this upload sits: received within it, q90 over it.
+    const out = await stripImageMetadata(input, input.length);
+    expect(out.length).toBeLessThanOrEqual(input.length);
+    const meta = await sharp(out).metadata();
+    expect([meta.format, meta.width, meta.height]).toEqual(['jpeg', 320, 240]);
+    expect(meta.exif).toBeUndefined();
+  });
+
+  it('refuses (422) an image no quality brings under the cap, rather than store it over', async () => {
+    const input = await sharp({
+      create: {
+        width: 64,
+        height: 64,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 },
+        noise: { type: 'gaussian', mean: 128, sigma: 40 },
+      },
+    })
+      .png()
+      .toBuffer();
+    await expect(stripImageMetadata(input, 100)).rejects.toThrow(UnprocessableEntityException);
+  });
+
+  it('refuses a form file received over the cap before decoding it', async () => {
+    const { service } = serviceWith({});
+    await expect(
+      service.uploadFormFile(Buffer.alloc(FORM_FILE_MAX_BYTES + 1), ALICE)
+    ).rejects.toThrow(PayloadTooLargeException);
+  });
+
+  // A small file declaring huge dimensions: without the bound, sharp would allocate every pixel
+  // (a 16000x16000 JPEG took the process from 53 MB to 2.4 GB RSS).
+  it('refuses an image over IMAGE_DECODE_MAX_PIXELS before decoding it', async () => {
+    const side = Math.ceil(Math.sqrt(IMAGE_DECODE_MAX_PIXELS)) + 500;
+    const huge = await sharp({
+      create: { width: side, height: side, channels: 3, background: { r: 9, g: 9, b: 9 } },
+    })
+      .jpeg({ quality: 50 })
+      .toBuffer();
+    expect(huge.length).toBeLessThan(FORM_FILE_MAX_BYTES);
+    await expect(stripImageMetadata(huge)).rejects.toThrow(UnprocessableEntityException);
+    await expect(stripImageMetadata(huge)).rejects.toThrow(/pixel limit/i);
   });
 
   it('stores what it stripped, and says how big that is', async () => {

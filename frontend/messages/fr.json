@@ -2183,6 +2183,7 @@
   "form_anonymous_hint_file": "Indisponible avec une question fichier : un fichier est lié au compte qui l'envoie.",
   "form_file_retention_label": "Suppression des fichiers (jours après la réponse)",
   "form_file_retention_hint": "Les fichiers envoyés sont lisibles par les gestionnaires du formulaire, puis supprimés automatiquement après ce délai, de 1 à 30 jours. La réponse reste, avec la mention « fichier supprimé ». Un changement, même un délai plus court, s'applique aussitôt aux fichiers déjà reçus.",
+  "form_file_submit_condition_answer": "Un formulaire qui demande un fichier ne peut pas limiter qui répond selon la réponse à une question : le fichier est envoyé avant les réponses. Utilisez plutôt une promo, une formation ou une cotisation.",
   "form_file_retention_invalid": "Le délai de suppression des fichiers doit être un nombre entier de jours, de 1 à 30.",
   "form_builder_file_hint": "La personne enverra un fichier : PDF, JPEG, PNG ou WebP, 8 Mo au plus. Il est lisible par les gestionnaires du formulaire et supprimé automatiquement (voir Paramètres avancés).",
   "form_file_choose": "Choisir un fichier",

@@ -54,14 +54,16 @@ import {
   PayloadTooLargeException,
   UnauthorizedException,
   BadRequestException,
+  UnprocessableEntityException,
   Logger,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
 import * as crypto from 'crypto';
-import sharp from 'sharp';
 import {
   MediaService,
+  boundedSharp,
+  FORM_FILE_MAX_BYTES,
   isRetentionClass,
   SERVER_READ_ONLY_CLASS,
   type FormFilePurgeOutcome,
@@ -278,11 +280,21 @@ export class MediaController {
       throw new BadRequestException('Logo must be JPEG, PNG, or WebP');
     }
 
-    // Resize to max 256x256, convert to WebP 90% - logos and avatars are public/unencrypted.
-    const compressed = await sharp(upload.buffer)
-      .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: 90 })
-      .toBuffer();
+    // Resize to max 256x256, convert to WebP 90% - logos and avatars are public/unencrypted. The
+    // decode is bounded (`boundedSharp`): a small file declaring huge dimensions is a 422, not an
+    // allocation of gigabytes in the process that carries every chat medium.
+    let compressed: Buffer;
+    try {
+      compressed = await boundedSharp(upload.buffer)
+        .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 90 })
+        .toBuffer();
+    } catch (err) {
+      this.logger.warn(
+        `Public asset refused: the image does not decode within bounds (${upload.size} bytes): ${err instanceof Error ? err.message : String(err)}`
+      );
+      throw new UnprocessableEntityException('The image could not be read');
+    }
 
     const mediaId = await this.mediaService.uploadPublicAsset(compressed, 'image/webp');
     this.logger.log(
@@ -654,7 +666,9 @@ export class MediaController {
    * `GET internal/form-file/:id` - see `form-file` on {@link RetentionClass}.
    */
   @Post('internal/form-file')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_BYTES }, storage: undefined }))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: FORM_FILE_MAX_BYTES + 1 }, storage: undefined })
+  )
   async uploadFormFile(
     @UploadedFile() file: unknown,
     @Body() body: { ownerId?: unknown },
@@ -666,7 +680,8 @@ export class MediaController {
     }
     const upload = requireUploadedFile(file);
     // An image is re-encoded without its metadata (EXIF, GPS) before it is stored; `sizeBytes` is
-    // what was STORED. An image that does not decode is a 422.
+    // what was STORED, never over FORM_FILE_MAX_BYTES. An image that does not decode, exceeds the
+    // pixel bound or cannot fit the cap is a 422.
     return this.mediaService.uploadFormFile(upload.buffer, body.ownerId);
   }
 

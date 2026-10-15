@@ -357,6 +357,14 @@ describe('FormFilesService.download', () => {
     expect(http.get.mock.calls[0][0]).toContain(`media/internal/form-file/${FILE_ID}`);
   });
 
+  // The media service stores at most FORM_FILE_MAX_BYTES (after the metadata strip); the download
+  // bound is that same number, neither looser nor tighter.
+  it('bounds the download by the stored cap', async () => {
+    const { service, http } = makeService({ row: ROW });
+    await service.download('f1', FILE_ID);
+    expect(http.get.mock.calls[0][1]).toMatchObject({ maxContentLength: FORM_FILE_MAX_BYTES });
+  });
+
   // A manager of form f2 holding an id from form f1's answers: the row is f1's, so f2's download
   // must not find it, whatever the manager right on f2 is.
   it('is a 404 for a file sent to ANOTHER form, even to a manager of the asking form', async () => {

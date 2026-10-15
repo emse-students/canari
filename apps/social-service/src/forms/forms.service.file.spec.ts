@@ -119,6 +119,43 @@ describe('FormsService - the file question', () => {
       const { service } = makeService();
       await expect(service.create(createInput())).resolves.toBeDefined();
     });
+
+    // The upload is judged on submitCondition BEFORE any answer exists: an `answer` criterion would
+    // refuse every upload (403), so the form could never be filled.
+    const MENU = {
+      id: 'q_menu',
+      label: 'Menu',
+      required: true,
+      type: 'single_choice',
+      options: [{ id: 'a', label: 'A', priceModifier: 0 }],
+    };
+    const BY_ANSWER = { answer: { questionId: 'q_menu', optionIds: ['a'] } };
+
+    it('refuses a file question with an answer criterion on who may submit', async () => {
+      const { service } = makeService();
+      await expect(
+        service.create(createInput({ items: [MENU, CV], submitCondition: BY_ANSWER }))
+      ).rejects.toThrow('A form that asks for a file cannot restrict who may answer by an answer');
+    });
+
+    it('refuses adding a file question to a form whose STORED condition reads an answer', async () => {
+      const { service } = makeService(baseForm({ items: [MENU], submitCondition: BY_ANSWER }));
+      await expect(
+        service.update(
+          'f1',
+          { title: 'x', basePrice: 0, currency: 'eur', items: [MENU, CV] } as any,
+          'u-owner',
+          false
+        )
+      ).rejects.toThrow('A form that asks for a file cannot restrict who may answer by an answer');
+    });
+
+    it('lets a profile criterion stand beside a file question', async () => {
+      const { service } = makeService();
+      await expect(
+        service.create(createInput({ submitCondition: { promo: { values: [2024] } } }))
+      ).resolves.toBeDefined();
+    });
   });
 
   describe('at submit', () => {

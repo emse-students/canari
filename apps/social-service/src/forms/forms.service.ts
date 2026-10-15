@@ -163,6 +163,26 @@ export class FormsService {
   }
 
   /**
+   * Refuses a form that asks for a file AND restricts who may submit by an ANSWER. The file is
+   * uploaded before the answer exists, and the upload is judged on the same `submitCondition`
+   * (`assertMayUploadAnswerFile`) - with no answers yet, an `answer` criterion matches nobody, so
+   * every upload would be a 403. Refused where it is chosen rather than shipped as a form nobody can
+   * fill. A profile criterion (promo, formation, cotisation) is known at upload and stays allowed.
+   */
+  private assertFileQuestionConfigValid(input: {
+    items?: CreateFormDto['items'];
+    submitCondition?: unknown;
+  }): void {
+    if (!hasFileQuestion(input.items)) return;
+    const condition = input.submitCondition as { answer?: unknown } | null | undefined;
+    if (condition?.answer != null) {
+      throw new BadRequestException(
+        'A form that asks for a file cannot restrict who may answer by an answer: the file is sent before the answers exist.'
+      );
+    }
+  }
+
+  /**
    * Refuses a public form that would need to know who a guest is. A guest has no account, so there
    * is nobody to charge, to grant a cotisation to, to match a profile criterion against, or to count
    * once - each is refused where it is chosen, rather than being a setting that quietly does
@@ -376,6 +396,7 @@ export class FormsService {
     }
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
+    this.assertFileQuestionConfigValid(input);
     await this.assertPaidFormAssociationReady(input);
     await this.assertCotisationConfigValid(input, {
       userId: input.ownerId!,
@@ -575,6 +596,12 @@ export class FormsService {
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
     // the answers already stored. An absent value means "leave it", so the stored one is checked.
     this.assertPublicConfigValid({ ...input, items, isPublic: input.isPublic ?? form.isPublic });
+    // An absent condition keeps the stored one, which still meets the questions sent now.
+    this.assertFileQuestionConfigValid({
+      items,
+      submitCondition:
+        input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+    });
 
     await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
     await this.assertCotisationConfigValid(

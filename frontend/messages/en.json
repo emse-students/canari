@@ -2151,6 +2151,7 @@
   "form_anonymous_hint_file": "Unavailable with a file question: a file is tied to the account that sends it.",
   "form_file_retention_label": "File deletion (days after the answer)",
   "form_file_retention_hint": "Sent files can be read by the form's managers, then are deleted automatically after this delay, from 1 to 30 days. The answer stays, marked \"file deleted\". A change, a shorter delay included, applies at once to the files already received.",
+  "form_file_submit_condition_answer": "A form that asks for a file cannot limit who may answer by an answer to a question: the file is sent before the answers exist. Use a promo, a programme or a cotisation instead.",
   "form_file_retention_invalid": "The file deletion delay must be a whole number of days, from 1 to 30.",
   "form_builder_file_hint": "The person will send a file: PDF, JPEG, PNG or WebP, 8 MB at most. The form's managers can read it, and it is deleted automatically (see Advanced settings).",
   "form_file_choose": "Choose a file",

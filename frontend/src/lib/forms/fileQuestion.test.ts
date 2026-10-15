@@ -70,6 +70,17 @@ describe('fileQuestionProblem', () => {
   it('accepts a member form with a valid retention', () => {
     expect(fileQuestionProblem(form())).toBeNull();
   });
+
+  it('refuses an answer criterion on who may submit, and lets a profile criterion stand', () => {
+    expect(
+      fileQuestionProblem(
+        form({ submitCondition: { answer: { questionId: 'q', optionIds: ['a'] } } })
+      )
+    ).toBe(m.form_file_submit_condition_answer());
+    expect(
+      fileQuestionProblem(form({ submitCondition: { promo: { values: [2024] } } }))
+    ).toBeNull();
+  });
 });
 
 describe('pickedFileProblem', () => {

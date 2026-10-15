@@ -433,6 +433,17 @@ plaintext away from every route a client can reach:
   signature, never from sharp's guess, so a corrupt JPEG is a `422` rather than stored unstripped.
   A PDF (or anything else) is stored byte for byte. The answer carries `{ mediaId, sizeBytes }`, the
   STRIPPED size, which is what social-service records.
+- **The STORED size is capped at `FORM_FILE_MAX_BYTES` (8 MiB)**, social-service's own number, which
+  also bounds its download. A re-encode at q90 GROWS a photo already saved at a low quality (a q70
+  6.3 MB JPEG became 8.3 MB), so the strip steps down q90, 80, 70, 60, 50, 40 (a PNG: default, then
+  maximum compression) until it fits, and answers `422` if nothing does. Before this, an 8 MiB scan
+  could be stored at ~10.5 MiB and never downloaded again. The route also refuses more than 8 MiB
+  received.
+- **Every decode of a member's image is bounded to 40 Mpx** (`boundedSharp`,
+  `IMAGE_DECODE_MAX_PIXELS`), read from the header before any pixel is allocated: here and on the
+  logo route `POST upload/public`. Measured on a 1.5 MB JPEG declaring 16000x16000: unbounded, the
+  process went from 41 MB to a 1613 MB RSS peak in 875 ms; bounded, it peaked at 42 MB and refused in
+  2 ms. This process carries every chat medium, so the OOM killer taking it down takes all of them.
 - **It cannot become anything else**: no reel claim, no promotion to a public asset, and
   **`DELETE /media/:id` refuses it** (403, `isServerReadOnly`): that route is secret-gated but its
   callers delete on behalf of a member, and a form file is deleted by the retention purge alone.

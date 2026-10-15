@@ -321,28 +321,79 @@ function announcedImageFormat(data: Buffer): 'jpeg' | 'png' | 'webp' | null {
 }
 
 /**
+ * The most pixels this service lets sharp DECODE from a member's upload: 40 Mpx, above any phone
+ * camera (a 200 Mpx sensor saves 12.5 Mpx binned) and far under sharp's default of ~268 Mpx. The
+ * limit is read from the HEADER before any pixel is allocated, which is the point: a 1.5 MB JPEG
+ * declaring 16000x16000 took this process from 53 MB to 2.4 GB RSS in 1.3 s without it - and this
+ * process carries every chat medium, so the OOM killer would have taken all of them down.
+ */
+export const IMAGE_DECODE_MAX_PIXELS = 40_000_000;
+
+/** A sharp pipeline over a member's bytes, bounded by {@link IMAGE_DECODE_MAX_PIXELS}. */
+export function boundedSharp(data: Buffer): sharp.Sharp {
+  return sharp(data, { limitInputPixels: IMAGE_DECODE_MAX_PIXELS });
+}
+
+/**
+ * The most bytes a form file may be STORED as - social-service's `FORM_FILE_MAX_BYTES` (8 MiB, the
+ * per-request budget under the host WAF), which social-service also uses to bound the DOWNLOAD. The
+ * cap is held on what is stored, not only on what was received: a re-encoded image can be larger
+ * than its upload, and a stored object over the download bound could never be read back.
+ */
+export const FORM_FILE_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The lossy qualities tried, in order, until the re-encoded image fits the stored cap. 90 first; a
+ * photo already saved at a low quality GROWS at 90 (a q70 6.3 MB JPEG becomes 8.3 MB), so an image
+ * near the cap steps down.
+ */
+const STRIP_LOSSY_QUALITIES = [90, 80, 70, 60, 50, 40] as const;
+
+/**
  * A form file's bytes WITHOUT the image's metadata: a JPEG, PNG or WebP is decoded and re-encoded
  * in its own format, which drops EXIF (GPS position, device, date), XMP and ICC - a phone photo of a
  * certificate carries where it was taken, and the form's managers have no use for that. The EXIF
  * orientation is APPLIED first (`rotate()`), so the picture stands the way it was seen. Anything else
  * (a PDF) is returned untouched.
  *
- * @throws UnprocessableEntityException for bytes that announce an image and do not decode as one -
- *   refused, never stored with their metadata.
+ * **The result is never larger than `maxBytes`** ({@link FORM_FILE_MAX_BYTES} by default): the
+ * download is bounded by that cap, so a stored file over it could never be read back. A lossy image
+ * steps down {@link STRIP_LOSSY_QUALITIES}; a PNG tries the default encoder, then the maximum
+ * compression. Still over: refused.
+ *
+ * @throws UnprocessableEntityException for bytes that announce an image and do not decode as one, an
+ *   image over {@link IMAGE_DECODE_MAX_PIXELS}, or one no encoding brings under `maxBytes` - refused,
+ *   never stored with their metadata.
  */
-export async function stripImageMetadata(data: Buffer): Promise<Buffer> {
+export async function stripImageMetadata(
+  data: Buffer,
+  maxBytes: number = FORM_FILE_MAX_BYTES
+): Promise<Buffer> {
   const format = announcedImageFormat(data);
   if (!format) return data;
-  try {
-    const image = sharp(data).rotate();
-    if (format === 'jpeg') return await image.jpeg({ quality: 90 }).toBuffer();
-    if (format === 'png') return await image.png().toBuffer();
-    return await image.webp({ quality: 90 }).toBuffer();
-  } catch (err) {
-    throw new UnprocessableEntityException(
-      `The image could not be read: ${err instanceof Error ? err.message : String(err)}`
-    );
+  const attempts: Array<(image: sharp.Sharp) => sharp.Sharp> =
+    format === 'png'
+      ? [(i) => i.png(), (i) => i.png({ compressionLevel: 9, adaptiveFiltering: true, effort: 10 })]
+      : STRIP_LOSSY_QUALITIES.map(
+          (quality) => (i: sharp.Sharp) =>
+            format === 'jpeg' ? i.jpeg({ quality }) : i.webp({ quality })
+        );
+  let smallest = Number.POSITIVE_INFINITY;
+  for (const encode of attempts) {
+    let out: Buffer;
+    try {
+      out = await encode(boundedSharp(data).rotate()).toBuffer();
+    } catch (err) {
+      throw new UnprocessableEntityException(
+        `The image could not be read: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    if (out.length <= maxBytes) return out;
+    smallest = Math.min(smallest, out.length);
   }
+  throw new UnprocessableEntityException(
+    `The image could not be re-encoded under ${maxBytes} B (${data.length} B received, ${smallest} B at best)`
+  );
 }
 
 /** What `purgeReels` answers for one object - see {@link MediaService.purgeReels}. */
@@ -519,7 +570,11 @@ export class MediaService {
     if (!ownerId) {
       throw new BadRequestException('A form file needs the member who uploads it');
     }
-    const stored = await stripImageMetadata(data);
+    if (data.length > FORM_FILE_MAX_BYTES) {
+      this.logger.warn(`Form file refused: ${data.length} bytes received for ${ownerId}`);
+      throw new PayloadTooLargeException(`A form file is at most ${FORM_FILE_MAX_BYTES} bytes`);
+    }
+    const stored = await stripImageMetadata(data, FORM_FILE_MAX_BYTES);
     const mediaId = uuidv4();
     await this.storage.put(mediaId, stored, stored.length);
     this.setAccess(mediaId, Date.now(), ownerId, SERVER_READ_ONLY_CLASS);

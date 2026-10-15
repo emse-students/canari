@@ -468,7 +468,7 @@ server must be able to hand it to them. That one fact decides the whole design.
 |---|---|---|
 | Pick | `FormQuestion.svelte` | PDF, JPEG, PNG or WebP, 8 MiB at most - the per-request budget under the host WAF ([host-waf-body-limit](../../infrastructure/host-waf-body-limit.md)) (`fileQuestion.ts`); checked before upload to say it in the reader's language. A file with an EMPTY `type` (some Android pickers) is judged by its EXTENSION (`pickedFileType`), and `accept` lists the extensions too; **HEIC is refused with its own sentence**, not converted - only Apple's engine decodes it, so a conversion would work on one phone in two |
 | Upload | `POST /api/forms/:id/files` (social-service, `FormFilesService.upload`) | the member must be ELIGIBLE to answer (`assertMayUploadAnswerFile`: the form's `submitCondition`, the same audience check as submit); the TYPE is read from the bytes, never from the name or the claimed type; the form must exist, be open, NOT public, and the item must be a file question (an `itemId` over 64 characters is a 400); at most 10 unsent uploads per member per form (429), counted again under a `pg_advisory_xact_lock` on (form, uploader) in the transaction that inserts the row, so twelve parallel uploads keep exactly ten - a loser's blob is taken back. Sent through `fetchUpload` (XHR): the card shows the percentage and offers a cancel, and the page REFUSES to send the answer while any file is still travelling (`form_file_wait_upload`) - an optional file question would otherwise go out empty |
-| Store | `POST /media/internal/form-file` (media-service, secret-gated) | retention class `form-file`, the uploader as owner, **no contentType recorded**, an image's EXIF/GPS removed by re-encoding (a PDF is untouched; an undecodable image is a 400 "send it as a PDF") - see [media-service](../../services/media-service.md#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15) |
+| Store | `POST /media/internal/form-file` (media-service, secret-gated) | retention class `form-file`, the uploader as owner, **no contentType recorded**, an image's EXIF/GPS removed by re-encoding (a PDF is untouched). The STORED size never exceeds 8 MiB - a re-encode can grow a low-quality photo, so the quality steps down - and the manager's download is bounded by that same 8 MiB. An image that does not decode, declares over 40 Mpx, or cannot fit is a 400 "send it as a PDF" - see [media-service](../../services/media-service.md#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15) |
 | Submit | `FormsService.submit` -> `FormFilesService.attach` | the answer is the file's id; one `UPDATE ... RETURNING` inside the submission's transaction claims the `form_files` row, matching id, form, question, UPLOADER, not purged, and either unsent within one day or already this submission's. No row = the whole submission is refused. `attachedAt = GREATEST(NOW(), submission.createdAt)`: a pending submission reused later keeps its old `createdAt`, and the retention must count from the claim. A transaction whose `NOW()` was read just before the one-day edge may claim a file the purge is deleting at that instant - benign: the manager's first download reads "Fichier supprimé" and marks the row purged |
 | Read | `GET /api/forms/:id/files/:fileId` | `assertFormManager` FIRST, then the bytes from `GET /media/internal/form-file/:id` with their own Content-Type, `Content-Disposition: attachment` (ASCII + RFC 5987 name), `nosniff`, `no-store`. Never through `GET /media/:id`, the push proxy's `GET /media/internal/:id` (no per-object ACL - both refuse the class) nor `/media/public` |
 | Purge | `FormFileRetentionScheduler`, hourly at :37 | see below |
@@ -478,7 +478,17 @@ server must be able to hand it to them. That one fact decides the whole design.
 
 - **a public form** (D40): a guest has no account to upload with;
 - **an anonymous form**: the `form_files` row and the blob's owner name the uploader, which would
-  re-join an anonymous answer to its author. A choice, not a requirement of the brief - see the PR.
+  re-join an anonymous answer to its author (confirmed by the user 2026-10-15; "a file without an
+  account" is a future work package);
+- **an ANSWER criterion in `submitCondition`** (`assertFileQuestionConfigValid`, and
+  `form_file_submit_condition_answer` on the page): the upload is judged on the form's audience
+  BEFORE any answer exists, so such a criterion would refuse every upload. A profile criterion
+  (promo, formation, cotisation) is known at upload and stays allowed.
+
+**Cancelling an upload is client-side only.** The card aborts the request, but a file the server had
+already stored keeps its blob and its unsent `form_files` row until the one-day purge, and that row
+holds one of the member's 10 unsent slots meanwhile. Accepted: a member reaching 10 by cancelling
+waits a day, which the 429 sentence says.
 
 **The answer reads as a word, never as its id.** `answerText` (and its declared duplicate
 `answer-text.ts`) takes the reader's `AnswerWords` - "Fichier" / "Fichier supprimé" - and THROWS on
@@ -809,7 +819,11 @@ byte-identical). Front: `fileQuestion.test.ts` (empty type, HEIC), `FormQuestion
 migration 085 to a throwaway schema and drives the real service and scheduler - a claim past the
 window, by another uploader, of a purged row, from another form, two submissions racing for one
 file (exactly one wins), `attachedAt` on a reused submission, twelve parallel uploads (exactly ten
-kept), the purge run twice and a lowered retention. It is skipped without a database:
+kept), the purge run twice and a lowered retention. **IT NEVER RUNS IN CI** - no workflow sets
+`SOCIAL_IT_DATABASE_URL`, so CI reports it skipped - and it is the ONLY test guarding the
+`GREATEST(...)` on `attachedAt`, the advisory lock and the claim SQL as Postgres executes it. Run it
+by hand before merging any change to `form-files.service.ts`, `form-file-retention.scheduler.ts` or
+migration 085:
 
 ```sh
 docker run -d --rm --name formfiles-pg -e POSTGRES_PASSWORD=it -p 55432:5432 postgres:18-alpine
