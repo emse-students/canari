@@ -59,22 +59,25 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## Removable at floor 1.2.7
 
-**Audited 2026-10-15, against `main` at `9f7ccfef8`.** The user reports `1.2.7` served by BOTH
-stores (Play serves `1.2.8`, the App Store `1.2.7`), so `minClientVersion` may rise from `1.0.3` to
-`1.2.7`. **It is NOT set at the time of writing** - every removal below is a DRAFT pull request that
-merges only after the user sets it in `/admin/platform`. "First release" is the first stable tag
-containing the replacement (`git tag --contains`); a shim is removable by the floor only when that
-release is `<= 1.2.7`. A floor never retires DATA AT REST: those rows need a count, then a migration.
+**Audited 2026-10-15, against `main` at `9f7ccfef8`**, when the user reported `1.2.7` served by BOTH
+stores (Play `1.2.8`, the App Store `1.2.7`), so that `minClientVersion` could rise from `1.0.3` to
+`1.2.7`. A removal marked "with the floor" REFUSES what an older build sends, so it may only deploy
+once `minClientVersion` reads `1.2.7` or more **on the estate it deploys to**: `platform_config` is
+PER ESTATE (production and `dev.canari-emse.fr` each hold their own row), so the floor is raised in
+`/admin/platform` on BOTH, dev included, or a pre-release carrying a refusal breaks a dev tester on an
+older build. "First release" is the first stable tag containing the replacement (`git tag --contains`);
+a shim is removable by the floor only when that release is `<= 1.2.7`. A floor never retires DATA AT
+REST: those rows need a count, then a migration.
 
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
-| Whole-list role PUT + `RETIRED_PERMISSIONS` | client floor past the PATCH (2026-08-20) and the key removal (2026-08-19) | YES (`v0.14.1`) | none (migration 044 already stripped the keys) | ~-200 lines, server + one uncalled client method | **#1899** |
-| `stripe` checkout return host | floor >= first release with `payment` | YES (`v1.2.4`) | none | ~-40 lines, server + client + `tauri.conf.json` + manifest | **#1900** |
-| `paymentMethod: 'stripe'` INPUT | floor >= Stripe removal | YES (`v1.2.0`) | - | 1 line | **#1900** |
-| `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` | type + 3 client arms, after a migration | owed: count + migration (user) |
-| Carte bare publish body | floor >= fingerprint | YES (`v0.18.28`) | old posters keep a null fingerprint (meaning UNKNOWN, kept) | ~-20 lines, server | **#1901** |
-| Prekeys as bare base64 strings | floor >= `0.18.10` | YES (`v0.18.10`) | undated rows stay covered by their `NULL` arms | ~-10 lines, server | **#1902** |
-| `/key-package` 404 with no `reason` | every estate past the 2026-09-16 server (not a client floor) | YES (since `v0.18.10` deployed) | none | ~-30 lines, client | **#1902** |
+| Whole-list role PUT + `RETIRED_PERMISSIONS` | client floor past the PATCH (2026-08-20) and the key removal (2026-08-19) | YES (`v0.14.1`) | none (migration 044 already stripped the keys) | ~-200 lines, server + one uncalled client method | removed with the floor (server only) |
+| `stripe` checkout return host | floor >= first release with `payment` | YES (`v1.2.4`) | none | ~-40 lines, server + client + `tauri.conf.json` + manifest | removed with the floor |
+| `paymentMethod: 'stripe'` INPUT | floor >= Stripe removal | YES (`v1.2.0`) | - | 1 line | removed with the floor |
+| `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
+| Carte bare publish body | floor >= fingerprint | YES (`v0.18.28`) | old posters keep a null fingerprint (meaning UNKNOWN, kept) | ~-20 lines, server | removed with the floor (server only); a missing or malformed fingerprint is refused too |
+| Prekeys as bare base64 strings | floor >= `0.18.10` | YES (`v0.18.10`) | undated rows stay covered by their `NULL` arms | ~-10 lines, server | removed with the floor |
+| `/key-package` 404 with no `reason` | every estate past the 2026-09-16 server (not a client floor) | YES (since `v0.18.10` deployed) | none | ~-30 lines, client | removed: a 404 with no reason is `unanswered`, a reason this build does not know is the typed refusal `unrecognized` |
 | Salon push held for a sender with no `seedFrame` | floor >= first release sending `seedFrame` | version YES (`v0.18.28`); proof NO | none | server refusal + Kotlin hold registry, native | NOT removed: nothing has measured that EVERY admitted send carries the frame (the server never stores it), so a required field could refuse an honest send. Owed: a log of frame-less non-silent sends, read for a week, then a native PR |
 | Server `legacyTitle`/`legacyBody` on social/form pushes | clients reading `contentKey` (2026-08-19) | version YES (`v0.14.1`) | none | ~-50 lines server + Kotlin + Swift arms | NOT removed: dropping them leaves an iOS alert EMPTY whenever the NSE does not run, a visible behaviour change, not a removal. Needs a decision and an iPhone reading |
 | Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
@@ -97,6 +100,7 @@ release is `<= 1.2.7`. A floor never retires DATA AT REST: those rows need a cou
 
 ```sql
 SELECT count(*) FROM purchase_records WHERE "paymentMethod" = 'stripe';
+SELECT count(*) FROM submissions WHERE "paymentMethod" = 'stripe';
 SELECT count(*) FROM queued_message WHERE content IS NOT NULL;
 SELECT count(*) FROM channel_roles WHERE permissions ~ '(MANAGE_WORKSPACE|MANAGE_CHANNELS|MANAGE_ROLES|MODERATE_MESSAGES|INVITE_USERS|SEND_MESSAGES)';
 SELECT count(*) FROM forms WHERE items::text LIKE '%"dependsOn": "%';
