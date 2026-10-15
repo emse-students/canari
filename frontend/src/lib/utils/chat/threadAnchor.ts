@@ -202,3 +202,19 @@ export function firstRowBelow(
   }
   return lo < count ? lo : -1;
 }
+
+/**
+ * The `[CHAT_VIEW]` diagnostic line for ONE change of the displayed conversation's message count,
+ * or null when the count did not change. It pairs with `[ADD_MSG] Batch into ... selected=<bool>`:
+ * the first says the conversation map took the message, this one says the pane's prop received it.
+ * `response` is the scroll decision for a growth and `n/a` for a shrink.
+ */
+export function chatViewCountLine(
+  conversationId: string,
+  previousCount: number,
+  count: number,
+  response: NewMessageResponse | null
+): string | null {
+  if (count === previousCount) return null;
+  return `${conversationId.slice(0, 8)} messages ${count} (hasNewMessage=${count > previousCount}, response=${response ?? 'n/a'})`;
+}

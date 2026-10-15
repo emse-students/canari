@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
-  fetchDisabledCategories: vi.fn(),
+  fetchNotificationPreferences: vi.fn(),
   saveDisabledCategories: vi.fn(),
+  saveGroupNotificationLevel: vi.fn(),
 }));
 vi.mock('$lib/notifications/preferencesApi', () => api);
 
@@ -12,6 +13,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   notificationPreferences.reset();
   api.saveDisabledCategories.mockResolvedValue(undefined);
+  api.saveGroupNotificationLevel.mockResolvedValue(undefined);
 });
 
 describe('notificationPreferences', () => {
@@ -21,16 +23,22 @@ describe('notificationPreferences', () => {
   });
 
   it('mirrors the server set after a load', async () => {
-    api.fetchDisabledCategories.mockResolvedValue(['posts', 'forms']);
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: ['posts', 'forms'],
+      groupLevels: {},
+    });
     expect(await notificationPreferences.load()).toBe(true);
     expect(notificationPreferences.isEnabled('posts')).toBe(false);
     expect(notificationPreferences.isEnabled('messages')).toBe(true);
   });
 
   it('keeps the current set and reports false when the load fails', async () => {
-    api.fetchDisabledCategories.mockResolvedValueOnce(['posts']);
+    api.fetchNotificationPreferences.mockResolvedValueOnce({
+      disabled: ['posts'],
+      groupLevels: {},
+    });
     await notificationPreferences.load();
-    api.fetchDisabledCategories.mockRejectedValueOnce(new Error('503'));
+    api.fetchNotificationPreferences.mockRejectedValueOnce(new Error('503'));
     expect(await notificationPreferences.load()).toBe(false);
     expect(notificationPreferences.isEnabled('posts')).toBe(false);
   });
@@ -63,5 +71,40 @@ describe('notificationPreferences', () => {
     await notificationPreferences.setEnabled('posts', false);
     notificationPreferences.reset();
     expect(notificationPreferences.isEnabled('posts')).toBe(true);
+  });
+
+  describe('private conversation levels', () => {
+    const g = '0b9f3d7e-1111-4222-8333-444455556666';
+
+    it('reads all for a conversation the server never named, and loaded only once answered', async () => {
+      expect(notificationPreferences.groupLevel(g)).toBe('all');
+      expect(notificationPreferences.loaded).toBe(false);
+      api.fetchNotificationPreferences.mockResolvedValue({
+        disabled: [],
+        groupLevels: { [g]: 'mentions' },
+      });
+      await notificationPreferences.load();
+      expect(notificationPreferences.loaded).toBe(true);
+      expect(notificationPreferences.groupLevel(g)).toBe('mentions');
+    });
+
+    it('moves the level at once and writes it for that conversation', async () => {
+      expect(await notificationPreferences.setGroupLevel(g, 'none')).toBe(true);
+      expect(notificationPreferences.groupLevel(g)).toBe('none');
+      expect(api.saveGroupNotificationLevel).toHaveBeenCalledWith(g, 'none');
+    });
+
+    it('puts the level back when the server refuses', async () => {
+      await notificationPreferences.setGroupLevel(g, 'mentions');
+      api.saveGroupNotificationLevel.mockRejectedValueOnce(new Error('403'));
+      expect(await notificationPreferences.setGroupLevel(g, 'none')).toBe(false);
+      expect(notificationPreferences.groupLevel(g)).toBe('mentions');
+    });
+
+    it('forgets the levels on reset', async () => {
+      await notificationPreferences.setGroupLevel(g, 'none');
+      notificationPreferences.reset();
+      expect(notificationPreferences.groupLevel(g)).toBe('all');
+    });
   });
 });

@@ -1380,6 +1380,44 @@ readings below were taken before it or after three quiet minutes.
   "Deverrouiller": the instrument's tap that raced the keypad animation signed the device out
   (re-signed in, same local state).
 
+## The Mi 9T readings of v1.2.8-alpha.1 (2026-10-15)
+
+Build `1.2.8` (`versionName` from `dumpsys package`), the `v1.2.8-alpha.1` release APK installed with
+`adb install -r` over the `1.2.7-alpha.3` build (accepted, no signature or downgrade refusal, account
+kept), dev estate, account `fourth` ("Canari Test Delta"), bench conversations only. The phone is on
+the vault path ("Rester connecte"), so no PIN gate was drawn. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1015-a128/` (`runs.ndjson`, summaries). Dev has no push,
+so reading 5 could not be taken.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. Start, version, unlock | **`PASS`** | Settings > A propos reads "Version de Canari 1.2.8-alpha.1" and "Vous utilisez la derniere version"; the app opened straight onto the feed on the vault path (a PIN-path unlock was not exercised) |
+| 2. Communities and a salon | **`PASS`** | `community-open.mjs --community Bench126 --runs 3 --start cold --net none --cpu 1`, medians ms: attach 552, nav 1099, **tap>rail 1134** (worst 1243), tap>salons 2244, tap>target salons 2512, **salon>pane 277**, salon>msgs 1833, switch>salons 143, switch salon>pane 202, reopen>msgs 773; long tasks 728, max gap 443 |
+| 3. Notification level, private conversation | **`PASS`** | The phone holds no group, only the DM with gamma (a bench account). Its "Infos de la discussion" panel shows Notifications with Tous / Mentions / Aucune; "Mentions" highlights, then "Tous" restores it. Persistence across a restart not read |
+| 4. Reply swipe near the right edge (#1880) | **`PASS`** | A swipe on an own bubble from x=985 of 1080 with a 70 px vertical drift arms "Repondre a Canari Test Delta" with the bubble's text in the composer. **From x=1040 the system back gesture wins** and the conversation closes: the gesture zone is the system's, not the app's |
+| 5. Group notification shows the sender | **`NOT-OBSERVED`** | No group on the phone and no push on dev |
+| 6. In-app log export | **`PASS`** | "Enregistrer le journal" saves `canari-log-1.2.8-alpha.1-20261015-0130.txt` (1.8 MB, 20471 lines) to Telechargements. All **397** `[SEND] handleSendChat` lines carry `text="[N chars]"`; no quoted value outside that shape, no `eyJ` or `Bearer`. The one-word leak of the 1.2.7 reading (`text="ok"`) is not present |
+
+**Met on the way:** a tap on the profile settings icon during the page transition hit the camera badge
+and opened the photo picker; it was cancelled without choosing. Tap again once the page is drawn.
+
+## The Mi 9T readings of v1.2.8-alpha.2 (2026-10-15)
+
+Build `1.2.8` (`versionName`), the `v1.2.8-alpha.2` release APK (`app-universal-release.apk`, sha256
+`2ac1560f...`) installed with `adb install -r` over the alpha.1 build (accepted, no signature or
+downgrade refusal, account kept), dev estate, account `fourth` ("Canari Test Delta"), bench
+conversations only, vault path (no PIN gate drawn). The only delta since alpha.1 is #1889: a salon
+message over the socket honours the salon's notification level. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1015-a128a2/` (`runs.ndjson`, summary, frames, `log.txt`).
+Dev has no push, so what #1889 changes (a notification suppressed or kept) could not be observed.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. Start, version, unlock | **`PASS`** | Settings > A propos reads "Version de Canari 1.2.8-alpha.2" and "Vous utilisez la derniere version"; the app opened on the feed on the vault path (a PIN-path unlock was not exercised) |
+| 2. Communities and a salon | **`PASS`** | `community-open.mjs --community Bench126 --runs 3 --start cold --net none --cpu 1`, medians ms (alpha.1 in brackets): attach 329 [552], nav 1092 [1099], **tap>rail 1072** [1134] (worst 1088), tap>salons 1899 [2244], tap>target salons 2276 [2512], **salon>pane 279** [277], salon>msgs 1834 [1833], switch>salons 174 [143], switch salon>pane 201 [202], reopen>msgs 676 [773]; api calls 65, long tasks 699, max gap 439. Same shape as alpha.1, within run-to-run noise |
+| 3. Notification level of a bench salon | **`PASS` (the control), the effect `NOT-OBSERVED`** | Salon "general" of a bench community: Parametres du canal shows Notifications with Tous / Mentions / Aucune, Tous selected; "Mentions" highlights, then "Tous" restores it. No push on dev, so a message received over the socket under Mentions/Aucune was not produced |
+| 4. In-app log export | **`PASS`** | `canari-log-1.2.8-alpha.2-20261015-0223.txt` (2.15 MB, 23773 lines): 0 `eyJ`, 0 `Bearer`; of 383 `handleSendChat` lines, the 192 carrying a text all read `text="[N chars]"`, the rest are "completed (message queued)"; no bench message text (`bisous`, `heldA*`, `iosA3*`, `Rendez`) found |
+
 ## The bench readings of v1.2.7-alpha.2 (2026-10-14)
 
 **Mi 9T**: build `1.2.7 (100200702)`, the release's `app-universal-release.apk` (sha256

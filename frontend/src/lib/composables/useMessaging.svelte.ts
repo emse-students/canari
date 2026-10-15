@@ -12,7 +12,6 @@ import { SvelteMap, SvelteDate } from 'svelte/reactivity';
 import { getToken } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
-import { extractMentionUserIds, normalizeMentionUserId } from '$lib/utils/mentions';
 import {
   sendChatMessage,
   retrySalonSend,
@@ -53,7 +52,10 @@ import {
   notificationGroupName,
   type NativeMessageNotification,
 } from '$lib/utils/nativeNotification';
-import { getUserDisplayNameSync, notificationSenderName } from '$lib/utils/users/displayName';
+import {
+  getUserDisplayNameSync,
+  resolveNotificationSenderName,
+} from '$lib/utils/users/displayName';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import {
@@ -103,6 +105,11 @@ import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
 import { categoryOfConversation } from '$lib/notifications/categories';
+import {
+  conversationLevelRefusal,
+  mentionsUser,
+  type ConversationNotificationLevel,
+} from '$lib/notifications/conversationLevel';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
 
@@ -396,15 +403,26 @@ export function useMessaging() {
      * is where both already are - deriving it from the name would be `deriveConversationIdentity`
      * run a second time, in a second place, against a string that is a `me::peer` key for a DM.
      */
-    convo: Pick<Conversation, 'name' | 'contactName' | 'conversationType' | 'readWatermarks'>,
+    convo: Pick<
+      Conversation,
+      'id' | 'name' | 'contactName' | 'conversationType' | 'readWatermarks'
+    >,
     senderId: string,
     content: string,
+    /**
+     * Whether what this ONE banner stands for names the reader - the message itself on the live path,
+     * ANY inbound message of the flush on the batch path. A catch-up bringing "@me look", "ok", "lol"
+     * is a mention even though its banner shows "lol": computed by the caller, which holds them all.
+     */
+    mentionsMe: boolean,
     isSystem: boolean,
     isOwn: boolean,
     /** The SENDER's instant in ms - what lets the native builder recognise one message. */
     sentAt: number,
     /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
-    covers: number
+    covers: number,
+    /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
+    salonLevelRead = false
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
@@ -433,6 +451,62 @@ export function useMessaging() {
         `[NOTIF] Inbound in ${conversationKey} - category "${category}" is switched off for this account; nothing raised.`
       );
       return;
+    }
+
+    // THE CONVERSATION'S OWN LEVEL (all / mentions / none), the salon's three for a private
+    // conversation. The server applies `none` to every push and hands `mentions` to the device; a
+    // frame received here involves no push, so this is the client's half - the ONE place it decides,
+    // with the plaintext already in hand. A salon is read from its own cache - see below.
+    //
+    // `mentionsMe` (see `mentionsUser`) decides the level here and picks the notification channel,
+    // which is the reader's own mute, sound and DND switch. `CanariFirebaseMessagingService` makes the
+    // same decision from the same token for messages that arrive as a push; this is the WebSocket
+    // half of one rule (NOTIF-16).
+    //
+    // LOOKED UP BY THE GROUP ID (`convo.id`), NEVER THE CONVERSATION KEY: a DM may be keyed
+    // `me::peer`, and the server's levels are keyed by the MLS group.
+    //
+    // A SALON'S LEVEL IS THE SAME THREE VALUES AND THE SAME DECISION (`conversationLevelRefusal`), read
+    // from the social service rather than the sign-in list, so it is cached per channel: read ONCE
+    // when the first frame of a salon arrives (one shared request, no read per message), refreshed
+    // whenever its settings panel opens. The frame that triggers the read waits for the answer and
+    // re-enters with `salonLevelRead`; if the read FAILED it is raised as `all`, the account default,
+    // and the failure is said by the store - the same rule as the groups' store.
+    let level: ConversationNotificationLevel | undefined;
+    if (category === 'messages') {
+      level = notificationPreferences.groupLevel(convo.id);
+    } else {
+      level = notificationPreferences.channelLevel(conversationKey);
+      if (level === undefined && !salonLevelRead) {
+        void notificationPreferences.loadChannelLevel(conversationKey).then(() => {
+          notifyInbound(
+            ctx,
+            conversationKey,
+            convo,
+            senderId,
+            content,
+            mentionsMe,
+            isSystem,
+            isOwn,
+            sentAt,
+            covers,
+            true
+          );
+        });
+        return;
+      }
+      if (level === undefined) {
+        console.warn(
+          `[NOTIF] Inbound in ${conversationKey} - the salon's level is unreadable; raised as "all".`
+        );
+      }
+    }
+    if (level !== undefined) {
+      const refusal = conversationLevelRefusal(level, mentionsMe);
+      if (refusal) {
+        console.log(`[NOTIF] Inbound in ${conversationKey} - ${refusal}; nothing raised.`);
+        return;
+      }
     }
 
     // NATIVE MOBILE USED TO RETURN HERE, AND THAT IS WHY A PHONE IN A POCKET NEVER NOTIFIED.
@@ -489,29 +563,23 @@ export function useMessaging() {
         : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
-    // WHETHER THIS MESSAGE NAMES THE READER IS DECIDED HERE, WHERE BOTH HALVES ARE ALREADY KNOWN -
-    // the raw text and `ctx.userId` - rather than left to the layer that only sees a title and a
-    // body. It picks the notification channel, which is the reader's own mute, sound and DND
-    // switch. `CanariFirebaseMessagingService` makes the same decision from the same token for
-    // messages that arrive as a push; this is the WebSocket half of one rule, and until 2026-09-08
-    // it did not exist, so which switches applied to a mention depended on which transport
-    // happened to carry it (NOTIF-16).
-    const mentionsMe = extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId));
-    const senderName = notificationSenderName(senderId, convo);
     const notificationBody = preview || m.notif_new_message();
-    void ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
-      // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
-      // plain notification, it asks the native builder for the SAME one a push would raise. See
-      // `nativeNotification.ts` for the pair of notifications this replaced.
-      conversationId: conversationKey,
-      senderId,
-      senderName,
-      groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
-      body: notificationBody,
-      mentionsMe,
-      sentAt,
-      covers,
-    });
+    // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
+    void resolveNotificationSenderName(senderId, convo).then((senderName) =>
+      ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
+        // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
+        // plain notification, it asks the native builder for the SAME one a push would raise. See
+        // `nativeNotification.ts` for the pair of notifications this replaced.
+        conversationId: conversationKey,
+        senderId,
+        senderName,
+        groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+        body: notificationBody,
+        mentionsMe,
+        sentAt,
+        covers,
+      })
+    );
   }
 
   /**
@@ -842,9 +910,7 @@ export function useMessaging() {
       canSeeArrival(ctx, normalized)
     ) {
       if (ctx.playReceiveTone) {
-        ctx.playReceiveTone(
-          extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId))
-        );
+        ctx.playReceiveTone(mentionsUser(content, ctx.userId));
       } else {
         ctx.playNotificationTone();
       }
@@ -857,6 +923,7 @@ export function useMessaging() {
       convo,
       senderId,
       content,
+      mentionsUser(content, ctx.userId),
       isSystem,
       isOwn,
       resolvedTimestamp.getTime(),
@@ -1060,7 +1127,7 @@ export function useMessaging() {
     // System messages are named individually because they are few, and because a card is one.
     const systemIds = brandNew.filter((m) => m.isSystem).map((m) => m.id);
     console.log(
-      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded` +
+      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded, selected=${ctx.selectedContact === normalized}` +
         (systemIds.length > 0 ? ` - system: ${systemIds.join(', ')}` : '')
     );
 
@@ -1109,17 +1176,23 @@ export function useMessaging() {
         `[NOTIF] Batch into "${normalized}" restored ${brandNew.length} message(s) from an archive - a replay is not an arrival, nothing raised.`
       );
     } else if (lastInbound) {
+      const inbound = brandNew.filter(
+        (msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId)
+      );
       notifyInbound(
         ctx,
         normalized,
         convo,
         lastInbound.senderId,
         lastInbound.content,
+        // ANY message of the flush, not the last one: at `mentions` a catch-up whose mention is not
+        // its final line is still a mention, and the one banner must say so.
+        inbound.some((msg) => mentionsUser(msg.content, ctx.userId)),
         false,
         false,
         lastInbound.timestamp.getTime(),
         // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
-        brandNew.filter((msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId)).length
+        inbound.length
       );
     }
 

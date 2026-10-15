@@ -19,12 +19,9 @@
   import { recordUnsentSalonText, takeOrphanedSalonTexts } from '$lib/utils/chat/salonUnsent';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
-  import { isAppInForeground } from '$lib/utils/appForeground';
-  import {
-    watermarkAfterReading,
-    watermarkFor,
-    withOwnReadAdvanced,
-  } from '$lib/utils/chat/readState';
+  import { isAppInForeground, onAppScreenChange } from '$lib/utils/appForeground';
+  import { readMarkTarget, watermarkFor, withOwnReadAdvanced } from '$lib/utils/chat/readState';
+  import { createReadMarkDebounce } from '$lib/utils/chat/readMarkDebounce';
   import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import {
@@ -483,6 +480,11 @@
         // list frozen with no sign the press had been taken. The row's highlight is
         // `selectedChannelId`; the thread follows `selectConversation`, below.
         channels.selectedChannelConversationId = channelId;
+        // THE HISTORY REQUEST LEAVES ON THE PRESS, not after the pane is drawn: the pane's mount
+        // used to sit in front of it (323 ms at 1x, 1.1 s at 4x on a Mi 9T, 2026-10-14), and nothing
+        // the request needs is in the pane. It resolves into the conversation map, which the pane
+        // reads when it mounts a frame later.
+        void convs.loadHistoryForConversation(channelId, channelId, convCtx(), { atTap: true });
         afterNextPaint(() => {
           // A second press during the frame wins: the first salon is not mounted under it.
           if (channels.selectedChannelConversationId !== channelId) return;
@@ -494,7 +496,6 @@
             session.userId
           );
           convs.selectConversation(channelId);
-          void convs.loadHistoryForConversation(channelId, channelId, convCtx());
           if (claimChannelReadSignal(channelId, readUpTo)) {
             void channelService.markChannelRead(channelId);
           }
@@ -584,11 +585,9 @@
     };
   });
 
-  // ─── Read watermark (debounced 2 s) ───────────────────────────────────────
-  let pendingReadWatermark = 0;
-  /** The newest `createdAt` among what the pending salon receipt covers - the server's own clock. */
-  let pendingReadServerAt = 0;
-  let readReceiptTimer: ReturnType<typeof setTimeout> | null = null;
+  // ─── Read watermark (debounced 2 s; delivered at once on leave or off-screen) ──
+  /** The pending mark of the conversation being read (see `readMarkDebounce.ts`). */
+  const readMarks = createReadMarkDebounce(2000);
 
   /** Delivers every owed salon read mark; a refusal keeps it owed (see `salonReadMarkQueue.ts`). */
   function flushOwedSalonMarks(): Promise<number> {
@@ -612,7 +611,9 @@
 
     const meNorm = session.userId.toLowerCase();
     const held = watermarkFor(convo.readWatermarks, meNorm);
-    const target = watermarkAfterReading(convo.messages, held, isSelectedChannel);
+    // A DM or group mark moves over FOREIGN messages only: one moved over this reader's own send
+    // told nobody anything and cost every member a decrypt and a checkpoint (`readMarkTarget`).
+    const target = readMarkTarget(convo.messages, held, isSelectedChannel);
     if (target <= held) return;
 
     const currentContact = convs.selectedContact;
@@ -660,94 +661,81 @@
       recordSalonReadMark(session.userId, currentContact, target, newestServerAt || undefined);
     }
 
-    pendingReadWatermark = Math.max(pendingReadWatermark, target);
-    for (const msg of convo.messages) {
-      if (msg.serverTimestamp !== undefined) {
-        pendingReadServerAt = Math.max(pendingReadServerAt, msg.serverTimestamp);
-      }
-    }
-
-    if (!readReceiptTimer) {
-      readReceiptTimer = setTimeout(() => {
-        untrack(() => {
-          const toSend = pendingReadWatermark;
-          const toSendServerAt = pendingReadServerAt;
-          pendingReadWatermark = 0;
-          pendingReadServerAt = 0;
-          readReceiptTimer = null;
-          if (toSend <= 0) return;
-          if (channelReceipt) {
-            // The mark was recorded durably when it was decided; this only delivers it.
-            void flushOwedSalonMarks();
-            // THE BANNER SIGNAL FOLLOWS THE READING, NOT THE ARRIVAL. A message that landed while the
-            // reader was elsewhere (another route, a hidden tab) is deliberately NOT announced as
-            // read on arrival (`isReadingConversationNow`), so nothing has yet told this account's
-            // other devices to drop its banner. The marker is shared with the arrival path: a message
-            // already signalled is not signalled twice.
-            // The newest FOREIGN message, not `toSend`: the watermark also advances over this user's
-            // own sends, and signalling those would be a self-push after every message written.
-            const readUpTo = newestForeignMessageAt(
-              convs.conversations.get(currentContact)?.messages ?? [],
-              session.userId
+    readMarks.note(target, (toSend) => {
+      untrack(() => {
+        if (channelReceipt) {
+          // The mark was recorded durably when it was decided; this only delivers it.
+          void flushOwedSalonMarks();
+          // THE BANNER SIGNAL FOLLOWS THE READING, NOT THE ARRIVAL. A message that landed while the
+          // reader was elsewhere (another route, a hidden tab) is deliberately NOT announced as
+          // read on arrival (`isReadingConversationNow`), so nothing has yet told this account's
+          // other devices to drop its banner. The marker is shared with the arrival path: a message
+          // already signalled is not signalled twice.
+          // The newest FOREIGN message, not `toSend`: the watermark also advances over this user's
+          // own sends, and signalling those would be a self-push after every message written.
+          const readUpTo = newestForeignMessageAt(
+            convs.conversations.get(currentContact)?.messages ?? [],
+            session.userId
+          );
+          if (claimChannelReadSignal(currentContact, readUpTo)) {
+            void channelService.markChannelRead(currentContact);
+          }
+          return;
+        }
+        // THREE WAYS OUT OF HERE AND ALL THREE USED TO BE SILENT. The debounce has already handed
+        // the mark over, so nothing will retry: whatever this device has read up to is
+        // lost for the peer, which keeps showing the conversation unread until something else
+        // moves the mark. That is a best-effort path, and a line is all a loss leaves behind it.
+        try {
+          const mlsService = session.ensureMls();
+          const fresh = convs.conversations.get(currentContact);
+          if (!fresh) {
+            console.warn(
+              `[READ] watermark ${toSend} dropped: conversation ${currentContact} left the store` +
+                ' between the debounce arming and its expiry, so the receipt is never sent'
             );
-            if (claimChannelReadSignal(currentContact, readUpTo)) {
-              void channelService.markChannelRead(currentContact);
-            }
             return;
           }
-          // THREE WAYS OUT OF HERE AND ALL THREE USED TO BE SILENT. The debounce has already zeroed
-          // `pendingReadWatermark`, so nothing will retry: whatever this device has read up to is
-          // lost for the peer, which keeps showing the conversation unread until something else
-          // moves the mark. That is a best-effort path, and a line is all a loss leaves behind it.
-          try {
-            const mlsService = session.ensureMls();
-            const fresh = convs.conversations.get(currentContact);
-            if (!fresh) {
-              console.warn(
-                `[READ] watermark ${toSend} dropped: conversation ${currentContact} left the store` +
-                  ' between the debounce arming and its expiry, so the receipt is never sent'
-              );
-              return;
-            }
-            sendReadWatermark(toSend, {
-              mlsService,
-              userId: session.userId,
-              deviceKeyB64: session.deviceKeyB64,
-              conversation: fresh,
-            }).catch((e) =>
-              console.warn(
-                `[READ] watermark ${toSend} for ${currentContact} was not sent - the peer keeps` +
-                  ' showing it unread until this device reads again:',
-                e
-              )
-            );
-          } catch (e) {
-            // The comment here used to READ `/* MLS not ready */` and assert a cause nothing had
-            // checked. `session.ensureMls()` is the only call above that can throw, so that reading
-            // is probably right - but "probably" is not what a swallowed branch may claim, and the
-            // throw itself says it for free.
+          sendReadWatermark(toSend, {
+            mlsService,
+            userId: session.userId,
+            deviceKeyB64: session.deviceKeyB64,
+            conversation: fresh,
+          }).catch((e) =>
             console.warn(
-              `[READ] watermark ${toSend} for ${currentContact} could not be sent - no MLS client:`,
+              `[READ] watermark ${toSend} for ${currentContact} was not sent - the peer keeps` +
+                ' showing it unread until this device reads again:',
               e
-            );
-          }
-        });
-      }, 2000);
-    }
+            )
+          );
+        } catch (e) {
+          // The comment here used to READ `/* MLS not ready */` and assert a cause nothing had
+          // checked. `session.ensureMls()` is the only call above that can throw, so that reading
+          // is probably right - but "probably" is not what a swallowed branch may claim, and the
+          // throw itself says it for free.
+          console.warn(
+            `[READ] watermark ${toSend} for ${currentContact} could not be sent - no MLS client:`,
+            e
+          );
+        }
+      });
+    });
 
-    // Only cancel the timer when the user navigates to a different conversation.
+    // Only end the window when the user navigates to a different conversation.
     // Same-conversation re-runs (e.g. from the optimistic update above) must
-    // not cancel the pending timer - that was the root cause of receipts never firing.
+    // not cancel the pending window - that was the root cause of receipts never firing.
     return () => {
       if (convs.selectedContact !== currentContact) {
-        // Leaving inside the debounce window must not cost the mark: it is already owed, so deliver now.
-        if (channelReceipt) void flushOwedSalonMarks();
-        if (readReceiptTimer) {
-          clearTimeout(readReceiptTimer);
-          readReceiptTimer = null;
+        // LEAVING INSIDE THE WINDOW MUST NOT COST THE MARK. A salon's is already owed durably, so
+        // the owed queue delivers it. A DM's used to be ZEROED here after the local mark had moved,
+        // so nothing ever sent it again and the peer saw the conversation unread for good: it is
+        // delivered now instead.
+        if (channelReceipt) {
+          void flushOwedSalonMarks();
+          readMarks.cancel();
+        } else {
+          readMarks.flush();
         }
-        pendingReadWatermark = 0;
-        pendingReadServerAt = 0;
       }
     };
   });
@@ -787,7 +775,13 @@
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('canari-keyboard-media', handleKeyboardMediaEvent);
+    // The app leaving the screen ends the reading: the pending read mark is delivered now rather
+    // than at a window expiry the OS may never let run (a backgrounded phone suspends timers).
+    const offScreenChange = onAppScreenChange((onScreen) => {
+      if (!onScreen) readMarks.flush();
+    });
     return () => {
+      offScreenChange();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('blur', handleWindowBlur);
@@ -834,12 +828,9 @@
       // Same reasoning for a target already selected: a genuine tab switch never carries a
       // selection that belongs to the mode being entered.
       if (selectionBelongsToRoute(convs.selectedContact, mode)) return;
-      if (readReceiptTimer) {
-        clearTimeout(readReceiptTimer);
-        readReceiptTimer = null;
-      }
-      pendingReadWatermark = 0;
-      pendingReadServerAt = 0;
+      // The reading ends here, so its pending mark is DELIVERED - it used to be zeroed, after the
+      // local mark had moved, which lost the receipt for good.
+      readMarks.flush();
       convs.selectedContact = null;
       channels.selectedChannelConversationId = '';
       convs.closeSidePanel();

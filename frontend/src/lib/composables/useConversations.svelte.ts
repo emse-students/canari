@@ -240,6 +240,12 @@ export function useConversations() {
    * would otherwise leave `isLoadingHistory` up for good.
    */
   let salonSkeletonOwner = 0;
+  /**
+   * The salon whose load raised the skeleton, or `null` for a load with no salon identity (the DM
+   * path). A load issued at the tap raises it BEFORE its salon is selected, and a second press within
+   * the frame can select another salon: the skeleton is shown only on the salon it was raised for.
+   */
+  let skeletonSalon: string | null = null;
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
     if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
@@ -454,11 +460,11 @@ export function useConversations() {
     contactName: string,
     id: string,
     ctx: ConversationContext,
-    options?: { force?: boolean }
+    options?: { force?: boolean; atTap?: boolean }
   ) {
     // Channel conversations: load via REST API instead of MLS replay
     if (isChannelConversationId(contactName)) {
-      await loadChannelHistory(contactName, ctx, options?.force);
+      await loadChannelHistory(contactName, ctx, options?.force, options?.atTap);
       return;
     }
 
@@ -480,7 +486,10 @@ export function useConversations() {
     }
 
     const isSelected = selectedContact === contactName;
-    if (isSelected) isLoadingHistory = true;
+    if (isSelected) {
+      isLoadingHistory = true;
+      skeletonSalon = null;
+    }
     // The rows the fast path drew before the probe, which the reload after a replay supersedes.
     let drawnFirst: ChatMessage[] = [];
     try {
@@ -565,7 +574,8 @@ export function useConversations() {
   async function loadChannelHistory(
     channelConversationId: string,
     ctx: ConversationContext,
-    force = false
+    force = false,
+    atTap = false
   ) {
     const { channelService } = await import('$lib/services/ChannelService');
     const { decodeChannelMessageRow, UnreadableRowTally, V1_SESSION_NOT_HELD } =
@@ -586,10 +596,14 @@ export function useConversations() {
     // had just decoded - see `loadGenerations.ts` for the exact sequence. Not a refetch afterwards:
     // that was the heal that hid the race.
     const generation = salonLoadGenerations.begin(channelConversationId);
-    const isSelected = selectedContact === channelConversationId;
+    // `atTap`: the request leaves on the press, BEFORE the pane that will show this salon is mounted
+    // (the selection follows the pressed row's frame). The skeleton is raised all the same, so the
+    // pane mounts onto it instead of onto an empty list.
+    const isSelected = atTap || selectedContact === channelConversationId;
     if (isSelected) {
       isLoadingHistory = true;
       salonSkeletonOwner = generation;
+      skeletonSalon = channelConversationId;
     }
 
     try {
@@ -739,6 +753,7 @@ export function useConversations() {
       if (salonSkeletonOwner === generation) {
         isLoadingHistory = false;
         salonSkeletonOwner = 0;
+        skeletonSalon = null;
       }
     }
   }
@@ -1926,7 +1941,7 @@ export function useConversations() {
     },
     /** True while history is being fetched and decrypted for the selected conversation. */
     get isLoadingHistory() {
-      return isLoadingHistory;
+      return isLoadingHistory && (skeletonSalon === null || skeletonSalon === selectedContact);
     },
     /** Last send or membership error message to display to the user. */
     get sendError() {

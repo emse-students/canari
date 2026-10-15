@@ -7,6 +7,7 @@ import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { appendLog } from '$lib/utils/sessionLog';
 import { discoverMissingGroups } from '$lib/utils/chat/actions';
+import type { AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
 import {
   openGatewayConnection,
   syncConnectionAfterWsOpen,
@@ -30,12 +31,16 @@ const CONNECTION_WATCHDOG_MS = RECOVERY_TIMEOUT_MS;
 /**
  * Fires `discoverMissingGroups` and logs any error.
  * Centralises the 7-field spread to avoid duplication across every call site.
+ *
+ * @param verdicts what the connection sync of the same pass learnt about absent local groups - see
+ *   `AbsentGroupVerdicts`. Passed only by a caller that ran that sync just before.
  */
 export function runGroupDiscoveryImpl(
   ctx: SessionContext,
   cb: ChatSessionCallbacks,
   mlsService: IMlsService,
-  label = ''
+  label = '',
+  verdicts?: AbsentGroupVerdicts
 ): void {
   const st = ctx.getStorage();
   discoverMissingGroups({
@@ -47,6 +52,7 @@ export function runGroupDiscoveryImpl(
     deleteConversation: st ? (id) => st.deleteConversation(id) : undefined,
     log: cb.log,
     storage: st,
+    verdicts,
   }).catch((e) =>
     cb.log(`[WARN] Echec decouverte groupes${label ? ` (${label})` : ''}: ${String(e)}`)
   );
@@ -176,8 +182,8 @@ export async function attemptReconnectImpl(
       retry = true;
       return;
     }
-    await syncConnectionAfterWsOpen(connectionDeps);
-    runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls(), 'reconnect');
+    const verdicts = await syncConnectionAfterWsOpen(connectionDeps);
+    runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls(), 'reconnect', verdicts);
   } catch (err) {
     if (err instanceof Error && err.name === 'SessionExpiredError') {
       ctx.setIsLoggedIn(false);

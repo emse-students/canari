@@ -285,3 +285,30 @@ export function watermarkAfterReading(
   }
   return highest;
 }
+
+/**
+ * Where reading an open conversation moves this user's own mark.
+ *
+ * A DM OR AN MLS GROUP MOVES OVER FOREIGN MESSAGES ONLY. The mark used to move over the reader's own
+ * sends too, so every message sent was followed 2 s later by a `read_watermark` frame that told
+ * nobody anything: an author is already placed at their own message (`seenByAnchors`) and an own
+ * message is never unread (`isUnreadForUser`). Each of those frames is an MLS application frame that
+ * every member's device must decrypt and then checkpoint. See history-reconciliation, "The sender says
+ * only what is new".
+ *
+ * A SALON IS UNCHANGED, own and system rows included: its mark goes to the server, which counts
+ * unread rows against it.
+ */
+export function readMarkTarget(
+  msgs: Array<
+    Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'awaitingServerId'>
+  >,
+  current: number,
+  isSalon: boolean
+): number {
+  if (isSalon) return watermarkAfterReading(msgs, current, true);
+  return watermarkAfterReading(
+    msgs.filter((msg) => !msg.isOwn),
+    current
+  );
+}

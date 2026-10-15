@@ -188,6 +188,11 @@ this session (or which byte length/etag), and skip the rest.
 - Expected and not a defect here: `[GRAINE] REFUSED 4 / 14 v1 seed(s)` (v1 seeds are refused since
   G2-5) and `[CHANNEL] 5 message(s) of 61d765e1 are unreadable` that follow from it.
 
+> **2026-10-14: the store build, measured.** The same open, timed per condition (cold, warm, a slow
+> link, 4x/6x CPU, offline) on `1.2.7-alpha.3` with a reproducible instrument: the hub and the salon
+> history are network-gated, five serial requests sit on the first-paint path, and the budget is
+> [community-open-budget](community-open-budget.md).
+
 ## What this did not measure
 
 - **The store build.** Divide the durations by ~10; the freezes are then 150-400 ms each, which is

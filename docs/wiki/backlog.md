@@ -51,6 +51,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 
 | What | The measurement that closes it |
 | --- | --- |
+| a reply swipe along a thumb's arc (45-70 px of vertical drift) replies once the bubble shows armed (2026-10-14; 0 of 14 before, unit and component tests since) | on the Mi 9T, next pre-release: the class-A cells of the matrix (`F:/Programmation/canari-harness/swipe-reply-r1014/`), 110 px across with 45 and 60 px drift, own and received; on the iPhone 12, the same arc by finger, its swipe never having been read on WebKit ([design-reference](frontend/design-reference.md#the-reply-swipe-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-14)) |
 | an Android relaunch (navigation-mode switch, WebView update) destroys the old WebView, so its Web Locks no longer withhold refused salon texts (2026-10-14; compiled and source-gated, never run) | on the Mi 9T, next pre-release: switch the navigation mode twice, CDP lists ONE page, a salon text refused before the switch comes back to its composer; restore gestural ([mobile](frontend/mobile.md#a-relaunched-activity-left-its-webview-alive-and-the-orphan-kept-its-web-locks-2026-10-14)) |
 | a post push tapped with the session dead lands on `/login?returnTo=` the post (2026-10-09) | check H step 4 on the Mi 9T, killed app AND backgrounded ([device-verification](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)); a bare `/login` with no `[hooks] Processing URL` means the intent never reached the JS |
 | after an edge swipe the next scroll is swallowed (Mi 9T, 2026-10-05; NOT a code defect anyone has seen: the page never holds the touch) | check X, ONE real-finger scroll on the Mi 9T with the `[swipeBack]` lines now logged ([device-verification](device-verification.md#x-the-scroll-after-an-edge-swipe---owed-on-the-mi-9t)) |
@@ -116,7 +117,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **decide whether `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App itself** (a lockfile-refresh superseding a Dependabot pull request, which is how the last class of dependency update that needs a person would merge unattended) | 1 decision | [the P2](#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix) |
 | **set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret** (environment `development`; today only the repository-level production `FIREBASE_SERVICE_ACCOUNT_JSON` exists): without it dev sends no push and T1, the push-to-banner latency, cannot be measured | 1 secret | [the notification latency P2](#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11) |
 | **decide production's log retention**: the per-message lines at `LOG` level roll the container log over in ~20 minutes, so an incident older than that is unreadable | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
-| **decide whether the iPhone app follows Dynamic Type** (today it ignores the setting) | 1 decision | [2026-10-13 bench pass](#a-decision---the-iphone-ignores-dynamic-type) |
 | **decide the WebCrypto checkpoint seal** (design only) | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **raise `minClientVersion` to `1.2.1` once BOTH stores serve `1.2.1`** - `1.0.3`-`1.1.2` keep the native key-group epoch bug (a cold start arms an epoch gap, salon sends are refused, the device re-joins 45 s later); the floor is `1.0.3` since 2026-10-11; Apple's order is to wait for 1.2.1's review, then submit 1.2.4 | 1 gesture | [channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09), [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
@@ -170,6 +170,18 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
 
+## P1 - Opening a community is network-gated: the salons 1.7 s after the tap on Wi-Fi, 6 s on a slow link and phone, never offline (user, 2026-10-14; measured, not built)
+
+**User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Mi 9T, `1.2.7-alpha.3`, dev, cold, medians: tap -> salons 1.7 s (Wi-Fi), 6.0 s (slow3g + 4x CPU), never in airplane mode (also on the user's Pixel on production); a salon's first messages 1.9 s / 6.2 s after its tap. Budget proposed: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. Fixes F1-F7, ranked, none built - F1 (a local workspace list), F4 (a salon's last page kept locally, local-first-ui ledger row 9) and F6 (mount the visible bubbles first) are the ones that reach the budget: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`. **Owed**: a CPU profile of the warm resume at 4x (2 s before the tap is handled), the history head/body split, iOS.
+
+## P2 - A process death inside the 2 s read-receipt window loses that DM receipt (found 2026-10-15, building the sender coalescing)
+
+The local mark is persisted when it moves. The frame is queued only when the window ends, on leave, or when the app leaves the screen. A kill in between leaves nothing that would announce the mark, and the next open finds nothing new. The fix is the salon's shape: write the owed mark durably at decision time and drain it into the outbox at boot ([history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)). **Owed with it**: a Pixel or Mi 9T count of received `[READ] ... has read up to` lines and of MLS checkpoints per 3 minutes of a two-person DM exchange, on the coalescing build against the one before it.
+
+## P3 - 45 identical `[HISTORY_RECONCILE] ... asked 30s ago` lines in 250 ms at a cold start (Pixel 6a, production `1.2.7`, 2026-10-14)
+
+Read in the user's exported log (`F:\Programmation\canari-harness\pixel-r1014\`): one line per group instead of one per sweep. Noise defect, no behaviour change owed ([community-open-budget](frontend/community-open-budget.md#6-the-smallest-set-of-fixes-the-evidence-proves)).
+
 ## P3 - Asked by the USER on 2026-10-14 - "Modifier les pseudos" for a group and a community, design questions answered, not built
 
 > *"Une fonctionnalite comme sur Messenger : 'Modifier les pseudos', un ecran qui liste les membres du groupe ou de la communaute, avec 'Definir un pseudo' et un crayon a cote de chaque membre."* (not urgent)
@@ -183,7 +195,65 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 - **Where it lives is OPEN and splits by kind.** DM or group is an MLS room: a nickname fits an MLS application frame the server never reads (precedent: the silent edit frame, [chat](frontend/modules/chat.md)), but "anybody may" is then enforced only by convention between equals. A community salon is sealed with Graine and a moderator rule is a SERVER-checked grant, so only a server column enforces it, at the cost that the server sees the nickname. To decide: one mechanism or two.
 - **Scope**: per conversation, visible to every member of THAT conversation, never leaking to the profile or another conversation. A late joiner misses an MLS frame sent before they joined ([channel-encryption](protocols/channel-encryption.md)); a column has no such gap.
 - **Abuse**: a nickname set by someone else can be an insult. Show who set it (setter id travels with the value), let the target reset it for themselves, make the community case reportable and moderator-reversible ([moderation-and-blocking](moderation-and-blocking.md)), and do not let a blocked user rename the blocker. Length and content limits mirror the profile's; every string through Paraglide.
-- **Open for the user**: in a community, is the setter named to the target; does a nickname outlive its setter leaving.
+- **DECIDED by the user, 2026-10-14: TWO MECHANISMS.** Private groups carry the nickname in an MLS application frame the server never sees; communities use a server column with the moderator check. **Build is queued AFTER mute / mentions-only** (next section).
+- **Still open for the user**: in a community, is the setter named to the target; does a nickname outlive its setter leaving.
+
+## Group notification levels (all / mentions only / none) - requested by the USER 2026-10-14, release 1.2.8 WAITS for it
+
+**RELEASE SCOPE (user, 2026-10-14).** The stable `1.2.8` waits for these levels (mute and mentions-only, PR #1874) and carries #1863 (device-key vault per account), #1870, #1871 (notification sender name), #1875 (salon first frame), #1877, #1880 (reply swipe thumb arc) and the salon-level-over-socket fix. It does NOT wait for "a remove holds against a re-add" (draft PR #1878, under review or rework): that and the in-app camera everywhere (#1859, needs conflict resolution and Mi 9T + iPhone readings) go to `1.2.9`.
+
+*"Pour la prochaine mise a jour"*: the user decided 1.2.8 is held until both mute and mentions-only ship. A PR is in progress by an agent. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
+
+## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, in progress)
+
+**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (today `1.0.3`) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. This is a deliberate exception to the standing "`minClientVersion` stays `1.0.3`". The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
+
+Draft PR with server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
+
+## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, draft PR in progress
+
+Decided: declare system gesture exclusion rects for the right edge band while a conversation is open (a reply swipe started in an own bubble's last 17.5 px is a system Back: 11 of 11 on the Mi 9T). **Owed: a Mi 9T reading on the next pre-release.**
+
+## iPhone follows the system text size (Dynamic Type) - DECIDED by the user 2026-10-14, draft PR in progress
+
+Decided: the iPhone app FOLLOWS the system text size, like Android. **Owed: an iPhone 12 reading** (the 2026-10-13 bench pass saw the largest size draw as the default).
+
+## Next chantier after 1.2.8 - speed (user, 2026-10-14)
+
+Order: (1) opening a community or salon in **under 200 ms** for the tab and the first paint of cached content: F1 local workspace list (draft PR in progress), then F4 salon last page cached locally, the posts feed local-first (offline it says "Impossible de charger les posts"), read-marker coalescing (pending the adversarial review of #1879) - budget and ranking in [community-open-budget](frontend/community-open-budget.md); (2) CanaReels in chats (RC-3, RC-7, [reels-in-chat](frontend/modules/reels-in-chat.md)); (3) Graine v2 G2-6.
+
+## P3 - Found reading the Pixel 6a on prod 1.2.7 (Wi-Fi, LTE, offline, 2026-10-14)
+
+Evidence: `canari-log-1.2.7-20261014-1759.txt` in the harness state dir `pixel-r1014` (outside the repo, cite by name only).
+
+- **The Communities tab shows NO community offline**: the workspace list is not local-first, and the feed says "Impossible de charger les posts" (both in the speed chantier above).
+- **P2, from the agent of PR #1881: an "absent conversation" at cold start.** Kept; it also affects community open time, so it belongs with the speed chantier.
+- **79 MLS checkpoints in 3 minutes** (94-238 ms each, 9.4 s in all): one per bulk ingest, even for `read_watermark` frames.
+- **Salon open measured ~0.6 s on Wi-Fi and ~0.9 s on LTE, ~0.7 s of it a skeleton.** The user's target is **under 0.2 s** for the tab and for the first paint of cached salon messages (cold start excluded).
+- **Stale "a ajouté un membre au groupe" bubbles may remain stored** on devices from before #1870 (the cache wrote the native preview as a plain message). No migration decided.
+
+## P2 - A group joined in the background has no conversation row at cold start, and 47 of its 150 queued frames are lost (Pixel 6a, prod 1.2.7, 2026-10-14)
+
+Same log as above, cold start at 17:55:53. Not built: the fix moves when frames are decrypted, which is MLS-adjacent.
+
+**What the log shows, for group `513411dc` (a group the user's own other device created):**
+
+1. The native push service joined it in the background (epoch 1) and cached 21 plaintexts; it wrote no conversation row.
+2. 17:55:55.136: the server redelivers the Welcome. The handler finds the group held, takes the "already held - redelivered Welcome ignored" path, which promotes an EXISTING row and creates none. 150 frames parked behind it are re-queued.
+3. They are refused `absent-conversation` twice: at 17:55:55.4 (before the restore seeded rows) and at 17:55:57.0 (the "conversation rows seeded" re-fetch; storage holds no row for it either). That is 306 of the 314 `Message for absent conversation` lines and the 306 matching `messageCallback -> false`; 149 frames were handled 3 times. The other 8 refusals are 3 groups whose frames arrived before the restore seeded rows, read 1.7 s later.
+4. 17:55:58.3: the FCM-cache merge creates the row in memory (`mergeFcmMessagesIntoConversations`) and does NOT call `notifyConversationAvailable`, so nothing re-fetches the waiting frames.
+5. 17:55:58.661: a live frame for the group finds the row, is at epoch 18, and the gap healer replays 17 commits from the archive (epoch 1 -> 18) without the application frames between them.
+6. 17:55:59.883: the "conversations restored" re-fetch finally delivers the 150 frames; **47 are `LOST frame ... past epoch application frame`** and history reconciliation is asked to repair them (a 2-message bundle at 17:56:03, three more asks by 17:56:40).
+
+The other high-count lines of that window are per event: 114 `read_watermark` frames each advanced a watermark (one dispatch line and one `[READ]` line each, 97 of them this group's backlog), and `[QUEUE] Processing` is one per frame, tripled for this group by the refusals above.
+
+**Cost**: the frames arrive 6.5 s after cold start instead of ~1.5 s; two refusal passes take ~600 ms of drain on the main thread during the restore and first paint; 47 messages depend on a peer's history answer.
+
+**Proposed fix, smallest first:**
+
+- The "already held" Welcome branch writes the row when none exists (the same `buildConversationRow` + `upsertConversation` the install path uses) and calls `notifyConversationAvailable`. Then the 150 frames read in order at 17:55:55.4 and nothing is lost. To check first: the restore's prune (`loadExistingConversations` drops non-salon rows absent from storage) must not erase a row written between its storage read and its prune.
+- The FCM-cache merge calls `notifyConversationAvailable` for each row it creates (the invariant `ensureConversationForServerGroup` already keeps).
+- The gap healer should not jump a group past epochs while that group has frames noted `absent-conversation`: they are in the server queue, in order, and will be delivered.
 
 ## P3 - A re-added reader rescans its own dropped tail on every launch (fifth review of #1878, 2026-10-15)
 
@@ -348,12 +418,6 @@ Below the 160 px keyboard threshold no keyboard is ever "open", so `computeSnaps
 those frames; the 12 px (one `0.75rem`) comes from somewhere it does not reach. Cause not read: owed
 a per-frame record of `innerHeight`, `visualViewport.height` and the footer's padding on that rise.
 
-### A decision - the iPhone ignores Dynamic Type
-
-At the largest standard text size the app draws exactly as at the default, warm and cold: the
-WebView does not follow the setting. Whether that is accepted (Android's 200 % does scale, through
-the WebView) or the root font should follow `-apple-system-body` is the user's call.
-
 ## P1 - A community key group sends every repair answer to every seat, and 42 % of seats have no device behind them (production, 2026-10-12)
 
 `queued_message` went from 14 493 rows (2026-09-22) to 93 580. A community created on 2026-10-11 holds 34 946 of them. In 37 minutes of log, 94 % of its key-group application frames were seed requests and answers, and each answer was queued for about 100 seats. 821 of 1 952 active seats belong to devices with no session left, and those devices hold 56 % of the rows. External-join churn is refuted, no client is provably stuck, and the 11 commit-log holes are unchanged. Plan, cheapest first: say why each seed request was made (F3), let one device of the answerer answer (F2), send an answer only to the requester (F1), and revoke replaced device generations with predicate R, staged (F4, needs the user's go). Measurements, SQL and risks: [prod-queue-and-epoch-audit](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md). **State, 2026-10-12 evening:** F1-F3 MERGED (#1768, [channel-encryption §23](protocols/channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)) and NOT in `v1.2.5`, so the queue keeps growing until the next stable; F4 is done: the first pass revoked 43 devices, the second (R in full) 118 ([second pass](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#second-pass---2026-10-12)). **Measured 2026-10-13** ([why the queue holds 300 000 rows](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#why-the-queue-holds-300-000-rows---measured-2026-10-13)): 301 937 rows, 255 475 of the last day in ONE group (`1b1687d0`), and 266 of the 448 devices with a queue have a session, so the reaper cannot help. Hypothesis, not proven: that group's broadcast seed requests and answers, which #1768 (in `v1.2.6`, 2026-10-13) addresses to one device. **Owed - the measurement that settles it:** re-run the same per-group `GROUP BY` (rows in the last day, rows per hour) 24 h and 72 h after `v1.2.6`. If the queue can tell which client version a sender runs, split `1b1687d0`'s rows per hour by it; the queue has no version column, so the `ADDRESSED matched=N of M` lines in the delivery log are the other source. **Prediction:** `1b1687d0`'s last-day rows fall from 255 475 to under about 51 000 (-80 %, F1's expected gain) at 72 h, once most of its senders run `v1.2.6`. At 24 h they fall in proportion to the share that has updated. Rows from senders on `v1.2.6` reach 1-3 seats per answer instead of about 100. **The hypothesis is refuted** if `1b1687d0`'s rows per hour from updated senders stay at their earlier level. No deletion: these rows belong to live devices.
@@ -369,10 +433,6 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 ### P3 - 80 roster reads per connection for the stray-leaf sweep
 
 **Built (2026-10-13, draft PR `perf/group-rosters-batch`)**: one `POST /api/mls/group-rosters` per connection ([chat-delivery](services/chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13)). Owed once shipped: the per-connection count on a production console (expected 1 request where there were 80-81).
-
-### P3 - the key-distribution groups are asked about twice per connection
-
-`forgetGroupsAbsentFromServer` runs from `initializeConnection` and from the discovery pass, and each sends `GET /api/mls/groups/<id>` for the same 8 distribution groups the registry restored before the drain already names. A fact held locally is fetched twice (sibling of the cold-start `/groups` item above).
 
 ### P3 - an avatar 404 is the only way to learn a person has no photo
 
@@ -1087,7 +1147,7 @@ fails the day the site stops offending.
 
 ### P3 - docker-prune is built for the Portail-etu host but not installed there
 
-Measured 2026-10-10: the Portail-etu host is 70 % used (30 G of 45 G, 13 G free; 6.3 GB of 12 GB of images reclaimable, no build cache, 0 reclaimable volume) and it grew 4 G in a day, so 80 % is about two days away at that rate. (The old VM was 18 % on 2026-10-09.) **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"; threshold and scope set 2026-10-11, overriding the no-install-without-DSI-agreement rule for this case only):** an agent installs and runs the prune when the host passes 75 %, images and build cache only and never a volume, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
+**Pruned by hand 2026-10-14, 80 % -> 67 %** (2.6 GB unused images + 2.5 GB build cache; three empty orphan volumes `infrastructure_garage_data`, `garage_meta`, `media_meta` removed with the user's go). The cron is still not installed. Measured 2026-10-10: the Portail-etu host is 70 % used (30 G of 45 G, 13 G free; 6.3 GB of 12 GB of images reclaimable, no build cache, 0 reclaimable volume) and it grew 4 G in a day, so 80 % is about two days away at that rate. (The old VM was 18 % on 2026-10-09.) **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"; threshold and scope set 2026-10-11, overriding the no-install-without-DSI-agreement rule for this case only):** an agent installs and runs the prune when the host passes 75 %, images and build cache only and never a volume, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 
