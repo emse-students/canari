@@ -24,6 +24,7 @@ import { mergeHistoryFloor, parseHistorySince } from '$lib/utils/chat/historyWin
 import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
 import { answerAfterMailboxDrained, noteCoverageShortfall } from '$lib/utils/chat/historyReconcile';
 import { owedPullTicket } from '$lib/utils/chat/historyOverheardPull';
+import { dropOwnExcludedMessages } from '$lib/utils/chat/historyEntitlement';
 import {
   historyRangeStartFor,
   readHistoryEntries,
@@ -925,22 +926,29 @@ export async function handleSystemEvent(
 
       if (msgs.length > 0) {
         const existingIds = new Set(convo.messages.map((m) => m.id));
+        // HYGIENE, NOT A CONTROL (user, 2026-10-14: a Remove holds against a later re-add). The
+        // answering peer withholds what was sent while a member was out; a message that still
+        // reaches us from inside OUR OWN window is dropped here, each one logged. Only the messages
+        // we would ADD are checked - one we already hold changes nothing - so a bundle restating
+        // our own store costs no read. An unreadable window set ingests none of them.
+        const fresh = await dropOwnExcludedMessages(
+          convoKey,
+          userId,
+          msgs.filter((m) => !existingIds.has(m.id)),
+          { mlsService, log }
+        );
         // 1) Add only the genuinely new messages. The add-path (AddMessageToChatOptions) cannot
         //    carry reactions/tombstones, so that metadata is merged in step 2 for new AND existing
         //    messages alike.
-        const toAdd = msgs
-          .filter((m) => !existingIds.has(m.id))
-          .map((m) => ({
-            senderId: m.senderId.toLowerCase(),
-            content: m.content,
-            messageId: m.id,
-            timestamp: new Date(m.timestamp),
-            // The secondary sort key. Dropping it here - the replay path keeps it - left two
-            // messages sharing a client timestamp in an order that changed on every reload.
-            ...(typeof m.serverTimestamp === 'number'
-              ? { serverTimestamp: m.serverTimestamp }
-              : {}),
-          }));
+        const toAdd = (fresh ?? []).map((m) => ({
+          senderId: m.senderId.toLowerCase(),
+          content: m.content,
+          messageId: m.id,
+          timestamp: new Date(m.timestamp),
+          // The secondary sort key. Dropping it here - the replay path keeps it - left two
+          // messages sharing a client timestamp in an order that changed on every reload.
+          ...(typeof m.serverTimestamp === 'number' ? { serverTimestamp: m.serverTimestamp } : {}),
+        }));
         if (toAdd.length > 0) {
           // NAMES ITS CONVERSATION AND ITS SENDER, like the pin line above it. This said
           // "from the inviting peer" and nothing else - wrong twice on a device rejoining forty

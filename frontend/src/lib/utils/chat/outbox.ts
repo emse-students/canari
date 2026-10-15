@@ -21,7 +21,8 @@ import {
   mkReply,
   mkText,
 } from '$lib/proto/codec';
-import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkMediaEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import { quotePreviewEntitled, type PlaceableMessage } from './historyEntitlement';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { m } from '$lib/paraglide/messages';
@@ -34,7 +35,11 @@ import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
-import { SendEdgeRefusedError } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  ExclusionsRefusedError,
+  SendEdgeRefusedError,
+  type SentFrame,
+} from '$lib/mls-client/mlsDeliveryApi';
 import {
   UPLOAD_NO_ANSWER_ATTEMPTS,
   UPLOAD_PROGRESS_MARGIN_BYTES,
@@ -590,6 +595,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     conversations.set(found.key, { ...found.convo, messages });
   }
 
+  /** Record the server's receive time on a sent message in the reactive map; `persistSent` writes it. */
+  function patchServerTimestamp(messageId: string, serverTimestamp: number): void {
+    const found = findMessage(messageId);
+    if (!found) return;
+    const messages = [...found.convo.messages];
+    messages[found.idx] = { ...messages[found.idx], serverTimestamp };
+    conversations.set(found.key, { ...found.convo, messages });
+  }
+
   /** Persist the sent message to the encrypted messages store under the live conversation key. */
   async function persistSent(liveConvId: string, messageId: string): Promise<void> {
     if (!storage) return;
@@ -625,6 +639,93 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const messages = [...found.convo.messages];
     messages[found.idx] = { ...messages[found.idx], content };
     conversations.set(found.key, { ...found.convo, messages });
+  }
+
+  /** This device's copy of the quoted message - in memory, else the store - or `null` if it holds none. */
+  async function quotedCopy(messageId: string): Promise<PlaceableMessage | null> {
+    const found = findMessage(messageId);
+    if (found) return found.convo.messages[found.idx];
+    if (!storage) return null;
+    return storage.getMessage(messageId, deviceKey()).catch((e: unknown) => {
+      // Unreadable is not absent: rethrown so the reply waits rather than losing its quote.
+      log(`[OUTBOX] quoted ${messageId.slice(0, 8)}… unreadable from the store: ${String(e)}`);
+      throw e;
+    });
+  }
+
+  /**
+   * The reply as it may leave: its quote text kept, or blanked when the quoted message falls inside
+   * a current member's exclusion window (a Remove holds against a later re-add, user 2026-10-14) - a
+   * reply reaches every current member live and its stored copy rides every later history bundle.
+   *
+   * Decided HERE, at the send, against the windows in force now - never when the reply is composed,
+   * which would cost a round trip per reply and blank the quote for good when composed offline.
+   * **A failed read THROWS** into the send's own catch, an ordinary transient failure: the reply
+   * waits for the next attempt and is never blanked on a failure.
+   *
+   * **THE SERVER REFUSING THE READ (`ExclusionsRefusedError`, off the roster) IS NOT A VERDICT ON
+   * THIS DEVICE.** The route refuses on the roster alone, the send on this device's row - a device
+   * `active` but roster-less sends freely. So the read's refusal repairs nothing (the roster repair
+   * forgets the tree, and a destructive repair waits for proof the state is broken): the frame
+   * quotes by id only - what a reader of no window may safely carry - and the SEND decides. Accepted,
+   * the reply went out id-only; refused `sender-not-active`, the send's own arm repairs on its own
+   * proof (fourth review of #1878).
+   *
+   * A blank is permanent, so it is written to the entry and the echo - the stored copy is what a
+   * later bundle carries - but only by `commit`, once the frame carrying it has been ACCEPTED: a
+   * send that fails keeps the quote, and the next attempt decides again.
+   */
+  async function decideQuote(
+    entry: OutboxEntry
+  ): Promise<{ entry: OutboxEntry; commit: () => Promise<void> }> {
+    const kept = { entry, commit: async () => {} };
+    if (entry.kind !== 'reply' || !entry.replyTo?.preview) return kept;
+    const quoted = await quotedCopy(entry.replyTo.id);
+    let entitled: boolean;
+    try {
+      entitled = await quotePreviewEntitled(entry.conversationId, quoted, { mlsService, log });
+    } catch (e) {
+      if (!(e instanceof ExclusionsRefusedError)) throw e;
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… the server refused the exclusion windows of ${entry.conversationId.slice(0, 8)}… (not on its roster) - the reply quotes by id only, and the send decides whether this device is a member`
+      );
+      entitled = false;
+    }
+    if (entitled) return kept;
+    const blanked: OutboxEntry = { ...entry, replyTo: { ...entry.replyTo, preview: '' } };
+    return { entry: blanked, commit: () => persistBlankedQuote(blanked) };
+  }
+
+  /** Writes an accepted reply's blanked quote to its queue entry and its echo - see `decideQuote`. */
+  async function persistBlankedQuote(blanked: OutboxEntry): Promise<void> {
+    const entry = blanked;
+    // A row withdrawn while its frame was on the wire is gone for good: saving it would put a
+    // deleted message back in the queue (#1887's withdrawal).
+    if (!cancelled.has(entry.id)) {
+      await storage
+        ?.saveOutboxEntry(blanked, deviceKey())
+        .catch((e: unknown) =>
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… blanked quote not saved to the queue: ${String(e)}`
+          )
+        );
+    }
+    const found = findMessage(entry.id);
+    if (found) {
+      const echo = found.convo.messages[found.idx];
+      const env = parseEnvelope(echo.content);
+      const content =
+        env.kind === 'text' && env.replyTo
+          ? serializeEnvelope(mkTextEnvelope(env.text, { ...env.replyTo, content: '' }))
+          : echo.content;
+      const messages = [...found.convo.messages];
+      messages[found.idx] = {
+        ...echo,
+        content,
+        ...(echo.replyTo ? { replyTo: { ...echo.replyTo, content: '' } } : {}),
+      };
+      conversations.set(found.key, { ...found.convo, messages });
+    }
   }
 
   /**
@@ -1119,6 +1220,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // Media: upload (idempotent) then build proto + the real attachment envelope.
       let proto: Uint8Array;
       let mediaContent: string | undefined;
+      // What an accepted frame makes permanent (a blanked quote); nothing for any other entry.
+      let commitQuote: () => Promise<void> = async () => {};
       if (entry.kind === 'media') {
         const prepared = await prepareMedia(entry);
         proto = prepared.proto;
@@ -1128,7 +1231,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         // the whole network race and a renderer that observed that state stays on its skeleton.
         updateMessageContent(entry.id, mediaContent);
       } else {
-        proto = buildOutboxProto(entry) ?? new Uint8Array(0);
+        const decided = await decideQuote(entry);
+        commitQuote = decided.commit;
+        proto = buildOutboxProto(decided.entry) ?? new Uint8Array(0);
       }
 
       // LAST LOOK, WITH NO AWAIT BEFORE THE CLAIM. The check at the top of this function is many
@@ -1145,7 +1250,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // "never sent" for a frame the peers already had - so no `delete_message` went out.
       inFlight.add(entry.id);
       try {
-        await mlsService.sendMessage(terminalId, proto, entry.id, deliveryForOutboxEntry(entry));
+        const sent: SentFrame = await mlsService.sendMessage(
+          terminalId,
+          proto,
+          entry.id,
+          deliveryForOutboxEntry(entry)
+        );
+        // A KNOWN CRASH WINDOW, AND WHY IT IS ACCEPTED: a kill between the accepted send and this
+        // write leaves the local entry and echo with the quote text the frame did not carry. The
+        // text is this device's own (it was decrypted here), so nothing reaches anyone who was out;
+        // only this device keeps showing it. The window is one storage write wide
+        // (history-reconciliation).
+        await commitQuote();
+        // THE SENDER'S OWN COPY GETS THE SERVER TIME every recipient's copy carries. A sender never
+        // receives its frame back, so this answer is the only place it can come from - and an
+        // undated copy cannot be placed against an exclusion window (a Remove holds against a later
+        // re-add, user 2026-10-14). A control frame is not a message: its entry id names the
+        // message it mutates, whose own time must not move.
+        if (entry.kind !== 'control') {
+          if (sent.receivedAt !== null) patchServerTimestamp(entry.id, sent.receivedAt);
+          else log(`[OUTBOX] ${entry.id.slice(0, 8)}… sent, the server answered no receive time`);
+        }
         // The media envelope was installed immediately after upload, before the MLS send.
         await persistSent(terminalId, entry.id);
         patchStatus(entry.id, 'sent');

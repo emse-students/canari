@@ -28,6 +28,14 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { resolveUserDisplayName, resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
 import { mlsFrameEpoch } from '../utils/mls-frame-epoch';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import {
+  exclusionWindows,
+  openMissingIntervals,
+  partingKey,
+  withholdExcludedHistoryRows,
+  type ExclusionWindow,
+} from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import {
   deleteGroupOwnedRows,
@@ -115,6 +123,14 @@ export interface SendMessageResult {
   status: string;
   queued: number;
   sent: number;
+  /**
+   * The instant this server received the frame, in milliseconds - the SAME value written as
+   * `createdAt` on every queued copy, so the sender can date its own copy with the time every
+   * recipient's copy carries. A sender never receives its own frame back, and without this its
+   * copy had no server time at all (a Remove holds against a later re-add, user 2026-10-14: an
+   * undated message cannot be placed against an exclusion window).
+   */
+  receivedAt: number;
 }
 
 export interface ValidateCommitBody {
@@ -156,6 +172,23 @@ export interface ValidateCommitBody {
    * before, with nothing replayed.
    */
   admits?: { userId: string; deviceId: string }[];
+  /**
+   * Whom this commit REMOVES from the tree, as the committing device staged it: a whole person
+   * (`userId` alone, every leaf of theirs) or one device (`userId` + `deviceId`).
+   *
+   * The removal was recorded by the server first (`removeGroupMember`), which deleted the device rows
+   * the fan-out resolves from - so the removed devices are found in the parting hint (`partingKey`)
+   * and the commit is queued to the ones this list names, and only those. Keyed to what the commit
+   * declares rather than to who sent it, so two removals in flight each reach their own person, and
+   * whoever commits a removal - the remover, or a holder collecting a stray leaf - delivers it.
+   * Absent from a client predating the field: its removals reach the removed devices as they did
+   * before, which is not at all.
+   *
+   * DECLARED, NOT PROVEN - the server cannot read the commit, so any member can forge it. Bounded by
+   * the hint: a forgery can only consume an entry (suppress a delivery), never route a frame to a
+   * device the server did not itself part from this group.
+   */
+  removes?: { userId: string; deviceId?: string }[];
 }
 
 export interface ValidateCommitResult {
@@ -966,7 +999,15 @@ export class MessagingService {
    * For online recipients, publishes via Redis pub/sub and schedules a deferred FCM fallback.
    * For offline recipients, schedules an immediate FCM push (non-blocking).
    */
-  async sendMessage(body: SendMessageBody, authUserIdRaw?: string): Promise<SendMessageResult> {
+  /**
+   * @param parting INTERNAL ONLY, never read from a request body: the removed devices a commit is
+   *   also queued to, resolved by {@link validateCommit} from what the commit declares it removes.
+   */
+  async sendMessage(
+    body: SendMessageBody,
+    authUserIdRaw?: string,
+    parting: ReadonlyArray<{ userId: string; deviceId: string }> = []
+  ): Promise<SendMessageResult> {
     const traceId = this.makeTraceId('send');
 
     // `senderId` is what the shared log records as the author of the frame, and what a device
@@ -981,6 +1022,12 @@ export class MessagingService {
     const ops: QueuedMessage[] = [];
     let sentCount = 0;
     const addressed = readAddressedDevices(body);
+    // ONE receive instant for the whole frame: every queued copy, the history stream row and the
+    // answer to the sender carry it, so every device that holds this message holds the same server
+    // time for it - the time an exclusion window is compared against (`historyEntitlement.ts`).
+    const receivedAt = new Date();
+    /** `userId:deviceId` of the parting devices this commit was queued to - consumed once queued. */
+    let partingConsumed: string[] = [];
 
     this.logger.log(
       `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}` +
@@ -1166,7 +1213,18 @@ export class MessagingService {
               `devices=${ghosts.map((m) => `${m.userId}:${m.deviceId}`).join(',')}`
           );
         }
-        for (const m of targets) {
+        // A COMMIT ALSO REACHES WHOEVER IT REMOVES. A removal is recorded before its commit and
+        // deletes the removed person's device rows, so the set above no longer names them - the
+        // commit that removes them would never reach them (`partingKey` says why). The devices the
+        // commit declared are queued like members' rows, minus any `targets` already names (a person
+        // re-added in between is reached as a member), and their entries are consumed once queued.
+        const already = new Set(targets.map((t) => `${t.userId}:${t.deviceId}`));
+        const removed =
+          body.isCommit && !addressed
+            ? parting.filter((p) => !already.has(`${p.userId}:${p.deviceId}`))
+            : [];
+        partingConsumed = removed.map((p) => `${p.userId}:${p.deviceId}`);
+        for (const m of [...targets, ...removed]) {
           ops.push(
             this.queuedMessageRepo.create({
               recipientId: m.userId,
@@ -1177,7 +1235,7 @@ export class MessagingService {
               isWelcome: body.isWelcome,
               isCommit: body.isCommit,
               proto,
-              createdAt: new Date(),
+              createdAt: receivedAt,
             })
           );
         }
@@ -1289,7 +1347,7 @@ export class MessagingService {
             groupId,
             content: safeContent,
             type: safeType,
-            createdAt: new Date(),
+            createdAt: receivedAt,
           })
         );
       }
@@ -1346,6 +1404,15 @@ export class MessagingService {
     if (toDeliver.length > 0) {
       await this.enqueueForLiveGroup(toDeliver, body.groupId, 'SEND', traceId);
       this.logger.log(`[SEND][${traceId}] QUEUED count=${toDeliver.length}`);
+      if (partingConsumed.length > 0 && body.groupId) {
+        await this.redis
+          .hdel(partingKey(body.groupId), ...partingConsumed)
+          .catch((e: unknown) =>
+            this.logger.warn(
+              `[SEND][${traceId}] parting entries NOT cleared group=${body.groupId?.slice(0, 8)} - a later commit naming them reaches them again: ${String(e)}`
+            )
+          );
+      }
     } else {
       // A GROUP DELETED BEFORE THIS SEND HAS NO ROSTER LEFT, SO IT LANDS HERE AND NOT ABOVE.
       // `tombstoneGroups` sweeps the device memberships with everything else, so the recipient set
@@ -1421,7 +1488,7 @@ export class MessagingService {
             'content',
             body.proto,
             'timestamp',
-            new Date().toISOString()
+            receivedAt.toISOString()
           )
           // THE AGE BOUND - the one the rest of the system already claims and this stream alone did
           // not honour. `MAXLEN` bounds the stream by COUNT, which says nothing about how far back
@@ -1489,7 +1556,12 @@ export class MessagingService {
     // that do not exist.
     this.logger.log(`[SEND][${traceId}] DONE queued=${toDeliver.length} realtime=${sentCount}`);
 
-    return { status: 'processed', queued: toDeliver.length, sent: sentCount };
+    return {
+      status: 'processed',
+      queued: toDeliver.length,
+      sent: sentCount,
+      receivedAt: receivedAt.getTime(),
+    };
   }
 
   /**
@@ -1704,14 +1776,27 @@ export class MessagingService {
       // broadcast is a single atomic unit; delivery is fast (queued rows + Redis publish, FCM is
       // deferred). Best-effort: the commit-log is already the durable source of truth, so a device
       // that misses the realtime fan-out replays it via GET /mls/commits. [[C7]]
-      await this.sendMessage({
+      // A device back in the tree - admitted by this commit, or committing itself (an external
+      // rejoin) - is no longer parting: an entry left for it would hand a LATER removal's commit to
+      // nobody who needs it, so it ends here, on that state.
+      await this.clearParting(
         groupId,
-        senderId: body.senderId,
-        senderDeviceId: deviceId,
-        proto: commitProto,
-        isCommit: true,
-        excludeDeviceIds: body.excludeDeviceIds,
-      }).catch((e) =>
+        [...admitted, ...(body.senderId ? [{ userId: body.senderId, deviceId }] : [])],
+        traceId
+      );
+      const parting = await this.declaredPartingDevices(groupId, body.removes, traceId);
+      await this.sendMessage(
+        {
+          groupId,
+          senderId: body.senderId,
+          senderDeviceId: deviceId,
+          proto: commitProto,
+          isCommit: true,
+          excludeDeviceIds: body.excludeDeviceIds,
+        },
+        undefined,
+        parting
+      ).catch((e) =>
         this.logger.warn(
           `[COMMIT][${traceId}] commit fan-out failed group=${groupId}: ${String(e)}`
         )
@@ -1736,6 +1821,70 @@ export class MessagingService {
         );
       }
     }
+  }
+
+  /**
+   * The parted devices of `groupId` (see `partingKey`) that a commit's declared `removes` names: every
+   * device of a person named alone, the one device of a person named with it. Nothing for a commit
+   * that declares nothing - an ordinary commit, or one from a build predating the field.
+   *
+   * Only an entry the server itself wrote can be named, so a commit cannot route itself to a device
+   * that was never parted from this group. A failed read reaches nobody extra and says so.
+   */
+  private async declaredPartingDevices(
+    groupId: string,
+    removes: ValidateCommitBody['removes'],
+    traceId: string
+  ): Promise<Array<{ userId: string; deviceId: string }>> {
+    const declared = (Array.isArray(removes) ? removes : []).filter(
+      (r): r is { userId: string; deviceId?: string } =>
+        typeof r?.userId === 'string' &&
+        r.userId.length > 0 &&
+        (r.deviceId === undefined || typeof r.deviceId === 'string')
+    );
+    if (declared.length === 0) return [];
+    let entries: Record<string, string>;
+    try {
+      entries = await this.redis.hgetall(partingKey(groupId));
+    } catch (e) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] parting devices unreadable group=${groupId.slice(0, 8)} - the removed device(s) miss their removal commit: ${String(e)}`
+      );
+      return [];
+    }
+    const parting = Object.keys(entries ?? {})
+      .map((key) => {
+        const at = key.lastIndexOf(':');
+        return { userId: key.slice(0, at), deviceId: key.slice(at + 1) };
+      })
+      .filter((p) =>
+        declared.some(
+          (r) => r.userId === p.userId && (r.deviceId === undefined || r.deviceId === p.deviceId)
+        )
+      );
+    this.logger.log(
+      `[COMMIT][${traceId}] PARTING group=${groupId.slice(0, 8)} removes=${declared.length} - commit also queued to ${parting.length} removed device(s)${parting.length > 0 ? `: ${parting.map((p) => `${cutUserId(p.userId)}:${cutDeviceId(p.deviceId)}`).join(',')}` : ''}`
+    );
+    return parting;
+  }
+
+  /**
+   * Ends the parting entries of devices that are in the tree again (see `partingKey`). Best-effort:
+   * a failure leaves an entry only a commit declaring that device's removal could ever name.
+   */
+  private async clearParting(
+    groupId: string,
+    devices: ReadonlyArray<{ userId: string; deviceId: string }>,
+    traceId: string
+  ): Promise<void> {
+    if (devices.length === 0) return;
+    await this.redis
+      .hdel(partingKey(groupId), ...devices.map((d) => `${d.userId}:${d.deviceId}`))
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `[COMMIT][${traceId}] parting entries of re-admitted device(s) NOT cleared group=${groupId.slice(0, 8)}: ${String(e)}`
+        )
+      );
   }
 
   /**
@@ -3165,6 +3314,26 @@ export class MessagingService {
    *
    * @param quietWhenCaughtUp the batch route's: a group whose cursor IS the head writes no line, and
    *   is counted in `[HISTORY_BATCH]` instead - 83 of 85 lines per launch said only that.
+   *
+   * **WITH `windows`, THE READER'S OWN EXCLUSION WINDOWS, A ROW INSIDE ONE IS DROPPED AND THE PAGE
+   * STILL FILLS** (a Remove holds against a later re-add, user 2026-10-14). Every build ends its walk
+   * on an empty page and continues from the LAST row it was handed, so a page that dropped its rows
+   * and returned short would end the walk with real rows still behind the dropped ones. The read
+   * goes on until `limit` rows are kept or the bound is reached, in chunks of at least
+   * `HISTORY_FULL_PAGE_LIMIT` whatever the caller's `limit` - the caller sets how much it is HANDED,
+   * never how many reads it costs: a `limit` of 1 would otherwise buy one `XRANGE` per row, up to
+   * `HISTORY_STREAM_MAXLEN` of them (fourth review of #1878). Rows dropped past the last kept one
+   * are read again by the next page and dropped again - nothing is skipped that a later page would
+   * not reach.
+   *
+   * **A DROPPED TAIL IS RESCANNED, ON PURPOSE.** A reader whose only unread rows lie in its own window
+   * reads them again on every launch, because every build advances only over rows it was handed. The
+   * rescan is bounded by the stream's `MAXLEN` and costs whole chunks. Naming the tail so the cursor
+   * could jump it (`skipTo`) was built and DELETED (fifth review of #1878): a window read wrongly
+   * open - a roster row with no open interval - moved the cursor past rows the later repair made
+   * entitled again, hiding them for good. A bounded rescan is the cost of never hiding a row
+   * (history-reconciliation, backlog P3). A cursor followed only by dropped rows up to the head is
+   * still counted as caught up rather than logged on every launch.
    */
   private async readHistoryStreamPage(
     groupId: string,
@@ -3172,23 +3341,47 @@ export class MessagingService {
     limit: number,
     until: string | undefined,
     requester: string,
-    quietWhenCaughtUp = false
-  ): Promise<{ rows: Record<string, unknown>[]; head?: string; caughtUp: boolean }> {
+    quietWhenCaughtUp = false,
+    windows?: readonly ExclusionWindow[]
+  ): Promise<{
+    rows: Record<string, unknown>[];
+    head?: string;
+    caughtUp: boolean;
+  }> {
     const streamKey = `history:${groupId}`;
-    const startId = after ? `(${after}` : '-';
     const endId = until ?? '+';
-    const entries = await this.redis.xrange(streamKey, startId, endId, 'COUNT', limit);
+    const filtering = windows !== undefined && windows.length > 0;
+    // Without windows nothing is dropped, so this is the single read of `limit` it always was.
+    const chunk = filtering ? Math.max(limit, HISTORY_FULL_PAGE_LIMIT) : limit;
+    const kept: Record<string, unknown>[] = [];
+    let withheld = 0;
+    let read = 0;
+    let lastRead = after;
+    while (kept.length < limit) {
+      const startId = lastRead ? `(${lastRead}` : '-';
+      const entries = await this.redis.xrange(streamKey, startId, endId, 'COUNT', chunk);
+      read += entries.length;
+      if (entries.length > 0) lastRead = entries[entries.length - 1][0];
+      const page = withholdExcludedHistoryRows(this.mapHistoryEntries(entries), windows ?? []);
+      withheld += page.withheld;
+      kept.push(...page.rows.slice(0, limit - kept.length));
+      if (entries.length < chunk || !filtering) break;
+    }
     const head = until
       ? until
       : ((await this.redis.xrevrange(streamKey, '+', '-', 'COUNT', 1))[0]?.[0] ?? undefined);
-    const caughtUp = entries.length === 0 && after !== undefined && head === after;
+    const caughtUp =
+      kept.length === 0 &&
+      after !== undefined &&
+      (head === after || (read > 0 && lastRead === head));
     if (!(quietWhenCaughtUp && caughtUp)) {
       this.logger.log(
         `[HISTORY] ${requester} group=${groupId} after=${after ?? 'start'} ` +
-          `until=${until ?? 'none'} head=${head ?? 'empty'} limit=${limit} entries=${entries.length}`
+          `until=${until ?? 'none'} head=${head ?? 'empty'} limit=${limit} entries=${kept.length}` +
+          (withheld > 0 ? ` withheld=${withheld} (sent while the reader was out of the group)` : '')
       );
     }
-    return { rows: this.mapHistoryEntries(entries), head, caughtUp };
+    return { rows: kept, head, caughtUp };
   }
 
   /**
@@ -3286,18 +3479,65 @@ export class MessagingService {
     }
 
     try {
-      const { rows, head } = await this.readHistoryStreamPage(
+      const windows = await this.ownExclusionWindows(headerUserId, groupId);
+      const page = await this.readHistoryStreamPage(
         groupId,
         after,
         limit,
         until,
-        requester
+        requester,
+        false,
+        windows
       );
-      return { rows: await this.enrichHistoryWithDisplayNames(rows), head };
+      return {
+        rows: await this.enrichHistoryWithDisplayNames(page.rows),
+        head: page.head,
+      };
     } catch (e) {
       this.logger.error(`[HISTORY] ${requester} group=${groupId} error=${String(e)}`);
       throw new ServiceUnavailableException('History stream unavailable');
     }
+  }
+
+  /**
+   * The caller's OWN exclusion windows in `groupId` - the spans they were out of the group (user,
+   * 2026-10-14: a Remove holds against a later re-add). Empty for a caller who never left, and for
+   * an internal caller with no user header, which reads on nobody's behalf.
+   *
+   * ONE GROUP PER READ, so the batch route isolates a failure to the group it was read for: one
+   * Postgres hiccup answers that group empty, never the whole batch.
+   *
+   * **A ROSTER MEMBER WITH NO OPEN INTERVAL IS REPAIRED BEFORE ITS WINDOWS ARE READ** (fifth review
+   * of #1878). Read as it stands, their last closed interval is a window open to now, and every row
+   * since their removal would be dropped although they are a member again. The repair is the one
+   * `GET .../exclusions` runs (`openMissingIntervals`), with the same ERROR line; it costs a roster
+   * read only when no interval is open, so a consistent member pays nothing extra.
+   */
+  private async ownExclusionWindows(
+    headerUserId: string | undefined,
+    groupId: string
+  ): Promise<ExclusionWindow[]> {
+    const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (!userId) return [];
+    const read = () =>
+      this.groupRepo.manager.find(GroupMembershipInterval, {
+        where: { userId, groupId },
+        select: { groupId: true, joinedAt: true, leftAt: true },
+      });
+    let intervals = await read();
+    if (intervals.length > 0 && !intervals.some((r) => r.leftAt === null)) {
+      // The roster is read under a lock inside the helper - a person removed meanwhile gets nothing.
+      const opened = await openMissingIntervals(this.groupRepo.manager, groupId, [userId]);
+      if (opened.length > 0) {
+        this.logger.error(
+          `[HISTORY] group=${groupId.slice(0, 8)} user=${userId.slice(0, 8)} opened a missing interval - a member with no open interval (pre-030 enrolment or an interrupted one) would have read as out of the group`
+        );
+      }
+      // Re-read rather than patch the list: a concurrent repair may have opened it instead, and a
+      // removal may have closed it since - the table is the only answer to both.
+      intervals = await read();
+    }
+    return exclusionWindows(intervals);
   }
 
   /**
@@ -3348,13 +3588,18 @@ export class MessagingService {
           return;
         }
         try {
+          // Read per group and inside its `try`: a failed read answers THIS group empty - never its
+          // stream unfiltered, which is what this read exists to prevent - and the rest of the batch
+          // is served.
+          const windows = await this.ownExclusionWindows(headerUserId, groupId);
           const page = await this.readHistoryStreamPage(
             groupId,
             after,
             limit,
             until,
             requester,
-            true
+            true,
+            windows
           );
           histories[groupId] = page.rows;
           if (page.head) heads[groupId] = page.head;

@@ -378,6 +378,10 @@ export async function sendChatMessage(
     return { success: false, error: m.chat_conversation_deleted_message() };
   }
 
+  // A quote from inside a member's exclusion window is decided by the OUTBOX, at the send - not here,
+  // where it would cost a round trip per reply and turn an offline compose into a lost quote. See
+  // `decideQuote` in `outbox.ts`.
+
   // THE ECHO AND ITS QUEUE ENTRY ARE ONE WRITE, and the entry is therefore built first.
   //
   // It used to be two awaits in the other order - persist the echo, then queue it - and a document

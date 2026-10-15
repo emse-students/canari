@@ -47,6 +47,7 @@ import {
 } from './outbox';
 import {
   DeliveryUnreachableError,
+  ExclusionsRefusedError,
   GroupDeletedError,
   SenderNotActiveError,
   SendForbiddenError,
@@ -78,6 +79,8 @@ import {
 } from '$lib/db/outboxCodec';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { TabOutboxEvent } from '$lib/mls-client/tabMessageSync';
+import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
+import { mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
 
@@ -133,8 +136,12 @@ function makeStorage(seed: OutboxEntry[] = []) {
 function makeMls(
   opts: {
     meta?: (id: string) => unknown;
-    send?: () => Promise<void>;
+    send?: (...args: unknown[]) => Promise<void>;
     active?: (id: string) => Promise<boolean>;
+    /** The server's exclusion windows; nobody was ever out by default. */
+    exclusions?: (
+      id: string
+    ) => Promise<Map<string, Array<{ from: number; until: number | null }>>>;
   } = {}
 ) {
   return {
@@ -143,9 +150,20 @@ function makeMls(
       opts.meta ? opts.meta(id) : { groupId: id, name: '', isGroup: true, deletedAt: null }
     ),
     isGroupActive: vi.fn(opts.active ?? (async () => true)),
-    sendMessage: vi.fn(opts.send ?? (async () => {})),
+    getGroupExclusions: vi.fn(opts.exclusions ?? (async () => new Map())),
+    // Whatever a test's own `send` does (throw, wait), an accepted frame answers what the real
+    // service answers: the sealed bytes and the server's receive time.
+    sendMessage: vi.fn(async (...args: unknown[]) => {
+      await (opts.send ?? (async () => {}))(...args);
+      return accepted();
+    }),
     waitForMessageQueueIdle: vi.fn(async () => {}),
   } as any;
+}
+
+/** What `sendMessage` answers for a frame the server took: the sealed bytes and its receive time. */
+function accepted(): SentFrame {
+  return { sealed: new Uint8Array(), receivedAt: 1_700_000_000_000 };
 }
 
 function convoWith(id: string, messageIds: string[]): Conversation {
@@ -405,6 +423,23 @@ describe('outbox flusher', () => {
     expect(sentIds).toEqual(['m1', 'm2']);
     expect(storage._map.size).toBe(0);
     expect(conversations.get('g1')!.messages.every((m) => m.status === 'sent')).toBe(true);
+  });
+
+  it("dates a sent message by the server's receive time, in memory and on disk", async () => {
+    // A history answer places our OWN copies against exclusion windows by this field - left
+    // undated, they could only be placed by the phone clock.
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(conversations.get('g1')!.messages[0].serverTimestamp).toBe(1_700_000_000_000);
+    expect(storage.saveMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'm1', serverTimestamp: 1_700_000_000_000 }),
+      'device-key'
+    );
   });
 
   it('sends a control entry silently (silent=true) then deletes it', async () => {
@@ -1852,6 +1887,7 @@ describe('outbox lanes - a stalled send freezes its own conversation and nothing
     const send = vi.fn(async (_g: string, _p: Uint8Array, id: string) => {
       started.push(id);
       await new Promise<void>((resolve, reject) => gates.set(id, { resolve, reject }));
+      return accepted();
     });
     return { gates, started, send };
   }
@@ -1922,6 +1958,7 @@ describe('outbox lanes - a stalled send freezes its own conversation and nothing
     const mlsService = makeMls();
     mlsService.sendMessage = vi.fn(async (_g: string, _p: Uint8Array, id: string) => {
       sent.push(id);
+      return accepted();
     });
     const outbox = createOutbox(makeDeps({ mlsService, storage }));
     await outbox.flush();
@@ -1982,7 +2019,7 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
     const mlsService = makeMls();
     mlsService.sendMessage = vi.fn(async (g: string, _p: Uint8Array, id: string) => {
       sent.push(id);
-      if (healed && g === 'gT') return;
+      if (healed && g === 'gT') return accepted();
       if (g === 'gT') throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
       throw new SenderNotActiveError(g, 'pending');
     });
@@ -2040,6 +2077,7 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
             // The POST REACHED the server; the link died with the answer.
             throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
           }
+          return accepted();
         });
         return mls;
       };
@@ -2067,6 +2105,231 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14). A reply carries the quoted message's text
+ * to every current member live, so a quote of something sent while one of them was out carries the
+ * id only. Decided HERE, at the send, against the windows in force then - and never on a failure,
+ * because a blank is permanent (second review of #1878).
+ */
+describe('outbox - a reply decides its quote text at the send', () => {
+  beforeEach(() => {
+    connectivity.reset();
+  });
+
+  const QUOTED_AT = 1_700_000_050_000;
+  /** Bob was out around the quoted message. */
+  const bobsWindow = async () => new Map([['bob', [{ from: QUOTED_AT - 1, until: null }]]]);
+
+  function replyEntry(): OutboxEntry {
+    return {
+      id: 'r1',
+      conversationId: 'g1',
+      sentAt: 100,
+      kind: 'reply',
+      text: 'answer',
+      replyTo: { id: 'q1', senderId: 'carol', preview: 'the quoted words' },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+  }
+
+  function convo(): Conversation {
+    return {
+      ...convoWith('g1', []),
+      messages: [
+        {
+          id: 'q1',
+          senderId: 'carol',
+          content: 'x',
+          timestamp: new Date(QUOTED_AT),
+          serverTimestamp: QUOTED_AT,
+          isOwn: false,
+        },
+        {
+          id: 'r1',
+          senderId: 'u',
+          content: serializeEnvelope(
+            mkTextEnvelope('answer', { id: 'q1', senderId: 'carol', content: 'the quoted words' })
+          ),
+          replyTo: { id: 'q1', senderId: 'carol', content: 'the quoted words' },
+          timestamp: new Date(100),
+          isOwn: true,
+          status: 'pending' as const,
+        },
+      ],
+    };
+  }
+
+  const sentPreview = (mls: any): string | null | undefined =>
+    decodeAppMessage(mls.sendMessage.mock.calls[0][1] as Uint8Array)?.reply?.replyTo?.preview;
+
+  it('quotes by id only when the quoted message falls in a member window - frame, entry and echo', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({ exclusions: bobsWindow });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(sentPreview(mlsService)).toBe('');
+    expect(storage.saveOutboxEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'r1', replyTo: expect.objectContaining({ preview: '' }) }),
+      'device-key'
+    );
+    const echo = conversations.get('g1')!.messages.find((m) => m.id === 'r1')!;
+    expect(echo.replyTo?.content).toBe('');
+    const env = parseEnvelope(echo.content);
+    expect(env.kind === 'text' && env.replyTo?.content).toBe('');
+  });
+
+  it('keeps the quote text when nobody is out around it', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(sentPreview(mlsService)).toBe('the quoted words');
+  });
+
+  it('sends nothing and blanks nothing when the windows cannot be read - the reply waits', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({
+      exclusions: async () => {
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.get('r1')!.replyTo!.preview).toBe('the quoted words');
+    expect(storage._map.get('r1')!.status).not.toBe('failed');
+    outbox.dispose();
+  });
+
+  /**
+   * A 403 ON THE WINDOWS IS AN ANSWER ABOUT THE ROSTER, NOT ABOUT THIS DEVICE (fourth review of
+   * #1878). The route refuses on the roster alone; the send refuses on this device's row. So a device
+   * `active` but roster-less must not lose its tree to the roster repair for quoting a message: the
+   * reply goes out quoting by id only, and only the SEND's own refusal may repair.
+   */
+  it('an active, roster-less device sends its reply id-only and repairs NOTHING', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({
+      exclusions: async () => {
+        throw new ExclusionsRefusedError('g1');
+      },
+    });
+    const recoverRosterDisagreement = vi.fn().mockResolvedValue(undefined);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, recoverRosterDisagreement })
+    );
+
+    await outbox.flush();
+
+    expect(recoverRosterDisagreement).not.toHaveBeenCalled();
+    expect(sentPreview(mlsService)).toBe('');
+    const echo = conversations.get('g1')!.messages.find((m) => m.id === 'r1')!;
+    expect(echo.replyTo?.content).toBe('');
+    outbox.dispose();
+  });
+
+  it('the repair runs only on the SEND refusing this device, and the quote survives the failure', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({
+      exclusions: async () => {
+        throw new ExclusionsRefusedError('g1');
+      },
+      send: async () => {
+        throw new SenderNotActiveError('g1', 'pending');
+      },
+    });
+    const recoverRosterDisagreement = vi.fn().mockResolvedValue(undefined);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, recoverRosterDisagreement })
+    );
+
+    await outbox.flush();
+
+    expect(recoverRosterDisagreement).toHaveBeenCalledWith('g1');
+    // Refused, the blank was never made permanent: the next attempt decides again.
+    expect(storage._map.get('r1')!.replyTo!.preview).toBe('the quoted words');
+    const echo = conversations.get('g1')!.messages.find((m) => m.id === 'r1')!;
+    expect(echo.replyTo?.content).toBe('the quoted words');
+    outbox.dispose();
+  });
+
+  /**
+   * THE QUOTE DECISION IS AN AWAIT BEFORE THE CLAIM, so #1887's last look must still come after it:
+   * a withdrawal landing while the windows are read is answered "never sent" and must stay true.
+   */
+  it('a reply withdrawn while its quote is being decided is never sent and never re-queued', async () => {
+    const storage = makeStorage([replyEntry()]);
+    let outbox: ReturnType<typeof createOutbox> | null = null;
+    let withdrawn: boolean | undefined;
+    const mlsService = makeMls({
+      exclusions: async () => {
+        withdrawn = await outbox!.cancelPending('r1');
+        return bobsWindow();
+      },
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(withdrawn).toBe(true);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('r1')).toBe(false);
+    expect(storage.saveOutboxEntry).not.toHaveBeenCalled();
+    outbox.dispose();
+  });
+
+  /**
+   * WITHDRAWN WHILE ITS FRAME IS ON THE WIRE: the peers have it, so the delete travels as an event
+   * (#1887), and the row is gone. Making the blank permanent must not write that row back - a
+   * deleted message in the queue is one a later flush, or a crash before the final delete, sends.
+   */
+  it('a reply withdrawn while its frame is on the wire: the blank is not saved back into the queue', async () => {
+    const storage = makeStorage([replyEntry()]);
+    let outbox: ReturnType<typeof createOutbox> | null = null;
+    let withdrawn: boolean | undefined;
+    const mlsService = makeMls({
+      exclusions: bobsWindow,
+      send: (async () => {
+        withdrawn = await outbox!.cancelPending('r1');
+      }) as any,
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(withdrawn).toBe(false);
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storage.saveOutboxEntry).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'r1' }),
+      expect.anything()
+    );
+    expect(storage._map.has('r1')).toBe(false);
+    outbox.dispose();
+  });
+
+  it('the native mirror quotes by id only - it cannot read the windows', () => {
+    const mirror = toMirrorEntry(replyEntry())!;
+    const decoded = decodeAppMessage(Uint8Array.from(atob(mirror.proto), (c) => c.charCodeAt(0)));
+    expect(decoded?.reply?.replyTo?.preview).toBe('');
+    expect(decoded?.reply?.replyTo?.id).toBe('q1');
   });
 });
 
