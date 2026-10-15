@@ -1396,6 +1396,46 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
 
+## The Mi 9T readings of v1.2.9-alpha.2 (2026-10-15)
+
+Build `1.2.9 (100200902)` (`dumpsys package`), the `v1.2.9-alpha.2` release APK
+(`app-universal-release.apk`, sha256 `b3fcc8e2...`, tag commit `adf0b419d`), installed with
+`adb install -r` over alpha.1 (accepted, account kept), dev estate, account `fourth` ("Canari Test
+Delta"), bench conversations only, vault path. Offline means airplane mode (the phone has no mobile
+data). Same instruments as alpha.1 (`feed.mjs`, console over CDP, logcat for the whole pass), plus
+`reconnect.mjs` (offline cold start, 10 s, airplane mode off, 40 one-second samples) and `frames.mjs`
+(the `mediaTime` of every presented frame of a take). Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1015-a129a2/` (frames `s*.png`, `feed-runs.ndjson`,
+`reconnect-runs.ndjson`, `cons-camera.ndjson`, `frames-video1.json`, `logcat-main.txt`).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. Offline cold start noise (#1921) | **`PASS`** | n=3, same window as alpha.1: **10** warnings each (alpha.1: 68-70). One line per family: `[A] refresh✗transport` once, `[LAYOUT] Profile check did not answer` (twice, P3), revocation check, `push_context` write, `[DISPLAYNAME] profile lookups get no answer` once, `[FEED-STORE] ... drawn, unconfirmed`, `[History] batch ... got no answer`, `[HISTORY] no answer for group ...`, `[PENDING] ... UNDRAINED and stays queued`. No `getToken failed ... proceeding without auth`, no page-size halving, no `[GRAINE] asked <self>`. Feed drawn from the device (20 cards, 2432-2699 ms after `am start`), never "Impossible de charger" |
+| 1b. Back online without a restart (#1922) | **`PASS`** (refresh); media `NOT-OBSERVED` | Airplane off at t=0: `[CONNECTIVITY] browser reports online` +4.2 s (the radio), `server reachable again` +5.7 s, `[POSTS] server reachable again - the first page is asked again`, `200 GET /api/posts` +6.2 s; the status line is gone at the +7.2 s sample. `[PROMOTE] Access token acquired` at the same moment. **No post on the dev feed carries an image or video** (40+ cards of "Tout" and both reels scanned: no media element; the reels' API rows have `images: []`), so "media show after reconnect" could not be seen |
+| 1c. Online cold first paint (#1922) | **`PASS`** for the stored-copy hang; first card **not** under 1 s from launch | n=4: first card **2397-2798 ms after `am start`** (page 1779-2135 ms; alpha.1 2465-2973). The "Fil enregistre..., mise a jour..." line now stays **0.24-0.54 s** (alpha.1: 3.0-3.6 s), and in 1 run of 4 the server answer came first (`stored first page read after the server answered - not drawn`). `[POSTS] stored first page drawn: 20 posts read in 333 ms`; `<- 200 GET /api/posts` ~0.5 s after. The PR's 650-736 ms was a reload of a warm process; from a cold launch, the app's own boot dominates |
+| 2. CanaReels filter (#1920) | **`PASS`** (filter, relaunch); viewer `NOT-OBSERVED` | "Tous les posts" / "CanaReels" row under the header; CanaReels -> `GET /api/posts?...kind=reel` (`[POSTS] feed filter: all -> reel`), 2 reels listed; relaunch keeps "CanaReels" selected (stored page of 2 drawn). The row holds at 200 % text. **The two dev reels have no video** (`kind: reel`, `durationMs: 2219`, `images: []`), so the cards draw text only and a tap opens nothing: open / swipe to the next / return could not be read. Restored to "Tous les posts" |
+| 3a. Chat camera Back (#1925) | **`PASS`** | "+" > "Ouvrir la camera", photo. Back 1: "Abandonner cette capture ?" OVER the review; "La garder" keeps it (`discarding the review: kept`). Back 2: the dialog again; "Abandonner" returns to the live camera. Back 3 closes the camera (`Back closes the camera (chat)`), the conversation stays. Back 4 closes the conversation. Logs `historyOverlay ... Back landed on an entry no overlay above owns - closing the top one` twice (P3, below) |
+| 3b. Post composer video (#1925) | **`PASS`** | 3.5 s hold: `recording video/webm;codecs=h264,opus`, `take: 967955 bytes, video/x-matroska;codecs=avc1,opus`, `canari-video-*.mkv`, `[capture-poster] ... 3128-byte thumbnail attached`; the composer tile shows the frame, not a grey tile. Back closes the composer; reopening shows "Brouillon restaure (texte, options et medias)" with the video. Draft cleared afterwards, nothing published |
+| 3c. Refused camera, fresh permission (#1925) | **`PASS`** | `pm revoke` + flags cleared; chat camera: ONE system dialog, "Ne pas autoriser", no second dialog in the next 6 s (focus stays on Canari). `app away with an open in flight - its answer is awaited`, `refused (denied)`, `back on screen in error - nothing to reopen`. Text: "Canari n'a pas acces a la camera" / "Autorisez la camera pour Canari dans les reglages du telephone, puis reessayez." (no microphone). Permission granted back afterwards |
+| 3d. First frames of a take | **`PASS`** | The 2.975 s take plays 63 frames; first presented `mediaTime`s 0.003, 0.033, 0.100, 0.227...; largest gap 127 ms, spread over the whole take (a dim, still scene at ~21 fps), no hold at the start |
+| 4. PIN change then relaunch (#1898) | **`PASS`** | `Re-sealed under the new device key: messages=734 seeds=11 outbox=0; already new=0, unreadable=0, changed since read=0`, plus `3 stored feed page(s) dropped - the next feed answer rewrites them`, "PIN modifie" in 1.6 s. Kill and relaunch: `Device key restored from PinVault`, no PIN prompt, the DM history decrypted, 0 warnings. Changed back: the same counts |
+| 5. 200 % text and noise | **`PASS`** | `font_scale 2.0`: root 32 px, `/posts`, `/communities`, `/chat`, `/settings/about`, `/dashboard` all `scrollWidth = innerWidth = 436`; the only element past the edge is a truncated author name inside its `overflow: hidden` card. Restored to `0.85`. The whole online pass (1465 console lines): 2 warnings, the refusal itself and one `[TAURI] Couldn't find callback id` after a relaunch. Logcat: no `FATAL`, no ANR |
+
+**Findings:**
+
+- **P3 - back online, the refreshed feed shows 10 cards where the stored page and every cold start
+  show 20** (`reconnect-runs.ndjson`: 20 -> 10 at the refresh, still 10 at +37 s). More may load on
+  scroll; whether the reconnect path asks a smaller first page was not read.
+- **P3 - the dev estate cannot read media in the feed**: no post carries an image or video, and the
+  two reels come back with `images: []`. The reel viewer (#1920) and media after reconnect (#1922)
+  need a reel published on dev, or another bench.
+- **P3 - `[LAYOUT] Profile check did not answer` is logged twice** within 14 ms on an offline start.
+- **P3 - the overlay history stack heals itself on Back**: `Back landed on an entry no overlay above
+  owns - closing the top one`, then `1 left open` after the camera closed and `0 left open` with the
+  conversation. The user-visible order is right; the stack and the history disagree by one entry.
+- Logcat, camera stack (Chromium's, unchanged): 117 `Ignoring status update of camera`, 12
+  `BLUETOOTH_CONNECT permission is missing`, 3 `cr_VideoCapture` lines.
+
 ## The Mi 9T readings of v1.2.9-alpha.1 (2026-10-15)
 
 Build `1.2.9 (100200901)` (`dumpsys package`), the `v1.2.9-alpha.1` release APK
