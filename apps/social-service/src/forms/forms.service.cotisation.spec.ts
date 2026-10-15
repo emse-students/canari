@@ -34,18 +34,31 @@ describe('FormsService - cotisation configuration and granting', () => {
       count: jest.fn(() => Promise.resolve(0)),
       findOne: jest.fn(() => Promise.resolve(opts.submission ?? null)),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
-      // `markPaid`'s transaction: the seat lock, the locked row, and a count of 1 that says the
-      // row still holds its seat - the late-payment branches have their own file.
-      manager: {
-        transaction: jest.fn((_level: string, run: (m: unknown) => Promise<unknown>) =>
-          run({
-            query: jest.fn(() => Promise.resolve([])),
-            findOne: jest.fn(() => Promise.resolve(opts.submission ?? null)),
-            count: jest.fn(() => Promise.resolve(1)),
-            save: jest.fn((x: unknown) => Promise.resolve(x)),
-          })
-        ),
-      },
+      // The fulfilment flags (`claimFulfilment`): every claim is won, nothing was done before.
+      update: jest.fn(() => Promise.resolve()),
+      createQueryBuilder: jest.fn(() => {
+        const builder: any = {
+          update: () => builder,
+          set: () => builder,
+          where: () => builder,
+          andWhere: () => builder,
+          execute: () => Promise.resolve({ affected: 1 }),
+        };
+        return builder;
+      }),
+    };
+    // `markPaid`'s and the cash desk's transactions: the seat lock, the locked row (whatever the
+    // test made `findOne` answer), and a count of 1 that says the row still holds its seat - the
+    // late-payment branches have their own file.
+    submissionRepo.manager = {
+      transaction: jest.fn((_level: string, run: (m: unknown) => Promise<unknown>) =>
+        run({
+          query: jest.fn(() => Promise.resolve([])),
+          findOne: jest.fn(() => submissionRepo.findOne()),
+          count: jest.fn(() => Promise.resolve(1)),
+          save: jest.fn((x: unknown) => Promise.resolve(x)),
+        })
+      ),
     };
     const userTagService: any = {
       listCotisationTiers: jest.fn(() => Promise.resolve(opts.tiers ?? [])),

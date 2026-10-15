@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { FindOperator } from 'typeorm';
 import { FormsService } from './forms.service';
 import { Form } from './entities/form.entity';
@@ -17,11 +18,12 @@ import {
  * test exercises the predicate the service builds rather than a mock's canned count. The one SQL
  * fragment (`PENDING_HOLD_CUTOFF_SQL`) is evaluated here against a fake clock; that it means the
  * same thing in Postgres was checked against a real server (see the pull request). The seat lock
- * is a real mutex per form, released when the transaction ends, so two late payments genuinely
- * interleave every `await` they reach.
+ * is a real mutex per form, released when the transaction ends, and every transaction must be READ
+ * COMMITTED, so two late payments - or two submits - genuinely interleave every `await` they reach.
  */
 describe('FormsService - the seat a pending payment holds', () => {
   const HOLD_MS = PENDING_PAYMENT_HOLD_SECONDS * 1000;
+  const T0 = new Date('2026-10-15T12:00:00Z');
   type Row = {
     id: string;
     formId: string;
@@ -29,13 +31,24 @@ describe('FormsService - the seat a pending payment holds', () => {
     paymentStatus: string;
     paymentMethod: string | null;
     totalPaid: number;
+    paymentRequestedAt: Date;
     createdAt: Date;
     stripeSessionId?: string;
+    cotisationGrantedAt?: Date | null;
+    purchaseRecordedAt?: Date | null;
+    answers?: Record<string, unknown>;
   };
+  type Flag = 'cotisationGrantedAt' | 'purchaseRecordedAt';
 
-  function makeStore(opts: { maxSubmissions: number | null; rows: Row[] }) {
-    let now = new Date('2026-10-15T12:00:00Z');
-    const rows = opts.rows.map((row) => ({ ...row }));
+  function makeStore(opts: {
+    maxSubmissions: number | null;
+    rows: Row[];
+    basePrice?: number;
+    allowMultipleSubmissions?: boolean;
+  }) {
+    let now = T0;
+    const rows: Row[] = opts.rows.map((row) => ({ ...row }));
+    let nextId = 0;
     const form = {
       id: 'f1',
       title: 'Gala',
@@ -43,6 +56,17 @@ describe('FormsService - the seat a pending payment holds', () => {
       associationId: 'asso1',
       grantsCotisation: true,
       cotisationVariantKey: null,
+      basePrice: opts.basePrice ?? 0,
+      priceMatrix: null,
+      submitCondition: null,
+      anonymous: false,
+      isPublic: false,
+      allowMultipleSubmissions: opts.allowMultipleSubmissions ?? false,
+      allowCashPayment: false,
+      currency: 'eur',
+      opensAt: null,
+      closedAt: null,
+      items: [],
     };
 
     /** Lets every concurrent caller run up to its next await, as a database round trip would. */
@@ -53,10 +77,10 @@ describe('FormsService - the seat a pending payment holds', () => {
       if (expected instanceof FindOperator) {
         // The only operator the service puts in a submission `where` is the hold, and it must be
         // the ONE fragment the expiry job also uses - anything else is a new predicate.
-        expect(key).toBe('createdAt');
+        expect(key).toBe('paymentRequestedAt');
         expect(expected.type).toBe('raw');
         expect(expected.getSql?.('col')).toBe(`col > ${PENDING_HOLD_CUTOFF_SQL}`);
-        return row.createdAt.getTime() > now.getTime() - HOLD_MS;
+        return row.paymentRequestedAt.getTime() > now.getTime() - HOLD_MS;
       }
       return row[key] === expected;
     }
@@ -64,10 +88,38 @@ describe('FormsService - the seat a pending payment holds', () => {
       (Array.isArray(where) ? where : [where]).some((clause) =>
         Object.entries(clause).every(([key, value]) => matchesValue(row, key as keyof Row, value))
       );
+    const byId = (id: string) => rows.find((r) => r.id === id)!;
 
     const locks = new Map<string, Promise<void>>();
     const purchaseRecordService = { create: jest.fn(() => Promise.resolve()) };
     const userTagService = { grantCotisant: jest.fn(() => Promise.resolve({})) };
+
+    /** The two UPDATE shapes the service builds: the expiry job and a fulfilment claim. */
+    function runUpdate(state: {
+      set: Record<string, unknown>;
+      where: string[];
+      params: Record<string, unknown>;
+    }) {
+      if (state.where[0] === '"paymentStatus" = :status') {
+        expect(state.where).toEqual([
+          '"paymentStatus" = :status',
+          `"paymentRequestedAt" <= ${PENDING_HOLD_CUTOFF_SQL}`,
+        ]);
+        const moved = rows.filter(
+          (r) =>
+            r.paymentStatus === state.params.status &&
+            r.paymentRequestedAt.getTime() <= now.getTime() - HOLD_MS
+        );
+        moved.forEach((r) => Object.assign(r, state.set));
+        return { affected: moved.length };
+      }
+      const [flag] = Object.keys(state.set) as Flag[];
+      expect(state.where).toEqual(['id = :id', `"${flag}" IS NULL`]);
+      const target = byId(state.params.id as string);
+      if (target[flag]) return { affected: 0 };
+      target[flag] = now;
+      return { affected: 1 };
+    }
 
     const submissionRepo: any = {
       findOne: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
@@ -78,14 +130,18 @@ describe('FormsService - the seat a pending payment holds', () => {
         async ({ where }: { where: Record<string, unknown>[] }) =>
           rows.filter((r) => matches(r, where)).length
       ),
+      update: jest.fn(async (id: string, values: Partial<Row>) => {
+        Object.assign(byId(id), values);
+      }),
       createQueryBuilder: () => {
-        const state: { set?: Partial<Row>; where: string[]; params: Record<string, unknown> } = {
-          where: [],
-          params: {},
+        const state = {
+          set: {} as Record<string, unknown>,
+          where: [] as string[],
+          params: {} as Record<string, unknown>,
         };
         const builder = {
           update: () => builder,
-          set: (values: Partial<Row>) => ((state.set = values), builder),
+          set: (values: Record<string, unknown>) => ((state.set = values), builder),
           where: (sql: string, params: Record<string, unknown> = {}) => (
             state.where.push(sql),
             Object.assign(state.params, params),
@@ -94,23 +150,15 @@ describe('FormsService - the seat a pending payment holds', () => {
           andWhere: (sql: string) => (state.where.push(sql), builder),
           execute: async () => {
             await roundTrip();
-            expect(state.where).toEqual([
-              '"paymentStatus" = :status',
-              `"createdAt" <= ${PENDING_HOLD_CUTOFF_SQL}`,
-            ]);
-            const moved = rows.filter(
-              (r) =>
-                r.paymentStatus === state.params.status &&
-                r.createdAt.getTime() <= now.getTime() - HOLD_MS
-            );
-            moved.forEach((r) => Object.assign(r, state.set));
-            return { affected: moved.length };
+            return runUpdate(state);
           },
         };
         return builder;
       },
       manager: {
         transaction: jest.fn(async (level: string, run: (manager: unknown) => Promise<unknown>) => {
+          // REPEATABLE READ takes its snapshot BEFORE the lock wait, so the count after it would not
+          // see the previous holder's commit: the seat lock is only sound in READ COMMITTED.
           expect(level).toBe('READ COMMITTED');
           const releases: (() => void)[] = [];
           const manager = {
@@ -136,13 +184,28 @@ describe('FormsService - the seat a pending payment holds', () => {
               await roundTrip();
               return rows.filter((r) => matches(r, where)).length;
             },
+            create: (_entity: unknown, values: Partial<Row>) => ({ ...values }),
             save: async (row: Row) => {
               await roundTrip();
-              Object.assign(
-                rows.find((r) => r.id === row.id)!,
-                row
-              );
+              if (!row.id) {
+                // An insert: the database's defaults, on the fake clock.
+                const inserted = {
+                  ...row,
+                  id: `new${++nextId}`,
+                  paymentRequestedAt: now,
+                  createdAt: now,
+                };
+                rows.push(inserted);
+                return { ...inserted };
+              }
+              Object.assign(byId(row.id), row);
               return row;
+            },
+            update: async (_entity: unknown, id: string, values: Record<string, unknown>) => {
+              await roundTrip();
+              expect(Object.keys(values)).toEqual(['paymentRequestedAt']);
+              expect((values.paymentRequestedAt as () => string)()).toBe('now()');
+              byId(id).paymentRequestedAt = now;
             },
           };
           try {
@@ -154,15 +217,30 @@ describe('FormsService - the seat a pending payment holds', () => {
       },
     };
     const formRepo: any = { findOne: jest.fn(async () => ({ ...form })) };
+    const pricingFacts: any = {
+      build: jest.fn(async (input: { answers?: Record<string, string[]> }) => ({
+        promo: null,
+        formation: null,
+        cotisationTiers: [],
+        answers: input.answers ?? {},
+      })),
+    };
+    // Payments are DISABLED, so a paid submit stops right after its transaction committed: these
+    // tests are about what the transaction wrote, not about the checkout.
+    const associationsService: any = {
+      assertPaymentsReady: jest.fn(async () => undefined),
+      getPaymentAccountId: jest.fn(async () => 'vendor'),
+      getActivePaymentProvider: jest.fn(async () => 'disabled'),
+    };
     const service = new FormsService(
       formRepo,
       submissionRepo,
       {} as any,
       { get: jest.fn() } as any,
-      {} as any,
+      associationsService,
       userTagService as any,
       purchaseRecordService as any,
-      {} as any,
+      pricingFacts,
       {} as any
     );
     return {
@@ -174,6 +252,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     };
   }
 
+  const ago = (ms: number) => new Date(T0.getTime() - ms);
   const row = (over: Partial<Row>): Row => ({
     id: 's1',
     formId: 'f1',
@@ -181,19 +260,21 @@ describe('FormsService - the seat a pending payment holds', () => {
     paymentStatus: 'pending',
     paymentMethod: null,
     totalPaid: 1500,
-    createdAt: new Date('2026-10-15T12:00:00Z'),
+    paymentRequestedAt: T0,
+    createdAt: ago(10 * HOLD_MS),
+    cotisationGrantedAt: null,
+    purchaseRecordedAt: null,
     ...over,
   });
-  const ago = (ms: number) => new Date(new Date('2026-10-15T12:00:00Z').getTime() - ms);
 
   describe('the seat count', () => {
-    // The boundary itself: the hold is decided from `createdAt` in the count, so no job has run.
+    // The boundary itself: the hold is decided from the row in the count, so no job has run.
     it('counts a pending row one second inside the hold, and not one second past it', async () => {
       const { service } = makeStore({
         maxSubmissions: 10,
         rows: [
-          row({ id: 'inside', createdAt: ago(HOLD_MS - 1000) }),
-          row({ id: 'past', createdAt: ago(HOLD_MS + 1000) }),
+          row({ id: 'inside', paymentRequestedAt: ago(HOLD_MS - 1000) }),
+          row({ id: 'past', paymentRequestedAt: ago(HOLD_MS + 1000) }),
         ],
       });
       expect((await service.get('f1')).submissionCount).toBe(1);
@@ -202,7 +283,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     it('releases the seat as the clock crosses the hold, with no job run', async () => {
       const { service, advance } = makeStore({
         maxSubmissions: 1,
-        rows: [row({ createdAt: ago(HOLD_MS - 1000) })],
+        rows: [row({ paymentRequestedAt: ago(HOLD_MS - 1000) })],
       });
       expect((await service.get('f1')).submissionCount).toBe(1);
       advance(2000);
@@ -215,15 +296,60 @@ describe('FormsService - the seat a pending payment holds', () => {
     });
   });
 
+  describe('submit', () => {
+    // Fails if `submit` goes back to REPEATABLE READ (the store refuses any other level) or counts
+    // before it takes the form's lock (both would count the seat free and both would insert).
+    it('lets two simultaneous answers take the last seat ONCE', async () => {
+      const { service, rows } = makeStore({ maxSubmissions: 1, rows: [] });
+      const results = await Promise.allSettled([
+        service.submit('f1', { userId: 'u1', answers: {} } as any),
+        service.submit('f1', { userId: 'u2', answers: {} } as any),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+      expect(rows).toHaveLength(1);
+    });
+
+    it('restarts the hold when it reuses a live pending row for a new request', async () => {
+      const { service, rows, advance } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        rows: [row({ id: 'mine', paymentRequestedAt: ago(HOLD_MS - 60_000) })],
+      });
+      await expect(
+        service.submit('f1', { userId: 'u1', answers: {} } as any)
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].paymentRequestedAt).toEqual(T0);
+      // Past the ORIGINAL hold, still inside the new one: the seat is still held.
+      advance(2 * 60_000);
+      expect((await service.get('f1')).submissionCount).toBe(1);
+    });
+
+    it('leaves a pending row past the hold alone and writes a new one', async () => {
+      const { service, rows } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        rows: [row({ id: 'stale', paymentRequestedAt: ago(HOLD_MS + 1000) })],
+      });
+      await expect(
+        service.submit('f1', { userId: 'u1', answers: {} } as any)
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(rows.map((r) => [r.id, r.paymentStatus])).toEqual([
+        ['stale', 'pending'],
+        ['new1', 'pending'],
+      ]);
+    });
+  });
+
   describe('the expiry job', () => {
     it('moves only pending rows past the hold to expired, and a second run moves nothing', async () => {
       const { service, rows } = makeStore({
         maxSubmissions: null,
         rows: [
-          row({ id: 'stale', createdAt: ago(HOLD_MS + 1000) }),
-          row({ id: 'live', createdAt: ago(HOLD_MS - 1000) }),
-          row({ id: 'cash', paymentStatus: 'pending_cash', createdAt: ago(10 * HOLD_MS) }),
-          row({ id: 'paid', paymentStatus: 'paid', createdAt: ago(10 * HOLD_MS) }),
+          row({ id: 'stale', paymentRequestedAt: ago(HOLD_MS + 1000) }),
+          row({ id: 'live', paymentRequestedAt: ago(HOLD_MS - 1000) }),
+          row({ id: 'cash', paymentStatus: 'pending_cash', paymentRequestedAt: ago(10 * HOLD_MS) }),
+          row({ id: 'paid', paymentStatus: 'paid', paymentRequestedAt: ago(10 * HOLD_MS) }),
         ],
       });
       expect(await service.expireStalePendingPayments()).toBe(1);
@@ -244,7 +370,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       const { service, rows, userTagService, purchaseRecordService } = makeStore({
         maxSubmissions: 2,
         rows: [
-          row({ id: 'late', paymentStatus: 'expired', createdAt: ago(2 * HOLD_MS) }),
+          row({ id: 'late', paymentStatus: 'expired', paymentRequestedAt: ago(2 * HOLD_MS) }),
           row({ id: 'other', paymentStatus: 'paid' }),
         ],
       });
@@ -253,13 +379,15 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0].stripeSessionId).toBe('req-1');
       expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+      expect(rows[0].cotisationGrantedAt).toBeTruthy();
+      expect(rows[0].purchaseRecordedAt).toBeTruthy();
     });
 
     it('lands over capacity on a full form, accused at warn, and grants nothing', async () => {
       const { service, rows, userTagService, purchaseRecordService } = makeStore({
         maxSubmissions: 1,
         rows: [
-          row({ id: 'late', paymentStatus: 'expired', createdAt: ago(2 * HOLD_MS) }),
+          row({ id: 'late', paymentStatus: 'expired', paymentRequestedAt: ago(2 * HOLD_MS) }),
           row({ id: 'other', paymentStatus: 'paid' }),
         ],
       });
@@ -269,6 +397,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('late'));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('1500 cents'));
       expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(rows[0].cotisationGrantedAt).toBeNull();
       // The payer's trace that they paid stays: the refund happens outside the application.
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
@@ -277,7 +406,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       const { service, rows } = makeStore({
         maxSubmissions: 1,
         rows: [
-          row({ id: 'late', paymentStatus: 'pending', createdAt: ago(HOLD_MS + 1000) }),
+          row({ id: 'late', paymentStatus: 'pending', paymentRequestedAt: ago(HOLD_MS + 1000) }),
           row({ id: 'other', paymentStatus: 'paid' }),
         ],
       });
@@ -288,7 +417,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     it('never refuses a row still holding its seat, even on a full form', async () => {
       const { service, rows } = makeStore({
         maxSubmissions: 1,
-        rows: [row({ id: 'onTime', paymentStatus: 'pending', createdAt: ago(1000) })],
+        rows: [row({ id: 'onTime', paymentStatus: 'pending', paymentRequestedAt: ago(1000) })],
       });
       await service.markPaid('onTime');
       expect(rows[0].paymentStatus).toBe('paid');
@@ -298,8 +427,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       const { service, rows } = makeStore({
         maxSubmissions: 2,
         rows: [
-          row({ id: 'a', paymentStatus: 'expired', createdAt: ago(2 * HOLD_MS) }),
-          row({ id: 'b', paymentStatus: 'expired', createdAt: ago(2 * HOLD_MS) }),
+          row({ id: 'a', paymentStatus: 'expired', paymentRequestedAt: ago(2 * HOLD_MS) }),
+          row({ id: 'b', paymentStatus: 'expired', paymentRequestedAt: ago(2 * HOLD_MS) }),
           row({ id: 'other', paymentStatus: 'paid' }),
         ],
       });
@@ -314,11 +443,37 @@ describe('FormsService - the seat a pending payment holds', () => {
     it('changes nothing and grants nothing a second time', async () => {
       const { service, rows, userTagService, purchaseRecordService } = makeStore({
         maxSubmissions: 1,
-        rows: [row({ id: 's1', paymentStatus: 'pending', createdAt: ago(1000) })],
+        rows: [row({ id: 's1', paymentStatus: 'pending', paymentRequestedAt: ago(1000) })],
       });
-      await service.markPaid('s1');
-      await service.markPaid('s1');
+      await service.markPaid('s1', 'req-1');
+      await service.markPaid('s1', 'req-1');
+      await Promise.all([service.markPaid('s1', 'req-1'), service.markPaid('s1', 'req-1')]);
       expect(rows[0].paymentStatus).toBe('paid');
+      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+    });
+
+    // The effects run after the commit; the flag is what lets the next replay finish them.
+    it('retries a grant that failed, and only that', async () => {
+      const { service, rows, userTagService, purchaseRecordService } = makeStore({
+        maxSubmissions: 1,
+        rows: [row({ id: 's1', paymentStatus: 'pending', paymentRequestedAt: ago(1000) })],
+      });
+      userTagService.grantCotisant.mockRejectedValueOnce(new Error('core-service down'));
+      await service.markPaid('s1', 'req-1');
+      expect(rows[0].cotisationGrantedAt).toBeNull();
+      await service.markPaid('s1', 'req-1');
+      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(2);
+      expect(rows[0].cotisationGrantedAt).toBeTruthy();
+      expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('finishes a payment whose effects never ran (a crash after the commit)', async () => {
+      const { service, userTagService, purchaseRecordService } = makeStore({
+        maxSubmissions: 1,
+        rows: [row({ id: 's1', paymentStatus: 'paid', stripeSessionId: 'req-1' })],
+      });
+      await service.markPaid('s1', 'req-1');
       expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
@@ -333,6 +488,41 @@ describe('FormsService - the seat a pending payment holds', () => {
       });
       await service.markPaid('late');
       expect(rows[0].paymentStatus).toBe('paid_over_capacity');
+    });
+
+    // A reused pending row had two payable requests: the second one paid is money taken twice.
+    it('accuses a payment by another request than the one the row records', async () => {
+      const { service, rows, userTagService } = makeStore({
+        maxSubmissions: 1,
+        rows: [
+          row({
+            id: 's1',
+            paymentStatus: 'paid',
+            stripeSessionId: 'req-new',
+            cotisationGrantedAt: T0,
+            purchaseRecordedAt: T0,
+          }),
+        ],
+      });
+      const warn = jest.spyOn((service as any).logger, 'warn');
+      await service.markPaid('s1', 'req-old');
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/req-old.*req-new.*taken twice/));
+      expect(rows[0].paymentStatus).toBe('paid');
+      expect(rows[0].stripeSessionId).toBe('req-new');
+      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a cancel callback', () => {
+    // The status check and the write are one locked step: a cancel never overwrites a payment.
+    it('cancels a pending row and leaves a paid one alone', async () => {
+      const { service, rows } = makeStore({
+        maxSubmissions: 1,
+        rows: [row({ id: 'p', paymentStatus: 'pending' }), row({ id: 'q', paymentStatus: 'paid' })],
+      });
+      await service.cancelPendingSubmission('p');
+      await service.cancelPendingSubmission('q');
+      expect(rows.map((r) => r.paymentStatus)).toEqual(['cancelled', 'paid']);
     });
   });
 

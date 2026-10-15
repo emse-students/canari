@@ -619,21 +619,22 @@ export class FormsService {
    *
    * Best-effort by design: the payment is a fact by the time this runs, so a failure here must not
    * unwind it - but it is logged as an error, because a paid cotisation that granted nothing is a
-   * user who will be told they are not a member.
+   * user who will be told they are not a member. Returns false ONLY when a retry could succeed (the
+   * grant threw), which is what `fulfilPayment` releases its claim on.
    */
   private async grantCotisationIfConfigured(
     form: Pick<Form, 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
     userId: string,
     grantedBy: string,
     metadata: Record<string, unknown>
-  ): Promise<void> {
-    if (!form.grantsCotisation) return;
+  ): Promise<boolean> {
+    if (!form.grantsCotisation) return true;
     if (!form.associationId) {
       this.logger.error(
         '[UserTag] Form grants a cotisation but names no beneficiary association - nothing to be ' +
           'a member of. The create/update DTO must reject this pairing.'
       );
-      return;
+      return true;
     }
     try {
       await this.userTagService.grantCotisant(
@@ -643,13 +644,111 @@ export class FormsService {
         form.cotisationVariantKey,
         metadata
       );
+      return true;
     } catch (e) {
       this.logger.error(
         `[UserTag] Failed to grant cotisation tier "${form.cotisationVariantKey ?? 'base'}" of ` +
           `assoc=${form.associationId.slice(0, 8)} to user=${userId.slice(0, 8)}`,
         e
       );
+      return false;
     }
+  }
+
+  /**
+   * Runs what a landed payment buys - the cotisation (only when a seat was given) and the purchase
+   * record - each AT MOST ONCE, decided by a durable flag on the row (migration 084).
+   *
+   * Both effects run after the payment's own transaction committed, so a crash between the two, or
+   * a failed grant, used to be lost for good, and a replay used to run both again. Now each effect
+   * is CLAIMED first (`claimFulfilment`, a conditional UPDATE only one caller can win) and released
+   * if it failed, so the next replay of the same payment retries exactly what is missing. No clock.
+   */
+  private async fulfilPayment(
+    submission: Pick<Submission, 'id' | 'formId' | 'userId' | 'totalPaid'>,
+    seatGiven: boolean,
+    how: {
+      grantedBy: string;
+      paymentMethod: 'online' | 'cash';
+      metadata: Record<string, unknown>;
+    }
+  ): Promise<void> {
+    const form = await this.formRepo.findOne({
+      where: { id: submission.formId },
+      select: {
+        id: true,
+        title: true,
+        grantsCotisation: true,
+        cotisationVariantKey: true,
+        associationId: true,
+      },
+    });
+    if (!form) {
+      this.logger.error(
+        `[Forms] fulfilment of submission ${submission.id}: form ${submission.formId} not found - ` +
+          'nothing granted, nothing recorded'
+      );
+      return;
+    }
+    if (seatGiven && (await this.claimFulfilment(submission.id, 'cotisationGrantedAt'))) {
+      const granted = await this.grantCotisationIfConfigured(
+        form,
+        submission.userId,
+        how.grantedBy,
+        how.metadata
+      );
+      if (!granted) await this.releaseFulfilment(submission.id, 'cotisationGrantedAt');
+    }
+    if (
+      form.associationId &&
+      submission.totalPaid > 0 &&
+      (await this.claimFulfilment(submission.id, 'purchaseRecordedAt'))
+    ) {
+      try {
+        await this.purchaseRecordService.create({
+          userId: submission.userId,
+          source: 'form',
+          formId: submission.formId,
+          amountCents: submission.totalPaid,
+          paymentMethod: how.paymentMethod,
+          status: 'paid',
+          associationId: form.associationId,
+          productName: form.title ?? 'Formulaire',
+        });
+      } catch (e) {
+        this.logger.error(
+          `[PurchaseRecord] Failed to record ${how.paymentMethod} purchase for submission ` +
+            `${submission.id} - released for the next replay`,
+          e
+        );
+        await this.releaseFulfilment(submission.id, 'purchaseRecordedAt');
+      }
+    }
+  }
+
+  /** Takes a fulfilment flag if nobody has: true for exactly one caller, ever (until released). */
+  private async claimFulfilment(
+    submissionId: string,
+    flag: 'cotisationGrantedAt' | 'purchaseRecordedAt'
+  ): Promise<boolean> {
+    const result = await this.submissionRepo
+      .createQueryBuilder()
+      .update()
+      .set({ [flag]: () => 'now()' })
+      .where('id = :id', { id: submissionId })
+      .andWhere(`"${flag}" IS NULL`)
+      .execute();
+    const won = (result.affected ?? 0) === 1;
+    if (!won) this.logger.debug(`[Forms] ${flag} already set on submission ${submissionId}`);
+    return won;
+  }
+
+  /** Gives a claimed flag back after its effect failed, so a replay retries it. */
+  private async releaseFulfilment(
+    submissionId: string,
+    flag: 'cotisationGrantedAt' | 'purchaseRecordedAt'
+  ): Promise<void> {
+    await this.submissionRepo.update(submissionId, { [flag]: null });
   }
 
   /**
@@ -855,7 +954,23 @@ export class FormsService {
     let savedSubmission!: Submission;
     await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       await lockFormSeats(manager, id);
-      if (form.maxSubmissions) {
+
+      // Reuse an existing pending submission to avoid double-charge, unless multiple
+      // submissions are allowed (e.g. order forms where each submit is a new purchase). Only one
+      // still holding its seat: a row past the hold is not counted below, so reviving it would
+      // take a seat the count never saw, and it stays for the expiry job (and a late payment).
+      // Looked up BEFORE the capacity check: the row already holds this person's seat, so a retry
+      // on a form it filled is a retry, not a new answer - it used to be refused as "Form is full".
+      const existingPending =
+        !form.anonymous && !guest && totalCents > 0 && !form.allowMultipleSubmissions
+          ? await manager.findOne(Submission, {
+              where: livePendingWhere(id, { userId: input.userId }),
+              order: { createdAt: 'DESC' },
+              lock: { mode: 'pessimistic_write' },
+            })
+          : null;
+
+      if (form.maxSubmissions && !existingPending) {
         const count = await manager.count(Submission, { where: seatHoldingWhere(id) });
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
       }
@@ -906,24 +1021,19 @@ export class FormsService {
         return;
       }
 
-      // Reuse an existing pending submission to avoid double-charge, unless multiple
-      // submissions are allowed (e.g. order forms where each submit is a new purchase). Only one
-      // still holding its seat: a row past the hold was not counted above, so reviving it would
-      // take a seat the count never saw, and it stays for the expiry job (and a late payment).
-      const existingPending =
-        totalCents > 0 && !form.allowMultipleSubmissions
-          ? await manager.findOne(Submission, {
-              where: livePendingWhere(id, { userId: input.userId }),
-              order: { createdAt: 'DESC' },
-              lock: { mode: 'pessimistic_write' },
-            })
-          : null;
-
       if (existingPending) {
         existingPending.answers = input.answers;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
         savedSubmission = await manager.save(existingPending);
+        // A new payment request is about to be issued for this row, so its hold restarts with it,
+        // on the database clock like every other read of it (`seat-hold.ts`).
+        await manager.update(Submission, existingPending.id, {
+          paymentRequestedAt: () => 'now()',
+        });
+        this.logger.debug(
+          `[Forms] submit reuses pending submission ${existingPending.id}: its hold restarts`
+        );
       } else {
         const submission = manager.create(Submission, {
           formId: id,
@@ -1093,10 +1203,15 @@ export class FormsService {
    * not, and the organiser refunds it outside the application. Two late payments queue on the lock,
    * so they cannot both take the last seat.
    *
-   * A SECOND CALL ON A SETTLED ROW IS A REPLAY AND DOES NOTHING. It is the ordinary case, not an
-   * accident: the Lydia callback and the payer's `verify-session` both land here for one payment.
-   * Before 2026-10-15 each call re-granted and wrote ANOTHER purchase record, and a replay would now
-   * also have turned a `paid_over_capacity` into a `paid` that took no seat.
+   * A SECOND CALL FOR THE SAME REQUEST ON A SETTLED ROW IS A REPLAY: the status does not move. It is
+   * the ordinary case - the Lydia callback and the payer's `verify-session` both land here for one
+   * payment. Before 2026-10-15 each call re-granted and wrote ANOTHER purchase record; now the
+   * effects run from durable flags (`fulfilPayment`), so a replay only finishes what is missing.
+   *
+   * A SECOND CALL FOR A DIFFERENT REQUEST IS MONEY TAKEN TWICE, not a replay: `submit` reuses a live
+   * pending row and issues a new request while the old one may still be payable. The stored
+   * `stripeSessionId` (the Lydia `request_uuid`) is what tells the two apart, and a mismatch is
+   * accused at WARN with both ids - it was invisible before.
    */
   async markPaid(submissionId: string, sessionId?: string) {
     const found = await this.submissionRepo.findOne({ where: { id: submissionId } });
@@ -1111,8 +1226,16 @@ export class FormsService {
           lock: { mode: 'pessimistic_write' },
         });
         if (!submission) throw new NotFoundException('Submission not found');
+        const storedRequest = submission.stripeSessionId ?? null;
+        const otherRequest = !!sessionId && !!storedRequest && sessionId !== storedRequest;
         if (SETTLED_PAYMENT_STATUSES.has(submission.paymentStatus)) {
-          return { submission, status: submission.paymentStatus, replay: true };
+          return {
+            submission,
+            status: submission.paymentStatus,
+            replay: true,
+            otherRequest,
+            storedRequest,
+          };
         }
         const holdsSeat =
           (await manager.count(Submission, {
@@ -1136,18 +1259,26 @@ export class FormsService {
         submission.paymentStatus = status;
         if (sessionId) submission.stripeSessionId = sessionId;
         await manager.save(submission);
-        return { submission, status, replay: false };
+        return { submission, status, replay: false, otherRequest, storedRequest };
       }
     );
     const { submission } = outcome;
 
+    if (outcome.otherRequest) {
+      // Two payment requests for one row were both payable, and this one is not the request the
+      // row last issued. Whether it is the first or the second to be paid, one of the two payments
+      // has bought nothing: the organiser owes a refund, and this line is the only trace of it.
+      this.logger.warn(
+        `[Forms] Submission ${submissionId} paid by request ${sessionId} while it records request ` +
+          `${outcome.storedRequest} (status ${outcome.status}, ${submission.totalPaid} cents): ` +
+          'money may have been taken twice'
+      );
+    }
     if (outcome.replay) {
       this.logger.debug(
         `[Forms] markPaid replay on submission ${submissionId}, already ${outcome.status}`
       );
-      return { ok: true };
-    }
-    if (outcome.status === 'paid_over_capacity') {
+    } else if (outcome.status === 'paid_over_capacity') {
       // The money is the payer's until the organiser refunds it: no cotisation is granted for a
       // seat that was not given. The purchase record below is still written - it is the payer's
       // trace that they paid.
@@ -1157,42 +1288,13 @@ export class FormsService {
       );
     }
 
-    // Grant the configured cotisation tier if any + log purchase record
-    const form = await this.formRepo.findOne({
-      where: { id: submission.formId },
-      select: {
-        id: true,
-        title: true,
-        grantsCotisation: true,
-        cotisationVariantKey: true,
-        associationId: true,
-      },
+    // Run on a replay too: each effect is flagged on the row, so this finishes only what a previous
+    // call left undone (a failed grant, a crash after the commit) and repeats nothing.
+    await this.fulfilPayment(submission, outcome.status === 'paid', {
+      grantedBy: 'system',
+      paymentMethod: 'online',
+      metadata: { submissionId, sessionId: sessionId ?? null },
     });
-    if (form && outcome.status === 'paid') {
-      await this.grantCotisationIfConfigured(form, submission.userId, 'system', {
-        submissionId,
-        sessionId: sessionId ?? null,
-      });
-    }
-    if (form?.associationId && submission.totalPaid > 0) {
-      try {
-        await this.purchaseRecordService.create({
-          userId: submission.userId,
-          source: 'form',
-          formId: submission.formId,
-          amountCents: submission.totalPaid,
-          paymentMethod: 'online',
-          status: 'paid',
-          associationId: form.associationId,
-          productName: form.title ?? 'Formulaire',
-        });
-      } catch (e) {
-        this.logger.error(
-          `[PurchaseRecord] Failed to record online purchase for submission ${submissionId}`,
-          e
-        );
-      }
-    }
     return { ok: true };
   }
 
@@ -1215,16 +1317,48 @@ export class FormsService {
    * Called by core-service when checkout expires or a charge fails definitively.
    */
   async cancelPendingSubmission(submissionId: string): Promise<{ ok: boolean }> {
-    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
-    if (!submission) {
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled');
+    if (outcome === 'missing') {
       this.logger.warn(`[Forms] cancelPendingSubmission: submission ${submissionId} not found`);
       return { ok: false };
     }
-    if (submission.paymentStatus !== 'pending') return { ok: true };
-    submission.paymentStatus = 'cancelled';
-    await this.submissionRepo.save(submission);
-    this.logger.log(`[Forms] Submission ${submissionId} cancelled (payment failed or abandoned)`);
+    if (typeof outcome === 'object') {
+      this.logger.log(`[Forms] Submission ${submissionId} cancelled (payment failed or abandoned)`);
+    }
     return { ok: true };
+  }
+
+  /**
+   * Moves ONE submission from `from` to `to` under its row lock, and only if it is still in `from`.
+   *
+   * The read and the write used to be two statements with nothing between them: a cancel or expiry
+   * callback that read `pending` could then overwrite a `paid` that `markPaid` committed in between,
+   * and a cash validation could be applied twice. The lock makes the check and the move one step.
+   * Takes no form lock: none of these moves changes how many seats are held in a way a count could
+   * race (a cancel only frees one, a cash validation keeps the one it has).
+   */
+  private async moveLockedSubmission(
+    submissionId: string,
+    from: string,
+    to: string,
+    formId?: string
+  ): Promise<{ moved: Submission } | 'missing' | 'not-in-state'> {
+    return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+      const submission = await manager.findOne(Submission, {
+        where: formId ? { id: submissionId, formId } : { id: submissionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!submission) return 'missing';
+      if (submission.paymentStatus !== from) {
+        this.logger.debug(
+          `[Forms] submission ${submissionId} is ${submission.paymentStatus}, not ${from} - left as is`
+        );
+        return 'not-in-state';
+      }
+      submission.paymentStatus = to;
+      await manager.save(submission);
+      return { moved: submission };
+    });
   }
 
   /** Lists submissions waiting for cash validation on a given form. Requires form manager rights. */
@@ -1247,52 +1381,17 @@ export class FormsService {
     isGlobalAdmin: boolean
   ) {
     await this.assertFormManager(formId, validatedBy, isGlobalAdmin);
-    const submission = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
-    if (!submission) throw new NotFoundException('Submission not found');
-    if (submission.paymentStatus !== 'pending_cash') {
-      return { ok: true, message: 'Already processed' };
-    }
-    submission.paymentStatus = 'paid';
-    await this.submissionRepo.save(submission);
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending_cash', 'paid', formId);
+    if (outcome === 'missing') throw new NotFoundException('Submission not found');
+    if (outcome === 'not-in-state') return { ok: true, message: 'Already processed' };
     this.logger.log(`[Forms] Cash validated for submission ${submissionId} by ${validatedBy}`);
 
-    // Grant the configured cotisation tier if any + log purchase record
-    const form = await this.formRepo.findOne({
-      where: { id: formId },
-      select: {
-        id: true,
-        title: true,
-        grantsCotisation: true,
-        cotisationVariantKey: true,
-        associationId: true,
-      },
+    // Credits the validator rather than `system`, which is why the granter is a parameter.
+    await this.fulfilPayment(outcome.moved, true, {
+      grantedBy: validatedBy,
+      paymentMethod: 'cash',
+      metadata: { submissionId, validatedBy, paymentMethod: 'cash' },
     });
-    if (form) {
-      await this.grantCotisationIfConfigured(form, submission.userId, validatedBy, {
-        submissionId,
-        validatedBy,
-        paymentMethod: 'cash',
-      });
-    }
-    if (form?.associationId && submission.totalPaid > 0) {
-      try {
-        await this.purchaseRecordService.create({
-          userId: submission.userId,
-          source: 'form',
-          formId: submission.formId,
-          amountCents: submission.totalPaid,
-          paymentMethod: 'cash',
-          status: 'paid',
-          associationId: form.associationId,
-          productName: form.title ?? 'Formulaire',
-        });
-      } catch (e) {
-        this.logger.error(
-          `[PurchaseRecord] Failed to record cash purchase for submission ${submissionId}`,
-          e
-        );
-      }
-    }
     return { ok: true };
   }
 
@@ -1304,11 +1403,13 @@ export class FormsService {
     isGlobalAdmin: boolean
   ) {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
-    const submission = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
-    if (!submission) throw new NotFoundException('Submission not found');
-    if (submission.paymentStatus !== 'pending_cash') return { ok: true };
-    submission.paymentStatus = 'cancelled';
-    await this.submissionRepo.save(submission);
+    const outcome = await this.moveLockedSubmission(
+      submissionId,
+      'pending_cash',
+      'cancelled',
+      formId
+    );
+    if (outcome === 'missing') throw new NotFoundException('Submission not found');
     return { ok: true };
   }
 
@@ -1344,7 +1445,7 @@ export class FormsService {
       .update()
       .set({ paymentStatus: 'expired' })
       .where('"paymentStatus" = :status', { status: 'pending' })
-      .andWhere(`"createdAt" <= ${PENDING_HOLD_CUTOFF_SQL}`)
+      .andWhere(`"paymentRequestedAt" <= ${PENDING_HOLD_CUTOFF_SQL}`)
       .execute();
     const count = result.affected ?? 0;
     if (count > 0) {

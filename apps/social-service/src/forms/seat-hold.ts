@@ -2,7 +2,9 @@ import { Raw, type EntityManager, type FindOptionsWhere } from 'typeorm';
 import type { Submission } from './entities/submission.entity';
 
 /**
- * HOW LONG AN ONLINE-PAYMENT `pending` SUBMISSION HOLDS ITS SEAT, from its own `createdAt`.
+ * HOW LONG AN ONLINE-PAYMENT `pending` SUBMISSION HOLDS ITS SEAT, from its own `paymentRequestedAt`
+ * - the instant its CURRENT payment request was issued (migration 084). `createdAt` would be wrong
+ * the moment `submit` reuses a live pending row for a new request: the hold must restart with it.
  *
  * UNMEASURED: 30 minutes is a guess at Lydia's payment window, not a reading of it (the window is
  * one of the Livrable A questions, [backlog WP-LYDIA-1]). Too short and a slow payer lands over
@@ -15,7 +17,7 @@ export const PENDING_PAYMENT_HOLD_SECONDS = 30 * 60;
 /**
  * The instant before which a `pending` row no longer holds a seat, as SQL on the DATABASE clock.
  *
- * The database clock, not the service's: `createdAt` is written by the database's own `now()` into
+ * The database clock, not the service's: `paymentRequestedAt` is written by the database's own `now()` into
  * a `timestamp` column, so comparing it with `now()` reads both sides through the same session time
  * zone, whatever zone the Node process runs in. The constant is interpolated, never a parameter, so
  * this fragment is the same text in a `find` and in the expiry `UPDATE` - ONE definition of
@@ -57,7 +59,7 @@ export function livePendingWhere(
     ...extra,
     formId,
     paymentStatus: 'pending',
-    createdAt: Raw((column) => `${column} > ${PENDING_HOLD_CUTOFF_SQL}`),
+    paymentRequestedAt: Raw((column) => `${column} > ${PENDING_HOLD_CUTOFF_SQL}`),
   };
 }
 

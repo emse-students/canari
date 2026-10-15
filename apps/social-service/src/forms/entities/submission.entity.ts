@@ -62,6 +62,25 @@ export class Submission {
   @Column({ type: 'timestamptz', nullable: true })
   cashExpiresAt: Date | null;
 
+  /**
+   * When the CURRENT payment request was issued (migration 084): the seat hold of an online
+   * `pending` row is counted from it (`seat-hold.ts`). Equal to `createdAt` until `submit` reuses
+   * the row for a new request, which sets it to the database's `now()` again.
+   */
+  @Column({ type: 'timestamp', default: () => 'now()' })
+  paymentRequestedAt: Date;
+
+  /**
+   * Set once the cotisation this payment buys was granted, or found not to be configured
+   * (migration 084). A replayed payment grants again only while it is NULL.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  cotisationGrantedAt: Date | null;
+
+  /** Set once this payment's purchase record was written (migration 084), same rule. */
+  @Column({ type: 'timestamptz', nullable: true })
+  purchaseRecordedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

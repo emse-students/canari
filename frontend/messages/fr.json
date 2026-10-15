@@ -2087,7 +2087,7 @@
   "form_success_not_found_desc": "Impossible de confirmer votre paiement. Si vous avez été débité, contactez le support.",
   "form_success_back_to_forms": "Retour aux formulaires",
   "form_success_over_capacity_heading": "Paiement reçu, formulaire complet",
-  "form_success_over_capacity_desc": "Votre paiement est arrivé après la libération de votre place, et le formulaire s'est rempli entre-temps. L'organisateur en est averti et vous remboursera.",
+  "form_success_over_capacity_desc": "Votre paiement est arrivé après la libération de votre place, et le formulaire s'est rempli entre-temps. Votre paiement apparaît en tête des réponses de l'organisateur, qui vous remboursera.",
   "form_list_title": "Mes formulaires",
   "form_list_count": "{count} formulaires",
   "form_list_count_one": "1 formulaire",

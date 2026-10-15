@@ -2055,7 +2055,7 @@
   "form_success_not_found_desc": "Unable to confirm your payment. If you were charged, please contact support.",
   "form_success_back_to_forms": "Back to forms",
   "form_success_over_capacity_heading": "Payment received, form full",
-  "form_success_over_capacity_desc": "Your payment arrived after your place was released, and the form filled up in the meantime. The organiser has been told and will refund you.",
+  "form_success_over_capacity_desc": "Your payment arrived after your place was released, and the form filled up in the meantime. Your payment is at the top of the organiser's responses, and they will refund you.",
   "form_list_title": "My forms",
   "form_list_count": "{count} forms",
   "form_list_count_one": "1 form",
