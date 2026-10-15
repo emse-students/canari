@@ -1237,3 +1237,9 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 | #1785 a salon re-read once per drain | draft | review |
 | #1783 polls, #1784 double tap | drafts | review |
 | #1542 the run-locally rule | conflicting | a rebase |
+
+## Chantiers in planning (opened 2026-10-15)
+
+- **Bookings** (rooms and slots, a module of its own): 41 decisions and eight work packages in [bookings-chantier](bookings-chantier.md). Draft PRs open: the `MANAGE_BOOKINGS` right (WP-B0, a DATA migration that needs the user's yes before merge).
+- **Paid public forms** (the same as a paid internal form, answered with no account): five decisions and five work packages in [public-paid-forms-chantier](public-paid-forms-chantier.md). WP-P0 (a pending payment stops holding a seat for ever) also fixes a defect members have today. The observed payment waits on WP-LYDIA-1.
+- **The FILE question type** for forms (WP-F) serves both: decisions D7, D8, D22, D40, D41 of the bookings page.
