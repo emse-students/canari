@@ -13,8 +13,6 @@ import { listPosts, type ListPostsOptions, type PostEntity } from '$lib/posts/ap
 export interface ReelFeedSource {
   /** The filtered feed's query (tab, promo, formation), or `null` while the feed is not filtered. */
   options: () => Omit<ListPostsOptions, 'offset' | 'limit' | 'kind'> | null;
-  /** The filtered list on screen, so the viewer pages on from the touched reel's position. */
-  list: () => readonly Pick<PostEntity, 'id'>[];
 }
 
 /** A page of reels from `offset`, `limit` long - what `ReelViewer` asks for. */
@@ -37,23 +35,39 @@ const ALL_REELS: ReelPageLoader = (offset, limit) =>
   listPosts({ kind: 'reel', feed: 'all', offset, limit });
 
 /**
- * The page loader the viewer opened on `startPostId` uses.
+ * The page loader the viewer opened on `startPost` uses.
  *
- * With a filtered feed, the server is asked for `kind=reel` on the SAME tab, from the touched reel's
- * index in the list on screen: the server pages the same list, so the reels after it come next (the
- * touched one, answered again, is dropped by `mergeReelPage`). A reel the list does not hold starts
- * at the top. Without a filtered feed, the C7 list.
+ * With a filtered feed, the reels after the touched one are read by a CURSOR, its `publishedAt`:
+ * the server has none to offer (`GET /api/posts` pages by offset only), so this loader walks the
+ * filtered tab from its top with its OWN offset and keeps the reels published at or before the
+ * touched one. Where the touched reel sits in the list on screen decides nothing, so reels published
+ * since, or rows deleted above it, cannot shift where the viewer continues. The viewer's `offset` is
+ * ignored; a page shorter than `limit` means the list has ended. One limit is the offset paging
+ * itself: a reel deleted between two page reads shifts the rest by one, as in the feed's own scroll.
+ * Without a filtered feed, the C7 list.
  */
 export function reelPageLoader(
   source: ReelFeedSource | undefined,
-  startPostId: string
+  startPost: Pick<PostEntity, 'id' | 'publishedAt'>
 ): ReelPageLoader {
   const options = source?.options() ?? null;
-  if (!source || !options) return ALL_REELS;
-  const start = Math.max(
-    0,
-    source.list().findIndex((p) => p.id === startPostId)
+  if (!options) return ALL_REELS;
+  const cursor = Date.parse(startPost.publishedAt);
+  let serverOffset = 0;
+  let ended = false;
+  console.debug(
+    `[reel-viewer] paging the filtered feed "${options.feed}" from ${startPost.publishedAt}`
   );
-  console.debug(`[reel-viewer] paging the filtered feed "${options.feed}" from ${start}`);
-  return (offset, limit) => listPosts({ ...options, kind: 'reel', offset: start + offset, limit });
+  return async (_offset, limit) => {
+    const kept: PostEntity[] = [];
+    while (kept.length < limit && !ended) {
+      const page = await listPosts({ ...options, kind: 'reel', offset: serverOffset, limit });
+      serverOffset += page.length;
+      if (page.length < limit) ended = true;
+      for (const reel of page) {
+        if (reel.id !== startPost.id && Date.parse(reel.publishedAt) <= cursor) kept.push(reel);
+      }
+    }
+    return kept;
+  };
 }

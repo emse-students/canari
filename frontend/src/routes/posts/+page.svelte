@@ -2,7 +2,6 @@
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
-  import { feedToShowAfterPublish } from '$lib/posts/landingFeed';
   import { onMount, untrack } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import { page } from '$app/state';
@@ -17,7 +16,11 @@
     type ScheduledPost,
   } from '$lib/posts/api';
   import {
+    advanceLastSeen,
     feedKindFilterOf,
+    feedPageOptions,
+    kindForTabSwitch,
+    landingAfterPublish,
     rememberFeedKind,
     type FeedKindFilter,
   } from '$lib/posts/feedKindFilter';
@@ -187,16 +190,15 @@
     if (!seenObserver) {
       seenObserver = new IntersectionObserver(
         (entries) => {
-          // The "new" mark measures the WHOLE feed: a reel seen in the CanaReels view says nothing
-          // of the posts published between, so the filtered view does not advance it.
-          if (activeKind === 'reel') return;
-          let maxTs = lastSeenTs;
+          const seen: number[] = [];
           for (const entry of entries) {
             if (entry.isIntersecting) {
               const ts = elementPostTs.get(entry.target);
-              if (ts !== undefined && ts > maxTs) maxTs = ts;
+              if (ts !== undefined) seen.push(ts);
             }
           }
+          // The CanaReels view leaves the mark where it is (`advanceLastSeen`).
+          const maxTs = advanceLastSeen(lastSeenTs, seen, activeKind);
           if (maxTs > lastSeenTs) {
             lastSeenTs = maxTs;
             localStorage.setItem(LAST_SEEN_KEY, String(maxTs));
@@ -399,7 +401,6 @@
       const { feed, promo, formation } = data.feedParams;
       return { feed, promo, formation };
     },
-    list: () => postsOverride ?? initialPostsResolved ?? [],
   });
 
   /**
@@ -533,7 +534,7 @@
    * resolved; the only thing that changes between pages is the offset.
    */
   function buildListOptions(offset = 0) {
-    return { limit: PAGE_SIZE, offset, ...data.feedParams };
+    return feedPageOptions(data.feedParams, offset, PAGE_SIZE);
   }
 
   /**
@@ -550,28 +551,30 @@
 
   /**
    * Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice.
-   * The CanaReels filter follows the reader across tabs; `kind` overrides it for this visit only.
+   * The CanaReels filter follows the reader's choice across tabs; `kind` overrides it for this visit.
    */
   function showFeed(feed: PostFeed, kind?: FeedKindFilter) {
     const u = new URL(page.url);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
-    if (kind) u.searchParams.set('kind', kind);
+    // The viewer's CHOICE, so a `kind=all` a publish wrote lasts that visit only (`kindForTabSwitch`).
+    const nextKind = kind ?? kindForTabSwitch();
+    if (nextKind) u.searchParams.set('kind', nextKind);
     void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
   }
 
   /**
    * Switches between the whole feed and its CanaReels, and REMEMBERS it for this viewer - a per-viewer
-   * convenience (`feedKindFilter.ts`), so the URL says it too: the choice holds without storage.
+   * convenience (`feedKindFilter.ts`). The URL ALWAYS says it, `kind=all` included, so the URL alone
+   * decides the view whatever the storage did with the choice.
    */
   function selectKind(filter: FeedKindFilter) {
     if (filter === activeKind) return;
     Log.d('POSTS', `feed filter: ${activeKind} -> ${filter}`);
     rememberFeedKind(filter);
     const u = new URL(page.url);
-    if (filter === 'reel') u.searchParams.set('kind', filter);
-    else u.searchParams.delete('kind');
+    u.searchParams.set('kind', filter);
     void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
   }
 
@@ -627,17 +630,14 @@
    */
   function onPostCreated(landing: PostFeed | null) {
     showCreateModal = false;
-    const target = feedToShowAfterPublish(activeFeed, landing);
-    // A post does not appear among the reels: the whole feed is shown for this visit, unremembered.
-    if (activeKind === 'reel') {
-      Log.d('POSTS', 'published post lands in the whole feed, leaving the CanaReels view');
-      showFeed(target ?? activeFeed, 'all');
-      void loadScheduled();
-      return;
-    }
+    // A post is not a reel: while filtered, the whole feed is shown, for this visit only.
+    const target = landingAfterPublish(activeFeed, activeKind, landing);
     if (target) {
-      Log.d('POSTS', `published post lands in "${target}", leaving "${activeFeed}"`);
-      showFeed(target);
+      Log.d(
+        'POSTS',
+        `published post lands in "${target.feed}" (${target.kind ?? activeKind}), leaving "${activeFeed}" (${activeKind})`
+      );
+      showFeed(target.feed, target.kind);
       void loadScheduled();
       return;
     }

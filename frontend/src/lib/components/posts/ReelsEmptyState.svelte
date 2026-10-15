@@ -10,7 +10,7 @@
 </script>
 
 <div
-  class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"
+  class="border-cn-border bg-cn-surface rounded-2xl border border-dashed px-6 py-16 text-center"
   data-reels-empty
 >
   <Clapperboard size={48} class="text-text-muted mx-auto mb-3 opacity-40" />

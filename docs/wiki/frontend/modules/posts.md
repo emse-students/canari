@@ -22,7 +22,7 @@
 
 Posts are loaded via `GET /api/posts` (social-service), paginated with infinite scroll (`IntersectionObserver`).
 
-Above the tabs, a "Tout" / "CanaReels" filter (2026-10-15) narrows the open tab to its reels, on the
+Above the tabs, a "Tous les posts" / "CanaReels" filter (2026-10-15) narrows the open tab to its reels, on the
 server (`?kind=reel`); its decisions are on [reels](reels.md#the-canareels-filter---a-view-on-the-feed-not-a-place-addendum-to-c7-user-2026-10-15).
 
 ## An anonymous poll stores a tally and no voters (2026-09-30)

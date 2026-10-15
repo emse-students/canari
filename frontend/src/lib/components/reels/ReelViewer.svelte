@@ -59,7 +59,7 @@
     startPost,
     authToken,
     onClose,
-    loadPage = reelPageLoader(feedSource, startPost.id),
+    loadPage = reelPageLoader(feedSource, startPost),
   }: Props = $props();
 
   /** How many reels one page asks for. */
