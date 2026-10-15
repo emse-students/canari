@@ -418,6 +418,8 @@ has no foreign key; the orphan rendered as "Personnel"). Submissions stay, as wi
 | POST | `/api/payments/onboarding` | JWT | Start/resume Connect-style onboarding for an association, with the active provider |
 | POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
 | POST | `/api/payments/create-checkout-session` | InternalSecret | Create a checkout session (called by social-service, never by a browser) |
+| POST | `/api/payments/cancel-request` | InternalSecret | Cancel a payment request a retry replaced (Lydia `request/cancel`, numeric `request_id`; social-service only) |
+| POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state after a cancel answered "already processed" (Lydia `request/state`, `request_uuid` + `vendor_token`; social-service only) |
 | POST | `/api/payments/verify-session` | JWT | Verify completed checkout, mark form submission paid |
 | POST | `/api/payments/cancel-session` | JWT | Cancel unpaid checkout |
 | POST | `/api/payments/lydia-request-callback?outcome=confirm\|cancel\|expire` | Lydia signature (`sig`) | `request/do` payment confirmation - the authoritative fulfillment path for Lydia, since the buyer returning to the success redirect is not guaranteed |

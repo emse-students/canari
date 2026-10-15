@@ -112,12 +112,19 @@ export class PaymentWebhookController {
     this.logger.log(`Product purchase completed: productId=${productId} userId=${userId}`);
   }
 
-  /** Cancels a pending form submission via the internal social-service route. */
-  private async cancelPendingSubmissionInternal(submissionId: string): Promise<void> {
+  /**
+   * Cancels a pending form submission via the internal social-service route, naming the request
+   * Lydia reported (its numeric `request_id`): social-service applies it only if that is still the
+   * row's current request, so the cancel of a request a retry replaced changes nothing.
+   */
+  private async cancelPendingSubmissionInternal(
+    submissionId: string,
+    requestId: string
+  ): Promise<void> {
     assertValidSubmissionId(submissionId);
     await axios.post(
       internalSubmissionUrl(submissionId, 'cancel-pending'),
-      {},
+      { requestId },
       {
         ...internalSocialRequestConfig(),
         timeout: 15_000,
@@ -205,8 +212,10 @@ export class PaymentWebhookController {
       } else if (ref.kind === 'form') {
         // No pending row exists for a boutique purchase (unlike a form submission), so a
         // cancelled/expired Lydia request for one is simply never fulfilled - nothing to undo.
-        await this.cancelPendingSubmissionInternal(ref.submissionId);
-        this.logger.log(`Cancelled pending submission ${ref.submissionId} after Lydia ${outcome}`);
+        await this.cancelPendingSubmissionInternal(ref.submissionId, requestId);
+        this.logger.log(
+          `Reported Lydia ${outcome} of request ${requestId} for submission ${ref.submissionId}`
+        );
       }
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };

@@ -436,7 +436,9 @@ export async function cancelCashSubmission(
 }
 
 /** Cancels a pending online-payment submission after payment failure or user abort. */
-export async function cancelPendingSubmission(submissionId: string): Promise<{ ok: boolean }> {
+export async function cancelPendingSubmission(
+  submissionId: string
+): Promise<{ ok: boolean; alreadyPaid?: boolean }> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/cancel`,
     { method: 'POST' }

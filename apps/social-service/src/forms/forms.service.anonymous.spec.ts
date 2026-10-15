@@ -33,6 +33,10 @@ describe('FormsService - anonymous forms', () => {
     ...over,
   });
 
+  /** The registry statements, apart from the seat lock every submit takes first. */
+  const registryCalls = (manager: { query: jest.Mock }): [string, unknown[]][] =>
+    manager.query.mock.calls.filter(([sql]: [string]) => sql.includes('form_respondents'));
+
   function makeService(opts: { form?: Record<string, unknown>; inserted?: unknown[] } = {}) {
     const saved: Record<string, unknown>[] = [];
     const manager: any = {
@@ -92,7 +96,8 @@ describe('FormsService - anonymous forms', () => {
     it('records WHO answered in the registry, which names no answer', async () => {
       const { service, manager } = makeService();
       await service.submit('f1', { userId: 'u-alice', answers: { q1: 'bof' } });
-      const [sql, params] = manager.query.mock.calls[0];
+      // The first call is the form's seat lock (`lockFormSeats`); the registry insert follows it.
+      const [sql, params] = registryCalls(manager)[0];
       expect(sql).toContain('form_respondents');
       expect(sql).not.toMatch(/submission/i);
       expect(params).toEqual(['f1', 'u-alice']);
@@ -111,7 +116,7 @@ describe('FormsService - anonymous forms', () => {
         form: baseForm({ allowMultipleSubmissions: true }),
       });
       await service.submit('f1', { userId: 'u-alice', answers: { q1: 'bof' } });
-      expect(manager.query).not.toHaveBeenCalled();
+      expect(registryCalls(manager)).toHaveLength(0);
       expect(saved).toHaveLength(1);
     });
 
