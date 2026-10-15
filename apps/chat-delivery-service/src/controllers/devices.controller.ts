@@ -446,16 +446,14 @@ export class DevicesController {
       throw new BadRequestException('keyPackages must not exceed 200 items');
     }
 
-    // A UNION FOR EXACTLY ONE RELEASE, and the bare string is the OLD half. A client from before
-    // 2026-09-16 sends `["base64", ...]` and cannot be made to send anything else; one from after
-    // sends `[{ keyPackage, notAfter }, ...]` because the server did not read the lifetime out of the
-    // package and so could not tell an elapsed one from a fresh one. The old spelling stores a NULL, which the
-    // resolver reads as "not known to be expired" - no device is locked out by a fact nobody has.
-    // The removal date is on `docs/wiki/legacy-compatibility.md`.
+    // ONE SHAPE: `[{ keyPackage, notAfter }, ...]`, because the server does not read the lifetime
+    // out of the package and so cannot tell an elapsed one from a fresh one. The bare
+    // `["base64", ...]` of clients before 0.18.10 is refused since `minClientVersion` 1.2.7.
     const parsed = body.keyPackages.map((entry) => {
-      const raw: unknown =
-        typeof entry === 'object' && entry !== null ? entry : { keyPackage: entry };
-      const { keyPackage, notAfter } = raw as { keyPackage?: unknown; notAfter?: unknown };
+      if (typeof entry !== 'object' || entry === null) {
+        throw new BadRequestException('Each keyPackages entry must be { keyPackage, notAfter }');
+      }
+      const { keyPackage, notAfter } = entry as { keyPackage?: unknown; notAfter?: unknown };
       if (typeof keyPackage !== 'string' || keyPackage.length === 0 || keyPackage.length > 16384) {
         throw new BadRequestException('Each keyPackage must be a non-empty base64 string');
       }

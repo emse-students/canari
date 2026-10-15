@@ -52,24 +52,24 @@ describe('asking for one device KeyPackage', () => {
     }
   );
 
-  /** A server older than the reason field. `unspecified` keeps the only reading that can't be wrong. */
-  it('reads a 404 with no reason as unspecified rather than guessing one', async () => {
-    const fetchFn = vi.fn().mockResolvedValue(json({ statusCode: 404, message: 'nope' }, 404));
+  /**
+   * Every delivery service since 2026-09-16 names its reason, so a 404 with none, or with one it
+   * never sends, is not that service answering - it establishes nothing, and nothing is retired.
+   */
+  it.each([[{ statusCode: 404, message: 'nope' }], [{ reason: 'something-newer' }]])(
+    'says a 404 naming no known reason (%j) established nothing',
+    async (body) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const fetchFn = vi.fn().mockResolvedValue(json(body, 404));
 
-    expect(await api(fetchFn).fetchDeviceKeyPackage('u1', 'd1')).toEqual({
-      kind: 'none',
-      reason: 'unspecified',
-    });
-  });
-
-  it('reads a 404 with an UNKNOWN reason as unspecified, not as the string it was sent', async () => {
-    const fetchFn = vi.fn().mockResolvedValue(json({ reason: 'something-newer' }, 404));
-
-    expect(await api(fetchFn).fetchDeviceKeyPackage('u1', 'd1')).toEqual({
-      kind: 'none',
-      reason: 'unspecified',
-    });
-  });
+      expect(await api(fetchFn).fetchDeviceKeyPackage('u1', 'd1')).toEqual({
+        kind: 'unanswered',
+        detail: 'a 404 with no reason in it',
+      });
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    }
+  );
 
   it.each([500, 502, 503, 401])('says %d established NOTHING about the device', async (status) => {
     const fetchFn = vi.fn().mockResolvedValue(json({}, status));
@@ -107,10 +107,9 @@ describe('refusalIsTemporary', () => {
    * The one behavioural difference between the refusals: an elapsed package is replaced by the
    * device itself on its next connection, and `registerDevice` re-creates the pending membership.
    */
-  it('is true for the elapsed package and false for the other three', () => {
+  it('is true for the elapsed package and false for the other two', () => {
     expect(refusalIsTemporary('expired')).toBe(true);
     expect(refusalIsTemporary('revoked')).toBe(false);
     expect(refusalIsTemporary('unregistered')).toBe(false);
-    expect(refusalIsTemporary('unspecified')).toBe(false);
   });
 });

@@ -721,17 +721,23 @@ export class MlsDeliveryApi {
     }
 
     if (res.status === 404) {
-      // The reason is the server's, classified where it is known. A server older than the field
-      // sends none, and `unspecified` keeps the reading that cannot be wrong: the caller then
-      // behaves exactly as it did before the field existed.
+      // The reason is the server's, classified where it is known, and every delivery service since
+      // 2026-09-16 sends one. A 404 WITHOUT one is therefore not the delivery service answering (a
+      // proxy, a missing route): it establishes nothing about the device, so it is `unanswered`.
       const reason = await res
         .json()
         .then((b: { reason?: unknown }) =>
           b?.reason === 'revoked' || b?.reason === 'unregistered' || b?.reason === 'expired'
             ? b.reason
-            : ('unspecified' as const)
+            : null
         )
-        .catch(() => 'unspecified' as const);
+        .catch(() => null);
+      if (reason === null) {
+        console.warn(
+          '[MLS] key-package 404 carries no reason - not the delivery service answering'
+        );
+        return { kind: 'unanswered', detail: 'a 404 with no reason in it' };
+      }
       return { kind: 'none', reason };
     }
 

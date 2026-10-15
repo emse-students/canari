@@ -22,12 +22,10 @@ export type DeviceKeyPackage = {
 };
 
 /**
- * Why there is no package. Mirrors `KeyPackageRefusal` in the delivery service, plus the one case
- * only a client can be in: `unspecified`, a 404 from a server older than the reason field. Treated
- * as the old behaviour was, which is the only reading that cannot be wrong - see
- * `docs/wiki/legacy-compatibility.md`.
+ * Why there is no package. Mirrors `KeyPackageRefusal` in the delivery service exactly; a 404 that
+ * names none of the three is not the delivery service answering and is `unanswered`.
  */
-export type DeviceKeyPackageRefusal = 'revoked' | 'unregistered' | 'expired' | 'unspecified';
+export type DeviceKeyPackageRefusal = 'revoked' | 'unregistered' | 'expired';
 
 /**
  * The answer, or the statement that there was none.
@@ -67,8 +65,8 @@ export type DeviceSignatureKeys =
  *
  * - `published`: a row exists. An ELAPSED package counts, because the gate checks presence and an
  *   elapsed row is exactly the one the device replaces on its own next connection.
- * - `absent`: the server says there is no row (`unregistered`, or a 404 from a server older than
- *   the reason field) - the fact is false until the device's round publishes.
+ * - `absent`: the server says there is no row (`unregistered`) - the fact is false until the
+ *   device's round publishes.
  * - `revoked`: the id is denylisted; no round of THIS id will ever make it true.
  * - `unknown`: nothing was established (`unanswered`).
  */

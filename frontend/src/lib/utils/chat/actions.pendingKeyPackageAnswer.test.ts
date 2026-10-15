@@ -125,14 +125,6 @@ describe('a pending invitation acts on WHICH answer it got', () => {
     }
   );
 
-  /** A server older than the reason field. The reading that cannot be wrong is the old one. */
-  it('retires it on an unexplained 404, exactly as it did before the reason existed', async () => {
-    const { mlsService, lines } = await sweep({ kind: 'none', reason: 'unspecified' });
-
-    expect(mlsService.deleteDeviceMembership).toHaveBeenCalledWith('peer', 'peer-dev', 'g1');
-    expect(lines).toContain('unspecified');
-  });
-
   it('adds the device when there IS a package, which is the whole point of the fallback', async () => {
     const { mlsService, lines } = await sweep({
       kind: 'package',
