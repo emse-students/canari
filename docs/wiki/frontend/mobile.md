@@ -954,8 +954,12 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
 **It also never sees a silent frame, so it can never cancel anything.** The extension runs on
-`mutable-content: 1` ALERT pushes only; a `content-available: 1` background push goes to the app
-(`canari_push.mm` `CanariHandleFcmData`). So `channel_read` — the frame that clears a salon's
+`mutable-content: 1` ALERT pushes only; a `content-available: 1` background push is MEANT for the app
+(`canari_push.mm` `CanariHandleFcmData`) - **and reaches no Canari native code today, background or foreground** (`willPresentNotification` fires for alerts only): the hook that would
+take it is never installed, because wry's delegate lacks
+`application:didReceiveRemoteNotification:fetchCompletionHandler:` and the hook only replaces an
+existing method (syslog, every launch: `remote notification hook NOT installed`;
+[backlog](../backlog.md)). So `channel_read` — the frame that clears a salon's
 notification after it was read on another device — is the app's to handle, and listing it in the
 extension's switch (as it was until 2026-08-16) is a branch that cannot execute. The removal itself
 must key on `threadIdentifier`, since the identifier differs between the two posters — see
@@ -1143,13 +1147,13 @@ halves agreeing field by field (`systemComponentsPatch.test.ts`); the Swift comp
 **Owed on an iPhone:** the pieces over their CSS twins pixel for pixel, the "+" following the keyboard
 without a lag the eye sees, the picker opening, and VoiceOver reading the four names.
 
-### The iPhone follows Dynamic Type, by CSS alone (decided by the user 2026-10-14)
+### The iPhone follows Dynamic Type (decided by the user 2026-10-14)
 
 WKWebView ignores the system text size for ordinary CSS (read 2026-10-13: the largest standard size
 drew exactly as the default). A font declared `-apple-system-body` does resolve to the user's current
 body size, so `publishIosTypeScale` (`lib/utils/textZoom.ts`) reads a hidden probe styled that way,
 divides by 17px (the default "Large" body), clamps to `[1, 2]` and publishes `--type-scale`, which
-the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multiply by (a size growing inside a fixed line box overlaps its lines and clips the composer; `typeScaleRatio.test.ts` keeps the two in step). No Swift. Spacing and boxes stay fixed, as on Android's WebView, and `.text-zoom-exempt` and `text-zoom-size-N` divide/multiply by `--type-scale` as well as `--text-zoom`, so avatar initials stay in their circle
+the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multiply by (a size growing inside a fixed line box overlaps its lines and clips the composer; `typeScaleRatio.test.ts` keeps the two in step). The probe is read at start-up only; a later change is carried from native (below). Spacing and boxes stay fixed, as on Android's WebView, and `.text-zoom-exempt` and `text-zoom-size-N` divide/multiply by `--type-scale` as well as `--text-zoom`, so avatar initials stay in their circle
 ([phone-comparison](../phone-comparison.md)).
 
 - **Bound: 2.** Android's 200 % is the largest scale rows, composer, nav, bubbles and the agenda were
@@ -1161,15 +1165,28 @@ the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multi
   Android's measured `--text-zoom`. **Unproven until the iPhone reading: that `-apple-system-body`
   resolves live to Dynamic Type in WKWebView.** Nothing here can settle it.
 - **`--text-zoom` stays 1 on iOS** (it means "the engine inflated every font"; only Android does). The reel overlay's `cqmin` size divides by `--text-zoom` alone, so it keeps matching the export canvas at any Dynamic Type size.
-- **A size changed from Control Center while the app is in front fires no `visibilitychange`**, so it applies at the next return to the foreground; no timer polls for it.
-- Read at start-up and on each return to the foreground (`visibilitychange`), since the setting is
-  changed outside the app without a reload.
+- **A LATER CHANGE COMES FROM NATIVE, NOT FROM THE PROBE (2026-10-15).** The first design re-read the
+  probe on `visibilitychange`; on the iPhone 12 (`1.2.9-alpha.1`) a size changed in Settings while
+  the app was backgrounded applied only after a cold start, 3 of 3. Whether the event never fired
+  or the probe read WebKit's size before WebKit had learnt the new one was not separated - neither
+  matters now: `CanariPublishDynamicType` (`canari_ios.mm`) reads
+  `UIFont preferredFontForTextStyle:UIFontTextStyleBody` and dispatches `canari:dynamic-type`
+  (`detail.bodyPx`) plus `window.__canariDynamicTypeBodyPx`, on
+  `UIContentSizeCategoryDidChangeNotification` (extra coverage: dismissing Control Center already fires an activation), on every
+  `didBecomeActive` (a change made while suspended) and after every page load.
+  `followIosDynamicType` starts from that global when it is there, from the probe otherwise, and
+  listens to the event. No timer.
+- **Text with no `text-*` class follows too**: `body` is `calc(1rem * var(--type-scale, 1))`, 16px
+  wherever the scale is 1. The rail's salon name inherited the engine's 16px and stayed put at 2x.
+- **A markdown heading hyphenates** (`.post-markdown` h1-h6, `hyphens: auto` under `lang="fr"`)
+  before `wrap-break-word` splits a word at the card's edge ("personnalisati/on" at 2x), with `-webkit-hyphens` for iOS below 17. Limit: a post carries no language, so an English heading is hyphenated by French rules.
 - **Owed - one reading on the iPhone 12 bench** (nothing here can render WKWebView): Settings >
   Display & Brightness > Text Size, then Accessibility > Display & Text Size > Larger Text (also
   Larger Accessibility Sizes), and each main screen: chats list and a conversation (bubbles,
   composer), communities, feed, agenda, dashboard, a modal and the PIN sheet. Check the text grows,
   nothing clips or overflows, avatar initials stay inside their circle, and changing the size with
-  the app in the background applies on return.
+  the app in the background applies on return (FAILED on `1.2.9-alpha.1`, re-owed on the native
+  publish above).
 
 ### iOS project
 

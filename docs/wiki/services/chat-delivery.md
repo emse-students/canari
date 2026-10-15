@@ -1238,8 +1238,10 @@ asserts the block on the message that actually reaches FCM, because `push-payloa
 covered the builder field by field and none of it applied to a caller that never called it).
 
 **Which iOS process a push reaches is decided here.** `mutable-content: 1` (alert) runs the
-Notification Service Extension; `content-available: 1` (background) goes to the app
-(`canari_push.mm` `CanariHandleFcmData`) and never to the extension. So a silent type — today only
+Notification Service Extension; `content-available: 1` (background) is meant for the app
+(`canari_push.mm` `CanariHandleFcmData`) and never goes to the extension - **but the app hook taking
+it is not installed (2026-10-15), so no Canari native code acts on it, background or foreground**
+([mobile](../frontend/mobile.md), [backlog](../backlog.md)). So a silent type — today only
 `channel_read` — is acted on by the app alone, and listing one in the NSE's switch is a branch that
 cannot execute. `frontend/src/lib/mobile/channelPushFields.test.ts` pins both directions across the
 seam.

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import CameraOverlay from './CameraOverlay.svelte';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
+import { screenCover } from '$lib/actions/coversScreen.svelte';
 import {
   clearHistoryOverlayStack,
   historyOverlayStackDepth,
@@ -225,6 +226,27 @@ describe('CameraOverlay history', () => {
     // Its entry's traversal lands HERE, not in the next test.
     unmount(app);
     await drainTraversals(model);
+  });
+
+  it('covers the screen while open, so the native iOS chrome hides over the viewfinder', async () => {
+    const model = installHistoryModel();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    expect(screenCover.covered).toBe(false);
+    const app = mount(CameraOverlay, {
+      target,
+      props: {
+        destination: 'chat',
+        session: new CameraSession(() => Promise.resolve(stream())),
+        oncapture: vi.fn(),
+        onclose: vi.fn(),
+      },
+    });
+    await settle();
+    expect(screenCover.covered).toBe(true);
+    unmount(app);
+    await drainTraversals(model);
+    expect(screenCover.covered).toBe(false);
   });
 
   it('torn down by its owner under a review, it takes BOTH its entries back and releases the camera', async () => {

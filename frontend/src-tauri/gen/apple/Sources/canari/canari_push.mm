@@ -282,12 +282,12 @@ NSString *CanariRetrievePushSecret(void) {
       NSMutableData *zeros = [NSMutableData dataWithLength:raw.length];
       [zeros writeToFile:path atomically:YES];
       [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
-      NSLog(@"[CanariPush] secret plus recent adopte depuis pending_push_secret.txt");
+      NSLog(@"[CanariPush] newer secret adopted from pending_push_secret.txt");
       return secret;
     }
     // An empty/unreadable file is a half-written handoff, not an answer: leave it for the next
     // reader and fall through to the Keychain rather than deleting a secret nobody has read yet.
-    NSLog(@"[CanariPush] pending_push_secret.txt present mais vide - repli sur le Keychain");
+    NSLog(@"[CanariPush] pending_push_secret.txt present but empty - reading the Keychain");
   }
 
   NSDictionary *query = @{
@@ -305,8 +305,8 @@ NSString *CanariRetrievePushSecret(void) {
       return stored;
     }
   }
-  NSLog(@"[CanariPush] aucun secret: ni fichier en attente ni Keychain - envoi en arriere-plan "
-        @"impossible");
+  NSLog(@"[CanariPush] no secret: neither a pending file nor the Keychain holds one - background "
+        @"sends impossible");
   return nil;
 }
 
@@ -2228,7 +2228,7 @@ static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *r
     return;
   }
   if (ctx.deviceKeyB64.length == 0) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: deviceKeyB64 vide");
+    NSLog(@"[CanariPush] processWelcomeRequestBackground: deviceKeyB64 empty");
     return;
   }
   NSString *secret = CanariRetrievePushSecret();
@@ -2246,7 +2246,7 @@ static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *r
     usleep(2000000);
   }
   if (!lockAcquired) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: verrou Redis non acquis");
+    NSLog(@"[CanariPush] processWelcomeRequestBackground: Redis lock not acquired");
     return;
   }
 
@@ -2321,7 +2321,7 @@ static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *
     return;
   }
   if (ctx.deviceKeyB64.length == 0) {
-    NSLog(@"[CanariPush] processReceivedWelcomeBackground: deviceKeyB64 vide");
+    NSLog(@"[CanariPush] processReceivedWelcomeBackground: deviceKeyB64 empty");
     return;
   }
 
@@ -2940,7 +2940,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
       if (decrypted.callEnded && decrypted.callId.length > 0) {
         CanariEndCallKitCall(decrypted.callId, CXCallEndedReasonRemoteEnded);
       }
-      NSLog(@"[CanariPush] call_control supprime (ended=%d)", decrypted.callEnded);
+      NSLog(@"[CanariPush] call_control removed (ended=%d)", decrypted.callEnded);
       return;
     }
 
@@ -3398,7 +3398,16 @@ static void CanariInstallRemoteNotificationHook(void) {
     SEL sel = @selector(application:didReceiveRemoteNotification:fetchCompletionHandler:);
     Method method = class_getInstanceMethod(delegateClass, sel);
     if (method == nil) {
-      NSLog(@"[CanariPush] remote notification hook: selector absent on %@", delegateClass);
+      // NOT INSTALLED, ON EVERY LAUNCH: wry's delegate does not implement the selector, and the
+      // Firebase proxy that would have added one found no delegate (see the APNs token hook). So a
+      // `content-available` frame reaches no Canari native code, in the background OR the foreground
+      // (willPresentNotification fires for alerts only).
+      // Adding the method (class_replaceMethod, as the token hook does) changes what iOS wakes the
+      // app for, and is its own change owing a device reading (docs/wiki/backlog.md).
+      NSLog(@"[CanariPush] remote notification hook NOT installed: %@ has no "
+            @"didReceiveRemoteNotification:fetchCompletionHandler: - no native code handles a silent "
+            @"frame, background or foreground",
+            delegateClass);
       return;
     }
     CanariOrigDidReceiveRemoteNotification =
@@ -3427,7 +3436,8 @@ static void CanariWritePushDiagnostic(NSString *_Nullable reason) {
     [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
     return;
   }
-  NSLog(@"[CanariPush] push diagnostic: %@", reason);
+  // No line of its own: every caller has just logged the cause in words, and repeating it as a
+  // code doubled each one in the syslog (iPhone 12, 2026-10-15).
   [reason writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
@@ -3655,7 +3665,7 @@ void CanariPushSetup(void) {
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
   g_fcmPushDelegate = [[CanariFcmPushDelegate alloc] init];
   [FIRMessaging messaging].delegate = g_fcmPushDelegate;
-  NSLog(@"[CanariPush] FCM delegate installe");
+  NSLog(@"[CanariPush] FCM delegate installed");
   // THE TOKEN IS NOT FETCHED HERE, and that is the fix rather than an omission. This block used to
   // call `tokenWithCompletion` on the spot, declaring itself the peer of Android's
   // MainActivity.onCreate force-read - but it copied a pattern whose precondition exists only on the
@@ -3677,7 +3687,10 @@ void CanariSyncFcmTokenIfApnsReady(void) {
   // arrived or it has not, `didBecomeActive` fires again on every foreground, and
   // didReceiveRegistrationToken covers the first acquisition independently. Nothing here waits.
   if ([FIRMessaging messaging].APNSToken == nil) {
-    NSLog(@"[CanariPush] APNs token not here yet - not asking FCM for one");
+    // Expected once per cold start: the first activation runs before APNs answers (about 40 ms
+    // later on the iPhone 12, 2026-10-15), and that answer fetches the token itself. Seen on a
+    // LATER activation, or with no "APNs token received" after it, APNs never answered.
+    NSLog(@"[CanariPush] APNs token not here yet - the FCM token is fetched when it arrives");
     CanariWritePushDiagnostic(@"no-apns-token");
     return;
   }
@@ -3694,7 +3707,7 @@ void CanariSyncFcmTokenIfApnsReady(void) {
     // token which rotated while the app was killed, where didReceiveRegistrationToken never fires
     // because, from this launch's point of view, nothing changed.
     CanariPersistFcmToken(token);
-    NSLog(@"[CanariPush] FCM token synchronise");
+    NSLog(@"[CanariPush] FCM token synchronised");
   }];
 #else
   NSLog(@"[CanariPush] Firebase Messaging absent - no FCM token to sync");
