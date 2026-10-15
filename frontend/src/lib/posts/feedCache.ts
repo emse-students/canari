@@ -17,8 +17,9 @@ import type { PostFeed } from '$lib/posts/api';
  *
  * MEMORY ONLY, AND SCOPED TO ONE ACCOUNT. Posts are per-reader - `followed` and `promo` feeds are
  * literally so - so an entry carries the id it was fetched for and is invisible to anybody else;
- * a logout, which clears that id, therefore hides every entry without a sweep. It is not persisted
- * because a feed is the one thing that genuinely is stale after a reload.
+ * a logout, which clears that id, therefore hides every entry without a sweep. It is not persisted:
+ * what survives a reload is the first page in the account's sealed store (`feedStore.ts`), drawn
+ * only until the server's first page replaces it.
  */
 export interface FeedCacheEntry {
   posts: PostEntity[];

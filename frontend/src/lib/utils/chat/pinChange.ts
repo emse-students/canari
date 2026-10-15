@@ -190,6 +190,28 @@ export async function reencryptGraineSessions(
 }
 
 /**
+ * Deletes the feed's stored first pages instead of re-sealing them under the new device key.
+ *
+ * They are a COPY the server's next answer rewrites (`$lib/posts/feedStore`), so re-sealing them is
+ * work for nothing, and leaving them under the old key would make every later read fail to open
+ * them - a warning on every launch about a copy nobody needs. Never fatal: a page left behind is
+ * deleted by the first read that cannot open it.
+ */
+export async function dropStoredFeedPages(
+  storage: IStorage,
+  log: (msg: string) => void = () => {}
+): Promise<void> {
+  try {
+    const dropped = await storage.deleteFeedPages();
+    log(
+      `[DEVICEKEY_CHANGE] ${dropped} stored feed page(s) dropped - the next feed answer rewrites them.`
+    );
+  } catch (e) {
+    log(`[DEVICEKEY_CHANGE] Warning: the stored feed pages could not be dropped: ${String(e)}`);
+  }
+}
+
+/**
  * Points this device's local unlock path at the new device key after the account PIN changed.
  * Shared by both the change and recovery flows.
  *
@@ -263,6 +285,7 @@ export async function performPinChange(
   // After the messages, and before the new key is adopted: a seed left under the old key is
   // channel history nothing can serve again.
   await reencryptGraineSessions(storage, currentDeviceKeyB64, newDeviceKeyB64, log);
+  await dropStoredFeedPages(storage, log);
 
   reportProgress(onProgress, { percent: 92, stage: 'finalize' });
   setDeviceKey(newDeviceKeyB64);

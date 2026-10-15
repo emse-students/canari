@@ -2986,6 +2986,8 @@
   "posts_empty_followed": "Follow clubs or people to see their posts here, or switch to",
   "posts_badge_new": "New",
   "posts_all_loaded": "You are all caught up!",
+  "posts_stored_refreshing": "Feed saved on this device, updating…",
+  "posts_stored_not_refreshed": "Feed saved on this device: the server did not answer.",
   "posts_load_error_title": "Could not load posts",
   "posts_no_audience_title": "No feed for you yet",
   "posts_no_audience_hint": "The posts feed opens once you join a space or an association.",

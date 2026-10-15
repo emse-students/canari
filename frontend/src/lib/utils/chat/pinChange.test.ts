@@ -11,7 +11,7 @@ import {
   encodeGraineSensitive,
   decodeGraineSession,
 } from '$lib/db/graineCodec';
-import { reencryptGraineSessions, reencryptLocalMessages } from './pinChange';
+import { dropStoredFeedPages, reencryptGraineSessions, reencryptLocalMessages } from './pinChange';
 import { setLocale } from '$lib/paraglide/runtime';
 
 /** In-memory IStorage stub that persists real encrypted rows (no IndexedDB). */
@@ -95,6 +95,9 @@ function makeEncryptedStorage(): IStorage & {
     saveDistributionGroup: vi.fn().mockResolvedValue(undefined),
     getDistributionGroups: vi.fn().mockResolvedValue([]),
     deleteDistributionGroup: vi.fn().mockResolvedValue(undefined),
+    saveFeedPage: vi.fn().mockResolvedValue(undefined),
+    getFeedPage: vi.fn().mockResolvedValue(null),
+    deleteFeedPages: vi.fn().mockResolvedValue(0),
     clear: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -241,5 +244,27 @@ describe('reencryptGraineSessions', () => {
 
     expect(count).toBe(0);
     expect(storage.graineRows[0]!.cipherText).toEqual(before);
+  });
+});
+
+describe('dropStoredFeedPages', () => {
+  it('drops the feed copy rather than leaving it sealed under a key this device no longer has', async () => {
+    const storage = makeEncryptedStorage();
+    vi.mocked(storage.deleteFeedPages).mockResolvedValue(3);
+    const log = vi.fn();
+
+    await dropStoredFeedPages(storage, log);
+
+    expect(storage.deleteFeedPages).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('3 stored feed page(s) dropped'));
+  });
+
+  it('logs a refused delete and does not fail the PIN change', async () => {
+    const storage = makeEncryptedStorage();
+    vi.mocked(storage.deleteFeedPages).mockRejectedValue(new Error('disk full'));
+    const log = vi.fn();
+
+    await expect(dropStoredFeedPages(storage, log)).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('disk full'));
   });
 });
