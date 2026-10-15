@@ -98,7 +98,14 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
 | `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding |
 | `MANAGE_PARTNERSHIPS` | 10 | 8 | partnership cards, their icons, their codes and their claims |
-| `MANAGE_BOOKINGS` | 11 | 0 | nothing yet: the right of the planned bookings module ([bookings-chantier](bookings-chantier.md), WP-B0). In the admin preset, inherited by a BDE super-admin, backfilled to every `MANAGE_FORMS` holder by migration 083 |
+| `MANAGE_BOOKINGS` | 11 | 0 | nothing yet: the right of the planned bookings module (the bookings chantier, WP-B0). In the admin preset, inherited by a BDE super-admin, backfilled to every `MANAGE_FORMS` holder by migration 083 |
+
+**Deploy order and old clients for `MANAGE_BOOKINGS` (bit 11).** The admin preset is now 3871. An OLD server
+validates `permissions` against its own `ALL_PERMISSION_FLAGS` (at most 2047) and answers 400 to a mask above it,
+so a new client talking to a server not yet deployed fails to add an admin - the same shape as
+`MANAGE_PARTNERSHIPS`: deploy the server first. Conversely an admin added from an OLD app keeps the old preset
+(1823, no bit 2048) and lacks the right; that is not fixed by a second backfill but by WP-B1 of the bookings
+chantier, which is where the right first has an effect.
 
 Nothing is dead: every flag has at least one call site. Re-measure the table rather than trusting it
 - one pass over the `@SetMetadata` decorators and one over `AssociationPermissionFlag.` references
