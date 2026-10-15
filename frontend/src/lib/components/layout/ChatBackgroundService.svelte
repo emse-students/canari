@@ -567,14 +567,6 @@
   }
 
   /**
-   * Opens the PIN modal for the given user.
-   *
-   * THE GATE IS DRAWN ON THE LOCAL FACT WHEN THERE IS ONE. A device that enrolled this user is a
-   * returning one, so the server's `pin-status` - which waited for the token refresh, then a round
-   * trip, ~0.5 s of a cold start behind a notification - is asked only by a device that never did.
-   * See {@link firstPinSetupFromDevice}.
-   */
-  /**
    * The ONE place the keypad is put on screen. A keypad on screen means a PIN is owed, so the
    * unlock fact is set back to "needs the member" here and nowhere else: every caller that draws
    * the keypad also hides the community list and holds the pre-session listing (F1).
@@ -585,6 +577,14 @@
     showPinModal = true;
   }
 
+  /**
+   * Opens the PIN modal for the given user.
+   *
+   * THE GATE IS DRAWN ON THE LOCAL FACT WHEN THERE IS ONE. A device that enrolled this user is a
+   * returning one, so the server's `pin-status` - which waited for the token refresh, then a round
+   * trip, ~0.5 s of a cold start behind a notification - is asked only by a device that never did.
+   * See {@link firstPinSetupFromDevice}.
+   */
   async function openPinModal(uid: string, opts?: { deviceIdUnproven?: boolean }) {
     // A PIN is owed: the device is locked from here until the unlock, whatever page is shown (F1).
     noteUnlockNeedsMember();
