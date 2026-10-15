@@ -38,7 +38,7 @@ submitCondition != null)}`): that lock is lifted by this chantier, only for what
 
 | WP | Scope | Named starting point | Proof |
 |---|---|---|---|
-| **WP-P0** (DRAFT PR #1906, 2026-10-15: built, with two changes beyond its scope that review must confirm - `submit` now locks the form row and runs in READ COMMITTED because main let 4 concurrent submits take a 1-seat form, and `markPaid` is a no-op on a row already `paid` or `paid_over_capacity` because the Lydia callback and `verify-session` both called it, re-granting the cotisation twice; no migration, `paymentStatus` is a plain varchar) | Expire a pending online answer from its row (PP3, PP4), the "expired" and "paid outside capacity" states, for ALL forms; ships first because it fixes members too | `forms.service.ts` (`submit`, the capacity count), `forms-reminder.scheduler.ts` (cash expiry as the pattern), migration for the new states | A row left pending frees its seat; a late payment lands in the right state; a second job run changes nothing |
+| **WP-P0** (DRAFT PR #1906, 2026-10-15: built, with two changes beyond its scope that review must confirm - `submit` now locks the form row and runs in READ COMMITTED because main let 4 concurrent submits take a 1-seat form, and `markPaid` is a no-op on a row already `paid` or `paid_over_capacity` because the Lydia callback and `verify-session` both called it, re-granting the cotisation twice; migration 084 adds the request time and two durable fulfilment flags, a DATA change that needs the user's yes before any production deploy; its round two also locks cancel and cash validation and guards the replay on the request id) | Expire a pending online answer from its row (PP3, PP4), the "expired" and "paid outside capacity" states, for ALL forms; ships first because it fixes members too | `forms.service.ts` (`submit`, the capacity count), `forms-reminder.scheduler.ts` (cash expiry as the pattern), migration for the new states | A row left pending frees its seat; a late payment lands in the right state; a second job run changes nothing |
 | **WP-P1** | Lift the guest refusals PP1 allows: the `submit` guest branch takes the paid path with `userId = null`, `assertPublicConfigValid` allows price, answer grid, supplements and cash, `markPaid` accepts a null user, the editor lock is lifted | `forms.service.ts`, `markPaid`, `FormAdvancedSettings.svelte` | A guest pays on dev, one real Lydia payment observed |
 | **WP-P2** | The guest return page with a reference (PP2), no dependence on the session-guarded `verify-session`; the Lydia callback marks the row paid | `routes/f/[id]/`, `webhook.controller.ts`, `payment.controller.ts` | The page is read after a real payment and the row is `paid` |
 | **WP-P3** | The per-visitor ceiling of pending paid answers (PP5), honeypot and throttle on the paid path | `PublicFormsController`, `ClientIpThrottlerGuard` | A script of 4 pending answers from one address is refused on the 4th |
@@ -49,6 +49,18 @@ WP-P4's stale forms.md line is already corrected in #1906. Guest rows (`userId =
 **All of it waits on WP-LYDIA-1 for the observed payment** (production tokens, `LYDIA_ENV`, the Livrable A answers):
 the code can be written and tested on dev with Lydia's homologation account, but nothing ships to users before.
 Order: P0 first (independent), then P1, P2, P3 in parallel, P4 last.
+
+## Blocked on information the repository does not hold (2026-10-15, from WP-P0 round two)
+
+| Point | What is missing | Who can supply it |
+|---|---|---|
+| D1: the Lydia request expires with the seat hold | the name and format of the `request/do` expiry parameter appear nowhere (`plans/stripe-to-lydia-migration.md`, `payments.md`, `core-service.md`, the provider code) | Lydia's documentation (the Livrable A exchange) |
+| D2: reuse a pending row and cancel the old Lydia request | no cancel call is documented (only the cashier permission `access_cancelrequest`); `cancel-pending` carries no request id, so an old request's cancel callback could cancel the live one | Lydia, then the request id on the cancel callback |
+| D3: tell the organiser of `paid_over_capacity` | no notification type fits (`form_reminder` links to the fill page); a NEW category needs push text, a `NotificationRow` case and a deep link | The user's approval of a new category |
+
+Until then a row past the hold is NOT reused (a new row is written), and the replay warning is the only
+trace of two payable requests. The migration numbers 084 of WP-P0 and WP-F collide: the second to
+merge renumbers to 085.
 
 ## Open
 
