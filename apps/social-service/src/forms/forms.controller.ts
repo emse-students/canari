@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Headers,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -279,6 +280,24 @@ export class FormsController {
   // `stripe.webhooks.constructEvent` has verified the signature; a form manager takes cash through
   // `POST :id/submissions/:submissionId/validate-cash`, which is scoped to the form they manage;
   // and a free submission is written `'free'` at submit time.
+
+  /**
+   * Asks the provider whether a pending online answer was paid and records it if so, then answers
+   * the submission like the GET above. Requires the submitter or a form manager. NOT a `mark-paid`
+   * (see above): the caller names only the submission, and the payment is Lydia's answer about the
+   * request the row itself stored (`FormsService.confirmPayment`).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('submissions/:submissionId/confirm-payment')
+  @HttpCode(200)
+  async confirmPayment(
+    @Param('submissionId', ParseUUIDPipe) submissionId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertSubmissionAccess(submissionId, xUserId, ga === 'true');
+    return this.service.confirmPayment(submissionId);
+  }
 
   /** Cancels a pending submission. Requires the submitter or a form manager. */
   @UseGuards(NginxAuthGuard)

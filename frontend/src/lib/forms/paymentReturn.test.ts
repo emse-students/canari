@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { paymentReturnVerdict } from './paymentReturn';
+import { paymentCancelView, paymentReturnVerdict } from './paymentReturn';
+
+describe('paymentCancelView', () => {
+  it.each([
+    // The callback (or the cancel's own state read) found the request paid: never "cancelled".
+    ['paid', 'paid'],
+    ['paid_over_capacity', 'overCapacity'],
+    ['pending', 'cancelled'],
+    ['cancelled', 'cancelled'],
+    ['expired', 'cancelled'],
+  ])('%j shows %s', (status, view) => {
+    expect(paymentCancelView(status)).toBe(view);
+  });
+});
 
 describe('paymentReturnVerdict', () => {
   it.each([

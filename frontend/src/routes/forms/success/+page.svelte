@@ -3,12 +3,14 @@
   import { onMount } from 'svelte';
   import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { apiFetch } from '$lib/utils/apiFetch';
-  import { getSubmissionPayment } from '$lib/forms/api';
+  import { confirmSubmissionPayment } from '$lib/forms/api';
   import { paymentReturnVerdict } from '$lib/forms/paymentReturn';
 
-  const sessionId = $derived(page.url.searchParams.get('session_id'));
-  /** Lydia's return carries the submission id: its signed callback, not this page, marks it paid. */
+  /**
+   * Lydia's return carries the submission id (it cannot fill in a session id). Each read asks the
+   * server to check the row's own request at Lydia, so a payment whose callback was lost is still
+   * confirmed here; a payment the callback already confirmed reads paid at once.
+   */
   const submissionId = $derived(page.url.searchParams.get('submission_id'));
 
   /** Ceiling on how long the page keeps asking before it says the payment is still unconfirmed. */
@@ -20,7 +22,7 @@
 
   async function confirmBySubmission(id: string) {
     for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
-      const submission = await getSubmissionPayment(id);
+      const submission = await confirmSubmissionPayment(id);
       formId = submission.formId;
       const verdict = paymentReturnVerdict(submission.paymentStatus);
       if (verdict === 'confirmed') {
@@ -41,33 +43,15 @@
   }
 
   onMount(async () => {
-    if (submissionId) {
-      try {
-        await confirmBySubmission(submissionId);
-      } catch (err) {
-        console.error('[forms/success] could not read the submission:', err);
-        status = 'error';
-      }
-      return;
-    }
-    if (!sessionId) {
+    if (!submissionId) {
+      console.warn('[forms/success] reached without a submission_id');
       status = 'error';
       return;
     }
     try {
-      const coreUrl = (import.meta as any).env?.VITE_CORE_URL?.trim() || '';
-      const res = await apiFetch(`${coreUrl}/api/payments/verify-session`, {
-        method: 'POST',
-        body: JSON.stringify({ sessionId }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        formId = data.formId ?? null;
-        status = 'confirmed';
-      } else {
-        status = 'error';
-      }
-    } catch {
+      await confirmBySubmission(submissionId);
+    } catch (err) {
+      console.error('[forms/success] could not read the submission:', err);
       status = 'error';
     }
   });

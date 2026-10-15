@@ -344,6 +344,22 @@ export async function getSubmissionPayment(
   return res.json();
 }
 
+/**
+ * Asks the server to read, at the payment provider, whether a pending online answer was paid, and
+ * to record it if so - then answers the submission like `getSubmissionPayment`. The payer's return
+ * page calls it, so a payment whose provider callback was lost is still confirmed.
+ */
+export async function confirmSubmissionPayment(
+  submissionId: string
+): Promise<{ id: string; formId: string; paymentStatus: string }> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/confirm-payment`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw await refusal(res, 'Failed to confirm the payment');
+  return res.json();
+}
+
 /** Deletes a submission. Requires form manager access. */
 export async function deleteSubmission(submissionId: string): Promise<void> {
   const res = await apiFetch(

@@ -8,7 +8,6 @@ import type {
   CancelRequestOutcome,
   CheckoutLineItem,
   CheckoutRequestState,
-  CheckoutSessionInfo,
   CheckoutSessionResult,
   ConnectAccountStatusResponse,
   ConnectBalanceSummary,
@@ -18,7 +17,7 @@ import type {
   PayerRecipient,
 } from './payment-provider.interface';
 
-export type { CheckoutSessionInfo, ConnectBalanceSummary };
+export type { ConnectBalanceSummary };
 
 /**
  * Orchestrates payment operations against the active PaymentProvider (Lydia, or `disabled`; Stripe
@@ -151,11 +150,6 @@ export class PaymentService {
   /** Returns a URL to manage payouts for a Connect-style account. */
   async createConnectDashboardLink(accountId: string): Promise<string> {
     return (await this.getProvider()).createConnectDashboardLink(accountId);
-  }
-
-  /** Retrieves a checkout session by ID. */
-  async retrieveSession(sessionId: string): Promise<CheckoutSessionInfo> {
-    return (await this.getProvider()).retrieveSession(sessionId);
   }
 }
 

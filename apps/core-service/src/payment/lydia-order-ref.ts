@@ -23,15 +23,3 @@ export function parseLydiaOrderRef(orderRef: string | null | undefined): LydiaOr
   if (productMatch) return { kind: 'product', productId: productMatch[1], userId: productMatch[2] };
   return null;
 }
-
-/**
- * Builds the metadata dict `retrieveSession()` exposes generically, from a parsed `order_ref` -
- * mirrors Stripe's checkout session metadata shape so `verify-session`/`cancel-session` in
- * `payment.controller.ts` need no provider-specific branch.
- */
-export function orderRefToMetadata(ref: LydiaOrderRef | null): Record<string, string> {
-  if (!ref) return {};
-  return ref.kind === 'form'
-    ? { submissionId: ref.submissionId }
-    : { productId: ref.productId, userId: ref.userId };
-}

@@ -72,13 +72,17 @@ their reasons in [stripe-archive](../../stripe-archive.md#the-names-that-outlive
 |---|---|
 | `POST /api/payments/create-checkout-session` | Checkout for forms |
 | `POST /api/associations/:id/products/:productId/checkout` | Checkout for products |
-| `POST /api/payments/verify-session` | Unguarded. Re-reads the request from the provider and marks the linked submission paid **only if the provider says paid** |
-| `POST /api/payments/cancel-session` | Unguarded. The mirror: marks the submission cancelled, refusing outright if the session WAS paid |
 | `POST /api/payments/lydia-request-callback` | Lydia's own confirmation |
+| `POST /api/payments/request-state` | Internal secret only. A request's state at Lydia, by its `request_uuid` and the Business's vendor token |
+| `POST /api/forms/submissions/:id/confirm-payment` (social-service) | Submitter or manager. Reads the row's OWN request at Lydia and records it if paid |
 
-**A payment is confirmed twice on purpose**: the callback is authoritative (it fires whether or not
-the buyer's browser returns), `verify-session` is the browser-return path and does exactly what the
-callback would have done. Repair a payment the callback missed through `verify-session`, never by an
+**A form payment is confirmed by the callback, and by the payer's return when the callback has
+not.** The callback fires whether or not the buyer's browser returns; the return page polls
+`confirm-payment`, which asks Lydia about the request the row stored and, if it is paid, does what
+the callback would have done. `verify-session` and `cancel-session` were meant to be that return
+path and never worked - they took the submission from an `order_ref` `request/state` does not echo
+([below](#what-requeststate-answers-and-what-it-does-not-2026-10-15)) - and were deleted on
+2026-10-15. Repair a payment the callback missed through `confirm-payment`, never by an
 `UPDATE`: `markPaid` in social-service writes the submission status, the cotisation tier
 (`user_tags`, when the form sets `grantsCotisation`) and the `purchase_records` row, and a hand-written
 update produces only the first. The 2026-08 Stripe webhook that never verified under bun is told in
@@ -193,17 +197,55 @@ Stripe used to replace `{CHECKOUT_SESSION_ID}` in a return URL; **Lydia does not
 paid form's page received the literal braces, `verify-session` refused it and the screen said
 "payment not found" while the signed callback had in fact marked the submission paid. For Lydia,
 `forms.service.ts` now swaps that placeholder for `submission_id=<id>` (the id exists before the
-request does), the success page reads the submission and keeps asking while it is `pending` (the
+request does), the success page asks the submission and keeps asking while it is `pending` (the
 callback may land after the redirect; `paymentReturnVerdict` is the one rule, at most 10 reads 3 s
 apart, then an honest "awaiting confirmation" instead of an error), and the cancel page cancels that
-pending submission. The boutique needs none of this: its return URLs carry no session id and its
-fulfilment is the callback.
+pending submission. Since 2026-10-15 each of those reads is `confirm-payment`, which also asks
+Lydia about the row's own request, so a payment whose callback was lost is confirmed while the payer
+looks; the cancel page shows a paid answer as paid and a still-open request as such
+([forms](forms.md#an-online-payment-holds-its-seat-for-30-minutes-and-a-late-one-is-decided-from-the-row-2026-10-15)).
+The boutique needs none of this: its return URLs carry no session id and its fulfilment is the
+callback.
 
 **Not verified, and owed to Lydia or a phone**: whether Lydia appends parameters to
 `browser_success_url`, whether it accepts the `fr.emse.canari://` deep link the phone app sends,
 and the mobile deep-link branch itself (`hooks.client.ts` reads `submission_id` now). A return URL
 you see in a test is the one the request was created with: a link made by hand with `/ok` and
 `/ko` returns there, which is how a test once ended on `/ko`.
+
+## What `request/state` answers, and what it does not (2026-10-15)
+
+Measured from inside `canari-dev-core-service-1` with the dev estate's HOMOLOGATION provider token
+and the "Les Rootz" homologation Business, against `homologation.lydia-app.com` only (tokens and
+signatures redacted). One request, `request_id 12115506`, created with `order_ref` set and
+`expire_time 3600`, then read four ways while open:
+
+| `request/state` called with | Answer |
+|---|---|
+| `request_uuid` only (what `retrieveSession` sent) | `{state: "0", used_ease_of_payment: "unknown"}` |
+| `request_uuid` + `provider_token` | the same |
+| `request_uuid` + `vendor_token` | the same **plus `signature`** (32 characters) |
+| `request_id` + `vendor_token` | the same as the line above |
+
+- **The vendor token is not what lets the call through: it is what makes Lydia sign the answer.**
+  The state is readable with the uuid alone.
+- **No variant echoes `order_ref`**, although `request/do` echoed it back on creation. So the
+  answer cannot say which submission it is about: the caller must already know, which is why
+  `confirm-payment` reads by the uuid its own row stored, and why `verify-session` (which expected
+  the `order_ref` there) could never name a submission and was deleted.
+- **`request_uuid` is 32 hex digits, no dash** (`077f2efc...`). `payments/request-state` validated
+  it as the dashed RFC 4122 shape and refused every real one until this was measured.
+
+**Not measured, and why: state 1 (paid) and state 5 (refused by the payer).** Both are reached
+only by acting as the PAYER on Lydia's payer page (the homologation page's final-status buttons),
+which is a human at the Lydia form, so they were not driven here. The code reads `1` as paid
+from Lydia's documentation and reports `5`, like any code not measured, as `other`: a retry or a
+cancel that meets it refuses with `PREVIOUS_PAYMENT_OPEN` until the hold ends, and `confirm-payment`
+leaves the row as it is. Still owed, by a person on the homologation payer page, then one
+`request/state` each: pay a request (expect `1`, and read whether the confirm callback arrives),
+refuse one (expect `5`, and whether `request/cancel` then answers error 2), and what
+`request/cancel` answers on the PAID one. Request `12115506` was left open on the sandbox; it
+expires on its own (`expire_time 3600`).
 
 ## Which onboarding flag a screen reads (2026-10-03)
 
