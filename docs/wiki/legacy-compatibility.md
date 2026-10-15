@@ -62,13 +62,18 @@ working clients to protect them from a warning that was accurate all along - see
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
 **Site:** `PurchasePaymentMethod` in `apps/social-service/src/users/entities/purchase-record.entity.ts`,
-and the `'stripe'` arms of the client's `paymentMethod` types and labels (`EditAchatsTab`,
+`Submission.paymentMethod` in `apps/social-service/src/forms/entities/submission.entity.ts`, and the
+`'stripe'` arms of the client's `paymentMethod` types and labels (`EditAchatsTab`,
 `EditDelegationTab`, `account/purchases`).
-**Shim:** purchase rows written before 2026-10-08 hold `stripe` and are read as `online`. Nothing
-writes `stripe` any more, and since floor 1.2.7 nothing may SEND it either: the form input and the
-`fr.emse.canari://stripe` return host are gone ([stripe-archive](stripe-archive.md)).
-**Removal condition:** data at rest, so a data migration of `purchase_records` (`stripe` -> `online`)
-and no version: then the type and the client arms go.
+**Shim:** purchase rows AND form submissions written before 2026-10-08 hold `stripe`, read as
+`online`. Nothing writes `stripe` any more, and since floor 1.2.7 nothing may SEND it either: the
+form input and the `fr.emse.canari://stripe` return host are gone ([stripe-archive](stripe-archive.md)).
+**One known cost of the host's removal:** a checkout STARTED on a build from 1.2.0 to 1.2.3 (Lydia
+already, `stripe` host still) and finished after the phone updated returns to a host the new build
+no longer registers - the payment itself is recorded server-side, only the in-app landing is lost.
+The server's refusal of a `stripe` callback URL is logged (`[CHECKOUT] callback URL REFUSED`).
+**Removal condition:** data at rest, so a data migration of `purchase_records` AND `submissions`
+(`stripe` -> `online`), counted first, and no version: then the type and the client arms go.
 
 ### No date yet - MiConnect's `formation` and `promo` claims, derived from the profile
 

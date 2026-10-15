@@ -18,6 +18,9 @@ const SERVER_HOSTS = ['chat', 'post', 'form', 'posts', 'calendar', 'admin-agenda
 /** The checkout return. `stripe`, its name in builds below 1.2.4, is retired. */
 const CHECKOUT_HOSTS = ['payment'];
 
+/** Hosts retired with `minClientVersion` 1.2.7, refused by the server. */
+const RETIRED_HOSTS = ['stripe'];
+
 /**
  * MiConnect's way back from a sign-out (`OIDC_MOBILE_POST_LOGOUT_URI`). Opened by the Custom Tab, not
  * by an explicit intent, so on Android it needs the MANIFEST filter as well: without it Chrome finds
@@ -50,4 +53,17 @@ describe('custom-scheme deep-link hosts', () => {
       expect(manifest).toContain(`android:host="${host}"`);
     }
   );
+
+  /**
+   * A RETIRED host must not come back by a regen: the server refuses it, so an app that registered
+   * it again would catch a URL nothing legitimate emits.
+   */
+  it.each(RETIRED_HOSTS)('declares fr.emse.canari://%s nowhere', (host) => {
+    const manifest = readFileSync(
+      resolve(__dirname, '../../../src-tauri/gen/android/app/src/main/AndroidManifest.xml'),
+      'utf8'
+    );
+    expect(declared).not.toContain(host);
+    expect(manifest).not.toContain(`android:host="${host}"`);
+  });
 });
