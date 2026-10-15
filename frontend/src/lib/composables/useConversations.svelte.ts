@@ -636,29 +636,27 @@ export function useConversations() {
   /**
    * Replaces a salon's stored page with the page the server just gave (F4). The store is a COPY of
    * the last page drawn, never a source: what it held is deleted only now, once a newer page is in
-   * hand, so an open that fails keeps the last one for the next open (and offline). The notice row
-   * is not a message and is not kept; unsent echoes never reach this page.
+   * hand, so an open that fails keeps the last one for the next open (and offline). `page` is the
+   * server's rows alone: the caller has taken the older-messages notice out, and an unsent echo is
+   * never in a server page. An empty page empties the copy.
    */
   async function storeSalonPage(
     channelConversationId: string,
     page: readonly ChatMessage[],
-    noticeId: string,
     ctx: ConversationContext
   ): Promise<void> {
     if (!ctx.storage) return;
-    const rows: StoredMessage[] = page
-      .filter((m) => m.id !== noticeId && !m.status)
-      .map((m) => ({
-        id: m.id,
-        conversationId: channelConversationId,
-        senderId: m.senderId,
-        content: m.content,
-        timestamp: m.timestamp.getTime(),
-        ...(m.serverTimestamp !== undefined ? { serverTimestamp: m.serverTimestamp } : {}),
-        ...(m.isEdited ? { isEdited: true } : {}),
-        ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
-        ...(m.isDeleted ? { isDeleted: true } : {}),
-      }));
+    const rows: StoredMessage[] = page.map((m) => ({
+      id: m.id,
+      conversationId: channelConversationId,
+      senderId: m.senderId,
+      content: m.content,
+      timestamp: m.timestamp.getTime(),
+      ...(m.serverTimestamp !== undefined ? { serverTimestamp: m.serverTimestamp } : {}),
+      ...(m.isEdited ? { isEdited: true } : {}),
+      ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
+      ...(m.isDeleted ? { isDeleted: true } : {}),
+    }));
     try {
       await ctx.storage.deleteMessagesForConversation(channelConversationId);
       if (rows.length > 0) await ctx.storage.saveMessages(rows, ctx.deviceKeyB64);
@@ -671,9 +669,8 @@ export function useConversations() {
 
   /**
    * Loads a salon's history from the server, the source of truth, after drawing the last page this
-   * device stored for it (F4). The stored page is a copy the server page replaces: rows it omits
-   * inside its window are dropped (`mergeMessagePage`), and early-drawn rows older than it that it
-   * does not name are withdrawn.
+   * device stored for it (F4). The stored page is a copy the server page replaces: every row drawn
+   * from it that the server page does not name is withdrawn, whatever its place in the window.
    */
   async function loadChannelHistory(
     channelConversationId: string,
@@ -873,25 +870,27 @@ export function useConversations() {
           owedSalonReadMarks(ctx.userId)[channelConversationId]?.at,
           channelConversationId
         );
-        // A STORED ROW OLDER THAN THIS PAGE THAT THE PAGE DOES NOT NAME IS WITHDRAWN (F4): memory is
-        // authoritative outside a page's window (`mergeMessagePage`), so a copy's row the server no
-        // longer holds would otherwise outlive the page that proves it gone. Only the rows this load
-        // drew from the store - an older page the reader scrolled in is not a copy.
+        // EVERY ROW DRAWN FROM THE STORE THAT THIS PAGE DOES NOT NAME IS WITHDRAWN (F4, review
+        // 2026-10-15). The copy is a preview of the server's newest page, and the server HARD-deletes
+        // a salon message (no tombstone), so a missing row is the only sign it is gone. The merge
+        // alone cannot say it: memory is authoritative outside a page's window, so a deleted newest
+        // row reads as a live arrival and an emptied salon's page removes nothing. A drawn row older
+        // than a full page is withdrawn too: what lies between it and the page is unknown, and a row
+        // shown across a hidden gap is worse than one fetched again on scroll. Only rows this load
+        // drew from the store: a message that arrived live after the draw is not in `drawnFirst`.
         let base = current.messages;
+        // The server's rows alone: the older-messages notice is not a message, and is never stored.
         const serverRows = loadedEdited.filter(
           (m) => m.id !== olderMessagesNoticeId(channelConversationId)
         );
-        if (drawnFirst.length > 0 && serverRows.length > 0) {
-          const oldest = [...serverRows].sort(compareMessageOrder)[0];
+        if (drawnFirst.length > 0) {
           const inPage = new SvelteSet(serverRows.map((m) => m.id));
           const withdrawn = new SvelteSet(
-            drawnFirst
-              .filter((m) => !inPage.has(m.id) && compareMessageOrder(m, oldest) < 0)
-              .map((m) => m.id)
+            drawnFirst.filter((m) => !inPage.has(m.id)).map((m) => m.id)
           );
           if (withdrawn.size > 0) {
             ctx.log(
-              `[CHANNEL] ${channelConversationId.slice(0, 16)} ${withdrawn.size} stored row(s) below the fresh page withdrawn`
+              `[CHANNEL] ${channelConversationId.slice(0, 16)} ${withdrawn.size} stored row(s) the fresh page does not name withdrawn`
             );
             base = base.filter((m) => !withdrawn.has(m.id));
           }
@@ -906,12 +905,7 @@ export function useConversations() {
           loadedAt: Date.now(),
           userId: ctx.userId,
         });
-        await storeSalonPage(
-          channelConversationId,
-          serverRows,
-          olderMessagesNoticeId(channelConversationId),
-          ctx
-        );
+        await storeSalonPage(channelConversationId, serverRows, ctx);
       }
     } catch (e) {
       ctx.log(`[CHANNEL] History load failed: ${String(e)}`);

@@ -488,6 +488,15 @@ export interface IStorage {
    * holds something, not a store that was wiped.
    */
   countMessages(conversationId: string): Promise<number>;
+  /**
+   * The ids of the conversations that hold at least one stored message and start with `prefix`,
+   * decrypting nothing.
+   *
+   * It exists for the rows NO conversation row names: a salon's stored page (F4 of
+   * community-open-budget) is kept without a conversation row, so the sweep of the salons a listing
+   * no longer names cannot find it through {@link getConversations}.
+   */
+  getMessageConversationIds(prefix: string): Promise<string[]>;
   /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */
   getMessagesPage(
     conversationId: string,

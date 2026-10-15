@@ -355,8 +355,13 @@ Same protocol and instrument as sections 1 and 5.
 - `loadChannelHistory` sends the server request first. While that request is in flight, it draws the
   stored page (`drawStoredSalonPage`), only on the salon's first draw in the process. When the
   server page answers, it merges as before.
-  - Any stored row that is older than the fresh page and absent from it is withdrawn, so a row
-    deleted on the server does not outlive the page that proves it is gone.
+  - EVERY row drawn from the store that the fresh page does not name is withdrawn, wherever it sits
+    and even when the page is empty. The server HARD-deletes a salon message (no tombstone), so a
+    missing row is the only sign that it is gone. A message that arrived live after the draw is
+    kept, because it was not drawn from the store. Review of #1892 (2026-10-15) found what the first
+    version missed: it withdrew only rows OLDER than the page, while the merge keeps rows newer
+    than a page as live arrivals. A deleted newest message, or an emptied salon, therefore
+    reappeared from the copy for the life of the process.
   - Only then is the copy replaced in the store (`storeSalonPage`: delete, then save).
 - Nothing is deleted BEFORE the server answers any more. That includes the boot restore, which used
   to erase every salon's rows (`conversations.ts`).
@@ -367,6 +372,20 @@ Same protocol and instrument as sections 1 and 5.
 - Live salon messages are still not written one by one (`skipDbSave`).
 - A pre-session landing still has no salon preview (`landingPreview.ts`).
 - A salon pruned by the listing is deleted with its rows (`deleteConversation`).
+
+**The sweep that replaced the boot delete.** A salon gets a conversation only once a listing names it
+in this process. The prune's loop over the conversations therefore never reaches the stored page
+of a salon the member lost, or that was deleted, while the app was closed. Each complete listing
+now deletes the stored page of every salon it does not name, except a salon created on this device
+after the request (`sweepStoredSalonPages`, over `IStorage.getMessageConversationIds`). A listing
+that failed sweeps nothing.
+
+**What a sign-out does not sweep, deliberately.** A sign-out keeps the message database: the user
+chose "deconnecter seulement, garder l'etat" (`ChatBackgroundService`, the PIN gate's exit). A salon
+copy follows the same rule as a DM's rows: sealed under the device key, in the account's own
+database. Account DELETION (`SettingsDangerZone`) also leaves that whole database, DMs included, at
+rest. That is a question about the database as a whole, not about salons, and it is owed in
+[backlog](../backlog.md).
 
 **Measured** on the Mi 9T (2026-10-15). Both builds are 1.2.8, measured with
 `tools/cold-start/community-open.mjs` on target `BancOuverture-1`. The baseline is #1886's head;

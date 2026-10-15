@@ -598,6 +598,15 @@ export class SqliteStorage implements IStorage {
     return Number(rows[0]?.n ?? 0);
   }
 
+  /** See {@link IStorage.getMessageConversationIds}. Compares the prefix exactly, never as a pattern. */
+  async getMessageConversationIds(prefix: string): Promise<string[]> {
+    const rows: Array<{ conversation_id: string }> = await this.db.select(
+      'SELECT DISTINCT conversation_id FROM messages WHERE substr(conversation_id, 1, length($1)) = $1',
+      [prefix]
+    );
+    return rows.map((r) => String(r.conversation_id));
+  }
+
   /**
    * Decrypt and return a paginated slice of messages using a server-side LIMIT clause.
    * Rows are fetched in descending timestamp order (most recent first) then re-sorted

@@ -8,6 +8,8 @@ import type { StoredMessage } from '$lib/db';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
+/** Row ids the mocked decoder counts as `v1 session not held` - they raise the notice. */
+const droppedV1 = vi.hoisted(() => ({ ids: [] as string[] }));
 
 vi.mock('$lib/services/ChannelService', () => ({
   channelService: { listMessages, listReadMarks },
@@ -15,21 +17,25 @@ vi.mock('$lib/services/ChannelService', () => ({
 
 vi.mock('$lib/utils/chat/channelCrypto', () => ({
   isChannelConversationId: (id: string) => id.startsWith('channel_'),
-  decodeChannelMessageRow: vi.fn(async (_raw: string, row: { id: string; at: number }) => ({
-    kind: 'message',
-    message: {
-      id: row.id,
-      senderId: 'peer',
-      content: `server ${row.id}`,
-      timestamp: new Date(row.at),
-      isOwn: false,
-      isSystem: false,
-    },
-  })),
+  decodeChannelMessageRow: vi.fn(async (_raw: string, row: { id: string; at: number }) =>
+    droppedV1.ids.includes(row.id)
+      ? null
+      : {
+          kind: 'message',
+          message: {
+            id: row.id,
+            senderId: 'peer',
+            content: `server ${row.id}`,
+            timestamp: new Date(row.at),
+            isOwn: false,
+            isSystem: false,
+          },
+        }
+  ),
   UnreadableRowTally: class {
     report() {}
     rowsOf() {
-      return [];
+      return droppedV1.ids;
     }
   },
   V1_SESSION_NOT_HELD: 'v1 session not held',
@@ -52,13 +58,13 @@ function storedRow(id: string, at: number): StoredMessage {
   return { id, conversationId: SALON, senderId: 'peer', content: `stored ${id}`, timestamp: at };
 }
 
-function makeStorage(page: StoredMessage[]) {
+function makeStorage(page: StoredMessage[] | (() => Promise<StoredMessage[]>)) {
   const calls: string[] = [];
   return {
     calls,
     getMessagesPage: vi.fn(async () => {
       calls.push('read');
-      return page;
+      return typeof page === 'function' ? page() : page;
     }),
     deleteMessagesForConversation: vi.fn(async () => {
       calls.push('delete');
@@ -88,6 +94,7 @@ function salon(): Conversation {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  droppedV1.ids = [];
   listReadMarks.mockResolvedValue([]);
 });
 
@@ -156,5 +163,104 @@ describe("a salon's stored page", () => {
     await convs.loadHistoryForConversation(SALON, SALON, makeCtx(storage));
 
     expect(storage.getMessagesPage).not.toHaveBeenCalled();
+  });
+
+  // Review of #1892 (2026-10-15): the server HARD-deletes a salon message, so a row missing from its
+  // page is the only sign it is gone. The merge keeps rows newer than a page as live arrivals, and
+  // an empty page removed nothing - so a copy's deleted newest row, or an emptied salon, stayed.
+  it('withdraws a stored row newer than the page that the page does not name (a deleted message)', async () => {
+    const storage = makeStorage([
+      storedRow('a', 1_000),
+      storedRow('b', 2_000),
+      storedRow('z', 9_000),
+    ]);
+    listMessages.mockResolvedValue([
+      { id: 'a', at: 1_000 },
+      { id: 'b', at: 2_000 },
+    ]);
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+
+    await convs.loadHistoryForConversation(SALON, SALON, makeCtx(storage));
+
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a', 'b']);
+  });
+
+  it('withdraws every stored row when the server page is empty, and empties the copy', async () => {
+    const storage = makeStorage([storedRow('a', 1_000), storedRow('b', 2_000)]);
+    listMessages.mockResolvedValue([]);
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+
+    await convs.loadHistoryForConversation(SALON, SALON, makeCtx(storage));
+
+    expect(convs.conversations.get(SALON)?.messages).toEqual([]);
+    expect(storage.calls).toEqual(['read', 'delete']);
+  });
+
+  it('keeps a message that arrived live after the stored page was drawn', async () => {
+    const storage = makeStorage([storedRow('a', 1_000), storedRow('z', 9_000)]);
+    let answer!: (rows: unknown[]) => void;
+    listMessages.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+
+    const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(storage));
+    await vi.waitFor(() => expect(convs.conversations.get(SALON)?.messages).toHaveLength(2));
+    const drawn = convs.conversations.get(SALON)!;
+    convs.conversations.set(SALON, {
+      ...drawn,
+      messages: [
+        ...drawn.messages,
+        { id: 'live', senderId: 'peer', content: 'live', timestamp: new Date(10_000) },
+      ],
+    } as unknown as Conversation);
+    answer([{ id: 'a', at: 1_000 }]);
+    await loading;
+
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a', 'live']);
+  });
+
+  it('is not drawn by a load a newer one superseded while the store was read', async () => {
+    let releaseFirstRead!: (rows: StoredMessage[]) => void;
+    let reads = 0;
+    const storage = makeStorage(() => {
+      reads += 1;
+      return reads === 1
+        ? new Promise<StoredMessage[]>((resolve) => (releaseFirstRead = resolve))
+        : Promise.resolve([]);
+    });
+    listMessages.mockReturnValue(new Promise(() => {}));
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    const ctx = makeCtx(storage);
+
+    void convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() => expect(reads).toBe(1));
+    // A stale mark makes the next load its own rather than a join, and the newer generation.
+    convs.invalidateChannelHistoryCache(SALON);
+    void convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() => expect(reads).toBe(2));
+    releaseFirstRead([storedRow('old', 1_000)]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(convs.conversations.get(SALON)?.messages).toEqual([]);
+  });
+
+  it('never stores the older-messages notice, which is not a message', async () => {
+    droppedV1.ids = ['gone'];
+    const storage = makeStorage([]);
+    listMessages.mockResolvedValue([
+      { id: 'gone', at: 500, createdAt: new Date(500).toISOString() },
+      { id: 'a', at: 1_000, createdAt: new Date(1_000).toISOString() },
+    ]);
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+
+    await convs.loadHistoryForConversation(SALON, SALON, makeCtx(storage));
+
+    // On screen, first, as always; in the store, absent.
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.isSystem)).toEqual([true, false]);
+    expect(storage.saveMessages).toHaveBeenCalledWith([expect.objectContaining({ id: 'a' })], 'k');
   });
 });

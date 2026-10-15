@@ -169,7 +169,7 @@ in the app marks a salon read that was not opened: the server mark moves only on
 the SELECTED salon (`MainChatPage`, behind the focus and visibility guard), `onSelectCommunity` clears the
 selection, and no effect, history load, reconnect or visibility change selects or marks anything. What the
 user saw is the other half: **a salon's `unreadCount` was a tally of what arrived while this device was
-listening** - salon messages are never stored here and the count was never persisted - so a reload, a
+listening** - salon messages were not stored here (since F4 only a copy of the last loaded page is kept) and the count was never persisted - so a reload, a
 cold start, a phone asleep or a socket that was down left every badge at zero while the server's mark
 said the salon was unread. The user reads that as "marked read".
 
@@ -2784,7 +2784,7 @@ the same message twice, once from the display and once from the badge.
 
 ### A salon copy is stale when the live stream had a gap, never when a clock says so (2026-10-01)
 
-A salon is never persisted: its in-memory copy is the REST page plus every live socket event since.
+A salon's in-memory copy is the REST page plus every live socket event since. Live events are never persisted one by one; since F4 the device keeps only a copy of the last page a load drew, replaced at every load and drawn before the next one answers ([community-open-budget F4](../community-open-budget.md#f4-built-2026-10-15)).
 It used to be trusted for five minutes after its load (`CHANNEL_HISTORY_CACHE_TTL_MS`), which proves
 nothing. **Measured on a Mi 9T, 2026-10-01:** A1 on `#general`, HOME, a peer posts, the push decrypts
 and notifies (`seed source=mirror`), the tap resumes the app - the socket reconnects and NO

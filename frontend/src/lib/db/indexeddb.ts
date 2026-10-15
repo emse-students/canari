@@ -614,6 +614,26 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  /** See {@link IStorage.getMessageConversationIds}: walks the conversation index, one key each. */
+  async getMessageConversationIds(prefix: string): Promise<string[]> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const ids: string[] = [];
+      const tx = db.transaction('messages', 'readonly');
+      const req = tx
+        .objectStore('messages')
+        .index('byConversation')
+        .openKeyCursor(IDBKeyRange.bound(prefix, `${prefix}\uffff`), 'nextunique');
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) return resolve(ids);
+        ids.push(String(cursor.key));
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
   /**
    * Decrypt and return a paginated slice of messages for `conversationId`.
    * Rows are sorted descending by timestamp, the most recent `limit` rows are taken,

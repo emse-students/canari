@@ -336,6 +336,44 @@ describe('F1 - the saved community list', () => {
     expect(readWorkspaceSnapshot(ALICE)![0].channels.map((c) => c.id)).toEqual(['channel_c1']);
   });
 
+  // Review of #1892 (2026-10-15): a salon's stored page (F4) has no conversation until a listing
+  // names it in this process, so the loop over the conversations never reaches the page of a salon
+  // lost while the app was closed - and the boot no longer erases salon rows.
+  it('deletes the stored page of every salon the listing no longer names, and only those', async () => {
+    listUserWorkspaces.mockResolvedValue([ws('ws1', 'One', 'one')]);
+    listChannels.mockResolvedValue([salon('c1', 'general')]);
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const store = useChannelWorkspaces();
+
+    await store.loadChannelWorkspacesFromBackend(
+      makeContext({
+        deleteConversation,
+        storedSalonPageIds: vi.fn().mockResolvedValue(['channel_c1', 'channel_lost']),
+      })
+    );
+
+    expect(deleteConversation).toHaveBeenCalledTimes(1);
+    expect(deleteConversation).toHaveBeenCalledWith('channel_lost');
+  });
+
+  it('sweeps no stored page when the listing failed', async () => {
+    listUserWorkspaces.mockResolvedValue([ws('ws1', 'One', 'one')]);
+    listChannels.mockRejectedValue(new Error('offline'));
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const store = useChannelWorkspaces();
+
+    await store
+      .loadChannelWorkspacesFromBackend(
+        makeContext({
+          deleteConversation,
+          storedSalonPageIds: vi.fn().mockResolvedValue(['channel_c1']),
+        })
+      )
+      .catch(() => {});
+
+    expect(deleteConversation).not.toHaveBeenCalled();
+  });
+
   it('a listing that fails keeps the saved list on screen, unconfirmed', async () => {
     storeWorkspaceSnapshot(
       ALICE,

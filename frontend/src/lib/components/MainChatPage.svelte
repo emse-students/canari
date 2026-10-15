@@ -25,6 +25,7 @@
   import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import {
+    CHANNEL_CONVERSATION_PREFIX,
     isChannelConversationId,
     sendChannelPoll,
     type ChannelPollDraft,
@@ -310,6 +311,9 @@
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
       deleteConversation: (name: string) =>
         session.storage?.deleteConversation(name) ?? Promise.resolve(),
+      storedSalonPageIds: () =>
+        session.storage?.getMessageConversationIds(CHANNEL_CONVERSATION_PREFIX) ??
+        Promise.resolve([]),
       selectConversation: convs.selectConversation,
       ensureMls: async () => session.ensureMls(),
       startDirectConversation: (targetUserId: string, opts?: { silent?: boolean }) =>

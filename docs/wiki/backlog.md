@@ -177,6 +177,10 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 The local mark is persisted when it moves. The frame is queued only when the window ends, on leave, or when the app leaves the screen. A kill in between leaves nothing that would announce the mark, and the next open finds nothing new. The fix is the salon's shape: write the owed mark durably at decision time and drain it into the outbox at boot ([history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)). **Owed with it**: a Pixel or Mi 9T count of received `[READ] ... has read up to` lines and of MLS checkpoints per 3 minutes of a two-person DM exchange, on the coalescing build against the one before it.
 
+## P2 - Deleting the account leaves its local message database at rest (found 2026-10-15, review of #1892)
+
+`SettingsDangerZone` runs `deleteMyAccount()`, then `clearAuth()`, then `leaveSignedOut()`. None of them deletes `CanariDB_<userId>` / `canari_<userId>.db`, so after the server account is gone, every DM row (and, since F4, every salon's last page) stays on the device, sealed under the device key. A sign-out keeps that database ON PURPOSE (the user's "garder l'etat"). A deletion is the opposite intent, and a salon-only sweep would be the wrong cut ([community-open-budget F4](frontend/community-open-budget.md#f4-built-2026-10-15)). **Owed**: a decision on what a deletion wipes on THIS device (that account's database and its vault slot) and a test, never a blanket `wipeDeviceToFactory`, which takes other accounts' state too.
+
 ## P3 - 45 identical `[HISTORY_RECONCILE] ... asked 30s ago` lines in 250 ms at a cold start (Pixel 6a, production `1.2.7`, 2026-10-14)
 
 Read in the user's exported log (`F:\Programmation\canari-harness\pixel-r1014\`): one line per group instead of one per sweep. Noise defect, no behaviour change owed ([community-open-budget](frontend/community-open-budget.md#6-the-smallest-set-of-fixes-the-evidence-proves)).

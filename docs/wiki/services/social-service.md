@@ -504,7 +504,7 @@ The legacy per-channel/per-role override system (`channel_permission_overrides`,
 `GET /:channelId/messages` returns the newest messages first, capped at 200 per page. Passing
 `before=<ISO createdAt>` returns only strictly-older messages (keyset pagination on `createdAt`),
 so clients page back through the whole channel by following the oldest `createdAt` of the previous
-page until an empty page is returned. Channel messages are never persisted client-side, so full-text
+page until an empty page is returned. Channel messages are not persisted one by one client-side (only a copy of the last page a load drew is kept, [F4](../frontend/community-open-budget.md#f4-built-2026-10-15)), so full-text
 search fetches and decrypts the entire history on demand (`ChannelService.fetchAllChannelMessages`
 -> `useConversations.searchChannelHistory`, capped at ~2000 messages) and merges the decrypted rows
 into the open conversation so a hit older than the loaded page can be scrolled to. The server only
