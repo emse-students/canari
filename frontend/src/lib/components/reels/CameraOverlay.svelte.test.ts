@@ -1,9 +1,10 @@
 /**
- * The camera overlay's HISTORY, against a model of the browser's: `pushState` is synchronous, and
- * `history.back()` is a TRAVERSAL that lands later and fires `popstate` - two calls go back two
- * entries (Chrome 155, measured 2026-10-14). The overlay owns one entry and a take a second; when a
- * composer's take is handed back, BOTH must leave the history and the stack, and the overlay the
- * camera was opened over (the conversation, on a phone) must stay open.
+ * The camera overlay's HISTORY, against a model of the browser's: `pushState` and `replaceState` are
+ * synchronous, and `history.back()` is a TRAVERSAL that lands later and fires `popstate` (Chrome 155,
+ * measured 2026-10-14). The overlay owns one entry and a take a second. Nothing here traverses to
+ * close: a hand-back or a teardown takes both off the stack at once and leaves their entries as
+ * ghosts, which the next overlay takes over or a Back crosses - and the overlay the camera was opened
+ * over (the conversation, on a phone) stays open, and is what the next Back closes.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -46,9 +47,13 @@ function installHistoryModel() {
   const entries: unknown[] = [null];
   let index = 0;
   let pending = 0;
+  vi.spyOn(history, 'state', 'get').mockImplementation(() => entries[index]);
   vi.spyOn(history, 'pushState').mockImplementation((state: unknown) => {
     entries.splice(index + 1, entries.length, state);
     index = entries.length - 1;
+  });
+  vi.spyOn(history, 'replaceState').mockImplementation((state: unknown) => {
+    entries[index] = state;
   });
   vi.spyOn(history, 'back').mockImplementation(() => {
     pending++;
@@ -111,7 +116,7 @@ afterEach(() => {
 });
 
 describe('CameraOverlay history', () => {
-  it('a chat photo handed back leaves the conversation open and the history where it was', async () => {
+  it('a chat photo handed back leaves the conversation open, and the next sheet plus one Back closes only that sheet', async () => {
     const model = installHistoryModel();
     const closeConversation = vi.fn();
     // The conversation, opened as an overlay on a phone (useConversations).
@@ -155,7 +160,25 @@ describe('CameraOverlay history', () => {
     expect(open).toBe(false);
     expect(closeConversation).not.toHaveBeenCalled();
     expect(historyOverlayStackDepth()).toBe(1);
-    expect(model.index()).toBe(1);
+    // No traversal: the camera's and the take's entries stay, as ghosts.
+    expect(history.back).not.toHaveBeenCalled();
+    expect(model.index()).toBe(3);
+
+    // A sheet opens over the conversation: it TAKES the ghost under the pointer.
+    const closeSheet = vi.fn();
+    pushHistoryOverlay(closeSheet);
+    expect(model.index()).toBe(3);
+    // One Back closes the sheet, and only the sheet.
+    history.back();
+    await drainTraversals(model);
+    expect(closeSheet).toHaveBeenCalledTimes(1);
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
+    // The next one closes the conversation - the overlay on screen - and never leaves the app.
+    history.back();
+    await drainTraversals(model);
+    expect(closeConversation).toHaveBeenCalledTimes(1);
+    expect(historyOverlayStackDepth()).toBe(0);
   });
 
   it('Back discards a review first, then closes the camera, and never the conversation', async () => {
@@ -231,7 +254,9 @@ describe('CameraOverlay history', () => {
       },
     });
     await settle();
-    await drainTraversals(model);
+    // The camera took the menu's entry over (a hand-off), so nothing traverses.
+    expect(history.back).not.toHaveBeenCalled();
+    expect(model.index()).toBe(2);
     const video = document.querySelector('video')!;
     Object.defineProperty(video, 'videoWidth', { value: 720, configurable: true });
     video.dispatchEvent(new Event('loadeddata'));
@@ -301,7 +326,6 @@ describe('CameraOverlay history', () => {
     expect(document.activeElement).not.toBe(field);
     // The page under the layer is not re-laid out (its scroller would lose its position).
     expect(document.documentElement.classList.contains('fullscreen-place-open')).toBe(false);
-    // Its entry's traversal lands HERE, not in the next test.
     unmount(app);
     await drainTraversals(model);
   });
@@ -327,7 +351,7 @@ describe('CameraOverlay history', () => {
     expect(screenCover.covered).toBe(false);
   });
 
-  it('torn down by its owner under a review, it takes BOTH its entries back and releases the camera', async () => {
+  it('torn down by its owner under a review, it leaves BOTH its entries as ghosts and releases the camera', async () => {
     const model = installHistoryModel();
     const closeConversation = vi.fn();
     pushHistoryOverlay(closeConversation);
@@ -362,7 +386,12 @@ describe('CameraOverlay history', () => {
 
     expect(closeConversation).not.toHaveBeenCalled();
     expect(historyOverlayStackDepth()).toBe(1);
-    expect(model.index()).toBe(1);
+    expect(history.back).not.toHaveBeenCalled();
+    expect(model.index()).toBe(3);
     expect(lens.getTracks()[0].stop).toHaveBeenCalled();
+    // The Back that follows closes the conversation, the one overlay still on screen.
+    history.back();
+    await drainTraversals(model);
+    expect(closeConversation).toHaveBeenCalledTimes(1);
   });
 });

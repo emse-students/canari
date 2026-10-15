@@ -4,14 +4,12 @@ import { isOverlayLayout } from './viewport';
  * History-based overlay stack - Android Back button support.
  *
  * How it works on Android (Tauri / WebView):
- *  1. When a modal/drawer opens, `pushHistoryOverlay(close)` adds a
- *     `history.pushState` entry (same URL, no SvelteKit route change).
- *  2. When the user presses the physical Back button, Android delegates
- *     the event to the WebView. Since there is a history entry, the WebView
- *     fires a `popstate` event instead of exiting the app.
- *  3. `onPopState` closes every overlay pushed after the entry the traversal
- *     landed on (`settleArrival`) - Back behaves like tapping the X button.
- *  4. If the stack is empty, `popstate` propagates normally:
+ *  1. When a modal/drawer opens, `pushHistoryOverlay(close)` gives it a history entry (same URL, no
+ *     SvelteKit route change).
+ *  2. When the user presses the physical Back button, Android delegates the event to the WebView.
+ *     Since there is a history entry, the WebView fires a `popstate` event instead of exiting the app.
+ *  3. `onPopState` closes the overlay the person sees (`settleArrival`) - Back behaves like the X.
+ *  4. If nothing is open, `popstate` propagates normally:
  *     - SvelteKit navigates back (if there is router history), OR
  *     - Android exits the app (correct behaviour at the root screen).
  *
@@ -22,25 +20,27 @@ import { isOverlayLayout } from './viewport';
  * No native Kotlin or Tauri plugin is required - `TauriActivity` already
  * delegates Back presses to the WebView by default.
  *
- * Ghost-entry problem & fix:
- *  When `drainHistoryOverlayStack` (called in `beforeNavigate`) clears the JS
- *  stack, the corresponding `history.pushState` entries are NOT removed - they
- *  become "ghost" entries in the browser history.  Calling `history.go(-n)`
- *  after SvelteKit has already pushed the new route would move the history
- *  pointer backwards and cause SvelteKit to navigate back - exactly the bug
- *  "the first back gesture lands on the previous page".
+ * THIS MODULE NEVER TRAVERSES THE HISTORY TO CLOSE AN OVERLAY (2026-10-15, the Mi 9T reading of
+ * v1.2.9-alpha.1 and two reviews of #1925). `history.back()` lands LATER and `pushState` does not,
+ * so every close that walked the history (an abandon, a UI close) raced the next overlay's push: the
+ * "+" menu abandoned its entry and the in-app camera pushed its own in the same task, the traversal
+ * went back off the CAMERA's entry, and one Back on a taken photo closed the photo AND the camera.
+ * Waiting for the traversal was tried and could be left waiting for good (a back that cannot land,
+ * two backs predicted from one pointer, a shallow navigation re-labelling the landing). So:
  *
- *  Instead, `onPopState` detects ghost entries by their `{ canariOverlay: id }`
- *  state object: an entry of ours whose id no live overlay holds is a ghost.
- *  A ghost is also what `releaseHistoryOverlay` leaves when an owner closes
- *  its overlay by state, and it may sit ABOVE a live overlay. A landing that
- *  closes nothing walks one more entry with `history.back()`, so a Back
- *  always closes the overlay the person sees (`settleArrival`).
+ *  - A close by the app (the X, an abandon, an owner's state) closes NOW and leaves its entry as a
+ *    GHOST under the pointer - an entry of ours that no live overlay owns.
+ *  - The next overlay opened REUSES a ghost under the pointer (`replaceState`, same depth): a
+ *    hand-off from one overlay to the next costs no traversal, which is what the camera needed.
+ *  - A member's Back closes exactly the top overlay: the ones above the entry it landed on, or, when
+ *    it landed on a ghost or on the live entry under one, the top one.
  *
- *  `skipPops` (a counter, formerly the boolean `ignoreNextPop`) is used when
- *  we deliberately call `history.back()` in `abandonHistoryOverlay` to remove
- *  an entry that was already spliced from the JS stack - we don't want
- *  `onPopState` to misinterpret that event.
+ *  The one traversal left is a WALK after a Back that closed nothing because it was spent on a ghost
+ *  with nothing open - it does what the Back does on the page. Nothing waits for it.
+ *
+ *  `drainHistoryOverlayStack` (in `beforeNavigate`) leaves ghosts too: `history.go(-n)` after
+ *  SvelteKit pushed the new route would move the pointer back off it - "the first back gesture
+ *  lands on the previous page".
  */
 const STATE_KEY = 'canariOverlay';
 /** Which page load pushed an entry: an id is only comparable with ids of the same load. */
@@ -73,14 +73,14 @@ const stack: StackEntry[] = [];
 /** The id of the last entry pushed by this load. */
 let lastId = 0;
 /**
- * The entry the history pointer is on, as far as this module moved it: the id of an entry this load
- * pushed, or 0 for any other entry. With `hereHref`, it tells a landing whether the Back that caused
- * it LEFT a ghost (see `settleArrival`).
+ * The entry the history pointer is on, as far as this module last saw it: the id of an entry this
+ * load wrote, or 0 for any other entry. With `hereHref`, it tells a landing whether the Back that
+ * caused it LEFT a ghost (see `settleArrival`).
  */
 let here = 0;
 /** The page address when `here` was last set: a ghost and its router entry share it. */
 let hereHref = '';
-/** A `history.back()` issued by `settleArrival` has not landed yet: its landing is not a Back. */
+/** A walk issued by `settleArrival` has not landed yet: its landing is not a Back. */
 let walking = false;
 
 /** The page address now; empty where there is none (a test without a `location`). */
@@ -88,37 +88,6 @@ function currentHref(): string {
   return globalThis.location?.href ?? '';
 }
 let initialized = false;
-/**
- * How many upcoming `popstate` events to absorb silently.
- * Incremented by `abandonHistoryOverlay` (and only that) before calling
- * `history.back()`.  This replaces the former boolean `ignoreNextPop`,
- * allowing multiple concurrent absorptions.
- */
-let skipPops = 0;
-/**
- * The entry each of our entries was pushed ABOVE: the id of an entry of this load, or 0 for the
- * router's own (or an earlier load's). It is where a `history.back()` from that entry lands, which
- * is what lets a landing be recognised as OURS (`awaited`).
- */
-const below = new Map<number, number>();
-/**
- * Traversals this module started (`history.back()` from an abandon, a UI close or a walk) and has
- * not seen land, oldest first, each as the entry it will land on. While one is in flight, a push is
- * HELD (`pending`), see {@link pushHistoryOverlay}.
- *
- * ONLY A TRAVERSAL PROVEN TO LAND IS AWAITED: one that leaves an entry of ours, which was pushed
- * above another and so has one below it. A `history.back()` from the router's entry may be at the
- * history's FIRST entry, where it moves nothing and fires no `popstate` - a hold waiting for it would
- * never end, and every later overlay would get no entry at all (review of #1925). And a landing ends
- * the hold only when it arrives WHERE our traversal goes (`to`): a member's Back landing elsewhere
- * is theirs, never counted as ours.
- */
-const awaited: { to: number }[] = [];
-/**
- * Overlays opened while a traversal was in flight: on the JS side they are open, but their history
- * entry is written only once that traversal has landed (`flushPending`), in the order they opened.
- */
-const pending: OverlayClose[] = [];
 
 /**
  * Viewports where chat/drawers use full-screen overlays.
@@ -141,30 +110,10 @@ export function initHistoryOverlayStack(): () => void {
   initialized = true;
 
   const onPopState = (event: PopStateEvent) => {
-    const arrival = readArrival(event.state).id;
-    if (awaited.length > 0 && awaited[0].to === arrival) {
-      awaited.shift();
-    } else if (pending.length > 0) {
-      // The member's Back while overlays are held: those are what is on screen, on top of
-      // everything with an entry, so they close first - never an overlay below them.
-      Log.d('historyOverlay', `a Back during a hold closes the ${pending.length} held overlay(s)`);
-      while (pending.length > 0) pending.pop()?.('back');
-    }
-    settlePopState(event);
-    if (awaited.length === 0) flushPending();
-  };
-
-  const settlePopState = (event: PopStateEvent) => {
     const from = here;
     const fromHref = hereHref;
     here = readArrival(event.state).id;
     hereHref = currentHref();
-    // Absorb events that are the deliberate side-effect of `abandonHistoryOverlay`
-    // calling `history.back()` after already splicing the entry from the JS stack.
-    if (skipPops > 0) {
-      skipPops--;
-      return;
-    }
     const byWalk = walking;
     walking = false;
     // A Back pressed ON a ghost of this load, landing on the same page: the press went into the
@@ -179,10 +128,6 @@ export function initHistoryOverlayStack(): () => void {
     window.removeEventListener('popstate', onPopState);
     initialized = false;
     stack.length = 0;
-    skipPops = 0;
-    awaited.length = 0;
-    below.clear();
-    pending.length = 0;
     here = 0;
     hereHref = '';
     walking = false;
@@ -190,63 +135,27 @@ export function initHistoryOverlayStack(): () => void {
 }
 
 /**
- * Push a history entry; Android/iOS back will invoke `close`.
+ * Gives `close` a history entry; Android/iOS back will invoke it.
  *
- * A PUSH WAITS FOR A TRAVERSAL IN FLIGHT. `history.back()` is asynchronous and `pushState` is not,
- * so an overlay opened in the same task as another one is abandoned (a menu entry that opens the
- * camera) wrote its entry FIRST, and the abandon's traversal then went back off THAT entry: the
- * pointer sat on the menu's ghost, the next push truncated the camera's entry, and one Back on the
- * camera's review closed the review AND the camera (Mi 9T, v1.2.9-alpha.1, `Back closed 2
- * overlay(s)`, 2 of 2). The order is a fact this module holds (`awaited`), so the entry is
- * written when the traversal has landed - never after a delay.
+ * A GHOST UNDER THE POINTER IS REUSED (`replaceState`): an overlay that hands over to another (a
+ * menu entry that opens the camera, a sheet that opens a picker) closed first and left its entry as
+ * a ghost, and the next overlay takes that entry at the same depth - no traversal, nothing to race.
+ * The entry under the pointer is read from `history.state`, never assumed: a shallow navigation by
+ * the router may have moved the pointer, and its entry is not ours to take.
  */
 export function pushHistoryOverlay(close: OverlayClose): void {
   if (!isBrowser) return;
-  if (awaited.length > 0) {
-    Log.d('historyOverlay', `push held until ${awaited.length} traversal(s) in flight have landed`);
-    pending.push(close);
-    return;
-  }
-  writeEntry(close);
-}
-
-/** Writes `close`'s history entry and puts it on the stack. */
-function writeEntry(close: OverlayClose): void {
   const id = ++lastId;
+  const state = { [STATE_KEY]: id, [LOAD_KEY]: LOAD_ID };
+  if (readArrival(history.state).ghost) {
+    Log.d('historyOverlay', `overlay ${id} takes the ghost entry under the pointer (a hand-off)`);
+    history.replaceState(state, '');
+  } else {
+    history.pushState(state, '');
+  }
   stack.push({ close, id });
-  history.pushState({ [STATE_KEY]: id, [LOAD_KEY]: LOAD_ID }, '');
-  below.set(id, here);
   here = id;
   hereHref = currentHref();
-}
-
-/** Writes the entries held while a traversal was in flight, in the order their overlays opened. */
-function flushPending(): void {
-  if (pending.length === 0) return;
-  Log.d('historyOverlay', `the traversal landed - writing ${pending.length} held entry(ies)`);
-  for (const close of pending.splice(0)) writeEntry(close);
-}
-
-/**
- * `history.back()`, awaited when it is proven to land (`awaited`): it leaves an entry of ours, so
- * the entry it lands on is the one that entry was pushed above.
- */
-function goBack(): void {
-  const to = below.get(here);
-  if (to === undefined) {
-    Log.d('historyOverlay', 'going back from an entry not ours - its landing is not awaited');
-  } else {
-    awaited.push({ to });
-  }
-  history.back();
-}
-
-/** Takes `close` out of the held pushes; true when it was there (it has no history entry yet). */
-function dropPending(close: OverlayClose): boolean {
-  const idx = pending.indexOf(close);
-  if (idx < 0) return false;
-  pending.splice(idx, 1);
-  return true;
 }
 
 /**
@@ -266,94 +175,62 @@ function readArrival(state: unknown): { id: number; ghost: boolean } {
 }
 
 /**
- * Brings the stack in line with the history entry a traversal landed on.
+ * Brings the stack in line with the history entry a member's Back landed on: ONE Back closes the
+ * overlay the person sees.
  *
- * EVERY OVERLAY PUSHED AFTER THE ENTRY WE LANDED ON IS CLOSED, and nothing else. This used to pop the
- * top of the stack on any landing, which was right only while every open overlay held an entry and
- * every closed one had given its entry back. Neither holds: an overlay closed by its owner's state
- * (`releaseHistoryOverlay`: a tapped action, a publish) leaves its entry behind as a GHOST, and a
- * ghost above a live overlay turned one Back into the wrong one - it closed the overlay below and
- * left the history one entry out of step, so the next Back did nothing.
+ * The overlays pushed after the landed entry are closed (ids grow with position, so they are the
+ * ones above it). When none is, the Back went INTO an entry no live overlay owns any more - a ghost
+ * left by an overlay the app closed, or the live entry under one - and the press still closes the
+ * top overlay: its entry, now at or below the pointer, becomes a ghost the next overlay reuses.
  *
- * When the landing closes nothing, the Back pressed still has to close something, so the walk goes
- * on one more entry: a ghost is stepped off (what the old code did only on an empty stack), and so is
- * a live entry reached from a ghost above it - the next landing closes that overlay. The walk ends at
- * the first landing that closes an overlay, or on a router entry with nothing open.
- *
- * `leftGhost` covers the last case: a Back pressed while the pointer sat ON a ghost (a picker that
- * closed on its choice, a confirmation answered, nothing else open) lands on the page's own router
- * entry and closes nothing - the press was spent on the ghost and the page did not move. It walks one
- * more entry too, so the Back does what it does on the page: the previous page, or nothing at the
- * history's first entry (where Android's next Back leaves the app).
+ * With NOTHING open, a Back that landed on a ghost walks one more entry (`history.back()`), and so
+ * does one pressed while the pointer sat ON a ghost (`leftGhost`: a picker closed on its choice, a
+ * confirmation answered) that landed on the page's own router entry - so the Back does what it does
+ * on the page: the previous page, or nothing at the history's first entry (where Android's next Back
+ * leaves the app). Nothing waits for that walk: no overlay is open to be closed by it, and a push
+ * made before it lands is an overlay closed by the member's Back, which it is.
  */
 function settleArrival(state: unknown, leftGhost: boolean): void {
   const arrival = readArrival(state);
   const above: StackEntry[] = [];
   while (stack.length > 0 && stack[stack.length - 1].id > arrival.id) above.push(stack.pop()!);
+  if (above.length === 0 && stack.length > 0) {
+    Log.d('historyOverlay', 'Back landed on an entry no overlay above owns - closing the top one');
+    above.push(stack.pop()!);
+  }
   for (const entry of above) entry.close('back');
   if (above.length > 0) {
     Log.d('historyOverlay', `Back closed ${above.length} overlay(s), ${stack.length} left open`);
     return;
   }
-  if (arrival.ghost || stack.length > 0 || leftGhost) {
-    const where = arrival.ghost
-      ? 'a ghost entry'
-      : stack.length > 0
-        ? 'a live entry from a ghost above it'
-        : 'the router entry from a ghost above it';
-    Log.d('historyOverlay', `Back landed on ${where} - walking one more`);
+  if (arrival.ghost || leftGhost) {
+    const where = arrival.ghost ? 'a ghost entry' : 'the router entry from a ghost above it';
+    Log.d('historyOverlay', `Back landed on ${where} with nothing open - walking one more`);
     walking = true;
-    goBack();
+    history.back();
   }
 }
 
 /**
- * Close from UI (X, backdrop). Uses `history.back()` when this overlay is on top
- * so the history stack stays consistent.
+ * Close from UI (X, backdrop): the overlay closes NOW, and its entry stays as a ghost for the next
+ * overlay to reuse or the next Back to cross (see the module comment: no traversal).
  */
 export function closeHistoryOverlayFromUi(close: () => void): void {
   if (!isBrowser) {
     close();
     return;
   }
-  if (dropPending(close)) {
-    close();
-    return;
-  }
-  const idx = stack.findIndex((e) => e.close === close);
-  if (idx < 0) {
-    close();
-    return;
-  }
-  if (idx === stack.length - 1) {
-    // Do NOT increment skipPops here: the resulting popstate SHOULD reach
-    // `onPopState` so it pops the stack entry and calls close().
-    goBack();
-    return;
-  }
-  stack.splice(idx, 1);
+  releaseHistoryOverlay(close);
   close();
 }
 
 /**
- * Removes an overlay from the stack when it is dismissed indirectly
- * (e.g. opening a conversation closes the list drawer).
- *
- * The entry is spliced from the JS stack first, then `history.back()` removes
- * the pushState entry from the browser history.  We increment `skipPops` so
- * `onPopState` absorbs the resulting event without trying to close anything.
+ * Removes an overlay from the stack when it is dismissed indirectly (opening a conversation closes
+ * the list drawer, a take handed back closes the camera). Its entry stays as a ghost - see
+ * {@link releaseHistoryOverlay}, which this now is: a traversal to remove it raced the next push.
  */
 export function abandonHistoryOverlay(close: () => void): void {
-  if (!isBrowser) return;
-  if (dropPending(close)) return;
-  const idx = stack.findIndex((e) => e.close === close);
-  if (idx < 0) return;
-  const wasTop = idx === stack.length - 1;
-  stack.splice(idx, 1);
-  if (wasTop) {
-    skipPops++;
-    goBack();
-  }
+  releaseHistoryOverlay(close);
 }
 
 /**
@@ -365,15 +242,11 @@ export function abandonHistoryOverlay(close: () => void): void {
  * camera did nothing three times, and worked after one round trip through another tab - the
  * `beforeNavigate` drain that finally emptied the stack (Mi 9T, 2026-10-06).
  *
- * No `history.back()` here, unlike {@link abandonHistoryOverlay}: the owner is typically about to
- * navigate, and an asynchronous traversal landing after the router's own push would walk the
- * pointer back off the new route (the bug the drain's comment names). The entry becomes the same
- * ghost the drain leaves, which `onPopState` already skips transparently. A no-op when the overlay
+ * The entry becomes a ghost, which the next push reuses and a Back crosses. A no-op when the overlay
  * is already gone, which is the case on every dismissal that went through the stack itself.
  */
 export function releaseHistoryOverlay(close: () => void): void {
   if (!isBrowser) return;
-  if (dropPending(close)) return;
   const idx = stack.findIndex((e) => e.close === close);
   if (idx >= 0) stack.splice(idx, 1);
 }
@@ -382,9 +255,7 @@ export function releaseHistoryOverlay(close: () => void): void {
  * Close every overlay and call their close handlers.
  *
  * Called by `beforeNavigate` in the root layout before every SvelteKit
- * navigation.  The corresponding `history.pushState` entries are NOT removed
- * here - they become ghost entries.  Ghost entries are handled transparently
- * by `onPopState` (see module-level comment above).
+ * navigation.  The corresponding history entries are NOT removed here - they become ghost entries.
  *
  * ⚠️  Do NOT call `history.go(-count)` here.  That call is asynchronous and
  * fires AFTER SvelteKit has already pushed the new route, which moves the
@@ -392,8 +263,6 @@ export function releaseHistoryOverlay(close: () => void): void {
  * known as "the first back gesture lands on the previous page".
  */
 export function drainHistoryOverlayStack(): void {
-  // Held overlays are the topmost: they close first, and never get an entry.
-  while (pending.length > 0) pending.pop()?.('navigation');
   while (stack.length > 0) {
     stack.pop()?.close('navigation');
   }
@@ -401,23 +270,16 @@ export function drainHistoryOverlayStack(): void {
   // ours, and a Back from the next page must not be read as one pressed on it.
   here = 0;
   hereHref = '';
-  // Do not reset skipPops: any pending absorptions from abandonHistoryOverlay
-  // must still fire.
 }
 
 /** Drop stack entries without invoking close handlers (app teardown). */
 export function clearHistoryOverlayStack(): void {
   stack.length = 0;
-  pending.length = 0;
-  skipPops = 0;
-  awaited.length = 0;
-  below.clear();
   here = 0;
   hereHref = '';
   walking = false;
 }
 
 export function historyOverlayStackDepth(): number {
-  // A held overlay is open on screen: it stands the tab swipe down like any other.
-  return stack.length + pending.length;
+  return stack.length;
 }

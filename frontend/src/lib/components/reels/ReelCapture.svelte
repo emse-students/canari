@@ -53,7 +53,6 @@
   import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
   import {
     abandonHistoryOverlay,
-    closeHistoryOverlayFromUi,
     pushHistoryOverlay,
     type OverlayClose,
   } from '$lib/utils/historyOverlayStack';
@@ -248,9 +247,8 @@
     }
     oncapture(file);
     editorOpen = false;
-    // The take's entry leaves the stack NOW, by abandon: `closeHistoryOverlayFromUi` would leave it
-    // on the stack until its traversal lands, the overlay's teardown below would pop it a SECOND
-    // time, and that second traversal closed what the camera was opened over (the conversation).
+    // The take's entry leaves the stack NOW, by abandon - its close would ask about the take the
+    // composer just received. The entry stays as a ghost the next overlay takes over.
     const entry = takeEntry;
     takeEntry = null;
     if (entry) abandonHistoryOverlay(entry);
@@ -298,9 +296,11 @@
     if (await confirmDiscardTake()) send({ type: 'discard' });
   }
 
+  /** The take is over (back to `ready`): its entry leaves the stack, with nothing left to ask. */
   function releaseTakeEntry() {
     const entry = takeEntry;
-    if (entry) closeHistoryOverlayFromUi(entry);
+    takeEntry = null;
+    if (entry) abandonHistoryOverlay(entry);
   }
 
   /** A tap: the preview's crop of the current frame, kept as a photo. */
@@ -469,16 +469,10 @@
     const entry = takeEntry;
     takeEntry = null;
     if (!entry) return;
-    if (onclose) {
-      // AN OVERLAY TORN DOWN UNDER A TAKE (its composer unmounted): the take's entry leaves the stack
-      // NOW, as in `handBack`. `closeHistoryOverlayFromUi` would leave it there until its traversal
-      // lands, so the overlay's own abandon below it would splice without going back - one history
-      // entry left behind, and the next Back spent on nothing.
-      console.debug('[reel-capture] torn down under a take: its history entry is abandoned');
-      abandonHistoryOverlay(entry);
-      return;
-    }
-    closeHistoryOverlayFromUi(entry);
+    // TORN DOWN UNDER A TAKE: the take's entry leaves the stack, and its close is NOT run - it would
+    // ask about a take whose screen is gone, over whatever page is now showing.
+    console.debug('[reel-capture] torn down under a take: its history entry is abandoned');
+    abandonHistoryOverlay(entry);
   });
 
   const recording = $derived(capture.kind === 'recording' || capture.kind === 'finishing');
