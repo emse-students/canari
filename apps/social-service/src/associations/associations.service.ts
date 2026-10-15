@@ -25,6 +25,7 @@ import {
   signAgendaSelection,
 } from './agenda-signature';
 import { Association } from './entities/association.entity';
+import type { AssociationPayoutAccount } from './association.projection';
 import {
   AssociationMember,
   AssociationPermissionFlag,
@@ -2838,6 +2839,28 @@ ${rejectionReason}`
     await this.assoRepo.update(id, update);
     await this.invalidatePostListCaches();
     return { ...asso, ...update };
+  }
+
+  /**
+   * The payout account of an association, for its MANAGE_PAYOUT_ACCOUNT holders only (the
+   * controller checks). Reads the three columns and nothing else of the row.
+   */
+  async getPayoutAccount(id: string): Promise<AssociationPayoutAccount> {
+    const asso = await this.assoRepo.findOne({
+      where: { id },
+      select: {
+        id: true,
+        lydiaAccountId: true,
+        lydiaDashboardUrl: true,
+        lydiaOnboardingComplete: true,
+      },
+    });
+    if (!asso) throw new NotFoundException('Association not found');
+    return {
+      lydiaAccountId: asso.lydiaAccountId,
+      lydiaDashboardUrl: asso.lydiaDashboardUrl,
+      lydiaOnboardingComplete: asso.lydiaOnboardingComplete,
+    };
   }
 
   /** Flips lydiaOnboardingComplete to true once the Lydia Business is confirmed ready. */

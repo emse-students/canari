@@ -2067,6 +2067,8 @@
   "asso_lydia_name_label_institution": "Nom légal de l'institution",
   "asso_lydia_disconnect_confirm_institution": "Retirer le compte Lydia Pro de cette institution ? Le compte Lydia lui-même n'est pas supprimé, mais l'institution devra refaire toute la configuration pour accepter à nouveau les paiements en ligne via Lydia.",
   "asso_lydia_validate_confirm_institution": "Confirmer que Lydia a accepté le dossier de cette institution ? Les paiements en ligne via Lydia seront activés pour elle.",
+  "asso_lydia_account_loading": "Chargement du compte Lydia…",
+  "asso_lydia_account_error": "Impossible de lire le compte Lydia. Réessayez dans un instant.",
   "asso_payments_provider_loading": "Chargement du prestataire de paiement…",
   "asso_payments_provider_error": "Impossible de savoir quel prestataire de paiement est configuré. Réessayez dans un instant.",
   "asso_payments_provider_retry": "Réessayer",

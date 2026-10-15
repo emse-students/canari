@@ -750,18 +750,22 @@ controller's `── Public ──` banner and carry **no guard**. nginx puts `/
 `{ ...asso, memberCount, parentName }` - which spread `documentVaultKey`, the hex 32-byte master
 key every document CEK is derived from, and `notesCiphertext`.
 
-`toSafeAssociation` (`associations/association.projection.ts`) is now the single seam that nulls
+`toSafeAssociation` (`associations/association.projection.ts`) became the single seam that nulled
 both, applied at the three controller reads. Third instance of one rule, after `Channel.masterSecret`
 (since deleted outright) and `AssociationProduct.webhookSecret`: **an entity that carries a secret
 needs one projection, and every read has to pass through it.**
 
 The seam is the controller, not the service, on purpose: `findById` is also used by writers
-(`update`), and stripping in the service would hand them a row whose key column reads null. It
-nulls rather than deletes, so responses keep the shape their TypeScript clients expect.
+(`update`, `resolvePaymentTarget`), and stripping in the service would hand them a row whose key
+column reads null. The three reads are behind `NginxAuthGuard` since 2026-08-05.
 
-*Still open, deliberately:* the three routes remain unguarded, so `stripeAccountId` and the rest of
-the row are readable without a session. Adding `NginxAuthGuard` there is the right fix but changes
-access semantics for routes other repos may consume, so it is a separate decision.
+**A denylist was the wrong shape, and it leaked the next secret (2026-10-15).** It named two columns,
+so `lydiaAccountId` - the Lydia `vendor_token`, all `request/cancel` needs besides a sequential
+request id - reached every signed-in member, and `me/list`, `POST /`, `PATCH :id` and the logo
+routes answered the raw row, vault key included. `toAssociationView` replaced it: an ALLOWLIST on
+all eight routes that answer a row, so a column added later is private until someone lists it. The
+payout account has its own read, `GET :id/payout-account` (`canManagePayoutAccount`). Story and
+test: [forms](../frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15).
 
 ### The document vault's markers are parsed in two languages, and they disagreed for seven weeks
 

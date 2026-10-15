@@ -362,21 +362,11 @@
           {:else if canManagePayoutAccount && activePaymentProvider.current === 'lydia'}
             <LydiaBusinessOnboardingForm
               {asso}
-              onAccountCreated={(accountId, dashboardUrl) => {
-                if (asso)
-                  asso = { ...asso, lydiaAccountId: accountId, lydiaDashboardUrl: dashboardUrl };
-              }}
               onValidated={() => {
                 if (asso) asso = { ...asso, lydiaOnboardingComplete: true };
               }}
               onDisconnected={() => {
-                if (asso)
-                  asso = {
-                    ...asso,
-                    lydiaAccountId: null,
-                    lydiaOnboardingComplete: false,
-                    lydiaDashboardUrl: null,
-                  };
+                if (asso) asso = { ...asso, lydiaOnboardingComplete: false };
               }}
             />
           {:else if canManagePayoutAccount && activePaymentProvider.current === 'disabled'}

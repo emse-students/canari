@@ -29,7 +29,7 @@ import {
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
 import { ReviewerAccessGuard } from './guards/reviewer-access.guard';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
-import { toSafeAssociation } from './association.projection';
+import { toAssociationView } from './association.projection';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
@@ -150,9 +150,9 @@ export class AssociationsController {
 
   // ── Association reads (logged-in members) ─────────────────────────────────
   //
-  // These three answer the FULL row minus the two secrets `toSafeAssociation` strips - which still
-  // leaves `lydiaAccountId`, `createdBy`, the document quota and the cotisation configuration.
-  // None of that belongs to an anonymous caller, and nginx does not stop one: `/api/associations`
+  // These answer the member view of the row (`toAssociationView`, an allowlist: no payout account,
+  // no vault key, no notes) - which still carries `createdBy`, the document quota and the cotisation
+  // configuration. None of that belongs to an anonymous caller, and nginx does not stop one: `/api/associations`
   // sits behind `auth_request`, but `AuthController.check()` answers 200 for anonymous (it only
   // sets `X-Logged-In: false`), so the guard has to be here.
   //
@@ -186,21 +186,21 @@ export class AssociationsController {
         campus: query.campus,
         formation: query.formation,
       })
-    ).map(toSafeAssociation);
+    ).map((row) => toAssociationView(row));
   }
 
   /** Returns an association looked up by its URL slug. */
   @UseGuards(NginxAuthGuard)
   @Get('slug/:slug')
   async findBySlug(@Param('slug') slug: string) {
-    return toSafeAssociation(await this.service.findBySlug(slug));
+    return toAssociationView(await this.service.findBySlug(slug));
   }
 
-  /** Returns all associations the calling user is a member of. */
+  /** Returns all associations the calling user is a member of, with the caller's own permissions. */
   @UseGuards(NginxAuthGuard)
   @Get('me/list')
-  myAssociations(@Headers('x-user-id') userId: string) {
-    return this.service.listByUser(userId);
+  async myAssociations(@Headers('x-user-id') userId: string) {
+    return (await this.service.listByUser(userId)).map((row) => toAssociationView(row));
   }
 
   /**
@@ -507,6 +507,30 @@ export class AssociationsController {
     return { ok };
   }
 
+  /**
+   * The association's payout account - the Lydia `vendor_token` and the dashboard URL - for the
+   * Lydia panel. MANAGE_PAYOUT_ACCOUNT only, the permission the onboarding and the disconnect ask
+   * (`canManagePayoutAccount`, which a BDE super-admin does not inherit). The member reads never
+   * carry these two (`toAssociationView`): the token is all Lydia's `request/cancel` needs besides a
+   * sequential request id.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/payout-account')
+  async payoutAccount(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Param('id') id: string
+  ) {
+    const allowed = await this.service.canManagePayoutAccount(userId, id, {
+      isGlobalAdmin: ga === 'true',
+    });
+    if (!allowed) {
+      this.logger.debug(`[PERM] payout account read refused on ${sanitizeLog(id)}`);
+      throw new ForbiddenException('MANAGE_PAYOUT_ACCOUNT permission required');
+    }
+    return this.service.getPayoutAccount(id);
+  }
+
   /** Recent posts and forms for this association (picker when linking calendar ↔ content). */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.PROPOSE_EVENT)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
@@ -549,7 +573,7 @@ export class AssociationsController {
   @UseGuards(NginxAuthGuard)
   @Get(':id')
   async findOne(@Param('id') id: string) {
-    return toSafeAssociation(await this.service.findById(id));
+    return toAssociationView(await this.service.findById(id));
   }
 
   // ── Authenticated ─────────────────────────────────────────────────────────
@@ -596,7 +620,7 @@ export class AssociationsController {
         throw new ForbiddenException('Global admin or BDE MANAGE_ASSO permission required');
       }
     }
-    return this.service.create(dto, userId, isGlobalAdmin);
+    return toAssociationView(await this.service.create(dto, userId, isGlobalAdmin));
   }
 
   /**
@@ -681,7 +705,7 @@ export class AssociationsController {
     if (touchesCotisation && updated.cotisationEnabled) {
       await this.productsService.provisionCotisationProduct(updated);
     }
-    return updated;
+    return toAssociationView(updated);
   }
 
   /**
@@ -698,7 +722,7 @@ export class AssociationsController {
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } }))
   @Post(':id/logo')
-  uploadLogo(
+  async uploadLogo(
     @Param('id') id: string,
     @Headers('authorization') authorization: string | undefined,
     @UploadedFile() file: { buffer: Buffer; mimetype: string; size: number } | undefined,
@@ -707,11 +731,13 @@ export class AssociationsController {
     if (!file?.buffer) {
       throw new BadRequestException('Missing file');
     }
-    return this.service.setLogoFromUpload(
-      id,
-      { buffer: file.buffer, mimetype: file.mimetype, size: file.size },
-      authorization,
-      slot === 'second' ? 'second' : 'primary'
+    return toAssociationView(
+      await this.service.setLogoFromUpload(
+        id,
+        { buffer: file.buffer, mimetype: file.mimetype, size: file.size },
+        authorization,
+        slot === 'second' ? 'second' : 'primary'
+      )
     );
   }
 
@@ -719,15 +745,17 @@ export class AssociationsController {
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/logo')
-  deleteLogo(
+  async deleteLogo(
     @Param('id') id: string,
     @Headers('authorization') authorization: string | undefined,
     @Query('slot') slot?: string
   ) {
-    return this.service.clearStoredLogo(
-      id,
-      authorization,
-      slot === 'second' ? 'second' : 'primary'
+    return toAssociationView(
+      await this.service.clearStoredLogo(
+        id,
+        authorization,
+        slot === 'second' ? 'second' : 'primary'
+      )
     );
   }
 

@@ -1,29 +1,82 @@
 import { Association } from './entities/association.entity';
 
 /**
- * Strips the two association columns that are secrets before the row leaves the service.
+ * WHAT A CLIENT MAY READ OF AN ASSOCIATION, AS AN ALLOWLIST (2026-10-15).
  *
- * `documentVaultKey` is the hex 32-byte master key of the association's document vault, from which
- * every per-document CEK is derived (`deriveDocumentCekHex`); `notesCiphertext` holds the
- * association's private notes. Both were reaching clients because the read paths spread the whole
- * entity (`{ ...asso, memberCount }`), and the three routes that do so carry no guard at all - so an
- * unauthenticated request could enumerate every vault key on the platform.
+ * The member reads (`GET /api/associations`, `slug/:slug`, `:id`, `me/list`) and the writes that
+ * answer the row (`POST`, `PATCH :id`, the two logo routes) used to spread the entity, first raw and
+ * then through a DENYLIST that nulled `documentVaultKey` and `notesCiphertext`. That left
+ * `lydiaAccountId` - the Lydia Business `vendor_token`, which with a sequential `request_id` is all
+ * Lydia's `request/cancel` asks for - readable by every signed-in member, so anyone could cancel the
+ * open payment requests of everyone paying that association. `me/list` never went through the
+ * denylist at all and answered the vault master key to every member.
  *
- * Same lesson as `AssociationProduct.webhookSecret`: an entity that
- * carries a secret needs one seam that removes it, and every read has to pass through it.
+ * A denylist has to name every secret column added later; an allowlist makes a new column private
+ * until someone adds it here. The payout account (`lydiaAccountId`, `lydiaDashboardUrl`) has its own
+ * read, `GET :id/payout-account`, for the holders of MANAGE_PAYOUT_ACCOUNT - the same permission the
+ * onboarding and the disconnect already ask (`canManagePayoutAccount`). The vault key has its own
+ * read too (`:id/vault-key`, MANAGE_DOCUMENTS), and the notes theirs (`:id/notes`).
  *
- * Nulls rather than deletes, so the response keeps the shape its TypeScript clients expect - and so
- * a caller reading `documentVaultKey` gets "absent" rather than a missing property. The seam is the
- * CONTROLLER, not the service: `findById` is also used internally by writers (`update`), and a
- * service-level strip would feed them a row whose key column reads null.
+ * The seam is the CONTROLLER, not the service: `findById` is also used internally by writers
+ * (`update`, `resolvePaymentTarget`), which need the whole row.
  */
-export function toSafeAssociation<T extends Partial<Association>>(
-  association: T
-): Omit<T, 'documentVaultKey' | 'notesCiphertext'> & {
-  documentVaultKey: null;
-  notesCiphertext: null;
-} {
-  // Omit before intersecting: a bare `T & { documentVaultKey: null }` collapses to `never` as soon
-  // as T types that column as a non-nullable string.
-  return { ...association, documentVaultKey: null, notesCiphertext: null };
+
+/** The entity columns a signed-in member reads. Nothing that is a credential or a key. */
+const ASSOCIATION_FIELDS = [
+  'id',
+  'name',
+  'slug',
+  'description',
+  'bioMarkdown',
+  'logoUrl',
+  'logoMediaId',
+  'lydiaOnboardingComplete',
+  'paymentParentAssociationId',
+  'paymentDelegationStatus',
+  'isBDE',
+  'documentQuotaBytes',
+  'color',
+  'categoryId',
+  'type',
+  'promo',
+  'parentAssociationId',
+  'name2',
+  'logoMediaId2',
+  'archived',
+  'contactEmail',
+  'cotisationEnabled',
+  'cotisationMode',
+  'cotisationExpiresAt',
+  'createdBy',
+  'createdAt',
+  'updatedAt',
+] as const satisfies readonly (keyof Association)[];
+
+/**
+ * The fields the service DERIVES and attaches to a row: the member count and the parent's name
+ * (`list`, `findById`, `findBySlug`), and the caller's own membership (`listByUser`).
+ */
+const DERIVED_FIELDS = ['memberCount', 'parentName', 'role', 'permissions', 'isAdmin'] as const;
+
+const VIEW_FIELDS: readonly string[] = [...ASSOCIATION_FIELDS, ...DERIVED_FIELDS];
+
+type ViewField = (typeof ASSOCIATION_FIELDS)[number] | (typeof DERIVED_FIELDS)[number];
+
+/** An association row as a signed-in member may read it: the allowlisted keys the row carries. */
+export type AssociationView<T> = Pick<T, Extract<keyof T, ViewField>>;
+
+/** The payout account of an association, read only by MANAGE_PAYOUT_ACCOUNT holders. */
+export type AssociationPayoutAccount = Pick<
+  Association,
+  'lydiaAccountId' | 'lydiaDashboardUrl' | 'lydiaOnboardingComplete'
+>;
+
+/** Projects an association row onto what a signed-in member may read of it. */
+export function toAssociationView<T extends Partial<Association>>(row: T): AssociationView<T> {
+  const source = row as Record<string, unknown>;
+  const view: Record<string, unknown> = {};
+  for (const field of VIEW_FIELDS) {
+    if (field in source) view[field] = source[field];
+  }
+  return view as AssociationView<T>;
 }

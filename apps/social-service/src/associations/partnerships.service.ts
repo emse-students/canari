@@ -123,7 +123,7 @@ export class PartnershipsService {
    * Strips `sharedCode` before a card leaves the service on a listing route: revealing it is what
    * `claimCard` is FOR, gated on `membersOnly` there. Returning it here would let anyone read a
    * `shared_code` card's code straight off the list response, bypassing that gate entirely -
-   * the same shape of leak `toSafeProduct`/`toSafeAssociation` close for other secrets.
+   * the same shape of leak `toSafeProduct`/`toAssociationView` close for other secrets.
    */
   private toStudentCard<T extends PartnershipCard>(card: T): T {
     return { ...card, sharedCode: null };
