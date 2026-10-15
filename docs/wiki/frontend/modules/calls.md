@@ -48,6 +48,13 @@
 > [backlog](../../backlog.md)). `CallService.callsEnabled.test.ts` already asserts the on state, so
 > the flip has a test the day it happens.
 
+> **AN EIGHTH, AND IT IS THE NETWORK (measured 2026-10-15): FROM PRODUCTION AS BUILT, NO CALL CAN
+> CONNECT.** The host cannot send UDP to the internet, and the SFU's TURN client (webrtc-rs 0.17)
+> speaks only UDP 3478 to Cloudflare TURN; the two transports that DO leave the host (TCP 80, TLS
+> 443) are the two it cannot use. No inbound port is needed. The minimal ask to the DSI is ONE
+> outbound rule, and it belongs in the revival commit's preconditions
+> ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md)).
+
 ## Responsibilities
 
 - WebRTC audio/video calls within MLS groups (E2E encrypted).
