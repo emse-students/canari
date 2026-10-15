@@ -3,6 +3,7 @@ package fr.emse.canari
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -19,6 +20,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.firebase.messaging.FirebaseMessaging
+import fr.emse.canari.gesture.ExclusionBand
+import fr.emse.canari.gesture.rightEdgeExclusion
 import java.io.File
 
 class MainActivity : TauriActivity() {
@@ -170,6 +173,8 @@ class MainActivity : TauriActivity() {
         liveWebView = webView
         pushForeground(isInForeground)
         webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
+        webView.addJavascriptInterface(GestureBridge(), "canariGestures")
+        webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyRightEdgeExclusion() }
     }
 
     /**
@@ -198,6 +203,66 @@ class MainActivity : TauriActivity() {
                 Log.d("MainActivity", "theme=$theme -> light bar icons=$light")
             }
         }
+    }
+
+    /** The message list's vertical span in WebView px, while a conversation is open; null otherwise. */
+    private var rightBandSpan: Pair<Int, Int>? = null
+
+    /** What was last handed to the system, so an unchanged layout pass neither re-sets nor logs. */
+    private var appliedBand: ExclusionBand? = null
+
+    /**
+     * THE PAGE SAYS WHEN A CONVERSATION IS OPEN AND WHERE ITS LIST IS; NOTHING NATIVE KNOWS EITHER.
+     *
+     * The exclusion exists for one reason: a reply swipe started on an own bubble inside the right
+     * back-gesture inset is taken by the system and closes the conversation (Mi 9T, 2026-10-14, see
+     * `rightEdgeExclusion`). It is therefore declared ONLY while the message list is mounted, so the
+     * right-edge back swipe keeps working on every other screen. Called from a JavaScript thread.
+     */
+    private inner class GestureBridge {
+        @JavascriptInterface
+        fun setRightBand(topPx: Int, bottomPx: Int) {
+            runOnUiThread {
+                rightBandSpan = Pair(topPx, bottomPx)
+                applyRightEdgeExclusion()
+            }
+        }
+
+        @JavascriptInterface
+        fun clearRightBand() {
+            runOnUiThread {
+                rightBandSpan = null
+                applyRightEdgeExclusion()
+            }
+        }
+    }
+
+    /**
+     * Declares (or clears) the right-edge exclusion on the WebView. Runs when the page reports and on
+     * every layout change of the WebView (rotation, keyboard resize), skipping an unchanged result -
+     * never per frame. `setSystemGestureExclusionRects` is API 29+ (the ViewCompat call is a no-op
+     * below), and the gesture inset reads 0 on 3-button navigation, where there is nothing to
+     * exclude. The whole list is replaced each time, so it never accumulates past Android's cap.
+     */
+    private fun applyRightEdgeExclusion() {
+        val webView = liveWebView ?: return
+        val span = rightBandSpan
+        val band = if (span == null) {
+            null
+        } else {
+            val inset = ViewCompat.getRootWindowInsets(webView)
+                ?.getInsets(WindowInsetsCompat.Type.systemGestures())?.right ?: 0
+            rightEdgeExclusion(
+                webView.width, webView.height, resources.displayMetrics.density, inset, span.first, span.second
+            )
+        }
+        if (band == appliedBand) return
+        appliedBand = band
+        Log.d("MainActivity", "right-edge gesture exclusion: span=$span -> $band")
+        ViewCompat.setSystemGestureExclusionRects(
+            webView,
+            if (band == null) emptyList() else listOf(Rect(band.left, band.top, band.right, band.bottom))
+        )
     }
 
     /**
