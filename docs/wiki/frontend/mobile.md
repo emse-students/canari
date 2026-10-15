@@ -2182,7 +2182,7 @@ side opens the file it already owns. **The flag exists because an absent array a
 something**: FIRST INSTALL, which fresh-starts - rotating the device identity and resetting the
 send-ratchet ledger. "There is no state" and "the state is on disk, not in this argument" are two
 facts and one missing value cannot carry both. Two callers still pass real bytes, and correctly: the
-pre-v0.11.0 Argon2id migration retry and `recoverAndRekey`'s probe of a candidate key, neither of
+pre-v0.11.0 Argon2id migration retry and `openLocalStateWithKey`'s probe of a candidate key, neither of
 which is bytes the native side could have read for itself.
 
 The same shape, smaller: asking **whether** a state exists by loading it. `mls_state_size` answers

@@ -26,6 +26,7 @@ export { SqliteStorage } from './db/sqlite';
 import { IndexedDbStorage } from './db/indexeddb';
 import { SqliteStorage } from './db/sqlite';
 import type { IStorage } from './db/types';
+import { gateStorage } from './db/deviceKeyGate';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
@@ -85,10 +86,12 @@ async function openStore(userId: string): Promise<IStorage> {
     const s = new SqliteStorage(userId);
     await s.init();
     console.log('[DB] Using SQLite storage (Tauri)');
-    return s;
+    return gateStorage(s);
   }
   const s = new IndexedDbStorage(userId);
   await s.init();
   console.log(`[DB] Using IndexedDB storage (Web) for user: ${userId}`);
-  return s;
+  // THROUGH THE GATE, ALWAYS: a device key change holds every call here while it re-seals, and
+  // forwards the retired key afterwards (`db/deviceKeyGate.ts`).
+  return gateStorage(s);
 }

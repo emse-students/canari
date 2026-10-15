@@ -2424,7 +2424,6 @@
   "profile_pin_error_wrong_current": "Incorrect current PIN.",
   "profile_pin_error_server_failed": "PIN change failed on the server.",
   "profile_pin_change_failed": "The PIN change did not complete. Try again in a moment.",
-  "profile_pin_error_local_decrypt": "Could not decrypt local messages with the old PIN. Check the PIN you entered.",
   "profile_devices_desc": "Rename or revoke the devices linked to your account.",
   "profile_biometric_heading": "Biometric unlock",
   "profile_biometric_desc": "Unlock messaging with biometrics instead of your PIN.",

@@ -530,17 +530,17 @@ export interface IMlsService {
    */
   changeDeviceKey(newDeviceKeyB64: string): Promise<void>;
   /**
-   * Forgot-PIN-elsewhere recovery: decrypts this device's local state with the OLD key
-   * (non-destructively) then re-encrypts it under the NEW key, preserving all
-   * local messages. Marks the client initialised so a following login reuses it.
-   * Returns `false` if `oldDeviceKeyB64` does not decrypt the local state.
+   * Forgot-PIN-elsewhere recovery: opens this device's local state with the OLD key
+   * (non-destructively, nothing written) and marks the client initialised so a following login
+   * reuses it. Returns `false` if the key does not open the state - the proof the old PIN is wrong.
+   * The re-seal is a later {@link changeDeviceKey}.
    */
-  recoverAndRekey(
-    userId: string,
-    oldDeviceKeyB64: string,
-    newDeviceKeyB64: string,
-    state: Uint8Array
-  ): Promise<boolean>;
+  openLocalStateWithKey(userId: string, deviceKeyB64: string, state: Uint8Array): Promise<boolean>;
+  /**
+   * Points the unattended unlock (platform keystore: biometrics, background push) at a new device
+   * key, awaited. A no-op on web. Rejects when the keystore refused the write.
+   */
+  pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<void>;
   /** Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity key. */
   generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage>;
   /**

@@ -280,9 +280,9 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * So there is ONE owner, and it is the object whose state is being sealed. {@link init} sets it,
    * {@link changeDeviceKey} moves it, and {@link persistCheckpoint} takes no key at all - a caller
-   * cannot pass a stale one if it cannot pass one. {@link recoverAndRekey} is covered by the same
-   * two: it re-seals through `changeDeviceKey` BEFORE short-circuiting `initPromise`, so the login
-   * that follows finds the field already right and its early return costs nothing.
+   * cannot pass a stale one if it cannot pass one. {@link openLocalStateWithKey} sets it to the key
+   * that opened the state, and the recovery's `changeDeviceKey` moves it before the login that
+   * follows, so that login finds the field already right and its early return costs nothing.
    *
    * **AN EMPTY STRING IS A VALUE HERE, NOT A MISSING ONE - do not add a guard that refuses it.**
    * The Tauri biometric path calls {@link init} with an empty key on purpose and lets the native
@@ -655,39 +655,50 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<void>;
 
   /**
-   * Forgot-PIN-elsewhere recovery: the account PIN was changed on another device, so this
-   * device's local state is still sealed under the OLD key. Decrypts it with `oldDeviceKeyB64`
-   * (non-destructively - no fresh-start, device id untouched) then re-encrypts it under
-   * `newDeviceKeyB64` via {@link changeDeviceKey}, preserving all local messages. Marks the
-   * client as initialised so a following {@link init}/login reuses it instead of re-decrypting.
+   * Forgot-PIN-elsewhere recovery, first half: the account PIN was changed on another device, so
+   * this device's local state is still sealed under the OLD key. Opens it with `deviceKeyB64`
+   * (non-destructively - no fresh start, device id untouched, nothing written) and marks the client
+   * initialised so a following {@link init}/login reuses it. The re-seal is {@link changeDeviceKey},
+   * called by `performPinChange` only AFTER the local stores have moved - see there for why.
    *
-   * Returns `false` when `oldDeviceKeyB64` does not decrypt the local state (so the caller can
-   * show an "ancien PIN incorrect" error); `true` on success.
+   * Returns `false` when `deviceKeyB64` does not open the local state: THE proof that the old PIN
+   * the user typed is wrong, decided here and not from the message store, whose rows may sit under
+   * an even older key.
    */
-  async recoverAndRekey(
+  async openLocalStateWithKey(
     userId: string,
-    oldDeviceKeyB64: string,
-    newDeviceKeyB64: string,
+    deviceKeyB64: string,
     state: Uint8Array
   ): Promise<boolean> {
     this.userId = userId;
     this.delivery.userId = userId;
     await this.resolveDeviceId(userId);
     try {
-      await this.loadStateWithKey(oldDeviceKeyB64, state);
+      await this.loadStateWithKey(deviceKeyB64, state);
     } catch (e) {
       console.warn(
-        '[MLS] recoverAndRekey: old device key did not decrypt local state:',
+        '[MLS] openLocalStateWithKey: the old device key did not open the local state:',
         String(e).slice(0, 160)
       );
       return false;
     }
-    await this.changeDeviceKey(newDeviceKeyB64);
-    // The client is already decrypted in memory and the persisted blob is now re-encrypted
-    // under newPin; short-circuit init() so the subsequent login reuses this exact client.
+    // The state in memory is the one sealed under this key, so this key is what a checkpoint
+    // taken before the re-seal must use.
+    this.currentDeviceKeyB64 = deviceKeyB64;
     this.initPromise = Promise.resolve();
     return true;
   }
+
+  /**
+   * Points every UNATTENDED unlock of this device at `newDeviceKeyB64` - the platform keystore
+   * entry that biometric unlock and the background push read. Concrete and a no-op here: the web
+   * has no keystore (its vault is `applyNewDeviceKeyLocally`'s). Tauri overrides it.
+   *
+   * Exists so a PIN change can move the unattended unlock BEFORE it moves any data: an unlock that
+   * skips the server PIN check and still held the old key would open an MLS state not yet re-sealed
+   * and run a session over stores already half moved - silently, with no recovery ever offered.
+   */
+  async pointUnattendedUnlockAt(_newDeviceKeyB64: string): Promise<void> {}
 
   /**
    * Removes shared event listeners and clears the heartbeat timer.
