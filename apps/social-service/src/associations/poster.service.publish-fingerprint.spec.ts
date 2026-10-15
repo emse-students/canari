@@ -111,12 +111,15 @@ describe('PosterService - the fingerprint of the document that went live', () =>
     expect(patchFor('p1')).toBeUndefined();
   });
 
-  // A stored junk value would later be COMPARED, and would answer the staleness question wrongly.
-  it.each([['not-hex'], ['A'.repeat(64)], ['a'.repeat(63)], [''], [42]])(
-    'drops a malformed fingerprint (%p) rather than storing it',
+  // A stored junk value would later be COMPARED, and would answer the staleness question wrongly;
+  // every admitted client sends a well-formed one, so an absent or malformed one is refused.
+  it.each([['not-hex'], ['A'.repeat(64)], ['a'.repeat(63)], [''], [42], [undefined]])(
+    'refuses a malformed or absent fingerprint (%p), and publishes nothing',
     async (fingerprint) => {
-      await service.publish('p1', { carte: carte(), fingerprint });
-      expect(patchFor('p1')?.publicationFingerprint).toBeNull();
+      await expect(service.publish('p1', { carte: carte(), fingerprint })).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+      expect(patchFor('p1')).toBeUndefined();
     }
   );
 

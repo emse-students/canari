@@ -87,24 +87,31 @@ export class PosterService {
   /**
    * Reads the publish body: `{ carte, fingerprint }`, the only shape since `minClientVersion` 1.2.7.
    *
-   * The bare document that clients before 2026-09-28 posted is refused: every admitted build sends
-   * the wrapper, so a body without one is a bug rather than an old build.
+   * Every admitted build sends the wrapper with a SHA-256 hex fingerprint
+   * (`fingerprintPublishedCarte`), so anything else - the bare document clients before 2026-09-28
+   * posted, a wrapper with no fingerprint, or a malformed one - is a bug rather than an old build,
+   * and is refused before anything is written: a stored junk value would later be COMPARED and
+   * answer the staleness question wrongly.
    *
-   * @throws BadRequestException when the body is not the `{ carte, ... }` wrapper.
+   * @throws BadRequestException when the body is not `{ carte, fingerprint }` with a fingerprint of
+   *   64 lowercase hex characters.
    */
-  private readPublishBody(body: unknown): { carte: unknown; fingerprint: string | null } {
+  private readPublishBody(body: unknown): { carte: unknown; fingerprint: string } {
     if (body === null || typeof body !== 'object' || !('carte' in body)) {
       this.logger.warn('publish refused: the body is not the { carte, fingerprint } wrapper');
       throw new BadRequestException('Publication body must be { carte, fingerprint }');
     }
     const wrapped = body as { carte: unknown; fingerprint?: unknown };
     const fp = wrapped.fingerprint;
-    // 64 lowercase hex characters, or nothing: the column is a hint, and a malformed one is
-    // dropped rather than stored, so a later comparison can never be decided by junk.
-    const valid = typeof fp === 'string' && /^[0-9a-f]{64}$/.test(fp);
-    if (fp !== undefined && !valid)
-      this.logger.warn('publish body carries a malformed fingerprint');
-    return { carte: wrapped.carte, fingerprint: valid ? fp : null };
+    if (typeof fp !== 'string' || !/^[0-9a-f]{64}$/.test(fp)) {
+      this.logger.warn(
+        `publish refused: fingerprint ${fp === undefined ? 'absent' : 'malformed'} - every admitted client sends one`
+      );
+      throw new BadRequestException(
+        'Publication body must be { carte, fingerprint } with a 64-character lowercase hex fingerprint'
+      );
+    }
+    return { carte: wrapped.carte, fingerprint: fp };
   }
 
   /**
