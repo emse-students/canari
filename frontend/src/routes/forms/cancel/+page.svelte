@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { onMount } from 'svelte';
-  import { CircleCheck, CircleX } from '@lucide/svelte';
+  import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { cancelPendingSubmission, getSubmissionPayment } from '$lib/forms/api';
   import { paymentCancelView, type PaymentCancelView } from '$lib/forms/paymentReturn';
@@ -11,11 +11,13 @@
   /** Lydia's return carries the submission id (it cannot fill in a session id). */
   const submissionId = $derived(page.url.searchParams.get('submission_id'));
   let formId = $state<string | null>(null);
-  let view = $state<PaymentCancelView>('cancelled');
+  /** `loading` until the row is read: "cancelled" must not flash over an answer that is paid. */
+  let view = $state<PaymentCancelView | 'loading'>('loading');
 
   onMount(async () => {
     if (!submissionId) {
       console.warn('[forms/cancel] reached without a submission_id');
+      view = 'cancelled';
       return;
     }
     try {
@@ -33,7 +35,9 @@
         // The cancel found the request PAID at Lydia and recorded it; the row says which seat.
         const after = await getSubmissionPayment(submissionId);
         view = paymentCancelView(after.paymentStatus);
+        return;
       }
+      view = 'cancelled';
     } catch (err) {
       if (err instanceof SocialApiError && err.code === PREVIOUS_PAYMENT_OPEN) {
         // An answer, not a failure: the request could not be shown dead or paid, so the answer
@@ -50,7 +54,14 @@
 
 <div class="flex min-h-screen items-center justify-center px-4">
   <div class="w-full max-w-md space-y-6 text-center">
-    {#if view === 'paid'}
+    {#if view === 'loading'}
+      <div class="flex justify-center">
+        <div class="bg-cn-border/30 animate-pulse rounded-full p-4">
+          <Loader size={48} class="text-text-muted animate-spin" />
+        </div>
+      </div>
+      <p class="text-text-muted">{m.form_success_verifying()}</p>
+    {:else if view === 'paid'}
       <div class="flex justify-center">
         <div class="bg-green-ok/15 rounded-full p-4">
           <CircleCheck size={48} class="text-green-ok" />
@@ -96,15 +107,17 @@
         </p>
       </div>
     {/if}
-    <a
-      href={formId ? `/forms/${formId}` : '/forms'}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
-    >
-      {#if view === 'paid' || view === 'overCapacity'}
-        {m.form_success_back_to_form()}
-      {:else}
-        {formId ? m.common_retry_button() : m.form_cancel_back_button()}
-      {/if}
-    </a>
+    {#if view !== 'loading'}
+      <a
+        href={formId ? `/forms/${formId}` : '/forms'}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+      >
+        {#if view === 'paid' || view === 'overCapacity'}
+          {m.form_success_back_to_form()}
+        {:else}
+          {formId ? m.common_retry_button() : m.form_cancel_back_button()}
+        {/if}
+      </a>
+    {/if}
   </div>
 </div>
