@@ -955,7 +955,7 @@ The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbo
 
 **It also never sees a silent frame, so it can never cancel anything.** The extension runs on
 `mutable-content: 1` ALERT pushes only; a `content-available: 1` background push is MEANT for the app
-(`canari_push.mm` `CanariHandleFcmData`) - **and reaches no Canari code today**: the hook that would
+(`canari_push.mm` `CanariHandleFcmData`) - **and reaches no Canari native code today, background or foreground** (`willPresentNotification` fires for alerts only): the hook that would
 take it is never installed, because wry's delegate lacks
 `application:didReceiveRemoteNotification:fetchCompletionHandler:` and the hook only replaces an
 existing method (syslog, every launch: `remote notification hook NOT installed`;
@@ -1172,14 +1172,14 @@ the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multi
   matters now: `CanariPublishDynamicType` (`canari_ios.mm`) reads
   `UIFont preferredFontForTextStyle:UIFontTextStyleBody` and dispatches `canari:dynamic-type`
   (`detail.bodyPx`) plus `window.__canariDynamicTypeBodyPx`, on
-  `UIContentSizeCategoryDidChangeNotification` (Control Center, app in front), on every
+  `UIContentSizeCategoryDidChangeNotification` (extra coverage: dismissing Control Center already fires an activation), on every
   `didBecomeActive` (a change made while suspended) and after every page load.
   `followIosDynamicType` starts from that global when it is there, from the probe otherwise, and
   listens to the event. No timer.
 - **Text with no `text-*` class follows too**: `body` is `calc(1rem * var(--type-scale, 1))`, 16px
   wherever the scale is 1. The rail's salon name inherited the engine's 16px and stayed put at 2x.
 - **A markdown heading hyphenates** (`.post-markdown` h1-h6, `hyphens: auto` under `lang="fr"`)
-  before `wrap-break-word` splits a word at the card's edge ("personnalisati/on" at 2x).
+  before `wrap-break-word` splits a word at the card's edge ("personnalisati/on" at 2x), with `-webkit-hyphens` for iOS below 17. Limit: a post carries no language, so an English heading is hyphenated by French rules.
 - **Owed - one reading on the iPhone 12 bench** (nothing here can render WKWebView): Settings >
   Display & Brightness > Text Size, then Accessibility > Display & Text Size > Larger Text (also
   Larger Accessibility Sizes), and each main screen: chats list and a conversation (bubbles,

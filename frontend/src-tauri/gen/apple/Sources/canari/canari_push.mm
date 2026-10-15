@@ -3400,12 +3400,13 @@ static void CanariInstallRemoteNotificationHook(void) {
     if (method == nil) {
       // NOT INSTALLED, ON EVERY LAUNCH: wry's delegate does not implement the selector, and the
       // Firebase proxy that would have added one found no delegate (see the APNs token hook). So a
-      // `content-available` frame reaches no Canari code while the app is in the background.
+      // `content-available` frame reaches no Canari native code, in the background OR the foreground
+      // (willPresentNotification fires for alerts only).
       // Adding the method (class_replaceMethod, as the token hook does) changes what iOS wakes the
       // app for, and is its own change owing a device reading (docs/wiki/backlog.md).
       NSLog(@"[CanariPush] remote notification hook NOT installed: %@ has no "
-            @"didReceiveRemoteNotification:fetchCompletionHandler: - silent frames are not handled "
-            @"in the background",
+            @"didReceiveRemoteNotification:fetchCompletionHandler: - no native code handles a silent "
+            @"frame, background or foreground",
             delegateClass);
       return;
     }

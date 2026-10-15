@@ -2146,8 +2146,11 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 /* A heading word wider than the card broke at whatever letter hit the edge ("personnalisati/on",
    iPhone 12 at 2x, 2026-10-15): `wrap-break-word` on the post body is the last resort, and
    hyphenation in the document's language (`lang="fr"`) is the first. Headings only - their size
-   is what makes one word outgrow the card. */
+   is what makes one word outgrow the card. LIMIT: a post carries no language, so every heading is
+   hyphenated by French rules, an English one included. `-webkit-hyphens` because the unprefixed
+   property needs Safari 17 and the iOS targets are 14.0 (app) and 15.6 (the extension). */
 .post-markdown :is(h1, h2, h3, h4, h5, h6) {
+  -webkit-hyphens: auto;
   hyphens: auto;
 }
 

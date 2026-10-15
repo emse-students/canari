@@ -670,7 +670,9 @@ void canari_ios_bootstrap(void) {
               usingBlock:^(NSNotification *note) {
                 CanariApplyKeyboardLayout(note);
               }];
-  // A size changed from Control Center with the app in front: no activation follows it.
+  // The change itself. Activations already cover a size changed in Settings or Control Center
+  // (dismissing Control Center fires didBecomeActive); this observer is extra coverage for any
+  // change that reaches the app without one.
   [nc addObserverForName:UIContentSizeCategoryDidChangeNotification
                   object:nil
                    queue:[NSOperationQueue mainQueue]

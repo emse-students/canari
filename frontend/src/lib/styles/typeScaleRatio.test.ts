@@ -28,7 +28,9 @@ describe('type scale tokens', () => {
   });
 
   it('a markdown heading hyphenates before it breaks mid-word', () => {
-    expect(css).toMatch(/\.post-markdown :is\(h1, h2, h3, h4, h5, h6\) \{\s*hyphens: auto;/);
+    expect(css).toMatch(
+      /\.post-markdown :is\(h1, h2, h3, h4, h5, h6\) \{\s*-webkit-hyphens: auto;\s*hyphens: auto;/
+    );
   });
 
   it('the composer field height derives from the scaled line-height token', () => {
