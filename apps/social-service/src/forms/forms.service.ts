@@ -1203,15 +1203,15 @@ export class FormsService {
    * not, and the organiser refunds it outside the application. Two late payments queue on the lock,
    * so they cannot both take the last seat.
    *
-   * A SECOND CALL FOR THE SAME REQUEST ON A SETTLED ROW IS A REPLAY: the status does not move. It is
-   * the ordinary case - the Lydia callback and the payer's `verify-session` both land here for one
-   * payment. Before 2026-10-15 each call re-granted and wrote ANOTHER purchase record; now the
-   * effects run from durable flags (`fulfilPayment`), so a replay only finishes what is missing.
+   * A SECOND CALL ON A SETTLED ROW IS A REPLAY: the status does not move. It is the ordinary case -
+   * the Lydia callback and the payer's `verify-session` both land here for one payment. Before
+   * 2026-10-15 each call re-granted and wrote ANOTHER purchase record; now the effects run from
+   * durable flags (`fulfilPayment`), so a replay only finishes what is missing.
    *
-   * A SECOND CALL FOR A DIFFERENT REQUEST IS MONEY TAKEN TWICE, not a replay: `submit` reuses a live
-   * pending row and issues a new request while the old one may still be payable. The stored
-   * `stripeSessionId` (the Lydia `request_uuid`) is what tells the two apart, and a mismatch is
-   * accused at WARN with both ids - it was invisible before.
+   * THE REQUEST ID IS NOT COMPARED, ON PURPOSE. The two callers carry two DIFFERENT ids for one
+   * payment - the callback's `request_id`, `verify-session`'s `request_uuid` - so any comparison of
+   * `sessionId` with the stored one would accuse ordinary payments. Telling two requests for one row
+   * apart waits on one fact about Lydia's API (forms.md).
    */
   async markPaid(submissionId: string, sessionId?: string) {
     const found = await this.submissionRepo.findOne({ where: { id: submissionId } });
@@ -1226,16 +1226,8 @@ export class FormsService {
           lock: { mode: 'pessimistic_write' },
         });
         if (!submission) throw new NotFoundException('Submission not found');
-        const storedRequest = submission.stripeSessionId ?? null;
-        const otherRequest = !!sessionId && !!storedRequest && sessionId !== storedRequest;
         if (SETTLED_PAYMENT_STATUSES.has(submission.paymentStatus)) {
-          return {
-            submission,
-            status: submission.paymentStatus,
-            replay: true,
-            otherRequest,
-            storedRequest,
-          };
+          return { submission, status: submission.paymentStatus, replay: true };
         }
         const holdsSeat =
           (await manager.count(Submission, {
@@ -1259,21 +1251,11 @@ export class FormsService {
         submission.paymentStatus = status;
         if (sessionId) submission.stripeSessionId = sessionId;
         await manager.save(submission);
-        return { submission, status, replay: false, otherRequest, storedRequest };
+        return { submission, status, replay: false };
       }
     );
     const { submission } = outcome;
 
-    if (outcome.otherRequest) {
-      // Two payment requests for one row were both payable, and this one is not the request the
-      // row last issued. Whether it is the first or the second to be paid, one of the two payments
-      // has bought nothing: the organiser owes a refund, and this line is the only trace of it.
-      this.logger.warn(
-        `[Forms] Submission ${submissionId} paid by request ${sessionId} while it records request ` +
-          `${outcome.storedRequest} (status ${outcome.status}, ${submission.totalPaid} cents): ` +
-          'money may have been taken twice'
-      );
-    }
     if (outcome.replay) {
       this.logger.debug(
         `[Forms] markPaid replay on submission ${submissionId}, already ${outcome.status}`

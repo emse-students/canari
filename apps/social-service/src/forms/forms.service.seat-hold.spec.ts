@@ -490,26 +490,32 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0].paymentStatus).toBe('paid_over_capacity');
     });
 
-    // A reused pending row had two payable requests: the second one paid is money taken twice.
-    it('accuses a payment by another request than the one the row records', async () => {
-      const { service, rows, userTagService } = makeStore({
+    // ONE payment reaches markPaid under TWO ids: the Lydia callback carries its `request_id`, the
+    // payer's verify-session the `request_uuid` `submit` stored. Neither order may leave the row
+    // unpaid, accuse anybody, or fulfil twice - whichever id is stored when the other one arrives.
+    it.each([
+      ['the callback first, then verify-session', ['124', 'uuid-1']],
+      ['verify-session first, then the callback', ['uuid-1', '124']],
+    ])('pays once whatever the id: %s', async (_order, [first, second]) => {
+      const { service, rows, userTagService, purchaseRecordService } = makeStore({
         maxSubmissions: 1,
         rows: [
           row({
             id: 's1',
-            paymentStatus: 'paid',
-            stripeSessionId: 'req-new',
-            cotisationGrantedAt: T0,
-            purchaseRecordedAt: T0,
+            paymentStatus: 'pending',
+            paymentRequestedAt: ago(1000),
+            stripeSessionId: 'uuid-1',
           }),
         ],
       });
       const warn = jest.spyOn((service as any).logger, 'warn');
-      await service.markPaid('s1', 'req-old');
-      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/req-old.*req-new.*taken twice/));
+      await service.markPaid('s1', first);
       expect(rows[0].paymentStatus).toBe('paid');
-      expect(rows[0].stripeSessionId).toBe('req-new');
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      await service.markPaid('s1', second);
+      expect(rows[0].paymentStatus).toBe('paid');
+      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalled();
     });
   });
 
