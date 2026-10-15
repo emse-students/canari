@@ -42,7 +42,7 @@ comparison R1 was built from is on
 | C6 | **A CanaReel is kept ONE MONTH, then deleted - post, comments and reactions with it**; nothing dead stays on screen. The member can **save a reel to the phone's gallery** first, for memories. |
 | C7 | **A reel is read in the feed, and touching it opens a full-screen vertical viewer** that swipes to the next one. No dedicated Reels tab. |
 | C8 | **Stories: not now.** With one-month reels the two formats overlap. |
-| C9 | **Live, when it comes, is for the WHOLE network**, keyed like a post (its key in the row, as a post CEK is), after calls are revived and the box's egress is MEASURED (~1.5 Mb/s x viewers). |
+| C9 | **Live, when it comes, is for the WHOLE network**, keyed like a post (its key in the row, as a post CEK is), after calls are revived and the box's egress is MEASURED (~1.5 Mb/s x viewers). The plan and the user's 2026-10-15 decisions: [live](live.md). |
 | C10 | **Delivered in stages**, each its own release (below). |
 
 Also decided later: no expiry notification for reel authors (user, 2026-10-02); the "deleted in N
@@ -66,7 +66,7 @@ days" chip was removed (user, 2026-10-02), a reel shows its age.
    Android and MP4 on iOS and R2's compression brings both to one format. The server half is
    [reels (server)](../../services/reels.md). The editor, called "catastrophic" by the user on
    2026-10-05, is [reel-editor](reel-editor.md).
-4. **R4 - live** (C9), behind the calls revival: not started.
+4. **R4 - live** (C9), behind the calls revival: not started; planned on [live](live.md).
 
 ## The first camera open, read on both phones (2026-10-01, before anything was built on it)
 
