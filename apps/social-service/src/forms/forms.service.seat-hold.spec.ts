@@ -294,6 +294,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       userTagService as any,
       purchaseRecordService as any,
       pricingFacts,
+      {} as any,
+      // FormFilesService: these forms ask for no file, so nothing here reaches it.
       {} as any
     );
     return {
