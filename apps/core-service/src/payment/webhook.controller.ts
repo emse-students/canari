@@ -64,6 +64,15 @@ export function describeContentType(contentType: string | undefined): string {
   return mediaType.slice(0, 48) || 'none';
 }
 
+/** Every received field except the signature, as strings: the candidate set an observation tries. */
+function receivedFields(body: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(body ?? {})
+      .filter(([name]) => name !== 'sig')
+      .map(([name, value]) => [name, String(value ?? '')])
+  );
+}
+
 @Controller('payments')
 export class PaymentWebhookController {
   private readonly logger = new Logger(PaymentWebhookController.name);
@@ -192,7 +201,8 @@ export class PaymentWebhookController {
       this.logger.error(
         `Lydia request-callback: signature verification failed (outcome=${outcome}, ` +
           `content-type=${describeContentType(contentType)}, ${describeFieldNames(body)}, ` +
-          `verified-over=[${Object.keys(signedFields).join(',')}])`
+          `verified-over=[${Object.keys(signedFields).join(',')}]) ` +
+          this.paymentService.observeLydiaRequestCallback(receivedFields(body), signature)
       );
       throw new BadRequestException('Invalid signature');
     }

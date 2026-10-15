@@ -20,6 +20,7 @@ const USER_ID = '22222222-2222-2222-2222-222222222222';
 function makeController(verified: boolean) {
   const paymentService = {
     verifyLydiaRequestCallback: jest.fn().mockReturnValue(verified),
+    observeLydiaRequestCallback: jest.fn().mockReturnValue('observe: stub'),
   } as unknown as PaymentService;
   return new PaymentWebhookController(paymentService);
 }
@@ -163,7 +164,15 @@ describe('POST /api/payments/lydia-request-callback - the body types it reads', 
     verify = jest.fn().mockReturnValue(false);
     const moduleRef = await Test.createTestingModule({
       controllers: [PaymentWebhookController],
-      providers: [{ provide: PaymentService, useValue: { verifyLydiaRequestCallback: verify } }],
+      providers: [
+        {
+          provide: PaymentService,
+          useValue: {
+            verifyLydiaRequestCallback: verify,
+            observeLydiaRequestCallback: () => 'observe: stub',
+          },
+        },
+      ],
     }).compile();
     app = moduleRef.createNestApplication();
     app.use(bodyParser.json());
@@ -250,6 +259,8 @@ describe('a multipart callback through the REAL signature check', () => {
           useValue: {
             verifyLydiaRequestCallback: (f: Record<string, string>, sig: string) =>
               provider.verifyRequestCallback(f, sig),
+            observeLydiaRequestCallback: (f: Record<string, string>, sig: string) =>
+              provider.observeRequestCallback(f, sig),
           },
         },
       ],

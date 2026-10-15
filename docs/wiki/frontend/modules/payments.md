@@ -279,3 +279,7 @@ it**: the test reproduces the exact symptom without the interceptor, but the nex
 log line is what settles it. No callback has yet been verified, so which private token signs one
 (the Provider's, as `verifyRequestCallback` assumes, or the Business's, as Lydia's CSM wrote on
 2026-10-15) is still open.
+
+### Which key signs Lydia's callback - the observation (2026-10-15)
+
+Lydia's CSM says the callback is signed with the BUSINESS private token; core stores none (`associations` holds only the public `vendor_token`, and `business/create`'s `api_token_id` is dropped on purpose), and the Provider private token verifies nothing. `LYDIA_OBSERVE_KEYS` (a comma list, dev only, never logged, REMOVED once the algorithm is known) feeds `matchLydiaSignature` (`lydia-signature-match.ts`): on a refused callback it tries every subset of the received field names x five algorithms per candidate key and the failure line adds `observe: key#N fields=[names] algorithm=...` - indexes and names, never a value. The refusal itself is unchanged. **Lasting design, a later lot:** capture the Business key at `business/create`, store it ENCRYPTED per association (column + migration) and verify with it.

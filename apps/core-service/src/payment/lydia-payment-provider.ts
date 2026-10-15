@@ -1,6 +1,7 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { verifyLydiaSignature } from './lydia-signature';
+import { matchLydiaSignature } from './lydia-signature-match';
 import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
@@ -74,11 +75,13 @@ export class LydiaPaymentProvider implements PaymentProvider {
   private readonly baseUrl: string;
   private readonly providerToken: string | undefined;
   private readonly providerPrivateToken: string | undefined;
+  private readonly observeKeys: string[];
 
   constructor(env: {
     LYDIA_ENV?: string;
     LYDIA_PROVIDER_TOKEN?: string;
     LYDIA_PROVIDER_PRIVATE_TOKEN?: string;
+    LYDIA_OBSERVE_KEYS?: string;
   }) {
     this.baseUrl =
       (env.LYDIA_ENV || '').trim().toLowerCase() === 'production'
@@ -86,6 +89,10 @@ export class LydiaPaymentProvider implements PaymentProvider {
         : HOMOLOGATION_BASE_URL;
     this.providerToken = env.LYDIA_PROVIDER_TOKEN;
     this.providerPrivateToken = env.LYDIA_PROVIDER_PRIVATE_TOKEN;
+    this.observeKeys = (env.LYDIA_OBSERVE_KEYS ?? '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
     this.logger.log(`Lydia configured: ${this.isConfigured() ? 'yes' : 'no'} (${this.baseUrl})`);
   }
 
@@ -393,5 +400,19 @@ export class LydiaPaymentProvider implements PaymentProvider {
   verifyRequestCallback(fields: Record<string, string>, signature: string): boolean {
     if (!this.providerPrivateToken) return false;
     return verifyLydiaSignature(fields, this.providerPrivateToken, signature);
+  }
+
+  /**
+   * Observation of a callback that failed verification: which candidate key (by index), field set
+   * and algorithm reproduces its signature. Candidates come from `LYDIA_OBSERVE_KEYS`, a dev-only
+   * measurement variable removed once the algorithm is known; the answer carries names, never a value.
+   */
+  observeRequestCallback(fields: Record<string, string>, signature: string): string {
+    if (this.observeKeys.length === 0) return 'observe: no candidate key configured';
+    const matches = matchLydiaSignature(fields, signature, this.observeKeys);
+    if (matches.length === 0) return `observe: no match over ${this.observeKeys.length} key(s)`;
+    return `observe: ${matches
+      .map((m) => `key#${m.keyIndex} fields=[${m.fields.join(',')}] algorithm=${m.algorithm}`)
+      .join('; ')}`;
   }
 }

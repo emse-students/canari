@@ -43,6 +43,7 @@ export class PaymentService {
       LYDIA_ENV: process.env.LYDIA_ENV,
       LYDIA_PROVIDER_TOKEN: process.env.LYDIA_PROVIDER_TOKEN,
       LYDIA_PROVIDER_PRIVATE_TOKEN: process.env.LYDIA_PROVIDER_PRIVATE_TOKEN,
+      LYDIA_OBSERVE_KEYS: process.env.LYDIA_OBSERVE_KEYS,
     });
   }
 
@@ -71,6 +72,11 @@ export class PaymentService {
    */
   verifyLydiaRequestCallback(fields: Record<string, string>, signature: string): boolean {
     return this.lydiaProvider.verifyRequestCallback(fields, signature);
+  }
+
+  /** What a callback that failed verification would have matched with the candidate keys (names only). */
+  observeLydiaRequestCallback(fields: Record<string, string>, signature: string): string {
+    return this.lydiaProvider.observeRequestCallback(fields, signature);
   }
 
   /** Creates or resumes a Connect-style onboarding link for the given association. */
