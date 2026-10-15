@@ -12,6 +12,8 @@ import {
   framedOutputSize,
   shouldMirrorCapture,
   takeFramedPhoto,
+  THUMBNAIL_LONG_EDGE,
+  thumbnailSize,
   videoBitrateFor,
 } from './framedCapture';
 
@@ -106,6 +108,18 @@ describe('framedOutputSize', () => {
       coverCropRect({ width: 1280, height: 720 }, { width: 800, height: 400 })
     );
     expect(out.width).toBeGreaterThan(out.height);
+  });
+});
+
+describe('thumbnailSize', () => {
+  it('brings a take frame down to the thumbnail edge, keeping its ratio and even sides', () => {
+    const t = thumbnailSize({ width: 1080, height: 1920 });
+    expect(Math.max(t.width, t.height)).toBeLessThanOrEqual(THUMBNAIL_LONG_EDGE);
+    expect(t.width % 2).toBe(0);
+    expect(t.height % 2).toBe(0);
+    expect(t.width / t.height).toBeCloseTo(1080 / 1920, 1);
+    // A small preview is never scaled UP.
+    expect(thumbnailSize({ width: 200, height: 356 })).toEqual({ width: 200, height: 356 });
   });
 });
 

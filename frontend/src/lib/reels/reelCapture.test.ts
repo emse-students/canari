@@ -192,4 +192,10 @@ describe('captureFileFrom', () => {
       'canari-video-7.mp4'
     );
   });
+
+  it('names the Android WebView take by the container it reports, never .bin (Mi 9T, v1.2.9-alpha.1)', () => {
+    const mkv = captureFileFrom(new Blob(['x'], { type: 'video/x-matroska;codecs=avc1,opus' }), 7);
+    expect(mkv.name).toBe('canari-video-7.mkv');
+    expect(mkv.type).toBe('video/x-matroska;codecs=avc1,opus');
+  });
 });
