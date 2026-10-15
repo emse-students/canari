@@ -80,6 +80,14 @@ see who else booked.
 
 D27 was re-confirmed by the user on 2026-10-15: the history is frozen only while its space exists.
 
+## Accords recorded
+
+User, 2026-10-15, in session (relayed by the planning session, recorded at Master's request),
+covering: D1-D3 of the paid-form chantier, the backfill of migration 083, the data half of migration
+084 before production, `minClientVersion` 1.2.7 (the user's own action), the anonymous-form file
+question refused, and Lydia states 1 and 5 to be measured by hand. No later work package starts
+until the lead session says so.
+
 ## Open
 
 - Validation of the work-package plan below by the user, then the pull request carrying this page and the backlog pointer.
