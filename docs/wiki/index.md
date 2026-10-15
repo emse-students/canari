@@ -98,6 +98,7 @@
 - [Store listings](store-listings.md) - what Play and the App Store show: current texts and what is stale, screenshot sizes, the fictional-demo-data pipeline and its privacy checklist
 - [Production queue and epoch audit, 2026-10-12](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md) - why `queued_message` reached 93 k rows: repair answers sent to every seat of a new community, and seats of devices with no session left; no client stuck, the reaper by age rejected
 - [Storage forecast](infrastructure/storage-forecast.md) — Measured unit costs, the model at 400 daily users, and why the backup scheme fails before the data does
+- [Storage and retention](infrastructure/storage-and-retention.md) — Draft audit of 2026-10-11: host disk, volumes, logs and backups measured read-only; the unmeasured remainder is listed
 - [Estate migration](infrastructure/estate-migration.md) - the three VMs moving onto the Portail-etu host and then onto `emse.fr`: the two phases and why they are separate, the decisions taken 2026-09-23, the bun blocker that is REFUTED, and the certificate renewal nothing would reload
 
 ### Features
