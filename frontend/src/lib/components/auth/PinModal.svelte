@@ -73,6 +73,14 @@
     onRecoverPin?: () => void;
     /** The signed-in account's id, filed with the PIN by a password manager (see `PinAccountField`). */
     account?: string;
+    /**
+     * The PIN being typed, two-way bound so the caller EMPTIES it where it refuses an attempt - a
+     * wrong PIN or no server to ask. The digits used to stay and the next ones were APPENDED: iPhone
+     * 12, 2026-10-16, an offline attempt left six dots, six more were typed once back online, and the
+     * twelve-digit PIN cost a "PIN incorrect" (an offline refusal costs no attempt - nothing reached
+     * the server - but the PIN typed after it did).
+     */
+    pin?: string;
   }
 
   let {
@@ -92,9 +100,9 @@
     resetWithheldNotice = '',
     onRecoverPin,
     account = '',
+    pin = $bindable(''),
   }: Props = $props();
 
-  let pin = $state('');
   let internalError = $state('');
   /**
    * The `<form>`'s id, so the submit button can live in the modal FOOTER and still submit it.
@@ -140,6 +148,18 @@
   $effect(() => {
     if (externalError) internalError = '';
   });
+
+  /**
+   * A FOCUSED CONTROL OF THE SCROLL REGION IS BROUGHT INTO IT. At the largest text sizes the keypad's
+   * last row and the two links under it sit below the fold of the scroll region, and the footer
+   * (outside that region) is what is drawn there - so a control reached by focus (VoiceOver,
+   * a keyboard, a switch) was hidden while it was the one being used. Same shape as the forgot box.
+   */
+  function revealFocused(e: FocusEvent) {
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) return;
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
 
   const displayError = $derived(externalError || internalError);
 
@@ -241,7 +261,11 @@
     NO AUTO-SUBMIT: a PIN here is 4 to 8 digits (`isValidPin`) and the code has no notion of a
     complete one, so submitting at the fourth digit would make every longer PIN impossible.
   -->
-  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pt-4 pb-2">
+  <div
+    data-pin-scroll
+    onfocusin={revealFocused}
+    class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pt-4 pb-2"
+  >
     <form
       id={FORM_ID}
       onsubmit={handleSubmit}
